@@ -244,9 +244,11 @@ class ChatService:
         """
         system_prompt = _SYSTEM_PROMPTS.get(agent_type, _SYSTEM_PROMPTS["qa"])
 
-        # 注入记忆上下文到系统提示词（用户偏好、历史摘要、工作记忆、Checkpoint 恢复信息）
+        # 注入记忆上下文到系统提示词
+        # P1-Opt5: render_short_term=True — 使用 memory_ctx 中的 L1 短期窗口，
+        # 不再从 DB 重新加载全部历史（修复 W4 + W7: 双重加载浪费）。
         if memory_ctx:
-            memory_fragment = memory_ctx.to_system_prompt()
+            memory_fragment = memory_ctx.to_system_prompt(render_short_term=True)
             if memory_fragment:
                 system_prompt = system_prompt + "\n\n" + memory_fragment
 
@@ -254,8 +256,24 @@ class ChatService:
             Message(role="system", content=system_prompt)
         ]
 
-        history = await self.msg_repo.get_by_conversation(conversation_id)
-        for msg in history:
-            messages.append(Message(role=msg.role, content=msg.content))
+        # P1-Opt5: 历史消息窗口化 — 优先使用 memory_ctx.short_term（已加载），
+        # fallback 时从 DB 加载但加 limit（修复 W4: 之前无 limit 全量加载）。
+        _HISTORY_WINDOW = 16  # 最近 8 轮对话（16 条消息）
+
+        if memory_ctx and memory_ctx.short_term:
+            # 使用已加载的 L1 短期窗口，不再从 DB 重复加载
+            recent = memory_ctx.short_term[-_HISTORY_WINDOW:]
+            for msg in recent:
+                messages.append(Message(
+                    role=msg.get("role", "user"),
+                    content=str(msg.get("content", "")),
+                ))
+        else:
+            # Fallback: memory_ctx 无 short_term 时从 DB 加载（带 limit）
+            history = await self.msg_repo.get_by_conversation(
+                conversation_id, limit=_HISTORY_WINDOW
+            )
+            for msg in history:
+                messages.append(Message(role=msg.role, content=msg.content))
 
         return messages

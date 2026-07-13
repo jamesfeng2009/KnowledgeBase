@@ -26,6 +26,13 @@ logger = get_logger(__name__)
 # 短期窗口大小：保留最近 N 条消息作为上下文
 SHORT_TERM_WINDOW_SIZE = 20
 
+# P1-Opt5: L1 短期窗口注入 LLM 的最大消息条数（每条截断到 _SHORT_TERM_MSG_MAX_CHARS）
+_SHORT_TERM_INJECT_SIZE = 8  # 最近 4 轮对话（8 条消息）
+_SHORT_TERM_MSG_MAX_CHARS = 200  # 每条消息截断到 200 字符
+
+# P1-Opt5: L3 用户偏好注入 top-N（从全量 10 条缩减到 top-3，省 ~200 tok）
+_L3_INJECT_TOP_N = 3
+
 
 class MemoryContext:
     """聚合后的记忆上下文 — 传递给 Agent Loop 的完整记忆。"""
@@ -36,19 +43,42 @@ class MemoryContext:
         self.user_facts: list[dict] = []        # L3: 用户偏好和事实
         self.working_memory: list[dict] = []    # L4: 工作记忆
 
-    def to_system_prompt(self) -> str:
-        """将记忆上下文转换为 system prompt 片段。"""
+    def to_system_prompt(self, render_short_term: bool = False) -> str:
+        """将记忆上下文转换为 system prompt 片段。
+
+        P1-Opt5: 新增 render_short_term 参数，为 True 时渲染 L1 短期窗口
+        （修复 W7: 之前 L1 加载后不渲染，ChatService 另从 DB 双重加载）。
+        L3 用户偏好从全量 top-10 缩减到 top-3，省 ~200 tok。
+
+        Args:
+            render_short_term: 是否渲染 L1 短期窗口到 system prompt。
+                ChatService 传 True（使用 memory_ctx 中的 short_term，
+                不再从 DB 重新加载）；AgenticRAGEngine 传 False（由
+                Agent Loop 自己管理对话历史）。
+
+        Returns:
+            拼接后的 system prompt 片段。
+        """
         parts = []
 
-        # L3: 用户偏好
+        # P1-Opt5: L1 短期窗口 — 修复 W7（之前加载后不渲染）
+        if render_short_term and self.short_term:
+            recent = self.short_term[-_SHORT_TERM_INJECT_SIZE:]
+            parts.append("=== 近期对话 ===")
+            for msg in recent:
+                role = msg.get("role", "user")
+                content = str(msg.get("content", ""))[:_SHORT_TERM_MSG_MAX_CHARS]
+                parts.append(f"{role}: {content}")
+
+        # P1-Opt5: L3 用户偏好 — top-3 而非 top-10
         if self.user_facts:
             prefs = [f["fact_text"] for f in self.user_facts if f.get("category") == "preference"]
             if prefs:
-                parts.append("用户偏好：\n" + "\n".join(f"  - {p}" for p in prefs))
+                parts.append("用户偏好：\n" + "\n".join(f"  - {p}" for p in prefs[:_L3_INJECT_TOP_N]))
 
             summaries = [f["fact_text"] for f in self.user_facts if f.get("category") == "summary"]
             if summaries:
-                parts.append("历史摘要：\n" + "\n".join(f"  - {s}" for s in summaries))
+                parts.append("历史摘要：\n" + "\n".join(f"  - {s}" for s in summaries[:_L3_INJECT_TOP_N]))
 
         # L4: 工作记忆
         if self.working_memory:

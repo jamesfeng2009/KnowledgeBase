@@ -8,32 +8,35 @@ __pycache__/
 dist/
 build/
 
-# Environment
-.env
-.env.local
-.env.*.local
-*.env
+# Virtual environments
+venv/
+.venv/
+env/
 
 # IDE
+.trae/
 .idea/
 .vscode/
 *.swp
 *.swo
 
-# Testing
-.pytest_cache/
-.ruff_cache/
-htmlcov/
-.coverage
-coverage.xml
-
 # OS
 .DS_Store
 Thumbs.db
 
-# Trae workspace
-.trae/
+# Environment
+.env
+.env.local
+*.env
+
+# TRAE share packages
 .trae-html-share-packages/
 
-# Attachments
-attachments/
+# Node.js
+collab-service/dist/
+collab-service/node_modules/
+
+# Test
+.pytest_cache/
+.coverage
+htmlcov/

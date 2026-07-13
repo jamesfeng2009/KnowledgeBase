@@ -544,6 +544,7 @@ class SemanticChunker:
                         start_pos=start_pos,
                         end_pos=min(end_pos, len(content)),
                         token_count=estimate_tokens(text),
+                        chunk_strategy="semantic",
                     )
                 )
             offset = end_pos
@@ -562,6 +563,7 @@ class SemanticChunker:
                         start_pos=start_pos,
                         end_pos=len(content),
                         token_count=estimate_tokens(text),
+                        chunk_strategy="semantic",
                     )
                 )
         return chunks
@@ -646,6 +648,7 @@ class SemanticChunker:
                         start_pos=parent.start_pos,
                         end_pos=parent.end_pos,
                         token_count=parent.token_count,
+                        chunk_strategy=parent.chunk_strategy or "semantic",
                     )
                 )
                 # 父块本身也保留，供上下文扩充
@@ -666,6 +669,7 @@ class SemanticChunker:
                         start_pos=parent.start_pos,
                         end_pos=parent.start_pos + len(text),
                         token_count=estimate_tokens(text),
+                        chunk_strategy=parent.chunk_strategy or "semantic",
                     )
                 )
             # 父块保留
@@ -693,6 +697,7 @@ class SemanticChunker:
                     start_pos=offset,
                     end_pos=offset + len(text),
                     token_count=estimate_tokens(text),
+                    chunk_strategy="fallback",
                 )
             )
             offset += len(text)
@@ -704,6 +709,7 @@ class SemanticChunker:
                 start_pos=0,
                 end_pos=len(content),
                 token_count=estimate_tokens(content),
+                chunk_strategy="fallback",
             )
         ]
 

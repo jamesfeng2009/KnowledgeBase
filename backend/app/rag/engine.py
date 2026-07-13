@@ -35,6 +35,8 @@ from app.llm.base import LLMProvider, Message, ToolUse
 from app.mcp.client import MCPClient
 from app.observability.langfuse_tracer import TraceContext, trace_node
 from app.rag.cache import TokenCache
+from app.rag.context_budget import ContextBudgetManager
+from app.rag.context_dedup import CrossTurnDeduplicator
 from app.rag.generator import Generator
 from app.rag.reranker import RerankerBase
 from app.rag.retriever import HybridRetriever
@@ -167,6 +169,10 @@ class AgenticRAGEngine:
         self._compiled_graph: Any = None
         # LangFuse 追踪上下文（每次 answer 调用时重置）
         self._trace_ctx: TraceContext | None = None
+        # P1-Opt3: 跨轮工具结果去重器 — 检测重复结果并用指针引用替代
+        self._dedup = CrossTurnDeduplicator()
+        # P2-Opt6: 上下文预算管理器 — think 上下文超预算时压缩早期消息
+        self._budget = ContextBudgetManager()
 
     # ------------------------------------------------------------------
     # 对外入口
@@ -224,6 +230,11 @@ class AgenticRAGEngine:
             "memory_context": memory_context,
         }
 
+        # P1-Opt3: 每次新对话重置去重器（清空上一轮对话的已见列表）
+        self._dedup.reset()
+        # P2-Opt6: 重置预算管理器统计
+        self._budget.reset()
+
         # 2.5 初始化 LangFuse 追踪
         self._trace_ctx = TraceContext(
             trace_name="rag_agent_loop",
@@ -261,6 +272,7 @@ class AgenticRAGEngine:
 
         # 7. 结束 Trace
         if self._trace_ctx is not None:
+            budget_stats = self._budget.get_stats()
             self._trace_ctx.finalize(
                 output=answer[:500],
                 metadata={
@@ -268,6 +280,8 @@ class AgenticRAGEngine:
                     "total_tokens": len(answer) // 4,  # 粗估
                     "retrieved_docs": len(state["retrieved_docs"]),
                     "tool_results": len(state["tool_results"]),
+                    "budget_compress_count": budget_stats["compress_count"],
+                    "budget_tokens_saved": budget_stats["total_tokens_saved"],
                 },
             )
 
@@ -524,6 +538,11 @@ class AgenticRAGEngine:
         P0-Opt2: Live-Zone 增量上下文传递 — 循环开始前初始化稳定前缀
         [system_stable, user_query]，后续每轮只追加增量结果（短摘要），
         不重建完整 messages 列表。前缀字节稳定以命中 Anthropic KV Cache。
+
+        P2-Opt6: 上下文预算保护 — 每轮 think 前检查 messages 总 token 数，
+        超过预算（2000 tok）时压缩早期中间消息为单条摘要。
+        Head（system + query）和 Tail（最近 2 条）保持不变，确保
+        KV Cache 前缀稳定且 Live Zone 上下文完整。
         """
         kb_ids = state.get("kb_ids")
 
@@ -545,6 +564,10 @@ class AgenticRAGEngine:
                 break
 
             # think：LLM 决策下一步（读取 state["messages"] 稳定前缀 + 增量结果）
+            # P2-Opt6: think 前检查上下文预算，超限时压缩早期消息
+            if self._budget.should_compress(state["messages"]):
+                state["messages"] = self._budget.compress(state["messages"])
+
             decision = await self._think(state)
 
             if decision == "retrieve":
@@ -559,13 +582,21 @@ class AgenticRAGEngine:
                 continue
             if decision == "tool_call":
                 await self._tool_call(state)
-                # P0-Opt2: 只追加最新工具结果摘要，不重传历史结果
+                # P0-Opt2 + P1-Opt3: 只追加最新工具结果摘要（经去重），不重传历史结果
                 if state["tool_results"]:
                     latest = state["tool_results"][-1]
+                    raw_summary = self._summarize(latest)
+                    tool_name = latest.get("tool", "unknown") if isinstance(latest, dict) else "unknown"
+                    # P1-Opt3: 跨轮去重 — 重复结果替换为指针引用
+                    deduped = self._dedup.register(
+                        turn=state["iteration"],
+                        tool_name=tool_name,
+                        result_content=raw_summary,
+                    )
                     state["messages"].append(
                         {
                             "role": "user",
-                            "content": f"[系统] 工具结果：{self._summarize(latest)}",
+                            "content": f"[系统] 工具结果：{deduped}",
                         }
                     )
                 continue
@@ -816,9 +847,18 @@ class AgenticRAGEngine:
 
         当前实现仅记录反思结论，不触发重试（避免在流式输出后二次循环）；
         反思日志可用于质量监控与知识缺口识别。
+
+        P1-Opt4: 传答案摘要而非全文 — reflect 只需判断"是否需要补充检索"，
+        不需要逐字审查答案。摘要提取答案的前 3 个要点 + 结论，
+        省 ~1800 tok/次。原始答案保存在 state["answer"] 和 L2 Checkpoint 中，
+        不会丢失。
         """
+        # P1-Opt4: 生成答案摘要而非全文回传
+        answer = state.get("answer", "")
+        answer_summary = self._summarize_for_reflect(answer)
+
         prompt = (
-            "评估以下回答的质量：\n"
+            "评估以下回答摘要的质量：\n"
             "1. 是否有引用来源？\n"
             "2. 是否完整回答了用户问题？\n"
             "3. 是否有幻觉风险？\n"
@@ -826,8 +866,7 @@ class AgenticRAGEngine:
         )
         messages: list[Message] = [
             {"role": "system", "content": prompt},
-            {"role": "user", "content": state["query"]},
-            {"role": "assistant", "content": state.get("answer", "")},
+            {"role": "user", "content": f"问题: {state['query']}\n\n答案摘要: {answer_summary}"},
         ]
         try:
             text = ""
@@ -838,10 +877,43 @@ class AgenticRAGEngine:
                 "engine.reflect",
                 iteration=state["iteration"],
                 conclusion=text[:200],
+                answer_tokens_saved=len(answer) - len(answer_summary),
                 session_id=state["session_id"],
             )
         except Exception as exc:
             log.warning("engine.reflect_error", error=str(exc))
+
+    @staticmethod
+    def _summarize_for_reflect(answer: str, max_chars: int = 700) -> str:
+        """为 reflect 生成答案摘要 — 保留结构要点，省略详细内容。
+
+        P1-Opt4: 提取答案的前 3 个要点行 + 首段引言，截断到 max_chars。
+        要点行识别：以 - / • / * / # / 数字编号开头的行。
+
+        Args:
+            answer: 完整答案文本。
+            max_chars: 摘要最大字符数（默认 700，约 200 tokens）。
+
+        Returns:
+            答案摘要文本。
+        """
+        if not answer:
+            return ""
+        lines = answer.split("\n")
+        # 提取结构化要点行
+        key_points = [
+            line.strip()
+            for line in lines
+            if line.strip() and line.strip()[0] in ("-•*#") or
+               (len(line.strip()) > 1 and line.strip()[0].isdigit() and
+                line.strip()[1] in ".、)")
+        ]
+        intro = lines[0].strip() if lines else ""
+        if key_points:
+            summary = f"{intro}\n" + "\n".join(key_points[:3])
+        else:
+            summary = intro
+        return summary[:max_chars]
 
     # ------------------------------------------------------------------
     # 辅助

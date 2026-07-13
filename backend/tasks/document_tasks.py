@@ -6,6 +6,10 @@
 遵循开闭原则：新增文档类型只需扩展 _parse_document 中的分支，
 不修改 process_document 主流程。
 
+分块策略：使用 SemanticChunker 的四级优先级分块策略
+（Q&A 分块 → 结构化分块 → TextTiling 语义分块 → 固定长度兜底），
+不再使用简单的滑动窗口分块。
+
 注意：文档解析依赖 pymupdf / python-docx 等第三方库，
 这些库可能未安装，使用延迟导入实现优雅降级。
 """
@@ -18,14 +22,14 @@ from typing import Any
 
 from celery_app import celery_app
 
+from app.rag.chunker import Chunk, SemanticChunker
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-#: 文档分块大小（字符数）
+# 保留旧常量供向后兼容引用，实际分块已委托给 SemanticChunker
+# Deprecated: 使用 SemanticChunker 替代简单滑动窗口
 CHUNK_SIZE: int = 500
-
-#: 分块重叠大小（字符数）
 CHUNK_OVERLAP: int = 50
 
 
@@ -155,12 +159,15 @@ async def _process_document_async(doc_id: str) -> dict[str, Any]:
             doc.content_text = parsed_text
             await session.flush()
 
-        # 3. 分块
-        chunks = _chunk_text(parsed_text, CHUNK_SIZE, CHUNK_OVERLAP)
+        # 3. 分块 — 使用 SemanticChunker 四级优先级策略
+        #    （Q&A → 结构化 → TextTiling → 固定长度兜底）
+        chunk_objects = _chunk_document(parsed_text, doc.doc_type or "md")
+        chunks = [c.content for c in chunk_objects]
         logger.info(
             "document.chunked",
             doc_id=doc_id,
             chunk_count=len(chunks),
+            strategies=[c.chunk_strategy for c in chunk_objects],
         )
 
         # 4. 向量化（延迟导入，外部服务不可用时优雅降级）
@@ -177,7 +184,7 @@ async def _process_document_async(doc_id: str) -> dict[str, Any]:
 
         # 5. 索引（延迟导入，构建全文索引和向量索引）
         try:
-            await _build_indexes(doc_id, chunks, embeddings)
+            await _build_indexes(doc_id, chunk_objects, chunks, embeddings)
         except Exception as exc:
             logger.warning("document.index_failed", doc_id=doc_id, error=str(exc))
 
@@ -199,6 +206,7 @@ async def _process_document_async(doc_id: str) -> dict[str, Any]:
             "chunk_count": len(chunks),
             "embedding_count": len(embeddings),
             "doc_status": "published",
+            "chunk_strategies": list(set(c.chunk_strategy for c in chunk_objects)),
         }
 
 
@@ -293,16 +301,48 @@ def _parse_html(doc: Any) -> str:
         return doc.content_text or ""
 
 
-def _chunk_text(text: str, chunk_size: int, overlap: int) -> list[str]:
-    """将文本分块 — 滑动窗口策略。
+def _chunk_document(
+    text: str,
+    doc_type: str = "md",
+    content_type: str = "auto",
+) -> list[Chunk]:
+    """使用 SemanticChunker 对文档执行四级优先级分块。
+
+    策略优先级：
+    0. 内容类型路由（content_type 显式指定时）；
+    1. 结构化分块：按 Markdown 标题或 HTML 标签分割（带标题路径锚点）；
+    2. 语义分块：TextTiling 相似度算法，在话题边界分割；
+    3. 父子索引：小块检索、大块上下文；
+    4. 固定长度兜底：512 tokens 固定分割。
 
     Args:
-        text: 待分块的文本。
-        chunk_size: 每块大小（字符数）。
-        overlap: 相邻块重叠大小（字符数）。
+        text: 待分块的纯文本内容。
+        doc_type: 文档类型（md / html / docx / pdf / txt 等）。
+        content_type: 内容类型标签（auto / faq / tutorial / specification / report / plain）。
 
     Returns:
-        文本块列表。
+        Chunk 对象列表，每个 Chunk 包含 content、title_path、content_type、
+        chunk_strategy 等元数据。
+    """
+    if not text or not text.strip():
+        return []
+
+    chunker = SemanticChunker()
+    chunks = chunker.chunk(text, doc_type=doc_type, content_type=content_type)
+    logger.info(
+        "document.chunk_detail",
+        chunk_count=len(chunks),
+        strategies=[c.chunk_strategy for c in chunks],
+        doc_type=doc_type,
+        content_type=content_type,
+    )
+    return chunks
+
+
+def _chunk_text(text: str, chunk_size: int, overlap: int) -> list[str]:
+    """[Deprecated] 简单滑动窗口分块 — 保留供向后兼容。
+
+    新代码应使用 _chunk_document() 接入 SemanticChunker 四级分块策略。
     """
     if not text:
         return []
@@ -340,33 +380,38 @@ async def _generate_embeddings(chunks: list[str]) -> list[list[float]]:
 
 async def _build_indexes(
     doc_id: str,
+    chunk_objects: list[Chunk],
     chunks: list[str],
     embeddings: list[list[float]],
 ) -> None:
     """构建全文索引和向量索引 — 延迟导入。
 
-    外部服务不可用时优雅降级。
+    传递 Chunk 对象以索引 richer 元数据（title_path、content_type、chunk_strategy）。
 
     Args:
         doc_id: 文档 ID。
-        chunks: 文本块列表。
+        chunk_objects: Chunk 对象列表（含元数据）。
+        chunks: 文本块内容列表（chunk_objects 中提取的 .content）。
         embeddings: 向量嵌入列表。
     """
-    # 构建全文索引（OpenSearch）
+    # 构建全文索引（OpenSearch）— 传入 Chunk 元数据
     try:
-        await _build_opensearch_index(doc_id, chunks)
+        await _build_opensearch_index(doc_id, chunk_objects)
     except Exception as exc:
         logger.warning("opensearch.index_failed", doc_id=doc_id, error=str(exc))
 
-    # 构建向量索引（Milvus）
+    # 构建向量索引（Milvus）— 传入 Chunk 元数据
     try:
-        await _build_milvus_index(doc_id, chunks, embeddings)
+        await _build_milvus_index(doc_id, chunk_objects, embeddings)
     except Exception as exc:
         logger.warning("milvus.index_failed", doc_id=doc_id, error=str(exc))
 
 
-async def _build_opensearch_index(doc_id: str, chunks: list[str]) -> None:
+async def _build_opensearch_index(doc_id: str, chunk_objects: list[Chunk]) -> None:
     """构建 OpenSearch 全文索引 — 延迟导入。
+
+    存储 Chunk 元数据（title_path、content_type、chunk_strategy）以支持
+    检索时按内容类型过滤和标题路径展示。
 
     库未安装或服务不可用时优雅降级。
     """
@@ -386,25 +431,35 @@ async def _build_opensearch_index(doc_id: str, chunks: list[str]) -> None:
                     "mappings": {
                         "properties": {
                             "doc_id": {"type": "keyword"},
-                            "chunk_id": {"type": "integer"},
+                            "chunk_id": {"type": "keyword"},
+                            "parent_id": {"type": "keyword"},
                             "content": {"type": "text", "analyzer": "standard"},
+                            "title_path": {"type": "text", "analyzer": "keyword"},
+                            "content_type": {"type": "keyword"},
+                            "chunk_strategy": {"type": "keyword"},
+                            "token_count": {"type": "integer"},
                         }
                     }
                 },
             )
 
-        # 批量索引文档块
-        for idx, chunk in enumerate(chunks):
+        # 批量索引文档块（含元数据）
+        for idx, chunk in enumerate(chunk_objects):
             await client.index(
                 index=index_name,
                 body={
                     "doc_id": doc_id,
-                    "chunk_id": idx,
-                    "content": chunk,
+                    "chunk_id": chunk.id,
+                    "parent_id": chunk.parent_id,
+                    "content": chunk.content,
+                    "title_path": chunk.title_path,
+                    "content_type": chunk.content_type,
+                    "chunk_strategy": chunk.chunk_strategy,
+                    "token_count": chunk.token_count,
                 },
             )
         await client.close()
-        logger.info("opensearch.indexed", doc_id=doc_id, chunk_count=len(chunks))
+        logger.info("opensearch.indexed", doc_id=doc_id, chunk_count=len(chunk_objects))
     except ImportError:
         logger.warning("opensearch.skipped", reason="opensearch-py not installed")
     except Exception as exc:
@@ -414,10 +469,13 @@ async def _build_opensearch_index(doc_id: str, chunks: list[str]) -> None:
 
 async def _build_milvus_index(
     doc_id: str,
-    chunks: list[str],
+    chunk_objects: list[Chunk],
     embeddings: list[list[float]],
 ) -> None:
     """构建 Milvus 向量索引 — 延迟导入。
+
+    存储 Chunk 元数据（title_path、content_type、chunk_strategy）以支持
+    向量检索后按内容类型过滤和标题路径展示。
 
     库未安装或服务不可用时优雅降级。
     """
@@ -438,13 +496,18 @@ async def _build_milvus_index(
             return
 
         collection = Collection(collection_name)
-        # 插入向量数据
+        # 插入向量数据（含 Chunk 元数据）
         if embeddings:
+            n = len(embeddings)
+            chunks_meta = chunk_objects[:n]
             collection.insert([
-                [doc_id] * len(embeddings),  # doc_id 列
-                list(range(len(embeddings))),  # chunk_id 列
-                chunks[:len(embeddings)],  # content 列
-                embeddings,  # embedding 列
+                [doc_id] * n,                                    # doc_id 列
+                [c.id for c in chunks_meta],                     # chunk_id 列
+                [c.content for c in chunks_meta],                # content 列
+                embeddings,                                      # embedding 列
+                [c.title_path for c in chunks_meta],             # title_path 列
+                [c.content_type for c in chunks_meta],           # content_type 列
+                [c.chunk_strategy for c in chunks_meta],         # chunk_strategy 列
             ])
             collection.load()
         logger.info(
