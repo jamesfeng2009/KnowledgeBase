@@ -557,22 +557,22 @@ flowchart TD
 
 ```mermaid
 sequenceDiagram
-    participant Loop as Decision Loop
+    participant LoopP as Decision Loop
     participant Dedup as CrossTurnDeduplicator
     participant Messages as messages 列表
 
     Note over Dedup: 已见列表 = []
 
-    Loop->>Dedup: 第 1 轮: register(turn=1, "search_erp", "订单 BG2024001 金额 5000 元...")
+    LoopP->>Dedup: 第 1 轮: register(turn=1, "search_erp", "订单 BG2024001 金额 5000 元...")
     Dedup->>Dedup: Jaccard 比对: 已见列表为空
     Dedup->>Dedup: 注册到已见列表
-    Dedup-->>Loop: 返回完整摘要 (300 字符)
-    Loop->>Messages: 追加 "[系统] 工具结果：订单 BG2024001 金额 5000 元..."
+    Dedup-->>LoopP: 返回完整摘要 (300 字符)
+    LoopP->>Messages: 追加 "[系统] 工具结果：订单 BG2024001 金额 5000 元..."
 
-    Loop->>Dedup: 第 2 轮: register(turn=2, "search_erp", "订单 BG2024001 金额 5000 元 备注：已审批")
+    LoopP->>Dedup: 第 2 轮: register(turn=2, "search_erp", "订单 BG2024001 金额 5000 元 备注：已审批")
     Dedup->>Dedup: Jaccard 比对: 与第 1 轮相似度 = 0.85 > 0.8
-    Dedup-->>Loop: 返回指针引用 "↑ [见第1轮 search_erp 结果]"
-    Loop->>Messages: 追加 "[系统] 工具结果：↑ [见第1轮 search_erp 结果]" (30 字符)
+    Dedup-->>LoopP: 返回指针引用 "↑ [见第1轮 search_erp 结果]"
+    LoopP->>Messages: 追加 "[系统] 工具结果：↑ [见第1轮 search_erp 结果]" (30 字符)
 
     Note over Messages: 节省 ~270 字符 (~77 tok)
 ```
