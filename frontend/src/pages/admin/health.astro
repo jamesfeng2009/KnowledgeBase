@@ -1,0 +1,314 @@
+---
+/**
+ * 知识健康度页面
+ * 整体健康度评分（环形图） + 各知识库健康度 + 低质量文档列表 + 质量趋势
+ */
+import DefaultLayout from '@/layouts/DefaultLayout.astro';
+
+const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '知识健康度' }];
+---
+
+<DefaultLayout title="知识健康度" breadcrumb={breadcrumb}>
+  <div class="page-header">
+    <h1 class="page-title">知识健康度</h1>
+    <button class="btn btn-outline btn-sm" id="scan-btn">🔍 重新扫描</button>
+  </div>
+
+  <div style="display: grid; grid-template-columns: 1fr 2fr; gap: var(--space-5); margin-bottom: var(--space-6);">
+    <!-- 整体健康度环形图 -->
+    <div class="card text-center">
+      <div class="card-header"><h3>整体健康度</h3></div>
+      <div class="health-ring-wrapper">
+        <canvas id="health-ring" width="200" height="200"></canvas>
+        <div class="health-ring-center">
+          <div class="health-ring-score" id="health-score">--</div>
+          <div class="text-muted" style="font-size: var(--text-sm);">健康度评分</div>
+        </div>
+      </div>
+      <div style="display: flex; justify-content: space-around; margin-top: var(--space-4);">
+        <div>
+          <div class="text-muted" style="font-size: var(--text-xs);">优质</div>
+          <div style="font-size: var(--text-xl); font-weight: 600; color: var(--success);" id="good-count">--</div>
+        </div>
+        <div>
+          <div class="text-muted" style="font-size: var(--text-xs);">待改进</div>
+          <div style="font-size: var(--text-xl); font-weight: 600; color: var(--warning);" id="warn-count">--</div>
+        </div>
+        <div>
+          <div class="text-muted" style="font-size: var(--text-xs);">低质量</div>
+          <div style="font-size: var(--text-xl); font-weight: 600; color: var(--danger);" id="bad-count">--</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 各知识库健康度 -->
+    <div class="card">
+      <div class="card-header"><h3>各知识库健康度</h3></div>
+      <div id="kb-health-list"></div>
+    </div>
+  </div>
+
+  <!-- 低质量文档列表 -->
+  <div class="card" style="margin-bottom: var(--space-6);">
+    <div class="card-header"><h3>低质量文档（建议优化）</h3></div>
+    <div style="overflow-x: auto;">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>文档名称</th>
+            <th>知识库</th>
+            <th>问题</th>
+            <th>评分</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="low-quality-list"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 质量趋势 -->
+  <div class="card">
+    <div class="card-header"><h3>质量趋势（近 30 天）</h3></div>
+    <canvas id="quality-trend" style="width: 100%; height: 200px;"></canvas>
+  </div>
+</DefaultLayout>
+
+<style>
+  .health-ring-wrapper {
+    position: relative;
+    display: inline-block;
+    margin: var(--space-4) auto;
+  }
+  .health-ring-center {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    text-align: center;
+  }
+  .health-ring-score {
+    font-size: var(--text-4xl);
+    font-weight: 600;
+    color: var(--primary);
+  }
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .data-table th {
+    text-align: left;
+    padding: var(--space-3) var(--space-4);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-muted);
+  }
+  .data-table td {
+    padding: var(--space-3) var(--space-4);
+    font-size: var(--text-sm);
+    color: var(--text);
+    border-bottom: 1px solid var(--border-light);
+  }
+  .kb-health-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) 0;
+    border-bottom: 1px solid var(--border-light);
+  }
+  .kb-health-item:last-child {
+    border-bottom: none;
+  }
+  .kb-health-name {
+    width: 120px;
+    font-size: var(--text-sm);
+    font-weight: 500;
+  }
+  .kb-health-bar {
+    flex: 1;
+    height: 8px;
+    background: var(--surface-muted);
+    border-radius: var(--radius-full);
+    overflow: hidden;
+  }
+  .kb-health-bar-fill {
+    height: 100%;
+    border-radius: var(--radius-full);
+    transition: width var(--transition);
+  }
+</style>
+
+<script>
+  const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
+  const TOKEN_KEY = 'ekb_access_token';
+
+  function mockData() {
+    return {
+      score: 82,
+      good: 980,
+      warn: 186,
+      bad: 82,
+      kbs: [
+        { name: '公司制度', score: 88, color: 'var(--success)' },
+        { name: '产品文档', score: 76, color: 'var(--warning)' },
+        { name: '技术文档', score: 92, color: 'var(--success)' },
+        { name: '历史归档', score: 45, color: 'var(--danger)' },
+      ],
+      lowQuality: [
+        { id: 'd1', title: '旧版产品说明', kb: '产品文档', issue: '内容过时', score: 35 },
+        { id: 'd2', title: '废弃 API 文档', kb: '技术文档', issue: '重复内容', score: 42 },
+        { id: 'd3', title: '2019 年制度汇编', kb: '公司制度', issue: '已过期', score: 28 },
+        { id: 'd4', title: '测试文档草稿', kb: '技术文档', issue: '内容不完整', score: 38 },
+      ],
+    };
+  }
+
+  async function loadHealth() {
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (!token) {
+      window.location.href = '/auth/login';
+      return;
+    }
+    let data: any;
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/admin/health`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const result = await res.json();
+        data = result.data || result;
+      } else if (res.status === 401) {
+        window.location.href = '/auth/login';
+        return;
+      } else {
+        data = mockData();
+      }
+    } catch {
+      data = mockData();
+    }
+    renderHealth(data);
+  }
+
+  function renderHealth(data: any) {
+    document.getElementById('health-score')!.textContent = String(data.score);
+    document.getElementById('good-count')!.textContent = String(data.good);
+    document.getElementById('warn-count')!.textContent = String(data.warn);
+    document.getElementById('bad-count')!.textContent = String(data.bad);
+
+    drawRing(data.score);
+
+    document.getElementById('kb-health-list')!.innerHTML = data.kbs
+      .map(
+        (kb: any) => `
+      <div class="kb-health-item">
+        <div class="kb-health-name">${escapeHtml(kb.name)}</div>
+        <div class="kb-health-bar">
+          <div class="kb-health-bar-fill" style="width: ${kb.score}%; background: ${kb.color};"></div>
+        </div>
+        <div style="width: 40px; text-align: right; font-size: var(--text-sm); font-weight: 500; color: ${kb.color};">${kb.score}</div>
+      </div>`
+      )
+      .join('');
+
+    document.getElementById('low-quality-list')!.innerHTML = data.lowQuality
+      .map(
+        (d: any) => `
+      <tr>
+        <td>${escapeHtml(d.title)}</td>
+        <td class="text-muted">${escapeHtml(d.kb)}</td>
+        <td><span class="badge badge-warning">${escapeHtml(d.issue)}</span></td>
+        <td><span style="color: var(--danger); font-weight: 600;">${d.score}</span></td>
+        <td>
+          <button class="btn btn-ghost btn-sm" data-id="${d.id}">优化</button>
+        </td>
+      </tr>`
+      )
+      .join('');
+
+    document.querySelectorAll('#low-quality-list button').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        window.location.href = `/knowledge/detail?id=${(btn as HTMLElement).dataset.id}`;
+      });
+    });
+
+    drawTrend();
+  }
+
+  function drawRing(score: number) {
+    const canvas = document.getElementById('health-ring') as HTMLCanvasElement;
+    const ctx = canvas.getContext('2d')!;
+    const cx = 100;
+    const cy = 100;
+    const r = 80;
+
+    // 背景圆
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+    ctx.strokeStyle = '#F0F1F5';
+    ctx.lineWidth = 16;
+    ctx.stroke();
+
+    // 进度圆
+    const color = score >= 80 ? '#00B884' : score >= 60 ? '#FF9500' : '#FF3B5C';
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + (2 * Math.PI * score) / 100);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 16;
+    ctx.lineCap = 'round';
+    ctx.stroke();
+  }
+
+  function drawTrend() {
+    const canvas = document.getElementById('quality-trend') as HTMLCanvasElement;
+    const ctx = canvas.getContext('2d')!;
+    canvas.width = canvas.offsetWidth * 2;
+    canvas.height = 200 * 2;
+    ctx.scale(2, 2);
+    const w = canvas.offsetWidth;
+    const h = 200;
+
+    const data = Array.from({ length: 30 }, (_, i) => 70 + Math.sin(i / 3) * 8 + i * 0.5);
+    const max = 100;
+    const pad = 30;
+
+    ctx.strokeStyle = '#F0F1F5';
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= 4; i++) {
+      const y = pad + ((h - pad * 2) / 4) * i;
+      ctx.beginPath();
+      ctx.moveTo(pad, y);
+      ctx.lineTo(w - pad, y);
+      ctx.stroke();
+    }
+
+    ctx.strokeStyle = '#00B884';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    data.forEach((v, i) => {
+      const x = pad + ((w - pad * 2) / (data.length - 1)) * i;
+      const y = h - pad - ((h - pad * 2) * v) / max;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    ctx.lineTo(w - pad, h - pad);
+    ctx.lineTo(pad, h - pad);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(0, 184, 132, 0.1)';
+    ctx.fill();
+  }
+
+  function escapeHtml(s: string): string {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  document.getElementById('scan-btn')?.addEventListener('click', () => {
+    alert('正在重新扫描知识健康度...');
+    setTimeout(loadHealth, 1000);
+  });
+
+  loadHealth();
+</script>

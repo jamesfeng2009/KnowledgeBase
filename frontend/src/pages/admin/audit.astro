@@ -1,0 +1,315 @@
+---
+/**
+ * 审核工作流页面
+ * 待审核列表 + 审核流程步骤 + 批准/拒绝操作 + 审核历史
+ */
+import DefaultLayout from '@/layouts/DefaultLayout.astro';
+
+const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '审核工作流' }];
+---
+
+<DefaultLayout title="审核工作流" breadcrumb={breadcrumb}>
+  <div class="page-header">
+    <h1 class="page-title">审核工作流</h1>
+  </div>
+
+  <!-- 统计 -->
+  <div class="grid grid-cols-4" style="margin-bottom: var(--space-5);">
+    <div class="card">
+      <div class="text-muted" style="font-size: var(--text-sm);">待审核</div>
+      <div style="font-size: var(--text-3xl); font-weight: 600; color: var(--warning);" id="stat-pending">--</div>
+    </div>
+    <div class="card">
+      <div class="text-muted" style="font-size: var(--text-sm);">已通过</div>
+      <div style="font-size: var(--text-3xl); font-weight: 600; color: var(--success);" id="stat-approved">--</div>
+    </div>
+    <div class="card">
+      <div class="text-muted" style="font-size: var(--text-sm);">已拒绝</div>
+      <div style="font-size: var(--text-3xl); font-weight: 600; color: var(--danger);" id="stat-rejected">--</div>
+    </div>
+    <div class="card">
+      <div class="text-muted" style="font-size: var(--text-sm);">本月审核</div>
+      <div style="font-size: var(--text-3xl); font-weight: 600; color: var(--info);" id="stat-total">--</div>
+    </div>
+  </div>
+
+  <!-- 待审核列表 -->
+  <div class="card" style="margin-bottom: var(--space-5);">
+    <div class="card-header"><h3>待审核内容</h3></div>
+    <div id="pending-list">
+      <div class="loading-state">加载中...</div>
+    </div>
+  </div>
+
+  <!-- 审核历史 -->
+  <div class="card">
+    <div class="card-header"><h3>审核历史</h3></div>
+    <div style="overflow-x: auto;">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>内容</th>
+            <th>类型</th>
+            <th>提交人</th>
+            <th>审核人</th>
+            <th>结果</th>
+            <th>时间</th>
+          </tr>
+        </thead>
+        <tbody id="history-list"></tbody>
+      </table>
+    </div>
+  </div>
+</DefaultLayout>
+
+<style>
+  .pending-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    padding: var(--space-4) 0;
+    border-bottom: 1px solid var(--border-light);
+  }
+  .pending-item:last-child {
+    border-bottom: none;
+  }
+  .pending-item-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: var(--radius);
+    background: var(--primary-bg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    flex-shrink: 0;
+  }
+  .pending-item-body {
+    flex: 1;
+    min-width: 0;
+  }
+  .pending-item-title {
+    font-size: var(--text-base);
+    font-weight: 500;
+    color: var(--text);
+  }
+  .pending-item-meta {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    margin-top: var(--space-1);
+  }
+  .audit-steps {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+    background: var(--surface-muted);
+    border-radius: var(--radius);
+    margin: var(--space-3) 0;
+  }
+  .audit-step {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--text-xs);
+  }
+  .audit-step-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--border-dark);
+  }
+  .audit-step.done .audit-step-dot {
+    background: var(--success);
+  }
+  .audit-step.current .audit-step-dot {
+    background: var(--warning);
+    box-shadow: 0 0 0 3px var(--warning-bg);
+  }
+  .audit-step-line {
+    width: 24px;
+    height: 1px;
+    background: var(--border);
+  }
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .data-table th {
+    text-align: left;
+    padding: var(--space-3) var(--space-4);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-muted);
+  }
+  .data-table td {
+    padding: var(--space-3) var(--space-4);
+    font-size: var(--text-sm);
+    color: var(--text);
+    border-bottom: 1px solid var(--border-light);
+  }
+  .loading-state {
+    text-align: center;
+    padding: var(--space-6);
+    color: var(--text-muted);
+  }
+</style>
+
+<script>
+  const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
+  const TOKEN_KEY = 'ekb_access_token';
+
+  function mockPending() {
+    return [
+      { id: 'a1', title: 'API 设计规范 V2', type: '文档发布', submitter: '李四', time: '10 分钟前', steps: ['提交', '初审', '复审', '发布'], current: 1 },
+      { id: 'a2', title: '报销管理办法修订', type: '文档更新', submitter: '张三', time: '1 小时前', steps: ['提交', '审核', '发布'], current: 1 },
+      { id: 'a3', title: 'Q3 产品需求文档', type: '文档发布', submitter: '王五', time: '3 小时前', steps: ['提交', '初审', '复审', '发布'], current: 2 },
+    ];
+  }
+
+  function mockHistory() {
+    return [
+      { title: '员工手册 V3.2', type: '文档更新', submitter: '张三', reviewer: '管理员', result: 'approved', time: '2026-07-05 14:30' },
+      { title: '差旅报销指南', type: '文档发布', submitter: '李四', reviewer: '管理员', result: 'approved', time: '2026-07-04 10:15' },
+      { title: '废弃技术方案', type: '文档删除', submitter: '钱七', reviewer: '管理员', result: 'rejected', time: '2026-07-03 16:45' },
+      { title: '安全管理制度', type: '文档发布', submitter: '赵六', reviewer: '管理员', result: 'approved', time: '2026-07-02 09:20' },
+    ];
+  }
+
+  async function loadPending() {
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (!token) {
+      window.location.href = '/auth/login';
+      return;
+    }
+    let list: any[] = [];
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/admin/audit/pending`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const result = await res.json();
+        list = result.data?.items || result.data || [];
+      } else if (res.status === 401) {
+        window.location.href = '/auth/login';
+        return;
+      }
+    } catch {
+      // ignore
+    }
+    if (list.length === 0) list = mockPending();
+    renderPending(list);
+    updateStats();
+    renderHistory();
+  }
+
+  function updateStats() {
+    const setText = (id: string, v: number) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = String(v);
+    };
+    setText('stat-pending', 3);
+    setText('stat-approved', 28);
+    setText('stat-rejected', 4);
+    setText('stat-total', 35);
+  }
+
+  function renderPending(list: any[]) {
+    const container = document.getElementById('pending-list')!;
+    if (list.length === 0) {
+      container.innerHTML = '<div class="loading-state">暂无待审核内容</div>';
+      return;
+    }
+    const typeIcon: Record<string, string> = { '文档发布': '📄', '文档更新': '✏️', '文档删除': '🗑️' };
+    container.innerHTML = list
+      .map(
+        (item) => `
+      <div class="pending-item">
+        <div class="pending-item-icon">${typeIcon[item.type] || '📄'}</div>
+        <div class="pending-item-body">
+          <div class="pending-item-title">${escapeHtml(item.title)}</div>
+          <div class="pending-item-meta">
+            <span class="badge badge-primary">${escapeHtml(item.type)}</span>
+            <span>提交人：${escapeHtml(item.submitter)}</span>
+            <span>${escapeHtml(item.time)}</span>
+          </div>
+          <div class="audit-steps">
+            ${item.steps
+              .map((step: string, i: number) => {
+                const cls = i < item.current ? 'done' : i === item.current ? 'current' : '';
+                return `<div class="audit-step ${cls}"><span class="audit-step-dot"></span>${escapeHtml(step)}</div>${i < item.steps.length - 1 ? '<div class="audit-step-line"></div>' : ''}`;
+              })
+              .join('')}
+          </div>
+        </div>
+        <div style="display: flex; gap: var(--space-2);">
+          <button class="btn btn-primary btn-sm" data-action="approve" data-id="${item.id}">批准</button>
+          <button class="btn btn-danger btn-sm" data-action="reject" data-id="${item.id}">拒绝</button>
+          <button class="btn btn-ghost btn-sm" data-action="view" data-id="${item.id}">查看</button>
+        </div>
+      </div>`
+      )
+      .join('');
+
+    container.querySelectorAll('button[data-action]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const action = (btn as HTMLElement).dataset.action!;
+        const id = (btn as HTMLElement).dataset.id!;
+        if (action === 'view') {
+          window.location.href = `/knowledge/detail?id=${id}`;
+        } else {
+          const reason = action === 'reject' ? prompt('请输入拒绝原因：') || '' : '';
+          await doAudit(id, action, reason);
+        }
+      });
+    });
+  }
+
+  async function doAudit(id: string, action: string, reason: string) {
+    const token = localStorage.getItem(TOKEN_KEY);
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/admin/audit/${id}/${action}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ reason }),
+      });
+      if (res.ok) {
+        alert(action === 'approve' ? '已批准' : '已拒绝');
+        loadPending();
+      } else {
+        alert('操作失败');
+      }
+    } catch {
+      alert('网络异常');
+    }
+  }
+
+  function renderHistory() {
+    const list = mockHistory();
+    const resultMap: Record<string, { label: string; badge: string }> = {
+      approved: { label: '已通过', badge: 'badge-success' },
+      rejected: { label: '已拒绝', badge: 'badge-danger' },
+    };
+    document.getElementById('history-list')!.innerHTML = list
+      .map(
+        (h) => `
+      <tr>
+        <td>${escapeHtml(h.title)}</td>
+        <td><span class="badge badge-primary">${escapeHtml(h.type)}</span></td>
+        <td class="text-muted">${escapeHtml(h.submitter)}</td>
+        <td class="text-muted">${escapeHtml(h.reviewer)}</td>
+        <td><span class="badge ${resultMap[h.result].badge}">${resultMap[h.result].label}</span></td>
+        <td class="text-muted">${escapeHtml(h.time)}</td>
+      </tr>`
+      )
+      .join('');
+  }
+
+  function escapeHtml(s: string): string {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  loadPending();
+</script>

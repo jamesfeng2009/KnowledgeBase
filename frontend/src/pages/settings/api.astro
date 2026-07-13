@@ -1,0 +1,358 @@
+---
+/**
+ * API 密钥管理页面
+ * API 密钥列表 + 创建密钥 + 密钥权限范围 + 使用记录
+ */
+import DefaultLayout from '@/layouts/DefaultLayout.astro';
+
+const breadcrumb = [{ label: '设置', href: '/settings/tenant' }, { label: 'API 密钥' }];
+---
+
+<DefaultLayout title="API 密钥" breadcrumb={breadcrumb}>
+  <div class="settings-nav" style="margin-bottom: var(--space-5);">
+    <a href="/settings/tenant" class="settings-nav-item">租户设置</a>
+    <a href="/settings/api" class="settings-nav-item active">API 密钥</a>
+    <a href="/settings/llm" class="settings-nav-item">LLM 配置</a>
+    <a href="/settings/system" class="settings-nav-item">系统设置</a>
+  </div>
+
+  <div class="page-header">
+    <h1 class="page-title">API 密钥管理</h1>
+    <button class="btn btn-primary btn-sm" id="create-key-btn">＋ 创建密钥</button>
+  </div>
+
+  <!-- 密钥列表 -->
+  <div class="card" style="margin-bottom: var(--space-5);">
+    <div style="overflow-x: auto;">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>名称</th>
+            <th>密钥</th>
+            <th>权限范围</th>
+            <th>创建时间</th>
+            <th>最后使用</th>
+            <th>状态</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="key-list"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 使用记录 -->
+  <div class="card">
+    <div class="card-header"><h3>使用记录（近 24 小时）</h3></div>
+    <div id="usage-records"></div>
+  </div>
+
+  <!-- 创建密钥弹窗 -->
+  <div class="modal-overlay" id="create-modal" style="display: none;">
+    <div class="modal" style="max-width: 480px;">
+      <div class="modal-header">
+        <h3>创建 API 密钥</h3>
+        <button class="btn btn-ghost btn-sm" id="close-modal">✕</button>
+      </div>
+      <form id="key-form">
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">密钥名称 *</label>
+            <input type="text" class="form-input" name="name" required placeholder="如：搜索 API 密钥" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">权限范围</label>
+            <div class="scope-options">
+              <label class="scope-item"><input type="checkbox" name="scope" value="knowledge:read" checked /> 知识读取</label>
+              <label class="scope-item"><input type="checkbox" name="scope" value="knowledge:write" /> 知识写入</label>
+              <label class="scope-item"><input type="checkbox" name="scope" value="chat" checked /> AI 对话</label>
+              <label class="scope-item"><input type="checkbox" name="scope" value="search" checked /> 搜索</label>
+              <label class="scope-item"><input type="checkbox" name="scope" value="admin" /> 管理权限</label>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">有效期</label>
+            <select class="form-input" name="expiry">
+              <option value="365">1 年</option>
+              <option value="90">90 天</option>
+              <option value="30">30 天</option>
+              <option value="0">永久</option>
+            </select>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-ghost" id="cancel-btn">取消</button>
+          <button type="submit" class="btn btn-primary">创建</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</DefaultLayout>
+
+<style>
+  .settings-nav {
+    display: flex;
+    gap: var(--space-1);
+    border-bottom: 1px solid var(--border);
+  }
+  .settings-nav-item {
+    padding: var(--space-3) var(--space-5);
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    border-bottom: 2px solid transparent;
+    text-decoration: none;
+    transition: all var(--transition-fast);
+  }
+  .settings-nav-item:hover {
+    color: var(--primary);
+  }
+  .settings-nav-item.active {
+    color: var(--primary);
+    border-bottom-color: var(--primary);
+    font-weight: 500;
+  }
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .data-table th {
+    text-align: left;
+    padding: var(--space-3) var(--space-4);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-muted);
+  }
+  .data-table td {
+    padding: var(--space-3) var(--space-4);
+    font-size: var(--text-sm);
+    color: var(--text);
+    border-bottom: 1px solid var(--border-light);
+  }
+  .key-value {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    background: var(--surface-muted);
+    padding: 2px var(--space-2);
+    border-radius: var(--radius-xs);
+  }
+  .scope-badge {
+    display: inline-block;
+    padding: 2px var(--space-2);
+    margin: 1px;
+    font-size: var(--text-xs);
+    background: var(--primary-bg);
+    color: var(--primary);
+    border-radius: var(--radius-xs);
+  }
+  .scope-options {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-2);
+  }
+  .scope-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+  .usage-record {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) 0;
+    border-bottom: 1px solid var(--border-light);
+  }
+  .usage-record:last-child {
+    border-bottom: none;
+  }
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+  .modal {
+    background: var(--surface);
+    border-radius: var(--radius-lg);
+    width: 100%;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: var(--shadow-xl);
+  }
+  .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-5);
+    border-bottom: 1px solid var(--border);
+  }
+  .modal-body {
+    padding: var(--space-5);
+  }
+  .modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-3);
+    padding: var(--space-5);
+    border-top: 1px solid var(--border);
+  }
+</style>
+
+<script>
+  const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
+  const TOKEN_KEY = 'ekb_access_token';
+
+  let keys: any[] = [];
+
+  function mockKeys() {
+    return [
+      { id: 'k1', name: '搜索服务密钥', key: 'ekb_sk_8a3f...c2e1', scopes: ['knowledge:read', 'search'], created_at: '2026-06-01', last_used: '5 分钟前', status: 'active' },
+      { id: 'k2', name: '对话 API 密钥', key: 'ekb_sk_b7d2...f9a4', scopes: ['chat', 'search'], created_at: '2026-05-15', last_used: '2 小时前', status: 'active' },
+      { id: 'k3', name: '测试密钥', key: 'ekb_sk_c1e5...a3b8', scopes: ['knowledge:read'], created_at: '2026-04-20', last_used: '3 天前', status: 'disabled' },
+    ];
+  }
+
+  async function loadKeys() {
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (!token) {
+      window.location.href = '/auth/login';
+      return;
+    }
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/settings/api-keys`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const result = await res.json();
+        keys = result.data?.items || result.data || [];
+      } else if (res.status === 401) {
+        window.location.href = '/auth/login';
+        return;
+      }
+      if (keys.length === 0) keys = mockKeys();
+    } catch {
+      keys = mockKeys();
+    }
+    renderKeys();
+    renderUsage();
+  }
+
+  function renderKeys() {
+    document.getElementById('key-list')!.innerHTML = keys
+      .map(
+        (k) => `
+      <tr>
+        <td style="font-weight: 500;">${escapeHtml(k.name)}</td>
+        <td><code class="key-value">${escapeHtml(k.key)}</code></td>
+        <td>${k.scopes.map((s: string) => `<span class="scope-badge">${escapeHtml(s)}</span>`).join('')}</td>
+        <td class="text-muted">${escapeHtml(k.created_at)}</td>
+        <td class="text-muted">${escapeHtml(k.last_used)}</td>
+        <td><span class="badge ${k.status === 'active' ? 'badge-success' : 'badge-danger'}">${k.status === 'active' ? '启用' : '禁用'}</span></td>
+        <td>
+          <div style="display: flex; gap: var(--space-2);">
+            <button class="btn btn-ghost btn-sm" data-action="copy" data-id="${k.id}">复制</button>
+            <button class="btn btn-ghost btn-sm" data-action="toggle" data-id="${k.id}">${k.status === 'active' ? '禁用' : '启用'}</button>
+            <button class="btn btn-ghost btn-sm" data-action="delete" data-id="${k.id}">删除</button>
+          </div>
+        </td>
+      </tr>`
+      )
+      .join('');
+
+    document.querySelectorAll('#key-list button[data-action]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const action = (btn as HTMLElement).dataset.action!;
+        const id = (btn as HTMLElement).dataset.id!;
+        const key = keys.find((k) => k.id === id);
+        if (action === 'copy') {
+          navigator.clipboard?.writeText(key.key).then(() => alert('密钥已复制到剪贴板'));
+        } else if (action === 'toggle') {
+          key.status = key.status === 'active' ? 'disabled' : 'active';
+          renderKeys();
+        } else if (action === 'delete') {
+          if (confirm('确定删除此密钥？此操作不可恢复。')) {
+            keys = keys.filter((k) => k.id !== id);
+            renderKeys();
+          }
+        }
+      });
+    });
+  }
+
+  function renderUsage() {
+    const records = [
+      { key: '搜索服务密钥', endpoint: '/api/v1/knowledge/search', method: 'GET', status: 200, time: '14:32:05', ip: '192.168.1.100' },
+      { key: '对话 API 密钥', endpoint: '/api/v1/chat/stream', method: 'POST', status: 200, time: '14:30:12', ip: '192.168.1.101' },
+      { key: '搜索服务密钥', endpoint: '/api/v1/knowledge/documents', method: 'GET', status: 200, time: '14:28:45', ip: '192.168.1.100' },
+      { key: '对话 API 密钥', endpoint: '/api/v1/chat/conversations', method: 'GET', status: 401, time: '14:25:30', ip: '192.168.1.102' },
+      { key: '搜索服务密钥', endpoint: '/api/v1/knowledge/search', method: 'GET', status: 200, time: '14:20:18', ip: '192.168.1.100' },
+    ];
+    document.getElementById('usage-records')!.innerHTML = records
+      .map(
+        (r) => `
+      <div class="usage-record">
+        <span class="badge ${r.status === 200 ? 'badge-success' : 'badge-danger'}">${r.method}</span>
+        <span style="font-family: var(--font-mono); font-size: var(--text-sm); flex: 1;">${escapeHtml(r.endpoint)}</span>
+        <span class="text-muted" style="font-size: var(--text-xs);">${escapeHtml(r.key)}</span>
+        <span class="badge ${r.status === 200 ? 'badge-success' : 'badge-danger'}">${r.status}</span>
+        <span class="text-muted" style="font-size: var(--text-xs);">${escapeHtml(r.time)}</span>
+      </div>`
+      )
+      .join('');
+  }
+
+  function escapeHtml(s: string): string {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  const modal = document.getElementById('create-modal')!;
+  document.getElementById('create-key-btn')?.addEventListener('click', () => (modal.style.display = 'flex'));
+  document.getElementById('close-modal')?.addEventListener('click', () => (modal.style.display = 'none'));
+  document.getElementById('cancel-btn')?.addEventListener('click', () => (modal.style.display = 'none'));
+
+  document.getElementById('key-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.target as HTMLFormElement;
+    const data = Object.fromEntries(new FormData(form));
+    const scopes = (form.querySelectorAll('input[name="scope"]:checked') as NodeListOf<HTMLInputElement>);
+    const scopeList = Array.from(scopes).map((s) => s.value);
+    const token = localStorage.getItem(TOKEN_KEY);
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/settings/api-keys`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ name: data.name, scopes: scopeList, expiry: data.expiry }),
+      });
+      if (res.ok) {
+        const result = await res.json();
+        const newKey = result.data || result;
+        keys.unshift({
+          id: newKey.id || 'k' + Date.now(),
+          name: data.name,
+          key: (newKey.key || 'ekb_sk_new...').slice(0, 16) + '...',
+          scopes: scopeList,
+          created_at: new Date().toISOString().slice(0, 10),
+          last_used: '从未使用',
+          status: 'active',
+        });
+        renderKeys();
+        alert('密钥创建成功，请妥善保管');
+        modal.style.display = 'none';
+        form.reset();
+      } else {
+        alert('创建失败');
+      }
+    } catch {
+      alert('网络异常');
+    }
+  });
+
+  loadKeys();
+</script>

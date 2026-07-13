@@ -1,0 +1,262 @@
+---
+/**
+ * 新员工入职场景
+ * 入职流程引导 + 公司知识库推荐 + 常见问题 + AI 助手对话入口
+ */
+import DefaultLayout from '@/layouts/DefaultLayout.astro';
+
+const breadcrumb = [{ label: '场景应用', href: '/scenes/onboarding' }, { label: '新员工入职' }];
+---
+
+<DefaultLayout title="新员工入职" breadcrumb={breadcrumb}>
+  <!-- 欢迎横幅 -->
+  <div class="card" style="background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%); border: none; color: white; margin-bottom: var(--space-6);">
+    <h1 style="color: white; font-size: var(--text-3xl); margin-bottom: var(--space-3);">欢迎加入公司</h1>
+    <p style="color: rgba(255,255,255,0.9); font-size: var(--text-md); line-height: var(--lh-relaxed); max-width: 600px;">
+      恭喜您成为我们的一员！这里是为您准备的入职指南，帮助您快速了解公司文化、熟悉工作流程、融入团队。
+    </p>
+    <a href="/chat?agent=onboarding" class="btn btn-lg" style="background: white; color: var(--primary); margin-top: var(--space-4);">
+      💬 向 AI 助手提问
+    </a>
+  </div>
+
+  <!-- 入职流程引导 -->
+  <div class="page-header">
+    <h2 style="font-size: var(--text-xl);">入职流程引导</h2>
+  </div>
+  <div class="onboarding-steps" style="margin-bottom: var(--space-6);">
+    <div class="onboarding-step done">
+      <div class="step-number">✓</div>
+      <div class="step-content">
+        <div class="step-title">账号激活</div>
+        <div class="step-desc">您的账号已激活，可以登录系统</div>
+      </div>
+    </div>
+    <div class="onboarding-step done">
+      <div class="step-number">✓</div>
+      <div class="step-content">
+        <div class="step-title">个人信息填写</div>
+        <div class="step-desc">基本信息已完善</div>
+      </div>
+    </div>
+    <div class="onboarding-step current">
+      <div class="step-number">3</div>
+      <div class="step-content">
+        <div class="step-title">阅读公司制度</div>
+        <div class="step-desc">了解公司规章制度和流程</div>
+        <a href="/knowledge/search?tag=制度" class="btn btn-outline btn-sm" style="margin-top: var(--space-2);">前往阅读</a>
+      </div>
+    </div>
+    <div class="onboarding-step">
+      <div class="step-number">4</div>
+      <div class="step-content">
+        <div class="step-title">配置办公设备</div>
+        <div class="step-desc">领取并配置办公设备</div>
+      </div>
+    </div>
+    <div class="onboarding-step">
+      <div class="step-number">5</div>
+      <div class="step-content">
+        <div class="step-title">导师对接</div>
+        <div class="step-desc">与入职导师见面，制定学习计划</div>
+      </div>
+    </div>
+    <div class="onboarding-step">
+      <div class="step-number">6</div>
+      <div class="step-content">
+        <div class="step-title">入职培训</div>
+        <div class="step-desc">参加公司组织的入职培训</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: grid; grid-template-columns: 2fr 1fr; gap: var(--space-5);">
+    <!-- 公司知识库推荐 -->
+    <div class="card">
+      <div class="card-header"><h3>推荐知识库</h3></div>
+      <div class="kb-recommend-list" id="kb-recommend"></div>
+    </div>
+
+    <!-- 常见问题 -->
+    <div class="card">
+      <div class="card-header"><h3>常见问题</h3></div>
+      <div class="faq-list" id="faq-list"></div>
+    </div>
+  </div>
+</DefaultLayout>
+
+<style>
+  .onboarding-steps {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+  }
+  .onboarding-step {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-4);
+    padding: var(--space-4);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    position: relative;
+  }
+  .onboarding-step::before {
+    content: '';
+    position: absolute;
+    left: 32px;
+    top: 100%;
+    width: 2px;
+    height: var(--space-4);
+    background: var(--border);
+  }
+  .onboarding-step:last-child::before {
+    display: none;
+  }
+  .step-number {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--surface-muted);
+    border: 2px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+  .onboarding-step.done .step-number {
+    background: var(--success);
+    border-color: var(--success);
+    color: var(--text-white);
+  }
+  .onboarding-step.current {
+    border-color: var(--primary);
+    background: var(--primary-bg);
+  }
+  .onboarding-step.current .step-number {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: var(--text-white);
+  }
+  .step-content {
+    flex: 1;
+  }
+  .step-title {
+    font-weight: 600;
+    font-size: var(--text-base);
+    color: var(--text);
+    margin-bottom: var(--space-1);
+  }
+  .onboarding-step.done .step-title {
+    color: var(--text-muted);
+  }
+  .step-desc {
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+  }
+  .kb-recommend-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) 0;
+    border-bottom: 1px solid var(--border-light);
+  }
+  .kb-recommend-item:last-child {
+    border-bottom: none;
+  }
+  .kb-recommend-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: var(--radius);
+    background: var(--primary-bg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+  }
+  .faq-item {
+    padding: var(--space-3) 0;
+    border-bottom: 1px solid var(--border-light);
+    cursor: pointer;
+  }
+  .faq-item:last-child {
+    border-bottom: none;
+  }
+  .faq-question {
+    font-size: var(--text-sm);
+    font-weight: 500;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .faq-item:hover .faq-question {
+    color: var(--primary);
+  }
+</style>
+
+<script>
+  function renderKbRecommend() {
+    const kbs = [
+      { icon: '📋', name: '员工手册', desc: '公司文化、价值观、行为规范', docs: 12 },
+      { icon: '💼', name: '薪酬福利', desc: '薪资、社保、公积金、福利政策', docs: 8 },
+      { icon: '📅', name: '考勤休假', desc: '考勤规则、请假流程、假期制度', docs: 15 },
+      { icon: '🔧', name: '办公指南', desc: '设备使用、系统操作、常用工具', docs: 20 },
+    ];
+    document.getElementById('kb-recommend')!.innerHTML = kbs
+      .map(
+        (kb) => `
+      <div class="kb-recommend-item">
+        <div class="kb-recommend-icon">${kb.icon}</div>
+        <div style="flex: 1;">
+          <div style="font-weight: 500; font-size: var(--text-sm);">${escapeHtml(kb.name)}</div>
+          <div class="text-muted" style="font-size: var(--text-xs);">${escapeHtml(kb.desc)}</div>
+        </div>
+        <button class="btn btn-outline btn-sm">查看</button>
+      </div>`
+      )
+      .join('');
+    document.querySelectorAll('.kb-recommend-item button').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        window.location.href = '/knowledge/search';
+      });
+    });
+  }
+
+  function renderFaq() {
+    const faqs = [
+      { q: '入职需要准备哪些材料？', a: '身份证、学历证书、银行卡、体检报告等' },
+      { q: '社保公积金缴纳比例是多少？', a: '养老保险单位 16% 个人 8%，公积金各 12%' },
+      { q: '年假有多少天？', a: '工龄 1-10 年 5 天，10-20 年 10 天，20 年以上 15 天' },
+      { q: '入职导师怎么分配？', a: '由部门负责人指定，通常为同岗位资深员工' },
+      { q: '电脑设备如何领取？', a: '入职当天到 IT 部门领取，需签字确认' },
+      { q: '试用期为多久？', a: '通常为 3 个月，表现优秀可缩短' },
+    ];
+    document.getElementById('faq-list')!.innerHTML = faqs
+      .map(
+        (f) => `
+      <div class="faq-item" data-q="${escapeHtml(f.q)}">
+        <div class="faq-question">
+          <span>${escapeHtml(f.q)}</span>
+          <span style="color: var(--text-muted);">›</span>
+        </div>
+      </div>`
+      )
+      .join('');
+    document.querySelectorAll('.faq-item').forEach((el) => {
+      el.addEventListener('click', () => {
+        const q = (el as HTMLElement).dataset.q!;
+        window.location.href = `/chat?q=${encodeURIComponent(q)}`;
+      });
+    });
+  }
+
+  function escapeHtml(s: string): string {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  renderKbRecommend();
+  renderFaq();
+</script>

@@ -1,0 +1,279 @@
+---
+/**
+ * 租户设置页面
+ * 租户信息 + 套餐计划 + 用量统计 + 成员管理
+ */
+import DefaultLayout from '@/layouts/DefaultLayout.astro';
+
+const breadcrumb = [{ label: '设置', href: '/settings/tenant' }, { label: '租户设置' }];
+---
+
+<DefaultLayout title="租户设置" breadcrumb={breadcrumb}>
+  <!-- 设置导航 -->
+  <div class="settings-nav" style="margin-bottom: var(--space-5);">
+    <a href="/settings/tenant" class="settings-nav-item active">租户设置</a>
+    <a href="/settings/api" class="settings-nav-item">API 密钥</a>
+    <a href="/settings/llm" class="settings-nav-item">LLM 配置</a>
+    <a href="/settings/system" class="settings-nav-item">系统设置</a>
+  </div>
+
+  <!-- 租户信息 -->
+  <div class="card" style="margin-bottom: var(--space-5);">
+    <div class="card-header"><h3>租户信息</h3></div>
+    <form id="tenant-form">
+      <div class="grid grid-cols-2">
+        <div class="form-group">
+          <label class="form-label">租户名称</label>
+          <input type="text" class="form-input" name="name" value="某科技有限公司" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">租户 ID</label>
+          <input type="text" class="form-input" value="tenant-001" disabled />
+        </div>
+        <div class="form-group">
+          <label class="form-label">联系人</label>
+          <input type="text" class="form-input" name="contact" value="张三" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">联系电话</label>
+          <input type="text" class="form-input" name="phone" value="138-0000-0000" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">联系邮箱</label>
+          <input type="email" class="form-input" name="email" value="admin@company.com" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">创建时间</label>
+          <input type="text" class="form-input" value="2025-06-01" disabled />
+        </div>
+      </div>
+      <button type="submit" class="btn btn-primary">保存信息</button>
+    </form>
+  </div>
+
+  <!-- 套餐计划 -->
+  <div class="card" style="margin-bottom: var(--space-5);">
+    <div class="card-header">
+      <h3>套餐计划</h3>
+      <span class="badge badge-success">企业版</span>
+    </div>
+    <div class="grid grid-cols-3">
+      <div class="plan-card">
+        <div class="plan-name">基础版</div>
+        <div class="plan-price">¥0/月</div>
+        <ul class="plan-features">
+          <li>100 篇文档</li>
+          <li>5 个用户</li>
+          <li>基础搜索</li>
+        </ul>
+        <button class="btn btn-outline btn-block">切换</button>
+      </div>
+      <div class="plan-card active">
+        <span class="plan-current">当前套餐</span>
+        <div class="plan-name">企业版</div>
+        <div class="plan-price">¥2,999/月</div>
+        <ul class="plan-features">
+          <li>无限文档</li>
+          <li>无限用户</li>
+          <li>AI 对话 + 工作流</li>
+          <li>知识图谱</li>
+          <li>优先支持</li>
+        </ul>
+        <button class="btn btn-primary btn-block" disabled>当前套餐</button>
+      </div>
+      <div class="plan-card">
+        <div class="plan-name">专业版</div>
+        <div class="plan-price">¥999/月</div>
+        <ul class="plan-features">
+          <li>5000 篇文档</li>
+          <li>50 个用户</li>
+          <li>AI 对话</li>
+        </ul>
+        <button class="btn btn-outline btn-block">切换</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 用量统计 -->
+  <div class="card" style="margin-bottom: var(--space-5);">
+    <div class="card-header"><h3>用量统计（本月）</h3></div>
+    <div class="grid grid-cols-4">
+      <div class="usage-item">
+        <div class="text-muted" style="font-size: var(--text-sm);">文档存储</div>
+        <div style="font-size: var(--text-xl); font-weight: 600;">8.2 / 100 GB</div>
+        <div class="usage-bar"><div class="usage-bar-fill" style="width: 8%;"></div></div>
+      </div>
+      <div class="usage-item">
+        <div class="text-muted" style="font-size: var(--text-sm);">AI 调用</div>
+        <div style="font-size: var(--text-xl); font-weight: 600;">15.4K / 50K</div>
+        <div class="usage-bar"><div class="usage-bar-fill" style="width: 31%;"></div></div>
+      </div>
+      <div class="usage-item">
+        <div class="text-muted" style="font-size: var(--text-sm);">活跃用户</div>
+        <div style="font-size: var(--text-xl); font-weight: 600;">256 / 无限</div>
+        <div class="usage-bar"><div class="usage-bar-fill" style="width: 100%; background: var(--success);"></div></div>
+      </div>
+      <div class="usage-item">
+        <div class="text-muted" style="font-size: var(--text-sm);">Token 消耗</div>
+        <div style="font-size: var(--text-xl); font-weight: 600;">1.2M / 5M</div>
+        <div class="usage-bar"><div class="usage-bar-fill" style="width: 24%; background: var(--warning);"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 成员管理 -->
+  <div class="card">
+    <div class="card-header">
+      <h3>成员管理</h3>
+      <button class="btn btn-primary btn-sm" id="invite-member">＋ 邀请成员</button>
+    </div>
+    <div style="overflow-x: auto;">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>成员</th>
+            <th>邮箱</th>
+            <th>角色</th>
+            <th>加入时间</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><div style="display: flex; align-items: center; gap: var(--space-2); font-weight: 500;"><div class="avatar avatar-sm">张</div>张三</div></td>
+            <td class="text-muted">zhangsan@company.com</td>
+            <td><span class="badge badge-primary">超级管理员</span></td>
+            <td class="text-muted">2025-06-01</td>
+            <td><button class="btn btn-ghost btn-sm">管理</button></td>
+          </tr>
+          <tr>
+            <td><div style="display: flex; align-items: center; gap: var(--space-2); font-weight: 500;"><div class="avatar avatar-sm" style="background: var(--success);">李</div>李四</div></td>
+            <td class="text-muted">lisi@company.com</td>
+            <td><span class="badge badge-success">管理员</span></td>
+            <td class="text-muted">2025-06-15</td>
+            <td><button class="btn btn-ghost btn-sm">管理</button></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</DefaultLayout>
+
+<style>
+  .settings-nav {
+    display: flex;
+    gap: var(--space-1);
+    border-bottom: 1px solid var(--border);
+  }
+  .settings-nav-item {
+    padding: var(--space-3) var(--space-5);
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    border-bottom: 2px solid transparent;
+    text-decoration: none;
+    transition: all var(--transition-fast);
+  }
+  .settings-nav-item:hover {
+    color: var(--primary);
+  }
+  .settings-nav-item.active {
+    color: var(--primary);
+    border-bottom-color: var(--primary);
+    font-weight: 500;
+  }
+  .plan-card {
+    border: 2px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: var(--space-5);
+    text-align: center;
+    position: relative;
+    transition: all var(--transition);
+  }
+  .plan-card.active {
+    border-color: var(--primary);
+    background: var(--primary-bg);
+  }
+  .plan-current {
+    position: absolute;
+    top: -10px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--primary);
+    color: var(--text-white);
+    padding: 2px var(--space-3);
+    border-radius: var(--radius-full);
+    font-size: var(--text-xs);
+    white-space: nowrap;
+  }
+  .plan-name {
+    font-size: var(--text-lg);
+    font-weight: 600;
+    margin-bottom: var(--space-2);
+  }
+  .plan-price {
+    font-size: var(--text-3xl);
+    font-weight: 600;
+    color: var(--primary);
+    margin-bottom: var(--space-4);
+  }
+  .plan-features {
+    text-align: left;
+    margin-bottom: var(--space-5);
+  }
+  .plan-features li {
+    list-style: none;
+    padding: var(--space-1) 0;
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+  }
+  .plan-features li::before {
+    content: '✓';
+    color: var(--success);
+    margin-right: var(--space-2);
+  }
+  .usage-item {
+    padding: var(--space-3) 0;
+  }
+  .usage-bar {
+    height: 6px;
+    background: var(--surface-muted);
+    border-radius: var(--radius-full);
+    overflow: hidden;
+    margin-top: var(--space-2);
+  }
+  .usage-bar-fill {
+    height: 100%;
+    background: var(--primary);
+    border-radius: var(--radius-full);
+  }
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .data-table th {
+    text-align: left;
+    padding: var(--space-3) var(--space-4);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-muted);
+  }
+  .data-table td {
+    padding: var(--space-3) var(--space-4);
+    font-size: var(--text-sm);
+    color: var(--text);
+    border-bottom: 1px solid var(--border-light);
+  }
+</style>
+
+<script>
+  document.getElementById('tenant-form')?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    alert('租户信息已保存');
+  });
+  document.getElementById('invite-member')?.addEventListener('click', () => {
+    const email = prompt('请输入被邀请人的邮箱：');
+    if (email) alert(`邀请链接已发送至 ${email}`);
+  });
+</script>

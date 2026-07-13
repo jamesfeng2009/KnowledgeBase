@@ -1,0 +1,302 @@
+---
+/**
+ * DefaultLayout.astro - 默认布局组件
+ * 包含顶部导航栏、可折叠侧边栏和主内容区
+ */
+import '@/styles/global.css';
+
+interface BreadcrumbItem {
+  label: string;
+  href?: string;
+}
+
+interface Props {
+  title?: string;
+  description?: string;
+  breadcrumb?: BreadcrumbItem[];
+}
+
+const {
+  title = '企业知识库',
+  description = '基于 Agentic RAG 的智能知识管理平台',
+  breadcrumb = [],
+} = Astro.props;
+
+const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
+
+// 侧边栏导航配置
+const navConfig = [
+  {
+    label: '',
+    items: [
+      { label: '工作台', route: '/', icon: 'home' },
+    ],
+  },
+  {
+    label: 'AI 能力',
+    items: [
+      { label: 'AI 对话', route: '/chat', icon: 'chat' },
+      { label: '对话历史', route: '/chat/history', icon: 'clock' },
+      { label: 'Agent 管理', route: '/chat/agent', icon: 'agent' },
+    ],
+  },
+  {
+    label: '知识',
+    items: [
+      { label: '知识首页', route: '/knowledge', icon: 'book' },
+      { label: '知识搜索', route: '/knowledge/search', icon: 'search' },
+      { label: '问答社区', route: '/knowledge/qa', icon: 'message' },
+      { label: '知识图谱', route: '/knowledge/graph', icon: 'graph' },
+      { label: '变更时间线', route: '/knowledge/timeline', icon: 'timeline' },
+    ],
+  },
+  {
+    label: '管理',
+    items: [
+      { label: '知识库管理', route: '/manage/kb', icon: 'folder' },
+      { label: '文档上传', route: '/manage/upload', icon: 'upload' },
+      { label: '协同编辑', route: '/manage/editor', icon: 'edit' },
+      { label: '会议纪要', route: '/manage/minutes', icon: 'minutes' },
+      { label: '知识缺口', route: '/manage/gaps', icon: 'gaps' },
+    ],
+  },
+  {
+    label: '治理后台',
+    items: [
+      { label: '运营看板', route: '/admin', icon: 'chart' },
+      { label: '知识健康度', route: '/admin/health', icon: 'health' },
+      { label: '审核工作流', route: '/admin/audit', icon: 'audit' },
+      { label: '用户管理', route: '/admin/users', icon: 'users' },
+      { label: '标签管理', route: '/admin/tags', icon: 'tags' },
+      { label: '报表', route: '/admin/reports', icon: 'reports' },
+      { label: '反馈管理', route: '/admin/feedback', icon: 'feedback' },
+    ],
+  },
+  {
+    label: '场景应用',
+    items: [
+      { label: '新员工入职', route: '/scenes/onboarding', icon: 'onboarding' },
+      { label: 'IT 工单', route: '/scenes/it-helpdesk', icon: 'it' },
+    ],
+  },
+  {
+    label: '设置',
+    items: [
+      { label: '租户设置', route: '/settings/tenant', icon: 'tenant' },
+      { label: 'API 密钥', route: '/settings/api', icon: 'api' },
+      { label: 'LLM 配置', route: '/settings/llm', icon: 'llm' },
+      { label: '系统设置', route: '/settings/system', icon: 'settings' },
+    ],
+  },
+];
+
+// 当前路径用于高亮导航项
+const currentPath = Astro.url.pathname;
+---
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content={description} />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>{title} · {appName}</title>
+  </head>
+  <body>
+    <div class="app-shell">
+      <!-- 侧边栏 -->
+      <aside class="sidebar" id="sidebar">
+        <!-- 侧边栏 Logo -->
+        <div class="sidebar-logo">
+          <div class="sidebar-logo-icon">E</div>
+          <span class="sidebar-logo-text">{appName}</span>
+        </div>
+
+        <!-- 导航菜单 -->
+        <nav class="sidebar-nav">
+          {navConfig.map((group) => (
+            <div class="sidebar-group">
+              {group.label && <div class="sidebar-group-label">{group.label}</div>}
+              {group.items.map((item) => {
+                const isActive = currentPath === item.route ||
+                  (item.route !== '/' && currentPath.startsWith(item.route));
+                return (
+                  <a
+                    href={item.route}
+                    class:list={['sidebar-item', { active: isActive }]}
+                  >
+                    <span class="sidebar-item-icon">
+                      {item.icon === 'home' && '🏠'}
+                      {item.icon === 'chat' && '💬'}
+                      {item.icon === 'clock' && '🕐'}
+                      {item.icon === 'agent' && '🤖'}
+                      {item.icon === 'book' && '📚'}
+                      {item.icon === 'search' && '🔍'}
+                      {item.icon === 'message' && '💬'}
+                      {item.icon === 'graph' && '🕸️'}
+                      {item.icon === 'timeline' && '📅'}
+                      {item.icon === 'folder' && '📁'}
+                      {item.icon === 'upload' && '📤'}
+                      {item.icon === 'edit' && '✏️'}
+                      {item.icon === 'minutes' && '📝'}
+                      {item.icon === 'gaps' && '🔍'}
+                      {item.icon === 'chart' && '📊'}
+                      {item.icon === 'health' && '💚'}
+                      {item.icon === 'audit' && '✅'}
+                      {item.icon === 'users' && '👥'}
+                      {item.icon === 'tags' && '🏷️'}
+                      {item.icon === 'reports' && '📈'}
+                      {item.icon === 'feedback' && '📢'}
+                      {item.icon === 'onboarding' && '👋'}
+                      {item.icon === 'it' && '🛠️'}
+                      {item.icon === 'tenant' && '🏢'}
+                      {item.icon === 'api' && '🔑'}
+                      {item.icon === 'llm' && '🧠'}
+                      {item.icon === 'settings' && '⚙️'}
+                    </span>
+                    <span class="sidebar-item-text">{item.label}</span>
+                  </a>
+                );
+              })}
+            </div>
+          ))}
+        </nav>
+
+        <!-- 折叠按钮 -->
+        <div class="sidebar-toggle" id="sidebar-toggle" title="折叠/展开侧边栏">
+          ‹
+        </div>
+      </aside>
+
+      <!-- 主区域 -->
+      <div class="main-area" id="main-area">
+        <!-- 顶部导航栏 -->
+        <header class="topbar">
+          <div class="topbar-left">
+            <div class="topbar-breadcrumb">
+              {breadcrumb.length > 0 ? (
+                breadcrumb.map((item, index) => (
+                  <>
+                    {index > 0 && <span>/</span>}
+                    {item.href ? (
+                      <a href={item.href}>{item.label}</a>
+                    ) : (
+                      <span>{item.label}</span>
+                    )}
+                  </>
+                ))
+              ) : (
+                <span>{title}</span>
+              )}
+            </div>
+          </div>
+
+          <div class="topbar-right">
+            <input
+              type="text"
+              class="topbar-search"
+              placeholder="搜索知识库..."
+              id="global-search"
+            />
+            <div class="topbar-actions">
+              <div class="topbar-user" id="user-menu-trigger">
+                <div class="avatar avatar-sm" id="user-avatar">U</div>
+                <span class="topbar-user-name" id="user-name">用户</span>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <!-- 主内容区 -->
+        <main class="content-area">
+          <div class="page-container">
+            <slot />
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <!-- 布局交互脚本 -->
+    <script>
+      // 侧边栏折叠/展开
+      const sidebar = document.getElementById('sidebar');
+      const mainArea = document.getElementById('main-area');
+      const toggle = document.getElementById('sidebar-toggle');
+
+      toggle?.addEventListener('click', () => {
+        sidebar?.classList.toggle('collapsed');
+        mainArea?.classList.toggle('sidebar-collapsed');
+        // 更新箭头方向
+        const isCollapsed = sidebar?.classList.contains('collapsed');
+        if (toggle) {
+          toggle.textContent = isCollapsed ? '›' : '‹';
+        }
+      });
+
+      // 移动端侧边栏抽屉
+      document.addEventListener('click', (e) => {
+        const target = e.target as HTMLElement;
+        if (window.innerWidth <= 768) {
+          // 点击遮罩关闭
+          if (target.classList.contains('app-shell') && sidebar?.classList.contains('mobile-open')) {
+            sidebar?.classList.remove('mobile-open');
+          }
+        }
+      });
+
+      // 加载用户信息
+      async function loadUser() {
+        const token = localStorage.getItem('ekb_access_token');
+        if (!token) {
+          // 未登录，跳转登录页
+          if (!window.location.pathname.startsWith('/auth/')) {
+            window.location.href = '/auth/login';
+          }
+          return;
+        }
+
+        try {
+          const apiBase = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
+          const response = await fetch(`${apiBase}/api/v1/auth/me`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+
+          if (response.ok) {
+            const result = await response.json();
+            const user = result.data || result;
+            const nameEl = document.getElementById('user-name');
+            const avatarEl = document.getElementById('user-avatar');
+            if (nameEl && user.name) {
+              nameEl.textContent = user.name;
+            }
+            if (avatarEl && user.name) {
+              avatarEl.textContent = user.name.charAt(0).toUpperCase();
+            }
+          } else if (response.status === 401) {
+            localStorage.removeItem('ekb_access_token');
+            if (!window.location.pathname.startsWith('/auth/')) {
+              window.location.href = '/auth/login';
+            }
+          }
+        } catch {
+          // 网络错误，静默处理
+        }
+      }
+
+      // 用户菜单点击 - 登出
+      document.getElementById('user-menu-trigger')?.addEventListener('click', () => {
+        if (confirm('确定要退出登录吗？')) {
+          localStorage.removeItem('ekb_access_token');
+          window.location.href = '/auth/login';
+        }
+      });
+
+      loadUser();
+    </script>
+
+    <style>
+      /* 全局样式已在 global.css 中定义 */
+    </style>
+  </body>
+</html>

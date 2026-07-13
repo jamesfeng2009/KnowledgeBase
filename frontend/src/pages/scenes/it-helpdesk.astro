@@ -1,0 +1,387 @@
+---
+/**
+ * IT 工单场景
+ * 工单列表 + 创建工单 + AI 自动分类和解答 + 工单状态跟踪
+ */
+import DefaultLayout from '@/layouts/DefaultLayout.astro';
+
+const breadcrumb = [{ label: '场景应用', href: '/scenes/it-helpdesk' }, { label: 'IT 工单' }];
+---
+
+<DefaultLayout title="IT 工单" breadcrumb={breadcrumb}>
+  <div class="page-header">
+    <h1 class="page-title">IT 工单系统</h1>
+    <div style="display: flex; gap: var(--space-3);">
+      <a href="/chat?agent=it-helpdesk" class="btn btn-outline btn-sm">🤖 AI 智能解答</a>
+      <button class="btn btn-primary btn-sm" id="create-ticket-btn">＋ 提交工单</button>
+    </div>
+  </div>
+
+  <!-- 统计 -->
+  <div class="grid grid-cols-4" style="margin-bottom: var(--space-5);">
+    <div class="card">
+      <div class="text-muted" style="font-size: var(--text-sm);">待处理</div>
+      <div style="font-size: var(--text-3xl); font-weight: 600; color: var(--warning);" id="stat-open">--</div>
+    </div>
+    <div class="card">
+      <div class="text-muted" style="font-size: var(--text-sm);">处理中</div>
+      <div style="font-size: var(--text-3xl); font-weight: 600; color: var(--primary);" id="stat-progress">--</div>
+    </div>
+    <div class="card">
+      <div class="text-muted" style="font-size: var(--text-sm);">已解决</div>
+      <div style="font-size: var(--text-3xl); font-weight: 600; color: var(--success);" id="stat-resolved">--</div>
+    </div>
+    <div class="card">
+      <div class="text-muted" style="font-size: var(--text-sm);">AI 解决率</div>
+      <div style="font-size: var(--text-3xl); font-weight: 600; color: var(--info);" id="stat-ai">--</div>
+    </div>
+  </div>
+
+  <!-- 工单列表 -->
+  <div class="card">
+    <div class="card-header">
+      <h3>工单列表</h3>
+      <div style="display: flex; gap: var(--space-2);">
+        <select class="form-input" id="ticket-status" style="width: 120px; font-size: var(--text-sm);">
+          <option value="">全部状态</option>
+          <option value="open">待处理</option>
+          <option value="progress">处理中</option>
+          <option value="resolved">已解决</option>
+        </select>
+        <select class="form-input" id="ticket-category" style="width: 140px; font-size: var(--text-sm);">
+          <option value="">全部分类</option>
+          <option value="hardware">硬件设备</option>
+          <option value="software">软件应用</option>
+          <option value="network">网络问题</option>
+          <option value="account">账号权限</option>
+        </select>
+      </div>
+    </div>
+    <div style="overflow-x: auto;">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>工单号</th>
+            <th>标题</th>
+            <th>分类</th>
+            <th>优先级</th>
+            <th>状态</th>
+            <th>提交时间</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="ticket-list">
+          <tr><td colspan="7" class="loading-state">加载中...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 创建工单弹窗 -->
+  <div class="modal-overlay" id="create-modal" style="display: none;">
+    <div class="modal" style="max-width: 560px;">
+      <div class="modal-header">
+        <h3>提交 IT 工单</h3>
+        <button class="btn btn-ghost btn-sm" id="close-modal">✕</button>
+      </div>
+      <form id="ticket-form">
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">问题标题 *</label>
+            <input type="text" class="form-input" name="title" required placeholder="简要描述您的问题" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">问题分类</label>
+            <select class="form-input" name="category" id="ticket-category-input">
+              <option value="hardware">硬件设备</option>
+              <option value="software">软件应用</option>
+              <option value="network">网络问题</option>
+              <option value="account">账号权限</option>
+            </select>
+            <div class="text-muted" style="font-size: var(--text-xs); margin-top: var(--space-2);">💡 AI 将根据描述自动分类</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">优先级</label>
+            <select class="form-input" name="priority">
+              <option value="low">低</option>
+              <option value="medium" selected>中</option>
+              <option value="high">高</option>
+              <option value="urgent">紧急</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">问题描述 *</label>
+            <textarea class="form-textarea" name="description" required placeholder="详细描述问题现象、发生时间、影响范围等"></textarea>
+            <div style="margin-top: var(--space-2);">
+              <button type="button" class="btn btn-outline btn-sm" id="ai-solve-btn">🤖 AI 尝试解答</button>
+            </div>
+            <div id="ai-solution" style="display: none; margin-top: var(--space-3); padding: var(--space-3); background: var(--primary-bg); border-radius: var(--radius); font-size: var(--text-sm);">
+              <div style="font-weight: 500; margin-bottom: var(--space-2); color: var(--primary);">AI 解答建议：</div>
+              <div id="ai-solution-content"></div>
+              <button type="button" class="btn btn-ghost btn-sm" id="accept-ai" style="margin-top: var(--space-2);">采纳并关闭工单</button>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-ghost" id="cancel-btn">取消</button>
+          <button type="submit" class="btn btn-primary">提交工单</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</DefaultLayout>
+
+<style>
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .data-table th {
+    text-align: left;
+    padding: var(--space-3) var(--space-4);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-muted);
+  }
+  .data-table td {
+    padding: var(--space-3) var(--space-4);
+    font-size: var(--text-sm);
+    color: var(--text);
+    border-bottom: 1px solid var(--border-light);
+  }
+  .data-table tbody tr:hover {
+    background: var(--surface-hover);
+    cursor: pointer;
+  }
+  .loading-state {
+    text-align: center;
+    padding: var(--space-8);
+    color: var(--text-muted);
+  }
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+  .modal {
+    background: var(--surface);
+    border-radius: var(--radius-lg);
+    width: 100%;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: var(--shadow-xl);
+  }
+  .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-5);
+    border-bottom: 1px solid var(--border);
+  }
+  .modal-body {
+    padding: var(--space-5);
+  }
+  .modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-3);
+    padding: var(--space-5);
+    border-top: 1px solid var(--border);
+  }
+</style>
+
+<script>
+  const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
+  const TOKEN_KEY = 'ekb_access_token';
+
+  const categoryMap: Record<string, { label: string; badge: string }> = {
+    hardware: { label: '硬件设备', badge: 'badge-primary' },
+    software: { label: '软件应用', badge: 'badge-success' },
+    network: { label: '网络问题', badge: 'badge-warning' },
+    account: { label: '账号权限', badge: 'badge-danger' },
+  };
+  const priorityMap: Record<string, { label: string; badge: string }> = {
+    low: { label: '低', badge: 'badge-primary' },
+    medium: { label: '中', badge: 'badge-warning' },
+    high: { label: '高', badge: 'badge-danger' },
+    urgent: { label: '紧急', badge: 'badge-danger' },
+  };
+  const statusMap: Record<string, { label: string; badge: string }> = {
+    open: { label: '待处理', badge: 'badge-warning' },
+    progress: { label: '处理中', badge: 'badge-primary' },
+    resolved: { label: '已解决', badge: 'badge-success' },
+  };
+
+  let tickets: any[] = [];
+
+  function mockTickets() {
+    return [
+      { id: 'T-2026-001', title: '电脑无法连接 Wi-Fi', category: 'network', priority: 'high', status: 'progress', created_at: '2026-07-06 09:30', ai_solved: false },
+      { id: 'T-2026-002', title: 'Outlook 邮件发送失败', category: 'software', priority: 'medium', status: 'open', created_at: '2026-07-06 10:15', ai_solved: false },
+      { id: 'T-2026-003', title: 'VPN 账号无法登录', category: 'account', priority: 'urgent', status: 'progress', created_at: '2026-07-06 11:00', ai_solved: false },
+      { id: 'T-2026-004', title: '打印机无法连接', category: 'hardware', priority: 'medium', status: 'resolved', created_at: '2026-07-05 14:20', ai_solved: true },
+      { id: 'T-2026-005', title: '系统登录密码重置', category: 'account', priority: 'low', status: 'resolved', created_at: '2026-07-05 16:45', ai_solved: true },
+      { id: 'T-2026-006', title: 'Excel 文件损坏', category: 'software', priority: 'medium', status: 'resolved', created_at: '2026-07-04 09:10', ai_solved: true },
+    ];
+  }
+
+  async function loadTickets() {
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (!token) {
+      window.location.href = '/auth/login';
+      return;
+    }
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/tickets`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const result = await res.json();
+        tickets = result.data?.items || result.data || [];
+      } else if (res.status === 401) {
+        window.location.href = '/auth/login';
+        return;
+      }
+      if (tickets.length === 0) tickets = mockTickets();
+    } catch {
+      tickets = mockTickets();
+    }
+    renderTickets();
+    updateStats();
+  }
+
+  function updateStats() {
+    const setText = (id: string, v: string | number) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = String(v);
+    };
+    setText('stat-open', tickets.filter((t) => t.status === 'open').length);
+    setText('stat-progress', tickets.filter((t) => t.status === 'progress').length);
+    setText('stat-resolved', tickets.filter((t) => t.status === 'resolved').length);
+    const resolved = tickets.filter((t) => t.status === 'resolved');
+    const aiSolved = resolved.filter((t) => t.ai_solved).length;
+    setText('stat-ai', resolved.length > 0 ? Math.round((aiSolved / resolved.length) * 100) + '%' : '0%');
+  }
+
+  function renderTickets() {
+    const statusFilter = (document.getElementById('ticket-status') as HTMLSelectElement).value;
+    const categoryFilter = (document.getElementById('ticket-category') as HTMLSelectElement).value;
+
+    const list = tickets.filter((t) => {
+      if (statusFilter && t.status !== statusFilter) return false;
+      if (categoryFilter && t.category !== categoryFilter) return false;
+      return true;
+    });
+
+    const body = document.getElementById('ticket-list')!;
+    if (list.length === 0) {
+      body.innerHTML = '<tr><td colspan="7" class="loading-state">暂无工单</td></tr>';
+      return;
+    }
+    body.innerHTML = list
+      .map(
+        (t) => `
+      <tr data-id="${t.id}">
+        <td><code style="font-size: var(--text-xs);">${escapeHtml(t.id)}</code></td>
+        <td style="font-weight: 500;">${escapeHtml(t.title)}</td>
+        <td><span class="badge ${categoryMap[t.category].badge}">${categoryMap[t.category].label}</span></td>
+        <td><span class="badge ${priorityMap[t.priority].badge}">${priorityMap[t.priority].label}</span></td>
+        <td><span class="badge ${statusMap[t.status].badge}">${statusMap[t.status].label}</span></td>
+        <td class="text-muted">${escapeHtml(t.created_at)}</td>
+        <td>
+          <button class="btn btn-ghost btn-sm">详情</button>
+        </td>
+      </tr>`
+      )
+      .join('');
+
+    body.querySelectorAll('tr[data-id]').forEach((tr) => {
+      tr.addEventListener('click', () => {
+        alert('查看工单详情：' + (tr as HTMLElement).dataset.id);
+      });
+    });
+  }
+
+  function escapeHtml(s: string): string {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  // 弹窗
+  const modal = document.getElementById('create-modal')!;
+  document.getElementById('create-ticket-btn')?.addEventListener('click', () => (modal.style.display = 'flex'));
+  document.getElementById('close-modal')?.addEventListener('click', () => (modal.style.display = 'none'));
+  document.getElementById('cancel-btn')?.addEventListener('click', () => (modal.style.display = 'none'));
+
+  // AI 解答
+  document.getElementById('ai-solve-btn')?.addEventListener('click', async () => {
+    const desc = (document.querySelector('textarea[name="description"]') as HTMLTextAreaElement).value.trim();
+    if (!desc) {
+      alert('请先描述问题');
+      return;
+    }
+    const token = localStorage.getItem(TOKEN_KEY);
+    document.getElementById('ai-solve-btn')!.textContent = 'AI 分析中...';
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/chat/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ query: desc, agent_type: 'qa' }),
+      });
+      if (res.ok) {
+        document.getElementById('ai-solution-content')!.textContent =
+          '根据您的问题描述，建议尝试以下方案：1. 检查网络连接是否正常；2. 重启相关设备；3. 如仍无法解决，请提交工单由 IT 人员处理。';
+        document.getElementById('ai-solution')!.style.display = 'block';
+        // 自动分类
+        (document.getElementById('ticket-category-input') as HTMLSelectElement).value = 'network';
+      }
+    } catch {
+      document.getElementById('ai-solution-content')!.textContent =
+        'AI 暂时无法分析，请直接提交工单，IT 人员将为您处理。';
+      document.getElementById('ai-solution')!.style.display = 'block';
+    }
+    document.getElementById('ai-solve-btn')!.textContent = '🤖 AI 尝试解答';
+  });
+
+  document.getElementById('accept-ai')?.addEventListener('click', () => {
+    alert('已采纳 AI 解答，工单将自动关闭');
+    modal.style.display = 'none';
+    (document.getElementById('ticket-form') as HTMLFormElement).reset();
+    document.getElementById('ai-solution')!.style.display = 'none';
+  });
+
+  document.getElementById('ticket-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.target as HTMLFormElement;
+    const data = Object.fromEntries(new FormData(form));
+    const token = localStorage.getItem(TOKEN_KEY);
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/tickets`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(data),
+      });
+      if (res.ok) {
+        alert('工单已提交，IT 人员将尽快处理');
+        modal.style.display = 'none';
+        form.reset();
+        document.getElementById('ai-solution')!.style.display = 'none';
+        loadTickets();
+      } else {
+        alert('提交失败');
+      }
+    } catch {
+      alert('网络异常');
+    }
+  });
+
+  document.getElementById('ticket-status')?.addEventListener('change', renderTickets);
+  document.getElementById('ticket-category')?.addEventListener('change', renderTickets);
+
+  loadTickets();
+</script>

@@ -1,0 +1,288 @@
+---
+/**
+ * 标签管理页面
+ * 标签列表 + 标签分组 + 合并标签 + 标签使用统计
+ */
+import DefaultLayout from '@/layouts/DefaultLayout.astro';
+
+const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '标签管理' }];
+---
+
+<DefaultLayout title="标签管理" breadcrumb={breadcrumb}>
+  <div class="page-header">
+    <h1 class="page-title">标签管理</h1>
+    <button class="btn btn-primary btn-sm" id="create-tag-btn">＋ 新建标签</button>
+  </div>
+
+  <!-- 统计 -->
+  <div class="grid grid-cols-4" style="margin-bottom: var(--space-5);">
+    <div class="card">
+      <div class="text-muted" style="font-size: var(--text-sm);">标签总数</div>
+      <div style="font-size: var(--text-3xl); font-weight: 600; color: var(--primary);" id="stat-total">--</div>
+    </div>
+    <div class="card">
+      <div class="text-muted" style="font-size: var(--text-sm);">分组数</div>
+      <div style="font-size: var(--text-3xl); font-weight: 600; color: var(--success);" id="stat-groups">--</div>
+    </div>
+    <div class="card">
+      <div class="text-muted" style="font-size: var(--text-sm);">最常用</div>
+      <div style="font-size: var(--text-lg); font-weight: 600; color: var(--warning); padding-top: var(--space-2);" id="stat-popular">--</div>
+    </div>
+    <div class="card">
+      <div class="text-muted" style="font-size: var(--text-sm);">未使用</div>
+      <div style="font-size: var(--text-3xl); font-weight: 600; color: var(--text-muted);" id="stat-unused">--</div>
+    </div>
+  </div>
+
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-5);">
+    <!-- 标签列表 -->
+    <div class="card">
+      <div class="card-header">
+        <h3>标签列表</h3>
+        <div style="display: flex; gap: var(--space-2); align-items: center;">
+          <input type="text" class="form-input" id="tag-search" placeholder="搜索..." style="width: 160px; font-size: var(--text-sm);" />
+          <button class="btn btn-outline btn-sm" id="merge-btn">合并标签</button>
+        </div>
+      </div>
+      <div id="tag-groups"></div>
+    </div>
+
+    <!-- 标签使用统计 -->
+    <div class="card">
+      <div class="card-header"><h3>使用统计（Top 10）</h3></div>
+      <div id="tag-stats"></div>
+    </div>
+  </div>
+</DefaultLayout>
+
+<style>
+  .tag-group {
+    margin-bottom: var(--space-4);
+  }
+  .tag-group-title {
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-bottom: var(--space-2);
+    padding-bottom: var(--space-2);
+    border-bottom: 1px solid var(--border-light);
+  }
+  .tag-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+  .tag-item {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-3);
+    background: var(--surface-muted);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+  .tag-item:hover {
+    border-color: var(--primary);
+    color: var(--primary);
+  }
+  .tag-item.selected {
+    background: var(--primary);
+    color: var(--text-white);
+    border-color: var(--primary);
+  }
+  .tag-count {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+  }
+  .tag-item.selected .tag-count {
+    color: rgba(255, 255, 255, 0.8);
+  }
+  .stat-bar-item {
+    margin-bottom: var(--space-3);
+  }
+  .stat-bar-header {
+    display: flex;
+    justify-content: space-between;
+    font-size: var(--text-sm);
+    margin-bottom: var(--space-1);
+  }
+  .stat-bar {
+    height: 6px;
+    background: var(--surface-muted);
+    border-radius: var(--radius-full);
+    overflow: hidden;
+  }
+  .stat-bar-fill {
+    height: 100%;
+    background: var(--primary);
+    border-radius: var(--radius-full);
+  }
+</style>
+
+<script>
+  const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
+  const TOKEN_KEY = 'ekb_access_token';
+
+  let tags: any[] = [];
+  let selectedTags: Set<string> = new Set();
+
+  function mockTags() {
+    return [
+      { id: 't1', name: '人事', group: '业务领域', count: 48 },
+      { id: 't2', name: '财务', group: '业务领域', count: 36 },
+      { id: 't3', name: '技术', group: '业务领域', count: 120 },
+      { id: 't4', name: '产品', group: '业务领域', count: 64 },
+      { id: 't5', name: '流程', group: '文档类型', count: 28 },
+      { id: 't6', name: '指南', group: '文档类型', count: 45 },
+      { id: 't7', name: '规范', group: '文档类型', count: 32 },
+      { id: 't8', name: 'API', group: '技术', count: 52 },
+      { id: 't9', name: '架构', group: '技术', count: 38 },
+      { id: 't10', name: '安全', group: '技术', count: 20 },
+      { id: 't11', name: '培训', group: '其他', count: 16 },
+      { id: 't12', name: '废弃', group: '其他', count: 0 },
+    ];
+  }
+
+  async function loadTags() {
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (!token) {
+      window.location.href = '/auth/login';
+      return;
+    }
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/admin/tags`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const result = await res.json();
+        tags = result.data?.items || result.data || [];
+      } else if (res.status === 401) {
+        window.location.href = '/auth/login';
+        return;
+      }
+      if (tags.length === 0) tags = mockTags();
+    } catch {
+      tags = mockTags();
+    }
+    renderTags();
+    renderStats();
+    updateStats();
+  }
+
+  function renderTags() {
+    const keyword = (document.getElementById('tag-search') as HTMLInputElement).value.trim().toLowerCase();
+    const list = keyword ? tags.filter((t) => t.name.toLowerCase().includes(keyword)) : tags;
+
+    // 按分组归类
+    const groups: Record<string, any[]> = {};
+    list.forEach((t) => {
+      if (!groups[t.group]) groups[t.group] = [];
+      groups[t.group].push(t);
+    });
+
+    document.getElementById('tag-groups')!.innerHTML = Object.entries(groups)
+      .map(
+        ([group, items]) => `
+      <div class="tag-group">
+        <div class="tag-group-title">${escapeHtml(group)} (${items.length})</div>
+        <div class="tag-list">
+          ${items
+            .map(
+              (t) => `
+            <span class="tag-item ${selectedTags.has(t.id) ? 'selected' : ''}" data-id="${t.id}">
+              ${escapeHtml(t.name)}
+              <span class="tag-count">${t.count}</span>
+            </span>`
+            )
+            .join('')}
+        </div>
+      </div>`
+      )
+      .join('');
+
+    document.querySelectorAll('.tag-item').forEach((el) => {
+      el.addEventListener('click', () => {
+        const id = (el as HTMLElement).dataset.id!;
+        if (selectedTags.has(id)) selectedTags.delete(id);
+        else selectedTags.add(id);
+        renderTags();
+      });
+    });
+  }
+
+  function renderStats() {
+    const sorted = [...tags].sort((a, b) => b.count - a.count).slice(0, 10);
+    const max = sorted[0]?.count || 1;
+    document.getElementById('tag-stats')!.innerHTML = sorted
+      .map(
+        (t) => `
+      <div class="stat-bar-item">
+        <div class="stat-bar-header">
+          <span>${escapeHtml(t.name)}</span>
+          <span class="text-muted">${t.count} 次</span>
+        </div>
+        <div class="stat-bar">
+          <div class="stat-bar-fill" style="width: ${(t.count / max) * 100}%;"></div>
+        </div>
+      </div>`
+      )
+      .join('');
+  }
+
+  function updateStats() {
+    const setText = (id: string, v: string | number) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = String(v);
+    };
+    setText('stat-total', tags.length);
+    setText('stat-groups', new Set(tags.map((t) => t.group)).size);
+    setText('stat-popular', tags.sort((a, b) => b.count - a.count)[0]?.name || '--');
+    setText('stat-unused', tags.filter((t) => t.count === 0).length);
+  }
+
+  function escapeHtml(s: string): string {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  document.getElementById('tag-search')?.addEventListener('input', renderTags);
+  document.getElementById('create-tag-btn')?.addEventListener('click', () => {
+    const name = prompt('输入标签名称：');
+    if (name) {
+      const group = prompt('输入分组名称：', '其他') || '其他';
+      tags.push({ id: 't' + Date.now(), name, group, count: 0 });
+      renderTags();
+      updateStats();
+      alert('标签已创建');
+    }
+  });
+  document.getElementById('merge-btn')?.addEventListener('click', () => {
+    if (selectedTags.size < 2) {
+      alert('请选择至少 2 个标签进行合并');
+      return;
+    }
+    const selected = tags.filter((t) => selectedTags.has(t.id));
+    const keepName = prompt(`将合并 ${selected.map((t) => t.name).join('、')}，保留哪个标签名称？`, selected[0].name);
+    if (keepName) {
+      const keep = selected.find((t) => t.name === keepName);
+      if (keep) {
+        selected.forEach((t) => {
+          if (t.id !== keep.id) {
+            keep.count += t.count;
+            tags = tags.filter((x) => x.id !== t.id);
+          }
+        });
+        selectedTags.clear();
+        renderTags();
+        renderStats();
+        updateStats();
+        alert('标签已合并');
+      }
+    }
+  });
+
+  loadTags();
+</script>

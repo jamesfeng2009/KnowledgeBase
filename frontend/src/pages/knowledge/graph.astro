@@ -1,0 +1,404 @@
+---
+/**
+ * 知识图谱页面
+ * 图谱可视化画布 + 节点分类 + 点击节点详情 + 搜索过滤
+ */
+import DefaultLayout from '@/layouts/DefaultLayout.astro';
+
+const breadcrumb = [{ label: '知识', href: '/knowledge' }, { label: '知识图谱' }];
+---
+
+<DefaultLayout title="知识图谱" breadcrumb={breadcrumb}>
+  <div class="page-header">
+    <h1 class="page-title">知识图谱</h1>
+    <div style="display: flex; gap: var(--space-3); align-items: center;">
+      <input type="text" class="form-input" id="graph-search" placeholder="搜索节点..." style="width: 200px;" />
+      <button class="btn btn-outline btn-sm" id="reset-graph">重置视图</button>
+    </div>
+  </div>
+
+  <div class="graph-layout">
+    <!-- 图谱画布 -->
+    <div class="graph-canvas-wrapper">
+      <canvas id="graph-canvas" class="graph-canvas"></canvas>
+      <!-- 图例 -->
+      <div class="graph-legend">
+        <div class="legend-item"><span class="legend-dot" style="background: var(--primary);"></span> 核心实体</div>
+        <div class="legend-item"><span class="legend-dot" style="background: var(--info);"></span> 普通实体</div>
+        <div class="legend-item"><span class="legend-dot" style="background: var(--success);"></span> 属性节点</div>
+      </div>
+      <!-- 统计 -->
+      <div class="graph-stats">
+        <span class="badge badge-primary" id="node-count">0 节点</span>
+        <span class="badge badge-success" id="edge-count">0 关系</span>
+      </div>
+    </div>
+
+    <!-- 节点详情面板 -->
+    <aside class="graph-detail" id="graph-detail">
+      <div class="card">
+        <div class="card-header"><h3>节点详情</h3></div>
+        <div id="node-detail">
+          <div class="detail-empty">点击节点查看详情</div>
+        </div>
+      </div>
+    </aside>
+  </div>
+</DefaultLayout>
+
+<style>
+  .graph-layout {
+    display: grid;
+    grid-template-columns: 1fr 300px;
+    gap: var(--space-5);
+    height: calc(100vh - 220px);
+  }
+  .graph-canvas-wrapper {
+    position: relative;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+  }
+  .graph-canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+    cursor: grab;
+  }
+  .graph-canvas:active {
+    cursor: grabbing;
+  }
+  .graph-legend {
+    position: absolute;
+    top: var(--space-4);
+    left: var(--space-4);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: var(--space-3);
+    box-shadow: var(--shadow-sm);
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    margin-bottom: var(--space-1);
+  }
+  .legend-item:last-child {
+    margin-bottom: 0;
+  }
+  .legend-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+  .graph-stats {
+    position: absolute;
+    bottom: var(--space-4);
+    left: var(--space-4);
+    display: flex;
+    gap: var(--space-2);
+  }
+  .graph-detail {
+    overflow-y: auto;
+  }
+  .detail-empty {
+    text-align: center;
+    color: var(--text-muted);
+    padding: var(--space-8);
+    font-size: var(--text-sm);
+  }
+  .detail-row {
+    display: flex;
+    justify-content: space-between;
+    padding: var(--space-2) 0;
+    border-bottom: 1px solid var(--border-light);
+    font-size: var(--text-sm);
+  }
+  .detail-row:last-child {
+    border-bottom: none;
+  }
+  .detail-row .label {
+    color: var(--text-muted);
+  }
+  .relation-list {
+    margin-top: var(--space-3);
+  }
+  .relation-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2);
+    background: var(--surface-muted);
+    border-radius: var(--radius);
+    margin-bottom: var(--space-2);
+    font-size: var(--text-sm);
+  }
+  @media (max-width: 1024px) {
+    .graph-layout {
+      grid-template-columns: 1fr;
+      height: auto;
+    }
+    .graph-canvas-wrapper {
+      height: 500px;
+    }
+  }
+</style>
+
+<script>
+  const canvas = document.getElementById('graph-canvas') as HTMLCanvasElement;
+  const ctx = canvas.getContext('2d')!;
+
+  // 节点数据
+  interface GNode {
+    id: string;
+    label: string;
+    type: 'core' | 'entity' | 'attribute';
+    x: number;
+    y: number;
+    vx: number;
+    vy: number;
+  }
+  interface GEdge {
+    source: string;
+    target: string;
+    label: string;
+  }
+
+  let nodes: GNode[] = [];
+  let edges: GEdge[] = [];
+  let selectedNode: GNode | null = null;
+
+  function initData() {
+    const w = canvas.width;
+    const h = canvas.height;
+    const cx = w / 2;
+    const cy = h / 2;
+
+    nodes = [
+      { id: 'n1', label: '企业知识库', type: 'core', x: cx, y: cy, vx: 0, vy: 0 },
+      { id: 'n2', label: '文档管理', type: 'entity', x: cx - 150, y: cy - 80, vx: 0, vy: 0 },
+      { id: 'n3', label: 'AI 对话', type: 'entity', x: cx + 150, y: cy - 80, vx: 0, vy: 0 },
+      { id: 'n4', label: '知识搜索', type: 'entity', x: cx + 180, y: cy + 60, vx: 0, vy: 0 },
+      { id: 'n5', label: '协同编辑', type: 'entity', x: cx - 180, y: cy + 60, vx: 0, vy: 0 },
+      { id: 'n6', label: '知识图谱', type: 'entity', x: cx, y: cy + 130, vx: 0, vy: 0 },
+      { id: 'n7', label: 'PDF 文档', type: 'attribute', x: cx - 260, y: cy - 140, vx: 0, vy: 0 },
+      { id: 'n8', label: 'Word 文档', type: 'attribute', x: cx - 240, y: cy - 30, vx: 0, vy: 0 },
+      { id: 'n9', label: '问答 Agent', type: 'attribute', x: cx + 240, y: cy - 140, vx: 0, vy: 0 },
+    ];
+
+    edges = [
+      { source: 'n1', target: 'n2', label: '包含' },
+      { source: 'n1', target: 'n3', label: '支持' },
+      { source: 'n1', target: 'n4', label: '支持' },
+      { source: 'n1', target: 'n5', label: '支持' },
+      { source: 'n1', target: 'n6', label: '包含' },
+      { source: 'n2', target: 'n7', label: '格式' },
+      { source: 'n2', target: 'n8', label: '格式' },
+      { source: 'n3', target: 'n9', label: '类型' },
+    ];
+
+    updateStats();
+  }
+
+  function updateStats() {
+    document.getElementById('node-count')!.textContent = `${nodes.length} 节点`;
+    document.getElementById('edge-count')!.textContent = `${edges.length} 关系`;
+  }
+
+  function resize() {
+    const wrapper = canvas.parentElement!;
+    canvas.width = wrapper.clientWidth;
+    canvas.height = wrapper.clientHeight;
+  }
+
+  function colorFor(type: string): string {
+    if (type === 'core') return '#6C5CE7';
+    if (type === 'entity') return '#2196F3';
+    return '#00B884';
+  }
+
+  function radiusFor(type: string): number {
+    if (type === 'core') return 28;
+    if (type === 'entity') return 20;
+    return 14;
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // 力导向模拟
+    const k = 0.5;
+    nodes.forEach((n, i) => {
+      for (let j = i + 1; j < nodes.length; j++) {
+        const m = nodes[j];
+        const dx = m.x - n.x;
+        const dy = m.y - n.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        const force = (k * 800) / (dist * dist);
+        n.vx -= (dx / dist) * force;
+        n.vy -= (dy / dist) * force;
+        m.vx += (dx / dist) * force;
+        m.vy += (dy / dist) * force;
+      }
+    });
+
+    // 连线吸引
+    edges.forEach((e) => {
+      const s = nodes.find((n) => n.id === e.source)!;
+      const t = nodes.find((n) => n.id === e.target)!;
+      const dx = t.x - s.x;
+      const dy = t.y - s.y;
+      const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+      const force = (dist - 150) * 0.01;
+      s.vx += (dx / dist) * force;
+      s.vy += (dy / dist) * force;
+      t.vx -= (dx / dist) * force;
+      t.vy -= (dy / dist) * force;
+    });
+
+    // 中心吸引
+    nodes.forEach((n) => {
+      n.vx += (canvas.width / 2 - n.x) * 0.001;
+      n.vy += (canvas.height / 2 - n.y) * 0.001;
+      n.vx *= 0.9;
+      n.vy *= 0.9;
+      n.x += n.vx;
+      n.y += n.vy;
+    });
+
+    // 绘制连线
+    edges.forEach((e) => {
+      const s = nodes.find((n) => n.id === e.source)!;
+      const t = nodes.find((n) => n.id === e.target)!;
+      ctx.beginPath();
+      ctx.moveTo(s.x, s.y);
+      ctx.lineTo(t.x, t.y);
+      ctx.strokeStyle = '#E5E6EB';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      // 关系标签
+      const mx = (s.x + t.x) / 2;
+      const my = (s.y + t.y) / 2;
+      ctx.fillStyle = '#8B8D9F';
+      ctx.font = '11px sans-serif';
+      ctx.fillText(e.label, mx, my);
+    });
+
+    // 绘制节点
+    nodes.forEach((n) => {
+      const r = radiusFor(n.type);
+      const isSelected = selectedNode?.id === n.id;
+
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, r, 0, 2 * Math.PI);
+      ctx.fillStyle = colorFor(n.type);
+      ctx.fill();
+
+      if (isSelected) {
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, r + 4, 0, 2 * Math.PI);
+        ctx.strokeStyle = '#6C5CE7';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+
+      ctx.fillStyle = '#1A1B2E';
+      ctx.font = `${n.type === 'core' ? 'bold ' : ''}12px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText(n.label, n.x, n.y + r + 16);
+    });
+
+    requestAnimationFrame(draw);
+  }
+
+  canvas.addEventListener('click', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    const clicked = nodes.find((n) => {
+      const r = radiusFor(n.type);
+      const dx = n.x - x;
+      const dy = n.y - y;
+      return Math.sqrt(dx * dx + dy * dy) < r;
+    });
+
+    if (clicked) {
+      selectedNode = clicked;
+      renderDetail(clicked);
+    }
+  });
+
+  function renderDetail(node: GNode) {
+    const relations = edges
+      .filter((e) => e.source === node.id || e.target === node.id)
+      .map((e) => {
+        const otherId = e.source === node.id ? e.target : e.source;
+        const other = nodes.find((n) => n.id === otherId)!;
+        return { label: e.label, target: other.label, targetId: otherId };
+      });
+
+    const typeLabel: Record<string, string> = { core: '核心实体', entity: '普通实体', attribute: '属性节点' };
+
+    document.getElementById('node-detail')!.innerHTML = `
+      <div class="detail-row"><span class="label">名称</span><span>${escapeHtml(node.label)}</span></div>
+      <div class="detail-row"><span class="label">类型</span><span class="badge badge-primary">${typeLabel[node.type]}</span></div>
+      <div class="detail-row"><span class="label">关联数</span><span>${relations.length}</span></div>
+      <div class="relation-list">
+        <div class="text-muted" style="font-size: var(--text-sm); margin-bottom: var(--space-2);">关联关系</div>
+        ${relations
+          .map(
+            (r) => `
+          <div class="relation-item" data-id="${r.targetId}">
+            <span class="badge badge-success">${escapeHtml(r.label)}</span>
+            <span>${escapeHtml(r.target)}</span>
+          </div>`
+          )
+          .join('') || '<div class="detail-empty">无关联关系</div>'}
+      </div>`;
+
+    document.querySelectorAll('.relation-item').forEach((el) => {
+      el.addEventListener('click', () => {
+        const id = (el as HTMLElement).dataset.id!;
+        const target = nodes.find((n) => n.id === id);
+        if (target) {
+          selectedNode = target;
+          renderDetail(target);
+        }
+      });
+    });
+  }
+
+  function escapeHtml(s: string): string {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  // 搜索过滤
+  document.getElementById('graph-search')?.addEventListener('input', (e) => {
+    const kw = (e.target as HTMLInputElement).value.trim().toLowerCase();
+    nodes.forEach((n) => {
+      (n as any).highlight = kw && n.label.toLowerCase().includes(kw);
+    });
+  });
+
+  document.getElementById('reset-graph')?.addEventListener('click', () => {
+    selectedNode = null;
+    document.getElementById('node-detail')!.innerHTML =
+      '<div class="detail-empty">点击节点查看详情</div>';
+    initData();
+  });
+
+  window.addEventListener('resize', () => {
+    resize();
+  });
+
+  resize();
+  initData();
+  draw();
+</script>

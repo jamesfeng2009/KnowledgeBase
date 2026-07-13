@@ -1,0 +1,308 @@
+---
+/**
+ * 报表页面
+ * 使用量报表 + 知识库报表 + 成本报表 + 时间范围筛选
+ */
+import DefaultLayout from '@/layouts/DefaultLayout.astro';
+
+const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '报表' }];
+---
+
+<DefaultLayout title="运营报表" breadcrumb={breadcrumb}>
+  <div class="page-header">
+    <h1 class="page-title">运营报表</h1>
+    <div style="display: flex; gap: var(--space-3); align-items: center;">
+      <select class="form-input" id="report-range" style="width: 160px;">
+        <option value="7">近 7 天</option>
+        <option value="30" selected>近 30 天</option>
+        <option value="90">近 90 天</option>
+        <option value="365">近 1 年</option>
+      </select>
+      <button class="btn btn-outline btn-sm" id="export-btn">📊 导出报表</button>
+    </div>
+  </div>
+
+  <!-- 使用量报表 -->
+  <div class="card" style="margin-bottom: var(--space-5);">
+    <div class="card-header"><h3>使用量报表</h3></div>
+    <div class="grid grid-cols-4" style="margin-bottom: var(--space-4);">
+      <div class="text-center">
+        <div class="text-muted" style="font-size: var(--text-sm);">总搜索次数</div>
+        <div style="font-size: var(--text-2xl); font-weight: 600; color: var(--primary);" id="usage-search">--</div>
+      </div>
+      <div class="text-center">
+        <div class="text-muted" style="font-size: var(--text-sm);">总对话次数</div>
+        <div style="font-size: var(--text-2xl); font-weight: 600; color: var(--success);" id="usage-chat">--</div>
+      </div>
+      <div class="text-center">
+        <div class="text-muted" style="font-size: var(--text-sm);">文档查看</div>
+        <div style="font-size: var(--text-2xl); font-weight: 600; color: var(--warning);" id="usage-view">--</div>
+      </div>
+      <div class="text-center">
+        <div class="text-muted" style="font-size: var(--text-sm);">文档下载</div>
+        <div style="font-size: var(--text-2xl); font-weight: 600; color: var(--info);" id="usage-download">--</div>
+      </div>
+    </div>
+    <canvas id="usage-chart" style="width: 100%; height: 220px;"></canvas>
+  </div>
+
+  <div class="grid grid-cols-2" style="margin-bottom: var(--space-5);">
+    <!-- 知识库报表 -->
+    <div class="card">
+      <div class="card-header"><h3>知识库报表</h3></div>
+      <div style="overflow-x: auto;">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>知识库</th>
+              <th>文档数</th>
+              <th>浏览</th>
+              <th>搜索命中</th>
+            </tr>
+          </thead>
+          <tbody id="kb-report-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 成本报表 -->
+    <div class="card">
+      <div class="card-header"><h3>成本报表</h3></div>
+      <div id="cost-breakdown">
+        <div class="cost-item">
+          <div class="cost-item-header">
+            <span>LLM Token 消耗</span>
+            <span style="font-weight: 600; color: var(--primary);">¥1,280.00</span>
+          </div>
+          <div class="cost-bar"><div class="cost-bar-fill" style="width: 65%; background: var(--primary);"></div></div>
+          <div class="text-muted" style="font-size: var(--text-xs);">1.2M Tokens · 占总成本 65%</div>
+        </div>
+        <div class="cost-item">
+          <div class="cost-item-header">
+            <span>向量存储</span>
+            <span style="font-weight: 600; color: var(--success);">¥420.00</span>
+          </div>
+          <div class="cost-bar"><div class="cost-bar-fill" style="width: 21%; background: var(--success);"></div></div>
+          <div class="text-muted" style="font-size: var(--text-xs);">12.5 GB · 占总成本 21%</div>
+        </div>
+        <div class="cost-item">
+          <div class="cost-item-header">
+            <span>对象存储</span>
+            <span style="font-weight: 600; color: var(--warning);">¥180.00</span>
+          </div>
+          <div class="cost-bar"><div class="cost-bar-fill" style="width: 9%; background: var(--warning);"></div></div>
+          <div class="text-muted" style="font-size: var(--text-xs);">8.2 GB · 占总成本 9%</div>
+        </div>
+        <div class="cost-item">
+          <div class="cost-item-header">
+            <span>其他</span>
+            <span style="font-weight: 600; color: var(--info);">¥90.00</span>
+          </div>
+          <div class="cost-bar"><div class="cost-bar-fill" style="width: 5%; background: var(--info);"></div></div>
+          <div class="text-muted" style="font-size: var(--text-xs);">占总成本 5%</div>
+        </div>
+        <div style="display: flex; justify-content: space-between; padding-top: var(--space-4); margin-top: var(--space-3); border-top: 1px solid var(--border);">
+          <span style="font-weight: 600;">总成本</span>
+          <span style="font-size: var(--text-xl); font-weight: 600; color: var(--danger);">¥1,970.00</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</DefaultLayout>
+
+<style>
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .data-table th {
+    text-align: left;
+    padding: var(--space-3) var(--space-4);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-muted);
+  }
+  .data-table td {
+    padding: var(--space-3) var(--space-4);
+    font-size: var(--text-sm);
+    color: var(--text);
+    border-bottom: 1px solid var(--border-light);
+  }
+  .cost-item {
+    padding: var(--space-3) 0;
+    border-bottom: 1px solid var(--border-light);
+  }
+  .cost-item:last-of-type {
+    border-bottom: none;
+  }
+  .cost-item-header {
+    display: flex;
+    justify-content: space-between;
+    font-size: var(--text-sm);
+    margin-bottom: var(--space-2);
+  }
+  .cost-bar {
+    height: 6px;
+    background: var(--surface-muted);
+    border-radius: var(--radius-full);
+    overflow: hidden;
+    margin-bottom: var(--space-1);
+  }
+  .cost-bar-fill {
+    height: 100%;
+    border-radius: var(--radius-full);
+  }
+</style>
+
+<script>
+  const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
+  const TOKEN_KEY = 'ekb_access_token';
+
+  function mockData(range: string) {
+    const factor = parseInt(range) / 30;
+    return {
+      usage: {
+        search: Math.round(12480 * factor),
+        chat: Math.round(8652 * factor),
+        view: Math.round(23400 * factor),
+        download: Math.round(3120 * factor),
+      },
+      kbReport: [
+        { name: '技术文档', docs: 245, views: 8600, hits: 4200 },
+        { name: '公司制度', docs: 128, views: 5200, hits: 3100 },
+        { name: '产品文档', docs: 86, views: 3400, hits: 1800 },
+        { name: '历史归档', docs: 56, views: 280, hits: 120 },
+      ],
+    };
+  }
+
+  async function loadReport() {
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (!token) {
+      window.location.href = '/auth/login';
+      return;
+    }
+    const range = (document.getElementById('report-range') as HTMLSelectElement).value;
+    let data: any;
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/admin/reports?range=${range}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const result = await res.json();
+        data = result.data || result;
+      } else if (res.status === 401) {
+        window.location.href = '/auth/login';
+        return;
+      } else {
+        data = mockData(range);
+      }
+    } catch {
+      data = mockData(range);
+    }
+    renderUsage(data.usage);
+    renderKbReport(data.kbReport);
+    drawUsageChart(parseInt(range));
+  }
+
+  function renderUsage(usage: any) {
+    const setText = (id: string, v: number) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = v.toLocaleString();
+    };
+    setText('usage-search', usage.search);
+    setText('usage-chat', usage.chat);
+    setText('usage-view', usage.view);
+    setText('usage-download', usage.download);
+  }
+
+  function renderKbReport(list: any[]) {
+    document.getElementById('kb-report-body')!.innerHTML = list
+      .map(
+        (k) => `
+      <tr>
+        <td style="font-weight: 500;">${escapeHtml(k.name)}</td>
+        <td>${k.docs}</td>
+        <td>${k.views.toLocaleString()}</td>
+        <td>${k.hits.toLocaleString()}</td>
+      </tr>`
+      )
+      .join('');
+  }
+
+  function drawUsageChart(days: number) {
+    const canvas = document.getElementById('usage-chart') as HTMLCanvasElement;
+    const ctx = canvas.getContext('2d')!;
+    canvas.width = canvas.offsetWidth * 2;
+    canvas.height = 220 * 2;
+    ctx.scale(2, 2);
+    const w = canvas.offsetWidth;
+    const h = 220;
+    const pad = 40;
+
+    const points = Math.min(days, 30);
+    const search = Array.from({ length: points }, () => Math.floor(200 + Math.random() * 300));
+    const chat = Array.from({ length: points }, () => Math.floor(100 + Math.random() * 200));
+    const max = Math.max(...search, ...chat) * 1.2;
+
+    // 网格
+    ctx.strokeStyle = '#F0F1F5';
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= 4; i++) {
+      const y = pad + ((h - pad * 2) / 4) * i;
+      ctx.beginPath();
+      ctx.moveTo(pad, y);
+      ctx.lineTo(w - pad, y);
+      ctx.stroke();
+    }
+
+    // 搜索线
+    ctx.strokeStyle = '#6C5CE7';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    search.forEach((v, i) => {
+      const x = pad + ((w - pad * 2) / (points - 1)) * i;
+      const y = h - pad - ((h - pad * 2) * v) / max;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    // 对话线
+    ctx.strokeStyle = '#00B884';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    chat.forEach((v, i) => {
+      const x = pad + ((w - pad * 2) / (points - 1)) * i;
+      const y = h - pad - ((h - pad * 2) * v) / max;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    // 图例
+    ctx.font = '12px sans-serif';
+    ctx.fillStyle = '#6C5CE7';
+    ctx.fillRect(pad, 8, 12, 12);
+    ctx.fillStyle = '#1A1B2E';
+    ctx.textAlign = 'left';
+    ctx.fillText('搜索', pad + 18, 18);
+    ctx.fillStyle = '#00B884';
+    ctx.fillRect(pad + 70, 8, 12, 12);
+    ctx.fillStyle = '#1A1B2E';
+    ctx.fillText('对话', pad + 88, 18);
+  }
+
+  function escapeHtml(s: string): string {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  document.getElementById('report-range')?.addEventListener('change', loadReport);
+  document.getElementById('export-btn')?.addEventListener('click', () => {
+    alert('报表导出中，完成后将发送至您的邮箱');
+  });
+
+  loadReport();
+</script>

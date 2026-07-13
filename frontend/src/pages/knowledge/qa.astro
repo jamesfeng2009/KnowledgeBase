@@ -1,0 +1,239 @@
+---
+/**
+ * 问答社区页面
+ * 问题列表（状态筛选） + 问题统计 + 提问按钮 + 热门标签
+ */
+import DefaultLayout from '@/layouts/DefaultLayout.astro';
+
+const breadcrumb = [{ label: '知识', href: '/knowledge' }, { label: '问答社区' }];
+---
+
+<DefaultLayout title="问答社区" breadcrumb={breadcrumb}>
+  <div class="page-header">
+    <h1 class="page-title">问答社区</h1>
+    <button class="btn btn-primary" id="ask-btn">＋ 提问</button>
+  </div>
+
+  <!-- 统计卡片 -->
+  <div class="grid grid-cols-4" style="margin-bottom: var(--space-5);">
+    <div class="card">
+      <div class="text-muted" style="font-size: var(--text-sm);">问题总数</div>
+      <div style="font-size: var(--text-3xl); font-weight: 600; color: var(--primary);" id="stat-all">--</div>
+    </div>
+    <div class="card">
+      <div class="text-muted" style="font-size: var(--text-sm);">待回答</div>
+      <div style="font-size: var(--text-3xl); font-weight: 600; color: var(--warning);" id="stat-open">--</div>
+    </div>
+    <div class="card">
+      <div class="text-muted" style="font-size: var(--text-sm);">已解决</div>
+      <div style="font-size: var(--text-3xl); font-weight: 600; color: var(--success);" id="stat-solved">--</div>
+    </div>
+    <div class="card">
+      <div class="text-muted" style="font-size: var(--text-sm);">今日新增</div>
+      <div style="font-size: var(--text-3xl); font-weight: 600; color: var(--info);" id="stat-today">--</div>
+    </div>
+  </div>
+
+  <div style="display: grid; grid-template-columns: 2fr 1fr; gap: var(--space-5);">
+    <!-- 问题列表 -->
+    <div>
+      <!-- 状态筛选 -->
+      <div class="tabs" style="margin-bottom: var(--space-4);">
+        <button class="tab active" data-status="all">全部</button>
+        <button class="tab" data-status="open">待回答</button>
+        <button class="tab" data-status="solved">已解决</button>
+      </div>
+
+      <div id="question-list">
+        <div class="loading-state">加载中...</div>
+      </div>
+    </div>
+
+    <!-- 热门标签 -->
+    <div class="card">
+      <div class="card-header"><h3>热门标签</h3></div>
+      <div style="display: flex; flex-wrap: wrap; gap: var(--space-2);">
+        <span class="tag" data-tag="报销">报销 (32)</span>
+        <span class="tag" data-tag="入职">入职 (28)</span>
+        <span class="tag" data-tag="年假">年假 (24)</span>
+        <span class="tag" data-tag="社保">社保 (18)</span>
+        <span class="tag" data-tag="考核">考核 (15)</span>
+        <span class="tag" data-tag="报销">报销 (32)</span>
+        <span class="tag" data-tag="合同">合同 (12)</span>
+      </div>
+    </div>
+  </div>
+</DefaultLayout>
+
+<style>
+  .tabs {
+    display: flex;
+    gap: var(--space-1);
+    border-bottom: 1px solid var(--border);
+  }
+  .tab {
+    padding: var(--space-3) var(--space-5);
+    font-size: var(--text-base);
+    color: var(--text-muted);
+    border-bottom: 2px solid transparent;
+    transition: all var(--transition-fast);
+  }
+  .tab.active {
+    color: var(--primary);
+    border-bottom-color: var(--primary);
+    font-weight: 500;
+  }
+  .question-item {
+    padding: var(--space-4);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: var(--space-3);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+  .question-item:hover {
+    border-color: var(--primary);
+    box-shadow: var(--shadow-sm);
+  }
+  .question-item-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    margin-bottom: var(--space-2);
+  }
+  .question-item-title {
+    font-size: var(--text-md);
+    font-weight: 500;
+    color: var(--text);
+    flex: 1;
+  }
+  .question-item-footer {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+  }
+  .loading-state {
+    text-align: center;
+    padding: var(--space-8);
+    color: var(--text-muted);
+  }
+  .card .tag {
+    cursor: pointer;
+  }
+</style>
+
+<script>
+  const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
+  const TOKEN_KEY = 'ekb_access_token';
+
+  let currentStatus = 'all';
+
+  function mockQuestions() {
+    return [
+      { id: 'q1', title: '差旅报销的审批流程是怎样的？', status: 'solved', answers: 3, views: 128, tags: ['报销', '流程'], author: '张三', created_at: '2 小时前' },
+      { id: 'q2', title: '新员工入职需要准备哪些材料？', status: 'open', answers: 0, views: 56, tags: ['入职'], author: '李四', created_at: '5 小时前' },
+      { id: 'q3', title: '年假可以折算成工资吗？', status: 'solved', answers: 2, views: 89, tags: ['年假'], author: '王五', created_at: '昨天' },
+      { id: 'q4', title: '社保公积金缴纳比例是多少？', status: 'open', answers: 1, views: 45, tags: ['社保'], author: '赵六', created_at: '2 天前' },
+      { id: 'q5', title: '季度考核的评分标准是什么？', status: 'solved', answers: 4, views: 201, tags: ['考核'], author: '钱七', created_at: '3 天前' },
+    ];
+  }
+
+  async function loadQuestions() {
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (!token) {
+      window.location.href = '/auth/login';
+      return;
+    }
+    let questions: any[] = [];
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/knowledge/questions?status=${currentStatus}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const result = await res.json();
+        questions = result.data?.items || result.data || [];
+      } else if (res.status === 401) {
+        window.location.href = '/auth/login';
+        return;
+      }
+    } catch {
+      // ignore
+    }
+    if (questions.length === 0) questions = mockQuestions();
+    renderQuestions(questions);
+    updateStats();
+  }
+
+  function updateStats() {
+    const all = mockQuestions();
+    const setText = (id: string, v: number) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = String(v);
+    };
+    setText('stat-all', all.length);
+    setText('stat-open', all.filter((q) => q.status === 'open').length);
+    setText('stat-solved', all.filter((q) => q.status === 'solved').length);
+    setText('stat-today', 2);
+  }
+
+  function renderQuestions(questions: any[]) {
+    const container = document.getElementById('question-list')!;
+    if (questions.length === 0) {
+      container.innerHTML = '<div class="loading-state">暂无问题</div>';
+      return;
+    }
+    container.innerHTML = questions
+      .map(
+        (q) => `
+      <div class="question-item" data-id="${q.id}">
+        <div class="question-item-header">
+          <span class="badge ${q.status === 'solved' ? 'badge-success' : 'badge-warning'}">${q.status === 'solved' ? '已解决' : '待回答'}</span>
+          <span class="question-item-title">${escapeHtml(q.title)}</span>
+        </div>
+        <div class="question-item-footer">
+          <span>${q.answers || 0} 回答</span>
+          <span>${q.views || 0} 浏览</span>
+          <span>${escapeHtml(q.author || '匿名')}</span>
+          <span>${escapeHtml(q.created_at || '')}</span>
+          ${q.tags?.map((t: string) => `<span class="tag">${escapeHtml(t)}</span>`).join('') || ''}
+        </div>
+      </div>`
+      )
+      .join('');
+
+    container.querySelectorAll('.question-item').forEach((el) => {
+      el.addEventListener('click', () => {
+        alert('查看问题详情：' + (el as HTMLElement).dataset.id);
+      });
+    });
+  }
+
+  function escapeHtml(s: string): string {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  document.querySelectorAll('.tab').forEach((el) => {
+    el.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach((e) => e.classList.remove('active'));
+      el.classList.add('active');
+      currentStatus = (el as HTMLElement).dataset.status!;
+      loadQuestions();
+    });
+  });
+
+  document.getElementById('ask-btn')?.addEventListener('click', () => {
+    alert('提问功能：请输入您的问题');
+  });
+
+  document.querySelectorAll('.card .tag').forEach((el) => {
+    el.addEventListener('click', () => {
+      const tag = (el as HTMLElement).dataset.tag!;
+      window.location.href = `/knowledge/search?tag=${tag}`;
+    });
+  });
+
+  loadQuestions();
+</script>

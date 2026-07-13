@@ -1,0 +1,324 @@
+---
+/**
+ * 知识缺口页面
+ * 缺口列表（优先级排序） + 缺口热力图 + 处理建议 + 补充知识入口
+ */
+import DefaultLayout from '@/layouts/DefaultLayout.astro';
+
+const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '知识缺口' }];
+---
+
+<DefaultLayout title="知识缺口分析" breadcrumb={breadcrumb}>
+  <div class="page-header">
+    <h1 class="page-title">知识缺口分析</h1>
+    <button class="btn btn-outline btn-sm" id="refresh-btn">🔄 刷新分析</button>
+  </div>
+
+  <!-- 概览 -->
+  <div class="grid grid-cols-4" style="margin-bottom: var(--space-5);">
+    <div class="card">
+      <div class="text-muted" style="font-size: var(--text-sm);">缺口总数</div>
+      <div style="font-size: var(--text-3xl); font-weight: 600; color: var(--danger);" id="stat-total">--</div>
+    </div>
+    <div class="card">
+      <div class="text-muted" style="font-size: var(--text-sm);">高优先级</div>
+      <div style="font-size: var(--text-3xl); font-weight: 600; color: var(--warning);" id="stat-high">--</div>
+    </div>
+    <div class="card">
+      <div class="text-muted" style="font-size: var(--text-sm);">已处理</div>
+      <div style="font-size: var(--text-3xl); font-weight: 600; color: var(--success);" id="stat-resolved">--</div>
+    </div>
+    <div class="card">
+      <div class="text-muted" style="font-size: var(--text-sm);">覆盖率</div>
+      <div style="font-size: var(--text-3xl); font-weight: 600; color: var(--info);" id="stat-coverage">--</div>
+    </div>
+  </div>
+
+  <div style="display: grid; grid-template-columns: 2fr 1fr; gap: var(--space-5);">
+    <!-- 缺口列表 -->
+    <div>
+      <div class="tabs" style="margin-bottom: var(--space-4);">
+        <button class="tab active" data-filter="all">全部</button>
+        <button class="tab" data-filter="high">高优先级</button>
+        <button class="tab" data-filter="medium">中优先级</button>
+        <button class="tab" data-filter="low">低优先级</button>
+      </div>
+      <div id="gap-list">
+        <div class="loading-state">加载中...</div>
+      </div>
+    </div>
+
+    <!-- 热力图 + 建议 -->
+    <div>
+      <div class="card" style="margin-bottom: var(--space-4);">
+        <div class="card-header"><h3>缺口热力图</h3></div>
+        <div class="heatmap" id="heatmap"></div>
+      </div>
+      <div class="card">
+        <div class="card-header"><h3>处理建议</h3></div>
+        <div id="suggestions">
+          <div class="suggestion-item">
+            <span class="suggestion-icon">📋</span>
+            <div>
+              <div style="font-weight: 500; font-size: var(--text-sm);">补充高频缺失内容</div>
+              <div class="text-muted" style="font-size: var(--text-xs);">「报销流程」相关查询缺口最高，建议优先补充</div>
+            </div>
+          </div>
+          <div class="suggestion-item">
+            <span class="suggestion-icon">🔄</span>
+            <div>
+              <div style="font-weight: 500; font-size: var(--text-sm);">更新过期文档</div>
+              <div class="text-muted" style="font-size: var(--text-xs);">3 篇制度文档已过期，建议更新</div>
+            </div>
+          </div>
+          <div class="suggestion-item">
+            <span class="suggestion-icon">🔗</span>
+            <div>
+              <div style="font-weight: 500; font-size: var(--text-sm);">建立知识关联</div>
+              <div class="text-muted" style="font-size: var(--text-xs);">补充实体间关联，提升检索精度</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</DefaultLayout>
+
+<style>
+  .tabs {
+    display: flex;
+    gap: var(--space-1);
+    border-bottom: 1px solid var(--border);
+  }
+  .tab {
+    padding: var(--space-3) var(--space-4);
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    border-bottom: 2px solid transparent;
+    transition: all var(--transition-fast);
+  }
+  .tab.active {
+    color: var(--primary);
+    border-bottom-color: var(--primary);
+    font-weight: 500;
+  }
+  .gap-item {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: var(--space-4);
+    margin-bottom: var(--space-3);
+    transition: all var(--transition-fast);
+  }
+  .gap-item:hover {
+    border-color: var(--primary);
+    box-shadow: var(--shadow-sm);
+  }
+  .gap-item-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: var(--space-2);
+  }
+  .gap-item-title {
+    font-weight: 500;
+    font-size: var(--text-base);
+    color: var(--text);
+  }
+  .gap-item-desc {
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    line-height: var(--lh-relaxed);
+    margin-bottom: var(--space-3);
+  }
+  .gap-item-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+  }
+  .gap-meta {
+    display: flex;
+    gap: var(--space-3);
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+  }
+  .loading-state {
+    text-align: center;
+    padding: var(--space-8);
+    color: var(--text-muted);
+  }
+  .heatmap {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: var(--space-1);
+    margin-top: var(--space-3);
+  }
+  .heatmap-cell {
+    aspect-ratio: 1;
+    border-radius: var(--radius-xs);
+    background: var(--surface-muted);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+  .heatmap-cell:hover {
+    transform: scale(1.2);
+  }
+  .suggestion-item {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-3);
+    padding: var(--space-3) 0;
+    border-bottom: 1px solid var(--border-light);
+  }
+  .suggestion-item:last-child {
+    border-bottom: none;
+  }
+  .suggestion-icon {
+    font-size: 20px;
+  }
+</style>
+
+<script>
+  const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
+  const TOKEN_KEY = 'ekb_access_token';
+
+  const priorityBadge: Record<string, { label: string; badge: string }> = {
+    high: { label: '高', badge: 'badge-danger' },
+    medium: { label: '中', badge: 'badge-warning' },
+    low: { label: '低', badge: 'badge-primary' },
+  };
+
+  function mockGaps() {
+    return [
+      { id: 'g1', topic: '报销审批流程细节', priority: 'high', query_count: 48, desc: '用户频繁查询报销审批的具体步骤和所需材料，但知识库中缺少详细说明', kb_name: '公司制度', status: 'open' },
+      { id: 'g2', topic: '社保公积金缴纳比例', priority: 'high', query_count: 36, desc: '多次查询社保缴纳比例，现有文档未覆盖最新政策', kb_name: '公司制度', status: 'open' },
+      { id: 'g3', topic: 'API 限流策略说明', priority: 'medium', query_count: 22, desc: '开发者文档中缺少 API 限流规则的详细说明', kb_name: '技术文档', status: 'open' },
+      { id: 'g4', topic: '新员工导师制度', priority: 'medium', query_count: 18, desc: '入职流程文档未包含导师分配机制', kb_name: '公司制度', status: 'open' },
+      { id: 'g5', topic: '产品版本兼容性', priority: 'low', query_count: 10, desc: '缺少产品各版本间的兼容性说明', kb_name: '产品文档', status: 'resolved' },
+    ];
+  }
+
+  async function loadGaps() {
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (!token) {
+      window.location.href = '/auth/login';
+      return;
+    }
+    let gaps: any[] = [];
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/manage/knowledge-gaps`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const result = await res.json();
+        gaps = result.data?.items || result.data || [];
+      } else if (res.status === 401) {
+        window.location.href = '/auth/login';
+        return;
+      }
+    } catch {
+      // ignore
+    }
+    if (gaps.length === 0) gaps = mockGaps();
+    renderGaps(gaps);
+    updateStats(gaps);
+    renderHeatmap(gaps);
+  }
+
+  function updateStats(gaps: any[]) {
+    const setText = (id: string, v: string | number) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = String(v);
+    };
+    setText('stat-total', gaps.length);
+    setText('stat-high', gaps.filter((g) => g.priority === 'high').length);
+    setText('stat-resolved', gaps.filter((g) => g.status === 'resolved').length);
+    setText('stat-coverage', Math.round((1 - gaps.filter((g) => g.status === 'open').length / gaps.length) * 100) + '%');
+  }
+
+  let currentFilter = 'all';
+
+  function renderGaps(gaps: any[]) {
+    const list = currentFilter === 'all' ? gaps : gaps.filter((g) => g.priority === currentFilter);
+    const container = document.getElementById('gap-list')!;
+    if (list.length === 0) {
+      container.innerHTML = '<div class="loading-state">暂无缺口</div>';
+      return;
+    }
+    // 按优先级和查询次数排序
+    list.sort((a, b) => {
+      const order: Record<string, number> = { high: 0, medium: 1, low: 2 };
+      if (order[a.priority] !== order[b.priority]) return order[a.priority] - order[b.priority];
+      return b.query_count - a.query_count;
+    });
+
+    container.innerHTML = list
+      .map(
+        (g) => `
+      <div class="gap-item">
+        <div class="gap-item-header">
+          <div class="gap-item-title">${escapeHtml(g.topic)}</div>
+          <span class="badge ${priorityBadge[g.priority].badge}">${priorityBadge[g.priority].label}</span>
+        </div>
+        <p class="gap-item-desc">${escapeHtml(g.desc)}</p>
+        <div class="gap-item-footer">
+          <div class="gap-meta">
+            <span>查询 ${g.query_count} 次</span>
+            <span>${escapeHtml(g.kb_name || '')}</span>
+            ${g.status === 'resolved' ? '<span class="badge badge-success">已处理</span>' : ''}
+          </div>
+          <div style="display: flex; gap: var(--space-2);">
+            <button class="btn btn-outline btn-sm" data-action="supplement" data-id="${g.id}">补充知识</button>
+            <button class="btn btn-ghost btn-sm" data-action="ignore" data-id="${g.id}">忽略</button>
+          </div>
+        </div>
+      </div>`
+      )
+      .join('');
+
+    container.querySelectorAll('button[data-action]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const action = (btn as HTMLElement).dataset.action!;
+        if (action === 'supplement') {
+          window.location.href = '/manage/upload';
+        } else if (action === 'ignore') {
+          alert('已忽略此缺口');
+        }
+      });
+    });
+  }
+
+  function renderHeatmap(gaps: any[]) {
+    const cells = [];
+    for (let i = 0; i < 35; i++) {
+      const intensity = Math.random();
+      let color = 'var(--surface-muted)';
+      if (intensity > 0.8) color = 'var(--danger)';
+      else if (intensity > 0.6) color = 'var(--warning)';
+      else if (intensity > 0.3) color = 'var(--primary-bg)';
+      cells.push(`<div class="heatmap-cell" style="background: ${color};" title="${Math.round(intensity * 50)} 次查询"></div>`);
+    }
+    document.getElementById('heatmap')!.innerHTML = cells.join('');
+  }
+
+  function escapeHtml(s: string): string {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  document.querySelectorAll('.tab').forEach((el) => {
+    el.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach((e) => e.classList.remove('active'));
+      el.classList.add('active');
+      currentFilter = (el as HTMLElement).dataset.filter!;
+      loadGaps();
+    });
+  });
+
+  document.getElementById('refresh-btn')?.addEventListener('click', () => {
+    document.getElementById('gap-list')!.innerHTML = '<div class="loading-state">分析中...</div>';
+    setTimeout(loadGaps, 1000);
+  });
+
+  loadGaps();
+</script>

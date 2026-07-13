@@ -1,0 +1,382 @@
+---
+/**
+ * 文档详情页面 detail.astro
+ * 文档标题和元信息 + 内容渲染 + 评论区 + 相关文档推荐 + 版本历史
+ * 文档 ID 通过 URL 查询参数传入：/knowledge/detail?id=xxx
+ */
+import DefaultLayout from '@/layouts/DefaultLayout.astro';
+
+const breadcrumb = [
+  { label: '知识', href: '/knowledge' },
+  { label: '文档详情' },
+];
+---
+
+<DefaultLayout title="文档详情" breadcrumb={breadcrumb}>
+  <div class="doc-layout">
+    <!-- 文档主内容 -->
+    <article class="doc-main">
+      <div id="doc-content">
+        <div class="loading-state">加载中...</div>
+      </div>
+    </article>
+
+    <!-- 侧边栏 -->
+    <aside class="doc-sidebar">
+      <!-- 相关文档 -->
+      <div class="card" style="margin-bottom: var(--space-4);">
+        <div class="card-header"><h3>相关文档</h3></div>
+        <div id="related-docs">
+          <div class="loading-state">加载中...</div>
+        </div>
+      </div>
+
+      <!-- 版本历史 -->
+      <div class="card">
+        <div class="card-header"><h3>版本历史</h3></div>
+        <div id="version-history">
+          <div class="loading-state">加载中...</div>
+        </div>
+      </div>
+    </aside>
+  </div>
+</DefaultLayout>
+
+<style>
+  .doc-layout {
+    display: grid;
+    grid-template-columns: 1fr 320px;
+    gap: var(--space-5);
+  }
+  .doc-main {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: var(--space-6);
+  }
+  .doc-header {
+    margin-bottom: var(--space-6);
+    padding-bottom: var(--space-4);
+    border-bottom: 1px solid var(--border);
+  }
+  .doc-title {
+    font-size: var(--text-3xl);
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: var(--space-3);
+  }
+  .doc-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    align-items: center;
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+  }
+  .doc-content {
+    font-size: var(--text-md);
+    line-height: var(--lh-relaxed);
+    color: var(--text);
+  }
+  .doc-content h2 {
+    font-size: var(--text-xl);
+    margin: var(--space-6) 0 var(--space-3);
+  }
+  .doc-content h3 {
+    font-size: var(--text-lg);
+    margin: var(--space-5) 0 var(--space-2);
+  }
+  .doc-content p {
+    margin-bottom: var(--space-4);
+  }
+  .doc-content ul,
+  .doc-content ol {
+    margin: var(--space-3) 0;
+    padding-left: var(--space-6);
+  }
+  .doc-content li {
+    margin-bottom: var(--space-2);
+    list-style: disc;
+  }
+  .doc-content code {
+    background: var(--surface-muted);
+    padding: 2px var(--space-2);
+    border-radius: var(--radius-xs);
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+  }
+  .comment-section {
+    margin-top: var(--space-8);
+    padding-top: var(--space-6);
+    border-top: 1px solid var(--border);
+  }
+  .comment-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: var(--space-4);
+  }
+  .comment-input-box {
+    display: flex;
+    gap: var(--space-3);
+    margin-bottom: var(--space-4);
+  }
+  .comment-input-box textarea {
+    flex: 1;
+  }
+  .comment-item {
+    display: flex;
+    gap: var(--space-3);
+    padding: var(--space-3) 0;
+    border-bottom: 1px solid var(--border-light);
+  }
+  .comment-item:last-child {
+    border-bottom: none;
+  }
+  .comment-item-body {
+    flex: 1;
+  }
+  .comment-item-author {
+    font-size: var(--text-sm);
+    font-weight: 500;
+    color: var(--text);
+  }
+  .comment-item-content {
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    line-height: var(--lh-relaxed);
+    margin-top: var(--space-1);
+  }
+  .comment-item-time {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    margin-top: var(--space-1);
+  }
+  .related-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2) 0;
+    border-bottom: 1px solid var(--border-light);
+    cursor: pointer;
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+  }
+  .related-item:last-child {
+    border-bottom: none;
+  }
+  .related-item:hover {
+    color: var(--primary);
+  }
+  .version-item {
+    padding: var(--space-2) 0;
+    border-bottom: 1px solid var(--border-light);
+    cursor: pointer;
+  }
+  .version-item:last-child {
+    border-bottom: none;
+  }
+  .version-item-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: var(--text-sm);
+  }
+  .version-item-meta {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    margin-top: var(--space-1);
+  }
+  .loading-state {
+    text-align: center;
+    padding: var(--space-6);
+    color: var(--text-muted);
+  }
+  @media (max-width: 1024px) {
+    .doc-layout {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+
+<script>
+  const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
+  const TOKEN_KEY = 'ekb_access_token';
+
+  // 从 URL 查询参数获取文档 ID
+  const urlParams = new URLSearchParams(window.location.search);
+  const docId = urlParams.get('id') || 'new';
+
+  async function loadDoc() {
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (!token) {
+      window.location.href = '/auth/login';
+      return;
+    }
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/knowledge/documents/${docId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      let doc: any;
+      if (res.ok) {
+        const result = await res.json();
+        doc = result.data || result;
+      } else if (res.status === 401) {
+        window.location.href = '/auth/login';
+        return;
+      } else {
+        doc = mockDoc();
+      }
+      renderDoc(doc);
+    } catch {
+      renderDoc(mockDoc());
+    }
+  }
+
+  function mockDoc(): any {
+    return {
+      id: docId,
+      title: '员工差旅报销管理办法',
+      kb_name: '公司制度',
+      author: '人力资源部',
+      created_at: '2026-06-15',
+      updated_at: '2026-07-01',
+      version: 'V3.2',
+      tags: ['财务', '报销', '制度'],
+      views: 1280,
+      content: `
+        <h2>一、总则</h2>
+        <p>为规范公司员工差旅报销管理，特制定本办法。适用于公司全体正式员工。</p>
+        <h2>二、差旅审批流程</h2>
+        <ol>
+          <li>出差前填写《出差申请单》，注明出差事由、地点、时间</li>
+          <li>部门负责人审批（3 个工作日内出差由部门经理审批）</li>
+          <li>分管副总审批（3 个工作日以上出差）</li>
+          <li>出差结束后 5 个工作日内提交报销申请</li>
+        </ol>
+        <h2>三、费用标准</h2>
+        <p>交通费、住宿费、餐饮补贴等按照公司《差旅标准表》执行，使用 <code>报销系统</code> 在线提交。</p>
+        <h3>交通费</h3>
+        <ul>
+          <li>飞机：经济舱（管理层可商务舱）</li>
+          <li>火车：高铁二等座（管理层可一等座）</li>
+          <li>市内交通：实报实销，每日上限 200 元</li>
+        </ul>
+      `,
+    };
+  }
+
+  function renderDoc(doc: any) {
+    document.getElementById('doc-content')!.innerHTML = `
+      <div class="doc-header">
+        <h1 class="doc-title">${escapeHtml(doc.title)}</h1>
+        <div class="doc-meta">
+          <span class="badge badge-primary">${escapeHtml(doc.kb_name || '')}</span>
+          <span>版本 ${escapeHtml(doc.version || 'V1.0')}</span>
+          <span>作者：${escapeHtml(doc.author || '未知')}</span>
+          <span>创建于 ${escapeHtml(doc.created_at || '')}</span>
+          <span>更新于 ${escapeHtml(doc.updated_at || '')}</span>
+          <span>浏览 ${doc.views || 0} 次</span>
+          ${doc.tags?.map((t: string) => `<span class="tag">${escapeHtml(t)}</span>`).join('') || ''}
+        </div>
+      </div>
+      <div class="doc-content">${doc.content || '<p>暂无内容</p>'}</div>
+
+      <div class="comment-section">
+        <div class="comment-header">
+          <h3 style="font-size: var(--text-lg);">评论讨论 (${comments.length})</h3>
+        </div>
+        <div class="comment-input-box">
+          <div class="avatar">我</div>
+          <textarea class="form-textarea" id="comment-input" placeholder="写下您的评论..." style="min-height: 60px;"></textarea>
+        </div>
+        <button class="btn btn-primary btn-sm" id="submit-comment">发表评论</button>
+        <div id="comment-list" style="margin-top: var(--space-4);">
+          ${comments.map((c) => renderComment(c)).join('')}
+        </div>
+      </div>`;
+
+    document.getElementById('submit-comment')?.addEventListener('click', submitComment);
+  }
+
+  let comments = [
+    { id: 'c1', author: '王五', content: '这个报销流程很清晰，解决了我的疑问。', time: '2 小时前' },
+    { id: 'c2', author: '赵六', content: '请问住宿费超出标准怎么办？', time: '昨天' },
+  ];
+
+  function renderComment(c: any): string {
+    return `
+      <div class="comment-item">
+        <div class="avatar avatar-sm">${escapeHtml(c.author.charAt(0))}</div>
+        <div class="comment-item-body">
+          <div class="comment-item-author">${escapeHtml(c.author)}</div>
+          <div class="comment-item-content">${escapeHtml(c.content)}</div>
+          <div class="comment-item-time">${escapeHtml(c.time)}</div>
+        </div>
+      </div>`;
+  }
+
+  function submitComment() {
+    const input = document.getElementById('comment-input') as HTMLTextAreaElement;
+    const content = input.value.trim();
+    if (!content) {
+      alert('请输入评论内容');
+      return;
+    }
+    comments.unshift({ id: 'c' + Date.now(), author: '我', content, time: '刚刚' });
+    document.getElementById('comment-list')!.innerHTML = comments.map(renderComment).join('');
+    input.value = '';
+  }
+
+  function renderRelated() {
+    const docs = [
+      { id: 'r1', title: '费用报销操作指南', icon: '📘' },
+      { id: 'r2', title: '差旅标准表', icon: '📊' },
+      { id: 'r3', title: '财务管理制度汇编', icon: '📄' },
+    ];
+    document.getElementById('related-docs')!.innerHTML = docs
+      .map(
+        (d) => `<div class="related-item" data-id="${d.id}"><span>${d.icon}</span> ${escapeHtml(d.title)}</div>`
+      )
+      .join('');
+    document.querySelectorAll('.related-item').forEach((el) => {
+      el.addEventListener('click', () => {
+        window.location.href = `/knowledge/detail?id=${(el as HTMLElement).dataset.id}`;
+      });
+    });
+  }
+
+  function renderVersions() {
+    const versions = [
+      { version: 'V3.2', time: '2026-07-01', author: '张三', note: '新增远程办公章节' },
+      { version: 'V3.1', time: '2026-05-10', author: '李四', note: '调整差旅标准' },
+      { version: 'V3.0', time: '2026-01-15', author: '王五', note: '全面修订' },
+      { version: 'V2.0', time: '2025-06-01', author: '赵六', note: '初版' },
+    ];
+    document.getElementById('version-history')!.innerHTML = versions
+      .map(
+        (v) => `
+      <div class="version-item" data-version="${v.version}">
+        <div class="version-item-header">
+          <span style="font-weight: 500; color: var(--primary);">${v.version}</span>
+          <span class="text-muted" style="font-size: var(--text-xs);">${v.time}</span>
+        </div>
+        <div class="version-item-meta">${escapeHtml(v.note)} · ${escapeHtml(v.author)}</div>
+      </div>`
+      )
+      .join('');
+    document.querySelectorAll('.version-item').forEach((el) => {
+      el.addEventListener('click', () => {
+        alert('查看版本：' + (el as HTMLElement).dataset.version);
+      });
+    });
+  }
+
+  function escapeHtml(s: string): string {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  loadDoc();
+  renderRelated();
+  renderVersions();
+</script>

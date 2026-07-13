@@ -1,0 +1,353 @@
+---
+/**
+ * 运营看板
+ * 统计卡片 + 趋势图表 + 最近活动 + 待办事项
+ */
+import DefaultLayout from '@/layouts/DefaultLayout.astro';
+
+const breadcrumb = [{ label: '系统', href: '/admin' }, { label: '运营看板' }];
+---
+
+<DefaultLayout title="运营看板" breadcrumb={breadcrumb}>
+  <!-- 统计卡片 -->
+  <div class="grid grid-cols-4" style="margin-bottom: var(--space-6);">
+    <div class="card stat-card">
+      <div class="stat-card-header">
+        <span class="text-muted" style="font-size: var(--text-sm);">用户总数</span>
+        <span class="badge badge-success">+12%</span>
+      </div>
+      <div class="stat-card-value" id="stat-users">--</div>
+      <div class="text-muted" style="font-size: var(--text-xs);">本月新增 28 人</div>
+    </div>
+    <div class="card stat-card">
+      <div class="stat-card-header">
+        <span class="text-muted" style="font-size: var(--text-sm);">文档总数</span>
+        <span class="badge badge-success">+8%</span>
+      </div>
+      <div class="stat-card-value" id="stat-docs">--</div>
+      <div class="text-muted" style="font-size: var(--text-xs);">本周新增 45 篇</div>
+    </div>
+    <div class="card stat-card">
+      <div class="stat-card-header">
+        <span class="text-muted" style="font-size: var(--text-sm);">对话次数</span>
+        <span class="badge badge-success">+23%</span>
+      </div>
+      <div class="stat-card-value" id="stat-chats">--</div>
+      <div class="text-muted" style="font-size: var(--text-xs);">今日 1,204 次</div>
+    </div>
+    <div class="card stat-card">
+      <div class="stat-card-header">
+        <span class="text-muted" style="font-size: var(--text-sm);">AI 调用数</span>
+        <span class="badge badge-warning">+5%</span>
+      </div>
+      <div class="stat-card-value" id="stat-calls">--</div>
+      <div class="text-muted" style="font-size: var(--text-xs);">Token 消耗 1.2M</div>
+    </div>
+  </div>
+
+  <!-- 趋势图表 -->
+  <div class="grid grid-cols-2" style="margin-bottom: var(--space-6);">
+    <div class="card">
+      <div class="card-header">
+        <h3>使用趋势（近 7 天）</h3>
+      </div>
+      <canvas id="trend-chart" style="width: 100%; height: 220px;"></canvas>
+    </div>
+    <div class="card">
+      <div class="card-header">
+        <h3>知识库分布</h3>
+      </div>
+      <canvas id="dist-chart" style="width: 100%; height: 220px;"></canvas>
+    </div>
+  </div>
+
+  <!-- 最近活动 + 待办 -->
+  <div class="grid grid-cols-2">
+    <!-- 最近活动 -->
+    <div class="card">
+      <div class="card-header">
+        <h3>最近活动</h3>
+      </div>
+      <div id="activity-list"></div>
+    </div>
+
+    <!-- 待办事项 -->
+    <div class="card">
+      <div class="card-header">
+        <h3>待办事项</h3>
+      </div>
+      <div id="todo-list"></div>
+    </div>
+  </div>
+</DefaultLayout>
+
+<style>
+  .stat-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+  .stat-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .stat-card-value {
+    font-size: var(--text-4xl);
+    font-weight: 600;
+    color: var(--primary);
+  }
+  .activity-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) 0;
+    border-bottom: 1px solid var(--border-light);
+  }
+  .activity-item:last-child {
+    border-bottom: none;
+  }
+  .activity-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: var(--radius);
+    background: var(--primary-bg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    flex-shrink: 0;
+  }
+  .activity-body {
+    flex: 1;
+    min-width: 0;
+  }
+  .activity-text {
+    font-size: var(--text-sm);
+    color: var(--text);
+  }
+  .activity-time {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    margin-top: var(--space-1);
+  }
+  .todo-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) 0;
+    border-bottom: 1px solid var(--border-light);
+  }
+  .todo-item:last-child {
+    border-bottom: none;
+  }
+  .todo-checkbox {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+  }
+  .todo-text {
+    flex: 1;
+    font-size: var(--text-sm);
+    color: var(--text);
+  }
+</style>
+
+<script>
+  const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
+  const TOKEN_KEY = 'ekb_access_token';
+
+  async function loadStats() {
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (!token) {
+      window.location.href = '/auth/login';
+      return;
+    }
+    const setText = (id: string, v: string | number) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = String(v);
+    };
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/stats/overview`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const result = await res.json();
+        const data = result.data || result;
+        setText('stat-users', data.active_users || 256);
+        setText('stat-docs', data.total_documents || 1248);
+        setText('stat-chats', data.total_conversations || 8652);
+        setText('stat-calls', data.ai_calls || 15420);
+      } else if (res.status === 401) {
+        window.location.href = '/auth/login';
+        return;
+      } else {
+        setMockStats(setText);
+      }
+    } catch {
+      setMockStats(setText);
+    }
+  }
+
+  function setMockStats(setText: (id: string, v: string | number) => void) {
+    setText('stat-users', 256);
+    setText('stat-docs', 1248);
+    setText('stat-chats', 8652);
+    setText('stat-calls', 15420);
+  }
+
+  // 趋势图
+  function drawTrendChart() {
+    const canvas = document.getElementById('trend-chart') as HTMLCanvasElement;
+    const ctx = canvas.getContext('2d')!;
+    canvas.width = canvas.offsetWidth * 2;
+    canvas.height = 220 * 2;
+    ctx.scale(2, 2);
+    const w = canvas.offsetWidth;
+    const h = 220;
+
+    const data = [120, 180, 150, 220, 280, 250, 320];
+    const days = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+    const max = Math.max(...data) * 1.2;
+    const pad = 30;
+
+    // 网格线
+    ctx.strokeStyle = '#F0F1F5';
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= 4; i++) {
+      const y = pad + ((h - pad * 2) / 4) * i;
+      ctx.beginPath();
+      ctx.moveTo(pad, y);
+      ctx.lineTo(w - pad, y);
+      ctx.stroke();
+    }
+
+    // 折线
+    ctx.strokeStyle = '#6C5CE7';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    data.forEach((v, i) => {
+      const x = pad + ((w - pad * 2) / (data.length - 1)) * i;
+      const y = h - pad - ((h - pad * 2) * v) / max;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    // 填充
+    ctx.lineTo(w - pad, h - pad);
+    ctx.lineTo(pad, h - pad);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(108, 92, 231, 0.1)';
+    ctx.fill();
+
+    // 数据点 + 标签
+    ctx.fillStyle = '#6C5CE7';
+    data.forEach((v, i) => {
+      const x = pad + ((w - pad * 2) / (data.length - 1)) * i;
+      const y = h - pad - ((h - pad * 2) * v) / max;
+      ctx.beginPath();
+      ctx.arc(x, y, 3, 0, 2 * Math.PI);
+      ctx.fill();
+    });
+
+    // X 轴标签
+    ctx.fillStyle = '#8B8D9F';
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'center';
+    days.forEach((d, i) => {
+      const x = pad + ((w - pad * 2) / (data.length - 1)) * i;
+      ctx.fillText(d, x, h - 10);
+    });
+  }
+
+  // 分布图（柱状）
+  function drawDistChart() {
+    const canvas = document.getElementById('dist-chart') as HTMLCanvasElement;
+    const ctx = canvas.getContext('2d')!;
+    canvas.width = canvas.offsetWidth * 2;
+    canvas.height = 220 * 2;
+    ctx.scale(2, 2);
+    const w = canvas.offsetWidth;
+    const h = 220;
+
+    const data = [
+      { label: '公司制度', value: 128, color: '#6C5CE7' },
+      { label: '产品文档', value: 86, color: '#00B884' },
+      { label: '技术文档', value: 245, color: '#FF9500' },
+      { label: '其他', value: 56, color: '#2196F3' },
+    ];
+    const max = Math.max(...data.map((d) => d.value)) * 1.2;
+    const pad = 30;
+    const barW = (w - pad * 2) / data.length - 20;
+
+    data.forEach((d, i) => {
+      const x = pad + ((w - pad * 2) / data.length) * i + 10;
+      const barH = ((h - pad * 2) * d.value) / max;
+      const y = h - pad - barH;
+
+      ctx.fillStyle = d.color;
+      ctx.beginPath();
+      ctx.roundRect(x, y, barW, barH, [4, 4, 0, 0]);
+      ctx.fill();
+
+      ctx.fillStyle = '#1A1B2E';
+      ctx.font = '11px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(d.label, x + barW / 2, h - 10);
+      ctx.fillText(String(d.value), x + barW / 2, y - 5);
+    });
+  }
+
+  function renderActivities() {
+    const activities = [
+      { icon: '📤', text: '张三上传了文档「API 设计规范」', time: '5 分钟前' },
+      { icon: '💬', text: '李四发起了 AI 对话「报销流程咨询」', time: '20 分钟前' },
+      { icon: '✏️', text: '王五编辑了文档「员工手册」', time: '1 小时前' },
+      { icon: '👤', text: '新用户赵六完成注册', time: '2 小时前' },
+      { icon: '🔍', text: '「年假政策」被搜索 8 次', time: '3 小时前' },
+    ];
+    document.getElementById('activity-list')!.innerHTML = activities
+      .map(
+        (a) => `
+      <div class="activity-item">
+        <div class="activity-icon">${a.icon}</div>
+        <div class="activity-body">
+          <div class="activity-text">${escapeHtml(a.text)}</div>
+          <div class="activity-time">${escapeHtml(a.time)}</div>
+        </div>
+      </div>`
+      )
+      .join('');
+  }
+
+  function renderTodos() {
+    const todos = [
+      { text: '审核 3 篇待发布文档', priority: 'high' },
+      { text: '处理 2 条用户反馈', priority: 'medium' },
+      { text: '更新过期知识库文档', priority: 'medium' },
+      { text: '配置新 LLM 模型', priority: 'low' },
+    ];
+    const colorMap: Record<string, string> = { high: 'var(--danger)', medium: 'var(--warning)', low: 'var(--info)' };
+    document.getElementById('todo-list')!.innerHTML = todos
+      .map(
+        (t) => `
+      <div class="todo-item">
+        <input type="checkbox" class="todo-checkbox" />
+        <span class="todo-text">${escapeHtml(t.text)}</span>
+        <span style="width: 8px; height: 8px; border-radius: 50%; background: ${colorMap[t.priority]};"></span>
+      </div>`
+      )
+      .join('');
+  }
+
+  function escapeHtml(s: string): string {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  loadStats();
+  drawTrendChart();
+  drawDistChart();
+  renderActivities();
+  renderTodos();
+</script>

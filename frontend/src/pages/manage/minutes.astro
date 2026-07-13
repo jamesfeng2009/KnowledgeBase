@@ -1,0 +1,341 @@
+---
+/**
+ * 会议纪要页面
+ * 会议纪要列表 + 创建纪要 + AI 自动整理纪要
+ */
+import DefaultLayout from '@/layouts/DefaultLayout.astro';
+
+const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '会议纪要' }];
+---
+
+<DefaultLayout title="会议纪要" breadcrumb={breadcrumb}>
+  <div class="page-header">
+    <h1 class="page-title">会议纪要</h1>
+    <div style="display: flex; gap: var(--space-3);">
+      <button class="btn btn-outline" id="ai-summary-btn">🤖 AI 整理纪要</button>
+      <button class="btn btn-primary" id="create-btn">＋ 创建纪要</button>
+    </div>
+  </div>
+
+  <!-- 纪要列表 -->
+  <div id="minutes-list">
+    <div class="loading-state">加载中...</div>
+  </div>
+
+  <!-- 创建纪要弹窗 -->
+  <div class="modal-overlay" id="create-modal" style="display: none;">
+    <div class="modal" style="max-width: 640px;">
+      <div class="modal-header">
+        <h3>创建会议纪要</h3>
+        <button class="btn btn-ghost btn-sm" id="close-modal">✕</button>
+      </div>
+      <form id="minutes-form">
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">会议主题 *</label>
+            <input type="text" class="form-input" name="title" required placeholder="如：Q3 产品评审会" />
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4);">
+            <div class="form-group">
+              <label class="form-label">会议日期</label>
+              <input type="date" class="form-input" name="date" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">会议地点</label>
+              <input type="text" class="form-input" name="location" placeholder="会议室或线上" />
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">参会人员</label>
+            <input type="text" class="form-input" name="attendees" placeholder="逗号分隔" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">会议内容</label>
+            <textarea class="form-textarea" name="content" placeholder="记录会议讨论内容..." style="min-height: 150px;"></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label">上传会议录音（AI 自动转写）</label>
+            <div class="upload-zone-mini" id="audio-zone">
+              <span class="text-muted">拖拽录音文件或点击上传（支持 mp3, wav, m4a）</span>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-ghost" id="cancel-btn">取消</button>
+          <button type="submit" class="btn btn-primary">创建</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</DefaultLayout>
+
+<style>
+  .minutes-item {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: var(--space-5);
+    margin-bottom: var(--space-4);
+    transition: all var(--transition-fast);
+    cursor: pointer;
+  }
+  .minutes-item:hover {
+    border-color: var(--primary);
+    box-shadow: var(--shadow-md);
+  }
+  .minutes-item-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: var(--space-3);
+  }
+  .minutes-item-title {
+    font-size: var(--text-lg);
+    font-weight: 600;
+    color: var(--text);
+  }
+  .minutes-item-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-4);
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    margin-bottom: var(--space-3);
+  }
+  .minutes-item-content {
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    line-height: var(--lh-relaxed);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+  .minutes-item-footer {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    margin-top: var(--space-3);
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--border-light);
+  }
+  .loading-state {
+    text-align: center;
+    padding: var(--space-8);
+    color: var(--text-muted);
+  }
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+  .modal {
+    background: var(--surface);
+    border-radius: var(--radius-lg);
+    width: 100%;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: var(--shadow-xl);
+  }
+  .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-5);
+    border-bottom: 1px solid var(--border);
+  }
+  .modal-body {
+    padding: var(--space-5);
+  }
+  .modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-3);
+    padding: var(--space-5);
+    border-top: 1px solid var(--border);
+  }
+  .upload-zone-mini {
+    border: 2px dashed var(--border);
+    border-radius: var(--radius);
+    padding: var(--space-6);
+    text-align: center;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+  .upload-zone-mini:hover {
+    border-color: var(--primary);
+    background: var(--primary-bg);
+  }
+</style>
+
+<script>
+  const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
+  const TOKEN_KEY = 'ekb_access_token';
+
+  function mockMinutes() {
+    return [
+      {
+        id: 'm1',
+        title: 'Q3 产品评审会',
+        date: '2026-07-05',
+        location: '一号会议室',
+        attendees: '张三、李四、王五',
+        content: '本次会议讨论了 Q3 产品迭代计划，确定了核心功能优先级和排期...',
+        has_recording: true,
+        ai_summarized: true,
+      },
+      {
+        id: 'm2',
+        title: '技术架构评审',
+        date: '2026-07-03',
+        location: '线上会议',
+        attendees: '技术团队全体',
+        content: '评审微服务架构改造方案，讨论服务拆分粒度和数据一致性保障策略...',
+        has_recording: false,
+        ai_summarized: false,
+      },
+      {
+        id: 'm3',
+        title: '月度运营复盘',
+        date: '2026-06-30',
+        location: '二号会议室',
+        attendees: '运营团队',
+        content: '复盘 6 月运营数据，分析用户增长趋势和内容质量提升方案...',
+        has_recording: true,
+        ai_summarized: true,
+      },
+    ];
+  }
+
+  async function loadMinutes() {
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (!token) {
+      window.location.href = '/auth/login';
+      return;
+    }
+    let list: any[] = [];
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/manage/minutes`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const result = await res.json();
+        list = result.data?.items || result.data || [];
+      } else if (res.status === 401) {
+        window.location.href = '/auth/login';
+        return;
+      }
+    } catch {
+      // ignore
+    }
+    if (list.length === 0) list = mockMinutes();
+    renderList(list);
+  }
+
+  function renderList(list: any[]) {
+    const container = document.getElementById('minutes-list')!;
+    if (list.length === 0) {
+      container.innerHTML = '<div class="loading-state">暂无会议纪要</div>';
+      return;
+    }
+    container.innerHTML = list
+      .map(
+        (m) => `
+      <div class="minutes-item" data-id="${m.id}">
+        <div class="minutes-item-header">
+          <div class="minutes-item-title">${escapeHtml(m.title)}</div>
+          <div style="display: flex; gap: var(--space-2);">
+            ${m.has_recording ? '<span class="badge badge-primary">🎤 有录音</span>' : ''}
+            ${m.ai_summarized ? '<span class="badge badge-success">🤖 AI 整理</span>' : ''}
+          </div>
+        </div>
+        <div class="minutes-item-meta">
+          <span>📅 ${escapeHtml(m.date || '')}</span>
+          <span>📍 ${escapeHtml(m.location || '')}</span>
+          <span>👥 ${escapeHtml(m.attendees || '')}</span>
+        </div>
+        <p class="minutes-item-content">${escapeHtml(m.content || '')}</p>
+        <div class="minutes-item-footer">
+          <button class="btn btn-ghost btn-sm" data-action="view" data-id="${m.id}">查看详情</button>
+          ${!m.ai_summarized ? `<button class="btn btn-outline btn-sm" data-action="ai" data-id="${m.id}">AI 整理</button>` : ''}
+          <button class="btn btn-ghost btn-sm" data-action="edit" data-id="${m.id}">编辑</button>
+        </div>
+      </div>`
+      )
+      .join('');
+
+    container.querySelectorAll('button[data-action]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const action = (btn as HTMLElement).dataset.action!;
+        const id = (btn as HTMLElement).dataset.id!;
+        if (action === 'view') alert('查看纪要详情：' + id);
+        else if (action === 'ai') aiSummarize(id);
+        else if (action === 'edit') alert('编辑纪要：' + id);
+      });
+    });
+  }
+
+  async function aiSummarize(id: string) {
+    const token = localStorage.getItem(TOKEN_KEY);
+    alert('AI 正在整理会议纪要，请稍候...');
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/manage/minutes/${id}/ai-summarize`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        alert('AI 整理完成');
+        loadMinutes();
+      } else {
+        alert('AI 整理失败');
+      }
+    } catch {
+      alert('网络异常');
+    }
+  }
+
+  function escapeHtml(s: string): string {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  // 弹窗
+  const modal = document.getElementById('create-modal')!;
+  document.getElementById('create-btn')?.addEventListener('click', () => (modal.style.display = 'flex'));
+  document.getElementById('ai-summary-btn')?.addEventListener('click', () => {
+    alert('请选择需要 AI 整理的纪要，点击对应纪要的「AI 整理」按钮');
+  });
+  document.getElementById('close-modal')?.addEventListener('click', () => (modal.style.display = 'none'));
+  document.getElementById('cancel-btn')?.addEventListener('click', () => (modal.style.display = 'none'));
+
+  document.getElementById('minutes-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.target as HTMLFormElement;
+    const data = Object.fromEntries(new FormData(form));
+    const token = localStorage.getItem(TOKEN_KEY);
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/manage/minutes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(data),
+      });
+      if (res.ok) {
+        alert('纪要创建成功');
+        modal.style.display = 'none';
+        form.reset();
+        loadMinutes();
+      } else {
+        alert('创建失败');
+      }
+    } catch {
+      alert('网络异常');
+    }
+  });
+
+  loadMinutes();
+</script>

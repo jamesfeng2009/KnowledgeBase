@@ -1,0 +1,42 @@
+---
+/**
+ * FullscreenLayout.astro - 全屏布局
+ * 用于登录、SSO、预览等无侧边栏页面，仅包含内容区
+ */
+import '@/styles/global.css';
+
+interface Props {
+  title?: string;
+  description?: string;
+}
+
+const {
+  title = '企业知识库',
+  description = '基于 Agentic RAG 的智能知识管理平台',
+} = Astro.props;
+
+const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
+---
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content={description} />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>{title} · {appName}</title>
+  </head>
+  <body>
+    <main class="fullscreen-main">
+      <slot />
+    </main>
+  </body>
+</html>
+
+<style>
+  .fullscreen-main {
+    min-height: 100vh;
+    width: 100%;
+  }
+</style>

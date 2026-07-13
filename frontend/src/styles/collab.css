@@ -1,0 +1,360 @@
+/* ============================================
+   协同编辑器专用样式
+   依赖 global.css 中的 CSS 变量
+   ============================================ */
+
+/* === 编辑器容器 === */
+.collab-editor {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+
+  /* 代码块暗色主题色板（Catppuccin Mocha） */
+  --code-bg: #1e1e2e;
+  --code-text: #cdd6f4;
+  --code-keyword: #cba6f7;
+  --code-string: #a6e3a1;
+  --code-comment: #7f849c;
+  --code-function: #89b4fa;
+  --code-number: #fab387;
+  --code-attr: #f9e2af;
+}
+
+/* === 格式化工具栏 === */
+.collab-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.tool-btn {
+  min-width: 30px;
+  height: 30px;
+  padding: 0 var(--space-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.tool-btn:hover {
+  background: var(--primary-bg);
+  border-color: var(--primary-light);
+  color: var(--primary);
+}
+
+.tool-btn.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--text-white);
+}
+
+.tool-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--border);
+  margin: 0 var(--space-1);
+  flex-shrink: 0;
+}
+
+/* === 连接状态指示器 === */
+.collab-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-light);
+}
+
+.collab-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  flex-shrink: 0;
+  animation: status-pulse 2s infinite;
+}
+
+@keyframes status-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(0, 0, 0, 0.12);
+  }
+  70% {
+    box-shadow: 0 0 0 6px rgba(0, 0, 0, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(0, 0, 0, 0);
+  }
+}
+
+/* === ProseMirror 编辑区 === */
+.collab-content {
+  padding: var(--space-6) var(--space-8);
+  min-height: 400px;
+  outline: none;
+  color: var(--text);
+  font-size: var(--text-base);
+  line-height: var(--lh-relaxed);
+}
+
+.collab-content > * + * {
+  margin-top: var(--space-3);
+}
+
+/* 占位符 */
+.collab-content p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: var(--text-muted);
+  pointer-events: none;
+  height: 0;
+}
+
+/* 段落 */
+.collab-content p {
+  margin: 0;
+}
+
+/* 标题 */
+.collab-content h1 {
+  font-size: var(--text-4xl);
+  font-weight: 700;
+  margin-top: var(--space-6);
+  line-height: var(--lh-tight);
+}
+
+.collab-content h2 {
+  font-size: var(--text-3xl);
+  font-weight: 600;
+  margin-top: var(--space-5);
+  line-height: var(--lh-tight);
+}
+
+.collab-content h3 {
+  font-size: var(--text-2xl);
+  font-weight: 600;
+  margin-top: var(--space-4);
+  line-height: var(--lh-tight);
+}
+
+/* 列表 */
+.collab-content ul,
+.collab-content ol {
+  padding-left: var(--space-6);
+}
+
+.collab-content ul {
+  list-style: disc;
+}
+
+.collab-content ol {
+  list-style: decimal;
+}
+
+.collab-content li {
+  margin: var(--space-1) 0;
+}
+
+.collab-content li > p {
+  margin: 0;
+}
+
+/* 引用块 */
+.collab-content blockquote {
+  padding: var(--space-2) var(--space-4);
+  border-left: 3px solid var(--primary);
+  background: var(--primary-bg);
+  color: var(--text-secondary);
+  font-style: italic;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+/* 行内代码 */
+.collab-content code {
+  background: var(--surface-muted);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-xs);
+  padding: 1px var(--space-1);
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  color: var(--primary);
+}
+
+/* 代码块（暗色主题） */
+.collab-content pre {
+  background: var(--code-bg);
+  color: var(--code-text);
+  border-radius: var(--radius);
+  padding: var(--space-4);
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: var(--lh-relaxed);
+}
+
+.collab-content pre code {
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font-size: inherit;
+}
+
+.collab-content pre code .hljs-keyword {
+  color: var(--code-keyword);
+}
+
+.collab-content pre code .hljs-string {
+  color: var(--code-string);
+}
+
+.collab-content pre code .hljs-comment {
+  color: var(--code-comment);
+  font-style: italic;
+}
+
+.collab-content pre code .hljs-function,
+.collab-content pre code .hljs-title {
+  color: var(--code-function);
+}
+
+.collab-content pre code .hljs-number,
+.collab-content pre code .hljs-literal {
+  color: var(--code-number);
+}
+
+.collab-content pre code .hljs-attr,
+.collab-content pre code .hljs-attribute {
+  color: var(--code-attr);
+}
+
+/* 链接 */
+.collab-content a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.collab-content a:hover {
+  color: var(--primary-dark);
+}
+
+/* 高亮标记 */
+.collab-content mark {
+  background: var(--warning-bg);
+  color: var(--warning);
+  border-radius: var(--radius-xs);
+  padding: 1px var(--space-1);
+}
+
+/* 图片 */
+.collab-content img {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius);
+  margin: var(--space-2) 0;
+}
+
+/* 表格 */
+.collab-content table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: var(--space-3) 0;
+  overflow: hidden;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+
+.collab-content th,
+.collab-content td {
+  border: 1px solid var(--border);
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+  vertical-align: top;
+}
+
+.collab-content th {
+  background: var(--surface-muted);
+  font-weight: 600;
+}
+
+.collab-content .selectedCell {
+  background: var(--primary-bg);
+}
+
+/* === 协作者光标 === */
+.ProseMirror-collab-caret {
+  border-left: 2px solid var(--cursor-color, var(--primary));
+  position: relative;
+  margin-left: -1px;
+  padding-left: 1px;
+}
+
+.ProseMirror-collab-caret-label {
+  position: absolute;
+  top: -1.4em;
+  left: -2px;
+  background: var(--cursor-color, var(--primary));
+  color: var(--text-white);
+  font-size: 11px;
+  line-height: 1;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-xs) var(--radius-xs) var(--radius-xs) 0;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* === 打字动画 === */
+.typing-indicator {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) 0;
+}
+
+.typing-indicator span {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--text-muted);
+  animation: typing 1.4s infinite ease-in-out both;
+}
+
+.typing-indicator span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.typing-indicator span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes typing {
+  0%,
+  80%,
+  100% {
+    transform: scale(0.6);
+    opacity: 0.4;
+  }
+  40% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}

@@ -1,0 +1,330 @@
+---
+/**
+ * 文档上传页面
+ * 拖拽上传区 + 批量上传 + 上传进度 + 文档分类和标签
+ */
+import DefaultLayout from '@/layouts/DefaultLayout.astro';
+
+const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上传' }];
+---
+
+<DefaultLayout title="文档上传" breadcrumb={breadcrumb}>
+  <div class="page-header">
+    <h1 class="page-title">文档上传</h1>
+  </div>
+
+  <div class="upload-layout">
+    <!-- 左侧：上传区 -->
+    <div class="upload-main">
+      <!-- 拖拽上传区 -->
+      <div class="upload-zone" id="upload-zone">
+        <div class="upload-zone-icon">📤</div>
+        <h3>拖拽文件到此处，或 <span style="color: var(--primary);">点击选择文件</span></h3>
+        <p class="text-muted">支持 PDF、Word、Excel、PPT、Markdown、TXT 等格式，单个文件最大 100MB</p>
+        <input type="file" id="file-input" multiple style="display: none;" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.md,.txt" />
+      </div>
+
+      <!-- 上传列表 -->
+      <div class="card" id="upload-list-card" style="display: none;">
+        <div class="card-header">
+          <h3>上传列表</h3>
+          <button class="btn btn-ghost btn-sm" id="clear-list">清空</button>
+        </div>
+        <div id="upload-list"></div>
+      </div>
+    </div>
+
+    <!-- 右侧：上传设置 -->
+    <aside class="upload-settings">
+      <div class="card">
+        <div class="card-header"><h3>上传设置</h3></div>
+        <div class="form-group">
+          <label class="form-label">目标知识库 *</label>
+          <select class="form-input" id="target-kb">
+            <option value="">请选择知识库</option>
+            <option value="kb-1">公司制度</option>
+            <option value="kb-2">产品文档</option>
+            <option value="kb-3">技术文档</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">文档分类</label>
+          <select class="form-input" id="doc-category">
+            <option value="">不分类</option>
+            <option value="policy">制度规范</option>
+            <option value="guide">操作指南</option>
+            <option value="reference">参考资料</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">标签（逗号分隔）</label>
+          <input type="text" class="form-input" id="doc-tags" placeholder="如：人事, 财务, 流程" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">解析选项</label>
+          <label style="display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm); margin-bottom: var(--space-2);">
+            <input type="checkbox" checked /> 自动 OCR 识别图片文字
+          </label>
+          <label style="display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm); margin-bottom: var(--space-2);">
+            <input type="checkbox" checked /> 自动向量化入库
+          </label>
+          <label style="display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm);">
+            <input type="checkbox" /> 提取知识图谱实体
+          </label>
+        </div>
+      </div>
+    </aside>
+  </div>
+</DefaultLayout>
+
+<style>
+  .upload-layout {
+    display: grid;
+    grid-template-columns: 1fr 320px;
+    gap: var(--space-5);
+  }
+  .upload-zone {
+    border: 2px dashed var(--border-dark);
+    border-radius: var(--radius-lg);
+    padding: var(--space-12);
+    text-align: center;
+    cursor: pointer;
+    transition: all var(--transition);
+    background: var(--surface);
+  }
+  .upload-zone:hover,
+  .upload-zone.dragover {
+    border-color: var(--primary);
+    background: var(--primary-bg);
+  }
+  .upload-zone-icon {
+    font-size: 48px;
+    margin-bottom: var(--space-4);
+  }
+  .upload-zone h3 {
+    font-size: var(--text-lg);
+    margin-bottom: var(--space-2);
+  }
+  .upload-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: var(--space-2);
+  }
+  .upload-item-icon {
+    font-size: 24px;
+  }
+  .upload-item-body {
+    flex: 1;
+    min-width: 0;
+  }
+  .upload-item-name {
+    font-size: var(--text-sm);
+    font-weight: 500;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .upload-item-meta {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    margin-top: var(--space-1);
+  }
+  .progress-bar {
+    height: 4px;
+    background: var(--surface-muted);
+    border-radius: var(--radius-full);
+    overflow: hidden;
+    margin-top: var(--space-2);
+  }
+  .progress-bar-fill {
+    height: 100%;
+    background: var(--primary);
+    border-radius: var(--radius-full);
+    transition: width var(--transition);
+  }
+  .progress-bar-fill.success {
+    background: var(--success);
+  }
+  .progress-bar-fill.error {
+    background: var(--danger);
+  }
+  @media (max-width: 1024px) {
+    .upload-layout {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+
+<script>
+  const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
+  const TOKEN_KEY = 'ekb_access_token';
+
+  interface UploadItem {
+    file: File;
+    progress: number;
+    status: 'pending' | 'uploading' | 'success' | 'error';
+  }
+
+  let uploadItems: UploadItem[] = [];
+  const fileIconMap: Record<string, string> = {
+    pdf: '📄', doc: '📘', docx: '📘', xls: '📊', xlsx: '📊',
+    ppt: '📙', pptx: '📙', md: '📝', txt: '📃',
+  };
+
+  function getFileIcon(name: string): string {
+    const ext = name.split('.').pop()?.toLowerCase() || '';
+    return fileIconMap[ext] || '📄';
+  }
+
+  function formatSize(bytes: number): string {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+  }
+
+  function addFiles(files: FileList | File[]) {
+    Array.from(files).forEach((file) => {
+      uploadItems.push({ file, progress: 0, status: 'pending' });
+    });
+    renderList();
+    // 自动开始上传
+    uploadItems.filter((i) => i.status === 'pending').forEach(uploadFile);
+  }
+
+  async function uploadFile(item: UploadItem) {
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (!token) {
+      window.location.href = '/auth/login';
+      return;
+    }
+    const kbId = (document.getElementById('target-kb') as HTMLSelectElement).value;
+    if (!kbId) {
+      alert('请先选择目标知识库');
+      return;
+    }
+
+    item.status = 'uploading';
+    renderList();
+
+    const formData = new FormData();
+    formData.append('file', item.file);
+    formData.append('kb_id', kbId);
+
+    try {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `${API_BASE}/api/v1/knowledge/documents/upload`);
+      xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          item.progress = Math.round((e.loaded / e.total) * 100);
+          renderList();
+        }
+      };
+
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          item.status = 'success';
+          item.progress = 100;
+        } else {
+          item.status = 'error';
+        }
+        renderList();
+      };
+
+      xhr.onerror = () => {
+        item.status = 'error';
+        renderList();
+      };
+
+      xhr.send(formData);
+    } catch {
+      item.status = 'error';
+      renderList();
+    }
+  }
+
+  function renderList() {
+    const card = document.getElementById('upload-list-card')!;
+    const list = document.getElementById('upload-list')!;
+
+    if (uploadItems.length === 0) {
+      card.style.display = 'none';
+      return;
+    }
+    card.style.display = 'block';
+
+    const statusMap: Record<string, { label: string; badge: string }> = {
+      pending: { label: '等待中', badge: 'badge-warning' },
+      uploading: { label: '上传中', badge: 'badge-primary' },
+      success: { label: '成功', badge: 'badge-success' },
+      error: { label: '失败', badge: 'badge-danger' },
+    };
+
+    list.innerHTML = uploadItems
+      .map(
+        (item, i) => `
+      <div class="upload-item">
+        <span class="upload-item-icon">${getFileIcon(item.file.name)}</span>
+        <div class="upload-item-body">
+          <div class="upload-item-name">${escapeHtml(item.file.name)}</div>
+          <div class="upload-item-meta">
+            <span>${formatSize(item.file.size)}</span>
+            <span class="badge ${statusMap[item.status].badge}">${statusMap[item.status].label}</span>
+          </div>
+          <div class="progress-bar">
+            <div class="progress-bar-fill ${item.status === 'success' ? 'success' : item.status === 'error' ? 'error' : ''}" style="width: ${item.progress}%;"></div>
+          </div>
+        </div>
+        <button class="btn btn-ghost btn-sm" data-index="${i}">✕</button>
+      </div>`
+      )
+      .join('');
+
+    list.querySelectorAll('button[data-index]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const idx = parseInt((btn as HTMLElement).dataset.index!);
+        uploadItems.splice(idx, 1);
+        renderList();
+      });
+    });
+  }
+
+  function escapeHtml(s: string): string {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  // 拖拽上传
+  const zone = document.getElementById('upload-zone')!;
+  const fileInput = document.getElementById('file-input') as HTMLInputElement;
+
+  zone.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files) addFiles(fileInput.files);
+    fileInput.value = '';
+  });
+
+  zone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    zone.classList.add('dragover');
+  });
+  zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+  zone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    zone.classList.remove('dragover');
+    if (e.dataTransfer?.files) addFiles(e.dataTransfer.files);
+  });
+
+  document.getElementById('clear-list')?.addEventListener('click', () => {
+    uploadItems = [];
+    renderList();
+  });
+</script>

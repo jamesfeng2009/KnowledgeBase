@@ -1,0 +1,285 @@
+---
+/**
+ * Agent 管理页面
+ * Agent 列表卡片 + Agent 详情和调用 + 创建自定义 Agent
+ */
+import DefaultLayout from '@/layouts/DefaultLayout.astro';
+
+const breadcrumb = [
+  { label: 'AI 能力', href: '/chat' },
+  { label: 'Agent 管理' },
+];
+---
+
+<DefaultLayout title="Agent 管理" breadcrumb={breadcrumb}>
+  <div class="page-header">
+    <h1 class="page-title">Agent 管理</h1>
+    <button class="btn btn-primary" id="create-agent-btn">＋ 创建自定义 Agent</button>
+  </div>
+
+  <!-- 内置 Agent -->
+  <h2 style="font-size: var(--text-lg); margin-bottom: var(--space-4);">内置 Agent</h2>
+  <div class="grid grid-cols-3" id="builtin-agents" style="margin-bottom: var(--space-8);">
+    <div class="loading-state">加载中...</div>
+  </div>
+
+  <!-- 自定义 Agent -->
+  <h2 style="font-size: var(--text-lg); margin-bottom: var(--space-4);">自定义 Agent</h2>
+  <div class="grid grid-cols-3" id="custom-agents">
+    <div class="loading-state">加载中...</div>
+  </div>
+
+  <!-- 创建 Agent 弹窗 -->
+  <div class="modal-overlay" id="create-modal" style="display: none;">
+    <div class="modal" style="max-width: 560px;">
+      <div class="modal-header">
+        <h3>创建自定义 Agent</h3>
+        <button class="btn btn-ghost btn-sm" id="close-modal">✕</button>
+      </div>
+      <form id="agent-form">
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">Agent 名称</label>
+            <input type="text" class="form-input" name="name" placeholder="如：合同审查助手" required />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Agent 描述</label>
+            <textarea class="form-textarea" name="description" placeholder="描述这个 Agent 的用途和能力"></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label">系统提示词（Prompt）</label>
+            <textarea class="form-textarea" name="system_prompt" placeholder="你是一个...的助手，你的任务是..." style="min-height: 120px;"></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label">关联知识库</label>
+            <select class="form-input" name="kb_id">
+              <option value="">不关联</option>
+              <option value="kb-1">公司制度知识库</option>
+              <option value="kb-2">产品文档知识库</option>
+              <option value="kb-3">技术文档知识库</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">温度参数</label>
+            <input type="range" min="0" max="1" step="0.1" value="0.7" name="temperature" id="temp-range" style="width: 100%;" />
+            <span id="temp-value" class="text-muted">0.7</span>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-ghost" id="cancel-btn">取消</button>
+          <button type="submit" class="btn btn-primary">创建</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</DefaultLayout>
+
+<style>
+  .loading-state {
+    text-align: center;
+    padding: var(--space-8);
+    color: var(--text-muted);
+  }
+  .agent-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    cursor: pointer;
+  }
+  .agent-card-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+  }
+  .agent-card-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: var(--radius-lg);
+    background: var(--primary-bg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+  }
+  .agent-card-title {
+    font-size: var(--text-lg);
+    font-weight: 600;
+    color: var(--text);
+  }
+  .agent-card-desc {
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    line-height: var(--lh-relaxed);
+    flex: 1;
+  }
+  .agent-card-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--border);
+  }
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+  .modal {
+    background: var(--surface);
+    border-radius: var(--radius-lg);
+    width: 100%;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: var(--shadow-xl);
+  }
+  .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-5);
+    border-bottom: 1px solid var(--border);
+  }
+  .modal-body {
+    padding: var(--space-5);
+  }
+  .modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-3);
+    padding: var(--space-5);
+    border-top: 1px solid var(--border);
+  }
+</style>
+
+<script>
+  const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
+  const TOKEN_KEY = 'ekb_access_token';
+
+  const builtinAgents = [
+    { id: 'qa', name: '问答 Agent', icon: '💬', desc: '基于知识库的智能问答，支持引用溯源，适用于知识检索和事实问答场景。', tag: '内置' },
+    { id: 'workflow', name: '工作流 Agent', icon: '🔄', desc: '多步骤推理与工具编排，可拆解复杂任务并依次调用工具完成。', tag: '内置' },
+    { id: 'action', name: '动作 Agent', icon: '⚡', desc: '可执行实际操作，如创建工单、发送通知、更新记录等。', tag: '内置' },
+  ];
+
+  function renderAgentCard(agent: any, builtin = false): string {
+    return `
+      <div class="card agent-card" data-id="${agent.id}">
+        <div class="agent-card-header">
+          <div class="agent-card-icon">${agent.icon || '🤖'}</div>
+          <span class="badge ${builtin ? 'badge-primary' : 'badge-success'}">${agent.tag || '自定义'}</span>
+        </div>
+        <div class="agent-card-title">${escapeHtml(agent.name)}</div>
+        <p class="agent-card-desc">${escapeHtml(agent.desc || '')}</p>
+        <div class="agent-card-footer">
+          <span class="text-muted" style="font-size: var(--text-xs);">调用 ${agent.call_count || 0} 次</span>
+          <button class="btn btn-primary btn-sm use-agent-btn">使用</button>
+        </div>
+      </div>`;
+  }
+
+  function renderBuiltin() {
+    document.getElementById('builtin-agents')!.innerHTML = builtinAgents
+      .map((a) => renderAgentCard(a, true))
+      .join('');
+    bindUseAgent();
+  }
+
+  async function loadCustom() {
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (!token) {
+      window.location.href = '/auth/login';
+      return;
+    }
+    const container = document.getElementById('custom-agents')!;
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/chat/agents`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      let agents: any[] = [];
+      if (res.ok) {
+        const result = await res.json();
+        agents = result.data?.items || result.data || [];
+      }
+      if (agents.length === 0) {
+        container.innerHTML = `
+          <div style="grid-column: 1 / -1;" class="empty-state">
+            <div style="font-size: 36px; margin-bottom: var(--space-3);">🤖</div>
+            <p class="text-muted">还没有自定义 Agent，点击「创建自定义 Agent」开始</p>
+          </div>`;
+      } else {
+        container.innerHTML = agents.map((a) => renderAgentCard(a, false)).join('');
+        bindUseAgent();
+      }
+    } catch {
+      container.innerHTML = `
+        <div style="grid-column: 1 / -1;" class="empty-state">
+          <p class="text-muted">加载失败，请检查网络</p>
+        </div>`;
+    }
+  }
+
+  function bindUseAgent() {
+    document.querySelectorAll('.use-agent-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const card = (btn as HTMLElement).closest('.agent-card') as HTMLElement;
+        const id = card.dataset.id;
+        window.location.href = `/chat?agent=${id}`;
+      });
+    });
+  }
+
+  function escapeHtml(s: string): string {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  // 弹窗逻辑
+  const modal = document.getElementById('create-modal')!;
+  document.getElementById('create-agent-btn')?.addEventListener('click', () => {
+    modal.style.display = 'flex';
+  });
+  document.getElementById('close-modal')?.addEventListener('click', () => (modal.style.display = 'none'));
+  document.getElementById('cancel-btn')?.addEventListener('click', () => (modal.style.display = 'none'));
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) modal.style.display = 'none';
+  });
+
+  // 温度滑块
+  const tempRange = document.getElementById('temp-range') as HTMLInputElement;
+  tempRange?.addEventListener('input', () => {
+    document.getElementById('temp-value')!.textContent = tempRange.value;
+  });
+
+  // 提交创建
+  document.getElementById('agent-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.target as HTMLFormElement;
+    const data = Object.fromEntries(new FormData(form));
+    const token = localStorage.getItem(TOKEN_KEY);
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/chat/agents`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(data),
+      });
+      if (res.ok) {
+        alert('Agent 创建成功');
+        modal.style.display = 'none';
+        form.reset();
+        loadCustom();
+      } else {
+        const result = await res.json();
+        alert(result.detail || result.message || '创建失败');
+      }
+    } catch {
+      alert('网络异常，请稍后重试');
+    }
+  });
+
+  renderBuiltin();
+  loadCustom();
+</script>

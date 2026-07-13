@@ -1,0 +1,146 @@
+"""
+Repository 基类 — 单一职责：提供泛型 CRUD 数据访问。
+
+遵循开闭原则：子类 Repository 继承 BaseRepository 即可获得标准 CRUD 能力，
+通过扩展添加领域专属查询方法，无需修改基类。
+
+遵循单一职责：BaseRepository 只负责通用数据访问（增删改查 + 软删除 + 计数），
+不包含任何业务逻辑。
+
+软删除策略：
+- 所有查询自动过滤 deleted_at IS NULL（仅当模型支持软删除时）。
+- soft_delete 方法将 deleted_at 设为当前时间，不物理删除记录。
+- 不支持软删除的模型（如 Message、Feedback）调用 soft_delete 返回 False。
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import Generic, TypeVar
+from uuid import UUID
+
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.base import Base
+
+# 泛型类型变量，绑定到 SQLAlchemy DeclarativeBase
+ModelT = TypeVar("ModelT", bound=Base)
+
+
+class BaseRepository(Generic[ModelT]):
+    """泛型仓储基类 — 提供标准 CRUD 操作。
+
+    使用方式（子类示例）：
+
+        class UserRepository(BaseRepository[User]):
+            def __init__(self, session: AsyncSession):
+                super().__init__(User, session)
+
+            async def get_by_email(self, email: str) -> User | None:
+                ...
+
+    所有查询方法自动排除已软删除的记录（deleted_at IS NULL）。
+    """
+
+    def __init__(self, model: type[ModelT], session: AsyncSession) -> None:
+        """初始化仓储。
+
+        Args:
+            model: ORM 模型类（如 User、Document）。
+            session: 异步数据库会话，由依赖注入 get_db_session 提供。
+        """
+        self.model: type[ModelT] = model
+        self.session: AsyncSession = session
+
+    # ------------------------------------------------------------------
+    # 内部工具
+    # ------------------------------------------------------------------
+
+    def _apply_soft_delete_filter(self, stmt):
+        """为 SELECT 语句追加软删除过滤条件。
+
+        仅当模型定义了 deleted_at 列（即继承了 SoftDeleteMixin）时生效，
+        否则原样返回语句，保证对非软删除模型（Message、Feedback 等）的兼容。
+        """
+        if hasattr(self.model, "deleted_at"):
+            return stmt.where(self.model.deleted_at.is_(None))
+        return stmt
+
+    # ------------------------------------------------------------------
+    # 标准 CRUD
+    # ------------------------------------------------------------------
+
+    async def get_by_id(self, id: UUID) -> ModelT | None:
+        """根据主键查询单条记录（排除已软删除）。"""
+        stmt = select(self.model).where(self.model.id == id)
+        stmt = self._apply_soft_delete_filter(stmt)
+        result = await self.session.execute(stmt)
+        return result.scalars().first()
+
+    async def get_all(self, skip: int = 0, limit: int = 20) -> list[ModelT]:
+        """分页查询全部记录（排除已软删除）。
+
+        Args:
+            skip: 跳过的记录数（OFFSET）。
+            limit: 返回的最大记录数（LIMIT）。
+        """
+        stmt = select(self.model)
+        stmt = self._apply_soft_delete_filter(stmt)
+        stmt = stmt.offset(skip).limit(limit)
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def create(self, **kwargs) -> ModelT:
+        """创建一条新记录。
+
+        使用 flush 将 INSERT 发送到数据库（不提交），
+        随后 refresh 加载服务端生成的默认值（如 created_at、updated_at）。
+        事务提交由 get_db_session 依赖统一处理。
+        """
+        instance = self.model(**kwargs)
+        self.session.add(instance)
+        await self.session.flush()
+        await self.session.refresh(instance)
+        return instance
+
+    async def update(self, id: UUID, **kwargs) -> ModelT | None:
+        """根据主键更新记录（排除已软删除）。
+
+        采用"先查询再修改"策略：
+        - 确保记录存在且未被软删除；
+        - 利用 SQLAlchemy 会话的变更跟踪自动生成 UPDATE 语句；
+        - 记录不存在时返回 None。
+        """
+        instance = await self.get_by_id(id)
+        if instance is None:
+            return None
+        for key, value in kwargs.items():
+            setattr(instance, key, value)
+        await self.session.flush()
+        await self.session.refresh(instance)
+        return instance
+
+    async def soft_delete(self, id: UUID) -> bool:
+        """软删除：将 deleted_at 设为当前时间。
+
+        - 仅对支持软删除的模型生效（继承了 SoftDeleteMixin）；
+        - 不支持软删除的模型返回 False；
+        - 记录不存在或已删除时返回 False。
+        """
+        if not hasattr(self.model, "deleted_at"):
+            return False
+        instance = await self.get_by_id(id)
+        if instance is None:
+            return False
+        instance.deleted_at = datetime.now(timezone.utc)
+        await self.session.flush()
+        return True
+
+    async def count(self) -> int:
+        """统计未软删除的记录总数。"""
+        stmt = select(func.count()).select_from(self.model)
+        if hasattr(self.model, "deleted_at"):
+            stmt = stmt.where(self.model.deleted_at.is_(None))
+        result = await self.session.scalar(stmt)
+        return int(result) if result is not None else 0

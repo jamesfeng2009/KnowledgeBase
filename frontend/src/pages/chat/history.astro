@@ -1,0 +1,295 @@
+---
+/**
+ * 对话历史页面
+ * 时间分组的对话列表 + 搜索过滤 + 对话详情查看
+ */
+import DefaultLayout from '@/layouts/DefaultLayout.astro';
+
+const breadcrumb = [
+  { label: 'AI 能力', href: '/chat' },
+  { label: '对话历史' },
+];
+---
+
+<DefaultLayout title="对话历史" breadcrumb={breadcrumb}>
+  <div class="page-header">
+    <h1 class="page-title">对话历史</h1>
+    <a href="/chat" class="btn btn-primary btn-sm">＋ 新建对话</a>
+  </div>
+
+  <!-- 搜索过滤栏 -->
+  <div class="card" style="margin-bottom: var(--space-5);">
+    <div style="display: flex; gap: var(--space-3); align-items: center; flex-wrap: wrap;">
+      <div style="flex: 1; min-width: 240px;">
+        <input type="text" class="form-input" id="history-search" placeholder="搜索对话标题或内容..." />
+      </div>
+      <select class="form-input" id="history-agent" style="width: 160px;">
+        <option value="">全部 Agent</option>
+        <option value="qa">问答 Agent</option>
+        <option value="workflow">工作流 Agent</option>
+        <option value="action">动作 Agent</option>
+      </select>
+      <select class="form-input" id="history-range" style="width: 140px;">
+        <option value="">全部时间</option>
+        <option value="today">今天</option>
+        <option value="week">本周</option>
+        <option value="month">本月</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- 统计概览 -->
+  <div class="grid grid-cols-4" style="margin-bottom: var(--space-5);">
+    <div class="card">
+      <div class="text-muted" style="font-size: var(--text-sm);">对话总数</div>
+      <div style="font-size: var(--text-3xl); font-weight: 600; color: var(--primary);" id="stat-total">--</div>
+    </div>
+    <div class="card">
+      <div class="text-muted" style="font-size: var(--text-sm);">今日对话</div>
+      <div style="font-size: var(--text-3xl); font-weight: 600; color: var(--success);" id="stat-today">--</div>
+    </div>
+    <div class="card">
+      <div class="text-muted" style="font-size: var(--text-sm);">本周对话</div>
+      <div style="font-size: var(--text-3xl); font-weight: 600; color: var(--warning);" id="stat-week">--</div>
+    </div>
+    <div class="card">
+      <div class="text-muted" style="font-size: var(--text-sm);">引用次数</div>
+      <div style="font-size: var(--text-3xl); font-weight: 600; color: var(--info);" id="stat-refs">--</div>
+    </div>
+  </div>
+
+  <!-- 对话列表（时间分组） -->
+  <div id="history-container">
+    <div class="loading-state">加载中...</div>
+  </div>
+
+  <!-- 空状态 -->
+  <div id="empty-state" class="empty-state" style="display: none;">
+    <div class="empty-icon">💬</div>
+    <h3>暂无对话历史</h3>
+    <p>开始您的第一次 AI 对话吧</p>
+    <a href="/chat" class="btn btn-primary">开始对话</a>
+  </div>
+</DefaultLayout>
+
+<style>
+  .empty-state {
+    text-align: center;
+    padding: var(--space-12);
+  }
+  .empty-icon {
+    font-size: 48px;
+    margin-bottom: var(--space-4);
+  }
+  .loading-state {
+    text-align: center;
+    padding: var(--space-8);
+    color: var(--text-muted);
+  }
+  .history-group {
+    margin-bottom: var(--space-6);
+  }
+  .history-group-title {
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-bottom: var(--space-3);
+    padding-left: var(--space-2);
+  }
+  .history-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    padding: var(--space-4);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: var(--space-2);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+  .history-item:hover {
+    border-color: var(--primary);
+    box-shadow: var(--shadow-sm);
+  }
+  .history-item-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: var(--radius);
+    background: var(--primary-bg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    flex-shrink: 0;
+  }
+  .history-item-body {
+    flex: 1;
+    min-width: 0;
+  }
+  .history-item-title {
+    font-weight: 500;
+    font-size: var(--text-base);
+    color: var(--text);
+    margin-bottom: var(--space-1);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .history-item-meta {
+    display: flex;
+    gap: var(--space-3);
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+  }
+</style>
+
+<script>
+  const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
+  const TOKEN_KEY = 'ekb_access_token';
+
+  let allConversations: any[] = [];
+
+  async function loadHistory() {
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (!token) {
+      window.location.href = '/auth/login';
+      return;
+    }
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/chat/conversations`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const result = await res.json();
+        allConversations = result.data?.items || result.data || [];
+      } else if (res.status === 401) {
+        window.location.href = '/auth/login';
+        return;
+      } else {
+        allConversations = mockData();
+      }
+    } catch {
+      allConversations = mockData();
+    }
+    updateStats();
+    renderHistory();
+  }
+
+  function mockData() {
+    const now = Date.now();
+    return [
+      { id: '1', title: '公司报销流程是什么？', agent_type: 'qa', created_at: now, message_count: 4, references: 3 },
+      { id: '2', title: '年假有多少天？', agent_type: 'qa', created_at: now - 3600000, message_count: 2, references: 1 },
+      { id: '3', title: '如何配置开发环境', agent_type: 'workflow', created_at: now - 86400000, message_count: 6, references: 5 },
+      { id: '4', title: '产品发布流程咨询', agent_type: 'action', created_at: now - 86400000 * 3, message_count: 3, references: 2 },
+      { id: '5', title: '新人入职材料清单', agent_type: 'qa', created_at: now - 86400000 * 8, message_count: 2, references: 4 },
+    ];
+  }
+
+  function updateStats() {
+    const now = Date.now();
+    const today = allConversations.filter((c) => now - c.created_at < 86400000).length;
+    const week = allConversations.filter((c) => now - c.created_at < 86400000 * 7).length;
+    const refs = allConversations.reduce((s, c) => s + (c.references || 0), 0);
+    const setText = (id: string, v: number) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = String(v);
+    };
+    setText('stat-total', allConversations.length);
+    setText('stat-today', today);
+    setText('stat-week', week);
+    setText('stat-refs', refs);
+  }
+
+  function renderHistory() {
+    const container = document.getElementById('history-container')!;
+    const empty = document.getElementById('empty-state')!;
+    const keyword = (document.getElementById('history-search') as HTMLInputElement).value.trim().toLowerCase();
+    const agent = (document.getElementById('history-agent') as HTMLSelectElement).value;
+    const range = (document.getElementById('history-range') as HTMLSelectElement).value;
+
+    let list = allConversations.filter((c) => {
+      if (keyword && !c.title.toLowerCase().includes(keyword)) return false;
+      if (agent && c.agent_type !== agent) return false;
+      const age = Date.now() - c.created_at;
+      if (range === 'today' && age > 86400000) return false;
+      if (range === 'week' && age > 86400000 * 7) return false;
+      if (range === 'month' && age > 86400000 * 30) return false;
+      return true;
+    });
+
+    if (list.length === 0) {
+      container.innerHTML = '';
+      empty.style.display = 'block';
+      return;
+    }
+    empty.style.display = 'none';
+
+    // 按日期分组
+    const groups: Record<string, any[]> = {};
+    list.forEach((c) => {
+      const date = new Date(c.created_at);
+      let label: string;
+      const today = new Date();
+      const diff = Math.floor((today.setHours(0, 0, 0, 0) - new Date(date).setHours(0, 0, 0, 0)) / 86400000);
+      if (diff === 0) label = '今天';
+      else if (diff === 1) label = '昨天';
+      else if (diff < 7) label = '本周';
+      else label = '更早';
+      if (!groups[label]) groups[label] = [];
+      groups[label].push(c);
+    });
+
+    const agentLabel: Record<string, string> = { qa: '问答', workflow: '工作流', action: '动作' };
+
+    container.innerHTML = Object.entries(groups)
+      .map(
+        ([label, items]) => `
+      <div class="history-group">
+        <div class="history-group-title">${label}</div>
+        ${items
+          .map(
+            (c) => `
+          <div class="history-item" data-id="${c.id}">
+            <div class="history-item-icon">💬</div>
+            <div class="history-item-body">
+              <div class="history-item-title">${escapeHtml(c.title)}</div>
+              <div class="history-item-meta">
+                <span class="badge badge-primary">${agentLabel[c.agent_type] || '问答'} Agent</span>
+                <span>${c.message_count || 0} 条消息</span>
+                <span>${c.references || 0} 个引用</span>
+                <span>${formatTime(c.created_at)}</span>
+              </div>
+            </div>
+            <span class="text-muted">›</span>
+          </div>`
+          )
+          .join('')}
+      </div>`
+      )
+      .join('');
+
+    container.querySelectorAll('.history-item').forEach((el) => {
+      el.addEventListener('click', () => {
+        const id = (el as HTMLElement).dataset.id;
+        window.location.href = `/chat?id=${id}`;
+      });
+    });
+  }
+
+  function formatTime(ts: number): string {
+    const d = new Date(ts);
+    return `${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  }
+
+  function escapeHtml(s: string): string {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  document.getElementById('history-search')?.addEventListener('input', renderHistory);
+  document.getElementById('history-agent')?.addEventListener('change', renderHistory);
+  document.getElementById('history-range')?.addEventListener('change', renderHistory);
+
+  loadHistory();
+</script>

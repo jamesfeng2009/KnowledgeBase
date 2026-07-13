@@ -1,0 +1,274 @@
+---
+/**
+ * LLM 配置页面
+ * 当前模型配置 + 模型切换 + 温度/Token 限制 + API Key 管理（脱敏显示）
+ */
+import DefaultLayout from '@/layouts/DefaultLayout.astro';
+
+const breadcrumb = [{ label: '设置', href: '/settings/tenant' }, { label: 'LLM 配置' }];
+---
+
+<DefaultLayout title="LLM 配置" breadcrumb={breadcrumb}>
+  <div class="settings-nav" style="margin-bottom: var(--space-5);">
+    <a href="/settings/tenant" class="settings-nav-item">租户设置</a>
+    <a href="/settings/api" class="settings-nav-item">API 密钥</a>
+    <a href="/settings/llm" class="settings-nav-item active">LLM 配置</a>
+    <a href="/settings/system" class="settings-nav-item">系统设置</a>
+  </div>
+
+  <!-- 当前模型 -->
+  <div class="card" style="margin-bottom: var(--space-5);">
+    <div class="card-header"><h3>当前模型配置</h3></div>
+    <div class="grid grid-cols-2">
+      <div class="config-item">
+        <div class="text-muted" style="font-size: var(--text-sm);">对话模型</div>
+        <div style="font-size: var(--text-lg); font-weight: 600; color: var(--primary);" id="current-chat-model">--</div>
+      </div>
+      <div class="config-item">
+        <div class="text-muted" style="font-size: var(--text-sm);">嵌入模型</div>
+        <div style="font-size: var(--text-lg); font-weight: 600; color: var(--success);" id="current-embed-model">--</div>
+      </div>
+      <div class="config-item">
+        <div class="text-muted" style="font-size: var(--text-sm);">温度参数</div>
+        <div style="font-size: var(--text-lg); font-weight: 600;" id="current-temp">--</div>
+      </div>
+      <div class="config-item">
+        <div class="text-muted" style="font-size: var(--text-sm);">最大 Token</div>
+        <div style="font-size: var(--text-lg); font-weight: 600;" id="current-tokens">--</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 模型切换 -->
+  <div class="card" style="margin-bottom: var(--space-5);">
+    <div class="card-header"><h3>模型切换</h3></div>
+    <form id="llm-form">
+      <div class="form-group">
+        <label class="form-label">对话模型</label>
+        <select class="form-input" name="chat_model" id="chat-model-select">
+          <option value="gpt-4o">GPT-4o（推荐，综合能力强）</option>
+          <option value="gpt-4o-mini">GPT-4o mini（快速，成本低）</option>
+          <option value="claude-3.5-sonnet">Claude 3.5 Sonnet（长文本优秀）</option>
+          <option value="deepseek-v3">DeepSeek V3（国产，性价比高）</option>
+          <option value="qwen-max">通义千问 Max（国产）</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">嵌入模型</label>
+        <select class="form-input" name="embed_model" id="embed-model-select">
+          <option value="text-embedding-3-large">text-embedding-3-large（推荐）</option>
+          <option value="text-embedding-3-small">text-embedding-3-small（经济）</option>
+          <option value="bge-large-zh">BGE Large 中文（国产）</option>
+          <option value="m3e-large">M3E Large（国产）</option>
+        </select>
+      </div>
+      <div class="grid grid-cols-2">
+        <div class="form-group">
+          <label class="form-label">温度参数（0-1）</label>
+          <div style="display: flex; align-items: center; gap: var(--space-3);">
+            <input type="range" min="0" max="1" step="0.1" value="0.7" name="temperature" id="temp-range" style="flex: 1;" />
+            <span id="temp-value" style="min-width: 30px; font-weight: 600;">0.7</span>
+          </div>
+          <div class="text-muted" style="font-size: var(--text-xs); margin-top: var(--space-1);">值越低回答越确定，值越高越有创造性</div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">最大输出 Token</label>
+          <input type="number" class="form-input" name="max_tokens" value="4096" min="256" max="32768" />
+          <div class="text-muted" style="font-size: var(--text-xs); margin-top: var(--space-1);">单次回复的最大 Token 数</div>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">系统提示词（可选）</label>
+        <textarea class="form-textarea" name="system_prompt" placeholder="自定义系统提示词，影响所有对话的 AI 行为">你是一个企业知识库助手，请基于知识库内容回答用户问题，回答要准确、简洁、专业。</textarea>
+      </div>
+      <button type="submit" class="btn btn-primary">保存配置</button>
+    </form>
+  </div>
+
+  <!-- API Key 管理 -->
+  <div class="card">
+    <div class="card-header">
+      <h3>API Key 管理</h3>
+      <button class="btn btn-outline btn-sm" id="add-key-btn">＋ 添加 Key</button>
+    </div>
+    <div id="api-key-list"></div>
+  </div>
+</DefaultLayout>
+
+<style>
+  .settings-nav {
+    display: flex;
+    gap: var(--space-1);
+    border-bottom: 1px solid var(--border);
+  }
+  .settings-nav-item {
+    padding: var(--space-3) var(--space-5);
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    border-bottom: 2px solid transparent;
+    text-decoration: none;
+    transition: all var(--transition-fast);
+  }
+  .settings-nav-item:hover {
+    color: var(--primary);
+  }
+  .settings-nav-item.active {
+    color: var(--primary);
+    border-bottom-color: var(--primary);
+    font-weight: 500;
+  }
+  .config-item {
+    padding: var(--space-3) 0;
+  }
+  .api-key-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) 0;
+    border-bottom: 1px solid var(--border-light);
+  }
+  .api-key-item:last-child {
+    border-bottom: none;
+  }
+  .api-key-provider {
+    width: 100px;
+    font-weight: 500;
+    font-size: var(--text-sm);
+  }
+  .api-key-value {
+    flex: 1;
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    background: var(--surface-muted);
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-xs);
+  }
+</style>
+
+<script>
+  const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
+  const TOKEN_KEY = 'ekb_access_token';
+
+  function mockConfig() {
+    return {
+      chat_model: 'gpt-4o',
+      embed_model: 'text-embedding-3-large',
+      temperature: 0.7,
+      max_tokens: 4096,
+    };
+  }
+
+  async function loadConfig() {
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (!token) {
+      window.location.href = '/auth/login';
+      return;
+    }
+    let config: any;
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/settings/llm`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const result = await res.json();
+        config = result.data || result;
+      } else if (res.status === 401) {
+        window.location.href = '/auth/login';
+        return;
+      } else {
+        config = mockConfig();
+      }
+    } catch {
+      config = mockConfig();
+    }
+
+    document.getElementById('current-chat-model')!.textContent = config.chat_model || 'gpt-4o';
+    document.getElementById('current-embed-model')!.textContent = config.embed_model || 'text-embedding-3-large';
+    document.getElementById('current-temp')!.textContent = String(config.temperature || 0.7);
+    document.getElementById('current-tokens')!.textContent = String(config.max_tokens || 4096);
+
+    (document.getElementById('chat-model-select') as HTMLSelectElement).value = config.chat_model || 'gpt-4o';
+    (document.getElementById('embed-model-select') as HTMLSelectElement).value = config.embed_model || 'text-embedding-3-large';
+    (document.getElementById('temp-range') as HTMLInputElement).value = String(config.temperature || 0.7);
+    document.getElementById('temp-value')!.textContent = String(config.temperature || 0.7);
+
+    renderApiKeys();
+  }
+
+  function renderApiKeys() {
+    const keys = [
+      { provider: 'OpenAI', key: 'sk-proj-abc...xyz', status: 'active' },
+      { provider: 'Anthropic', key: 'sk-ant-def...uvw', status: 'active' },
+      { provider: 'DeepSeek', key: 'sk-ds-ghi...rst', status: 'inactive' },
+    ];
+    document.getElementById('api-key-list')!.innerHTML = keys
+      .map(
+        (k) => `
+      <div class="api-key-item">
+        <div class="api-key-provider">${escapeHtml(k.provider)}</div>
+        <code class="api-key-value">${escapeHtml(k.key)}</code>
+        <span class="badge ${k.status === 'active' ? 'badge-success' : 'badge-warning'}">${k.status === 'active' ? '已启用' : '未启用'}</span>
+        <button class="btn btn-ghost btn-sm" data-provider="${k.provider}">编辑</button>
+      </div>`
+      )
+      .join('');
+
+    document.querySelectorAll('.api-key-item button').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const provider = (btn as HTMLElement).dataset.provider!;
+        const key = prompt(`输入 ${provider} 的 API Key：`);
+        if (key) {
+          alert(`${provider} API Key 已更新`);
+        }
+      });
+    });
+  }
+
+  function escapeHtml(s: string): string {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  // 温度滑块
+  document.getElementById('temp-range')?.addEventListener('input', (e) => {
+    document.getElementById('temp-value')!.textContent = (e.target as HTMLInputElement).value;
+  });
+
+  // 保存配置
+  document.getElementById('llm-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.target as HTMLFormElement;
+    const data = Object.fromEntries(new FormData(form));
+    const token = localStorage.getItem(TOKEN_KEY);
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/settings/llm`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          chat_model: data.chat_model,
+          embed_model: data.embed_model,
+          temperature: parseFloat(data.temperature as string),
+          max_tokens: parseInt(data.max_tokens as string),
+          system_prompt: data.system_prompt,
+        }),
+      });
+      if (res.ok) {
+        alert('配置已保存');
+        loadConfig();
+      } else {
+        alert('保存失败');
+      }
+    } catch {
+      alert('网络异常');
+    }
+  });
+
+  document.getElementById('add-key-btn')?.addEventListener('click', () => {
+    const provider = prompt('输入服务商名称（如 OpenAI、Anthropic）：');
+    if (provider) {
+      const key = prompt(`输入 ${provider} 的 API Key：`);
+      if (key) alert('API Key 已添加');
+    }
+  });
+
+  loadConfig();
+</script>

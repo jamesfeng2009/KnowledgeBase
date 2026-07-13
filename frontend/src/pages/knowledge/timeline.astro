@@ -1,0 +1,272 @@
+---
+/**
+ * 时间线页面
+ * 知识变更时间线 + 按日期分组 + 变更类型标记
+ */
+import DefaultLayout from '@/layouts/DefaultLayout.astro';
+
+const breadcrumb = [{ label: '知识', href: '/knowledge' }, { label: '变更时间线' }];
+---
+
+<DefaultLayout title="变更时间线" breadcrumb={breadcrumb}>
+  <div class="page-header">
+    <h1 class="page-title">知识变更时间线</h1>
+    <div style="display: flex; gap: var(--space-3); align-items: center;">
+      <select class="form-input" id="filter-type" style="width: 160px;">
+        <option value="">全部变更</option>
+        <option value="create">新建</option>
+        <option value="update">更新</option>
+        <option value="version">版本更新</option>
+        <option value="expire">过期</option>
+        <option value="merge">合并</option>
+        <option value="delete">删除</option>
+      </select>
+      <select class="form-input" id="filter-kb" style="width: 160px;">
+        <option value="">全部知识库</option>
+        <option value="kb-1">公司制度</option>
+        <option value="kb-2">产品文档</option>
+        <option value="kb-3">技术文档</option>
+      </select>
+    </div>
+  </div>
+
+  <div id="timeline-container">
+    <div class="loading-state">加载中...</div>
+  </div>
+</DefaultLayout>
+
+<style>
+  .timeline {
+    position: relative;
+    padding-left: var(--space-8);
+  }
+  .timeline::before {
+    content: '';
+    position: absolute;
+    left: 11px;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--border);
+  }
+  .timeline-group {
+    margin-bottom: var(--space-6);
+  }
+  .timeline-group-title {
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-bottom: var(--space-4);
+    padding-left: var(--space-2);
+  }
+  .timeline-item {
+    position: relative;
+    margin-bottom: var(--space-5);
+  }
+  .timeline-item-dot {
+    position: absolute;
+    left: -29px;
+    top: var(--space-2);
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 2px solid var(--surface);
+    box-shadow: 0 0 0 2px var(--border);
+  }
+  .timeline-item-dot.create { background: var(--success); }
+  .timeline-item-dot.update { background: var(--info); }
+  .timeline-item-dot.version { background: var(--primary); }
+  .timeline-item-dot.expire { background: var(--warning); }
+  .timeline-item-dot.merge { background: var(--info); }
+  .timeline-item-dot.delete { background: var(--danger); }
+  .timeline-item-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: var(--space-4);
+    transition: all var(--transition-fast);
+  }
+  .timeline-item-card:hover {
+    box-shadow: var(--shadow-md);
+    border-color: var(--primary-light);
+  }
+  .timeline-item-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: var(--space-2);
+  }
+  .timeline-item-title {
+    font-weight: 500;
+    font-size: var(--text-base);
+    color: var(--text);
+  }
+  .timeline-item-time {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+  }
+  .timeline-item-desc {
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    line-height: var(--lh-relaxed);
+  }
+  .timeline-item-footer {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    margin-top: var(--space-3);
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+  }
+  .loading-state {
+    text-align: center;
+    padding: var(--space-8);
+    color: var(--text-muted);
+  }
+  .empty-state {
+    text-align: center;
+    padding: var(--space-12);
+    color: var(--text-muted);
+  }
+</style>
+
+<script>
+  const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
+  const TOKEN_KEY = 'ekb_access_token';
+
+  function mockTimeline() {
+    const now = Date.now();
+    return [
+      { id: '1', doc_id: 'd1', title: '员工手册 V3.2', type: 'version', desc: '文档更新至 V3.2 版本，新增远程办公章节', kb_name: '公司制度', author: '张三', created_at: now - 3600000 },
+      { id: '2', doc_id: 'd2', title: 'API 设计规范', type: 'create', desc: '新建文档，定义 RESTful API 设计规范', kb_name: '技术文档', author: '李四', created_at: now - 7200000 },
+      { id: '3', doc_id: 'd3', title: '2024 年度财报', type: 'expire', desc: '文档已超过有效期，标记为过期', kb_name: '公司制度', author: '系统', created_at: now - 86400000 },
+      { id: '4', doc_id: 'd4', title: '旧版产品需求', type: 'merge', desc: '合并到「产品需求汇总 V2」', kb_name: '产品文档', author: '王五', created_at: now - 86400000 },
+      { id: '5', doc_id: 'd5', title: '报销管理办法', type: 'update', desc: '更新报销标准，调整差旅住宿上限', kb_name: '公司制度', author: '赵六', created_at: now - 86400000 * 2 },
+      { id: '6', doc_id: 'd6', title: '废弃技术方案', type: 'delete', desc: '技术方案已废弃，从知识库移除', kb_name: '技术文档', author: '钱七', created_at: now - 86400000 * 5 },
+    ];
+  }
+
+  async function loadTimeline() {
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (!token) {
+      window.location.href = '/auth/login';
+      return;
+    }
+    let items: any[] = [];
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/knowledge/timeline`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const result = await res.json();
+        items = result.data?.items || result.data || [];
+      } else if (res.status === 401) {
+        window.location.href = '/auth/login';
+        return;
+      }
+    } catch {
+      // ignore
+    }
+    if (items.length === 0) items = mockTimeline();
+    renderTimeline(items);
+  }
+
+  function renderTimeline(items: any[]) {
+    const typeFilter = (document.getElementById('filter-type') as HTMLSelectElement).value;
+    const kbFilter = (document.getElementById('filter-kb') as HTMLSelectElement).value;
+
+    let list = items.filter((i) => {
+      if (typeFilter && i.type !== typeFilter) return false;
+      if (kbFilter && i.kb_id !== kbFilter) return false;
+      return true;
+    });
+
+    const container = document.getElementById('timeline-container')!;
+    if (list.length === 0) {
+      container.innerHTML = '<div class="empty-state">暂无变更记录</div>';
+      return;
+    }
+
+    // 按日期分组
+    const groups: Record<string, any[]> = {};
+    list.forEach((i) => {
+      const date = new Date(i.created_at);
+      const today = new Date();
+      const diff = Math.floor((today.setHours(0, 0, 0, 0) - new Date(date).setHours(0, 0, 0, 0)) / 86400000);
+      let label: string;
+      if (diff === 0) label = '今天';
+      else if (diff === 1) label = '昨天';
+      else if (diff < 7) label = '本周';
+      else label = `${date.getMonth() + 1}月${date.getDate()}日`;
+      if (!groups[label]) groups[label] = [];
+      groups[label].push(i);
+    });
+
+    const typeLabel: Record<string, string> = {
+      create: '新建',
+      update: '更新',
+      version: '版本更新',
+      expire: '过期',
+      merge: '合并',
+      delete: '删除',
+    };
+    const typeBadge: Record<string, string> = {
+      create: 'badge-success',
+      update: 'badge-primary',
+      version: 'badge-primary',
+      expire: 'badge-warning',
+      merge: 'badge-primary',
+      delete: 'badge-danger',
+    };
+
+    container.innerHTML = `<div class="timeline">${Object.entries(groups)
+      .map(
+        ([label, group]) => `
+      <div class="timeline-group">
+        <div class="timeline-group-title">${label}</div>
+        ${group
+          .map(
+            (i) => `
+          <div class="timeline-item">
+            <div class="timeline-item-dot ${i.type}"></div>
+            <div class="timeline-item-card" data-doc="${i.doc_id}">
+              <div class="timeline-item-header">
+                <div class="timeline-item-title">${escapeHtml(i.title)}</div>
+                <div class="timeline-item-time">${formatTime(i.created_at)}</div>
+              </div>
+              <p class="timeline-item-desc">${escapeHtml(i.desc || '')}</p>
+              <div class="timeline-item-footer">
+                <span class="badge ${typeBadge[i.type] || 'badge-primary'}">${typeLabel[i.type] || '变更'}</span>
+                <span>${escapeHtml(i.kb_name || '')}</span>
+                <span>操作人：${escapeHtml(i.author || '系统')}</span>
+              </div>
+            </div>
+          </div>`
+          )
+          .join('')}
+      </div>`
+      )
+      .join('')}</div>`;
+
+    container.querySelectorAll('.timeline-item-card').forEach((el) => {
+      el.addEventListener('click', () => {
+        const docId = (el as HTMLElement).dataset.doc;
+        window.location.href = `/knowledge/detail?id=${docId}`;
+      });
+    });
+  }
+
+  function formatTime(ts: number): string {
+    const d = new Date(ts);
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  }
+
+  function escapeHtml(s: string): string {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  document.getElementById('filter-type')?.addEventListener('change', () => loadTimeline());
+  document.getElementById('filter-kb')?.addEventListener('change', () => loadTimeline());
+
+  loadTimeline();
+</script>

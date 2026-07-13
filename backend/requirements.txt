@@ -1,0 +1,68 @@
+# === Web 框架 ===
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+python-multipart>=0.0.12
+
+# === 数据库 ===
+sqlalchemy[asyncio]>=2.0.36
+asyncpg>=0.30.0
+alembic>=1.14.0
+
+# === 缓存 ===
+redis>=5.2.0
+
+# === 认证 ===
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+
+# === LLM Provider（SaaS 模式）===
+anthropic>=0.40.0
+openai>=1.50.0
+cohere>=5.5.0
+
+# === RAG 引擎 ===
+langgraph>=0.2.50
+langchain-core>=0.3.20
+langgraph-checkpoint-postgres>=2.0.5
+
+# === LlamaIndex 数据层 ===
+llama-index-core>=0.12.0
+llama-index-vector-stores-milvus>=0.4.0
+llama-index-embeddings-openai>=0.3.0
+llama-index-readers-file>=0.4.0
+
+# === CrewAI 多 Agent 协作 ===
+crewai>=0.70.0
+crewai-tools>=0.14.0
+
+# === 向量数据库 ===
+pymilvus>=2.4.9
+
+# === 全文检索 ===
+opensearch-py>=2.8.0
+
+# === 消息队列 ===
+celery>=5.4.0
+
+# === MCP 协议 ===
+mcp>=1.0.0
+
+# === 工具 ===
+httpx>=0.28.0
+pydantic>=2.10.0
+pydantic-settings>=2.6.0
+python-dotenv>=1.0.1
+
+# === 日志 ===
+structlog>=24.4.0
+
+# === LDAP ===
+ldap3>=2.9.1
+
+# === Neo4j 知识图谱 ===
+neo4j>=5.26.0
+llama-index-graph-stores-neo4j>=0.3.0
+
+# === 测试 ===
+pytest>=8.3.0
+pytest-asyncio>=0.24.0

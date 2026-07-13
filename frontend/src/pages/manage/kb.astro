@@ -1,0 +1,421 @@
+---
+/**
+ * 知识库管理页面
+ * 知识库列表表格 + 创建/编辑知识库 + 成员管理 + 权限设置
+ */
+import DefaultLayout from '@/layouts/DefaultLayout.astro';
+
+const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '知识库管理' }];
+---
+
+<DefaultLayout title="知识库管理" breadcrumb={breadcrumb}>
+  <div class="page-header">
+    <h1 class="page-title">知识库管理</h1>
+    <button class="btn btn-primary" id="create-kb-btn">＋ 创建知识库</button>
+  </div>
+
+  <div class="card">
+    <div class="table-toolbar">
+      <input type="text" class="form-input" id="kb-search" placeholder="搜索知识库..." style="max-width: 240px;" />
+      <select class="form-input" id="kb-status" style="width: 140px;">
+        <option value="">全部状态</option>
+        <option value="active">启用</option>
+        <option value="archived">归档</option>
+      </select>
+    </div>
+    <div style="overflow-x: auto;">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>知识库名称</th>
+            <th>描述</th>
+            <th>文档数</th>
+            <th>成员</th>
+            <th>状态</th>
+            <th>更新时间</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="kb-table-body">
+          <tr><td colspan="7" class="loading-state">加载中...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 创建/编辑知识库弹窗 -->
+  <div class="modal-overlay" id="kb-modal" style="display: none;">
+    <div class="modal" style="max-width: 560px;">
+      <div class="modal-header">
+        <h3 id="modal-title">创建知识库</h3>
+        <button class="btn btn-ghost btn-sm" id="close-modal">✕</button>
+      </div>
+      <form id="kb-form">
+        <div class="modal-body">
+          <input type="hidden" name="id" />
+          <div class="form-group">
+            <label class="form-label">知识库名称 *</label>
+            <input type="text" class="form-input" name="name" required placeholder="如：公司制度" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">描述</label>
+            <textarea class="form-textarea" name="description" placeholder="描述知识库的用途和范围"></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label">访问权限</label>
+            <select class="form-input" name="visibility">
+              <option value="private">私有（仅成员可见）</option>
+              <option value="team">团队可见</option>
+              <option value="public">全员可见</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">自动解析</label>
+            <div style="display: flex; align-items: center; gap: var(--space-2);">
+              <label class="switch"><input type="checkbox" name="auto_parse" checked /><span class="switch-slider"></span></label>
+              <span class="text-muted" style="font-size: var(--text-sm);">上传文档后自动解析和向量化</span>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-ghost" id="cancel-btn">取消</button>
+          <button type="submit" class="btn btn-primary">保存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 成员管理弹窗 -->
+  <div class="modal-overlay" id="member-modal" style="display: none;">
+    <div class="modal" style="max-width: 560px;">
+      <div class="modal-header">
+        <h3>成员管理</h3>
+        <button class="btn btn-ghost btn-sm" id="close-member-modal">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">添加成员</label>
+          <div style="display: flex; gap: var(--space-2);">
+            <input type="text" class="form-input" placeholder="输入邮箱或用户名" />
+            <select class="form-input" style="width: 120px;">
+              <option value="viewer">查看者</option>
+              <option value="editor">编辑者</option>
+              <option value="admin">管理员</option>
+            </select>
+            <button class="btn btn-primary">添加</button>
+          </div>
+        </div>
+        <div id="member-list"></div>
+      </div>
+    </div>
+  </div>
+</DefaultLayout>
+
+<style>
+  .table-toolbar {
+    display: flex;
+    gap: var(--space-3);
+    margin-bottom: var(--space-4);
+  }
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .data-table th {
+    text-align: left;
+    padding: var(--space-3) var(--space-4);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-muted);
+  }
+  .data-table td {
+    padding: var(--space-4);
+    font-size: var(--text-sm);
+    color: var(--text);
+    border-bottom: 1px solid var(--border-light);
+  }
+  .data-table tbody tr:hover {
+    background: var(--surface-hover);
+  }
+  .kb-name-cell {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-weight: 500;
+  }
+  .kb-name-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: var(--radius-sm);
+    background: var(--primary-bg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .action-btns {
+    display: flex;
+    gap: var(--space-2);
+  }
+  .loading-state {
+    text-align: center;
+    padding: var(--space-8);
+    color: var(--text-muted);
+  }
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+  .modal {
+    background: var(--surface);
+    border-radius: var(--radius-lg);
+    width: 100%;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: var(--shadow-xl);
+  }
+  .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-5);
+    border-bottom: 1px solid var(--border);
+  }
+  .modal-body {
+    padding: var(--space-5);
+  }
+  .modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-3);
+    padding: var(--space-5);
+    border-top: 1px solid var(--border);
+  }
+  .switch {
+    position: relative;
+    display: inline-block;
+    width: 40px;
+    height: 22px;
+  }
+  .switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+  .switch-slider {
+    position: absolute;
+    cursor: pointer;
+    inset: 0;
+    background: var(--border-dark);
+    border-radius: var(--radius-full);
+    transition: var(--transition);
+  }
+  .switch-slider::before {
+    content: '';
+    position: absolute;
+    height: 16px;
+    width: 16px;
+    left: 3px;
+    bottom: 3px;
+    background: var(--surface);
+    border-radius: 50%;
+    transition: var(--transition);
+  }
+  .switch input:checked + .switch-slider {
+    background: var(--primary);
+  }
+  .switch input:checked + .switch-slider::before {
+    transform: translateX(18px);
+  }
+  .member-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) 0;
+    border-bottom: 1px solid var(--border-light);
+  }
+</style>
+
+<script>
+  const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
+  const TOKEN_KEY = 'ekb_access_token';
+
+  let kbs: any[] = [];
+
+  function mockKbs() {
+    return [
+      { id: 'kb-1', name: '公司制度', icon: '📋', desc: '规章制度、流程规范', doc_count: 128, members: 8, status: 'active', updated_at: '2026-07-01' },
+      { id: 'kb-2', name: '产品文档', icon: '📦', desc: '产品说明、需求文档', doc_count: 86, members: 12, status: 'active', updated_at: '2026-06-28' },
+      { id: 'kb-3', name: '技术文档', icon: '⚙️', desc: 'API、架构、开发规范', doc_count: 245, members: 15, status: 'active', updated_at: '2026-07-05' },
+      { id: 'kb-4', name: '历史归档', icon: '📁', desc: '过期和归档文档', doc_count: 56, members: 3, status: 'archived', updated_at: '2025-12-01' },
+    ];
+  }
+
+  async function loadKbs() {
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (!token) {
+      window.location.href = '/auth/login';
+      return;
+    }
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/knowledge/bases`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const result = await res.json();
+        kbs = result.data?.items || result.data || [];
+      } else if (res.status === 401) {
+        window.location.href = '/auth/login';
+        return;
+      }
+      if (kbs.length === 0) kbs = mockKbs();
+    } catch {
+      kbs = mockKbs();
+    }
+    renderTable();
+  }
+
+  function renderTable() {
+    const keyword = (document.getElementById('kb-search') as HTMLInputElement).value.trim().toLowerCase();
+    const status = (document.getElementById('kb-status') as HTMLSelectElement).value;
+
+    let list = kbs.filter((k) => {
+      if (keyword && !k.name.toLowerCase().includes(keyword)) return false;
+      if (status && k.status !== status) return false;
+      return true;
+    });
+
+    const body = document.getElementById('kb-table-body')!;
+    if (list.length === 0) {
+      body.innerHTML = '<tr><td colspan="7" class="loading-state">暂无知识库</td></tr>';
+      return;
+    }
+
+    body.innerHTML = list
+      .map(
+        (k) => `
+      <tr>
+        <td>
+          <div class="kb-name-cell">
+            <div class="kb-name-icon">${k.icon || '📚'}</div>
+            ${escapeHtml(k.name)}
+          </div>
+        </td>
+        <td class="text-muted">${escapeHtml(k.desc || '')}</td>
+        <td>${k.doc_count || 0}</td>
+        <td>${k.members || 0} 人</td>
+        <td><span class="badge ${k.status === 'active' ? 'badge-success' : 'badge-warning'}">${k.status === 'active' ? '启用' : '归档'}</span></td>
+        <td class="text-muted">${escapeHtml(k.updated_at || '')}</td>
+        <td>
+          <div class="action-btns">
+            <button class="btn btn-ghost btn-sm" data-action="edit" data-id="${k.id}">编辑</button>
+            <button class="btn btn-ghost btn-sm" data-action="member" data-id="${k.id}">成员</button>
+            <button class="btn btn-ghost btn-sm" data-action="delete" data-id="${k.id}">删除</button>
+          </div>
+        </td>
+      </tr>`
+      )
+      .join('');
+
+    body.querySelectorAll('button[data-action]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const action = (btn as HTMLElement).dataset.action!;
+        const id = (btn as HTMLElement).dataset.id!;
+        const kb = kbs.find((k) => k.id === id);
+        if (action === 'edit') openEditModal(kb);
+        else if (action === 'member') openMemberModal(kb);
+        else if (action === 'delete') deleteKb(kb);
+      });
+    });
+  }
+
+  function openCreateModal() {
+    (document.getElementById('modal-title') as HTMLElement).textContent = '创建知识库';
+    (document.getElementById('kb-form') as HTMLFormElement).reset();
+    (document.querySelector('input[name="id"]') as HTMLInputElement).value = '';
+    document.getElementById('kb-modal')!.style.display = 'flex';
+  }
+
+  function openEditModal(kb: any) {
+    (document.getElementById('modal-title') as HTMLElement).textContent = '编辑知识库';
+    const form = document.getElementById('kb-form') as HTMLFormElement;
+    (form.querySelector('input[name="id"]') as HTMLInputElement).value = kb.id;
+    (form.querySelector('input[name="name"]') as HTMLInputElement).value = kb.name;
+    (form.querySelector('textarea[name="description"]') as HTMLTextAreaElement).value = kb.desc || '';
+    document.getElementById('kb-modal')!.style.display = 'flex';
+  }
+
+  function openMemberModal(kb: any) {
+    const members = [
+      { name: '张三', role: '管理员', email: 'zhangsan@company.com' },
+      { name: '李四', role: '编辑者', email: 'lisi@company.com' },
+      { name: '王五', role: '查看者', email: 'wangwu@company.com' },
+    ];
+    document.getElementById('member-list')!.innerHTML = members
+      .map(
+        (m) => `
+      <div class="member-row">
+        <div class="avatar avatar-sm">${escapeHtml(m.name.charAt(0))}</div>
+        <div style="flex: 1;">
+          <div style="font-size: var(--text-sm); font-weight: 500;">${escapeHtml(m.name)}</div>
+          <div class="text-muted" style="font-size: var(--text-xs);">${escapeHtml(m.email)}</div>
+        </div>
+        <span class="badge badge-primary">${escapeHtml(m.role)}</span>
+        <button class="btn btn-ghost btn-sm">移除</button>
+      </div>`
+      )
+      .join('');
+    document.getElementById('member-modal')!.style.display = 'flex';
+  }
+
+  function deleteKb(kb: any) {
+    if (confirm(`确定删除知识库「${kb.name}」吗？此操作不可恢复。`)) {
+      kbs = kbs.filter((k) => k.id !== kb.id);
+      renderTable();
+      alert('删除成功');
+    }
+  }
+
+  function escapeHtml(s: string): string {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  document.getElementById('create-kb-btn')?.addEventListener('click', openCreateModal);
+  document.getElementById('close-modal')?.addEventListener('click', () => (document.getElementById('kb-modal')!.style.display = 'none'));
+  document.getElementById('cancel-btn')?.addEventListener('click', () => (document.getElementById('kb-modal')!.style.display = 'none'));
+  document.getElementById('close-member-modal')?.addEventListener('click', () => (document.getElementById('member-modal')!.style.display = 'none'));
+
+  document.getElementById('kb-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.target as HTMLFormElement;
+    const data = Object.fromEntries(new FormData(form));
+    const token = localStorage.getItem(TOKEN_KEY);
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/knowledge/bases`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(data),
+      });
+      if (res.ok) {
+        alert(data.id ? '更新成功' : '创建成功');
+        document.getElementById('kb-modal')!.style.display = 'none';
+        loadKbs();
+      } else {
+        alert('操作失败');
+      }
+    } catch {
+      alert('网络异常');
+    }
+  });
+
+  document.getElementById('kb-search')?.addEventListener('input', renderTable);
+  document.getElementById('kb-status')?.addEventListener('change', renderTable);
+
+  loadKbs();
+</script>

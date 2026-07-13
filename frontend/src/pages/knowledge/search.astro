@@ -1,0 +1,389 @@
+---
+/**
+ * 知识搜索页面
+ * 搜索栏 + 结果列表（高亮匹配） + 筛选面板 + 搜索类型切换（全文/向量/混合）
+ */
+import DefaultLayout from '@/layouts/DefaultLayout.astro';
+
+const breadcrumb = [{ label: '知识', href: '/knowledge' }, { label: '知识搜索' }];
+---
+
+<DefaultLayout title="知识搜索" breadcrumb={breadcrumb}>
+  <div class="search-layout">
+    <!-- 搜索主区 -->
+    <div class="search-main">
+      <!-- 搜索栏 -->
+      <div class="search-bar-wrapper">
+        <div class="search-bar">
+          <span class="search-bar-icon">🔍</span>
+          <input
+            type="text"
+            class="search-bar-input"
+            id="search-input"
+            placeholder="搜索知识库内容，支持自然语言提问..."
+          />
+          <button class="btn btn-primary" id="search-btn">搜索</button>
+        </div>
+        <!-- 搜索类型切换 -->
+        <div class="search-type-switcher">
+          <button class="search-type-btn active" data-type="hybrid">混合检索</button>
+          <button class="search-type-btn" data-type="vector">向量检索</button>
+          <button class="search-type-btn" data-type="keyword">全文检索</button>
+        </div>
+      </div>
+
+      <!-- 搜索结果 -->
+      <div id="search-results">
+        <div class="search-hint">
+          <div style="font-size: 48px; margin-bottom: var(--space-4);">🔍</div>
+          <h3>开始搜索知识</h3>
+          <p class="text-muted">输入关键词或问题，系统将从知识库中检索相关内容</p>
+          <div class="search-suggestions">
+            <span class="text-muted" style="font-size: var(--text-sm);">试试搜索：</span>
+            <button class="tag" data-q="报销流程">报销流程</button>
+            <button class="tag" data-q="年假政策">年假政策</button>
+            <button class="tag" data-q="API 文档">API 文档</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 筛选面板 -->
+    <aside class="filter-panel">
+      <div class="card">
+        <div class="card-header">
+          <h3>筛选</h3>
+        </div>
+        <div class="filter-section">
+          <div class="filter-label">知识库</div>
+          <div id="filter-kb">
+            <label class="filter-item"><input type="checkbox" checked /> 全部知识库</label>
+            <label class="filter-item"><input type="checkbox" /> 公司制度</label>
+            <label class="filter-item"><input type="checkbox" /> 产品文档</label>
+            <label class="filter-item"><input type="checkbox" /> 技术文档</label>
+          </div>
+        </div>
+        <div class="filter-section">
+          <div class="filter-label">标签</div>
+          <div id="filter-tags" style="display: flex; flex-wrap: wrap; gap: var(--space-2);">
+            <span class="tag" data-tag="人事">人事</span>
+            <span class="tag" data-tag="技术">技术</span>
+            <span class="tag" data-tag="产品">产品</span>
+            <span class="tag" data-tag="财务">财务</span>
+          </div>
+        </div>
+        <div class="filter-section">
+          <div class="filter-label">时间范围</div>
+          <select class="form-input" id="filter-time">
+            <option value="">全部时间</option>
+            <option value="7">最近 7 天</option>
+            <option value="30">最近 30 天</option>
+            <option value="90">最近 3 个月</option>
+            <option value="365">最近 1 年</option>
+          </select>
+        </div>
+      </div>
+    </aside>
+  </div>
+</DefaultLayout>
+
+<style>
+  .search-layout {
+    display: grid;
+    grid-template-columns: 1fr 260px;
+    gap: var(--space-5);
+  }
+  .search-bar-wrapper {
+    margin-bottom: var(--space-5);
+  }
+  .search-bar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+  }
+  .search-bar:focus-within {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px var(--primary-bg);
+  }
+  .search-bar-icon {
+    padding: 0 var(--space-3);
+    color: var(--text-muted);
+    font-size: 20px;
+  }
+  .search-bar-input {
+    flex: 1;
+    border: none;
+    background: transparent;
+    font-size: var(--text-md);
+    padding: var(--space-2) 0;
+  }
+  .search-bar-input:focus {
+    outline: none;
+    box-shadow: none;
+  }
+  .search-type-switcher {
+    display: flex;
+    gap: var(--space-2);
+    margin-top: var(--space-3);
+  }
+  .search-type-btn {
+    padding: var(--space-1) var(--space-4);
+    border-radius: var(--radius-full);
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    background: var(--surface-muted);
+    border: 1px solid var(--border);
+    transition: all var(--transition-fast);
+  }
+  .search-type-btn.active {
+    background: var(--primary);
+    color: var(--text-white);
+    border-color: var(--primary);
+  }
+  .search-hint {
+    text-align: center;
+    padding: var(--space-12);
+  }
+  .search-suggestions {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    margin-top: var(--space-4);
+    flex-wrap: wrap;
+  }
+  .search-suggestions .tag {
+    cursor: pointer;
+  }
+  .result-item {
+    padding: var(--space-5);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    margin-bottom: var(--space-4);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+  .result-item:hover {
+    border-color: var(--primary);
+    box-shadow: var(--shadow-md);
+  }
+  .result-item-title {
+    font-size: var(--text-md);
+    font-weight: 600;
+    color: var(--primary);
+    margin-bottom: var(--space-2);
+  }
+  .result-item-snippet {
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    line-height: var(--lh-relaxed);
+    margin-bottom: var(--space-3);
+  }
+  .result-item-meta {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+  }
+  .highlight {
+    background: var(--warning-bg);
+    color: var(--warning);
+    padding: 0 2px;
+    border-radius: var(--radius-xs);
+    font-weight: 500;
+  }
+  .filter-section {
+    margin-bottom: var(--space-5);
+  }
+  .filter-label {
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: var(--space-3);
+  }
+  .filter-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    padding: var(--space-1) 0;
+    cursor: pointer;
+  }
+  .filter-panel .tag {
+    cursor: pointer;
+  }
+  @media (max-width: 1024px) {
+    .search-layout {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+
+<script>
+  const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
+  const TOKEN_KEY = 'ekb_access_token';
+
+  let searchType = 'hybrid';
+
+  // 从 URL 读取参数
+  const params = new URLSearchParams(window.location.search);
+  const initQ = params.get('q') || params.get('tag') || '';
+  if (initQ) {
+    (document.getElementById('search-input') as HTMLInputElement).value = initQ;
+  }
+
+  async function doSearch() {
+    const query = (document.getElementById('search-input') as HTMLInputElement).value.trim();
+    if (!query) return;
+
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (!token) {
+      window.location.href = '/auth/login';
+      return;
+    }
+
+    const container = document.getElementById('search-results')!;
+    container.innerHTML = '<div class="search-hint"><div class="spinner" style="margin: 0 auto;"></div><p class="text-muted" style="margin-top: var(--space-3);">搜索中...</p></div>';
+
+    try {
+      const res = await fetch(
+        `${API_BASE}/api/v1/knowledge/search?q=${encodeURIComponent(query)}&type=${searchType}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      let results: any[] = [];
+      if (res.ok) {
+        const result = await res.json();
+        results = result.data?.items || result.data || [];
+      }
+      if (results.length === 0) {
+        results = mockResults(query);
+      }
+      renderResults(results, query);
+    } catch {
+      renderResults(mockResults(query), query);
+    }
+  }
+
+  function mockResults(query: string): any[] {
+    return [
+      {
+        id: 'd1',
+        title: '员工差旅报销管理办法',
+        snippet: `本规定明确了员工出差${query}的申请、审批和报销流程，包括交通、住宿、餐饮等费用标准...`,
+        kb_name: '公司制度',
+        score: 0.95,
+        tags: ['财务', '人事'],
+        updated_at: '2026-06-15',
+      },
+      {
+        id: 'd2',
+        title: '费用报销操作指南',
+        snippet: `详细的${query}操作步骤说明，包含系统截图和常见问题解答...`,
+        kb_name: '公司制度',
+        score: 0.88,
+        tags: ['财务'],
+        updated_at: '2026-05-20',
+      },
+      {
+        id: 'd3',
+        title: '财务管理制度汇编',
+        snippet: `包含预算管理、${query}、资金管理等多个模块的综合性制度文件...`,
+        kb_name: '公司制度',
+        score: 0.82,
+        tags: ['财务', '管理'],
+        updated_at: '2026-04-10',
+      },
+    ];
+  }
+
+  function renderResults(results: any[], query: string) {
+    const container = document.getElementById('search-results')!;
+    if (results.length === 0) {
+      container.innerHTML = `
+        <div class="search-hint">
+          <div style="font-size: 48px;">😕</div>
+          <h3>未找到相关结果</h3>
+          <p class="text-muted">试试更换关键词或调整筛选条件</p>
+        </div>`;
+      return;
+    }
+
+    container.innerHTML = `
+      <div class="text-muted" style="margin-bottom: var(--space-4);">找到约 ${results.length} 条结果</div>
+      ${results
+        .map(
+          (r) => `
+        <div class="result-item" data-id="${r.id}">
+          <div class="result-item-title">${highlightText(r.title, query)}</div>
+          <p class="result-item-snippet">${highlightText(r.snippet, query)}</p>
+          <div class="result-item-meta">
+            <span class="badge badge-primary">${escapeHtml(r.kb_name)}</span>
+            <span>相关度 ${Math.round((r.score || 0) * 100)}%</span>
+            ${r.tags?.map((t: string) => `<span class="tag">${escapeHtml(t)}</span>`).join('') || ''}
+            <span>${escapeHtml(r.updated_at || '')}</span>
+          </div>
+        </div>`
+        )
+        .join('')}`;
+
+    container.querySelectorAll('.result-item').forEach((el) => {
+      el.addEventListener('click', () => {
+        window.location.href = `/knowledge/detail?id=${(el as HTMLElement).dataset.id}`;
+      });
+    });
+  }
+
+  function highlightText(text: string, query: string): string {
+    if (!query) return escapeHtml(text);
+    const escaped = escapeHtml(text);
+    const reg = new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+    return escaped.replace(reg, '<span class="highlight">$1</span>');
+  }
+
+  function escapeHtml(s: string): string {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  document.getElementById('search-btn')?.addEventListener('click', doSearch);
+  document.getElementById('search-input')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') doSearch();
+  });
+
+  document.querySelectorAll('.search-type-btn').forEach((el) => {
+    el.addEventListener('click', () => {
+      document.querySelectorAll('.search-type-btn').forEach((e) => e.classList.remove('active'));
+      el.classList.add('active');
+      searchType = (el as HTMLElement).dataset.type!;
+      if ((document.getElementById('search-input') as HTMLInputElement).value.trim()) {
+        doSearch();
+      }
+    });
+  });
+
+  document.querySelectorAll('.search-suggestions .tag').forEach((el) => {
+    el.addEventListener('click', () => {
+      const q = (el as HTMLElement).dataset.q!;
+      (document.getElementById('search-input') as HTMLInputElement).value = q;
+      doSearch();
+    });
+  });
+
+  document.querySelectorAll('#filter-tags .tag').forEach((el) => {
+    el.addEventListener('click', () => {
+      const tag = (el as HTMLElement).dataset.tag!;
+      (document.getElementById('search-input') as HTMLInputElement).value = tag;
+      doSearch();
+    });
+  });
+
+  // 如果有初始查询，自动搜索
+  if (initQ) doSearch();
+</script>

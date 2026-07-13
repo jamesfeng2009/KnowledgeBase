@@ -1,0 +1,308 @@
+---
+/**
+ * 系统设置页面
+ * 站点名称、Logo + 默认语言 + 功能开关 + 系统状态
+ */
+import DefaultLayout from '@/layouts/DefaultLayout.astro';
+
+const breadcrumb = [{ label: '设置', href: '/settings/tenant' }, { label: '系统设置' }];
+---
+
+<DefaultLayout title="系统设置" breadcrumb={breadcrumb}>
+  <div class="settings-nav" style="margin-bottom: var(--space-5);">
+    <a href="/settings/tenant" class="settings-nav-item">租户设置</a>
+    <a href="/settings/api" class="settings-nav-item">API 密钥</a>
+    <a href="/settings/llm" class="settings-nav-item">LLM 配置</a>
+    <a href="/settings/system" class="settings-nav-item active">系统设置</a>
+  </div>
+
+  <!-- 站点设置 -->
+  <div class="card" style="margin-bottom: var(--space-5);">
+    <div class="card-header"><h3>站点设置</h3></div>
+    <form id="site-form">
+      <div class="grid grid-cols-2">
+        <div class="form-group">
+          <label class="form-label">站点名称</label>
+          <input type="text" class="form-input" name="site_name" value="企业知识库" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">默认语言</label>
+          <select class="form-input" name="language">
+            <option value="zh-CN" selected>简体中文</option>
+            <option value="en-US">English</option>
+            <option value="ja-JP">日本語</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">时区</label>
+          <select class="form-input" name="timezone">
+            <option value="Asia/Shanghai" selected>Asia/Shanghai (UTC+8)</option>
+            <option value="UTC">UTC</option>
+            <option value="America/New_York">America/New_York</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">站点 Logo</label>
+          <div class="logo-upload">
+            <div class="logo-preview">E</div>
+            <div>
+              <button type="button" class="btn btn-outline btn-sm">上传 Logo</button>
+              <div class="text-muted" style="font-size: var(--text-xs); margin-top: var(--space-1);">建议尺寸 128x128，支持 PNG/SVG</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <button type="submit" class="btn btn-primary">保存设置</button>
+    </form>
+  </div>
+
+  <!-- 功能开关 -->
+  <div class="card" style="margin-bottom: var(--space-5);">
+    <div class="card-header"><h3>功能开关</h3></div>
+    <div id="feature-switches"></div>
+  </div>
+
+  <!-- 系统状态 -->
+  <div class="card">
+    <div class="card-header">
+      <h3>系统状态</h3>
+      <span class="badge badge-success">运行正常</span>
+    </div>
+    <div class="grid grid-cols-3">
+      <div class="status-item">
+        <div class="status-header">
+          <span class="status-dot success"></span>
+          <span style="font-weight: 500;">API 服务</span>
+        </div>
+        <div class="text-muted" style="font-size: var(--text-xs); margin-top: var(--space-1);">响应时间 45ms</div>
+      </div>
+      <div class="status-item">
+        <div class="status-header">
+          <span class="status-dot success"></span>
+          <span style="font-weight: 500;">数据库</span>
+        </div>
+        <div class="text-muted" style="font-size: var(--text-xs); margin-top: var(--space-1);">连接正常</div>
+      </div>
+      <div class="status-item">
+        <div class="status-header">
+          <span class="status-dot success"></span>
+          <span style="font-weight: 500;">向量数据库</span>
+        </div>
+        <div class="text-muted" style="font-size: var(--text-xs); margin-top: var(--space-1);">索引正常</div>
+      </div>
+      <div class="status-item">
+        <div class="status-header">
+          <span class="status-dot success"></span>
+          <span style="font-weight: 500;">对象存储</span>
+        </div>
+        <div class="text-muted" style="font-size: var(--text-xs); margin-top: var(--space-1);">可用空间 92%</div>
+      </div>
+      <div class="status-item">
+        <div class="status-header">
+          <span class="status-dot warning"></span>
+          <span style="font-weight: 500;">LLM 服务</span>
+        </div>
+        <div class="text-muted" style="font-size: var(--text-xs); margin-top: var(--space-1);">响应略慢，延迟 1.2s</div>
+      </div>
+      <div class="status-item">
+        <div class="status-header">
+          <span class="status-dot success"></span>
+          <span style="font-weight: 500;">消息队列</span>
+        </div>
+        <div class="text-muted" style="font-size: var(--text-xs); margin-top: var(--space-1);">积压 0 条</div>
+      </div>
+    </div>
+    <div style="margin-top: var(--space-4); padding-top: var(--space-4); border-top: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center;">
+      <div class="text-muted" style="font-size: var(--text-sm);">系统版本 v2.4.1 · 上次更新 2026-07-01</div>
+      <button class="btn btn-outline btn-sm" id="check-update">检查更新</button>
+    </div>
+  </div>
+</DefaultLayout>
+
+<style>
+  .settings-nav {
+    display: flex;
+    gap: var(--space-1);
+    border-bottom: 1px solid var(--border);
+  }
+  .settings-nav-item {
+    padding: var(--space-3) var(--space-5);
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    border-bottom: 2px solid transparent;
+    text-decoration: none;
+    transition: all var(--transition-fast);
+  }
+  .settings-nav-item:hover {
+    color: var(--primary);
+  }
+  .settings-nav-item.active {
+    color: var(--primary);
+    border-bottom-color: var(--primary);
+    font-weight: 500;
+  }
+  .logo-upload {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+  }
+  .logo-preview {
+    width: 48px;
+    height: 48px;
+    border-radius: var(--radius);
+    background: var(--primary);
+    color: var(--text-white);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: var(--text-2xl);
+    font-weight: 700;
+  }
+  .feature-switch-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-3) 0;
+    border-bottom: 1px solid var(--border-light);
+  }
+  .feature-switch-item:last-child {
+    border-bottom: none;
+  }
+  .feature-switch-label {
+    font-size: var(--text-sm);
+    color: var(--text);
+  }
+  .feature-switch-desc {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    margin-top: var(--space-1);
+  }
+  .switch {
+    position: relative;
+    display: inline-block;
+    width: 40px;
+    height: 22px;
+    flex-shrink: 0;
+  }
+  .switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+  .switch-slider {
+    position: absolute;
+    cursor: pointer;
+    inset: 0;
+    background: var(--border-dark);
+    border-radius: var(--radius-full);
+    transition: var(--transition);
+  }
+  .switch-slider::before {
+    content: '';
+    position: absolute;
+    height: 16px;
+    width: 16px;
+    left: 3px;
+    bottom: 3px;
+    background: var(--surface);
+    border-radius: 50%;
+    transition: var(--transition);
+  }
+  .switch input:checked + .switch-slider {
+    background: var(--primary);
+  }
+  .switch input:checked + .switch-slider::before {
+    transform: translateX(18px);
+  }
+  .status-item {
+    padding: var(--space-3) 0;
+  }
+  .status-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  .status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+  .status-dot.success {
+    background: var(--success);
+    box-shadow: 0 0 0 3px var(--success-bg);
+  }
+  .status-dot.warning {
+    background: var(--warning);
+    box-shadow: 0 0 0 3px var(--warning-bg);
+  }
+  .status-dot.danger {
+    background: var(--danger);
+    box-shadow: 0 0 0 3px var(--danger-bg);
+  }
+</style>
+
+<script>
+  const features = [
+    { key: 'ai_chat', name: 'AI 智能对话', desc: '启用 AI 对话功能', enabled: true },
+    { key: 'semantic_search', name: '语义搜索', desc: '基于向量的语义搜索', enabled: true },
+    { key: 'collab_edit', name: '协同编辑', desc: '多人实时协同编辑文档', enabled: true },
+    { key: 'knowledge_graph', name: '知识图谱', desc: '自动构建知识图谱', enabled: true },
+    { key: 'auto_summary', name: 'AI 自动摘要', desc: '文档上传后自动生成摘要', enabled: true },
+    { key: 'audit_workflow', name: '审核工作流', desc: '文档发布需审核', enabled: false },
+    { key: 'sso', name: 'SSO 单点登录', desc: '集成企业 SSO 登录', enabled: false },
+    { key: 'guest_access', name: '访客访问', desc: '允许外部访客查看公开知识', enabled: false },
+  ];
+
+  function renderSwitches() {
+    document.getElementById('feature-switches')!.innerHTML = features
+      .map(
+        (f) => `
+      <div class="feature-switch-item">
+        <div>
+          <div class="feature-switch-label">${escapeHtml(f.name)}</div>
+          <div class="feature-switch-desc">${escapeHtml(f.desc)}</div>
+        </div>
+        <label class="switch">
+          <input type="checkbox" data-key="${f.key}" ${f.enabled ? 'checked' : ''} />
+          <span class="switch-slider"></span>
+        </label>
+      </div>`
+      )
+      .join('');
+
+    document.querySelectorAll('#feature-switches input[type="checkbox"]').forEach((el) => {
+      el.addEventListener('change', async (e) => {
+        const key = (el as HTMLInputElement).dataset.key!;
+        const enabled = (el as HTMLInputElement).checked;
+        const f = features.find((x) => x.key === key);
+        if (f) f.enabled = enabled;
+        const token = localStorage.getItem('ekb_access_token');
+        const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
+        try {
+          await fetch(`${API_BASE}/api/v1/settings/features/${key}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ enabled }),
+          });
+        } catch {
+          // ignore
+        }
+      });
+    });
+  }
+
+  function escapeHtml(s: string): string {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  document.getElementById('site-form')?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    alert('站点设置已保存');
+  });
+
+  document.getElementById('check-update')?.addEventListener('click', () => {
+    alert('当前已是最新版本 v2.4.1');
+  });
+
+  renderSwitches();
+</script>

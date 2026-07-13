@@ -1,0 +1,291 @@
+---
+/**
+ * 知识首页
+ * 知识库卡片网格 + 最近浏览文档 + 热门标签云 + 知识统计概览
+ */
+import DefaultLayout from '@/layouts/DefaultLayout.astro';
+
+const breadcrumb = [{ label: '知识', href: '/knowledge' }, { label: '知识首页' }];
+---
+
+<DefaultLayout title="知识首页" breadcrumb={breadcrumb}>
+  <!-- 统计概览 -->
+  <div class="grid grid-cols-4" style="margin-bottom: var(--space-6);">
+    <div class="card">
+      <div class="text-muted" style="font-size: var(--text-sm);">知识库</div>
+      <div style="font-size: var(--text-3xl); font-weight: 600; color: var(--primary);" id="stat-kb">--</div>
+    </div>
+    <div class="card">
+      <div class="text-muted" style="font-size: var(--text-sm);">文档总数</div>
+      <div style="font-size: var(--text-3xl); font-weight: 600; color: var(--success);" id="stat-doc">--</div>
+    </div>
+    <div class="card">
+      <div class="text-muted" style="font-size: var(--text-sm);">本周新增</div>
+      <div style="font-size: var(--text-3xl); font-weight: 600; color: var(--warning);" id="stat-week">--</div>
+    </div>
+    <div class="card">
+      <div class="text-muted" style="font-size: var(--text-sm);">搜索次数</div>
+      <div style="font-size: var(--text-3xl); font-weight: 600; color: var(--info);" id="stat-search">--</div>
+    </div>
+  </div>
+
+  <!-- 知识库卡片 -->
+  <div class="page-header">
+    <h2 style="font-size: var(--text-xl);">知识库</h2>
+    <a href="/manage/kb" class="btn btn-outline btn-sm">管理知识库</a>
+  </div>
+  <div class="grid grid-cols-3" id="kb-grid" style="margin-bottom: var(--space-8);">
+    <div class="loading-state">加载中...</div>
+  </div>
+
+  <!-- 最近浏览 + 热门标签 -->
+  <div style="display: grid; grid-template-columns: 2fr 1fr; gap: var(--space-5);">
+    <!-- 最近浏览 -->
+    <div class="card">
+      <div class="card-header">
+        <h3>最近浏览</h3>
+      </div>
+      <div id="recent-docs">
+        <div class="loading-state">加载中...</div>
+      </div>
+    </div>
+
+    <!-- 热门标签云 -->
+    <div class="card">
+      <div class="card-header">
+        <h3>热门标签</h3>
+      </div>
+      <div id="tag-cloud" style="display: flex; flex-wrap: wrap; gap: var(--space-2);">
+        <div class="loading-state">加载中...</div>
+      </div>
+    </div>
+  </div>
+</DefaultLayout>
+
+<style>
+  .kb-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    cursor: pointer;
+    text-decoration: none;
+    color: inherit;
+  }
+  .kb-card-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+  }
+  .kb-card-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: var(--radius);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+    flex-shrink: 0;
+  }
+  .kb-card-title {
+    font-size: var(--text-lg);
+    font-weight: 600;
+    color: var(--text);
+  }
+  .kb-card-desc {
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    line-height: var(--lh-relaxed);
+    flex: 1;
+  }
+  .kb-card-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--border);
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+  }
+  .doc-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) 0;
+    border-bottom: 1px solid var(--border-light);
+  }
+  .doc-item:last-child {
+    border-bottom: none;
+  }
+  .doc-item-icon {
+    font-size: 20px;
+  }
+  .doc-item-body {
+    flex: 1;
+    min-width: 0;
+  }
+  .doc-item-title {
+    font-size: var(--text-base);
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .doc-item-meta {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    margin-top: var(--space-1);
+  }
+  .tag-cloud-item {
+    cursor: pointer;
+  }
+  .loading-state {
+    text-align: center;
+    padding: var(--space-6);
+    color: var(--text-muted);
+  }
+</style>
+
+<script>
+  const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
+  const TOKEN_KEY = 'ekb_access_token';
+
+  const kbColors = ['var(--primary)', 'var(--success)', 'var(--warning)', 'var(--info)', '#8B5CF6', '#EC4899'];
+  const kbBgs = ['var(--primary-bg)', 'var(--success-bg)', 'var(--warning-bg)', 'var(--info-bg)', '#F3E8FF', '#FCE7F3'];
+
+  function mockKbs() {
+    return [
+      { id: 'kb-1', name: '公司制度', icon: '📋', desc: '公司规章制度、流程规范、人事政策等', doc_count: 128, updated_at: Date.now() - 3600000 },
+      { id: 'kb-2', name: '产品文档', icon: '📦', desc: '产品说明书、需求文档、设计稿', doc_count: 86, updated_at: Date.now() - 86400000 },
+      { id: 'kb-3', name: '技术文档', icon: '⚙️', desc: 'API 文档、架构设计、开发规范', doc_count: 245, updated_at: Date.now() - 7200000 },
+    ];
+  }
+
+  async function loadKbs() {
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (!token) {
+      window.location.href = '/auth/login';
+      return;
+    }
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/knowledge/bases`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      let kbs: any[] = [];
+      if (res.ok) {
+        const result = await res.json();
+        kbs = result.data?.items || result.data || [];
+      } else if (res.status === 401) {
+        window.location.href = '/auth/login';
+        return;
+      }
+      if (kbs.length === 0) kbs = mockKbs();
+      renderKbs(kbs);
+      updateStats(kbs);
+    } catch {
+      const kbs = mockKbs();
+      renderKbs(kbs);
+      updateStats(kbs);
+    }
+  }
+
+  function updateStats(kbs: any[]) {
+    const total = kbs.reduce((s, k) => s + (k.doc_count || 0), 0);
+    const setText = (id: string, v: number) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = String(v);
+    };
+    setText('stat-kb', kbs.length);
+    setText('stat-doc', total);
+    setText('stat-week', 12);
+    setText('stat-search', 1024);
+  }
+
+  function renderKbs(kbs: any[]) {
+    document.getElementById('kb-grid')!.innerHTML = kbs
+      .map((kb, i) => {
+        const color = kbColors[i % kbColors.length];
+        const bg = kbBgs[i % kbBgs.length];
+        return `
+        <a href="/knowledge/search?kb=${kb.id}" class="card kb-card">
+          <div class="kb-card-header">
+            <div class="kb-card-icon" style="background: ${bg};">${kb.icon || '📚'}</div>
+            <div>
+              <div class="kb-card-title">${escapeHtml(kb.name)}</div>
+              <div class="text-muted" style="font-size: var(--text-xs);">${kb.doc_count || 0} 篇文档</div>
+            </div>
+          </div>
+          <p class="kb-card-desc">${escapeHtml(kb.desc || '')}</p>
+          <div class="kb-card-footer">
+            <span>更新于 ${formatTime(kb.updated_at)}</span>
+            <span style="color: ${color};">浏览 ›</span>
+          </div>
+        </a>`;
+      })
+      .join('');
+  }
+
+  function renderRecentDocs() {
+    const docs = [
+      { id: 'd1', title: '员工手册 V3.2', kb: '公司制度', type: 'pdf', time: '2 小时前' },
+      { id: 'd2', title: '用户中心架构设计', kb: '技术文档', type: 'md', time: '昨天' },
+      { id: 'd3', title: 'Q3 产品需求文档', kb: '产品文档', type: 'docx', time: '3 天前' },
+      { id: 'd4', title: '差旅报销管理办法', kb: '公司制度', type: 'pdf', time: '5 天前' },
+    ];
+    const typeIcon: Record<string, string> = { pdf: '📄', md: '📝', docx: '📘', xlsx: '📊' };
+    document.getElementById('recent-docs')!.innerHTML = docs
+      .map(
+        (d) => `
+      <a href="/knowledge/detail?id=${d.id}" class="doc-item" style="text-decoration: none; color: inherit;">
+        <span class="doc-item-icon">${typeIcon[d.type] || '📄'}</span>
+        <div class="doc-item-body">
+          <div class="doc-item-title">${escapeHtml(d.title)}</div>
+          <div class="doc-item-meta">${d.kb} · ${d.time}</div>
+        </div>
+        <span class="text-muted">›</span>
+      </a>`
+      )
+      .join('');
+  }
+
+  function renderTagCloud() {
+    const tags = [
+      { name: '人事', count: 48, size: 18 },
+      { name: '财务', count: 36, size: 16 },
+      { name: '技术', count: 120, size: 22 },
+      { name: '产品', count: 64, size: 18 },
+      { name: '流程', count: 28, size: 14 },
+      { name: 'API', count: 52, size: 17 },
+      { name: '安全', count: 20, size: 14 },
+      { name: '培训', count: 16, size: 13 },
+    ];
+    document.getElementById('tag-cloud')!.innerHTML = tags
+      .map(
+        (t) => `
+      <span class="tag tag-cloud-item" style="font-size: ${t.size}px;" data-tag="${t.name}">
+        ${t.name} <span class="text-muted">(${t.count})</span>
+      </span>`
+      )
+      .join('');
+    document.querySelectorAll('.tag-cloud-item').forEach((el) => {
+      el.addEventListener('click', () => {
+        const tag = (el as HTMLElement).dataset.tag!;
+        window.location.href = `/knowledge/search?tag=${tag}`;
+      });
+    });
+  }
+
+  function formatTime(ts: number): string {
+    const diff = Date.now() - ts;
+    if (diff < 3600000) return Math.floor(diff / 60000) + ' 分钟前';
+    if (diff < 86400000) return Math.floor(diff / 3600000) + ' 小时前';
+    return Math.floor(diff / 86400000) + ' 天前';
+  }
+
+  function escapeHtml(s: string): string {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  loadKbs();
+  renderRecentDocs();
+  renderTagCloud();
+</script>

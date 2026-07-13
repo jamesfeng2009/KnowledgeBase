@@ -1,0 +1,192 @@
+---
+/**
+ * 注册页 - 独立布局（不使用 DefaultLayout）
+ */
+import '@/styles/global.css';
+
+const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
+---
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="企业知识库 - 注册" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>注册 · {appName}</title>
+  </head>
+  <body>
+    <div class="auth-page">
+      <div class="auth-card">
+        <!-- Logo 区域 -->
+        <div class="auth-logo">
+          <div class="auth-logo-icon">E</div>
+          <h1 class="auth-title">创建账户</h1>
+          <p class="auth-subtitle">注册新账户，开启智能知识管理之旅</p>
+        </div>
+
+        <!-- 错误/成功提示 -->
+        <div id="error-message" class="alert alert-error" style="display: none;"></div>
+        <div id="success-message" class="alert alert-success" style="display: none;"></div>
+
+        <!-- 注册表单 -->
+        <form id="register-form">
+          <div class="form-group">
+            <label class="form-label" for="name">姓名</label>
+            <input
+              type="text"
+              id="name"
+              name="name"
+              class="form-input"
+              placeholder="请输入您的姓名"
+              required
+              autocomplete="name"
+            />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="email">邮箱</label>
+            <input
+              type="email"
+              id="email"
+              name="email"
+              class="form-input"
+              placeholder="请输入邮箱地址"
+              required
+              autocomplete="email"
+            />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="password">密码</label>
+            <input
+              type="password"
+              id="password"
+              name="password"
+              class="form-input"
+              placeholder="请输入密码（至少 8 位）"
+              required
+              minlength="8"
+              autocomplete="new-password"
+            />
+            <div style="font-size: var(--text-xs); color: var(--text-muted); margin-top: var(--space-2);">
+              密码至少 8 个字符，建议包含字母、数字和特殊字符
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="confirm-password">确认密码</label>
+            <input
+              type="password"
+              id="confirm-password"
+              name="confirm-password"
+              class="form-input"
+              placeholder="请再次输入密码"
+              required
+              autocomplete="new-password"
+            />
+          </div>
+
+          <div style="margin-bottom: var(--space-6);">
+            <label style="display: flex; align-items: flex-start; gap: var(--space-2); font-size: var(--text-sm); color: var(--text-secondary); cursor: pointer;">
+              <input type="checkbox" id="agree" name="agree" required style="margin-top: 3px;" />
+              <span>
+                我已阅读并同意
+                <a href="#" style="font-weight: 500;">服务条款</a>
+                和
+                <a href="#" style="font-weight: 500;">隐私政策</a>
+              </span>
+            </label>
+          </div>
+
+          <button type="submit" class="btn btn-primary btn-block btn-lg" id="submit-btn">
+            <span id="btn-text">注册</span>
+            <span id="btn-spinner" class="spinner" style="display: none;"></span>
+          </button>
+        </form>
+
+        <!-- 底部链接 -->
+        <div class="auth-footer">
+          已有账户？<a href="/auth/login">立即登录</a>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const form = document.getElementById('register-form') as HTMLFormElement;
+      const errorMsg = document.getElementById('error-message') as HTMLElement;
+      const successMsg = document.getElementById('success-message') as HTMLElement;
+      const submitBtn = document.getElementById('submit-btn') as HTMLButtonElement;
+      const btnText = document.getElementById('btn-text') as HTMLElement;
+      const btnSpinner = document.getElementById('btn-spinner') as HTMLElement;
+
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const name = (document.getElementById('name') as HTMLInputElement).value;
+        const email = (document.getElementById('email') as HTMLInputElement).value;
+        const password = (document.getElementById('password') as HTMLInputElement).value;
+        const confirmPassword = (document.getElementById('confirm-password') as HTMLInputElement).value;
+
+        // 隐藏提示
+        errorMsg.style.display = 'none';
+        successMsg.style.display = 'none';
+
+        // 前端验证：密码一致性
+        if (password !== confirmPassword) {
+          errorMsg.textContent = '两次输入的密码不一致';
+          errorMsg.style.display = 'block';
+          return;
+        }
+
+        // 显示加载状态
+        submitBtn.disabled = true;
+        btnText.textContent = '注册中...';
+        btnSpinner.style.display = 'inline-block';
+
+        try {
+          const apiBase = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
+          const response = await fetch(`${apiBase}/api/v1/auth/register`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, email, password }),
+          });
+
+          const result = await response.json();
+
+          if (response.ok) {
+            // 注册成功
+            successMsg.textContent = '注册成功！正在跳转到登录页...';
+            successMsg.style.display = 'block';
+
+            // 尝试自动登录
+            const accessToken = result.data?.access_token || result.access_token;
+            if (accessToken) {
+              localStorage.setItem('ekb_access_token', accessToken);
+              setTimeout(() => {
+                window.location.href = '/';
+              }, 1000);
+            } else {
+              // 未返回 Token，跳转登录页
+              setTimeout(() => {
+                window.location.href = '/auth/login';
+              }, 1500);
+            }
+          } else {
+            const message = result.detail || result.message || '注册失败，该邮箱可能已被注册';
+            errorMsg.textContent = message;
+            errorMsg.style.display = 'block';
+          }
+        } catch (error) {
+          errorMsg.textContent = error instanceof Error ? error.message : '网络请求异常，请稍后重试';
+          errorMsg.style.display = 'block';
+        } finally {
+          submitBtn.disabled = false;
+          btnText.textContent = '注册';
+          btnSpinner.style.display = 'none';
+        }
+      });
+    </script>
+  </body>
+</html>

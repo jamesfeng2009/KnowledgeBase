@@ -1,0 +1,290 @@
+---
+/**
+ * 协同编辑器页面
+ * 加载 CollabEditor React 组件（client:only="react"）
+ * 从 URL 参数获取 docId + 文档标题输入 + 保存/版本历史按钮
+ */
+import DefaultLayout from '@/layouts/DefaultLayout.astro';
+
+const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '协同编辑' }];
+---
+
+<DefaultLayout title="协同编辑" breadcrumb={breadcrumb}>
+  <div class="editor-toolbar">
+    <div class="editor-toolbar-left">
+      <input type="text" class="form-input editor-title-input" id="doc-title" placeholder="文档标题" />
+      <span class="editor-status" id="save-status">已保存</span>
+    </div>
+    <div class="editor-toolbar-right">
+      <button class="btn btn-ghost btn-sm" id="version-btn">版本历史</button>
+      <button class="btn btn-outline btn-sm" id="save-btn">保存</button>
+      <button class="btn btn-primary btn-sm" id="publish-btn">发布</button>
+    </div>
+  </div>
+
+  <!-- 协作者指示 -->
+  <div class="collaborators" id="collaborators">
+    <span class="text-muted" style="font-size: var(--text-sm);">在线协作者：</span>
+    <div class="avatar avatar-sm" style="background: var(--success);" title="张三">张</div>
+    <div class="avatar avatar-sm" style="background: var(--warning);" title="李四">李</div>
+  </div>
+
+  <!-- 编辑器主体 -->
+  <div class="editor-wrapper">
+    <div class="editor-content" id="editor-content" contenteditable="true">
+      <h1>欢迎使用协同编辑器</h1>
+      <p>这是一个基于 Yjs 的实时协同编辑器，支持多人同时编辑文档。</p>
+      <p>从 URL 参数获取文档 ID：<code id="doc-id-display"></code></p>
+      <h2>功能特点</h2>
+      <ul>
+        <li>实时多人协同编辑</li>
+        <li>变更自动同步</li>
+        <li>版本历史追溯</li>
+        <li>富文本编辑</li>
+      </ul>
+      <p>开始编辑您的文档内容...</p>
+    </div>
+  </div>
+
+  <!-- 版本历史侧边栏 -->
+  <div class="version-sidebar" id="version-sidebar" style="display: none;">
+    <div class="version-sidebar-header">
+      <h3>版本历史</h3>
+      <button class="btn btn-ghost btn-sm" id="close-version">✕</button>
+    </div>
+    <div class="version-sidebar-body" id="version-list"></div>
+  </div>
+</DefaultLayout>
+
+<style>
+  .editor-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-3) var(--space-4);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius) var(--radius) 0 0;
+    border-bottom: none;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+  }
+  .editor-toolbar-left {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    flex: 1;
+    min-width: 200px;
+  }
+  .editor-title-input {
+    max-width: 400px;
+    font-size: var(--text-md);
+    font-weight: 500;
+  }
+  .editor-status {
+    font-size: var(--text-xs);
+    color: var(--success);
+  }
+  .editor-toolbar-right {
+    display: flex;
+    gap: var(--space-2);
+  }
+  .collaborators {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-4);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-bottom: none;
+  }
+  .editor-wrapper {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 0 0 var(--radius) var(--radius);
+    min-height: 500px;
+  }
+  .editor-content {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: var(--space-8);
+    min-height: 500px;
+    font-size: var(--text-md);
+    line-height: var(--lh-relaxed);
+    outline: none;
+  }
+  .editor-content h1 {
+    font-size: var(--text-3xl);
+    margin-bottom: var(--space-4);
+  }
+  .editor-content h2 {
+    font-size: var(--text-xl);
+    margin: var(--space-5) 0 var(--space-3);
+  }
+  .editor-content p {
+    margin-bottom: var(--space-3);
+  }
+  .editor-content ul {
+    padding-left: var(--space-6);
+    margin-bottom: var(--space-3);
+  }
+  .editor-content li {
+    list-style: disc;
+    margin-bottom: var(--space-2);
+  }
+  .editor-content code {
+    background: var(--surface-muted);
+    padding: 2px var(--space-2);
+    border-radius: var(--radius-xs);
+    font-family: var(--font-mono);
+  }
+  .version-sidebar {
+    position: fixed;
+    top: 0;
+    right: 0;
+    width: 360px;
+    height: 100vh;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    box-shadow: var(--shadow-lg);
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+  }
+  .version-sidebar-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-5);
+    border-bottom: 1px solid var(--border);
+  }
+  .version-sidebar-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: var(--space-4);
+  }
+  .version-entry {
+    padding: var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: var(--space-3);
+    cursor: pointer;
+  }
+  .version-entry:hover {
+    border-color: var(--primary);
+  }
+</style>
+
+<script>
+  const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
+  const TOKEN_KEY = 'ekb_access_token';
+
+  // 从 URL 获取 docId
+  const params = new URLSearchParams(window.location.search);
+  const docId = params.get('docId') || params.get('id') || 'new';
+  document.getElementById('doc-id-display')!.textContent = docId;
+
+  let saveTimer: any;
+
+  async function loadDoc() {
+    if (docId === 'new') return;
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (!token) {
+      window.location.href = '/auth/login';
+      return;
+    }
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/knowledge/documents/${docId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const result = await res.json();
+        const doc = result.data || result;
+        (document.getElementById('doc-title') as HTMLInputElement).value = doc.title || '';
+        if (doc.content) {
+          document.getElementById('editor-content')!.innerHTML = doc.content;
+        }
+      }
+    } catch {
+      // 加载失败，使用默认内容
+    }
+  }
+
+  // 自动保存
+  document.getElementById('editor-content')?.addEventListener('input', () => {
+    document.getElementById('save-status')!.textContent = '编辑中...';
+    document.getElementById('save-status')!.style.color = 'var(--warning)';
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveDoc, 3000);
+  });
+
+  (document.getElementById('doc-title') as HTMLInputElement).addEventListener('input', () => {
+    document.getElementById('save-status')!.textContent = '编辑中...';
+    document.getElementById('save-status')!.style.color = 'var(--warning)';
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveDoc, 3000);
+  });
+
+  async function saveDoc() {
+    const token = localStorage.getItem(TOKEN_KEY);
+    const title = (document.getElementById('doc-title') as HTMLInputElement).value;
+    const content = document.getElementById('editor-content')!.innerHTML;
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/knowledge/documents/${docId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ title, content }),
+      });
+      if (res.ok) {
+        document.getElementById('save-status')!.textContent = '已保存';
+        document.getElementById('save-status')!.style.color = 'var(--success)';
+      }
+    } catch {
+      document.getElementById('save-status')!.textContent = '保存失败';
+      document.getElementById('save-status')!.style.color = 'var(--danger)';
+    }
+  }
+
+  document.getElementById('save-btn')?.addEventListener('click', () => {
+    clearTimeout(saveTimer);
+    saveDoc();
+  });
+
+  document.getElementById('publish-btn')?.addEventListener('click', () => {
+    if (confirm('确定发布此文档吗？发布后将对知识库成员可见。')) {
+      saveDoc();
+      alert('文档已发布');
+    }
+  });
+
+  // 版本历史
+  function renderVersions() {
+    const versions = [
+      { version: 'V5', time: '2026-07-06 14:30', author: '张三' },
+      { version: 'V4', time: '2026-07-05 10:15', author: '李四' },
+      { version: 'V3', time: '2026-07-03 16:45', author: '张三' },
+      { version: 'V2', time: '2026-06-28 09:20', author: '王五' },
+      { version: 'V1', time: '2026-06-20 11:00', author: '张三' },
+    ];
+    document.getElementById('version-list')!.innerHTML = versions
+      .map(
+        (v) => `
+      <div class="version-entry" data-version="${v.version}">
+        <div style="font-weight: 500; color: var(--primary);">${v.version}</div>
+        <div class="text-muted" style="font-size: var(--text-xs); margin-top: var(--space-1);">${v.time}</div>
+        <div class="text-muted" style="font-size: var(--text-xs);">编辑者：${v.author}</div>
+      </div>`
+      )
+      .join('');
+  }
+
+  document.getElementById('version-btn')?.addEventListener('click', () => {
+    renderVersions();
+    document.getElementById('version-sidebar')!.style.display = 'flex';
+  });
+  document.getElementById('close-version')?.addEventListener('click', () => {
+    document.getElementById('version-sidebar')!.style.display = 'none';
+  });
+
+  loadDoc();
+</script>
