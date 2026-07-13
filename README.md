@@ -497,19 +497,19 @@ flowchart TD
 ```mermaid
 flowchart LR
     subgraph "CacheAligner 检测"
-        INPUT[System Prompt 文本] --> DETECT_UUID[检测 UUID<br/>regex: [0-9a-f]{8}-...]
-        DETECT_UUID --> DETECT_TS[检测 ISO8601 时间戳<br/>regex: \\d{4}-\\d{2}-\\d{2}T...]
-        DETECT_TS --> DETECT_JWT[检测 JWT Token<br/>regex: eyJ...]
-        DETECT_JWT --> DETECT_HASH[检测十六进制哈希<br/>regex: [0-9a-f]{40,64}]
-        DETECT_HASH --> WARNINGS[返回警告列表]
+        INPUT["System Prompt 文本"] --> DETECT_UUID["检测 UUID<br/>regex: [0-9a-f]{8}-..."]
+        DETECT_UUID --> DETECT_TS["检测 ISO8601 时间戳<br/>regex: \\d{4}-\\d{2}-\\d{2}T..."]
+        DETECT_TS --> DETECT_JWT["检测 JWT Token<br/>regex: eyJ..."]
+        DETECT_JWT --> DETECT_HASH["检测十六进制哈希<br/>regex: [0-9a-f]{40,64}"]
+        DETECT_HASH --> WARNINGS["返回警告列表"]
     end
 
     subgraph "Anthropic Provider 集成"
-        SYSTEM_TEXT[system prompt] --> CHECK[check_cache_alignment]
-        CHECK --> |有警告| LOG[log.warning 记录]
-        CHECK --> |无警告| WRAP[包装为 content block]
+        SYSTEM_TEXT["system prompt"] --> CHECK["check_cache_alignment"]
+        CHECK --> |有警告| LOG["log.warning 记录"]
+        CHECK --> |无警告| WRAP["包装为 content block"]
         WRAP --> CACHE_CONTROL["cache_control: {type: ephemeral}"]
-        CACHE_CONTROL --> API[发送至 Anthropic API]
+        CACHE_CONTROL --> API["发送至 Anthropic API"]
     end
 ```
 
