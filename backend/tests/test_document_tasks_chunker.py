@@ -231,12 +231,13 @@ class TestBuildIndexes:
             "tasks.document_tasks._build_opensearch_index",
             new_callable=AsyncMock,
         ) as mock_os, patch(
-            "tasks.document_tasks._build_milvus_index",
+            "tasks.document_tasks._build_vector_index",
             new_callable=AsyncMock,
-        ) as mock_milvus:
+            return_value=len(embeddings),
+        ) as mock_vec:
             await _build_indexes("doc-001", chunk_objects, chunks_text, embeddings)
             mock_os.assert_called_once_with("doc-001", chunk_objects)
-            mock_milvus.assert_called_once_with("doc-001", chunk_objects, embeddings)
+            mock_vec.assert_called_once_with("doc-001", chunk_objects, embeddings)
 
     @pytest.mark.asyncio
     async def test_build_opensearch_index_with_chunk_metadata(self) -> None:
@@ -291,31 +292,19 @@ class TestBuildIndexes:
 
     @pytest.mark.asyncio
     async def test_build_milvus_index_with_chunk_metadata(self) -> None:
-        """_build_milvus_index 存储 Chunk 元数据。"""
+        """_build_milvus_index（向后兼容）通过 VectorStoreBase 适配器写入。"""
         chunk_objects = self._make_chunk_objects(2)
         embeddings = [[0.1] * 128, [0.2] * 128]
 
-        mock_collection = MagicMock()
-        mock_collection.insert = MagicMock()
+        # Mock 向量存储适配器
+        mock_store = MagicMock()
+        mock_store.upsert = AsyncMock(return_value=2)
 
-        with patch("pymilvus.connections.connect"), \
-             patch("pymilvus.utility.has_collection", return_value=True), \
-             patch("pymilvus.Collection", return_value=mock_collection):
+        with patch("app.rag.vector_store.get_vector_store", return_value=mock_store):
             await _build_milvus_index("doc-001", chunk_objects, embeddings)
 
-        # 验证 insert 被调用且包含元数据列
-        assert mock_collection.insert.called
-        insert_data = mock_collection.insert.call_args[0][0]
-        # 应有 7 列：doc_id, chunk_id, content, embedding, title_path, content_type, chunk_strategy
-        assert len(insert_data) == 7
-        # chunk_id 列应为 Chunk 的 id
-        assert insert_data[1] == ["chunk-0", "chunk-1"]
-        # title_path 列（_make_chunk_objects 中 i=1 时 title_path="标题 > 子标题2"）
-        assert insert_data[4] == ["标题", "标题 > 子标题2"]
-        # content_type 列
-        assert insert_data[5] == ["tutorial", "tutorial"]
-        # chunk_strategy 列
-        assert insert_data[6] == ["structural", "structural"]
+        # 验证 upsert 被调用且接收 Chunk 元数据
+        mock_store.upsert.assert_called_once_with("doc-001", chunk_objects, embeddings)
 
     @pytest.mark.asyncio
     async def test_build_opensearch_skipped_when_not_installed(self) -> None:
@@ -328,11 +317,15 @@ class TestBuildIndexes:
 
     @pytest.mark.asyncio
     async def test_build_milvus_skipped_when_not_installed(self) -> None:
-        """pymilvus 未安装时优雅降级。"""
+        """向量存储适配器不可用时优雅降级。"""
         chunk_objects = self._make_chunk_objects(1)
         embeddings = [[0.1] * 128]
 
-        with patch.dict("sys.modules", {"pymilvus": None}):
+        # Mock 适配器 upsert 返回 0（服务不可用）
+        mock_store = MagicMock()
+        mock_store.upsert = AsyncMock(return_value=0)
+
+        with patch("app.rag.vector_store.get_vector_store", return_value=mock_store):
             # 不应抛出异常
             await _build_milvus_index("doc-001", chunk_objects, embeddings)
 

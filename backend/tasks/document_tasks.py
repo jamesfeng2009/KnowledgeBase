@@ -400,11 +400,11 @@ async def _build_indexes(
     except Exception as exc:
         logger.warning("opensearch.index_failed", doc_id=doc_id, error=str(exc))
 
-    # 构建向量索引（Milvus）— 传入 Chunk 元数据
+    # 构建向量索引（通过 VectorStoreBase 适配器，默认 OpenSearch k-NN，可选 Milvus）
     try:
-        await _build_milvus_index(doc_id, chunk_objects, embeddings)
+        await _build_vector_index(doc_id, chunk_objects, embeddings)
     except Exception as exc:
-        logger.warning("milvus.index_failed", doc_id=doc_id, error=str(exc))
+        logger.warning("vector.index_failed", doc_id=doc_id, error=str(exc))
 
 
 async def _build_opensearch_index(doc_id: str, chunk_objects: list[Chunk]) -> None:
@@ -467,56 +467,56 @@ async def _build_opensearch_index(doc_id: str, chunk_objects: list[Chunk]) -> No
         raise
 
 
+async def _build_vector_index(
+    doc_id: str,
+    chunk_objects: list[Chunk],
+    embeddings: list[list[float]],
+) -> int:
+    """构建向量索引 — 通过 VectorStoreBase 适配器写入向量数据。
+
+    向量后端由 VECTOR_STORE 配置决定：
+        - os_knn（默认）：OpenSearch k-NN 引擎
+        - milvus：Milvus 向量引擎
+
+    适配器内部处理服务不可用的优雅降级（返回 0）。
+
+    Args:
+        doc_id: 文档 ID。
+        chunk_objects: Chunk 对象列表（含元数据）。
+        embeddings: 向量嵌入列表。
+
+    Returns:
+        成功写入的向量数量。
+    """
+    if not embeddings:
+        logger.info("vector.index_skipped", doc_id=doc_id, reason="no embeddings")
+        return 0
+
+    try:
+        from app.rag.vector_store import get_vector_store
+
+        store = get_vector_store()
+        count = await store.upsert(doc_id, chunk_objects, embeddings)
+        logger.info(
+            "vector.indexed",
+            doc_id=doc_id,
+            vector_count=count,
+            store_type=type(store).__name__,
+        )
+        return count
+    except Exception as exc:
+        logger.warning("vector.index_error", doc_id=doc_id, error=str(exc))
+        raise
+
+
 async def _build_milvus_index(
     doc_id: str,
     chunk_objects: list[Chunk],
     embeddings: list[list[float]],
 ) -> None:
-    """构建 Milvus 向量索引 — 延迟导入。
+    """[Deprecated] 构建 Milvus 向量索引 — 向后兼容包装器。
 
-    存储 Chunk 元数据（title_path、content_type、chunk_strategy）以支持
-    向量检索后按内容类型过滤和标题路径展示。
-
-    库未安装或服务不可用时优雅降级。
+    新代码应使用 _build_vector_index() 通过 VectorStoreBase 适配器写入，
+    自动根据 VECTOR_STORE 配置选择后端。
     """
-    try:
-        from pymilvus import connections, Collection, utility
-        from app.config import get_settings
-
-        settings = get_settings()
-        connections.connect(
-            alias="default",
-            host=settings.MILVUS_HOST,
-            port=str(settings.MILVUS_PORT),
-        )
-
-        collection_name = "ekb_documents"
-        if not utility.has_collection(collection_name):
-            logger.warning("milvus.collection_not_found", collection=collection_name)
-            return
-
-        collection = Collection(collection_name)
-        # 插入向量数据（含 Chunk 元数据）
-        if embeddings:
-            n = len(embeddings)
-            chunks_meta = chunk_objects[:n]
-            collection.insert([
-                [doc_id] * n,                                    # doc_id 列
-                [c.id for c in chunks_meta],                     # chunk_id 列
-                [c.content for c in chunks_meta],                # content 列
-                embeddings,                                      # embedding 列
-                [c.title_path for c in chunks_meta],             # title_path 列
-                [c.content_type for c in chunks_meta],           # content_type 列
-                [c.chunk_strategy for c in chunks_meta],         # chunk_strategy 列
-            ])
-            collection.load()
-        logger.info(
-            "milvus.indexed",
-            doc_id=doc_id,
-            vector_count=len(embeddings),
-        )
-    except ImportError:
-        logger.warning("milvus.skipped", reason="pymilvus not installed")
-    except Exception as exc:
-        logger.warning("milvus.index_error", error=str(exc))
-        raise
+    await _build_vector_index(doc_id, chunk_objects, embeddings)

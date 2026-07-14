@@ -2,13 +2,14 @@
 混合检索器 — 单一职责：多路召回知识库文档（向量 + 全文）。
 
 实现 Hybrid Retrieval：
-    - 向量检索：通过 Milvus 客户端检索（HNSW + COSINE）；
+    - 向量检索：通过 VectorStoreBase 适配器检索（默认 OpenSearch k-NN，可选 Milvus）；
     - 全文检索：通过 OpenSearch 检索（BM25）；
     - 合并结果并去重（按 chunk_id）。
 
 遵循单一职责：本模块只负责召回候选文档，不涉及重排与生成。
-遵循依赖倒置：向量/全文后端通过依赖注入获取，可替换为 Mock。
-遵循优雅降级：Milvus / OpenSearch 任一不可用时返回空列表并记录日志，
+遵循依赖倒置：向量后端通过 VectorStoreBase 抽象注入，可替换为 Mock；
+             全文后端通过 http_client 注入，可替换为 Mock。
+遵循优雅降级：向量存储 / OpenSearch 任一不可用时返回空列表并记录日志，
 不抛异常，确保 RAG 引擎可继续运行（仅召回能力下降）。
 """
 
@@ -21,15 +22,14 @@ import httpx
 
 from app.config import get_settings
 from app.llm.embedder import EmbeddingProvider, get_embedder
+from app.rag.vector_store import VectorStoreBase, get_vector_store
 from app.utils.logger import get_logger
 
 log = get_logger(__name__)
 
 settings = get_settings()
 
-# Milvus collection name — 与索引构建阶段保持一致。
-_MILVUS_COLLECTION: str = "document_chunks"
-# 检索超时（秒）
+# 检索超时（秒）— 用于全文检索的 HTTP 客户端
 _SEARCH_TIMEOUT: float = 5.0
 
 
@@ -40,18 +40,22 @@ class HybridRetriever:
 
         retriever = HybridRetriever()
         candidates = await retriever.search("报销流程", kb_ids=[...], top_k=20)
+
+    向量后端通过 VECTOR_STORE 环境变量切换（os_knn / milvus），
+    也可通过构造函数显式注入 VectorStoreBase 实例（测试场景）。
     """
 
     def __init__(
         self,
         embedder: EmbeddingProvider | None = None,
         http_client: httpx.AsyncClient | None = None,
+        vector_store: VectorStoreBase | None = None,
     ) -> None:
         self._embedder: EmbeddingProvider | None = embedder
         self._http: httpx.AsyncClient = http_client or httpx.AsyncClient(
             timeout=_SEARCH_TIMEOUT
         )
-        self._milvus_available: bool | None = None
+        self._vector_store: VectorStoreBase | None = vector_store
         self._opensearch_available: bool | None = None
 
     # ------------------------------------------------------------------
@@ -67,6 +71,12 @@ class HybridRetriever:
         except Exception as exc:
             log.warning("retriever.embedder.unavailable", error=str(exc))
         return self._embedder
+
+    def _get_vector_store(self) -> VectorStoreBase:
+        """懒初始化向量存储 — 未注入时通过工厂获取单例。"""
+        if self._vector_store is None:
+            self._vector_store = get_vector_store()
+        return self._vector_store
 
     # ------------------------------------------------------------------
     # 公共接口
@@ -116,7 +126,7 @@ class HybridRetriever:
         return merged
 
     # ------------------------------------------------------------------
-    # 向量检索（Milvus）
+    # 向量检索（通过 VectorStoreBase 适配器）
     # ------------------------------------------------------------------
 
     async def _vector_search(
@@ -125,16 +135,13 @@ class HybridRetriever:
         kb_ids: list[str] | None,
         top_k: int,
     ) -> list[dict[str, Any]]:
-        """通过 Milvus REST API 执行向量检索。
+        """通过 VectorStoreBase 适配器执行向量检索。
 
-        采用 Milvus 2.x 的 REST 接口（/v2/vectordb/entities/search），
-        避免在导入期建立 pymilvus 连接；若服务不可用则返回空列表。
+        向量后端由 VECTOR_STORE 配置决定（默认 OpenSearch k-NN，可选 Milvus）。
+        适配器内部处理服务不可用的优雅降级，此处不再重复判断。
         """
         embedder = await self._get_embedder()
         if embedder is None:
-            return []
-
-        if self._milvus_available is False:
             return []
 
         try:
@@ -143,64 +150,15 @@ class HybridRetriever:
             log.warning("retriever.vector.embed_error", error=str(exc))
             return []
 
-        url = f"http://{settings.MILVUS_HOST}:{settings.MILVUS_PORT}/v2/vectordb/entities/search"
-        payload: dict[str, Any] = {
-            "collectionName": _MILVUS_COLLECTION,
-            "data": [query_vec],
-            "limit": top_k,
-            "outputFields": ["doc_id", "chunk_text", "kb_id", "id"],
-        }
-        if kb_ids:
-            payload["filter"] = 'kb_id in ["' + '", "'.join(kb_ids) + '"]'
-
+        store = self._get_vector_store()
         try:
-            resp = await self._http.post(url, json=payload)
-            resp.raise_for_status()
-            data: Any = resp.json()
-            self._milvus_available = True
+            return await store.search(query_vec, kb_ids=kb_ids, top_k=top_k)
         except Exception as exc:
-            if self._milvus_available is not False:
-                log.warning("retriever.milvus.unavailable", error=str(exc))
-            self._milvus_available = False
+            log.warning("retriever.vector.search_failed", error=str(exc))
             return []
 
-        return self._parse_milvus_results(data, top_k)
-
-    @staticmethod
-    def _parse_milvus_results(data: Any, top_k: int) -> list[dict[str, Any]]:
-        """解析 Milvus REST 返回结果为统一格式。"""
-        results: list[dict[str, Any]] = []
-        # Milvus v2 REST 返回 {"data": [{...}, ...], "cost": ...}
-        rows: list[Any] = []
-        if isinstance(data, dict):
-            rows = data.get("data", []) or []
-        elif isinstance(data, list):
-            rows = data
-
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            distance = row.get("distance", 0.0)
-            # COSINE 相似度直接作为 score
-            score = float(distance) if isinstance(distance, (int, float)) else 0.0
-            chunk_id = str(row.get("id") or row.get("chunk_id") or uuid.uuid4())
-            results.append(
-                {
-                    "doc_id": str(row.get("doc_id") or ""),
-                    "chunk_id": chunk_id,
-                    "content": str(row.get("chunk_text") or row.get("content") or ""),
-                    "score": score,
-                    "source": "vector",
-                    "kb_id": str(row.get("kb_id") or "") or None,
-                    "title": row.get("title"),
-                }
-            )
-            if len(results) >= top_k:
-                break
-        return results
-
     # ------------------------------------------------------------------
-    # 全文检索（OpenSearch）
+    # 全文检索（OpenSearch BM25）
     # ------------------------------------------------------------------
 
     async def _fulltext_search(

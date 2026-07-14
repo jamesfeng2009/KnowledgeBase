@@ -1,0 +1,124 @@
+"""
+向量存储抽象接口 — 单一职责：定义向量存储的统一契约。
+
+遵循依赖倒置：检索器（HybridRetriever）和文档处理（document_tasks）
+均通过 VectorStoreBase 接口操作向量数据，不依赖具体后端实现。
+遵循开闭原则：新增向量存储后端只需继承 VectorStoreBase 并在 factory 注册。
+
+搜索结果统一格式::
+
+    {
+        "doc_id": str,
+        "chunk_id": str,
+        "content": str,
+        "score": float,           # 相似度分数（越高越相似）
+        "source": "vector",       # 固定为 "vector"
+        "kb_id": str | None,
+        "title": str | None,      # title_path
+    }
+"""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from app.rag.chunker import Chunk
+
+# 向量维度 — BGE-M3 输出 1024 维，所有后端共享此配置
+_DEFAULT_DIMENSION: int = 1024
+
+
+class VectorStoreBase(ABC):
+    """向量存储抽象基类 — 定义 search / upsert / delete / health_check 四项契约。
+
+    子类实现：
+        - OpenSearchVectorStore — OpenSearch k-NN 引擎（默认，适合 < 500 万向量）
+        - MilvusVectorStore    — Milvus 向量引擎（可选，适合 > 500 万向量）
+    """
+
+    @abstractmethod
+    async def search(
+        self,
+        query_vec: list[float],
+        kb_ids: list[str] | None = None,
+        top_k: int = 20,
+    ) -> list[dict[str, Any]]:
+        """向量相似度检索 — 返回最相似的文档块列表。
+
+        Args:
+            query_vec: 查询向量（与索引时使用的 Embedder 一致）。
+            kb_ids: 可选，限定检索的知识库 ID 列表。
+            top_k: 返回结果数量上限。
+
+        Returns:
+            候选文档列表，按相似度降序排列，每项格式见模块文档。
+        """
+        ...
+
+    @abstractmethod
+    async def upsert(
+        self,
+        doc_id: str,
+        chunks: list[Chunk],
+        embeddings: list[list[float]],
+    ) -> int:
+        """批量写入（插入或更新）向量数据。
+
+        Args:
+            doc_id: 文档 ID。
+            chunks: Chunk 对象列表（含元数据）。
+            embeddings: 与 chunks 对应的向量嵌入列表。
+
+        Returns:
+            成功写入的向量数量。
+        """
+        ...
+
+    @abstractmethod
+    async def delete(self, doc_id: str) -> None:
+        """删除指定文档的所有向量数据。
+
+        Args:
+            doc_id: 文档 ID。
+        """
+        ...
+
+    @abstractmethod
+    async def health_check(self) -> bool:
+        """健康检查 — 返回向量存储服务是否可用。
+
+        Returns:
+            True 表示服务可用，False 表示不可用。
+        """
+        ...
+
+    # ------------------------------------------------------------------
+    # 公共工具方法
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _format_result(
+        doc_id: str,
+        chunk_id: str,
+        content: str,
+        score: float,
+        kb_id: str | None = None,
+        title: str | None = None,
+    ) -> dict[str, Any]:
+        """格式化搜索结果为统一字典格式。"""
+        return {
+            "doc_id": doc_id,
+            "chunk_id": chunk_id,
+            "content": content,
+            "score": score,
+            "source": "vector",
+            "kb_id": kb_id,
+            "title": title,
+        }
+
+    @property
+    def dimension(self) -> int:
+        """向量维度（子类可覆盖）。"""
+        return _DEFAULT_DIMENSION

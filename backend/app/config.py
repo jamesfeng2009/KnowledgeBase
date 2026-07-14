@@ -43,6 +43,11 @@ class Settings(BaseSettings):
     # === OpenSearch ===
     OPENSEARCH_URL: str = "http://localhost:9200"
 
+    # === 向量存储后端 ===
+    # os_knn: OpenSearch k-NN（默认，< 500 万向量场景）
+    # milvus: Milvus 向量引擎（可选，> 500 万向量场景）
+    VECTOR_STORE: Literal["os_knn", "milvus"] = "os_knn"
+
     # === MinIO ===
     MINIO_ENDPOINT: str = "localhost:9000"
     MINIO_ACCESS_KEY: str = ""
