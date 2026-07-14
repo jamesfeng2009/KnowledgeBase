@@ -668,34 +668,34 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    CHECK{should_compress?<br/>总 token > 2000<br/>且消息数 > 4}
+    CHECK{should_compress?<br/>总 token &gt; 2000<br/>且消息数 &gt; 4}
 
-    CHECK -->|否| SKIP[不压缩<br/>直接进入 think]
+    CHECK -->|否| SKIP["不压缩<br/>直接进入 think"]
     CHECK -->|是| SPLIT[三段式切分]
 
-    SPLIT --> HEAD[Head: 前 2 条<br/>system + query<br/>永不压缩<br/>保持 KV Cache 前缀稳定]
-    SPLIT --> MIDDLE[Middle: 中间消息<br/>压缩为单条摘要]
-    SPLIT --> TAIL[Tail: 最近 2 条<br/>Live Zone<br/>保留原文]
+    SPLIT --> HEAD["Head: 前 2 条<br/>system + query<br/>永不压缩<br/>保持 KV Cache 前缀稳定"]
+    SPLIT --> MIDDLE["Middle: 中间消息<br/>压缩为单条摘要"]
+    SPLIT --> TAIL["Tail: 最近 2 条<br/>Live Zone<br/>保留原文"]
 
-    MIDDLE --> COMPRESS_MSG[_compress_single_message<br/>按消息类型智能压缩]
+    MIDDLE --> COMPRESS_MSG["_compress_single_message<br/>按消息类型智能压缩"]
 
     subgraph COMPRESS_TYPES [压缩类型识别]
         RETRIEVE_MSG["[系统] 已检索到 15 篇文档<br/>→ 检索15篇"]
-        TOOL_MSG["[系统] 工具结果：订单详情...<br/>→ 工具:订单详情...前80字"]
-        POINTER_MSG["[系统] 工具结果：↑ 见第1轮...<br/>→ 重复结果(见1轮)"]
-        CONTEXT_MSG["当前状态：迭代 3/5...<br/>→ 第3轮决策"]
+        TOOL_MSG["[系统] 工具结果:订单详情...<br/>→ 工具:订单详情...前80字"]
+        POINTER_MSG["[系统] 工具结果:↑ 见第1轮...<br/>→ 重复结果(见1轮)"]
+        CONTEXT_MSG["当前状态:迭代 3/5...<br/>→ 第3轮决策"]
         PLAIN_MSG["其他文本<br/>→ 截断到 80 字符"]
     end
 
     COMPRESS_MSG --> COMPRESS_TYPES
-    COMPRESS_TYPES --> MERGE[合并为单条摘要消息<br/>"[系统] 早期上下文摘要：检索15篇；工具:订单...；重复结果(见1轮)"]
+    COMPRESS_TYPES --> MERGE["合并为单条摘要消息<br/>[系统] 早期上下文摘要:检索15篇;工具:订单...;重复结果(见1轮)"]
 
-    HEAD --> RESULT[压缩后 messages:<br/>system + query + 摘要 + recent1 + recent2]
+    HEAD --> RESULT["压缩后 messages:<br/>system + query + 摘要 + recent1 + recent2"]
     MERGE --> RESULT
     TAIL --> RESULT
 
-    RESULT --> STATS[更新统计<br/>compress_count + tokens_saved]
-    STATS --> THINK[进入 think]
+    RESULT --> STATS["更新统计<br/>compress_count + tokens_saved"]
+    STATS --> THINK["进入 think"]
 ```
 
 **两个硬不变量**（与 Headroom Memory Budget 一致）：
