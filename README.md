@@ -31,7 +31,7 @@
 | **Agent 框架** | LangGraph（可选）+ CrewAI | Agent Loop 状态图 + 多 Agent 协作 |
 | **RAG 引擎** | LlamaIndex + 自研 Agentic RAG | 混合检索 + 重排 + 生成 |
 | **LLM** | Anthropic Claude / vLLM（Llama 3.3 / Qwen 3） | SaaS / 私有双部署模式 |
-| **向量数据库** | Milvus 2.4 | HNSW + COSINE 相似度检索 |
+| **向量存储** | OpenSearch k-NN（默认）/ Milvus 2.4（可选） | 适配器模式，按 VECTOR_STORE 切换；HNSW + COSINE |
 | **全文检索** | OpenSearch 2.18 | BM25 + multi_match |
 | **图数据库** | Neo4j 5.26 | 知识图谱 + Graphiti 时序图谱 |
 | **关系数据库** | PostgreSQL 16 | 主存储，JSONB + pgvector |
@@ -59,7 +59,7 @@ EnterpriseKnowledge/
 │   │   ├── memory/                   # 四级记忆引擎
 │   │   ├── models/                   # SQLAlchemy ORM 模型
 │   │   ├── observability/            # LangFuse 追踪 + LLM Judge
-│   │   ├── rag/                      # Agentic RAG 引擎
+│   │   ├── rag/                      # Agentic RAG 引擎（含 vector_store 适配层）
 │   │   ├── repositories/             # 数据访问层
 │   │   ├── schemas/                  # Pydantic 数据模型
 │   │   ├── services/                 # 业务逻辑层（21 个服务）
@@ -70,7 +70,7 @@ EnterpriseKnowledge/
 │   │   ├── deps.py                   # 依赖注入
 │   │   └── main.py                   # FastAPI 入口
 │   ├── tasks/                        # Celery 异步任务
-│   ├── tests/                        # 测试（371 项）
+│   ├── tests/                        # 测试（415 项）
 │   ├── celery_app.py                 # Celery 入口
 │   └── requirements.txt
 ├── collab-service/                   # Yjs 协作服务（Node.js + TypeScript）
@@ -130,8 +130,8 @@ graph TB
     subgraph "数据层"
         PG[(PostgreSQL 16<br/>主存储)]
         REDIS[(Redis 7<br/>缓存 + Pub/Sub)]
-        MILVUS[(Milvus 2.4<br/>向量检索)]
-        OS[(OpenSearch 2.18<br/>全文检索)]
+        VEC_STORE[(向量存储<br/>OpenSearch k-NN / Milvus<br/>适配器模式切换)]
+        OS[(OpenSearch 2.18<br/>全文检索 + k-NN 向量)]
         NEO4J[(Neo4j 5.26<br/>知识图谱)]
         MINIO[(MinIO<br/>对象存储)]
     end
@@ -156,12 +156,12 @@ graph TB
     RAG --> MEMORY
 
     WORKER --> PG
-    WORKER --> MILVUS
+    WORKER --> VEC_STORE
     WORKER --> OS
 
     API --> PG
     API --> REDIS
-    RAG --> MILVUS
+    RAG --> VEC_STORE
     RAG --> OS
     MEMORY --> NEO4J
     LLM_LAYER --> CLAUDE
@@ -179,7 +179,7 @@ graph TB
 | **单一职责** | 每个模块只做一件事：ChatService 编排对话、RAG Engine 编排检索、MemoryManager 编排记忆 |
 | **开闭原则** | LLM Provider / Embedder / Reranker / 模块注册表均使用注册表 + 装饰器模式，新增只需追加条目 |
 | **依赖倒置** | LLM、检索器、重排器、权限过滤器均通过构造注入，可替换为 Mock |
-| **优雅降级** | Redis / Neo4j / OpenSearch / Milvus 延迟初始化 + try/except 降级，PostgreSQL 为唯一强依赖 |
+| **优雅降级** | Redis / Neo4j / OpenSearch / 向量存储 延迟初始化 + try/except 降级，PostgreSQL 为唯一强依赖 |
 | **模块化单体** | 微服务不适合（共享数据库依赖），仅 Yjs 协作服务因技术栈原因独立部署 |
 
 ---
@@ -297,7 +297,7 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-    QUERY[用户 Query] --> VEC[向量检索<br/>Milvus HNSW + COSINE]
+    QUERY[用户 Query] --> VEC[向量检索<br/>VectorStoreBase 适配器<br/>OpenSearch k-NN 或 Milvus]
     QUERY --> FULL[全文检索<br/>OpenSearch BM25<br/>multi_match chunk_text + title^2]
 
     VEC --> MERGE[合并去重<br/>按 chunk_id 去重<br/>取较高 score]
@@ -313,10 +313,28 @@ flowchart LR
 
 | 检索路 | 后端 | 算法 | 优势 |
 |--------|------|------|------|
-| 向量检索 | Milvus 2.x | HNSW + COSINE | 语义相似性匹配 |
+| 向量检索 | OpenSearch k-NN（默认）/ Milvus（可选） | HNSW + COSINE | 语义相似性匹配，按 VECTOR_STORE 切换 |
 | 全文检索 | OpenSearch | BM25 + multi_match | 关键词精确匹配，标题权重 x2 |
 
 任一检索路不可用时优雅降级（返回空列表），不影响另一路。
+
+### 向量存储适配器
+
+向量检索通过 `VectorStoreBase` 抽象接口实现，支持按客户体量切换后端，业务代码零改动。
+
+| 后端 | 配置值 | 适用场景 | 优势 |
+|------|--------|----------|------|
+| OpenSearch k-NN | `VECTOR_STORE=os_knn`（默认） | < 500 万向量 | 与 BM25 共享集群，运维简单 |
+| Milvus | `VECTOR_STORE=milvus` | > 500 万向量 | 专用向量引擎，IVF/PQ 压缩 |
+
+```mermaid
+flowchart TD
+    CALL[业务层调用<br/>get_vector_store] --> FACTORY{Factory<br/>VECTOR_STORE?}
+    FACTORY -->|os_knn 默认| OS_KNN[OpenSearchVectorStore<br/>k-NN HNSW + cosinesimil<br/>与 BM25 共享集群]
+    FACTORY -->|milvus| MILVUS[MilvusVectorStore<br/>REST API<br/>大规模向量场景]
+    OS_KNN --> BASE[VectorStoreBase<br/>search / upsert / delete / health_check]
+    MILVUS --> BASE
+```
 
 ### 重排器双模式
 
@@ -967,15 +985,16 @@ flowchart LR
 
     EMBED --> INDEX[4. 索引构建]
     INDEX --> OS_INDEX[OpenSearch 全文索引<br/>含 Chunk 元数据<br/>title_path/content_type/strategy]
-    INDEX --> MILVUS_INDEX[Milvus 向量索引<br/>含 Chunk 元数据]
+    INDEX --> VEC_INDEX[向量索引<br/>VectorStoreBase 适配器<br/>os_knn 默认 / milvus 可选]
 
-    OS_INDEX & MILVUS_INDEX --> STATUS[5. 更新状态<br/>draft → published]
+    OS_INDEX & VEC_INDEX --> STATUS[5. 更新状态<br/>draft → published]
     STATUS --> INTEL[6. 链式触发<br/>文档智能处理<br/>摘要/标签/分类/行动项]
 ```
 
 ### 设计要点
 
 - **延迟导入**：pymupdf / python-docx / opensearchpy / pymilvus 延迟导入，未安装时优雅降级
+- **向量存储适配器**：通过 `VectorStoreBase` 抽象层，按 `VECTOR_STORE` 配置切换 OpenSearch k-NN（默认）或 Milvus，业务代码零改动
 - **Chunk 元数据**：每个 Chunk 携带 `title_path`、`content_type`、`chunk_strategy`、`parent_id`
 - **重试机制**：`max_retries=3`，`default_retry_delay=60`
 - **链式触发**：文档处理完成后自动触发智能处理（摘要/标签/分类/行动项/FAQ）
@@ -1066,7 +1085,7 @@ docker compose --profile private up -d
 | Yjs Server | 8001 | 协同编辑 WebSocket |
 | PostgreSQL | 5432 | 主数据库 |
 | Redis | 6379 | 缓存 + Pub/Sub |
-| Milvus | 19530 | 向量数据库 |
+| Milvus | 19530 | 向量数据库（可选，VECTOR_STORE=milvus 时启用） |
 | OpenSearch | 9200 | 全文检索 |
 | Neo4j | 7687 | 知识图谱 |
 | MinIO | 9000 | 对象存储 |
@@ -1075,7 +1094,7 @@ docker compose --profile private up -d
 
 | 层级 | 服务 |
 |------|------|
-| 基础设施 | postgres, redis, minio, opensearch, milvus (+etcd +minio), neo4j |
+| 基础设施 | postgres, redis, minio, opensearch, neo4j（milvus 可选，VECTOR_STORE=milvus 时启用） |
 | 应用层 | core-engine, frontend, yjs-server, celery-worker, celery-beat |
 | 私有模型 | llm-server (vLLM), embedding-server (TEI), reranker-server (TEI), vlm-server (vLLM) |
 
@@ -1086,7 +1105,7 @@ docker compose --profile private up -d
 ```bash
 cd backend
 
-# 运行全部测试（371 项）
+# 运行全部测试（415 项）
 python -m pytest --tb=short -q
 
 # 运行特定模块测试
@@ -1095,6 +1114,7 @@ python -m pytest tests/test_token_optimization.py -v      # P0 Token 优化
 python -m pytest tests/test_p1_token_optimization.py -v   # P1 Token 优化
 python -m pytest tests/test_p2_token_optimization.py -v   # P2 Token 优化
 python -m pytest tests/test_document_tasks_chunker.py -v  # 文档分块接入
+python -m pytest tests/test_vector_store.py -v            # 向量存储适配器
 ```
 
 ### 测试覆盖
@@ -1106,8 +1126,9 @@ python -m pytest tests/test_document_tasks_chunker.py -v  # 文档分块接入
 | `test_p1_token_optimization.py` | 32 | 跨轮去重、Reflect 摘要、L1 注入、历史窗口化 |
 | `test_p2_token_optimization.py` | 35 | ContextBudgetManager、三段式压缩、引擎集成 |
 | `test_document_tasks_chunker.py` | 30 | SemanticChunker 接入、索引元数据、端到端策略验证 |
+| `test_vector_store.py` | 44 | VectorStoreBase 抽象、OpenSearch k-NN / Milvus 双后端、工厂、检索器集成 |
 | 其他测试 | 215 | API 端点、服务层、模型层、记忆引擎等 |
-| **合计** | **371** | **全部通过，零回归** |
+| **合计** | **415** | **全部通过，零回归** |
 
 ---
 
