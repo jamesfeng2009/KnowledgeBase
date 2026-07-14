@@ -727,11 +727,11 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-    DOCS[检索文档列表<br/>Top-5 after rerank] --> CALC[计算总 token<br/>sum(doc.token_count)]
-    CALC --> CHECK{总 token > 2500?}
-    CHECK -->|否| ALL[注入全部 5 篇文档]
-    CHECK -->|是| DEGRADE[截断为 Top-3 文档<br/>记录 context_cliff_degraded 告警]
-    ALL --> PROMPT[组装 system prompt]
+    DOCS["检索文档列表<br/>Top-5 after rerank"] --> CALC["计算总 token<br/>sum(doc.token_count)"]
+    CALC --> CHECK{"总 token &gt; 2500?"}
+    CHECK -->|否| ALL["注入全部 5 篇文档"]
+    CHECK -->|是| DEGRADE["截断为 Top-3 文档<br/>记录 context_cliff_degraded 告警"]
+    ALL --> PROMPT["组装 system prompt"]
     DEGRADE --> PROMPT
 ```
 
