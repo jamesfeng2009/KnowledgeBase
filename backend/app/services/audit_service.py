@@ -121,6 +121,8 @@ class AuditService:
         """通过审核。
 
         将审核状态从 pending 变更为 approved，记录审核者和审核意见。
+        对于 document 类型的审核，审核通过后自动触发文档发布
+       （状态从 pending_review → published）。
 
         Args:
             audit_id: 审核流程 ID。
@@ -148,8 +150,37 @@ class AuditService:
             "audit.approved",
             audit_id=str(audit_id),
             reviewer=str(self._user.id),
+            resource_type=audit.resource_type,
         )
+
+        # 文档类型审核通过后触发发布
+        if audit.resource_type == "document":
+            try:
+                await self._publish_document_after_approval(
+                    str(audit.resource_id)
+                )
+            except Exception as exc:
+                log.warning(
+                    "audit.publish_failed",
+                    audit_id=str(audit_id),
+                    resource_id=str(audit.resource_id),
+                    error=str(exc),
+                )
+
         return audit
+
+    async def _publish_document_after_approval(self, doc_id: str) -> None:
+        """审核通过后发布文档 — 延迟导入避免循环依赖。
+
+        将文档状态从 pending_review 更新为 published，
+        由 document_tasks._publish_document 执行实际发布逻辑。
+
+        Args:
+            doc_id: 文档 ID（UUID 字符串）。
+        """
+        from tasks.document_tasks import _publish_document
+
+        await _publish_document(doc_id)
 
     async def reject(
         self,

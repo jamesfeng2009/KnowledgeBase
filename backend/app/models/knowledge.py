@@ -48,7 +48,7 @@ class Document(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
         String(20), default="md", comment="文档类型: md/html/docx/pdf"
     )
     status: Mapped[str] = mapped_column(
-        String(20), default="draft", comment="状态: draft/published/archived"
+        String(20), default="draft", comment="状态: draft/pending_review/published/archived"
     )
     owner_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, comment="所有者 ID"

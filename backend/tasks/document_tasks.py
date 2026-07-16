@@ -188,9 +188,25 @@ async def _process_document_async(doc_id: str) -> dict[str, Any]:
         except Exception as exc:
             logger.warning("document.index_failed", doc_id=doc_id, error=str(exc))
 
-        # 6. 更新文档状态为已发布
-        doc.status = "published"
-        await session.commit()
+        # 6. 根据密级决定发布路径：
+        #    confidential/secret → 待审核（审核通过后发布）
+        #    public/internal → 直接发布
+        classification = doc.classification or "internal"
+        needs_review = classification in _REQUIRES_REVIEW
+
+        if needs_review:
+            doc.status = "pending_review"
+            await session.commit()
+
+            # 提交审核流程 — 审核通过后触发文档发布
+            try:
+                await _submit_for_audit(doc_id, doc.owner_id)
+                logger.info("document.audit_submitted", doc_id=doc_id)
+            except Exception as exc:
+                logger.warning("document.audit_submit_failed", doc_id=doc_id, error=str(exc))
+        else:
+            doc.status = "published"
+            await session.commit()
 
         # 7. 链式触发文档智能处理（摘要/标签/分类/行动项）
         try:
@@ -200,12 +216,13 @@ async def _process_document_async(doc_id: str) -> dict[str, Any]:
         except Exception as exc:
             logger.warning("document.intelligence_trigger_failed", doc_id=doc_id, error=str(exc))
 
+        final_status = "pending_review" if needs_review else "published"
         return {
             "doc_id": doc_id,
             "status": "success",
             "chunk_count": len(chunks),
             "embedding_count": len(embeddings),
-            "doc_status": "published",
+            "doc_status": final_status,
             "chunk_strategies": list(set(c.chunk_strategy for c in chunk_objects)),
         }
 
@@ -376,6 +393,66 @@ async def _generate_embeddings(chunks: list[str]) -> list[list[float]]:
 
     embedder = get_embedder()
     return await embedder.embed(chunks)
+
+
+# ------------------------------------------------------------------
+# 审核流程串联
+# ------------------------------------------------------------------
+
+# 需要人工审核的密级 — confidential 和 secret 必须审核，
+# public 和 internal 可直接发布。
+_REQUIRES_REVIEW: set[str] = {"confidential", "secret"}
+
+
+async def _submit_for_audit(doc_id: str, owner_id: Any) -> None:
+    """提交文档审核 — 创建 AuditFlow 记录。
+
+    此函数在文档处理完成后调用，将文档纳入审核流程。
+    审核通过后由 AuditService.approve 触发 _publish_document。
+
+    Args:
+        doc_id: 文档 ID（UUID 字符串）。
+        owner_id: 文档所有者 ID（用于填充 submitter_id）。
+    """
+    from app.database import async_session_factory
+    from app.models.audit import AuditFlow
+    from app.repositories.base import BaseRepository
+
+    async with async_session_factory() as session:
+        repo = BaseRepository(AuditFlow, session)
+        await repo.create(
+            resource_type="document",
+            resource_id=uuid.UUID(doc_id),
+            submitter_id=owner_id,
+            priority="normal",
+        )
+        await session.commit()
+
+
+async def _publish_document(doc_id: str) -> None:
+    """发布文档 — 审核通过后调用，将状态设为 published。
+
+    此函数由 AuditService.approve 触发，完成审核通过后的发布动作：
+    1. 更新文档状态为 published；
+
+    Args:
+        doc_id: 文档 ID（UUID 字符串）。
+    """
+    from app.database import async_session_factory
+    from app.repositories.knowledge_repository import DocumentRepository
+
+    doc_uuid = uuid.UUID(doc_id)
+
+    async with async_session_factory() as session:
+        repo = DocumentRepository(session)
+        doc = await repo.get_by_id(doc_uuid)
+        if doc is None:
+            logger.warning("document.publish_not_found", doc_id=doc_id)
+            return
+
+        doc.status = "published"
+        await session.commit()
+        logger.info("document.published", doc_id=doc_id)
 
 
 async def _build_indexes(

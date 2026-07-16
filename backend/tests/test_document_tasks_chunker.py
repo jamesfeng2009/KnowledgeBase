@@ -351,6 +351,8 @@ class TestProcessDocumentAsyncIntegration:
         mock_doc.doc_type = "md"
         mock_doc.status = "draft"
         mock_doc.file_path = None
+        mock_doc.classification = "internal"
+        mock_doc.owner_id = _uuid.UUID(_TEST_UUID)
 
         mock_repo = AsyncMock()
         mock_repo.get_by_id = AsyncMock(return_value=mock_doc)
@@ -371,6 +373,7 @@ class TestProcessDocumentAsyncIntegration:
              ), \
              patch("tasks.document_tasks._generate_embeddings", new_callable=AsyncMock, return_value=[]), \
              patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock), \
+             patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock), \
              patch("tasks.intelligence_tasks.process_intelligence.delay"):
 
             result = await _process_document_async(_TEST_UUID)
@@ -393,6 +396,8 @@ class TestProcessDocumentAsyncIntegration:
         mock_doc.doc_type = "md"
         mock_doc.status = "draft"
         mock_doc.file_path = None
+        mock_doc.classification = "internal"
+        mock_doc.owner_id = _uuid.UUID(_TEST_UUID)
 
         mock_repo = AsyncMock()
         mock_repo.get_by_id = AsyncMock(return_value=mock_doc)
@@ -412,6 +417,7 @@ class TestProcessDocumentAsyncIntegration:
              ), \
              patch("tasks.document_tasks._generate_embeddings", new_callable=AsyncMock, return_value=[]), \
              patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock), \
+             patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock), \
              patch("tasks.intelligence_tasks.process_intelligence.delay"):
 
             result = await _process_document_async(_TEST_UUID)
