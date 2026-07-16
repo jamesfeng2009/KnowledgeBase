@@ -70,7 +70,7 @@ EnterpriseKnowledge/
 │   │   ├── deps.py                   # 依赖注入
 │   │   └── main.py                   # FastAPI 入口
 │   ├── tasks/                        # Celery 异步任务
-│   ├── tests/                        # 测试（415 项）
+│   ├── tests/                        # 测试（434 项）
 │   ├── celery_app.py                 # Celery 入口
 │   └── requirements.txt
 ├── collab-service/                   # Yjs 协作服务（Node.js + TypeScript）
@@ -987,8 +987,16 @@ flowchart LR
     INDEX --> OS_INDEX[OpenSearch 全文索引<br/>含 Chunk 元数据<br/>title_path/content_type/strategy]
     INDEX --> VEC_INDEX[向量索引<br/>VectorStoreBase 适配器<br/>os_knn 默认 / milvus 可选]
 
-    OS_INDEX & VEC_INDEX --> STATUS[5. 更新状态<br/>draft → published]
-    STATUS --> INTEL[6. 链式触发<br/>文档智能处理<br/>摘要/标签/分类/行动项]
+    OS_INDEX & VEC_INDEX --> CLASSIFY{密级路由}
+    CLASSIFY -->|confidential/secret| REVIEW[5a. 待审核<br/>pending_review]
+    CLASSIFY -->|public/internal| PUBLISH[5b. 直接发布<br/>published]
+
+    REVIEW --> AUDIT_SUBMIT[提交审核<br/>AuditFlow 创建]
+    AUDIT_SUBMIT --> AUDIT_WAIT[等待人工审核]
+    AUDIT_WAIT -->|approve| PUBLISH_AFTER[审核通过<br/>pending_review → published]
+    AUDIT_WAIT -->|reject| REJECTED[保持 pending_review<br/>记录驳回意见]
+
+    PUBLISH & PUBLISH_AFTER & REJECTED --> INTEL[6. 链式触发<br/>文档智能处理<br/>摘要/标签/分类/行动项]
 ```
 
 ### 设计要点
@@ -998,6 +1006,7 @@ flowchart LR
 - **Chunk 元数据**：每个 Chunk 携带 `title_path`、`content_type`、`chunk_strategy`、`parent_id`
 - **重试机制**：`max_retries=3`，`default_retry_delay=60`
 - **链式触发**：文档处理完成后自动触发智能处理（摘要/标签/分类/行动项/FAQ）
+- **审核流程串联**：按文档密级自动路由 — `confidential`/`secret` 进入 `pending_review` 状态并提交 AuditFlow 审核；`public`/`internal` 直接发布。审核通过后 `AuditService.approve` 自动触发 `_publish_document` 将状态更新为 `published`
 
 ---
 
@@ -1105,7 +1114,7 @@ docker compose --profile private up -d
 ```bash
 cd backend
 
-# 运行全部测试（415 项）
+# 运行全部测试（434 项）
 python -m pytest --tb=short -q
 
 # 运行特定模块测试
@@ -1115,6 +1124,7 @@ python -m pytest tests/test_p1_token_optimization.py -v   # P1 Token 优化
 python -m pytest tests/test_p2_token_optimization.py -v   # P2 Token 优化
 python -m pytest tests/test_document_tasks_chunker.py -v  # 文档分块接入
 python -m pytest tests/test_vector_store.py -v            # 向量存储适配器
+python -m pytest tests/test_audit_workflow.py -v          # 审核流程串联
 ```
 
 ### 测试覆盖
@@ -1127,8 +1137,9 @@ python -m pytest tests/test_vector_store.py -v            # 向量存储适配�
 | `test_p2_token_optimization.py` | 35 | ContextBudgetManager、三段式压缩、引擎集成 |
 | `test_document_tasks_chunker.py` | 30 | SemanticChunker 接入、索引元数据、端到端策略验证 |
 | `test_vector_store.py` | 44 | VectorStoreBase 抽象、OpenSearch k-NN / Milvus 双后端、工厂、检索器集成 |
+| `test_audit_workflow.py` | 19 | 文档审核流程串联、密级路由、AuditService.approve 触发发布 |
 | 其他测试 | 215 | API 端点、服务层、模型层、记忆引擎等 |
-| **合计** | **415** | **全部通过，零回归** |
+| **合计** | **434** | **全部通过，零回归** |
 
 ---
 
