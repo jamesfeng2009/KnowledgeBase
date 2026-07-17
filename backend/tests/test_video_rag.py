@@ -514,57 +514,90 @@ class TestDocumentTasksVideo:
     @pytest.mark.asyncio
     async def test_extract_keyframe_descriptions_success(self) -> None:
         """成功提取关键帧描述。"""
+        import tempfile
+        import os
         from tasks.document_tasks import _extract_keyframe_descriptions
         from app.video.processor import KeyFrame
 
-        mock_processor = MagicMock()
-        mock_processor.extract_keyframes = AsyncMock(
-            return_value=[
-                KeyFrame(timestamp=10.0, image_path="/tmp/frame1.png"),
-                KeyFrame(timestamp=30.0, image_path="/tmp/frame2.png"),
-            ]
-        )
+        # 创建真实的临时图片文件 — Phase 4 修复后代码会读取文件 bytes
+        tmpdir = tempfile.mkdtemp()
+        frame1_path = os.path.join(tmpdir, "frame1.png")
+        frame2_path = os.path.join(tmpdir, "frame2.png")
+        with open(frame1_path, "wb") as f:
+            f.write(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
+        with open(frame2_path, "wb") as f:
+            f.write(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
 
-        mock_vlm = MagicMock()
-        mock_vlm.understand = AsyncMock(
-            side_effect=["架构图描述", "流程图描述"]
-        )
+        try:
+            mock_processor = MagicMock()
+            mock_processor.extract_keyframes = AsyncMock(
+                return_value=[
+                    KeyFrame(timestamp=10.0, image_path=frame1_path),
+                    KeyFrame(timestamp=30.0, image_path=frame2_path),
+                ]
+            )
 
-        with patch("app.video.get_video_processor", return_value=mock_processor), \
-             patch("app.vlm.provider.get_vision_provider", return_value=mock_vlm):
-            result = await _extract_keyframe_descriptions("/fake/video.mp4")
+            mock_vlm = MagicMock()
+            mock_vlm.understand = AsyncMock(
+                side_effect=["架构图描述", "流程图描述"]
+            )
 
-        assert len(result) == 2
-        assert result[0]["timestamp"] == 10.0
-        assert result[0]["description"] == "架构图描述"
-        assert result[1]["timestamp"] == 30.0
-        assert result[1]["description"] == "流程图描述"
+            with patch("app.video.get_video_processor", return_value=mock_processor), \
+                 patch("app.vlm.provider.get_vision_provider", return_value=mock_vlm):
+                result = await _extract_keyframe_descriptions("/fake/video.mp4")
+
+            assert len(result) == 2
+            assert result[0]["timestamp"] == 10.0
+            assert result[0]["description"] == "架构图描述"
+            assert result[1]["timestamp"] == 30.0
+            assert result[1]["description"] == "流程图描述"
+            # 验证 VLM 接收到的是 bytes（Phase 4 修复验证）
+            for call in mock_vlm.understand.call_args_list:
+                assert isinstance(call.kwargs.get("image", call.args[0] if call.args else None), bytes)
+        finally:
+            import shutil
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
     @pytest.mark.asyncio
     async def test_extract_keyframe_descriptions_vlm_failure(self) -> None:
         """VLM 失败时跳过该帧。"""
+        import tempfile
+        import os
         from tasks.document_tasks import _extract_keyframe_descriptions
         from app.video.processor import KeyFrame
 
-        mock_processor = MagicMock()
-        mock_processor.extract_keyframes = AsyncMock(
-            return_value=[
-                KeyFrame(timestamp=10.0, image_path="/tmp/frame1.png"),
-                KeyFrame(timestamp=30.0, image_path="/tmp/frame2.png"),
-            ]
-        )
+        # 创建真实的临时图片文件
+        tmpdir = tempfile.mkdtemp()
+        frame1_path = os.path.join(tmpdir, "frame1.png")
+        frame2_path = os.path.join(tmpdir, "frame2.png")
+        with open(frame1_path, "wb") as f:
+            f.write(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
+        with open(frame2_path, "wb") as f:
+            f.write(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
 
-        mock_vlm = MagicMock()
-        mock_vlm.understand = AsyncMock(
-            side_effect=[Exception("VLM error"), "成功描述"]
-        )
+        try:
+            mock_processor = MagicMock()
+            mock_processor.extract_keyframes = AsyncMock(
+                return_value=[
+                    KeyFrame(timestamp=10.0, image_path=frame1_path),
+                    KeyFrame(timestamp=30.0, image_path=frame2_path),
+                ]
+            )
 
-        with patch("app.video.get_video_processor", return_value=mock_processor), \
-             patch("app.vlm.provider.get_vision_provider", return_value=mock_vlm):
-            result = await _extract_keyframe_descriptions("/fake/video.mp4")
+            mock_vlm = MagicMock()
+            mock_vlm.understand = AsyncMock(
+                side_effect=[Exception("VLM error"), "成功描述"]
+            )
 
-        assert len(result) == 1
-        assert result[0]["description"] == "成功描述"
+            with patch("app.video.get_video_processor", return_value=mock_processor), \
+                 patch("app.vlm.provider.get_vision_provider", return_value=mock_vlm):
+                result = await _extract_keyframe_descriptions("/fake/video.mp4")
+
+            assert len(result) == 1
+            assert result[0]["description"] == "成功描述"
+        finally:
+            import shutil
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 # ======================================================================

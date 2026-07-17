@@ -235,6 +235,8 @@ async def _parse_document(doc: Any) -> str:
     """解析文档内容 — 根据文档类型选择解析器。
 
     使用延迟导入，第三方库未安装时优雅降级为直接返回 content_text。
+    PDF / PPTX 走 app/document/ 增强解析器（表格 + 图片 VLM），
+    其他格式走原有解析逻辑。
 
     Args:
         doc: Document ORM 实例。
@@ -255,6 +257,8 @@ async def _parse_document(doc: Any) -> str:
         return await _parse_docx(doc)
     elif doc_type == "html":
         return _parse_html(doc)
+    elif doc_type in ("pptx", "ppt"):
+        return await _parse_pptx(doc)
     elif doc_type in ("video", "mp4", "avi", "mov", "mkv"):
         # 视频文档走专用处理流程（ASR 转写 + 关键帧 VLM）
         # 返回转写文本供 content_text 存储；视频分块在 _chunk_document 中处理
@@ -265,15 +269,34 @@ async def _parse_document(doc: Any) -> str:
 
 
 async def _parse_pdf(doc: Any) -> str:
-    """解析 PDF 文档 — 延迟导入 pymupdf。
+    """解析 PDF 文档 — 优先使用增强解析器（表格 + 图片 VLM），降级为纯文本。
 
-    库未安装时优雅降级。
+    增强解析器（app/document/pdf_parser.py）支持：
+    - 表格提取为 HTML <table> 标签（pymupdf find_tables）；
+    - 内嵌图片 VLM 描述（get_images → VLM.understand）。
+
+    pymupdf 未安装或增强解析器不可用时优雅降级为纯文本提取。
     """
+    if not doc.file_path:
+        return ""
+
+    # 优先尝试增强解析器
+    try:
+        from app.document import get_parser
+
+        parser = get_parser("pdf")
+        if parser is not None:
+            result = await parser.parse(doc.file_path)
+            if result and result.strip():
+                return result
+            # 增强解析器返回空，降级到纯文本
+    except Exception as exc:
+        logger.warning("pdf.enhanced_parse_failed", error=str(exc))
+
+    # 降级：纯文本提取
     try:
         import fitz  # pymupdf
 
-        if not doc.file_path:
-            return ""
         pdf_doc = fitz.open(doc.file_path)
         text_parts: list[str] = []
         for page in pdf_doc:
@@ -286,6 +309,30 @@ async def _parse_pdf(doc: Any) -> str:
     except Exception as exc:
         logger.warning("pdf.parse_error", error=str(exc))
         return doc.content_text or ""
+
+
+async def _parse_pptx(doc: Any) -> str:
+    """解析 PPTX 文档 — 使用增强解析器（文本 + 表格 + 图片 VLM）。
+
+    每个幻灯片输出为 <h2>标题</h2> + 内容，chunker 按 slide 分块。
+    python-pptx 未安装时优雅降级为返回 content_text。
+    """
+    if not doc.file_path:
+        return ""
+
+    try:
+        from app.document import get_parser
+
+        parser = get_parser("pptx")
+        if parser is not None:
+            result = await parser.parse(doc.file_path)
+            if result and result.strip():
+                return result
+    except Exception as exc:
+        logger.warning("pptx.parse_failed", error=str(exc))
+
+    # 降级
+    return doc.content_text or ""
 
 
 async def _parse_docx(doc: Any) -> str:
@@ -442,9 +489,22 @@ async def _extract_keyframe_descriptions(
 
             for kf in keyframes:
                 try:
+                    # 读取关键帧图片为 bytes — VLM 接口要求 image: bytes
+                    import os
+                    if not os.path.exists(kf.image_path):
+                        logger.warning(
+                            "video.keyframe_file_missing",
+                            image_path=kf.image_path,
+                        )
+                        continue
+
+                    with open(kf.image_path, "rb") as f:
+                        img_bytes = f.read()
+
                     desc = await vlm.understand(
-                        image_path=kf.image_path,
+                        image=img_bytes,
                         prompt="请用一句话描述这个视频帧的画面内容，重点关注图表、文字和关键信息。",
+                        mime_type="image/png",
                     )
                     if desc and desc.strip():
                         descriptions.append(

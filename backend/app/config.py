@@ -93,6 +93,16 @@ class Settings(BaseSettings):
     VIDEO_KEYFRAME_SCENE_THRESHOLD: float = 0.3
     VIDEO_KEYFRAME_MAX_COUNT: int = 100
 
+    # === 文档解析增强 ===
+    # PDF 表格提取 — pymupdf find_tables() → HTML <table>
+    PDF_TABLE_EXTRACTION_ENABLED: bool = True
+    # PDF 图片提取 + VLM 描述
+    PDF_IMAGE_EXTRACTION_ENABLED: bool = True
+    PDF_IMAGE_MAX_PER_DOC: int = 50
+    # PPTX 图片提取 + VLM 描述
+    PPTX_IMAGE_EXTRACTION_ENABLED: bool = True
+    PPTX_IMAGE_MAX_PER_DOC: int = 50
+
     # === LDAP ===
     LDAP_URL: str = ""
     LDAP_BIND_DN: str = ""

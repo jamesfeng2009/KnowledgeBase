@@ -40,6 +40,7 @@
 | **VLM** | Anthropic Claude Vision / vLLM (Pixtral) | SaaS / 私有双部署模式 |
 | **ASR** | OpenAI Whisper API / Faster-Whisper (私有) | 语音转写，视频 RAG |
 | **视频处理** | ffmpeg | 音轨提取 + 关键帧抽取 |
+| **文档解析** | pymupdf (find_tables) + python-pptx | PDF 表格→HTML / PPT 解析 / 图片 VLM 描述 |
 | **协同服务** | Node.js + Yjs + WebSocket | CRDT 实时协同编辑 |
 | **反向代理** | Caddy | 自动 HTTPS + HTTP/3 |
 
@@ -69,12 +70,13 @@ EnterpriseKnowledge/
 │   │   ├── asr/                      # ASR 语音转写（Whisper/FunASR）
 │   │   ├── vlm/                      # 视觉语言模型
 │   │   ├── video/                    # 视频处理（ffmpeg 音轨提取 + 关键帧抽取）
+│   │   ├── document/                 # 文档解析器（PDF 表格/PPT/图片 VLM）
 │   │   ├── config.py                 # 配置管理
 │   │   ├── database.py               # 数据库会话
 │   │   ├── deps.py                   # 依赖注入
 │   │   └── main.py                   # FastAPI 入口
 │   ├── tasks/                        # Celery 异步任务
-│   ├── tests/                        # 测试（498 项）
+│   ├── tests/                        # 测试（537 项）
 │   ├── celery_app.py                 # Celery 入口
 │   └── requirements.txt
 ├── collab-service/                   # Yjs 协作服务（Node.js + TypeScript）
@@ -1008,13 +1010,14 @@ flowchart LR
     UPLOAD[文档上传] --> CELERY[Celery Task<br/>process_document<br/>max_retries=3]
 
     CELERY --> PARSE[1. 文档解析<br/>延迟导入第三方库]
-    PARSE -->|PDF| PYMUPDF[pymupdf 提取文本]
+    PARSE -->|PDF| PYMUPDF[pymupdf 文本<br/>+ find_tables → HTML<br/>+ 图片 VLM 描述]
+    PARSE -->|PPTX| PPTX[python-pptx 文本<br/>+ 表格 → HTML<br/>+ 内嵌图片 VLM]
     PARSE -->|DOCX| DOCX[python-docx 提取]
     PARSE -->|HTML| REGEX[正则去标签]
     PARSE -->|MD/TXT| DIRECT[直接返回]
     PARSE -->|视频| VIDEO[ffmpeg 提取音轨<br/>→ ASR 转写<br/>→ 关键帧 VLM 描述]
 
-    PYMUPDF & DOCX & REGEX & DIRECT --> CHUNK[2. 四级语义分块<br/>SemanticChunker]
+    PYMUPDF & PPTX & DOCX & REGEX & DIRECT --> CHUNK[2. 四级语义分块<br/>SemanticChunker]
     VIDEO --> VCHUNK[2v. 视频语义分块<br/>chunk_video_transcript<br/>时间窗口合并 + 关键帧对齐]
 
     CHUNK --> QA_CHECK{content_type<br/>路由}
@@ -1041,8 +1044,9 @@ flowchart LR
 
 ### 设计要点
 
-- **延迟导入**：pymupdf / python-docx / opensearchpy / pymilvus / ffmpeg / ASR / VLM 延迟导入，未安装时优雅降级
+- **延迟导入**：pymupdf / python-docx / python-pptx / opensearchpy / pymilvus / ffmpeg / ASR / VLM 延迟导入，未安装时优雅降级
 - **向量存储适配器**：通过 `VectorStoreBase` 抽象层，按 `VECTOR_STORE` 配置切换 OpenSearch k-NN（默认）或 Milvus，业务代码零改动
+- **文档解析增强**：PDF 通过 `app/document/` 模块解析——表格用 `pymupdf find_tables()` 转为 HTML `<table>` 保留结构，内嵌图片用 VLM 生成 `[图片描述: ...]` 内联标注；PPTX 用 `python-pptx` 按 slide 提取文本 + 表格 + 内嵌图片 VLM；返回统一的"增强文本"格式（纯文本 + HTML 表格 + 图片描述），chunker 零改动
 - **Chunk 元数据**：每个 Chunk 携带 `title_path`、`content_type`、`chunk_strategy`、`parent_id`
 - **视频 RAG 流程**：视频文档走专用管线 — ffmpeg 提取 16kHz mono 音轨 → ASR 转写为带时间戳片段 → ffmpeg 场景切换检测抽取关键帧 → VLM 逐帧描述 → `chunk_video_transcript` 按时间窗口（120s）合并转写片段并对齐关键帧描述，`title_path` 存时间戳标签（如 `00:00-02:15`）
 - **重试机制**：`max_retries=3`，`default_retry_delay=60`
@@ -1155,7 +1159,7 @@ docker compose --profile private up -d
 ```bash
 cd backend
 
-# 运行全部测试（498 项）
+# 运行全部测试（537 项）
 python -m pytest --tb=short -q
 
 # 运行特定模块测试
@@ -1168,6 +1172,7 @@ python -m pytest tests/test_vector_store.py -v            # 向量存储适配�
 python -m pytest tests/test_audit_workflow.py -v          # 审核流程串联
 python -m pytest tests/test_tool_guard.py -v              # MCP 工具调用守卫
 python -m pytest tests/test_video_rag.py -v               # 视频 RAG（ASR + 关键帧 VLM）
+python -m pytest tests/test_document_parser.py -v         # 文档解析（PDF 表格/PPT/图片 VLM）
 ```
 
 ### 测试覆盖
@@ -1183,8 +1188,9 @@ python -m pytest tests/test_video_rag.py -v               # 视频 RAG（ASR + �
 | `test_audit_workflow.py` | 19 | 文档审核流程串联、密级路由、AuditService.approve 触发发布 |
 | `test_tool_guard.py` | 30 | DangerousToolGuard 守卫拦截、确认管理、engine 集成 |
 | `test_video_rag.py` | 34 | ASR Provider 工厂、视频处理器、视频转写分块、document_tasks 集成 |
+| `test_document_parser.py` | 39 | PDF 表格/图片 VLM、PPTX 解析、factory 路由、document_tasks 集成、配置项 |
 | 其他测试 | 215 | API 端点、服务层、模型层、记忆引擎等 |
-| **合计** | **498** | **全部通过，零回归** |
+| **合计** | **537** | **全部通过，零回归** |
 
 ---
 
