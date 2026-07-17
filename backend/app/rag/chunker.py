@@ -24,8 +24,8 @@ from __future__ import annotations
 import math
 import re
 import uuid
-from dataclasses import dataclass
-from typing import Sequence
+from dataclasses import dataclass, replace
+from typing import Any, Sequence
 
 from app.utils.logger import get_logger
 
@@ -205,6 +205,156 @@ class SemanticChunker:
         chunks = self._fixed_split(content, doc_id)
         log.debug("chunker.fallback", count=len(chunks))
         return chunks
+
+    # ------------------------------------------------------------------
+    # 视频转写分块 — P0 ASR + P1 关键帧 VLM
+    # ------------------------------------------------------------------
+
+    def chunk_video_transcript(
+        self,
+        segments: list[dict[str, Any]],
+        keyframe_descriptions: list[dict[str, Any]] | None = None,
+    ) -> list[Chunk]:
+        """对视频 ASR 转写片段执行语义分块 — 按章节/时间窗口合并。
+
+        P0: ASR 转写片段按时间窗口合并为语义块，title_path 存时间戳。
+        P1: 关键帧 VLM 描述按时间戳对齐到最近的转写块，追加为视觉上下文。
+
+        Args:
+            segments: ASR 转写片段列表，每项格式::
+
+                {"start": 0.0, "end": 15.2, "text": "..."}
+
+            keyframe_descriptions: 关键帧 VLM 描述列表（P1，可选），每项格式::
+
+                {"timestamp": 30.0, "description": "幻灯片显示三层架构图"}
+
+        Returns:
+            Chunk 列表，每个 Chunk 的 title_path 存时间戳标签（如 "00:00-02:15"），
+            content 为合并后的转写文本（+ 关键帧描述），chunk_strategy 为 "video_semantic"。
+        """
+        if not segments:
+            return []
+
+        doc_id = str(uuid.uuid4())
+        kf_map = self._build_keyframe_map(keyframe_descriptions)
+
+        # 按时间窗口合并转写片段 — 默认 120 秒一个块
+        WINDOW_SECONDS = 120
+        chunks: list[Chunk] = []
+        current_texts: list[str] = []
+        window_start = float(segments[0].get("start", 0))
+        window_end = window_start + WINDOW_SECONDS
+
+        for seg in segments:
+            seg_start = float(seg.get("start", 0))
+            seg_end = float(seg.get("end", 0))
+            seg_text = str(seg.get("text", "")).strip()
+            if not seg_text:
+                continue
+
+            # 如果当前片段超出窗口，先保存当前块
+            if seg_start >= window_end and current_texts:
+                chunk = self._make_video_chunk(
+                    doc_id, current_texts, window_start, seg_start, kf_map
+                )
+                if chunk:
+                    chunks.append(chunk)
+                current_texts = []
+                window_start = seg_start
+                window_end = window_start + WINDOW_SECONDS
+
+            current_texts.append(seg_text)
+
+        # 保存最后一个块
+        if current_texts:
+            last_end = float(segments[-1].get("end", window_start))
+            chunk = self._make_video_chunk(
+                doc_id, current_texts, window_start, last_end, kf_map
+            )
+            if chunk:
+                chunks.append(chunk)
+
+        # 如果合并后只有一个大块且文本很长，进一步用语义分块拆分
+        if len(chunks) == 1 and estimate_tokens(chunks[0].content) > self.fallback_tokens:
+            sub_chunks = self._semantic_split(chunks[0].content, doc_id)
+            if self._is_valid(sub_chunks):
+                # 保留原始时间戳在 title_path
+                ts_label = chunks[0].title_path
+                for i, sc in enumerate(sub_chunks):
+                    chunks[i] = replace(
+                        sc,
+                        title_path=f"{ts_label} (part {i+1})",
+                        content_type="video",
+                        chunk_strategy="video_semantic",
+                    )
+                chunks = chunks[:len(sub_chunks)]
+
+        log.info(
+            "chunker.video",
+            segments=len(segments),
+            chunks=len(chunks),
+            keyframes=len(kf_map),
+        )
+        return chunks
+
+    def _build_keyframe_map(
+        self,
+        keyframe_descriptions: list[dict[str, Any]] | None,
+    ) -> dict[float, str]:
+        """构建关键帧时间戳 → 描述的映射。"""
+        kf_map: dict[float, str] = {}
+        if not keyframe_descriptions:
+            return kf_map
+        for kf in keyframe_descriptions:
+            ts = float(kf.get("timestamp", 0))
+            desc = str(kf.get("description", "")).strip()
+            if desc:
+                kf_map[ts] = desc
+        return kf_map
+
+    def _make_video_chunk(
+        self,
+        doc_id: str,
+        texts: list[str],
+        start: float,
+        end: float,
+        kf_map: dict[float, str],
+    ) -> Chunk | None:
+        """创建一个视频转写 Chunk — 合并文本 + 附带关键帧描述。"""
+        content_parts: list[str] = list(texts)
+
+        # 查找时间窗口内的关键帧描述
+        kf_descs: list[str] = []
+        for kf_ts, kf_desc in sorted(kf_map.items()):
+            if start <= kf_ts <= end:
+                kf_label = f"{int(kf_ts // 60):02d}:{int(kf_ts % 60):02d}"
+                kf_descs.append(f"[画面 {kf_label}] {kf_desc}")
+
+        if kf_descs:
+            content_parts.append("\n--- 视觉描述 ---\n" + "\n".join(kf_descs))
+
+        content = "\n".join(content_parts).strip()
+        if not content:
+            return None
+
+        ts_label = (
+            f"{int(start // 60):02d}:{int(start % 60):02d}"
+            f"-{int(end // 60):02d}:{int(end % 60):02d}"
+        )
+
+        return Chunk(
+            id=str(uuid.uuid4()),
+            doc_id=doc_id,
+            content=content,
+            parent_id=None,
+            start_pos=int(start),
+            end_pos=int(end),
+            token_count=estimate_tokens(content),
+            title_path=ts_label,
+            content_type="video",
+            chunk_strategy="video_semantic",
+        )
 
     # ------------------------------------------------------------------
     # 校验

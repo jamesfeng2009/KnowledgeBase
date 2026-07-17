@@ -159,9 +159,13 @@ async def _process_document_async(doc_id: str) -> dict[str, Any]:
             doc.content_text = parsed_text
             await session.flush()
 
-        # 3. 分块 — 使用 SemanticChunker 四级优先级策略
-        #    （Q&A → 结构化 → TextTiling → 固定长度兜底）
-        chunk_objects = _chunk_document(parsed_text, doc.doc_type or "md")
+        # 3. 分块 — 视频文档走专用分块，其他走 SemanticChunker 四级策略
+        doc_type = doc.doc_type or "md"
+        if doc_type in _VIDEO_TYPES:
+            # 视频文档：ASR 转写片段 + 关键帧 VLM 描述 → 视频语义分块
+            chunk_objects = await _chunk_video_document(doc, parsed_text)
+        else:
+            chunk_objects = _chunk_document(parsed_text, doc_type)
         chunks = [c.content for c in chunk_objects]
         logger.info(
             "document.chunked",
@@ -251,6 +255,10 @@ async def _parse_document(doc: Any) -> str:
         return await _parse_docx(doc)
     elif doc_type == "html":
         return _parse_html(doc)
+    elif doc_type in ("video", "mp4", "avi", "mov", "mkv"):
+        # 视频文档走专用处理流程（ASR 转写 + 关键帧 VLM）
+        # 返回转写文本供 content_text 存储；视频分块在 _chunk_document 中处理
+        return await _parse_video(doc)
     else:
         # Markdown 或纯文本，直接返回
         return doc.content_html or doc.content_text or ""
@@ -318,6 +326,220 @@ def _parse_html(doc: Any) -> str:
         return doc.content_text or ""
 
 
+# ------------------------------------------------------------------
+# 视频处理 — ASR 转写 + 关键帧 VLM 描述
+# ------------------------------------------------------------------
+
+# 视频文件后缀集合
+_VIDEO_TYPES: set[str] = {"video", "mp4", "avi", "mov", "mkv"}
+
+
+async def _parse_video(doc: Any) -> str:
+    """解析视频文档 — 提取音轨 → ASR 转写 → 返回纯文本。
+
+    视频处理流水线（P0 + P1）：
+        1. ffmpeg 提取音轨为 16kHz mono WAV；
+        2. ASR 引擎转写为带时间戳的文本段；
+        3. （P1）ffmpeg 抽取关键帧 → VLM 生成画面描述；
+        4. 合并转写文本为纯文本返回（供 content_text 存储）。
+
+    视频分块（chunk_video_transcript）在 _process_document_async 中
+    根据转写片段单独处理，不走普通 _chunk_document。
+
+    延迟导入所有外部依赖，优雅降级。
+
+    Args:
+        doc: Document ORM 实例（file_path 指向视频文件）。
+
+    Returns:
+        ASR 转写的纯文本（各段拼接），失败时返回空字符串。
+    """
+    if not doc.file_path:
+        logger.warning("video.no_file_path", doc_id=str(getattr(doc, "id", "")))
+        return doc.content_text or ""
+
+    try:
+        from app.video import get_video_processor
+        from app.asr import get_asr_provider
+
+        # 1. 提取音轨
+        processor = get_video_processor()
+        wav_path = await processor.extract_audio(doc.file_path)
+        if not wav_path:
+            logger.warning("video.audio_extract_failed", file_path=doc.file_path)
+            return doc.content_text or ""
+
+        # 2. ASR 转写
+        try:
+            asr = get_asr_provider()
+            segments = await asr.transcribe(wav_path, language="zh")
+        except Exception as exc:
+            logger.warning("video.asr_failed", error=str(exc))
+            segments = []
+        finally:
+            # 清理临时音频文件
+            import os
+            if os.path.exists(wav_path):
+                os.remove(wav_path)
+
+        if not segments:
+            logger.warning("video.no_transcript", doc_id=str(getattr(doc, "id", "")))
+            return doc.content_text or ""
+
+        # 3. 合并转写文本
+        text_parts = [seg.text for seg in segments if seg.text.strip()]
+        transcript_text = "\n".join(text_parts)
+
+        logger.info(
+            "video.transcribed",
+            segments=len(segments),
+            text_len=len(transcript_text),
+        )
+        return transcript_text
+
+    except ImportError:
+        logger.warning("video.deps_not_installed")
+        return doc.content_text or ""
+    except Exception as exc:
+        logger.warning("video.parse_error", error=str(exc))
+        return doc.content_text or ""
+
+
+async def _extract_keyframe_descriptions(
+    video_path: str,
+) -> list[dict[str, Any]]:
+    """提取关键帧并使用 VLM 生成画面描述 — P1。
+
+    流程：ffmpeg 抽帧 → VLM.understand() 逐帧描述 → 返回描述列表。
+
+    Args:
+        video_path: 视频文件路径。
+
+    Returns:
+        关键帧描述列表，每项格式::
+
+            {"timestamp": 30.0, "description": "幻灯片显示三层架构图"}
+
+        失败时返回空列表。
+    """
+    if not video_path:
+        return []
+
+    try:
+        from app.video import get_video_processor
+
+        processor = get_video_processor()
+        keyframes = await processor.extract_keyframes(video_path)
+        if not keyframes:
+            return []
+
+        # 使用 VLM 逐帧描述
+        try:
+            from app.vlm.provider import get_vision_provider
+
+            vlm = get_vision_provider()
+            descriptions: list[dict[str, Any]] = []
+
+            for kf in keyframes:
+                try:
+                    desc = await vlm.understand(
+                        image_path=kf.image_path,
+                        prompt="请用一句话描述这个视频帧的画面内容，重点关注图表、文字和关键信息。",
+                    )
+                    if desc and desc.strip():
+                        descriptions.append(
+                            {
+                                "timestamp": kf.timestamp,
+                                "description": desc.strip(),
+                            }
+                        )
+                except Exception as exc:
+                    logger.warning(
+                        "video.keyframe_vlm_failed",
+                        timestamp=kf.timestamp,
+                        error=str(exc),
+                    )
+
+            logger.info("video.keyframes_described", count=len(descriptions))
+            return descriptions
+
+        except ImportError:
+            logger.warning("video.vlm_not_available")
+            return []
+
+    except Exception as exc:
+        logger.warning("video.keyframe_extract_error", error=str(exc))
+        return []
+
+
+async def _chunk_video_document(doc: Any, transcript_text: str) -> list[Chunk]:
+    """视频文档专用分块 — ASR 转写片段 + 关键帧 VLM 描述 → 语义分块。
+
+    流程：
+        1. 重新执行 ASR 转写获取带时间戳的片段（_parse_video 只返回纯文本，
+           此处需要片段级时间戳用于分块）；
+        2. （P1）提取关键帧 VLM 描述；
+        3. 调用 SemanticChunker.chunk_video_transcript() 分块。
+
+    如果 ASR 不可用，降级为普通文本分块。
+
+    Args:
+        doc: Document ORM 实例。
+        transcript_text: _parse_video 返回的转写纯文本。
+
+    Returns:
+        Chunk 对象列表。
+    """
+    if not transcript_text or not transcript_text.strip():
+        return []
+
+    # 尝试获取 ASR 片段（需要时间戳）
+    segments: list[dict[str, Any]] = []
+    try:
+        from app.video import get_video_processor
+        from app.asr import get_asr_provider
+
+        if doc.file_path:
+            processor = get_video_processor()
+            wav_path = await processor.extract_audio(doc.file_path)
+            if wav_path:
+                try:
+                    asr = get_asr_provider()
+                    segs = await asr.transcribe(wav_path, language="zh")
+                    segments = [s.to_dict() for s in segs]
+                finally:
+                    import os
+                    if os.path.exists(wav_path):
+                        os.remove(wav_path)
+    except Exception as exc:
+        logger.warning("video.chunk_asr_failed", error=str(exc))
+
+    # 如果拿不到 ASR 片段，降级为普通文本分块
+    if not segments:
+        logger.info("video.chunk_fallback_to_text", reason="no ASR segments")
+        return _chunk_document(transcript_text, "txt")
+
+    # P1: 提取关键帧 VLM 描述
+    keyframe_descs: list[dict[str, Any]] = []
+    try:
+        if doc.file_path:
+            keyframe_descs = await _extract_keyframe_descriptions(doc.file_path)
+    except Exception as exc:
+        logger.warning("video.keyframe_desc_failed", error=str(exc))
+
+    # 视频语义分块
+    chunker = SemanticChunker()
+    chunks = chunker.chunk_video_transcript(segments, keyframe_descs)
+
+    logger.info(
+        "video.chunked",
+        segments=len(segments),
+        chunks=len(chunks),
+        keyframes=len(keyframe_descs),
+    )
+    return chunks
+
+
 def _chunk_document(
     text: str,
     doc_type: str = "md",
@@ -331,6 +553,9 @@ def _chunk_document(
     2. 语义分块：TextTiling 相似度算法，在话题边界分割；
     3. 父子索引：小块检索、大块上下文；
     4. 固定长度兜底：512 tokens 固定分割。
+
+    注意：视频文档的分块在 _process_video_pipeline 中通过
+    chunker.chunk_video_transcript() 处理，不走本函数。
 
     Args:
         text: 待分块的纯文本内容。

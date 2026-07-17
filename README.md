@@ -37,7 +37,9 @@
 | **关系数据库** | PostgreSQL 16 | 主存储，JSONB + pgvector |
 | **缓存** | Redis 7 | Token 缓存 + Pub/Sub 通知 |
 | **对象存储** | MinIO | 文档附件 + 多模态资源 |
-| **前端** | Astro 5 + React 19 + Tiptap | SSR + 协同编辑 |
+| **VLM** | Anthropic Claude Vision / vLLM (Pixtral) | SaaS / 私有双部署模式 |
+| **ASR** | OpenAI Whisper API / Faster-Whisper (私有) | 语音转写，视频 RAG |
+| **视频处理** | ffmpeg | 音轨提取 + 关键帧抽取 |
 | **协同服务** | Node.js + Yjs + WebSocket | CRDT 实时协同编辑 |
 | **反向代理** | Caddy | 自动 HTTPS + HTTP/3 |
 
@@ -64,13 +66,15 @@ EnterpriseKnowledge/
 │   │   ├── schemas/                  # Pydantic 数据模型
 │   │   ├── services/                 # 业务逻辑层（21 个服务）
 │   │   ├── utils/                    # 工具（crypto/logger/sse）
+│   │   ├── asr/                      # ASR 语音转写（Whisper/FunASR）
 │   │   ├── vlm/                      # 视觉语言模型
+│   │   ├── video/                    # 视频处理（ffmpeg 音轨提取 + 关键帧抽取）
 │   │   ├── config.py                 # 配置管理
 │   │   ├── database.py               # 数据库会话
 │   │   ├── deps.py                   # 依赖注入
 │   │   └── main.py                   # FastAPI 入口
 │   ├── tasks/                        # Celery 异步任务
-│   ├── tests/                        # 测试（464 项）
+│   ├── tests/                        # 测试（498 项）
 │   ├── celery_app.py                 # Celery 入口
 │   └── requirements.txt
 ├── collab-service/                   # Yjs 协作服务（Node.js + TypeScript）
@@ -311,7 +315,17 @@ flowchart TD
 | P1 | 结构化分块 | tutorial/specification/report | 标题路径锚点增强语义 |
 | P2 | TextTiling 语义分块 | plain / auto 兜底 | 话题边界自动识别 |
 | P3 | 父子索引 | 语义分块后自动构建 | 小块检索 + 父块上下文 |
+| 视频 | 视频语义分块 | doc_type 为视频类型 | 时间窗口（120s）合并 ASR 片段 + 关键帧 VLM 描述对齐，`title_path` 存时间戳 |
 | 兜底 | 固定长度 | 以上均无效 | 512 tokens 段落边界断开 |
+
+### 视频语义分块（`chunk_video_transcript`）
+
+视频文档不走四级兜底链，而是由 `SemanticChunker.chunk_video_transcript()` 专用方法处理：
+
+- **输入**：ASR 转写片段列表（`{start, end, text}`）+ 关键帧 VLM 描述列表（`{timestamp, description}`，P1 可选）
+- **合并**：按 120 秒时间窗口将转写片段合并为语义块，`title_path` 存时间戳范围（如 `00:00-02:15`）
+- **关键帧对齐**：VLM 描述按时间戳对齐到最近的转写块，追加为视觉上下文（`[画面: 幻灯片显示三层架构图]`）
+- **降级**：单块过长时回退到 TextTiling 语义分块；无转写片段时返回空列表，由调用方降级为普通文本分块
 
 ---
 
@@ -987,7 +1001,7 @@ graph TB
 
 ## 文档处理流水线
 
-Celery 异步任务驱动文档处理流水线，从文档上传到索引构建全自动，支持 PDF/DOCX/HTML/Markdown 多格式。
+Celery 异步任务驱动文档处理流水线，从文档上传到索引构建全自动，支持 PDF/DOCX/HTML/Markdown/视频 多格式。
 
 ```mermaid
 flowchart LR
@@ -998,14 +1012,16 @@ flowchart LR
     PARSE -->|DOCX| DOCX[python-docx 提取]
     PARSE -->|HTML| REGEX[正则去标签]
     PARSE -->|MD/TXT| DIRECT[直接返回]
+    PARSE -->|视频| VIDEO[ffmpeg 提取音轨<br/>→ ASR 转写<br/>→ 关键帧 VLM 描述]
 
     PYMUPDF & DOCX & REGEX & DIRECT --> CHUNK[2. 四级语义分块<br/>SemanticChunker]
+    VIDEO --> VCHUNK[2v. 视频语义分块<br/>chunk_video_transcript<br/>时间窗口合并 + 关键帧对齐]
 
     CHUNK --> QA_CHECK{content_type<br/>路由}
     QA_CHECK -->|faq| QA_SPLIT[Q&A 对分块]
     QA_CHECK -->|其他| STRUCT[结构化/语义/兜底]
 
-    QA_SPLIT & STRUCT --> EMBED[3. 向量化<br/>EmbeddingProvider]
+    QA_SPLIT & STRUCT & VCHUNK --> EMBED[3. 向量化<br/>EmbeddingProvider]
 
     EMBED --> INDEX[4. 索引构建]
     INDEX --> OS_INDEX[OpenSearch 全文索引<br/>含 Chunk 元数据<br/>title_path/content_type/strategy]
@@ -1025,9 +1041,10 @@ flowchart LR
 
 ### 设计要点
 
-- **延迟导入**：pymupdf / python-docx / opensearchpy / pymilvus 延迟导入，未安装时优雅降级
+- **延迟导入**：pymupdf / python-docx / opensearchpy / pymilvus / ffmpeg / ASR / VLM 延迟导入，未安装时优雅降级
 - **向量存储适配器**：通过 `VectorStoreBase` 抽象层，按 `VECTOR_STORE` 配置切换 OpenSearch k-NN（默认）或 Milvus，业务代码零改动
 - **Chunk 元数据**：每个 Chunk 携带 `title_path`、`content_type`、`chunk_strategy`、`parent_id`
+- **视频 RAG 流程**：视频文档走专用管线 — ffmpeg 提取 16kHz mono 音轨 → ASR 转写为带时间戳片段 → ffmpeg 场景切换检测抽取关键帧 → VLM 逐帧描述 → `chunk_video_transcript` 按时间窗口（120s）合并转写片段并对齐关键帧描述，`title_path` 存时间戳标签（如 `00:00-02:15`）
 - **重试机制**：`max_retries=3`，`default_retry_delay=60`
 - **链式触发**：文档处理完成后自动触发智能处理（摘要/标签/分类/行动项/FAQ）
 - **审核流程串联**：按文档密级自动路由 — `confidential`/`secret` 进入 `pending_review` 状态并提交 AuditFlow 审核；`public`/`internal` 直接发布。审核通过后 `AuditService.approve` 自动触发 `_publish_document` 将状态更新为 `published`
@@ -1138,7 +1155,7 @@ docker compose --profile private up -d
 ```bash
 cd backend
 
-# 运行全部测试（464 项）
+# 运行全部测试（498 项）
 python -m pytest --tb=short -q
 
 # 运行特定模块测试
@@ -1150,6 +1167,7 @@ python -m pytest tests/test_document_tasks_chunker.py -v  # 文档分块接入
 python -m pytest tests/test_vector_store.py -v            # 向量存储适配器
 python -m pytest tests/test_audit_workflow.py -v          # 审核流程串联
 python -m pytest tests/test_tool_guard.py -v              # MCP 工具调用守卫
+python -m pytest tests/test_video_rag.py -v               # 视频 RAG（ASR + 关键帧 VLM）
 ```
 
 ### 测试覆盖
@@ -1164,8 +1182,9 @@ python -m pytest tests/test_tool_guard.py -v              # MCP 工具调用守�
 | `test_vector_store.py` | 44 | VectorStoreBase 抽象、OpenSearch k-NN / Milvus 双后端、工厂、检索器集成 |
 | `test_audit_workflow.py` | 19 | 文档审核流程串联、密级路由、AuditService.approve 触发发布 |
 | `test_tool_guard.py` | 30 | DangerousToolGuard 守卫拦截、确认管理、engine 集成 |
+| `test_video_rag.py` | 34 | ASR Provider 工厂、视频处理器、视频转写分块、document_tasks 集成 |
 | 其他测试 | 215 | API 端点、服务层、模型层、记忆引擎等 |
-| **合计** | **464** | **全部通过，零回归** |
+| **合计** | **498** | **全部通过，零回归** |
 
 ---
 

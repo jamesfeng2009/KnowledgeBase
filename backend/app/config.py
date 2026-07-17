@@ -77,9 +77,21 @@ class Settings(BaseSettings):
     TEI_RERANKER_HOST: str = "reranker-server"
     TEI_RERANKER_PORT: str = "80"
     RERANKER_MODEL: str = "jinaai/jina-reranker-v2-base-multilingual"
+
+    # === VLM ===
     VLM_HOST: str = "vlm-server"
     VLM_PORT: str = "8006"
     VLM_MODEL: str = "mistralai/Pixtral-12B-2409"
+
+    # === ASR 语音转写 ===
+    ASR_HOST: str = "asr-server"
+    ASR_PORT: str = "8005"
+    ASR_MODEL: str = "large-v3"
+
+    # === 视频处理 ===
+    VIDEO_KEYFRAME_ENABLED: bool = True
+    VIDEO_KEYFRAME_SCENE_THRESHOLD: float = 0.3
+    VIDEO_KEYFRAME_MAX_COUNT: int = 100
 
     # === LDAP ===
     LDAP_URL: str = ""
