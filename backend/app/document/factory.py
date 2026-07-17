@@ -20,12 +20,14 @@ _PARSER_CLASSES: dict[str, type[DocumentParser]] = {}
 
 def _register_parsers() -> None:
     """注册所有文档解析器 — 延迟导入避免循环依赖。"""
+    from app.document.docx_parser import DOCXParser
     from app.document.pdf_parser import PDFParser
     from app.document.pptx_parser import PPTXParser
 
     _PARSER_CLASSES["pdf"] = PDFParser
     _PARSER_CLASSES["pptx"] = PPTXParser
     _PARSER_CLASSES["ppt"] = PPTXParser  # 别名
+    _PARSER_CLASSES["docx"] = DOCXParser
 
 
 @lru_cache(maxsize=1)

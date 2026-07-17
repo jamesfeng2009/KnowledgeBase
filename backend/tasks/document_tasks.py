@@ -27,6 +27,9 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+# VLM 并发控制 — 关键帧描述并发上限，防止打满 VLM 服务
+_VLM_SEMAPHORE_LIMIT: int = 3
+
 # 保留旧常量供向后兼容引用，实际分块已委托给 SemanticChunker
 # Deprecated: 使用 SemanticChunker 替代简单滑动窗口
 CHUNK_SIZE: int = 500
@@ -336,15 +339,33 @@ async def _parse_pptx(doc: Any) -> str:
 
 
 async def _parse_docx(doc: Any) -> str:
-    """解析 DOCX 文档 — 延迟导入 python-docx。
+    """解析 DOCX 文档 — 优先使用增强解析器（表格 + 图片 VLM），降级为纯文本。
 
-    库未安装时优雅降级。
+    增强解析器（app/document/docx_parser.py）支持：
+    - 表格提取为 HTML <table> 标签；
+    - 内嵌图片 VLM 描述。
+
+    python-docx 未安装或增强解析器不可用时优雅降级为纯文本提取。
     """
+    if not doc.file_path:
+        return ""
+
+    # 优先尝试增强解析器
+    try:
+        from app.document import get_parser
+
+        parser = get_parser("docx")
+        if parser is not None:
+            result = await parser.parse(doc.file_path)
+            if result and result.strip():
+                return result
+    except Exception as exc:
+        logger.warning("docx.enhanced_parse_failed", error=str(exc))
+
+    # 降级：纯文本提取
     try:
         from docx import Document as DocxDocument
 
-        if not doc.file_path:
-            return ""
         docx_doc = DocxDocument(doc.file_path)
         paragraphs = [p.text for p in docx_doc.paragraphs if p.text.strip()]
         return "\n".join(paragraphs)
@@ -480,45 +501,56 @@ async def _extract_keyframe_descriptions(
         if not keyframes:
             return []
 
-        # 使用 VLM 逐帧描述
+        # 使用 VLM 并发描述关键帧 — Semaphore(3) 防止打满 VLM 服务
         try:
             from app.vlm.provider import get_vision_provider
 
             vlm = get_vision_provider()
-            descriptions: list[dict[str, Any]] = []
+            semaphore = asyncio.Semaphore(_VLM_SEMAPHORE_LIMIT)
 
-            for kf in keyframes:
+            async def describe_keyframe(kf: Any) -> dict[str, Any] | None:
+                """并发描述单个关键帧 — 异常时返回 None，不中断整体。"""
                 try:
-                    # 读取关键帧图片为 bytes — VLM 接口要求 image: bytes
                     import os
                     if not os.path.exists(kf.image_path):
                         logger.warning(
                             "video.keyframe_file_missing",
                             image_path=kf.image_path,
                         )
-                        continue
+                        return None
 
                     with open(kf.image_path, "rb") as f:
                         img_bytes = f.read()
 
-                    desc = await vlm.understand(
-                        image=img_bytes,
-                        prompt="请用一句话描述这个视频帧的画面内容，重点关注图表、文字和关键信息。",
-                        mime_type="image/png",
-                    )
-                    if desc and desc.strip():
-                        descriptions.append(
-                            {
-                                "timestamp": kf.timestamp,
-                                "description": desc.strip(),
-                            }
+                    async with semaphore:
+                        desc = await vlm.understand(
+                            image=img_bytes,
+                            prompt="请用一句话描述这个视频帧的画面内容，重点关注图表、文字和关键信息。",
+                            mime_type="image/png",
                         )
+                    if desc and desc.strip():
+                        return {
+                            "timestamp": kf.timestamp,
+                            "description": desc.strip(),
+                        }
+                    return None
                 except Exception as exc:
                     logger.warning(
                         "video.keyframe_vlm_failed",
                         timestamp=kf.timestamp,
                         error=str(exc),
                     )
+                    return None
+
+            tasks = [describe_keyframe(kf) for kf in keyframes]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            descriptions: list[dict[str, Any]] = []
+            for result in results:
+                if isinstance(result, dict):
+                    descriptions.append(result)
+                elif isinstance(result, Exception):
+                    logger.warning("video.keyframe_gather_error", error=str(result))
 
             logger.info("video.keyframes_described", count=len(descriptions))
             return descriptions

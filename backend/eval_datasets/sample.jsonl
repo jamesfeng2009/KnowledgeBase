@@ -1,0 +1,5 @@
+{"query": "公司报销流程是什么", "expected_doc_ids": ["doc_reimbursement_01", "doc_finance_policy_02"], "expected_answer": "员工报销需先在 OA 系统填写报销单，附上发票原件，经直属主管和部门负责人审批后提交财务部。", "kb_ids": ["kb_finance"], "tags": ["报销", "财务"]}
+{"query": "年假请假制度是怎样的", "expected_doc_ids": ["doc_hr_leave_01"], "expected_answer": "工龄满 1 年享 5 天年假，满 5 年享 10 天，满 10 年享 15 天。需提前 3 个工作日在 OA 系统提交请假申请。", "kb_ids": ["kb_hr"], "tags": ["请假", "人事"]}
+{"query": "新员工入职需要准备哪些材料", "expected_doc_ids": ["doc_hr_onboarding_01", "doc_hr_onboarding_02"], "expected_answer": "新员工入职需携带身份证原件及复印件、学历证明、离职证明、一寸照片 2 张以及银行卡复印件。", "kb_ids": ["kb_hr"], "tags": ["入职", "人事"]}
+{"query": "差旅费报销标准是多少", "expected_doc_ids": ["doc_finance_travel_01"], "expected_answer": "国内差旅住宿标准一线城市 500 元/晚，二三线城市 400 元/晚；交通费按实际发生报销，高铁限二等座。", "kb_ids": ["kb_finance"], "tags": ["差旅", "报销", "财务"]}
+{"query": "IT 设备故障如何报修", "expected_doc_ids": ["doc_it_support_01"], "expected_answer": "IT 设备故障请登录 IT 服务台提交工单，或拨打 IT 支持热线 8000，紧急故障可直接联系值班工程师。", "kb_ids": ["kb_it"], "tags": ["IT", "运维"]}

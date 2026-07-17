@@ -96,3 +96,23 @@ def mock_user():
         clearance_level="internal",
         is_active=True,
     )
+
+
+@pytest.fixture(autouse=True)
+def clear_lru_caches():
+    """每个测试前清理 lru_cache — 防止跨测试的缓存污染。
+
+    get_vision_provider / get_settings 等函数使用 @lru_cache，
+    如果某个测试未 mock 就调用了真实实现，缓存会残留到后续测试。
+    """
+    try:
+        from app.vlm.provider import get_vision_provider
+        get_vision_provider.cache_clear()
+    except Exception:
+        pass
+    try:
+        from app.config import get_settings
+        get_settings.cache_clear()
+    except Exception:
+        pass
+    yield

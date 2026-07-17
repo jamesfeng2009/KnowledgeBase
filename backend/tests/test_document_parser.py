@@ -714,3 +714,305 @@ class TestDocumentParserConfig:
         assert settings.PPTX_IMAGE_EXTRACTION_ENABLED is True
         assert hasattr(settings, "PPTX_IMAGE_MAX_PER_DOC")
         assert settings.PPTX_IMAGE_MAX_PER_DOC == 50
+
+    def test_docx_config(self) -> None:
+        from app.config import Settings
+
+        settings = Settings()
+        assert hasattr(settings, "DOCX_TABLE_EXTRACTION_ENABLED")
+        assert settings.DOCX_TABLE_EXTRACTION_ENABLED is True
+        assert hasattr(settings, "DOCX_IMAGE_EXTRACTION_ENABLED")
+        assert settings.DOCX_IMAGE_EXTRACTION_ENABLED is True
+        assert hasattr(settings, "DOCX_IMAGE_MAX_PER_DOC")
+        assert settings.DOCX_IMAGE_MAX_PER_DOC == 50
+
+    def test_rate_limit_config(self) -> None:
+        from app.config import Settings
+
+        settings = Settings()
+        assert hasattr(settings, "RATE_LIMIT_ENABLED")
+        assert settings.RATE_LIMIT_ENABLED is True
+        assert hasattr(settings, "RATE_LIMIT_PER_MINUTE")
+        assert settings.RATE_LIMIT_PER_MINUTE == 60
+        assert hasattr(settings, "RATE_LIMIT_BURST")
+        assert settings.RATE_LIMIT_BURST == 10
+
+    def test_eval_config(self) -> None:
+        from app.config import Settings
+
+        settings = Settings()
+        assert hasattr(settings, "EVAL_DATASET_DIR")
+        assert hasattr(settings, "EVAL_REGRESSION_THRESHOLD")
+        assert settings.EVAL_REGRESSION_THRESHOLD == 0.05
+
+
+# ======================================================================
+# DOCXParser 测试
+# ======================================================================
+
+
+class TestDOCXParserRowsToHtml:
+    """DOCXParser._rows_to_html 测试。"""
+
+    def test_basic_table(self) -> None:
+        from app.document.docx_parser import DOCXParser
+
+        rows = [["姓名", "年龄"], ["张三", "30"], ["李四", "25"]]
+        html = DOCXParser._rows_to_html(rows)
+        assert "<table>" in html
+        assert "<th>姓名</th>" in html
+        assert "<td>张三</td>" in html
+
+    def test_empty_rows(self) -> None:
+        from app.document.docx_parser import DOCXParser
+
+        assert DOCXParser._rows_to_html([]) == ""
+
+    def test_html_escaping(self) -> None:
+        from app.document.docx_parser import DOCXParser
+
+        rows = [["<script>", "&amp;"], ["normal", "data"]]
+        html = DOCXParser._rows_to_html(rows)
+        assert "&lt;script&gt;" in html
+        assert "&amp;amp;" in html
+
+
+class TestDOCXParserParse:
+    """DOCXParser.parse 测试。"""
+
+    @pytest.mark.asyncio
+    async def test_docx_not_installed(self) -> None:
+        """python-docx 未安装时返回空字符串。"""
+        from app.document.docx_parser import DOCXParser
+
+        with patch.dict("sys.modules", {"docx": None}):
+            parser = DOCXParser()
+            result = await parser.parse("/fake/path.docx")
+            assert result == ""
+
+    @pytest.mark.asyncio
+    async def test_parse_with_text_and_table(self) -> None:
+        """解析包含文本和表格的 DOCX。"""
+        from app.document.docx_parser import DOCXParser
+
+        # mock body 元素：段落 + 表格
+        mock_p_element = MagicMock()
+        mock_p_element.tag = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}p"
+
+        mock_tbl_element = MagicMock()
+        mock_tbl_element.tag = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}tbl"
+
+        mock_doc = MagicMock()
+        mock_doc.element.body = [mock_p_element, mock_tbl_element]
+        mock_doc.part.rels = {}
+
+        mock_docx_module = MagicMock()
+        mock_docx_module.Document.return_value = mock_doc
+
+        import sys
+        with patch.dict(sys.modules, {"docx": mock_docx_module}):
+            parser = DOCXParser()
+            # 直接 mock 解析器方法，避免复杂的 docx 模块 mock
+            with patch.object(parser, "_extract_paragraph_text", return_value="这是段落文本"), \
+                 patch.object(parser, "_extract_table_html", return_value="<table>\n<tr>\n<th>项目</th>\n</tr>\n<tr>\n<td>采购</td>\n</tr>\n</table>"), \
+                 patch.object(parser, "_extract_images", AsyncMock(return_value=([], 0))):
+                result = await parser.parse("/fake/doc.docx")
+
+        assert "这是段落文本" in result
+        assert "<table>" in result
+        assert "<th>项目</th>" in result
+        assert "<td>采购</td>" in result
+
+    @pytest.mark.asyncio
+    async def test_parse_with_image_vlm(self) -> None:
+        """解析包含图片的 DOCX，VLM 生成描述。"""
+        from app.document.docx_parser import DOCXParser
+
+        mock_p_element = MagicMock()
+        mock_p_element.tag = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}p"
+
+        # mock image relationship
+        mock_image_part = MagicMock()
+        mock_image_part.blob = b"\x89PNG fake image data"
+        mock_image_part.content_type = "image/png"
+
+        mock_rel = MagicMock()
+        mock_rel.reltype = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+        mock_rel.target_part = mock_image_part
+
+        mock_doc = MagicMock()
+        mock_doc.element.body = [mock_p_element]
+        mock_doc.part.rels = {"rId1": mock_rel}
+
+        mock_vlm = MagicMock()
+        mock_vlm.understand = AsyncMock(return_value="流程图描述")
+
+        mock_docx_module = MagicMock()
+        mock_docx_module.Document.return_value = mock_doc
+
+        import sys
+        with patch.dict(sys.modules, {"docx": mock_docx_module}):
+            parser = DOCXParser()
+            with patch.object(parser, "_extract_paragraph_text", return_value="文档内容"), \
+                 patch("app.vlm.provider.get_vision_provider", return_value=mock_vlm):
+                result = await parser.parse("/fake/doc.docx")
+
+        assert "文档内容" in result
+        assert "[图片描述: 流程图描述]" in result
+        mock_vlm.understand.assert_called_once()
+        call_kwargs = mock_vlm.understand.call_args.kwargs
+        assert isinstance(call_kwargs.get("image"), bytes)
+
+    @pytest.mark.asyncio
+    async def test_parse_image_max_limit(self) -> None:
+        """图片数量不超过 DOCX_IMAGE_MAX_PER_DOC。"""
+        from app.document.docx_parser import DOCXParser
+
+        mock_p_element = MagicMock()
+        mock_p_element.tag = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}p"
+
+        # 创建 10 个 mock image
+        mock_rels = {}
+        for i in range(10):
+            mock_image_part = MagicMock()
+            mock_image_part.blob = b"fake"
+            mock_image_part.content_type = "image/png"
+            mock_rel = MagicMock()
+            mock_rel.reltype = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+            mock_rel.target_part = mock_image_part
+            mock_rels[f"rId{i}"] = mock_rel
+
+        mock_doc = MagicMock()
+        mock_doc.element.body = [mock_p_element]
+        mock_doc.part.rels = mock_rels
+
+        mock_vlm = MagicMock()
+        mock_vlm.understand = AsyncMock(return_value="描述")
+
+        mock_docx_module = MagicMock()
+        mock_docx_module.Document.return_value = mock_doc
+
+        import sys
+        with patch.dict(sys.modules, {"docx": mock_docx_module}):
+            parser = DOCXParser()
+            with patch.object(parser, "_extract_paragraph_text", return_value="文本"), \
+                 patch("app.vlm.provider.get_vision_provider", return_value=mock_vlm), \
+                 patch("app.document.docx_parser.get_settings") as mock_settings:
+                mock_settings.return_value.DOCX_TABLE_EXTRACTION_ENABLED = True
+                mock_settings.return_value.DOCX_IMAGE_EXTRACTION_ENABLED = True
+                mock_settings.return_value.DOCX_IMAGE_MAX_PER_DOC = 3
+                result = await parser.parse("/fake/doc.docx")
+
+        # VLM 最多调用 3 次
+        assert mock_vlm.understand.call_count <= 3
+
+    @pytest.mark.asyncio
+    async def test_parse_vlm_not_available(self) -> None:
+        """VLM 不可用时跳过图片描述，保留文本。"""
+        from app.document.docx_parser import DOCXParser
+
+        mock_p_element = MagicMock()
+        mock_p_element.tag = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}p"
+
+        mock_image_part = MagicMock()
+        mock_image_part.blob = b"fake"
+        mock_image_part.content_type = "image/png"
+        mock_rel = MagicMock()
+        mock_rel.reltype = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+        mock_rel.target_part = mock_image_part
+
+        mock_doc = MagicMock()
+        mock_doc.element.body = [mock_p_element]
+        mock_doc.part.rels = {"rId1": mock_rel}
+
+        mock_docx_module = MagicMock()
+        mock_docx_module.Document.return_value = mock_doc
+
+        import sys
+        with patch.dict(sys.modules, {"docx": mock_docx_module}):
+            parser = DOCXParser()
+            with patch.object(parser, "_extract_paragraph_text", return_value="文本内容"), \
+                 patch.object(parser, "_vlm_describe", AsyncMock(return_value="")):
+                result = await parser.parse("/fake/doc.docx")
+
+        assert "文本内容" in result
+        # 图片描述被跳过
+        assert "[图片描述:" not in result
+
+
+class TestFactoryDOCX:
+    """factory 路由 DOCX 测试。"""
+
+    def test_get_parser_docx(self) -> None:
+        from app.document.factory import get_parser
+        from app.document.docx_parser import DOCXParser
+
+        parser = get_parser("docx")
+        assert isinstance(parser, DOCXParser)
+
+
+class TestDocumentTasksDOCXIntegration:
+    """document_tasks DOCX 集成测试。"""
+
+    @pytest.mark.asyncio
+    async def test_parse_docx_enhanced(self) -> None:
+        """_parse_docx 使用增强解析器。"""
+        from tasks.document_tasks import _parse_docx
+
+        mock_doc = MagicMock()
+        mock_doc.file_path = "/fake/doc.docx"
+        mock_doc.content_text = None
+
+        mock_parser = MagicMock()
+        mock_parser.parse = AsyncMock(return_value="增强解析结果，包含<table>表格</table>")
+
+        with patch("app.document.get_parser", return_value=mock_parser):
+            result = await _parse_docx(mock_doc)
+
+        assert result == "增强解析结果，包含<table>表格</table>"
+
+    @pytest.mark.asyncio
+    async def test_parse_docx_fallback_to_text(self) -> None:
+        """增强解析器返回空时降级到纯文本。"""
+        from tasks.document_tasks import _parse_docx
+
+        mock_doc = MagicMock()
+        mock_doc.file_path = "/fake/doc.docx"
+        mock_doc.content_text = "fallback text"
+
+        mock_parser = MagicMock()
+        mock_parser.parse = AsyncMock(return_value="")
+
+        with patch("app.document.get_parser", return_value=mock_parser), \
+             patch.dict("sys.modules", {"docx": None}):
+            result = await _parse_docx(mock_doc)
+
+        assert result == "fallback text"
+
+    @pytest.mark.asyncio
+    async def test_parse_docx_no_file_path(self) -> None:
+        """DOCX 无文件路径返回空字符串。"""
+        from tasks.document_tasks import _parse_docx
+
+        mock_doc = MagicMock()
+        mock_doc.file_path = None
+
+        result = await _parse_docx(mock_doc)
+        assert result == ""
+
+    @pytest.mark.asyncio
+    async def test_parse_document_routes_docx(self) -> None:
+        """_parse_document 正确路由 docx 类型。"""
+        from tasks.document_tasks import _parse_document
+
+        mock_doc = MagicMock()
+        mock_doc.content_text = None
+        mock_doc.doc_type = "docx"
+
+        mock_parser = MagicMock()
+        mock_parser.parse = AsyncMock(return_value="DOCX增强内容")
+
+        with patch("app.document.get_parser", return_value=mock_parser):
+            result = await _parse_document(mock_doc)
+
+        assert result == "DOCX增强内容"

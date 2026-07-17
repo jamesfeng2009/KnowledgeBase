@@ -102,6 +102,15 @@ class Settings(BaseSettings):
     # PPTX 图片提取 + VLM 描述
     PPTX_IMAGE_EXTRACTION_ENABLED: bool = True
     PPTX_IMAGE_MAX_PER_DOC: int = 50
+    # DOCX 表格提取 + 图片 VLM 描述
+    DOCX_TABLE_EXTRACTION_ENABLED: bool = True
+    DOCX_IMAGE_EXTRACTION_ENABLED: bool = True
+    DOCX_IMAGE_MAX_PER_DOC: int = 50
+
+    # === API 限流 ===
+    RATE_LIMIT_ENABLED: bool = True
+    RATE_LIMIT_PER_MINUTE: int = 60  # 每分钟请求数上限
+    RATE_LIMIT_BURST: int = 10  # 突发请求数（令牌桶容量）
 
     # === RAG 质量守卫 ===
     # 检索参数（原硬编码常量，外置为配置）
@@ -115,6 +124,12 @@ class Settings(BaseSettings):
     RAG_RETRIEVAL_MAX_RETRIES: int = 1
     # 生成质量守卫 — faithfulness 低于阈值时标记低置信度
     RAG_FAITHFULNESS_THRESHOLD: float = 3.0
+
+    # === 离线评测 ===
+    # 评测数据集目录（JSONL 格式）
+    EVAL_DATASET_DIR: str = "./eval_datasets"
+    # 回归阈值 — 指标下降超过此比例视为回归（如 0.05 = 下降 5%）
+    EVAL_REGRESSION_THRESHOLD: float = 0.05
 
     # === LDAP ===
     LDAP_URL: str = ""

@@ -17,6 +17,8 @@
 - [Yjs 协同编辑服务](#yjs-协同编辑服务)
 - [文档处理流水线](#文档处理流水线)
 - [LLM Provider 抽象层](#llm-provider-抽象层)
+- [API 限流](#api-限流)
+- [离线评测系统](#离线评测系统)
 - [部署指南](#部署指南)
 - [测试](#测试)
 
@@ -40,7 +42,8 @@
 | **VLM** | Anthropic Claude Vision / vLLM (Pixtral) | SaaS / 私有双部署模式 |
 | **ASR** | OpenAI Whisper API / Faster-Whisper (私有) | 语音转写，视频 RAG |
 | **视频处理** | ffmpeg | 音轨提取 + 关键帧抽取 |
-| **文档解析** | pymupdf (find_tables) + python-pptx | PDF 表格→HTML / PPT 解析 / 图片 VLM 描述 |
+| **文档解析** | pymupdf + python-pptx + python-docx | PDF/PPT/DOCX 表格→HTML / 图片 VLM 描述 |
+| **限流** | 自研令牌桶中间件 | 按客户端（API Key/IP）限流，突发 + 持续控制 |
 | **协同服务** | Node.js + Yjs + WebSocket | CRDT 实时协同编辑 |
 | **反向代理** | Caddy | 自动 HTTPS + HTTP/3 |
 
@@ -70,13 +73,14 @@ EnterpriseKnowledge/
 │   │   ├── asr/                      # ASR 语音转写（Whisper/FunASR）
 │   │   ├── vlm/                      # 视觉语言模型
 │   │   ├── video/                    # 视频处理（ffmpeg 音轨提取 + 关键帧抽取）
-│   │   ├── document/                 # 文档解析器（PDF 表格/PPT/图片 VLM）
+│   │   ├── document/                 # 文档解析器（PDF/PPT/DOCX 表格+图片 VLM）
+│   │   ├── eval/                     # 离线评测系统（数据集+Runner+回归基线+CLI）
 │   │   ├── config.py                 # 配置管理
 │   │   ├── database.py               # 数据库会话
 │   │   ├── deps.py                   # 依赖注入
 │   │   └── main.py                   # FastAPI 入口
 │   ├── tasks/                        # Celery 异步任务
-│   ├── tests/                        # 测试（570 项）
+│   ├── tests/                        # 测试（657 项）
 │   ├── celery_app.py                 # Celery 入口
 │   └── requirements.txt
 ├── collab-service/                   # Yjs 协作服务（Node.js + TypeScript）
@@ -1043,7 +1047,7 @@ flowchart LR
     CELERY --> PARSE[1. 文档解析<br/>延迟导入第三方库]
     PARSE -->|PDF| PYMUPDF[pymupdf 文本<br/>+ find_tables → HTML<br/>+ 图片 VLM 描述]
     PARSE -->|PPTX| PPTX[python-pptx 文本<br/>+ 表格 → HTML<br/>+ 内嵌图片 VLM]
-    PARSE -->|DOCX| DOCX[python-docx 提取]
+    PARSE -->|DOCX| DOCX[python-docx 文本<br/>+ 表格 → HTML<br/>+ 内嵌图片 VLM]
     PARSE -->|HTML| REGEX[正则去标签]
     PARSE -->|MD/TXT| DIRECT[直接返回]
     PARSE -->|视频| VIDEO[ffmpeg 提取音轨<br/>→ ASR 转写<br/>→ 关键帧 VLM 描述]
@@ -1077,7 +1081,8 @@ flowchart LR
 
 - **延迟导入**：pymupdf / python-docx / python-pptx / opensearchpy / pymilvus / ffmpeg / ASR / VLM 延迟导入，未安装时优雅降级
 - **向量存储适配器**：通过 `VectorStoreBase` 抽象层，按 `VECTOR_STORE` 配置切换 OpenSearch k-NN（默认）或 Milvus，业务代码零改动
-- **文档解析增强**：PDF 通过 `app/document/` 模块解析——表格用 `pymupdf find_tables()` 转为 HTML `<table>` 保留结构，内嵌图片用 VLM 生成 `[图片描述: ...]` 内联标注；PPTX 用 `python-pptx` 按 slide 提取文本 + 表格 + 内嵌图片 VLM；返回统一的"增强文本"格式（纯文本 + HTML 表格 + 图片描述），chunker 零改动
+- **文档解析增强**：PDF 通过 `app/document/` 模块解析——表格用 `pymupdf find_tables()` 转为 HTML `<table>` 保留结构，内嵌图片用 VLM 生成 `[图片描述: ...]` 内联标注；PPTX 用 `python-pptx` 按 slide 提取文本 + 表格 + 内嵌图片 VLM；DOCX 用 `python-docx` 遍历 body 元素保持段落/表格原始顺序，内嵌图片通过 `related_parts` 提取并 VLM 描述；所有 VLM 调用使用 `Semaphore(3)` + `asyncio.gather` 并发，返回统一的"增强文本"格式（纯文本 + HTML 表格 + 图片描述），chunker 零改动
+- **关键帧 VLM 并发**：视频关键帧描述使用 `Semaphore(3)` + `asyncio.gather` 并发调用 VLM，替代串行逐帧处理，多关键帧场景延迟降低约 60%
 - **Chunk 元数据**：每个 Chunk 携带 `title_path`、`content_type`、`chunk_strategy`、`parent_id`
 - **视频 RAG 流程**：视频文档走专用管线 — ffmpeg 提取 16kHz mono 音轨 → ASR 转写为带时间戳片段 → ffmpeg 场景切换检测抽取关键帧 → VLM 逐帧描述 → `chunk_video_transcript` 按时间窗口（120s）合并转写片段并对齐关键帧描述，`title_path` 存时间戳标签（如 `00:00-02:15`）
 - **重试机制**：`max_retries=3`，`default_retry_delay=60`
@@ -1125,6 +1130,90 @@ graph TB
 ### LangFuse 全链路追踪
 
 Agent Loop 的每个节点（think/retrieve/tool_call/generate/reflect）通过 `@trace_node` 装饰器自动记录到 LangFuse，支持五节点 Agent Loop 追踪。LangFuse 未配置时静默降级为纯日志，不影响主流程。
+
+---
+
+## API 限流
+
+自研令牌桶限流中间件，按客户端维度（API Key 优先，IP 回退）隔离限流，保护后端服务不被突发流量打垮。
+
+```mermaid
+flowchart LR
+    REQ[HTTP 请求] --> EXEMPT{路径豁免?}
+    EXEMPT -->|/health /docs| PASS[直接放行]
+    EXEMPT -->|API 路径| IDENTIFY[提取客户端标识<br/>X-API-Key → IP]
+    IDENTIFY --> BUCKET[查找/创建令牌桶<br/>per_minute + burst]
+    BUCKET --> CONSUME{try_consume}
+    CONSUME -->|有令牌| PASS
+    CONSUME -->|桶空| REJECT[429 Too Many Requests<br/>Retry-After: 60]
+```
+
+### 设计要点
+
+- **令牌桶算法**：桶容量 = `RATE_LIMIT_BURST`（突发上限），每秒补充 `RATE_LIMIT_PER_MINUTE / 60` 个令牌，兼顾突发流量与持续速率控制
+- **客户端隔离**：优先使用 `X-API-Key` / `Authorization` 头作为客户端标识（截断防内存溢出），无 Key 时回退到 `X-Forwarded-For` 或 `client.host`
+- **路径豁免**：`/health`、`/docs`、`/openapi.json`、`/redoc` 不受限流影响，确保健康检查和文档访问正常
+- **优雅降级**：`RATE_LIMIT_ENABLED=False` 时完全跳过限流；限流器初始化失败不影响请求处理
+- **429 响应**：超限返回 `429 Too Many Requests` + `Retry-After: 60` 头，客户端可据此退避重试
+
+---
+
+## 离线评测系统
+
+为搜索与问答链路建立可量化的质量指标和回归基线，防止模型/策略迭代造成质量回退。检索层使用纯数学指标（零 LLM 调用），生成层复用 `LLMJudgeService` 三维评分。
+
+```mermaid
+flowchart TB
+    DATASET[评测数据集<br/>JSONL 格式<br/>query + expected_doc_ids] --> RUNNER[EvalRunner]
+    RUNNER --> RETRIEVE[调用 engine._retrieve<br/>获取检索结果]
+    RETRIEVE --> METRICS[检索指标计算<br/>Recall@5 / MRR / NDCG@5]
+    METRICS --> GEN{with_generation?}
+    GEN -->|是| ANSWER[调用 engine.answer<br/>获取生成答案]
+    ANSWER --> JUDGE[LLMJudgeService<br/>citation/completeness/faithfulness]
+    GEN -->|否| SKIP[跳过生成评测]
+    JUDGE --> AGGREGATE[聚合结果<br/>EvalRunResult]
+    SKIP --> AGGREGATE
+    AGGREGATE --> REPO{有基线?}
+    REPO -->|是| COMPARE[对比基线<br/>delta + 回归检测]
+    REPO -->|否| SAVE[保存为基线]
+    COMPARE -->|回归| EXIT[exit code 1<br/>CI 阻断]
+    COMPARE -->|无回归| EXIT_OK[exit code 0]
+    SAVE --> EXIT_OK
+```
+
+### 评测指标
+
+| 层级 | 指标 | 说明 |
+|------|------|------|
+| **检索层** | Recall@K | 前 K 个结果中包含正确文档的比例 |
+| **检索层** | MRR | 第一个正确文档的倒数排名 |
+| **检索层** | NDCG@K | 考虑排序位置的归一化折损累计增益 |
+| **生成层** | citation_accuracy | 答案引用来源的准确性（1-5 分） |
+| **生成层** | completeness | 答案完整性（1-5 分） |
+| **生成层** | faithfulness | 答案忠实度 / 幻觉倒数（1-5 分） |
+
+### 回归检测
+
+评测结果持久化到 PostgreSQL `eval_results` 表（含完整 JSON 结果），支持：
+- `--set-baseline` 将某次结果设为回归基线
+- 后续运行自动与基线对比，各指标相对下降超过 `EVAL_REGRESSION_THRESHOLD`（默认 5%）视为回归
+- CLI 退出码 1 用于 CI 流水线阻断，防止质量回退的代码合并
+
+### CLI 用法
+
+```bash
+# 运行评测（检索 + 生成）
+python scripts/run_eval.py --dataset eval_datasets/sample.jsonl
+
+# 只测检索指标（不调 LLM 生成）
+python scripts/run_eval.py --dataset eval_datasets/ --no-generation
+
+# 对比基线，回归时退出码 1
+python scripts/run_eval.py --dataset eval_datasets/sample.jsonl --baseline <run_id>
+
+# 设置本次结果为基线
+python scripts/run_eval.py --dataset eval_datasets/sample.jsonl --set-baseline
+```
 
 ---
 
@@ -1190,7 +1279,7 @@ docker compose --profile private up -d
 ```bash
 cd backend
 
-# 运行全部测试（570 项）
+# 运行全部测试（657 项）
 python -m pytest --tb=short -q
 
 # 运行特定模块测试
@@ -1202,9 +1291,11 @@ python -m pytest tests/test_document_tasks_chunker.py -v  # 文档分块接入
 python -m pytest tests/test_vector_store.py -v            # 向量存储适配器
 python -m pytest tests/test_audit_workflow.py -v          # 审核流程串联
 python -m pytest tests/test_tool_guard.py -v              # MCP 工具调用守卫
-python -m pytest tests/test_video_rag.py -v               # 视频 RAG（ASR + 关键帧 VLM）
-python -m pytest tests/test_document_parser.py -v         # 文档解析（PDF 表格/PPT/图片 VLM）
+python -m pytest tests/test_video_rag.py -v               # 视频 RAG（ASR + 关键帧 VLM 并发）
+python -m pytest tests/test_document_parser.py -v         # 文档解析（PDF/PPT/DOCX 表格+图片 VLM）
 python -m pytest tests/test_quality_guard.py -v           # RAG 质量守卫（检索+生成双层评估）
+python -m pytest tests/test_rate_limiter.py -v            # API 限流（令牌桶+客户端隔离+FastAPI 集成）
+python -m pytest tests/test_eval.py -v                    # 离线评测（数据集+Recall/MRR/NDCG+回归基线+CLI）
 ```
 
 ### 测试覆盖
@@ -1219,11 +1310,13 @@ python -m pytest tests/test_quality_guard.py -v           # RAG 质量守卫（�
 | `test_vector_store.py` | 44 | VectorStoreBase 抽象、OpenSearch k-NN / Milvus 双后端、工厂、检索器集成 |
 | `test_audit_workflow.py` | 19 | 文档审核流程串联、密级路由、AuditService.approve 触发发布 |
 | `test_tool_guard.py` | 30 | DangerousToolGuard 守卫拦截、确认管理、engine 集成 |
-| `test_video_rag.py` | 34 | ASR Provider 工厂、视频处理器、视频转写分块、document_tasks 集成 |
-| `test_document_parser.py` | 39 | PDF 表格/图片 VLM、PPTX 解析、factory 路由、document_tasks 集成、配置项 |
+| `test_video_rag.py` | 34 | ASR Provider 工厂、视频处理器、视频转写分块、document_tasks 集成、关键帧 VLM 并发 |
+| `test_document_parser.py` | 55 | PDF 表格/图片 VLM、PPTX 解析、DOCX 解析、factory 路由、document_tasks 集成、配置项 |
 | `test_quality_guard.py` | 33 | 检索质量检查、重试决策、生成质量评估、低置信度标记、engine 集成 |
+| `test_rate_limiter.py` | 16 | 令牌桶消费/补充、客户端隔离、API Key/IP 标识、429 响应、健康检查豁免 |
+| `test_eval.py` | 55 | 数据集加载、Recall@K/MRR/NDCG 计算、Runner 集成、回归检测、DB 持久化、CLI 退出码 |
 | 其他测试 | 215 | API 端点、服务层、模型层、记忆引擎等 |
-| **合计** | **570** | **全部通过，零回归** |
+| **合计** | **657** | **全部通过，零回归** |
 
 ---
 
