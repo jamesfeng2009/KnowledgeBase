@@ -70,7 +70,7 @@ EnterpriseKnowledge/
 │   │   ├── deps.py                   # 依赖注入
 │   │   └── main.py                   # FastAPI 入口
 │   ├── tasks/                        # Celery 异步任务
-│   ├── tests/                        # 测试（434 项）
+│   ├── tests/                        # 测试（464 项）
 │   ├── celery_app.py                 # Celery 入口
 │   └── requirements.txt
 ├── collab-service/                   # Yjs 协作服务（Node.js + TypeScript）
@@ -240,6 +240,30 @@ flowchart TD
 | **tool_call** | `_tool_call()` | MCP 工具调用 | 跨轮去重，重复结果替换为指针引用 |
 | **generate** | `Generator.generate()` | 流式生成答案 | Context Cliff 监控，超限自动截断 |
 | **reflect** | `_reflect()` | 评估答案质量 | 传摘要而非全文，省 ~1800 tok/次 |
+
+### MCP 工具调用守卫（DangerousToolGuard）
+
+借鉴 DECO 数仓 Agent 的 beforeTool Hook 设计，在 Agent 调用 MCP 工具前增加代码级强制确认机制。**prompt 是软约束，不是安全边界** — 任何不可逆操作都必须有框架层兜底。
+
+```mermaid
+flowchart TD
+    LLM_DECIDE[LLM 决定调用工具] --> GUARD{DangerousToolGuard<br/>beforeTool 拦截}
+    GUARD -->|只读工具<br/>knowledge_search 等| ALLOW[直接放行<br/>执行 MCP 调用]
+    GUARD -->|危险工具<br/>document_create 等| CONFIRM{用户已确认?}
+    CONFIRM -->|是| ALLOW_CONFIRMED[放行执行]
+    CONFIRM -->|否| BLOCK[阻断执行<br/>返回结构化错误给 LLM<br/>不调用真实工具]
+    BLOCK --> NOTIFY[前端弹框确认<br/>用户选择后调用 guard.confirm]
+    NOTIFY -->|用户同意| CONFIRM
+    NOTIFY -->|用户拒绝| REJECTED[工具不执行<br/>Agent Loop 继续]
+```
+
+| 工具类别 | 示例 | 守卫行为 | 不可逆 |
+|----------|------|----------|--------|
+| 只读工具 | `knowledge_search`、`document_get`、`query_oa_approval` | 直接放行 | — |
+| 写操作工具 | `document_create`、`create_it_ticket` | 需用户确认 | `create_it_ticket` 标记为不可逆 |
+| 未知工具 | 未注册的新工具 | 默认放行 + 记录警告 | — |
+
+守卫通过构造注入 `AgenticRAGEngine(tool_guard=...)`，支持自定义危险工具清单和确认管理（confirm / revoke / reset）。
 
 ### 权限过滤核心安全约束
 
@@ -1114,7 +1138,7 @@ docker compose --profile private up -d
 ```bash
 cd backend
 
-# 运行全部测试（434 项）
+# 运行全部测试（464 项）
 python -m pytest --tb=short -q
 
 # 运行特定模块测试
@@ -1125,6 +1149,7 @@ python -m pytest tests/test_p2_token_optimization.py -v   # P2 Token 优化
 python -m pytest tests/test_document_tasks_chunker.py -v  # 文档分块接入
 python -m pytest tests/test_vector_store.py -v            # 向量存储适配器
 python -m pytest tests/test_audit_workflow.py -v          # 审核流程串联
+python -m pytest tests/test_tool_guard.py -v              # MCP 工具调用守卫
 ```
 
 ### 测试覆盖
@@ -1138,8 +1163,9 @@ python -m pytest tests/test_audit_workflow.py -v          # 审核流程串联
 | `test_document_tasks_chunker.py` | 30 | SemanticChunker 接入、索引元数据、端到端策略验证 |
 | `test_vector_store.py` | 44 | VectorStoreBase 抽象、OpenSearch k-NN / Milvus 双后端、工厂、检索器集成 |
 | `test_audit_workflow.py` | 19 | 文档审核流程串联、密级路由、AuditService.approve 触发发布 |
+| `test_tool_guard.py` | 30 | DangerousToolGuard 守卫拦截、确认管理、engine 集成 |
 | 其他测试 | 215 | API 端点、服务层、模型层、记忆引擎等 |
-| **合计** | **434** | **全部通过，零回归** |
+| **合计** | **464** | **全部通过，零回归** |
 
 ---
 

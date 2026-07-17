@@ -38,6 +38,7 @@ from app.rag.cache import TokenCache
 from app.rag.context_budget import ContextBudgetManager
 from app.rag.context_dedup import CrossTurnDeduplicator
 from app.rag.generator import Generator
+from app.rag.tool_guard import DangerousToolGuard, GuardAction
 from app.rag.reranker import RerankerBase
 from app.rag.retriever import HybridRetriever
 from app.utils.logger import get_logger
@@ -153,6 +154,7 @@ class AgenticRAGEngine:
         permission_filter: PermissionFilter | None = None,
         max_iterations: int = _DEFAULT_MAX_ITERATIONS,
         checkpointer: Any = None,
+        tool_guard: DangerousToolGuard | None = None,
     ) -> None:
         self.llm = llm
         self.mcp = mcp_client
@@ -173,6 +175,9 @@ class AgenticRAGEngine:
         self._dedup = CrossTurnDeduplicator()
         # P2-Opt6: 上下文预算管理器 — think 上下文超预算时压缩早期消息
         self._budget = ContextBudgetManager()
+        # MCP 工具调用守卫 — 危险工具拦截器（HITL 门禁）
+        # 默认实例化内置配置，也可通过构造注入自定义配置或 Mock
+        self._tool_guard: DangerousToolGuard = tool_guard or DangerousToolGuard()
 
     # ------------------------------------------------------------------
     # 对外入口
@@ -802,14 +807,55 @@ class AgenticRAGEngine:
             log.error("engine.tool_call.error", error=str(exc))
 
     async def _execute_tool_use(self, state: AgentState, tool_use: ToolUse) -> None:
-        """执行单个 ToolUse — 通过 MCPClient 调用并将结果存入 state。"""
+        """执行单个 ToolUse — 通过 MCPClient 调用并将结果存入 state。
+
+        工具调用守卫（DangerousToolGuard）在执行前拦截危险操作：
+            - 只读工具（knowledge_search / document_get 等）→ 直接放行；
+            - 危险工具（document_create / create_it_ticket 等）→ 需要用户确认；
+            - 未确认的危险工具被阻断，返回结构化错误给 LLM，不执行真实操作。
+
+        这借鉴 DECO 数仓 Agent 的 beforeTool Hook 设计：
+        "prompt 是软约束，不是安全边界。任何不可逆操作都必须有代码级强制确认。"
+        """
         tool_name = tool_use.get("name", "")
         tool_input = tool_use.get("input", {})
         tool_use_id = tool_use.get("id", "")
+
+        # 工具调用守卫 — beforeTool 拦截
+        guard_result = self._tool_guard.check(tool_name, tool_input)
+        if guard_result.needs_confirmation:
+            log.warning(
+                "engine.tool_call.blocked_by_guard",
+                tool=tool_name,
+                reason=guard_result.reason,
+                irreversible=guard_result.irreversible,
+            )
+            # 返回结构化错误给 LLM，告知需要用户确认
+            blocked_msg = json.dumps(
+                {
+                    "error": f"工具 {tool_name} 需要用户确认才能执行",
+                    "tool": tool_name,
+                    "reason": guard_result.reason,
+                    "irreversible": guard_result.irreversible,
+                    "action_required": "请在前端确认后重试",
+                },
+                ensure_ascii=False,
+            )
+            state["tool_results"].append(
+                {
+                    "tool": tool_name,
+                    "arguments": tool_input,
+                    "result": blocked_msg,
+                    "content": blocked_msg,
+                }
+            )
+            return
+
         log.info(
             "engine.tool_call.execute",
             tool=tool_name,
             tool_use_id=tool_use_id,
+            guard=guard_result.action.value,
         )
         try:
             result = await self.mcp.call_tool(tool_name, tool_input)
