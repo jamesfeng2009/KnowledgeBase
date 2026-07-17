@@ -155,6 +155,7 @@ class AgenticRAGEngine:
         max_iterations: int = _DEFAULT_MAX_ITERATIONS,
         checkpointer: Any = None,
         tool_guard: DangerousToolGuard | None = None,
+        quality_guard: Any = None,
     ) -> None:
         self.llm = llm
         self.mcp = mcp_client
@@ -178,6 +179,19 @@ class AgenticRAGEngine:
         # MCP 工具调用守卫 — 危险工具拦截器（HITL 门禁）
         # 默认实例化内置配置，也可通过构造注入自定义配置或 Mock
         self._tool_guard: DangerousToolGuard = tool_guard or DangerousToolGuard()
+        # RAG 质量守卫 — 双层自适应评估闭环
+        # 检索层：重排分数均值检查（零 LLM 调用）
+        # 生成层：LLMJudgeService 结构化评分（复用已有 Judge）
+        if quality_guard is not None:
+            self._quality_guard = quality_guard
+        else:
+            try:
+                from app.rag.quality_guard import QualityGuard
+                self._quality_guard = QualityGuard()
+            except Exception:
+                self._quality_guard = None
+        # 检索重试计数（每次 answer 调用时重置）
+        self._retrieval_retry_count: int = 0
 
     # ------------------------------------------------------------------
     # 对外入口
@@ -234,6 +248,8 @@ class AgenticRAGEngine:
             "kb_ids": kb_ids,
             "memory_context": memory_context,
         }
+        # 重置检索重试计数
+        self._retrieval_retry_count = 0
 
         # P1-Opt3: 每次新对话重置去重器（清空上一轮对话的已见列表）
         self._dedup.reset()
@@ -263,10 +279,22 @@ class AgenticRAGEngine:
             answer_parts.append(token)
             yield token
 
-        # 5. 反思（非流式，仅记录结果）
+        # 5. 反思（非流式，返回结构化评测结果）
         answer = "".join(answer_parts)
         state["answer"] = answer
-        await self._reflect(state)
+        eval_result = await self._reflect(state)
+
+        # 5.5 质量守卫：低置信度时通过 SSE 通知前端
+        if state.get("low_confidence"):
+            quality_event = json.dumps(
+                {
+                    "type": "quality",
+                    "low_confidence": True,
+                    "message": "本次回答的置信度较低，建议核实关键信息",
+                },
+                ensure_ascii=False,
+            )
+            yield f"data: {quality_event}\n\n"
 
         # 6. 回写缓存
         if self.cache is not None and answer:
@@ -275,19 +303,31 @@ class AgenticRAGEngine:
             except Exception as exc:
                 log.warning("engine.cache.set_error", error=str(exc))
 
-        # 7. 结束 Trace
+        # 7. 结束 Trace（含质量评分上报）
         if self._trace_ctx is not None:
             budget_stats = self._budget.get_stats()
+            trace_metadata = {
+                "iterations": state["iteration"],
+                "total_tokens": len(answer) // 4,  # 粗估
+                "retrieved_docs": len(state["retrieved_docs"]),
+                "tool_results": len(state["tool_results"]),
+                "budget_compress_count": budget_stats["compress_count"],
+                "budget_tokens_saved": budget_stats["total_tokens_saved"],
+                "retrieval_retry_count": self._retrieval_retry_count,
+            }
+            # 质量评分上报到 LangFuse
+            if eval_result is not None:
+                trace_metadata["quality"] = {
+                    "citation_accuracy": eval_result.citation_accuracy,
+                    "completeness": eval_result.completeness,
+                    "faithfulness": eval_result.hallucination_inverse,
+                    "total_score": eval_result.total_score,
+                    "low_confidence": state.get("low_confidence", False),
+                    "passed": eval_result.passed,
+                }
             self._trace_ctx.finalize(
                 output=answer[:500],
-                metadata={
-                    "iterations": state["iteration"],
-                    "total_tokens": len(answer) // 4,  # 粗估
-                    "retrieved_docs": len(state["retrieved_docs"]),
-                    "tool_results": len(state["tool_results"]),
-                    "budget_compress_count": budget_stats["compress_count"],
-                    "budget_tokens_saved": budget_stats["total_tokens_saved"],
-                },
+                metadata=trace_metadata,
             )
 
     # ------------------------------------------------------------------
@@ -734,6 +774,31 @@ class AgenticRAGEngine:
                 )
                 # 将重排分数回填到原文档，并按重排顺序排列
                 state["retrieved_docs"] = self._apply_rerank_scores(filtered, reranked)
+
+                # 质量守卫：检查重排分数均值，低质量时扩展 top_k 重排
+                if self._quality_guard is not None:
+                    check_result = self._quality_guard.check_retrieval_quality(
+                        state["retrieved_docs"]
+                    )
+                    if self._quality_guard.should_retry_retrieval(
+                        check_result, self._retrieval_retry_count
+                    ):
+                        self._retrieval_retry_count += 1
+                        expanded_top_k = self._quality_guard.get_expanded_top_k()
+                        log.info(
+                            "engine.retrieve.quality_retry",
+                            mean_score=check_result.mean_score,
+                            expanded_top_k=expanded_top_k,
+                            retry_count=self._retrieval_retry_count,
+                        )
+                        reranked = await self.reranker.rerank(
+                            query=query,
+                            documents=filtered,
+                            top_k=expanded_top_k,
+                        )
+                        state["retrieved_docs"] = self._apply_rerank_scores(
+                            filtered, reranked
+                        )
             except Exception as exc:
                 log.warning("engine.retrieve.rerank_error", error=str(exc))
                 state["retrieved_docs"] = filtered[:_RERANK_TOP_K]
@@ -888,18 +953,53 @@ class AgenticRAGEngine:
     # ------------------------------------------------------------------
 
     @trace_node("reflect")
-    async def _reflect(self, state: AgentState) -> None:
-        """自我反思 — 评估答案质量（引用 / 完整性 / 幻觉风险）。
+    async def _reflect(self, state: AgentState) -> Any | None:
+        """自我反思 — 评估答案质量，返回结构化评测结果。
 
-        当前实现仅记录反思结论，不触发重试（避免在流式输出后二次循环）；
-        反思日志可用于质量监控与知识缺口识别。
+        升级方案（Phase 3）：优先调用 LLMJudgeService.evaluate_single()，
+        返回结构化 EvalResult（citation/completeness/faithfulness 三维度评分）。
+        faithfulness 低于阈值时标记 low_confidence，供前端展示和 LangFuse 上报。
+
+        降级：LLMJudgeService 不可用时走原有内联 prompt（_reflect_inline），
+        仅记录日志，不阻断流程。
 
         P1-Opt4: 传答案摘要而非全文 — reflect 只需判断"是否需要补充检索"，
-        不需要逐字审查答案。摘要提取答案的前 3 个要点 + 结论，
-        省 ~1800 tok/次。原始答案保存在 state["answer"] 和 L2 Checkpoint 中，
-        不会丢失。
+        不需要逐字审查答案。但 LLMJudgeService 需要完整答案做 faithfulness 评估，
+        因此 Judge 路径传全文，inline 降级路径传摘要。
         """
-        # P1-Opt4: 生成答案摘要而非全文回传
+        answer = state.get("answer", "")
+        if not answer:
+            return None
+
+        # 优先：调用 LLMJudgeService 结构化评测
+        if self._quality_guard is not None:
+            contexts = [
+                doc.get("content", "")
+                for doc in state.get("retrieved_docs", [])
+                if doc.get("content")
+            ]
+            eval_result = await self._quality_guard.check_generation_quality(
+                query=state["query"],
+                answer=answer,
+                contexts=contexts,
+            )
+            if eval_result is not None:
+                # 标记低置信度
+                state["low_confidence"] = self._quality_guard.is_low_confidence(
+                    eval_result
+                )
+                state["eval_result"] = eval_result
+                return eval_result
+
+        # 降级：LLMJudgeService 不可用时走原有内联 prompt
+        await self._reflect_inline(state)
+        return None
+
+    async def _reflect_inline(self, state: AgentState) -> None:
+        """内联简单反思 — LLMJudgeService 不可用时的降级路径。
+
+        仅记录日志，不返回结构化数据，不触发重试。
+        """
         answer = state.get("answer", "")
         answer_summary = self._summarize_for_reflect(answer)
 
@@ -920,14 +1020,14 @@ class AgenticRAGEngine:
                 if isinstance(chunk, str):
                     text += chunk
             log.info(
-                "engine.reflect",
+                "engine.reflect_inline",
                 iteration=state["iteration"],
                 conclusion=text[:200],
                 answer_tokens_saved=len(answer) - len(answer_summary),
                 session_id=state["session_id"],
             )
         except Exception as exc:
-            log.warning("engine.reflect_error", error=str(exc))
+            log.warning("engine.reflect_inline_error", error=str(exc))
 
     @staticmethod
     def _summarize_for_reflect(answer: str, max_chars: int = 700) -> str:

@@ -76,7 +76,7 @@ EnterpriseKnowledge/
 │   │   ├── deps.py                   # 依赖注入
 │   │   └── main.py                   # FastAPI 入口
 │   ├── tasks/                        # Celery 异步任务
-│   ├── tests/                        # 测试（537 项）
+│   ├── tests/                        # 测试（570 项）
 │   ├── celery_app.py                 # Celery 入口
 │   └── requirements.txt
 ├── collab-service/                   # Yjs 协作服务（Node.js + TypeScript）
@@ -274,6 +274,37 @@ flowchart TD
 ### 权限过滤核心安全约束
 
 **权限过滤在重排之前执行**：检索召回 → ABAC 权限过滤 → 重排 → 生成。权限过滤出错时保守处理（返回空列表），避免泄露越权文档。
+
+### RAG 质量守卫（QualityGuard）
+
+借鉴 CorrectiveRAG 思路，但不引入 RAGAS 全量评估（适合离线批量，不适合每次查询）。采用**双层自适应评估闭环**：
+
+```mermaid
+flowchart TD
+    RERANK[rerank top_k=5] --> RGUARD{① 检索质量守卫<br/>零 LLM 调用}
+    RGUARD -->|mean_score ≥ 阈值| GEN[generate 流式生成]
+    RGUARD -->|mean_score < 阈值| EXPAND[扩展 rerank top_k=15<br/>重试 1 次]
+    EXPAND --> GEN
+
+    GEN --> GGUARD{② 生成质量守卫<br/>复用 LLMJudgeService}
+    GGUARD -->|faithfulness ≥ 阈值| NORMAL[正常返回]
+    GGUARD -->|faithfulness < 阈值| LOW[标记 low_confidence<br/>SSE 通知前端]
+    LOW --> TRACE[LangFuse 上报<br/>三维度评分]
+
+    NORMAL --> TRACE
+```
+
+| 守卫层 | 检查方式 | 阈值 | 触发动作 | 额外 LLM 调用 |
+|--------|----------|------|----------|--------------|
+| 检索层 | `mean(rerank_score)` 纯数学 | `RAG_RETRIEVAL_SCORE_THRESHOLD=0.3` | 扩展 `top_k` 重排 1 次 | 0 |
+| 生成层 | `LLMJudgeService.evaluate_single()` | `RAG_FAITHFULNESS_THRESHOLD=3.0` | 标记 `low_confidence` + SSE 通知 | 0（复用 reflect） |
+
+**设计要点**：
+- **检索层零 LLM 调用**：仅对重排分数做均值计算，低于阈值时扩展 rerank top_k（不重新检索），重试上限 1 次
+- **生成层复用 Judge**：将原有 `_reflect()` 从内联简单 prompt 升级为调用 `LLMJudgeService`，LLM 调用次数不变
+- **不阻断用户查询**：低置信度只标记不拦截，通过 SSE `quality` 事件通知前端，避免流式输出后二次循环
+- **LangFuse 联动**：EvalResult 的三维度分数（citation_accuracy / completeness / faithfulness）上报到 trace metadata，支持质量监控面板
+- **降级链**：LLMJudgeService 不可用时降级为原有内联 prompt（`_reflect_inline`），守卫关闭时完全跳过
 
 ---
 
@@ -1159,7 +1190,7 @@ docker compose --profile private up -d
 ```bash
 cd backend
 
-# 运行全部测试（537 项）
+# 运行全部测试（570 项）
 python -m pytest --tb=short -q
 
 # 运行特定模块测试
@@ -1173,6 +1204,7 @@ python -m pytest tests/test_audit_workflow.py -v          # 审核流程串联
 python -m pytest tests/test_tool_guard.py -v              # MCP 工具调用守卫
 python -m pytest tests/test_video_rag.py -v               # 视频 RAG（ASR + 关键帧 VLM）
 python -m pytest tests/test_document_parser.py -v         # 文档解析（PDF 表格/PPT/图片 VLM）
+python -m pytest tests/test_quality_guard.py -v           # RAG 质量守卫（检索+生成双层评估）
 ```
 
 ### 测试覆盖
@@ -1189,8 +1221,9 @@ python -m pytest tests/test_document_parser.py -v         # 文档解析（PDF �
 | `test_tool_guard.py` | 30 | DangerousToolGuard 守卫拦截、确认管理、engine 集成 |
 | `test_video_rag.py` | 34 | ASR Provider 工厂、视频处理器、视频转写分块、document_tasks 集成 |
 | `test_document_parser.py` | 39 | PDF 表格/图片 VLM、PPTX 解析、factory 路由、document_tasks 集成、配置项 |
+| `test_quality_guard.py` | 33 | 检索质量检查、重试决策、生成质量评估、低置信度标记、engine 集成 |
 | 其他测试 | 215 | API 端点、服务层、模型层、记忆引擎等 |
-| **合计** | **537** | **全部通过，零回归** |
+| **合计** | **570** | **全部通过，零回归** |
 
 ---
 

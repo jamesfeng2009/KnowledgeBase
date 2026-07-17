@@ -103,6 +103,19 @@ class Settings(BaseSettings):
     PPTX_IMAGE_EXTRACTION_ENABLED: bool = True
     PPTX_IMAGE_MAX_PER_DOC: int = 50
 
+    # === RAG 质量守卫 ===
+    # 检索参数（原硬编码常量，外置为配置）
+    RAG_RETRIEVE_TOP_K: int = 20
+    RAG_RERANK_TOP_K: int = 5
+    RAG_MAX_ITERATIONS: int = 5
+    # 检索质量守卫 — 重排分数均值低于阈值时扩展 top_k 重排
+    RAG_QUALITY_GUARD_ENABLED: bool = True
+    RAG_RETRIEVAL_SCORE_THRESHOLD: float = 0.3
+    RAG_RETRIEVAL_EXPAND_TOP_K: int = 10
+    RAG_RETRIEVAL_MAX_RETRIES: int = 1
+    # 生成质量守卫 — faithfulness 低于阈值时标记低置信度
+    RAG_FAITHFULNESS_THRESHOLD: float = 3.0
+
     # === LDAP ===
     LDAP_URL: str = ""
     LDAP_BIND_DN: str = ""

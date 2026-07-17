@@ -339,8 +339,10 @@ class TestReflectSummary:
 
     @pytest.mark.asyncio
     async def test_reflect_sends_summary_not_full(self) -> None:
-        """_reflect 应发送摘要而非完整答案给 LLM。"""
+        """_reflect 降级路径（无 quality_guard）应发送摘要而非完整答案给 LLM。"""
         engine, llm = _make_engine(llm_response="satisfied")
+        # 禁用 quality_guard，测试 inline 降级路径
+        engine._quality_guard = None
         long_answer = "这是答案。" + "详细内容。" * 200  # 非常长的答案
 
         state = _make_state(answer=long_answer, iteration=1)
@@ -371,6 +373,8 @@ class TestReflectSummary:
             reranker=FakeReranker(),
             generator=FakeGenerator(),
         )
+        # 禁用 quality_guard，测试 inline 降级路径的错误处理
+        engine._quality_guard = None
         state = _make_state(answer="test answer", iteration=1)
         # 不应抛出异常
         await engine._reflect(state)
