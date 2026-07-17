@@ -487,3 +487,172 @@ class TestBackwardCompatibility:
             cache=None,
         )
         assert engine.max_iterations == 5
+
+
+# ======================================================================
+# 格式智能检测测试 — Docling Markdown vs Legacy HTML
+# ======================================================================
+
+
+class TestFormatDetection:
+    """格式智能检测 — _is_markdown 和 _structural_split 路由测试。"""
+
+    def test_is_markdown_with_heading(self) -> None:
+        """包含 # 标题的内容被识别为 Markdown。"""
+        assert SemanticChunker._is_markdown("# 标题\n正文") is True
+        assert SemanticChunker._is_markdown("## 二级标题\n正文") is True
+        assert SemanticChunker._is_markdown("### 三级标题\n正文") is True
+
+    def test_is_markdown_with_table(self) -> None:
+        """包含 Markdown 表格的内容被识别为 Markdown。"""
+        content = "| 列1 | 列2 |\n|---|---|\n| 值1 | 值2 |"
+        assert SemanticChunker._is_markdown(content) is True
+
+    def test_is_markdown_with_table_separator_only(self) -> None:
+        """只有表格分隔行也被识别。"""
+        content = "一些文本\n|---|---|\n更多文本"
+        assert SemanticChunker._is_markdown(content) is True
+
+    def test_is_markdown_html_content(self) -> None:
+        """HTML 内容不被识别为 Markdown。"""
+        assert SemanticChunker._is_markdown("<h1>标题</h1><p>正文</p>") is False
+        assert SemanticChunker._is_markdown("<h2>章节</h2><table><tr><td>数据</td></tr></table>") is False
+
+    def test_is_markdown_plain_text(self) -> None:
+        """纯文本不被识别为 Markdown。"""
+        assert SemanticChunker._is_markdown("这是一段普通文本，没有格式标记。") is False
+        assert SemanticChunker._is_markdown("") is False
+
+    def test_is_markdown_heading_not_in_code_block(self) -> None:
+        """代码块中的 # 不应被误判（行首才匹配）。"""
+        # # 在行首非代码块内才算 Markdown 标题
+        content = "普通文本\n  # 这不是标题（有前导空格）\n更多文本"
+        assert SemanticChunker._is_markdown(content) is False
+
+    def test_structural_split_markdown_from_docling_pdf(self) -> None:
+        """Docling 解析 PDF 输出 Markdown — 按 # 标题分块（非 doc_type 路由）。"""
+        chunker = SemanticChunker()
+        # Docling 输出 Markdown，但 doc_type="pdf"
+        markdown_content = """\
+# 第一章 概述
+
+这是概述内容。
+
+## 1.1 背景
+
+背景说明。
+
+## 1.2 目标
+
+目标说明。
+
+# 第二章 设计
+
+设计内容。
+"""
+        # doc_type="pdf" 但内容是 Markdown — 应走 _split_markdown
+        chunks = chunker._structural_split(markdown_content, "doc-1", "pdf")
+        assert len(chunks) >= 2
+        # 验证标题路径被正确提取
+        title_paths = [c.title_path for c in chunks if c.title_path]
+        assert any("第一章" in tp for tp in title_paths)
+        assert any("第二章" in tp for tp in title_paths)
+
+    def test_structural_split_html_from_legacy_pdf(self) -> None:
+        """Legacy 解析 PDF 输出 HTML — 按 <h2> 标签分块。"""
+        chunker = SemanticChunker()
+        # Legacy pymupdf 输出 HTML，doc_type="pdf"
+        html_content = """\
+<h1>系统架构</h1>
+<p>架构概述</p>
+<h2>服务层</h2>
+<p>服务层内容</p>
+<h2>数据层</h2>
+<p>数据层内容</p>
+"""
+        # doc_type="pdf" 且内容是 HTML — 应走 _split_html
+        chunks = chunker._structural_split(html_content, "doc-2", "pdf")
+        assert len(chunks) >= 2
+        title_paths = [c.title_path for c in chunks if c.title_path]
+        assert any("系统架构" in tp for tp in title_paths)
+
+    def test_structural_split_markdown_table_from_docling_xlsx(self) -> None:
+        """Docling 解析 XLSX 输出 Markdown 表格 — 被正确识别为 Markdown。"""
+        chunker = SemanticChunker()
+        markdown_table = """\
+# 财务报表
+
+## Q3 收入
+
+| 项目 | 金额 |
+|---|---|
+| 营收 | 100万 |
+| 成本 | 60万 |
+
+## Q4 预算
+
+| 项目 | 金额 |
+|---|---|
+| 营收 | 120万 |
+"""
+        chunks = chunker._structural_split(markdown_table, "doc-3", "xlsx")
+        # 应走 _split_markdown（检测到 # 标题）
+        assert len(chunks) >= 2
+
+    def test_structural_split_html_from_legacy_docx(self) -> None:
+        """Legacy 解析 DOCX 输出 HTML — 按 <h2> 标签分块。"""
+        chunker = SemanticChunker()
+        html_content = """\
+<h2>员工表</h2>
+<table><tr><th>姓名</th><th>年龄</th></tr><tr><td>张三</td><td>25</td></tr></table>
+<h2>部门表</h2>
+<table><tr><th>部门</th><th>人数</th></tr><tr><td>技术部</td><td>15</td></tr></table>
+"""
+        chunks = chunker._structural_split(html_content, "doc-4", "docx")
+        assert len(chunks) >= 2
+
+    def test_structural_split_plain_text_falls_back_to_html(self) -> None:
+        """纯文本（无 Markdown 也无 HTML 标记）走 _split_html → 降级 token 分块。"""
+        chunker = SemanticChunker()
+        plain_text = "这是一段很长的纯文本内容。" * 100
+        chunks = chunker._structural_split(plain_text, "doc-5", "txt")
+        # 无结构标记 → _split_html 找不到 <h> 标签 → 返回空列表
+        assert chunks == []
+
+    def test_chunk_method_routes_markdown_content(self) -> None:
+        """chunk() 公开方法正确路由 Markdown 内容（Docling 场景）。"""
+        chunker = SemanticChunker()
+        markdown_content = """\
+# API 文档
+
+## 用户接口
+
+GET /api/users
+
+## 订单接口
+
+POST /api/orders
+"""
+        # doc_type="pdf" 但内容是 Markdown（Docling 输出）
+        chunks = chunker.chunk(markdown_content, doc_type="pdf")
+        assert len(chunks) >= 2
+        # 验证走的是 structural 策略（有 title_path）
+        structural_chunks = [c for c in chunks if c.chunk_strategy == "structural"]
+        assert len(structural_chunks) >= 2
+
+    def test_chunk_method_routes_html_content(self) -> None:
+        """chunk() 公开方法正确路由 HTML 内容（Legacy 场景）。"""
+        chunker = SemanticChunker()
+        html_content = """\
+<h2>第一章</h2>
+<p>内容一</p>
+<h2>第二章</h2>
+<p>内容二</p>
+<h2>第三章</h2>
+<p>内容三</p>
+"""
+        # doc_type="pdf" 且内容是 HTML（pymupdf 输出）
+        chunks = chunker.chunk(html_content, doc_type="pdf")
+        assert len(chunks) >= 2
+        structural_chunks = [c for c in chunks if c.chunk_strategy == "structural"]
+        assert len(structural_chunks) >= 2

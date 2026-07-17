@@ -1,14 +1,15 @@
 """
 PDF 文档解析器 — 单一职责：将 PDF 解析为增强文本（文本 + HTML 表格 + 图片描述）。
 
-两阶段能力：
+三阶段能力：
     Phase 1: 表格提取 — pymupdf page.find_tables() → HTML <table> 标签；
-    Phase 2: 图片提取 — pymupdf get_images() → VLM.understand() → [图片描述: ...]。
+    Phase 2: 图片提取 — pymupdf get_images() → VLM.understand() → [图片描述: ...]；
+    Phase 3: 扫描页 OCR — get_text() 返回空时，页面渲染为图片 → VLM OCR。
 
 遵循优雅降级：
     - pymupdf 未安装 / find_tables 不可用 → 退化为 page.get_text() 纯文本；
-    - VLM 不可用 → 跳过图片描述，只保留文本和表格；
-    - 配置开关可单独关闭表格提取或图片提取。
+    - VLM 不可用 → 跳过图片描述和扫描页 OCR，只保留文本和表格；
+    - 配置开关可单独关闭表格提取、图片提取或扫描页 OCR。
 """
 
 from __future__ import annotations
@@ -28,6 +29,12 @@ _VLM_SEMAPHORE_LIMIT: int = 3
 _IMAGE_PROMPT: str = (
     "请用一句话描述这张图片的内容，"
     "重点关注图表、数据、文字和关键信息，便于后续检索。"
+)
+# 扫描页 OCR prompt — 提取页面所有文字，保持阅读顺序
+_OCR_PROMPT: str = (
+    "请提取这张扫描文档图片中的所有文字内容，"
+    "保持原始的阅读顺序和段落结构，便于后续检索。"
+    "如果有表格，请用文字描述表格内容。"
 )
 
 
@@ -65,9 +72,12 @@ class PDFParser(DocumentParser):
         table_enabled = getattr(settings, "PDF_TABLE_EXTRACTION_ENABLED", True)
         image_enabled = getattr(settings, "PDF_IMAGE_EXTRACTION_ENABLED", True)
         max_images = getattr(settings, "PDF_IMAGE_MAX_PER_DOC", 50)
+        scan_ocr_enabled = getattr(settings, "PDF_SCAN_OCR_ENABLED", True)
+        scan_ocr_max_pages = getattr(settings, "PDF_SCAN_OCR_MAX_PAGES", 20)
 
         sections: list[ParsedSection] = []
         image_count = 0
+        scan_ocr_count = 0
 
         try:
             for page_num in range(len(doc)):
@@ -79,6 +89,19 @@ class PDFParser(DocumentParser):
                     sections.append(
                         ParsedSection(kind="text", content=text, page=page_num)
                     )
+                elif scan_ocr_enabled and scan_ocr_count < scan_ocr_max_pages:
+                    # 扫描页 — get_text() 返回空，渲染页面为图片做 VLM OCR
+                    ocr_text = await self._scan_page_ocr(doc, page, page_num)
+                    if ocr_text:
+                        sections.append(
+                            ParsedSection(
+                                kind="text",
+                                content=f"[扫描页 OCR]\n{ocr_text}",
+                                page=page_num,
+                            )
+                        )
+                        scan_ocr_count += 1
+                        log.info("pdf.scan_ocr_success", page=page_num)
 
                 # 2. 提取表格（Phase 1）
                 if table_enabled:
@@ -103,6 +126,7 @@ class PDFParser(DocumentParser):
             sections=len(sections),
             tables=sum(1 for s in sections if s.kind == "table"),
             images=sum(1 for s in sections if s.kind == "image_desc"),
+            scan_ocr=scan_ocr_count,
         )
         return self.sections_to_text(sections)
 
@@ -270,4 +294,54 @@ class PDFParser(DocumentParser):
             return ""
         except Exception as exc:
             log.warning("pdf.vlm_error", error=str(exc))
+            return ""
+
+    async def _scan_page_ocr(
+        self, doc: Any, page: Any, page_num: int
+    ) -> str:
+        """扫描页 OCR — 将页面渲染为图片，调用 VLM 提取文字。
+
+        当 page.get_text() 返回空字符串时（扫描 PDF / 图片型 PDF），
+        使用 pymupdf 的 page.get_pixmap() 将页面渲染为 PNG 图片，
+        然后调用 VLM 进行 OCR 文字提取。
+
+        Args:
+            doc: pymupdf Document 对象。
+            page: pymupdf Page 对象。
+            page_num: 页码（用于日志）。
+
+        Returns:
+            OCR 提取的文本。VLM 不可用或渲染失败时返回空字符串。
+        """
+        # 1. 渲染页面为 PNG 图片
+        try:
+            import fitz
+
+            # 2x 缩放提高 OCR 精度
+            matrix = fitz.Matrix(2, 2)
+            pixmap = page.get_pixmap(matrix=matrix)
+            img_bytes: bytes = pixmap.tobytes("png")
+        except Exception as exc:
+            log.debug("pdf.scan_ocr_render_failed", page=page_num, error=str(exc))
+            return ""
+
+        if not img_bytes:
+            return ""
+
+        # 2. 调用 VLM OCR
+        try:
+            from app.vlm.provider import get_vision_provider
+
+            vlm = get_vision_provider()
+            ocr_text = await vlm.understand(
+                image=img_bytes,
+                prompt=_OCR_PROMPT,
+                mime_type="image/png",
+            )
+            return ocr_text or ""
+        except ImportError:
+            log.warning("pdf.scan_ocr_vlm_not_available")
+            return ""
+        except Exception as exc:
+            log.warning("pdf.scan_ocr_error", page=page_num, error=str(exc))
             return ""

@@ -304,6 +304,9 @@ App.registerPage('manage/upload', {
       { name: '微服务架构设计规范_v2.pdf', size: '2.4 MB', type: 'pdf', status: '完成', progress: 100, color: 'success' },
       { name: '2026年Q3产品路线图.docx', size: '1.8 MB', type: 'docx', status: '向量化中', progress: 75, color: 'primary' },
       { name: 'API接口数据字典.xlsx', size: '856 KB', type: 'xlsx', status: '解析中', progress: 45, color: 'warning' },
+      { name: '季度财务报告.xlsx', size: '1.2 MB', type: 'xlsx', status: '等待中', progress: 0, color: 'info' },
+      { name: '产品培训视频.mp4', size: '45.6 MB', type: 'video', status: 'ASR 转写中', progress: 30, color: 'warning' },
+      { name: '客户访谈录音.mp3', size: '12.3 MB', type: 'audio', status: '等待中', progress: 0, color: 'info' },
       { name: '部署手册.md', size: '124 KB', type: 'md', status: '索引中', progress: 90, color: 'info' },
     ];
 
@@ -320,7 +323,7 @@ App.registerPage('manage/upload', {
           <div class="upload-zone mb-5" id="upload-zone">
             <div class="upload-zone-icon">📁</div>
             <div class="upload-zone-title">拖拽文件到此处，或点击选择文件</div>
-            <div class="upload-zone-hint">支持 PDF、Word、Excel、Markdown、图片等格式，单个文件最大 100MB</div>
+            <div class="upload-zone-hint">支持 PDF、Word、Excel、PPT、Markdown、图片、视频、音频等格式，单个文件最大 100MB</div>
             <button class="btn btn-primary mt-4" onclick="App.toast('文件选择器（原型演示）', 'info')">${Utils.icon('upload', 16)} 选择文件</button>
           </div>
 
@@ -417,8 +420,17 @@ App.registerPage('manage/upload', {
               <div class="form-group" style="margin-bottom:12px;">
                 <div class="flex items-center justify-between">
                   <div>
-                    <div class="text-sm font-medium">OCR 识别</div>
-                    <div class="text-xs text-muted">识别图片中的文字</div>
+                    <div class="text-sm font-medium">VLM 视觉理解</div>
+                    <div class="text-xs text-muted">图片/文档内嵌图片 VLM 描述</div>
+                  </div>
+                  <label class="switch"><input type="checkbox" checked><span class="switch-slider"></span></label>
+                </div>
+              </div>
+              <div class="form-group" style="margin-bottom:12px;">
+                <div class="flex items-center justify-between">
+                  <div>
+                    <div class="text-sm font-medium">音频转写</div>
+                    <div class="text-xs text-muted">音频/视频 ASR 语音转文本</div>
                   </div>
                   <label class="switch"><input type="checkbox" checked><span class="switch-slider"></span></label>
                 </div>

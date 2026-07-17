@@ -217,11 +217,11 @@ const Utils = {
   },
   truncate(s, len) { return s.length > len ? s.slice(0, len) + '...' : s; },
   fileIcon(type) {
-    const icons = { pdf: '📄', doc: '📝', docx: '📝', md: '📋', xlsx: '📊', pptx: '📽️', txt: '📃', img: '🖼️', video: '🎬' };
+    const icons = { pdf: '📄', doc: '📝', docx: '📝', md: '📋', xlsx: '📊', pptx: '📽️', txt: '📃', img: '🖼️', video: '🎬', audio: '🎵' };
     return icons[type] || '📄';
   },
   fileTypeLabel(type) {
-    const labels = { pdf: 'PDF', doc: 'Word', docx: 'Word', md: 'Markdown', xlsx: 'Excel', pptx: 'PPT', txt: '文本', img: '图片', video: '视频' };
+    const labels = { pdf: 'PDF', doc: 'Word', docx: 'Word', md: 'Markdown', xlsx: 'Excel', pptx: 'PPT', txt: '文本', img: '图片', video: '视频', audio: '音频' };
     return labels[type] || type.toUpperCase();
   },
   avatarColor(name) {

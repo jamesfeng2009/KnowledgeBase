@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 
@@ -571,12 +571,12 @@ class TestFactory:
         parser = get_parser("pptx")
         assert isinstance(parser, PPTXParser)
 
-    def test_get_parser_ppt_alias(self) -> None:
+    def test_get_parser_ppt_not_registered(self) -> None:
+        """ppt 旧格式不再注册别名 — 由 _parse_document 路由层兜底。"""
         from app.document.factory import get_parser
-        from app.document.pptx_parser import PPTXParser
 
         parser = get_parser("ppt")
-        assert isinstance(parser, PPTXParser)
+        assert parser is None
 
     def test_get_parser_unsupported(self) -> None:
         from app.document.factory import get_parser
@@ -1016,3 +1016,1578 @@ class TestDocumentTasksDOCXIntegration:
             result = await _parse_document(mock_doc)
 
         assert result == "DOCX增强内容"
+
+
+# ======================================================================
+# XLSXParser 测试
+# ======================================================================
+
+
+class TestXLSXParserRowsToHtml:
+    """XLSXParser._rows_to_html 测试。"""
+
+    def test_basic_table(self) -> None:
+        from app.document.xlsx_parser import XLSXParser
+
+        rows = [["部门", "人数"], ["技术部", "15"], ["市场部", "8"]]
+        html = XLSXParser._rows_to_html(rows)
+        assert "<table>" in html
+        assert "</table>" in html
+        assert "<th>部门</th>" in html
+        assert "<td>技术部</td>" in html
+        assert "<td>市场部</td>" in html
+
+    def test_empty_rows(self) -> None:
+        from app.document.xlsx_parser import XLSXParser
+
+        assert XLSXParser._rows_to_html([]) == ""
+
+    def test_html_escaping(self) -> None:
+        from app.document.xlsx_parser import XLSXParser
+
+        rows = [["<script>alert(1)</script>"], ["normal"]]
+        html = XLSXParser._rows_to_html(rows)
+        assert "<script>" not in html
+        assert "&lt;script&gt;" in html
+
+    def test_ampersand_escaping(self) -> None:
+        from app.document.xlsx_parser import XLSXParser
+
+        rows = [["A & B"]]
+        html = XLSXParser._rows_to_html(rows)
+        assert "A &amp; B" in html
+
+    def test_none_cells(self) -> None:
+        from app.document.xlsx_parser import XLSXParser
+
+        rows = [["a", None, "c"]]
+        html = XLSXParser._rows_to_html(rows)
+        assert "<th>a</th>" in html
+        assert "<th></th>" in html
+        assert "<th>c</th>" in html
+
+
+class TestXLSXParserEscapeHtml:
+    """XLSXParser._escape_html 测试。"""
+
+    def test_basic_escape(self) -> None:
+        from app.document.xlsx_parser import XLSXParser
+
+        assert XLSXParser._escape_html("<div>") == "&lt;div&gt;"
+
+    def test_ampersand(self) -> None:
+        from app.document.xlsx_parser import XLSXParser
+
+        assert XLSXParser._escape_html("a & b") == "a &amp; b"
+
+    def test_no_special_chars(self) -> None:
+        from app.document.xlsx_parser import XLSXParser
+
+        assert XLSXParser._escape_html("普通文本") == "普通文本"
+
+
+class TestXLSXParserParse:
+    """XLSXParser.parse 测试。"""
+
+    @pytest.mark.asyncio
+    async def test_openpyxl_not_installed(self) -> None:
+        """openpyxl 未安装时返回空字符串。"""
+        from app.document.xlsx_parser import XLSXParser
+
+        with patch.dict("sys.modules", {"openpyxl": None}):
+            parser = XLSXParser()
+            result = await parser.parse("/fake/path.xlsx")
+            assert result == ""
+
+    @pytest.mark.asyncio
+    async def test_open_failed(self) -> None:
+        """文件打开失败时返回空字符串。"""
+        from app.document.xlsx_parser import XLSXParser
+
+        mock_openpyxl = MagicMock()
+        mock_openpyxl.load_workbook.side_effect = Exception("file not found")
+
+        import sys
+        with patch.dict(sys.modules, {"openpyxl": mock_openpyxl}):
+            parser = XLSXParser()
+            result = await parser.parse("/fake/path.xlsx")
+            assert result == ""
+
+    @pytest.mark.asyncio
+    async def test_parse_single_sheet(self) -> None:
+        """解析单 sheet XLSX — 输出标题 + HTML 表格。"""
+        from app.document.xlsx_parser import XLSXParser
+
+        # mock worksheet 返回的行数据
+        mock_sheet = MagicMock()
+        mock_sheet.iter_rows.return_value = [
+            ("姓名", "年龄"),
+            ("张三", "25"),
+            ("李四", "30"),
+        ]
+
+        mock_workbook = MagicMock()
+        mock_workbook.sheetnames = ["员工表"]
+        mock_workbook.__getitem__ = MagicMock(return_value=mock_sheet)
+        mock_workbook.close = MagicMock()
+
+        mock_openpyxl = MagicMock()
+        mock_openpyxl.load_workbook.return_value = mock_workbook
+
+        import sys
+        with patch.dict(sys.modules, {"openpyxl": mock_openpyxl}):
+            parser = XLSXParser()
+            result = await parser.parse("/fake/data.xlsx")
+
+        assert "<h2>员工表</h2>" in result
+        assert "<table>" in result
+        assert "<th>姓名</th>" in result
+        assert "<td>张三</td>" in result
+
+    @pytest.mark.asyncio
+    async def test_parse_multiple_sheets(self) -> None:
+        """解析多 sheet XLSX — 每个 sheet 输出独立标题 + 表格。"""
+        from app.document.xlsx_parser import XLSXParser
+
+        mock_sheet1 = MagicMock()
+        mock_sheet1.iter_rows.return_value = [("A", "B"), ("1", "2")]
+
+        mock_sheet2 = MagicMock()
+        mock_sheet2.iter_rows.return_value = [("C", "D"), ("3", "4")]
+
+        mock_workbook = MagicMock()
+        mock_workbook.sheetnames = ["Sheet1", "Sheet2"]
+        mock_workbook.__getitem__ = MagicMock(
+            side_effect=lambda name: mock_sheet1 if name == "Sheet1" else mock_sheet2
+        )
+        mock_workbook.close = MagicMock()
+
+        mock_openpyxl = MagicMock()
+        mock_openpyxl.load_workbook.return_value = mock_workbook
+
+        import sys
+        with patch.dict(sys.modules, {"openpyxl": mock_openpyxl}):
+            parser = XLSXParser()
+            result = await parser.parse("/fake/multi.xlsx")
+
+        assert "<h2>Sheet1</h2>" in result
+        assert "<h2>Sheet2</h2>" in result
+        assert "<th>A</th>" in result
+        assert "<th>C</th>" in result
+
+    @pytest.mark.asyncio
+    async def test_parse_table_disabled(self) -> None:
+        """表格提取关闭时只有 sheet 标题。"""
+        from app.document.xlsx_parser import XLSXParser
+
+        mock_sheet = MagicMock()
+        mock_sheet.iter_rows.return_value = [("A", "B"), ("1", "2")]
+
+        mock_workbook = MagicMock()
+        mock_workbook.sheetnames = ["Sheet1"]
+        mock_workbook.__getitem__ = MagicMock(return_value=mock_sheet)
+        mock_workbook.close = MagicMock()
+
+        mock_openpyxl = MagicMock()
+        mock_openpyxl.load_workbook.return_value = mock_workbook
+
+        import sys
+        with patch.dict(sys.modules, {"openpyxl": mock_openpyxl}), \
+             patch("app.document.xlsx_parser.get_settings") as mock_settings:
+            mock_settings.return_value.XLSX_TABLE_EXTRACTION_ENABLED = False
+            mock_settings.return_value.XLSX_MAX_ROWS_PER_SHEET = 500
+            mock_settings.return_value.XLSX_MAX_SHEETS = 20
+
+            parser = XLSXParser()
+            result = await parser.parse("/fake/data.xlsx")
+
+        assert "<h2>Sheet1</h2>" in result
+        assert "<table>" not in result
+
+    @pytest.mark.asyncio
+    async def test_parse_empty_sheet(self) -> None:
+        """空 sheet 只输出标题，无表格。"""
+        from app.document.xlsx_parser import XLSXParser
+
+        mock_sheet = MagicMock()
+        mock_sheet.iter_rows.return_value = []  # 空表
+
+        mock_workbook = MagicMock()
+        mock_workbook.sheetnames = ["EmptySheet"]
+        mock_workbook.__getitem__ = MagicMock(return_value=mock_sheet)
+        mock_workbook.close = MagicMock()
+
+        mock_openpyxl = MagicMock()
+        mock_openpyxl.load_workbook.return_value = mock_workbook
+
+        import sys
+        with patch.dict(sys.modules, {"openpyxl": mock_openpyxl}):
+            parser = XLSXParser()
+            result = await parser.parse("/fake/empty.xlsx")
+
+        assert "<h2>EmptySheet</h2>" in result
+        assert "<table>" not in result
+
+    @pytest.mark.asyncio
+    async def test_parse_skip_empty_rows(self) -> None:
+        """全空行被自动跳过。"""
+        from app.document.xlsx_parser import XLSXParser
+
+        mock_sheet = MagicMock()
+        mock_sheet.iter_rows.return_value = [
+            ("姓名", "年龄"),
+            (None, None),  # 全空行
+            ("张三", "25"),
+        ]
+
+        mock_workbook = MagicMock()
+        mock_workbook.sheetnames = ["Data"]
+        mock_workbook.__getitem__ = MagicMock(return_value=mock_sheet)
+        mock_workbook.close = MagicMock()
+
+        mock_openpyxl = MagicMock()
+        mock_openpyxl.load_workbook.return_value = mock_workbook
+
+        import sys
+        with patch.dict(sys.modules, {"openpyxl": mock_openpyxl}):
+            parser = XLSXParser()
+            result = await parser.parse("/fake/data.xlsx")
+
+        assert "<table>" in result
+        # 只有 2 行数据（表头 + 1 行），空行被跳过
+        assert result.count("<tr>") == 2
+
+    @pytest.mark.asyncio
+    async def test_parse_max_sheets_limit(self) -> None:
+        """sheet 数量不超过 XLSX_MAX_SHEETS。"""
+        from app.document.xlsx_parser import XLSXParser
+
+        mock_sheet = MagicMock()
+        mock_sheet.iter_rows.return_value = [("A", "B")]
+
+        mock_workbook = MagicMock()
+        mock_workbook.sheetnames = [f"Sheet{i}" for i in range(10)]
+        mock_workbook.__getitem__ = MagicMock(return_value=mock_sheet)
+        mock_workbook.close = MagicMock()
+
+        mock_openpyxl = MagicMock()
+        mock_openpyxl.load_workbook.return_value = mock_workbook
+
+        import sys
+        with patch.dict(sys.modules, {"openpyxl": mock_openpyxl}), \
+             patch("app.document.xlsx_parser.get_settings") as mock_settings:
+            mock_settings.return_value.XLSX_TABLE_EXTRACTION_ENABLED = True
+            mock_settings.return_value.XLSX_MAX_ROWS_PER_SHEET = 500
+            mock_settings.return_value.XLSX_MAX_SHEETS = 3
+
+            parser = XLSXParser()
+            result = await parser.parse("/fake/many_sheets.xlsx")
+
+        # 只有 3 个 sheet 标题
+        assert result.count("<h2>") == 3
+
+    @pytest.mark.asyncio
+    async def test_parse_max_rows_limit(self) -> None:
+        """行数不超过 XLSX_MAX_ROWS_PER_SHEET。"""
+        from app.document.xlsx_parser import XLSXParser
+
+        # 生成 10 行数据
+        mock_sheet = MagicMock()
+        mock_sheet.iter_rows.return_value = [
+            (f"row{i}", f"val{i}") for i in range(10)
+        ]
+
+        mock_workbook = MagicMock()
+        mock_workbook.sheetnames = ["Sheet1"]
+        mock_workbook.__getitem__ = MagicMock(return_value=mock_sheet)
+        mock_workbook.close = MagicMock()
+
+        mock_openpyxl = MagicMock()
+        mock_openpyxl.load_workbook.return_value = mock_workbook
+
+        import sys
+        with patch.dict(sys.modules, {"openpyxl": mock_openpyxl}), \
+             patch("app.document.xlsx_parser.get_settings") as mock_settings:
+            mock_settings.return_value.XLSX_TABLE_EXTRACTION_ENABLED = True
+            mock_settings.return_value.XLSX_MAX_ROWS_PER_SHEET = 5
+            mock_settings.return_value.XLSX_MAX_SHEETS = 20
+
+            parser = XLSXParser()
+            result = await parser.parse("/fake/data.xlsx")
+
+        # 只有 5 行（表头 + 4 行数据）
+        assert result.count("<tr>") == 5
+
+    @pytest.mark.asyncio
+    async def test_parse_sheet_name_html_escaped(self) -> None:
+        """sheet 名包含 HTML 特殊字符时被转义。"""
+        from app.document.xlsx_parser import XLSXParser
+
+        mock_sheet = MagicMock()
+        mock_sheet.iter_rows.return_value = [("data",)]
+
+        mock_workbook = MagicMock()
+        mock_workbook.sheetnames = ["<Script>Sheet"]
+        mock_workbook.__getitem__ = MagicMock(return_value=mock_sheet)
+        mock_workbook.close = MagicMock()
+
+        mock_openpyxl = MagicMock()
+        mock_openpyxl.load_workbook.return_value = mock_workbook
+
+        import sys
+        with patch.dict(sys.modules, {"openpyxl": mock_openpyxl}):
+            parser = XLSXParser()
+            result = await parser.parse("/fake/data.xlsx")
+
+        assert "&lt;Script&gt;Sheet" in result
+        assert "<Script>" not in result
+
+
+class TestFactoryXLSX:
+    """factory 路由 XLSX 测试。"""
+
+    def test_get_parser_xlsx(self) -> None:
+        from app.document.factory import get_parser
+        from app.document.xlsx_parser import XLSXParser
+
+        parser = get_parser("xlsx")
+        assert isinstance(parser, XLSXParser)
+
+    def test_get_parser_xls_alias(self) -> None:
+        from app.document.factory import get_parser
+        from app.document.xlsx_parser import XLSXParser
+
+        parser = get_parser("xls")
+        assert isinstance(parser, XLSXParser)
+
+    def test_get_parser_xlsx_case_insensitive(self) -> None:
+        from app.document.factory import get_parser
+        from app.document.xlsx_parser import XLSXParser
+
+        parser = get_parser("XLSX")
+        assert isinstance(parser, XLSXParser)
+
+
+class TestDocumentTasksXLSXIntegration:
+    """document_tasks XLSX 集成测试。"""
+
+    @pytest.mark.asyncio
+    async def test_parse_xlsx_enhanced(self) -> None:
+        """_parse_xlsx 使用增强解析器。"""
+        from tasks.document_tasks import _parse_xlsx
+
+        mock_doc = MagicMock()
+        mock_doc.file_path = "/fake/data.xlsx"
+        mock_doc.content_text = None
+
+        mock_parser = MagicMock()
+        mock_parser.parse = AsyncMock(
+            return_value="<h2>员工表</h2>\n<table>\n<tr>\n<th>姓名</th>\n</tr>\n</table>"
+        )
+
+        with patch("app.document.get_parser", return_value=mock_parser):
+            result = await _parse_xlsx(mock_doc)
+
+        assert "<h2>员工表</h2>" in result
+        assert "<table>" in result
+
+    @pytest.mark.asyncio
+    async def test_parse_xlsx_fallback_to_text(self) -> None:
+        """增强解析器返回空时降级到 content_text。"""
+        from tasks.document_tasks import _parse_xlsx
+
+        mock_doc = MagicMock()
+        mock_doc.file_path = "/fake/data.xlsx"
+        mock_doc.content_text = "fallback text"
+
+        mock_parser = MagicMock()
+        mock_parser.parse = AsyncMock(return_value="")
+
+        with patch("app.document.get_parser", return_value=mock_parser):
+            result = await _parse_xlsx(mock_doc)
+
+        assert result == "fallback text"
+
+    @pytest.mark.asyncio
+    async def test_parse_xlsx_no_file_path(self) -> None:
+        """XLSX 无文件路径返回空字符串。"""
+        from tasks.document_tasks import _parse_xlsx
+
+        mock_doc = MagicMock()
+        mock_doc.file_path = None
+
+        result = await _parse_xlsx(mock_doc)
+        assert result == ""
+
+    @pytest.mark.asyncio
+    async def test_parse_document_routes_xlsx(self) -> None:
+        """_parse_document 正确路由 xlsx 类型。"""
+        from tasks.document_tasks import _parse_document
+
+        mock_doc = MagicMock()
+        mock_doc.content_text = None
+        mock_doc.doc_type = "xlsx"
+
+        mock_parser = MagicMock()
+        mock_parser.parse = AsyncMock(return_value="<h2>Sheet1</h2>\n<table>data</table>")
+
+        with patch("app.document.get_parser", return_value=mock_parser):
+            result = await _parse_document(mock_doc)
+
+        assert "<h2>Sheet1</h2>" in result
+
+    @pytest.mark.asyncio
+    async def test_parse_document_routes_xls_alias(self) -> None:
+        """_parse_document 正确路由 xls 别名。"""
+        from tasks.document_tasks import _parse_document
+
+        mock_doc = MagicMock()
+        mock_doc.content_text = None
+        mock_doc.doc_type = "xls"
+
+        mock_parser = MagicMock()
+        mock_parser.parse = AsyncMock(return_value="XLS内容")
+
+        with patch("app.document.get_parser", return_value=mock_parser):
+            result = await _parse_document(mock_doc)
+
+        assert result == "XLS内容"
+
+
+class TestXLSXConfig:
+    """XLSX 配置项测试。"""
+
+    def test_xlsx_config(self) -> None:
+        from app.config import Settings
+
+        settings = Settings()
+        assert hasattr(settings, "XLSX_TABLE_EXTRACTION_ENABLED")
+        assert settings.XLSX_TABLE_EXTRACTION_ENABLED is True
+        assert hasattr(settings, "XLSX_MAX_ROWS_PER_SHEET")
+        assert settings.XLSX_MAX_ROWS_PER_SHEET == 500
+        assert hasattr(settings, "XLSX_MAX_SHEETS")
+        assert settings.XLSX_MAX_SHEETS == 20
+
+
+# ======================================================================
+# 独立音频解析测试
+# ======================================================================
+
+
+class TestAudioTypes:
+    """音频类型集合测试。"""
+
+    def test_audio_types_contains_common_formats(self) -> None:
+        from tasks.document_tasks import _AUDIO_TYPES
+
+        assert "audio" in _AUDIO_TYPES
+        assert "mp3" in _AUDIO_TYPES
+        assert "wav" in _AUDIO_TYPES
+        assert "m4a" in _AUDIO_TYPES
+        assert "aac" in _AUDIO_TYPES
+        assert "flac" in _AUDIO_TYPES
+        assert "ogg" in _AUDIO_TYPES
+
+    def test_video_types_separate_from_audio(self) -> None:
+        from tasks.document_tasks import _AUDIO_TYPES, _VIDEO_TYPES
+
+        # 视频和音频类型不重叠
+        assert _VIDEO_TYPES.isdisjoint(_AUDIO_TYPES)
+
+
+class TestParseAudio:
+    """_parse_audio 测试。"""
+
+    @pytest.mark.asyncio
+    async def test_no_file_path(self) -> None:
+        """无文件路径返回 content_text。"""
+        from tasks.document_tasks import _parse_audio
+
+        mock_doc = MagicMock()
+        mock_doc.file_path = None
+        mock_doc.content_text = "existing text"
+
+        result = await _parse_audio(mock_doc)
+        assert result == "existing text"
+
+    @pytest.mark.asyncio
+    async def test_asr_disabled_by_config(self) -> None:
+        """AUDIO_ASR_ENABLED=False 时跳过 ASR。"""
+        from tasks.document_tasks import _parse_audio
+
+        mock_doc = MagicMock()
+        mock_doc.file_path = "/fake/audio.mp3"
+        mock_doc.content_text = "cached text"
+
+        with patch("app.config.get_settings") as mock_settings:
+            mock_settings.return_value.AUDIO_ASR_ENABLED = False
+            result = await _parse_audio(mock_doc)
+
+        assert result == "cached text"
+
+    @pytest.mark.asyncio
+    async def test_deps_not_installed(self) -> None:
+        """外部依赖未安装时返回 content_text。"""
+        from tasks.document_tasks import _parse_audio
+
+        mock_doc = MagicMock()
+        mock_doc.file_path = "/fake/audio.mp3"
+        mock_doc.content_text = "fallback"
+
+        with patch("app.config.get_settings") as mock_settings:
+            mock_settings.return_value.AUDIO_ASR_ENABLED = True
+            with patch.dict("sys.modules", {"app.video": None, "app.asr": None}):
+                result = await _parse_audio(mock_doc)
+
+        assert result == "fallback"
+
+    @pytest.mark.asyncio
+    async def test_successful_transcription(self) -> None:
+        """成功转写音频文件。"""
+        from tasks.document_tasks import _parse_audio
+
+        mock_doc = MagicMock()
+        mock_doc.file_path = "/fake/meeting.mp3"
+        mock_doc.content_text = None
+        mock_doc.id = "test-doc-id"
+
+        # mock VideoProcessor
+        mock_processor = MagicMock()
+        mock_processor.extract_audio = AsyncMock(return_value="/tmp/fake.wav")
+
+        # mock ASR provider
+        from app.asr.provider import TranscribeSegment
+
+        mock_segments = [
+            TranscribeSegment(start=0.0, end=5.0, text="大家好"),
+            TranscribeSegment(start=5.0, end=10.0, text="今天开会"),
+        ]
+        mock_asr = MagicMock()
+        mock_asr.transcribe = AsyncMock(return_value=mock_segments)
+
+        import os
+
+        with patch("app.config.get_settings") as mock_settings, \
+             patch("app.video.get_video_processor", return_value=mock_processor), \
+             patch("app.asr.get_asr_provider", return_value=mock_asr), \
+             patch("os.path.exists", return_value=True), \
+             patch("os.remove") as mock_remove:
+            mock_settings.return_value.AUDIO_ASR_ENABLED = True
+
+            result = await _parse_audio(mock_doc)
+
+        assert "大家好" in result
+        assert "今天开会" in result
+        # WAV 临时文件被清理
+        mock_remove.assert_called_once_with("/tmp/fake.wav")
+
+    @pytest.mark.asyncio
+    async def test_asr_failed_returns_content_text(self) -> None:
+        """ASR 转写失败时返回 content_text。"""
+        from tasks.document_tasks import _parse_audio
+
+        mock_doc = MagicMock()
+        mock_doc.file_path = "/fake/audio.mp3"
+        mock_doc.content_text = "cached"
+        mock_doc.id = "test-id"
+
+        mock_processor = MagicMock()
+        mock_processor.extract_audio = AsyncMock(return_value="/tmp/fake.wav")
+
+        mock_asr = MagicMock()
+        mock_asr.transcribe = AsyncMock(side_effect=Exception("ASR error"))
+
+        with patch("app.config.get_settings") as mock_settings, \
+             patch("app.video.get_video_processor", return_value=mock_processor), \
+             patch("app.asr.get_asr_provider", return_value=mock_asr), \
+             patch("os.path.exists", return_value=True), \
+             patch("os.remove"):
+            mock_settings.return_value.AUDIO_ASR_ENABLED = True
+
+            result = await _parse_audio(mock_doc)
+
+        assert result == "cached"
+
+    @pytest.mark.asyncio
+    async def test_audio_convert_failed(self) -> None:
+        """音频转换失败时返回 content_text。"""
+        from tasks.document_tasks import _parse_audio
+
+        mock_doc = MagicMock()
+        mock_doc.file_path = "/fake/audio.mp3"
+        mock_doc.content_text = "fallback"
+        mock_doc.id = "test-id"
+
+        mock_processor = MagicMock()
+        mock_processor.extract_audio = AsyncMock(return_value=None)  # 转换失败
+
+        with patch("app.config.get_settings") as mock_settings, \
+             patch("app.video.get_video_processor", return_value=mock_processor):
+            mock_settings.return_value.AUDIO_ASR_ENABLED = True
+
+            result = await _parse_audio(mock_doc)
+
+        assert result == "fallback"
+
+    @pytest.mark.asyncio
+    async def test_no_transcript_returns_content_text(self) -> None:
+        """ASR 返回空片段时返回 content_text。"""
+        from tasks.document_tasks import _parse_audio
+
+        mock_doc = MagicMock()
+        mock_doc.file_path = "/fake/silent.wav"
+        mock_doc.content_text = "empty"
+        mock_doc.id = "test-id"
+
+        mock_processor = MagicMock()
+        mock_processor.extract_audio = AsyncMock(return_value="/tmp/fake.wav")
+
+        mock_asr = MagicMock()
+        mock_asr.transcribe = AsyncMock(return_value=[])  # 空转写
+
+        with patch("app.config.get_settings") as mock_settings, \
+             patch("app.video.get_video_processor", return_value=mock_processor), \
+             patch("app.asr.get_asr_provider", return_value=mock_asr), \
+             patch("os.path.exists", return_value=True), \
+             patch("os.remove"):
+            mock_settings.return_value.AUDIO_ASR_ENABLED = True
+
+            result = await _parse_audio(mock_doc)
+
+        assert result == "empty"
+
+
+class TestDocumentTasksAudioIntegration:
+    """document_tasks 音频路由集成测试。"""
+
+    @pytest.mark.asyncio
+    async def test_parse_document_routes_mp3(self) -> None:
+        """_parse_document 正确路由 mp3 类型到 _parse_audio。"""
+        from tasks.document_tasks import _parse_document
+
+        mock_doc = MagicMock()
+        mock_doc.content_text = None
+        mock_doc.doc_type = "mp3"
+        mock_doc.file_path = "/fake/audio.mp3"
+        mock_doc.id = "test-id"
+
+        with patch("app.config.get_settings") as mock_settings, \
+             patch("tasks.document_tasks._parse_audio", new_callable=AsyncMock) as mock_parse_audio:
+            mock_settings.return_value.AUDIO_ASR_ENABLED = True
+            mock_parse_audio.return_value = "转写文本"
+
+            result = await _parse_document(mock_doc)
+
+        assert result == "转写文本"
+        mock_parse_audio.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_parse_document_routes_wav(self) -> None:
+        """_parse_document 正确路由 wav 类型。"""
+        from tasks.document_tasks import _parse_document
+
+        mock_doc = MagicMock()
+        mock_doc.content_text = None
+        mock_doc.doc_type = "wav"
+        mock_doc.file_path = "/fake/audio.wav"
+        mock_doc.id = "test-id"
+
+        with patch("app.config.get_settings") as mock_settings, \
+             patch("tasks.document_tasks._parse_audio", new_callable=AsyncMock) as mock_parse_audio:
+            mock_settings.return_value.AUDIO_ASR_ENABLED = True
+            mock_parse_audio.return_value = "WAV转写"
+
+            result = await _parse_document(mock_doc)
+
+        assert result == "WAV转写"
+
+
+class TestAudioConfig:
+    """音频配置项测试。"""
+
+    def test_audio_asr_enabled_config(self) -> None:
+        from app.config import Settings
+
+        settings = Settings()
+        assert hasattr(settings, "AUDIO_ASR_ENABLED")
+        assert settings.AUDIO_ASR_ENABLED is True
+
+
+# ======================================================================
+# P0: 旧格式兜底测试
+# ======================================================================
+
+
+class TestLegacyFormatFallback:
+    """P0: .doc/.ppt 旧格式兜底测试。"""
+
+    def test_doc_fallback_returns_hint(self) -> None:
+        """_legacy_format_fallback 返回 .doc 格式提示。"""
+        from tasks.document_tasks import _legacy_format_fallback
+
+        mock_doc = MagicMock()
+        mock_doc.content_text = None
+        mock_doc.id = "test-id"
+        mock_doc.file_path = "/fake/old.doc"
+
+        result = _legacy_format_fallback(mock_doc, "doc")
+
+        assert ".doc" in result
+        assert "请将文件另存为 .docx" in result
+
+    def test_ppt_fallback_returns_hint(self) -> None:
+        """_legacy_format_fallback 返回 .ppt 格式提示。"""
+        from tasks.document_tasks import _legacy_format_fallback
+
+        mock_doc = MagicMock()
+        mock_doc.content_text = None
+        mock_doc.id = "test-id"
+        mock_doc.file_path = "/fake/old.ppt"
+
+        result = _legacy_format_fallback(mock_doc, "ppt")
+
+        assert ".ppt" in result
+        assert "请将文件另存为 .pptx" in result
+
+    def test_doc_fallback_with_existing_text(self) -> None:
+        """已有 content_text 时拼接到提示前。"""
+        from tasks.document_tasks import _legacy_format_fallback
+
+        mock_doc = MagicMock()
+        mock_doc.content_text = "已有内容"
+        mock_doc.id = "test-id"
+        mock_doc.file_path = "/fake/old.doc"
+
+        result = _legacy_format_fallback(mock_doc, "doc")
+
+        assert "已有内容" in result
+        assert ".doc" in result
+
+    @pytest.mark.asyncio
+    async def test_parse_document_routes_doc(self) -> None:
+        """_parse_document 路由 .doc 到旧格式兜底。"""
+        from tasks.document_tasks import _parse_document
+
+        mock_doc = MagicMock()
+        mock_doc.content_text = None
+        mock_doc.doc_type = "doc"
+        mock_doc.file_path = "/fake/old.doc"
+        mock_doc.id = "test-id"
+
+        result = await _parse_document(mock_doc)
+
+        assert ".doc" in result
+        assert "请将文件另存为 .docx" in result
+
+    @pytest.mark.asyncio
+    async def test_parse_document_routes_ppt(self) -> None:
+        """_parse_document 路由 .ppt 到旧格式兜底。"""
+        from tasks.document_tasks import _parse_document
+
+        mock_doc = MagicMock()
+        mock_doc.content_text = None
+        mock_doc.doc_type = "ppt"
+        mock_doc.file_path = "/fake/old.ppt"
+        mock_doc.id = "test-id"
+
+        result = await _parse_document(mock_doc)
+
+        assert ".ppt" in result
+        assert "请将文件另存为 .pptx" in result
+
+    def test_factory_no_ppt_alias(self) -> None:
+        """factory 不注册 ppt 别名。"""
+        from app.document.factory import get_parser
+
+        # ppt 不应返回 PPTXParser（已移除别名）
+        parser = get_parser("ppt")
+        assert parser is None
+
+    def test_factory_no_doc_alias(self) -> None:
+        """factory 不注册 doc 别名。"""
+        from app.document.factory import get_parser
+
+        parser = get_parser("doc")
+        assert parser is None
+
+
+# ======================================================================
+# P1: PPTX 组合形状递归测试
+# ======================================================================
+
+
+class TestPPTXGroupShapeRecursion:
+    """P1: PPTX 组合形状递归遍历测试。"""
+
+    def test_collect_shape_text_normal_shape(self) -> None:
+        """普通形状文本被正确收集。"""
+        from app.document.pptx_parser import PPTXParser
+
+        parser = PPTXParser()
+        text_parts: list[str] = []
+
+        mock_shape = MagicMock()
+        mock_shape.has_table = False
+        mock_shape.has_text_frame = True
+        mock_shape.text_frame.text = "普通文本"
+        mock_shape.shape_type = MagicMock()
+        mock_shape.shape_type.value = 1  # 非 GROUP 非 PICTURE
+
+        parser._collect_shape_text(mock_shape, text_parts)
+
+        assert "普通文本" in text_parts
+
+    def test_collect_shape_text_group_recursion(self) -> None:
+        """GROUP 形状递归遍历子形状文本。"""
+        from app.document.pptx_parser import PPTXParser
+
+        parser = PPTXParser()
+        text_parts: list[str] = []
+
+        # 模拟子形状
+        mock_child = MagicMock()
+        mock_child.has_table = False
+        mock_child.has_text_frame = True
+        mock_child.text_frame.text = "组合内文本"
+        mock_child.shape_type = MagicMock()
+        mock_child.shape_type.value = 1
+
+        # 模拟 GROUP 形状（value=6）
+        mock_group = MagicMock()
+        mock_group.has_table = False
+        mock_group.has_text_frame = False
+        mock_group.shape_type = MagicMock()
+        mock_group.shape_type.value = 6
+        mock_group.shapes = [mock_child]
+
+        parser._collect_shape_text(mock_group, text_parts)
+
+        assert "组合内文本" in text_parts
+
+    def test_collect_shape_text_nested_group(self) -> None:
+        """嵌套 GROUP（2 层）递归正确。"""
+        from app.document.pptx_parser import PPTXParser
+
+        parser = PPTXParser()
+        text_parts: list[str] = []
+
+        # 最内层文本形状
+        mock_inner = MagicMock()
+        mock_inner.has_table = False
+        mock_inner.has_text_frame = True
+        mock_inner.text_frame.text = "嵌套文本"
+        mock_inner.shape_type = MagicMock()
+        mock_inner.shape_type.value = 1
+
+        # 中间 GROUP
+        mock_mid_group = MagicMock()
+        mock_mid_group.has_table = False
+        mock_mid_group.has_text_frame = False
+        mock_mid_group.shape_type = MagicMock()
+        mock_mid_group.shape_type.value = 6
+        mock_mid_group.shapes = [mock_inner]
+
+        # 外层 GROUP
+        mock_outer_group = MagicMock()
+        mock_outer_group.has_table = False
+        mock_outer_group.has_text_frame = False
+        mock_outer_group.shape_type = MagicMock()
+        mock_outer_group.shape_type.value = 6
+        mock_outer_group.shapes = [mock_mid_group]
+
+        parser._collect_shape_text(mock_outer_group, text_parts)
+
+        assert "嵌套文本" in text_parts
+
+    def test_collect_shape_text_skip_table(self) -> None:
+        """表格形状被跳过（由 _extract_tables 处理）。"""
+        from app.document.pptx_parser import PPTXParser
+
+        parser = PPTXParser()
+        text_parts: list[str] = []
+
+        mock_shape = MagicMock()
+        mock_shape.has_table = True
+        mock_shape.has_text_frame = True
+        mock_shape.text_frame.text = "不应出现"
+        mock_shape.shape_type = MagicMock()
+        mock_shape.shape_type.value = 1
+
+        parser._collect_shape_text(mock_shape, text_parts)
+
+        assert "不应出现" not in text_parts
+
+    def test_collect_shape_text_skip_picture(self) -> None:
+        """图片形状被跳过（由 _extract_images 处理）。"""
+        from app.document.pptx_parser import PPTXParser
+
+        parser = PPTXParser()
+        text_parts: list[str] = []
+
+        mock_shape = MagicMock()
+        mock_shape.has_table = False
+        mock_shape.has_text_frame = True
+        mock_shape.text_frame.text = "不应出现"
+        mock_shape.shape_type = MagicMock()
+        mock_shape.shape_type.value = 13  # PICTURE
+
+        parser._collect_shape_text(mock_shape, text_parts)
+
+        assert "不应出现" not in text_parts
+
+    def test_collect_shape_text_depth_limit(self) -> None:
+        """递归深度超过 5 层时停止。"""
+        from app.document.pptx_parser import PPTXParser
+
+        parser = PPTXParser()
+        text_parts: list[str] = []
+
+        # 模拟文本形状
+        mock_text = MagicMock()
+        mock_text.has_table = False
+        mock_text.has_text_frame = True
+        mock_text.text_frame.text = "深层文本"
+        mock_text.shape_type = MagicMock()
+        mock_text.shape_type.value = 1
+
+        # depth=6 应直接返回，不收集文本
+        parser._collect_shape_text(mock_text, text_parts, depth=6)
+
+        assert "深层文本" not in text_parts
+
+
+# ======================================================================
+# P2: 扫描 PDF OCR 兜底测试
+# ======================================================================
+
+
+class TestPDFScanOCR:
+    """P2: 扫描 PDF OCR 兜底测试。"""
+
+    def test_scan_ocr_config(self) -> None:
+        """PDF 扫描 OCR 配置项存在。"""
+        from app.config import Settings
+
+        settings = Settings()
+        assert hasattr(settings, "PDF_SCAN_OCR_ENABLED")
+        assert settings.PDF_SCAN_OCR_ENABLED is True
+        assert hasattr(settings, "PDF_SCAN_OCR_MAX_PAGES")
+        assert settings.PDF_SCAN_OCR_MAX_PAGES == 20
+
+    @pytest.mark.asyncio
+    async def test_scan_page_ocr_vlm_not_available(self) -> None:
+        """VLM 不可用时 _scan_page_ocr 返回空字符串。"""
+        from app.document.pdf_parser import PDFParser
+
+        parser = PDFParser()
+
+        # mock pymupdf page
+        mock_pixmap = MagicMock()
+        mock_pixmap.tobytes.return_value = b"fake_png_bytes"
+
+        mock_page = MagicMock()
+        mock_page.get_pixmap.return_value = mock_pixmap
+
+        mock_doc = MagicMock()
+
+        with patch.dict("sys.modules", {"app.vlm.provider": None}):
+            result = await parser._scan_page_ocr(mock_doc, mock_page, 0)
+            assert result == ""
+
+    @pytest.mark.asyncio
+    async def test_scan_page_ocr_render_failed(self) -> None:
+        """页面渲染失败时返回空字符串。"""
+        from app.document.pdf_parser import PDFParser
+
+        parser = PDFParser()
+
+        mock_page = MagicMock()
+        mock_page.get_pixmap.side_effect = Exception("render error")
+
+        mock_doc = MagicMock()
+
+        result = await parser._scan_page_ocr(mock_doc, mock_page, 0)
+        assert result == ""
+
+    @pytest.mark.asyncio
+    async def test_scan_page_ocr_success(self) -> None:
+        """成功 OCR 返回 VLM 文本。"""
+        from app.document.pdf_parser import PDFParser
+
+        parser = PDFParser()
+
+        mock_pixmap = MagicMock()
+        mock_pixmap.tobytes.return_value = b"fake_png_bytes"
+
+        mock_page = MagicMock()
+        mock_page.get_pixmap.return_value = mock_pixmap
+
+        mock_doc = MagicMock()
+
+        mock_vlm = MagicMock()
+        mock_vlm.understand = AsyncMock(return_value="这是OCR提取的文字")
+
+        import sys
+        mock_fit = MagicMock()
+        mock_fit.Matrix.return_value = MagicMock()
+
+        with patch.dict(sys.modules, {"fitz": mock_fit}), \
+             patch("app.vlm.provider.get_vision_provider", return_value=mock_vlm):
+            result = await parser._scan_page_ocr(mock_doc, mock_page, 0)
+
+        assert result == "这是OCR提取的文字"
+
+    @pytest.mark.asyncio
+    async def test_parse_scan_pdf_triggers_ocr(self) -> None:
+        """get_text() 返回空时触发扫描页 OCR。"""
+        from app.document.pdf_parser import PDFParser
+
+        # mock pymupdf
+        mock_page = MagicMock()
+        mock_page.get_text.return_value = ""  # 空文本 → 触发 OCR
+        mock_page.find_tables.return_value = MagicMock(tables=[])
+        mock_page.get_images.return_value = []
+        mock_pixmap = MagicMock()
+        mock_pixmap.tobytes.return_value = b"png"
+        mock_page.get_pixmap.return_value = mock_pixmap
+
+        mock_doc = MagicMock()
+        mock_doc.__len__ = MagicMock(return_value=1)
+        mock_doc.__getitem__ = MagicMock(return_value=mock_page)
+        mock_doc.close = MagicMock()
+
+        mock_fit = MagicMock()
+        mock_fit.open.return_value = mock_doc
+        mock_fit.Matrix.return_value = MagicMock()
+
+        mock_vlm = MagicMock()
+        mock_vlm.understand = AsyncMock(return_value="OCR文本内容")
+
+        import sys
+        with patch.dict(sys.modules, {"fitz": mock_fit}), \
+             patch("app.vlm.provider.get_vision_provider", return_value=mock_vlm), \
+             patch("app.document.pdf_parser.get_settings") as mock_settings:
+            mock_settings.return_value.PDF_TABLE_EXTRACTION_ENABLED = True
+            mock_settings.return_value.PDF_IMAGE_EXTRACTION_ENABLED = True
+            mock_settings.return_value.PDF_IMAGE_MAX_PER_DOC = 50
+            mock_settings.return_value.PDF_SCAN_OCR_ENABLED = True
+            mock_settings.return_value.PDF_SCAN_OCR_MAX_PAGES = 20
+
+            parser = PDFParser()
+            result = await parser.parse("/fake/scan.pdf")
+
+        assert "OCR文本内容" in result
+        assert "[扫描页 OCR]" in result
+
+    @pytest.mark.asyncio
+    async def test_parse_scan_ocr_disabled(self) -> None:
+        """PDF_SCAN_OCR_ENABLED=False 时不触发 OCR。"""
+        from app.document.pdf_parser import PDFParser
+
+        mock_page = MagicMock()
+        mock_page.get_text.return_value = ""  # 空文本
+        mock_page.find_tables.return_value = MagicMock(tables=[])
+        mock_page.get_images.return_value = []
+
+        mock_doc = MagicMock()
+        mock_doc.__len__ = MagicMock(return_value=1)
+        mock_doc.__getitem__ = MagicMock(return_value=mock_page)
+        mock_doc.close = MagicMock()
+
+        mock_fit = MagicMock()
+        mock_fit.open.return_value = mock_doc
+
+        import sys
+        with patch.dict(sys.modules, {"fitz": mock_fit}), \
+             patch("app.document.pdf_parser.get_settings") as mock_settings:
+            mock_settings.return_value.PDF_TABLE_EXTRACTION_ENABLED = False
+            mock_settings.return_value.PDF_IMAGE_EXTRACTION_ENABLED = False
+            mock_settings.return_value.PDF_IMAGE_MAX_PER_DOC = 50
+            mock_settings.return_value.PDF_SCAN_OCR_ENABLED = False
+            mock_settings.return_value.PDF_SCAN_OCR_MAX_PAGES = 20
+
+            parser = PDFParser()
+            result = await parser.parse("/fake/scan.pdf")
+
+        # OCR 被关闭，结果为空
+        assert result == ""
+
+
+# ======================================================================
+# P3: PPTX 备注提取测试
+# ======================================================================
+
+
+class TestPPTXNotesExtraction:
+    """P3: PPTX 演讲者备注提取测试。"""
+
+    def test_extract_notes_with_content(self) -> None:
+        """有备注时返回 ParsedSection。"""
+        from app.document.pptx_parser import PPTXParser
+
+        mock_slide = MagicMock()
+        mock_slide.has_notes_slide = True
+        mock_slide.notes_slide.notes_text_frame.text = "这是备注内容"
+
+        result = PPTXParser._extract_notes(mock_slide, 0)
+
+        assert result is not None
+        assert "备注内容" in result.content
+        assert "[演讲者备注]" in result.content
+
+    def test_extract_notes_empty(self) -> None:
+        """空备注返回 None。"""
+        from app.document.pptx_parser import PPTXParser
+
+        mock_slide = MagicMock()
+        mock_slide.has_notes_slide = True
+        mock_slide.notes_slide.notes_text_frame.text = ""
+
+        result = PPTXParser._extract_notes(mock_slide, 0)
+        assert result is None
+
+    def test_extract_notes_no_notes_slide(self) -> None:
+        """无备注页返回 None。"""
+        from app.document.pptx_parser import PPTXParser
+
+        mock_slide = MagicMock()
+        mock_slide.has_notes_slide = False
+
+        result = PPTXParser._extract_notes(mock_slide, 0)
+        assert result is None
+
+    def test_extract_notes_exception_returns_none(self) -> None:
+        """异常时返回 None。"""
+        from app.document.pptx_parser import PPTXParser
+
+        mock_slide = MagicMock()
+        mock_slide.has_notes_slide = True
+        mock_slide.notes_slide.notes_text_frame.text = ""
+        # 模拟访问 notes_slide 抛异常
+        type(mock_slide).notes_slide = PropertyMock(side_effect=Exception("error"))
+
+        result = PPTXParser._extract_notes(mock_slide, 0)
+        assert result is None
+
+
+# ======================================================================
+# P3: DOCX 页眉页脚提取测试
+# ======================================================================
+
+
+class TestDOCXHeaderFooterExtraction:
+    """P3: DOCX 页眉页脚提取测试。"""
+
+    def test_extract_header_footer_with_content(self) -> None:
+        """有页眉页脚时返回 ParsedSection。"""
+        from app.document.docx_parser import DOCXParser
+
+        mock_header = MagicMock()
+        mock_header.is_linked_to_previous = False
+        mock_para = MagicMock()
+        mock_para.text = "公司机密"
+        mock_header.paragraphs = [mock_para]
+
+        mock_footer = MagicMock()
+        mock_footer.is_linked_to_previous = False
+        mock_para2 = MagicMock()
+        mock_para2.text = "第1页"
+        mock_footer.paragraphs = [mock_para2]
+
+        mock_section = MagicMock()
+        mock_section.header = mock_header
+        mock_section.footer = mock_footer
+
+        mock_doc = MagicMock()
+        mock_doc.sections = [mock_section]
+
+        result = DOCXParser._extract_headers_footers(mock_doc)
+
+        assert len(result) == 2
+        assert "公司机密" in result[0].content
+        assert "[页眉]" in result[0].content
+        assert "第1页" in result[1].content
+        assert "[页脚]" in result[1].content
+
+    def test_extract_header_footer_linked_to_previous(self) -> None:
+        """页眉页脚链接到上一节时跳过。"""
+        from app.document.docx_parser import DOCXParser
+
+        mock_header = MagicMock()
+        mock_header.is_linked_to_previous = True  # 链接到上一节
+        mock_footer = MagicMock()
+        mock_footer.is_linked_to_previous = True
+
+        mock_section = MagicMock()
+        mock_section.header = mock_header
+        mock_section.footer = mock_footer
+
+        mock_doc = MagicMock()
+        mock_doc.sections = [mock_section]
+
+        result = DOCXParser._extract_headers_footers(mock_doc)
+        assert len(result) == 0
+
+
+# ======================================================================
+# Docling 统一解析器测试
+# ======================================================================
+
+
+class TestDoclingSupportedTypes:
+    """Docling 支持的文档类型测试。"""
+
+    def test_pdf_supported(self) -> None:
+        from app.document.docling_parser import DoclingParser
+
+        assert DoclingParser.is_supported("pdf") is True
+
+    def test_docx_supported(self) -> None:
+        from app.document.docling_parser import DoclingParser
+
+        assert DoclingParser.is_supported("docx") is True
+
+    def test_pptx_supported(self) -> None:
+        from app.document.docling_parser import DoclingParser
+
+        assert DoclingParser.is_supported("pptx") is True
+
+    def test_xlsx_supported(self) -> None:
+        from app.document.docling_parser import DoclingParser
+
+        assert DoclingParser.is_supported("xlsx") is True
+
+    def test_html_supported(self) -> None:
+        from app.document.docling_parser import DoclingParser
+
+        assert DoclingParser.is_supported("html") is True
+
+    def test_image_supported(self) -> None:
+        from app.document.docling_parser import DoclingParser
+
+        assert DoclingParser.is_supported("png") is True
+        assert DoclingParser.is_supported("jpg") is True
+
+    def test_audio_supported(self) -> None:
+        from app.document.docling_parser import DoclingParser
+
+        assert DoclingParser.is_supported("mp3") is True
+        assert DoclingParser.is_supported("wav") is True
+
+    def test_video_not_supported(self) -> None:
+        """视频不在 Docling 支持列表中。"""
+        from app.document.docling_parser import DoclingParser
+
+        assert DoclingParser.is_supported("mp4") is False
+        assert DoclingParser.is_supported("video") is False
+
+    def test_case_insensitive(self) -> None:
+        from app.document.docling_parser import DoclingParser
+
+        assert DoclingParser.is_supported("PDF") is True
+        assert DoclingParser.is_supported("DOCX") is True
+
+
+class TestDoclingParserParse:
+    """DoclingParser.parse 测试。"""
+
+    @pytest.mark.asyncio
+    async def test_not_installed_returns_empty(self) -> None:
+        """Docling 未安装时返回空字符串。"""
+        from app.document.docling_parser import DoclingParser
+
+        parser = DoclingParser()
+        with patch.dict("sys.modules", {"docling": None, "docling.document_converter": None}):
+            result = await parser.parse("/fake/doc.pdf")
+            assert result == ""
+
+    @pytest.mark.asyncio
+    async def test_successful_parse(self) -> None:
+        """成功解析返回 Markdown。"""
+        from app.document.docling_parser import DoclingParser
+
+        mock_result = MagicMock()
+        mock_result.document.export_to_markdown.return_value = "# 标题\n\n正文内容"
+
+        mock_converter = MagicMock()
+        mock_converter.convert.return_value = mock_result
+
+        parser = DoclingParser()
+        parser._converter = mock_converter
+        parser._init_checked = True
+
+        with patch("app.document.docling_parser.get_settings") as mock_settings:
+            mock_settings.return_value.DOCLING_VLM_IMAGE_ENHANCE = False
+            result = await parser.parse("/fake/doc.pdf")
+
+        assert "# 标题" in result
+        assert "正文内容" in result
+
+    @pytest.mark.asyncio
+    async def test_empty_result_returns_empty(self) -> None:
+        """Docling 返回空 Markdown 时返回空字符串。"""
+        from app.document.docling_parser import DoclingParser
+
+        mock_result = MagicMock()
+        mock_result.document.export_to_markdown.return_value = ""
+
+        mock_converter = MagicMock()
+        mock_converter.convert.return_value = mock_result
+
+        parser = DoclingParser()
+        parser._converter = mock_converter
+        parser._init_checked = True
+
+        with patch("app.document.docling_parser.get_settings") as mock_settings:
+            mock_settings.return_value.DOCLING_VLM_IMAGE_ENHANCE = False
+            result = await parser.parse("/fake/empty.pdf")
+
+        assert result == ""
+
+    @pytest.mark.asyncio
+    async def test_parse_exception_returns_empty(self) -> None:
+        """解析异常时返回空字符串。"""
+        from app.document.docling_parser import DoclingParser
+
+        mock_converter = MagicMock()
+        mock_converter.convert.side_effect = Exception("parse error")
+
+        parser = DoclingParser()
+        parser._converter = mock_converter
+        parser._init_checked = True
+
+        result = await parser.parse("/fake/bad.pdf")
+        assert result == ""
+
+    @pytest.mark.asyncio
+    async def test_vlm_enhance_disabled_by_default(self) -> None:
+        """默认不启用 VLM 图片描述增强。"""
+        from app.document.docling_parser import DoclingParser
+
+        mock_result = MagicMock()
+        mock_result.document.export_to_markdown.return_value = "# 文档"
+        mock_result.document.pictures = []
+
+        mock_converter = MagicMock()
+        mock_converter.convert.return_value = mock_result
+
+        parser = DoclingParser()
+        parser._converter = mock_converter
+        parser._init_checked = True
+
+        with patch("app.document.docling_parser.get_settings") as mock_settings:
+            mock_settings.return_value.DOCLING_VLM_IMAGE_ENHANCE = False
+            result = await parser.parse("/fake/doc.pdf")
+
+        assert result == "# 文档"
+
+
+class TestDoclingConfig:
+    """Docling 配置项测试。"""
+
+    def test_docling_enabled_config(self) -> None:
+        from app.config import Settings
+
+        settings = Settings()
+        assert hasattr(settings, "DOCLING_ENABLED")
+        assert settings.DOCLING_ENABLED is True
+
+    def test_docling_vlm_enhance_config(self) -> None:
+        from app.config import Settings
+
+        settings = Settings()
+        assert hasattr(settings, "DOCLING_VLM_IMAGE_ENHANCE")
+        assert settings.DOCLING_VLM_IMAGE_ENHANCE is False
+
+
+class TestFactoryDoclingPriority:
+    """factory Docling 优先级测试。"""
+
+    def test_get_parser_returns_legacy_when_docling_disabled(self) -> None:
+        """DOCLING_ENABLED=False 时返回原有解析器。"""
+        from app.document.factory import get_parser
+        from app.document.pdf_parser import PDFParser
+
+        with patch("app.document.factory._is_docling_enabled", return_value=False):
+            parser = get_parser("pdf")
+
+        assert isinstance(parser, PDFParser)
+
+    def test_get_parser_returns_docling_when_enabled(self) -> None:
+        """DOCLING_ENABLED=True 且 Docling 可用时返回 DoclingParser。"""
+        from app.document.factory import get_parser
+        from app.document.docling_parser import DoclingParser
+
+        with patch("app.document.factory._is_docling_enabled", return_value=True):
+            parser = get_parser("pdf")
+
+        assert isinstance(parser, DoclingParser)
+
+    def test_get_parser_with_fallback_docling(self) -> None:
+        """get_parser_with_fallback 返回 docling 类型。"""
+        from app.document.factory import get_parser_with_fallback
+
+        with patch("app.document.factory._is_docling_enabled", return_value=True):
+            parser, parser_type = get_parser_with_fallback("pdf")
+
+        assert parser_type == "docling"
+
+    def test_get_parser_with_fallback_legacy(self) -> None:
+        """Docling 禁用时返回 legacy 类型。"""
+        from app.document.factory import get_parser_with_fallback
+
+        with patch("app.document.factory._is_docling_enabled", return_value=False):
+            parser, parser_type = get_parser_with_fallback("pdf")
+
+        assert parser_type == "legacy"
+
+    def test_get_parser_with_fallback_none(self) -> None:
+        """不支持的类型返回 none。"""
+        from app.document.factory import get_parser_with_fallback
+
+        with patch("app.document.factory._is_docling_enabled", return_value=False):
+            parser, parser_type = get_parser_with_fallback("unknown")
+
+        assert parser_type == "none"
+        assert parser is None
+
+
+class TestDocumentTasksDoclingIntegration:
+    """document_tasks Docling 集成测试。"""
+
+    @pytest.mark.asyncio
+    async def test_parse_document_uses_docling_when_available(self) -> None:
+        """Docling 可用时优先使用 Docling 解析。"""
+        from tasks.document_tasks import _parse_document
+
+        mock_doc = MagicMock()
+        mock_doc.content_text = None
+        mock_doc.doc_type = "pdf"
+        mock_doc.file_path = "/fake/doc.pdf"
+        mock_doc.id = "test-id"
+
+        mock_parser = MagicMock()
+        mock_parser.parse = AsyncMock(return_value="# Markdown 内容")
+
+        with patch("app.document.factory.get_parser_with_fallback",
+                    return_value=(mock_parser, "docling")):
+            result = await _parse_document(mock_doc)
+
+        assert result == "# Markdown 内容"
+
+    @pytest.mark.asyncio
+    async def test_parse_document_fallback_to_legacy(self) -> None:
+        """Docling 返回空时降级到原有解析器。"""
+        from tasks.document_tasks import _parse_document
+
+        mock_doc = MagicMock()
+        mock_doc.content_text = None
+        mock_doc.doc_type = "pdf"
+        mock_doc.file_path = "/fake/doc.pdf"
+        mock_doc.id = "test-id"
+
+        mock_docling_parser = MagicMock()
+        mock_docling_parser.parse = AsyncMock(return_value="")  # Docling 返回空
+
+        mock_legacy_parser = MagicMock()
+        mock_legacy_parser.parse = AsyncMock(return_value="Legacy PDF 内容")
+
+        # _try_docling_parse 调用 get_parser_with_fallback → 返回 docling（空）
+        # _parse_pdf 调用 app.document.get_parser → 返回 legacy parser
+        with patch("app.document.factory.get_parser_with_fallback",
+                    return_value=(mock_docling_parser, "docling")), \
+             patch("app.document.get_parser", return_value=mock_legacy_parser):
+            result = await _parse_document(mock_doc)
+
+        assert result == "Legacy PDF 内容"
+
+    @pytest.mark.asyncio
+    async def test_parse_document_docling_not_available(self) -> None:
+        """Docling 不可用时直接走原有路径。"""
+        from tasks.document_tasks import _parse_document
+
+        mock_doc = MagicMock()
+        mock_doc.content_text = None
+        mock_doc.doc_type = "pdf"
+        mock_doc.file_path = "/fake/doc.pdf"
+        mock_doc.id = "test-id"
+
+        mock_parser = MagicMock()
+        mock_parser.parse = AsyncMock(return_value="PDF 内容")
+
+        # get_parser_with_fallback 返回 (None, "none") → 不走 Docling
+        with patch("app.document.factory.get_parser_with_fallback",
+                    return_value=(None, "none")), \
+             patch("app.document.get_parser", return_value=mock_parser):
+            result = await _parse_document(mock_doc)
+
+        assert result == "PDF 内容"
+
+    @pytest.mark.asyncio
+    async def test_parse_document_video_not_docling(self) -> None:
+        """视频类型不走 Docling，直接走视频管线。"""
+        from tasks.document_tasks import _parse_document
+
+        mock_doc = MagicMock()
+        mock_doc.content_text = None
+        mock_doc.doc_type = "mp4"
+        mock_doc.file_path = "/fake/video.mp4"
+        mock_doc.id = "test-id"
+
+        with patch("tasks.document_tasks._parse_video", new_callable=AsyncMock) as mock_video:
+            mock_video.return_value = "视频转写文本"
+            result = await _parse_document(mock_doc)
+
+        assert result == "视频转写文本"
+        mock_video.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_parse_document_doc_uses_legacy_fallback(self) -> None:
+        """旧格式 .doc 不走 Docling，返回降级提示。"""
+        from tasks.document_tasks import _parse_document
+
+        mock_doc = MagicMock()
+        mock_doc.content_text = None
+        mock_doc.doc_type = "doc"
+        mock_doc.file_path = "/fake/old.doc"
+        mock_doc.id = "test-id"
+
+        result = await _parse_document(mock_doc)
+
+        assert ".doc" in result
+        assert "请将文件另存为 .docx" in result
+
+    def test_extract_header_footer_empty(self) -> None:
+        """空页眉页脚返回空列表。"""
+        from app.document.docx_parser import DOCXParser
+
+        mock_header = MagicMock()
+        mock_header.is_linked_to_previous = False
+        mock_header.paragraphs = []
+
+        mock_footer = MagicMock()
+        mock_footer.is_linked_to_previous = False
+        mock_footer.paragraphs = []
+
+        mock_section = MagicMock()
+        mock_section.header = mock_header
+        mock_section.footer = mock_footer
+
+        mock_doc = MagicMock()
+        mock_doc.sections = [mock_section]
+
+        result = DOCXParser._extract_headers_footers(mock_doc)
+        assert len(result) == 0
+
+    def test_extract_header_footer_exception(self) -> None:
+        """异常时返回空列表。"""
+        from app.document.docx_parser import DOCXParser
+
+        mock_section = MagicMock()
+        type(mock_section).header = PropertyMock(side_effect=Exception("error"))
+
+        mock_doc = MagicMock()
+        mock_doc.sections = [mock_section]
+
+        result = DOCXParser._extract_headers_footers(mock_doc)
+        assert len(result) == 0

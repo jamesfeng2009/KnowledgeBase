@@ -97,6 +97,10 @@ class DOCXParser(DocumentParser):
             sections.extend(img_sections)
             image_count += img_count
 
+        # 提取页眉页脚
+        header_footer_sections = self._extract_headers_footers(docx_doc)
+        sections.extend(header_footer_sections)
+
         log.info(
             "docx.parsed",
             file_path=file_path,
@@ -138,6 +142,60 @@ class DOCXParser(DocumentParser):
         except Exception as exc:
             log.debug("docx.table_extract_failed", error=str(exc))
             return ""
+
+    @staticmethod
+    def _extract_headers_footers(docx_doc: Any) -> list[ParsedSection]:
+        """提取 DOCX 页眉页脚文本。
+
+        页眉页脚存储在独立的 section part 中，包含文档标题、
+        页码、公司信息等元数据，对 RAG 检索有补充价值。
+
+        Args:
+            docx_doc: python-docx Document 对象。
+
+        Returns:
+            页眉页脚的 ParsedSection 列表。无页眉页脚或提取失败时返回空列表。
+        """
+        sections: list[ParsedSection] = []
+
+        for section in docx_doc.sections:
+            # 提取页眉
+            try:
+                header = section.header
+                if header and not header.is_linked_to_previous:
+                    header_text = "\n".join(
+                        p.text.strip() for p in header.paragraphs if p.text.strip()
+                    )
+                    if header_text:
+                        sections.append(
+                            ParsedSection(
+                                kind="text",
+                                content=f"[页眉]\n{header_text}",
+                                page=9998,
+                            )
+                        )
+            except Exception as exc:
+                log.debug("docx.header_extract_failed", error=str(exc))
+
+            # 提取页脚
+            try:
+                footer = section.footer
+                if footer and not footer.is_linked_to_previous:
+                    footer_text = "\n".join(
+                        p.text.strip() for p in footer.paragraphs if p.text.strip()
+                    )
+                    if footer_text:
+                        sections.append(
+                            ParsedSection(
+                                kind="text",
+                                content=f"[页脚]\n{footer_text}",
+                                page=9999,
+                            )
+                        )
+            except Exception as exc:
+                log.debug("docx.footer_extract_failed", error=str(exc))
+
+        return sections
 
     @staticmethod
     def _rows_to_html(rows: list[list[str | None]]) -> str:

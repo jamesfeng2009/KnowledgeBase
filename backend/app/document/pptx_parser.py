@@ -81,6 +81,11 @@ class PPTXParser(DocumentParser):
                 sections.extend(img_sections)
                 image_count += img_count
 
+            # 提取演讲者备注
+            note_section = self._extract_notes(slide, slide_num)
+            if note_section:
+                sections.append(note_section)
+
         log.info(
             "pptx.parsed",
             file_path=file_path,
@@ -95,32 +100,63 @@ class PPTXParser(DocumentParser):
         """提取幻灯片文本，包装为 <h2> 标题块。
 
         尝试从 slide 的第一个标题占位符提取标题，找不到则用"幻灯片 N"。
+        递归遍历 GROUP 组合形状的子形状，提取组合内的文本框。
         """
         title = self._get_slide_title(slide) or f"幻灯片 {slide_num + 1}"
         text_parts: list[str] = [f"<h2>{title}</h2>"]
 
+        # 递归遍历所有形状（包括 GROUP 组合形状的子形状）
         for shape in slide.shapes:
-            # 跳过表格和图片，单独处理
-            if shape.has_table:
-                continue
-            try:
-                shape_type = shape.shape_type
-            except Exception:
-                shape_type = None
-            # PICTURE = 13
-            if shape_type is not None and hasattr(shape_type, "value") and shape_type.value == 13:
-                continue
-
-            if shape.has_text_frame:
-                text = shape.text_frame.text.strip()
-                if text:
-                    text_parts.append(text)
+            self._collect_shape_text(shape, text_parts)
 
         content = "\n".join(text_parts).strip()
         if not content:
             return []
 
         return [ParsedSection(kind="text", content=content, page=slide_num)]
+
+    def _collect_shape_text(
+        self, shape: Any, text_parts: list[str], depth: int = 0
+    ) -> None:
+        """递归收集形状文本 — 处理 GROUP 组合形状。
+
+        GROUP 形状本身没有 text_frame，但其子形状可能有。
+        递归遍历子形状提取文本，同时跳过表格和图片（由专用方法处理）。
+
+        Args:
+            shape: pptx Shape 对象。
+            text_parts: 文本收集列表（可变引用）。
+            depth: 递归深度（防止无限循环，上限 5 层）。
+        """
+        if depth > 5:
+            return
+
+        # 跳过表格（由 _extract_tables 处理）
+        if shape.has_table:
+            return
+
+        # 检查是否为图片（PICTURE = 13）
+        try:
+            shape_type = shape.shape_type
+        except Exception:
+            shape_type = None
+        if shape_type is not None and hasattr(shape_type, "value") and shape_type.value == 13:
+            return
+
+        # 检查是否为 GROUP 形状（GROUP = 6）
+        if shape_type is not None and hasattr(shape_type, "value") and shape_type.value == 6:
+            try:
+                for child_shape in shape.shapes:
+                    self._collect_shape_text(child_shape, text_parts, depth + 1)
+            except Exception as exc:
+                log.debug("pptx.group_traverse_failed", slide=depth, error=str(exc))
+            return
+
+        # 普通形状 — 提取文本
+        if shape.has_text_frame:
+            text = shape.text_frame.text.strip()
+            if text:
+                text_parts.append(text)
 
     @staticmethod
     def _get_slide_title(slide: Any) -> str:
@@ -140,6 +176,42 @@ class PPTXParser(DocumentParser):
             pass
 
         return ""
+
+    @staticmethod
+    def _extract_notes(slide: Any, slide_num: int) -> ParsedSection | None:
+        """提取幻灯片的演讲者备注。
+
+        备注存储在 slide.notes_slide.notes_text_frame 中，
+        包含演讲者补充说明，对 RAG 检索有较高价值。
+
+        Args:
+            slide: pptx Slide 对象。
+            slide_num: 幻灯片编号。
+
+        Returns:
+            备注的 ParsedSection，无备注时返回 None。
+        """
+        try:
+            # has_notes_slide 在某些版本中不可用，用 try/except 保护
+            if not slide.has_notes_slide:
+                return None
+        except Exception:
+            pass
+
+        try:
+            notes_slide = slide.notes_slide
+            notes_text = notes_slide.notes_text_frame.text.strip()
+            if not notes_text:
+                return None
+
+            return ParsedSection(
+                kind="text",
+                content=f"[演讲者备注]\n{notes_text}",
+                page=slide_num,
+            )
+        except Exception as exc:
+            log.debug("pptx.notes_extract_failed", slide=slide_num, error=str(exc))
+            return None
 
     def _extract_tables(self, slide: Any, slide_num: int) -> list[ParsedSection]:
         """提取幻灯片中的表格，转为 HTML <table>。"""

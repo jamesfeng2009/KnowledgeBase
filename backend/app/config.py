@@ -99,6 +99,9 @@ class Settings(BaseSettings):
     # PDF 图片提取 + VLM 描述
     PDF_IMAGE_EXTRACTION_ENABLED: bool = True
     PDF_IMAGE_MAX_PER_DOC: int = 50
+    # PDF 扫描页 OCR — get_text() 返回空时，页面渲染为图片调用 VLM 提取文字
+    PDF_SCAN_OCR_ENABLED: bool = True
+    PDF_SCAN_OCR_MAX_PAGES: int = 20  # 单个 PDF 最大 OCR 页数（防止大量扫描页打满 VLM）
     # PPTX 图片提取 + VLM 描述
     PPTX_IMAGE_EXTRACTION_ENABLED: bool = True
     PPTX_IMAGE_MAX_PER_DOC: int = 50
@@ -106,6 +109,21 @@ class Settings(BaseSettings):
     DOCX_TABLE_EXTRACTION_ENABLED: bool = True
     DOCX_IMAGE_EXTRACTION_ENABLED: bool = True
     DOCX_IMAGE_MAX_PER_DOC: int = 50
+    # XLSX 电子表格解析 — openpyxl 读取，每 sheet 转 HTML 表格
+    XLSX_TABLE_EXTRACTION_ENABLED: bool = True
+    XLSX_MAX_ROWS_PER_SHEET: int = 500  # 每个 sheet 最大提取行数
+    XLSX_MAX_SHEETS: int = 20  # 单个文件最大提取 sheet 数
+
+    # === 独立音频解析 ===
+    # 音频文件（mp3/wav/m4a 等）通过 ASR 转写为文本，复用视频 RAG 的分块管线
+    AUDIO_ASR_ENABLED: bool = True
+
+    # === Docling 统一文档解析（IBM Granite-Docling-258M，MIT 许可证）===
+    # 启用后优先使用 Docling 解析 PDF/DOCX/PPTX/XLSX/HTML/图片/音频
+    # Docling 不可用时自动降级到原有解析器（pymupdf/python-docx/openpyxl 等）
+    DOCLING_ENABLED: bool = True
+    # VLM 图片描述增强 — Docling 提取图片位置后用 VLM 生成描述注入 Markdown
+    DOCLING_VLM_IMAGE_ENHANCE: bool = False
 
     # === API 限流 ===
     RATE_LIMIT_ENABLED: bool = True

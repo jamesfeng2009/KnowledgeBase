@@ -42,7 +42,7 @@
 | **VLM** | Anthropic Claude Vision / vLLM (Pixtral) | SaaS / 私有双部署模式 |
 | **ASR** | OpenAI Whisper API / Faster-Whisper (私有) | 语音转写，视频 RAG |
 | **视频处理** | ffmpeg | 音轨提取 + 关键帧抽取 |
-| **文档解析** | pymupdf + python-pptx + python-docx | PDF/PPT/DOCX 表格→HTML / 图片 VLM 描述 |
+| **文档解析** | Docling (IBM Granite-Docling-258M) + pymupdf + python-pptx + python-docx + openpyxl | Docling 统一解析 PDF/DOCX/PPTX/XLSX/HTML/图片/音频 → Markdown，降级到原有解析器 |
 | **限流** | 自研令牌桶中间件 | 按客户端（API Key/IP）限流，突发 + 持续控制 |
 | **协同服务** | Node.js + Yjs + WebSocket | CRDT 实时协同编辑 |
 | **反向代理** | Caddy | 自动 HTTPS + HTTP/3 |
@@ -73,14 +73,21 @@ EnterpriseKnowledge/
 │   │   ├── asr/                      # ASR 语音转写（Whisper/FunASR）
 │   │   ├── vlm/                      # 视觉语言模型
 │   │   ├── video/                    # 视频处理（ffmpeg 音轨提取 + 关键帧抽取）
-│   │   ├── document/                 # 文档解析器（PDF/PPT/DOCX 表格+图片 VLM）
+│   │   ├── document/                 # 文档解析器
+│   │   │   ├── docling_parser.py     # Docling 统一解析（primary，MIT，CPU 可用）
+│   │   │   ├── pdf_parser.py         # PDF 解析（fallback，pymupdf + 表格 + VLM + 扫描页 OCR）
+│   │   │   ├── docx_parser.py        # DOCX 解析（fallback，python-docx + 表格 + 页眉页脚）
+│   │   │   ├── pptx_parser.py        # PPTX 解析（fallback，python-pptx + 组合形状递归 + 备注）
+│   │   │   ├── xlsx_parser.py        # XLSX 解析（fallback，openpyxl + sheet→HTML）
+│   │   │   ├── factory.py            # 解析器工厂（Docling 优先 → 原有降级）
+│   │   │   └── base.py              # 解析器基类
 │   │   ├── eval/                     # 离线评测系统（数据集+Runner+回归基线+CLI）
 │   │   ├── config.py                 # 配置管理
 │   │   ├── database.py               # 数据库会话
 │   │   ├── deps.py                   # 依赖注入
 │   │   └── main.py                   # FastAPI 入口
 │   ├── tasks/                        # Celery 异步任务
-│   ├── tests/                        # 测试（657 项）
+│   ├── tests/                        # 测试（762 项）
 │   ├── celery_app.py                 # Celery 入口
 │   └── requirements.txt
 ├── collab-service/                   # Yjs 协作服务（Node.js + TypeScript）
@@ -314,11 +321,18 @@ flowchart TD
 
 ## 四级语义分块策略
 
-`SemanticChunker` 采用内容类型路由 + 四级优先级降级策略，保证总能产出有效分块。每个 `Chunk` 携带 `title_path`（标题路径锚点）、`content_type`（内容类型标签）、`chunk_strategy`（实际使用策略）等元数据。
+`SemanticChunker` 采用**内容格式智能检测** + 内容类型路由 + 四级优先级降级策略，保证总能产出有效分块。每个 `Chunk` 携带 `title_path`（标题路径锚点）、`content_type`（内容类型标签）、`chunk_strategy`（实际使用策略）等元数据。
 
 ```mermaid
 flowchart TD
-    INPUT[原始文档文本] --> ROUTE{content_type<br/>路由}
+    INPUT[原始文档文本] --> DETECT{内容格式检测<br/>_is_markdown}
+    DETECT -->|含 # 标题 / | 表格| MD[Markdown 格式<br/>Docling 输出]
+    DETECT -->|含 <h> 标签| HTML[HTML 格式<br/>原有解析器输出]
+    DETECT -->|纯文本| PLAIN[无结构标记<br/>降级 token 分块]
+
+    MD --> ROUTE{content_type<br/>路由}
+    HTML --> ROUTE
+    PLAIN --> SEMANTIC_CHECK
 
     ROUTE -->|faq| QA[Q&A 对分块<br/>一个问答对 = 一个 chunk]
     ROUTE -->|tutorial/specification/report| STRUCT
@@ -328,7 +342,7 @@ flowchart TD
     QA_SPLIT --> QA_CHUNK[超长 Q&A 按 1200 tok 切分]
     QA_CHUNK --> OUTPUT
 
-    STRUCT[结构化分块<br/>按 Markdown 标题 / HTML 标签分割]
+    STRUCT[结构化分块<br/>按 Markdown # 标题 / HTML <h> 标签分割]
     STRUCT --> TITLE_PATH[提取标题路径锚点<br/>如 Redis > 集群 > 哈希槽]
     TITLE_PATH --> OUTPUT
 
@@ -344,15 +358,27 @@ flowchart TD
     OUTPUT[输出 Chunk 列表<br/>含 title_path / content_type / chunk_strategy]
 ```
 
+### 内容格式智能检测
+
+`_structural_split()` 不再依赖 `doc_type` 路由，而是通过 `_is_markdown()` 检测实际内容格式：
+
+| 检测条件 | 正则 | 匹配示例 |
+|----------|------|----------|
+| Markdown 标题 | `^#{1,3}\s+` | `# 标题` / `## 章节` / `### 小节` |
+| Markdown 表格 | `^\|.+\|\s*$` | `\| 列1 \| 列2 \|` |
+| 表格分隔行 | `^\|[\s\-:|]+\|\s*$` | `\|---\|---\|` |
+
+这确保 Docling 输出的 Markdown（`doc_type="pdf"` 但内容是 `# 标题`）和原有解析器输出的 HTML（`doc_type="pdf"` 但内容是 `<h2>标题</h2>`）都能正确路由到对应的分块策略。
+
 ### 分块策略优先级
 
 | 优先级 | 策略 | 触发条件 | 特点 |
 |--------|------|----------|------|
 | P0 | Q&A 对分块 | `content_type="faq"` | 问答对不被拆散 |
-| P1 | 结构化分块 | tutorial/specification/report | 标题路径锚点增强语义 |
+| P1 | 结构化分块 | `_is_markdown()` 检测到 Markdown 标记或 HTML `<h>` 标签 | 标题路径锚点增强语义，不依赖 doc_type |
 | P2 | TextTiling 语义分块 | plain / auto 兜底 | 话题边界自动识别 |
 | P3 | 父子索引 | 语义分块后自动构建 | 小块检索 + 父块上下文 |
-| 视频 | 视频语义分块 | doc_type 为视频类型 | 时间窗口（120s）合并 ASR 片段 + 关键帧 VLM 描述对齐，`title_path` 存时间戳 |
+| 视频/音频 | 视频语义分块 | doc_type 为视频/音频类型 | 时间窗口（120s）合并 ASR 片段 + 关键帧 VLM 描述对齐，`title_path` 存时间戳 |
 | 兜底 | 固定长度 | 以上均无效 | 512 tokens 段落边界断开 |
 
 ### 视频语义分块（`chunk_video_transcript`）
@@ -1038,7 +1064,7 @@ graph TB
 
 ## 文档处理流水线
 
-Celery 异步任务驱动文档处理流水线，从文档上传到索引构建全自动，支持 PDF/DOCX/HTML/Markdown/视频 多格式。
+Celery 异步任务驱动文档处理流水线，从文档上传到索引构建全自动，支持 PDF/DOCX/PPTX/XLSX/HTML/Markdown/图片/视频/音频 多格式。Docling 统一解析器优先处理（版面分析 + 表格 + 公式 + OCR），降级到原有专用解析器。
 
 ```mermaid
 flowchart LR
@@ -1047,13 +1073,19 @@ flowchart LR
     CELERY --> PARSE[1. 文档解析<br/>延迟导入第三方库]
     PARSE -->|PDF| PYMUPDF[pymupdf 文本<br/>+ find_tables → HTML<br/>+ 图片 VLM 描述]
     PARSE -->|PPTX| PPTX[python-pptx 文本<br/>+ 表格 → HTML<br/>+ 内嵌图片 VLM]
-    PARSE -->|DOCX| DOCX[python-docx 文本<br/>+ 表格 → HTML<br/>+ 内嵌图片 VLM]
+    PARSE -->|PDF / DOCX / PPTX<br/>XLSX / HTML / 图片 / 音频| DOCLING[Docling 统一解析<br/>Granite-Docling-258M<br/>版面分析 + 表格 + 公式 + OCR<br/>→ Markdown]
+    PARSE -->|Docling 不可用| PYMUPDF[pymupdf<br/>表格 → HTML<br/>图片 VLM 描述<br/>扫描页 OCR]
+    PARSE -->|Docling 不可用| PPTX[python-pptx<br/>表格 → HTML<br/>组合形状递归<br/>备注提取]
+    PARSE -->|Docling 不可用| DOCX[python-docx<br/>表格 → HTML<br/>图片 VLM 描述<br/>页眉页脚]
+    PARSE -->|Docling 不可用| XLSX[openpyxl<br/>每 sheet → HTML 表格]
     PARSE -->|HTML| REGEX[正则去标签]
     PARSE -->|MD/TXT| DIRECT[直接返回]
     PARSE -->|视频| VIDEO[ffmpeg 提取音轨<br/>→ ASR 转写<br/>→ 关键帧 VLM 描述]
+    PARSE -->|音频| AUDIO[ffmpeg 转 WAV<br/>→ ASR 转写<br/>复用视频分块管线]
 
-    PYMUPDF & PPTX & DOCX & REGEX & DIRECT --> CHUNK[2. 四级语义分块<br/>SemanticChunker]
-    VIDEO --> VCHUNK[2v. 视频语义分块<br/>chunk_video_transcript<br/>时间窗口合并 + 关键帧对齐]
+    DOCLING --> CHUNK[2. 四级语义分块<br/>SemanticChunker]
+    PYMUPDF & PPTX & DOCX & XLSX & REGEX & DIRECT --> CHUNK
+    VIDEO & AUDIO --> VCHUNK[2v. 视频/音频语义分块<br/>chunk_video_transcript<br/>时间窗口合并 + 关键帧对齐]
 
     CHUNK --> QA_CHECK{content_type<br/>路由}
     QA_CHECK -->|faq| QA_SPLIT[Q&A 对分块]
@@ -1079,9 +1111,9 @@ flowchart LR
 
 ### 设计要点
 
-- **延迟导入**：pymupdf / python-docx / python-pptx / opensearchpy / pymilvus / ffmpeg / ASR / VLM 延迟导入，未安装时优雅降级
+- **延迟导入**：docling / pymupdf / python-docx / python-pptx / opensearchpy / pymilvus / ffmpeg / ASR / VLM 延迟导入，未安装时优雅降级
 - **向量存储适配器**：通过 `VectorStoreBase` 抽象层，按 `VECTOR_STORE` 配置切换 OpenSearch k-NN（默认）或 Milvus，业务代码零改动
-- **文档解析增强**：PDF 通过 `app/document/` 模块解析——表格用 `pymupdf find_tables()` 转为 HTML `<table>` 保留结构，内嵌图片用 VLM 生成 `[图片描述: ...]` 内联标注；PPTX 用 `python-pptx` 按 slide 提取文本 + 表格 + 内嵌图片 VLM；DOCX 用 `python-docx` 遍历 body 元素保持段落/表格原始顺序，内嵌图片通过 `related_parts` 提取并 VLM 描述；所有 VLM 调用使用 `Semaphore(3)` + `asyncio.gather` 并发，返回统一的"增强文本"格式（纯文本 + HTML 表格 + 图片描述），chunker 零改动
+- **文档解析三级降级**：Docling 统一解析器（primary）→ 原有专用解析器（fallback）→ VLM 整页 OCR（兜底）。Docling 可用时统一输出 Markdown（版面分析 + 表格 + 公式 + OCR），不可用时降级到 pymupdf/python-docx/python-pptx/openpyxl 输出增强文本（纯文本 + HTML 表格 + 图片 VLM 描述）。chunker 通过 `_is_markdown()` 检测内容格式，自动选择 Markdown 或 HTML 分块策略，不依赖 doc_type
 - **关键帧 VLM 并发**：视频关键帧描述使用 `Semaphore(3)` + `asyncio.gather` 并发调用 VLM，替代串行逐帧处理，多关键帧场景延迟降低约 60%
 - **Chunk 元数据**：每个 Chunk 携带 `title_path`、`content_type`、`chunk_strategy`、`parent_id`
 - **视频 RAG 流程**：视频文档走专用管线 — ffmpeg 提取 16kHz mono 音轨 → ASR 转写为带时间戳片段 → ffmpeg 场景切换检测抽取关键帧 → VLM 逐帧描述 → `chunk_video_transcript` 按时间窗口（120s）合并转写片段并对齐关键帧描述，`title_path` 存时间戳标签（如 `00:00-02:15`）
@@ -1279,7 +1311,7 @@ docker compose --profile private up -d
 ```bash
 cd backend
 
-# 运行全部测试（657 项）
+# 运行全部测试（762 项）
 python -m pytest --tb=short -q
 
 # 运行特定模块测试
@@ -1292,7 +1324,7 @@ python -m pytest tests/test_vector_store.py -v            # 向量存储适配�
 python -m pytest tests/test_audit_workflow.py -v          # 审核流程串联
 python -m pytest tests/test_tool_guard.py -v              # MCP 工具调用守卫
 python -m pytest tests/test_video_rag.py -v               # 视频 RAG（ASR + 关键帧 VLM 并发）
-python -m pytest tests/test_document_parser.py -v         # 文档解析（PDF/PPT/DOCX 表格+图片 VLM）
+python -m pytest tests/test_document_parser.py -v         # 文档解析（Docling 统一解析 + PDF/PPT/DOCX/XLSX 表格+图片 VLM + 扫描页 OCR + 独立音频 ASR + 旧格式兜底）
 python -m pytest tests/test_quality_guard.py -v           # RAG 质量守卫（检索+生成双层评估）
 python -m pytest tests/test_rate_limiter.py -v            # API 限流（令牌桶+客户端隔离+FastAPI 集成）
 python -m pytest tests/test_eval.py -v                    # 离线评测（数据集+Recall/MRR/NDCG+回归基线+CLI）
@@ -1302,7 +1334,7 @@ python -m pytest tests/test_eval.py -v                    # 离线评测（数�
 
 | 测试文件 | 测试数 | 覆盖范围 |
 |----------|--------|----------|
-| `test_chunk_optimization.py` | 32 | Q&A 分块、内容类型路由、标题路径、Context Cliff |
+| `test_chunk_optimization.py` | 45 | Q&A 分块、内容类型路由、标题路径、Context Cliff、格式智能检测（Docling Markdown vs Legacy HTML） |
 | `test_token_optimization.py` | 27 | CacheAligner、Prompt Caching、稳定 System Prompt、增量上下文 |
 | `test_p1_token_optimization.py` | 32 | 跨轮去重、Reflect 摘要、L1 注入、历史窗口化 |
 | `test_p2_token_optimization.py` | 35 | ContextBudgetManager、三段式压缩、引擎集成 |
@@ -1311,12 +1343,12 @@ python -m pytest tests/test_eval.py -v                    # 离线评测（数�
 | `test_audit_workflow.py` | 19 | 文档审核流程串联、密级路由、AuditService.approve 触发发布 |
 | `test_tool_guard.py` | 30 | DangerousToolGuard 守卫拦截、确认管理、engine 集成 |
 | `test_video_rag.py` | 34 | ASR Provider 工厂、视频处理器、视频转写分块、document_tasks 集成、关键帧 VLM 并发 |
-| `test_document_parser.py` | 55 | PDF 表格/图片 VLM、PPTX 解析、DOCX 解析、factory 路由、document_tasks 集成、配置项 |
+| `test_document_parser.py` | 147 | Docling 统一解析、PDF 表格/图片 VLM/扫描页 OCR、PPTX 解析/组合形状递归/备注、DOCX 解析/页眉页脚、XLSX 解析、独立音频 ASR、旧格式兜底、factory 路由、document_tasks 集成、配置项 |
 | `test_quality_guard.py` | 33 | 检索质量检查、重试决策、生成质量评估、低置信度标记、engine 集成 |
 | `test_rate_limiter.py` | 16 | 令牌桶消费/补充、客户端隔离、API Key/IP 标识、429 响应、健康检查豁免 |
 | `test_eval.py` | 55 | 数据集加载、Recall@K/MRR/NDCG 计算、Runner 集成、回归检测、DB 持久化、CLI 退出码 |
 | 其他测试 | 215 | API 端点、服务层、模型层、记忆引擎等 |
-| **合计** | **657** | **全部通过，零回归** |
+| **合计** | **762** | **全部通过，零回归** |
 
 ---
 

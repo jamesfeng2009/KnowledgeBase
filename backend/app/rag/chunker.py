@@ -172,7 +172,7 @@ class SemanticChunker:
                 return chunks
             # QA 分块未产出有效结果，降级到兜底链
 
-        if ct in ("tutorial", "specification", "report") and doc_type in ("md", "html"):
+        if ct in ("tutorial", "specification", "report"):
             chunks = self._structural_split(content, doc_id, doc_type)
             if self._is_valid(chunks):
                 log.debug("chunker.structural_by_type", count=len(chunks), content_type=ct)
@@ -187,12 +187,12 @@ class SemanticChunker:
             # 语义分块无效，降级到兜底
 
         # auto 模式 — 四级兜底链
-        # 1. 结构化分块：Markdown / HTML
-        if doc_type in ("md", "html"):
-            chunks = self._structural_split(content, doc_id, doc_type)
-            if self._is_valid(chunks):
-                log.debug("chunker.structural", count=len(chunks), doc_type=doc_type)
-                return chunks
+        # 1. 结构化分块：检测内容格式（Markdown # 标题 / HTML <h> 标签）
+        #    不再依赖 doc_type — Docling 输出 Markdown 但 doc_type 可能是 pdf/docx
+        chunks = self._structural_split(content, doc_id, doc_type)
+        if self._is_valid(chunks):
+            log.debug("chunker.structural", count=len(chunks), doc_type=doc_type)
+            return chunks
 
         # 2. 语义分块：TextTiling 相似度
         chunks = self._semantic_split(content, doc_id)
@@ -524,10 +524,42 @@ class SemanticChunker:
         doc_id: str,
         doc_type: str,
     ) -> list[Chunk]:
-        """按 Markdown 标题或 HTML 标签分割。"""
-        if doc_type == "md":
+        """按内容格式智能分割 — 检测 Markdown 或 HTML，不依赖 doc_type。
+
+        Docling 输出 Markdown（# 标题 / | 表格），原有解析器输出 HTML
+        （<h2> 标签 / <table>），需要按实际内容格式选择分块策略，
+        否则 Docling 解析的 PDF/DOCX 会因 doc_type != "md" 走 _split_html，
+        找不到 HTML 标签导致结构化分块失效。
+        """
+        if self._is_markdown(content):
             return self._split_markdown(content, doc_id)
         return self._split_html(content, doc_id)
+
+    @staticmethod
+    def _is_markdown(content: str) -> bool:
+        """检测内容是否为 Markdown 格式。
+
+        判断依据（满足任一即视为 Markdown）：
+            - 行首 1~3 个 # 标题（# / ## / ###）
+            - Markdown 表格语法（| 列1 | 列2 |）
+            - Markdown 列表语法（- / * / 1.）
+
+        Args:
+            content: 待检测的文本内容。
+
+        Returns:
+            True 如果内容包含 Markdown 结构标记。
+        """
+        # Markdown 标题：# / ## / ###
+        if re.search(r"^#{1,3}\s+", content, re.MULTILINE):
+            return True
+        # Markdown 表格：| header | header |
+        if re.search(r"^\|.+\|\s*$", content, re.MULTILINE):
+            return True
+        # Markdown 表格分隔行：|---|---|
+        if re.search(r"^\|[\s\-:|]+\|\s*$", content, re.MULTILINE):
+            return True
+        return False
 
     @staticmethod
     def _split_markdown(content: str, doc_id: str) -> list[Chunk]:

@@ -162,10 +162,10 @@ async def _process_document_async(doc_id: str) -> dict[str, Any]:
             doc.content_text = parsed_text
             await session.flush()
 
-        # 3. 分块 — 视频文档走专用分块，其他走 SemanticChunker 四级策略
+        # 3. 分块 — 视频/音频文档走专用分块，其他走 SemanticChunker 四级策略
         doc_type = doc.doc_type or "md"
-        if doc_type in _VIDEO_TYPES:
-            # 视频文档：ASR 转写片段 + 关键帧 VLM 描述 → 视频语义分块
+        if doc_type in _VIDEO_TYPES or doc_type in _AUDIO_TYPES:
+            # 视频/音频文档：ASR 转写片段 + 关键帧 VLM 描述 → 语义分块
             chunk_objects = await _chunk_video_document(doc, parsed_text)
         else:
             chunk_objects = _chunk_document(parsed_text, doc_type)
@@ -235,11 +235,13 @@ async def _process_document_async(doc_id: str) -> dict[str, Any]:
 
 
 async def _parse_document(doc: Any) -> str:
-    """解析文档内容 — 根据文档类型选择解析器。
+    """解析文档内容 — 优先 Docling 统一解析，降级到原有专用解析器。
 
-    使用延迟导入，第三方库未安装时优雅降级为直接返回 content_text。
-    PDF / PPTX 走 app/document/ 增强解析器（表格 + 图片 VLM），
-    其他格式走原有解析逻辑。
+    解析优先级：
+        1. Docling 统一解析器（PDF/DOCX/PPTX/XLSX/HTML/图片/音频）
+        2. 原有专用解析器（pymupdf/python-docx/python-pptx/openpyxl）
+        3. 旧格式兜底提示（.doc/.ppt）
+        4. 视频专用管线（ffmpeg→ASR + 关键帧 VLM，Docling 不支持视频）
 
     Args:
         doc: Document ORM 实例。
@@ -251,24 +253,123 @@ async def _parse_document(doc: Any) -> str:
     if doc.content_text:
         return doc.content_text
 
-    # 根据文档类型解析
     doc_type = doc.doc_type or "md"
 
+    # 视频不走 Docling（Docling 不支持视频），直接走专用管线
+    if doc_type in _VIDEO_TYPES:
+        return await _parse_video(doc)
+
+    # .doc/.ppt 旧格式 — Docling 也无法解析，返回降级提示
+    if doc_type in ("doc", "ppt"):
+        return _legacy_format_fallback(doc, doc_type)
+
+    # 1. 优先尝试 Docling 统一解析
+    docling_result = await _try_docling_parse(doc, doc_type)
+    if docling_result is not None:
+        return docling_result
+
+    # 2. 降级到原有专用解析器
     if doc_type == "pdf":
         return await _parse_pdf(doc)
     elif doc_type == "docx":
         return await _parse_docx(doc)
+    elif doc_type in ("xlsx", "xls"):
+        return await _parse_xlsx(doc)
     elif doc_type == "html":
         return _parse_html(doc)
-    elif doc_type in ("pptx", "ppt"):
+    elif doc_type == "pptx":
         return await _parse_pptx(doc)
-    elif doc_type in ("video", "mp4", "avi", "mov", "mkv"):
-        # 视频文档走专用处理流程（ASR 转写 + 关键帧 VLM）
-        # 返回转写文本供 content_text 存储；视频分块在 _chunk_document 中处理
-        return await _parse_video(doc)
+    elif doc_type in _AUDIO_TYPES:
+        return await _parse_audio(doc)
     else:
         # Markdown 或纯文本，直接返回
         return doc.content_html or doc.content_text or ""
+
+
+async def _try_docling_parse(doc: Any, doc_type: str) -> str | None:
+    """尝试用 Docling 解析文档 — 成功返回 Markdown，不适用返回 None。
+
+    Docling 可用且支持该类型时，调用 DoclingParser.parse()。
+    解析结果非空则返回；解析失败或 Docling 不可用则返回 None，
+    由调用方降级到原有解析器。
+
+    Args:
+        doc: Document ORM 实例。
+        doc_type: 文档类型。
+
+    Returns:
+        Markdown 文本（成功）或 None（需降级）。
+    """
+    if not doc.file_path:
+        return None
+
+    try:
+        from app.document.factory import get_parser_with_fallback
+
+        parser, parser_type = get_parser_with_fallback(doc_type)
+        if parser is None or parser_type != "docling":
+            return None
+
+        result = await parser.parse(doc.file_path)
+        if result and result.strip():
+            logger.info(
+                "document.docling_parsed",
+                doc_id=str(getattr(doc, "id", "")),
+                doc_type=doc_type,
+                content_len=len(result),
+            )
+            return result
+
+        # Docling 返回空 — 降级
+        logger.info("document.docling_empty_fallback", doc_type=doc_type)
+        return None
+
+    except Exception as exc:
+        logger.warning("document.docling_failed_fallback", doc_type=doc_type, error=str(exc))
+        return None
+
+
+# 旧格式兜底提示文本
+_LEGACY_FORMAT_HINTS: dict[str, str] = {
+    "doc": (
+        "[格式提示] 此文件为 .doc 旧格式（Word 97-2003），"
+        "当前解析器仅支持 .docx（OOXML）格式。"
+        "请将文件另存为 .docx 格式后重新上传。"
+    ),
+    "ppt": (
+        "[格式提示] 此文件为 .ppt 旧格式（PowerPoint 97-2003），"
+        "当前解析器仅支持 .pptx（OOXML）格式。"
+        "请将文件另存为 .pptx 格式后重新上传。"
+    ),
+}
+
+
+def _legacy_format_fallback(doc: Any, fmt: str) -> str:
+    """旧格式兜底 — 返回提示文本而非空字符串。
+
+    python-docx / python-pptx 只支持 OOXML 格式，
+    .doc / .ppt 旧二进制格式无法解析。
+
+    Args:
+        doc: Document ORM 实例。
+        fmt: 旧格式标识（"doc" 或 "ppt"）。
+
+    Returns:
+        降级提示文本。如果 doc 已有 content_text 则优先返回。
+    """
+    hint = _LEGACY_FORMAT_HINTS.get(fmt, "")
+    logger.warning(
+        "document.legacy_format",
+        fmt=fmt,
+        doc_id=str(getattr(doc, "id", "")),
+        file_path=getattr(doc, "file_path", ""),
+    )
+
+    # 如果已有 content_text（可能由前端预提取），拼接到提示后
+    existing = doc.content_text or ""
+    if existing and existing.strip():
+        return f"{existing}\n\n{hint}"
+    return hint
 
 
 async def _parse_pdf(doc: Any) -> str:
@@ -377,6 +478,36 @@ async def _parse_docx(doc: Any) -> str:
         return doc.content_text or ""
 
 
+async def _parse_xlsx(doc: Any) -> str:
+    """解析 XLSX 文档 — 使用增强解析器（每 sheet 转 HTML 表格）。
+
+    增强解析器（app/document/xlsx_parser.py）支持：
+    - 每个 sheet 输出为 <h2>sheet 名</h2> 标题 + HTML <table>；
+    - 第一行视为表头，其余为数据行；
+    - 配置控制行数/sheet 数量上限。
+
+    openpyxl 未安装或增强解析器不可用时优雅降级为 content_text。
+    """
+    if not doc.file_path:
+        return ""
+
+    # 优先尝试增强解析器
+    try:
+        from app.document import get_parser
+
+        parser = get_parser("xlsx")
+        if parser is not None:
+            result = await parser.parse(doc.file_path)
+            if result and result.strip():
+                return result
+    except Exception as exc:
+        logger.warning("xlsx.enhanced_parse_failed", error=str(exc))
+
+    # 降级：返回 content_text
+    logger.warning("xlsx.parse_skipped", reason="openpyxl not installed or parse failed")
+    return doc.content_text or ""
+
+
 def _parse_html(doc: Any) -> str:
     """解析 HTML 文档 — 去除标签提取纯文本。"""
     try:
@@ -400,6 +531,9 @@ def _parse_html(doc: Any) -> str:
 
 # 视频文件后缀集合
 _VIDEO_TYPES: set[str] = {"video", "mp4", "avi", "mov", "mkv"}
+
+# 独立音频文件后缀集合 — 通过 ASR 转写为文本，复用视频分块管线
+_AUDIO_TYPES: set[str] = {"audio", "mp3", "wav", "m4a", "aac", "flac", "ogg", "wma"}
 
 
 async def _parse_video(doc: Any) -> str:
@@ -470,6 +604,84 @@ async def _parse_video(doc: Any) -> str:
         return doc.content_text or ""
     except Exception as exc:
         logger.warning("video.parse_error", error=str(exc))
+        return doc.content_text or ""
+
+
+async def _parse_audio(doc: Any) -> str:
+    """解析独立音频文档 — 转换为 WAV → ASR 转写 → 返回纯文本。
+
+    音频处理流程：
+        1. ffmpeg 将音频转换为 16kHz mono WAV（ASR 标准输入格式）；
+        2. ASR 引擎转写为带时间戳的文本段；
+        3. 合并转写文本返回（供 content_text 存储）。
+
+    音频分块复用 _chunk_video_document（按时间窗口合并 ASR 片段），
+    无关键帧提取步骤（音频无视频流，关键帧提取自动跳过）。
+
+    延迟导入所有外部依赖，优雅降级。
+
+    Args:
+        doc: Document ORM 实例（file_path 指向音频文件）。
+
+    Returns:
+        ASR 转写的纯文本，失败时返回 content_text 或空字符串。
+    """
+    if not doc.file_path:
+        logger.warning("audio.no_file_path", doc_id=str(getattr(doc, "id", "")))
+        return doc.content_text or ""
+
+    # 检查配置开关
+    from app.config import get_settings
+
+    settings = get_settings()
+    if not getattr(settings, "AUDIO_ASR_ENABLED", True):
+        logger.info("audio.asr_disabled_by_config")
+        return doc.content_text or ""
+
+    try:
+        from app.video import get_video_processor
+        from app.asr import get_asr_provider
+
+        # 1. 转换为 WAV（VideoProcessor.extract_audio 对音频输入同样适用）
+        processor = get_video_processor()
+        wav_path = await processor.extract_audio(doc.file_path)
+        if not wav_path:
+            logger.warning("audio.convert_failed", file_path=doc.file_path)
+            return doc.content_text or ""
+
+        # 2. ASR 转写
+        try:
+            asr = get_asr_provider()
+            segments = await asr.transcribe(wav_path, language="zh")
+        except Exception as exc:
+            logger.warning("audio.asr_failed", error=str(exc))
+            segments = []
+        finally:
+            # 清理临时 WAV 文件
+            import os
+            if os.path.exists(wav_path):
+                os.remove(wav_path)
+
+        if not segments:
+            logger.warning("audio.no_transcript", doc_id=str(getattr(doc, "id", "")))
+            return doc.content_text or ""
+
+        # 3. 合并转写文本
+        text_parts = [seg.text for seg in segments if seg.text.strip()]
+        transcript_text = "\n".join(text_parts)
+
+        logger.info(
+            "audio.transcribed",
+            segments=len(segments),
+            text_len=len(transcript_text),
+        )
+        return transcript_text
+
+    except ImportError:
+        logger.warning("audio.deps_not_installed")
+        return doc.content_text or ""
+    except Exception as exc:
+        logger.warning("audio.parse_error", error=str(exc))
         return doc.content_text or ""
 
 
@@ -565,12 +777,12 @@ async def _extract_keyframe_descriptions(
 
 
 async def _chunk_video_document(doc: Any, transcript_text: str) -> list[Chunk]:
-    """视频文档专用分块 — ASR 转写片段 + 关键帧 VLM 描述 → 语义分块。
+    """视频/音频文档专用分块 — ASR 转写片段 + 关键帧 VLM 描述 → 语义分块。
 
     流程：
-        1. 重新执行 ASR 转写获取带时间戳的片段（_parse_video 只返回纯文本，
-           此处需要片段级时间戳用于分块）；
-        2. （P1）提取关键帧 VLM 描述；
+        1. 重新执行 ASR 转写获取带时间戳的片段（_parse_video/_parse_audio
+           只返回纯文本，此处需要片段级时间戳用于分块）；
+        2. （仅视频）提取关键帧 VLM 描述；音频文件无视频流，自动跳过；
         3. 调用 SemanticChunker.chunk_video_transcript() 分块。
 
     如果 ASR 不可用，降级为普通文本分块。

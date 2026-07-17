@@ -20,8 +20,8 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
       <div class="upload-zone" id="upload-zone">
         <div class="upload-zone-icon">📤</div>
         <h3>拖拽文件到此处，或 <span style="color: var(--primary);">点击选择文件</span></h3>
-        <p class="text-muted">支持 PDF、Word、Excel、PPT、Markdown、TXT 等格式，单个文件最大 100MB</p>
-        <input type="file" id="file-input" multiple style="display: none;" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.md,.txt" />
+        <p class="text-muted">支持 PDF、Word、Excel、PPT、Markdown、图片、视频、音频等格式，单个文件最大 100MB</p>
+        <input type="file" id="file-input" multiple style="display: none;" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.md,.txt,.mp4,.avi,.mov,.mkv,.mp3,.wav,.m4a,.aac,.flac,.ogg,.png,.jpg,.jpeg,.gif,.webp" />
       </div>
 
       <!-- 上传列表 -->
@@ -63,7 +63,10 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
         <div class="form-group">
           <label class="form-label">解析选项</label>
           <label style="display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm); margin-bottom: var(--space-2);">
-            <input type="checkbox" checked /> 自动 OCR 识别图片文字
+            <input type="checkbox" checked /> VLM 视觉理解（图片/文档内嵌图片描述）
+          </label>
+          <label style="display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm); margin-bottom: var(--space-2);">
+            <input type="checkbox" checked /> 音频转写（音频/视频 ASR 语音转文本）
           </label>
           <label style="display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm); margin-bottom: var(--space-2);">
             <input type="checkbox" checked /> 自动向量化入库
@@ -177,6 +180,9 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
   const fileIconMap: Record<string, string> = {
     pdf: '📄', doc: '📘', docx: '📘', xls: '📊', xlsx: '📊',
     ppt: '📙', pptx: '📙', md: '📝', txt: '📃',
+    mp4: '🎬', avi: '🎬', mov: '🎬', mkv: '🎬',
+    mp3: '🎵', wav: '🎵', m4a: '🎵', aac: '🎵', flac: '🎵', ogg: '🎵',
+    png: '🖼️', jpg: '🖼️', jpeg: '🖼️', gif: '🖼️', webp: '🖼️',
   };
 
   function getFileIcon(name: string): string {
