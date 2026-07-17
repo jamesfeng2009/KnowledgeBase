@@ -42,7 +42,7 @@
 | **VLM** | Anthropic Claude Vision / vLLM (Pixtral) | SaaS / 私有双部署模式 |
 | **ASR** | OpenAI Whisper API / Faster-Whisper (私有) | 语音转写，视频 RAG |
 | **视频处理** | ffmpeg | 音轨提取 + 关键帧抽取 |
-| **文档解析** | Docling (IBM Granite-Docling-258M) + pymupdf + python-pptx + python-docx + openpyxl | Docling 统一解析 PDF/DOCX/PPTX/XLSX/HTML/图片/音频 → Markdown，降级到原有解析器 |
+| **文档解析** | Docling (IBM Granite-Docling-258M) + pymupdf + python-pptx + python-docx + openpyxl | Docling 统一解析 PDF/DOCX/PPTX/XLSX/HTML/图片/音频 → HTML（含 `<h1>`/`<h2>` 标题 + `<table>` 表格），降级到原有解析器 |
 | **限流** | 自研令牌桶中间件 | 按客户端（API Key/IP）限流，突发 + 持续控制 |
 | **协同服务** | Node.js + Yjs + WebSocket | CRDT 实时协同编辑 |
 | **反向代理** | Caddy | 自动 HTTPS + HTTP/3 |
@@ -74,7 +74,7 @@ EnterpriseKnowledge/
 │   │   ├── vlm/                      # 视觉语言模型
 │   │   ├── video/                    # 视频处理（ffmpeg 音轨提取 + 关键帧抽取）
 │   │   ├── document/                 # 文档解析器
-│   │   │   ├── docling_parser.py     # Docling 统一解析（primary，MIT，CPU 可用）
+│   │   │   ├── docling_parser.py     # Docling 统一解析（primary，MIT，→ HTML）
 │   │   │   ├── pdf_parser.py         # PDF 解析（fallback，pymupdf + 表格 + VLM + 扫描页 OCR）
 │   │   │   ├── docx_parser.py        # DOCX 解析（fallback，python-docx + 表格 + 页眉页脚）
 │   │   │   ├── pptx_parser.py        # PPTX 解析（fallback，python-pptx + 组合形状递归 + 备注）
@@ -326,36 +326,36 @@ flowchart TD
 ```mermaid
 flowchart TD
     INPUT[原始文档文本] --> DETECT{内容格式检测<br/>_is_markdown}
-    DETECT -->|含 # 标题 / | 表格| MD[Markdown 格式<br/>Docling 输出]
-    DETECT -->|含 <h> 标签| HTML[HTML 格式<br/>原有解析器输出]
-    DETECT -->|纯文本| PLAIN[无结构标记<br/>降级 token 分块]
+    DETECT -->|"含 # 标题 / | 表格"| MD["Markdown 格式<br/>（.md 文档）"]
+    DETECT -->|"含 &lt;h&gt; 标签"| HTML["HTML 格式<br/>Docling + 原有解析器输出"]
+    DETECT -->|纯文本| PLAIN["无结构标记<br/>降级 token 分块"]
 
     MD --> ROUTE{content_type<br/>路由}
     HTML --> ROUTE
     PLAIN --> SEMANTIC_CHECK
 
-    ROUTE -->|faq| QA[Q&A 对分块<br/>一个问答对 = 一个 chunk]
+    ROUTE -->|faq| QA["Q&amp;A 对分块<br/>一个问答对 = 一个 chunk"]
     ROUTE -->|tutorial/specification/report| STRUCT
     ROUTE -->|plain/auto| SEMANTIC_CHECK
 
-    QA --> QA_SPLIT[识别 Q:/A: 问：/答：<br/>## 问题/## 回答 模式]
-    QA_SPLIT --> QA_CHUNK[超长 Q&A 按 1200 tok 切分]
+    QA --> QA_SPLIT["识别 Q:/A: 问:/答:<br/>## 问题/## 回答 模式"]
+    QA_SPLIT --> QA_CHUNK["超长 Q&amp;A 按 1200 tok 切分"]
     QA_CHUNK --> OUTPUT
 
-    STRUCT[结构化分块<br/>按 Markdown # 标题 / HTML <h> 标签分割]
-    STRUCT --> TITLE_PATH[提取标题路径锚点<br/>如 Redis > 集群 > 哈希槽]
+    STRUCT["结构化分块<br/>按 Markdown # 标题 / HTML &lt;h&gt; 标签分割"]
+    STRUCT --> TITLE_PATH["提取标题路径锚点<br/>如 Redis &gt; 集群 &gt; 哈希槽"]
     TITLE_PATH --> OUTPUT
 
     SEMANTIC_CHECK{TextTiling<br/>语义分块}
-    SEMANTIC_CHECK --> TEXTTILING[滑动窗口计算<br/>相邻段落 Jaccard 相似度]
-    TEXTTILING --> VALLEY[在相似度谷底处<br/>depth < mean-std 分割]
-    VALLEY --> PARENT_CHILD[父子索引<br/>小块 256 tok 检索<br/>父块 1024 tok 上下文]
+    SEMANTIC_CHECK --> TEXTTILING["滑动窗口计算<br/>相邻段落 Jaccard 相似度"]
+    TEXTTILING --> VALLEY["在相似度谷底处<br/>depth &lt; mean-std 分割"]
+    VALLEY --> PARENT_CHILD["父子索引<br/>小块 256 tok 检索<br/>父块 1024 tok 上下文"]
     PARENT_CHILD --> OUTPUT
 
-    ROUTE -->|以上均无效| FALLBACK[固定长度兜底<br/>512 tokens 固定分割<br/>尽量在段落/句子边界断开]
+    ROUTE -->|以上均无效| FALLBACK["固定长度兜底<br/>512 tokens 固定分割<br/>尽量在段落/句子边界断开"]
     FALLBACK --> OUTPUT
 
-    OUTPUT[输出 Chunk 列表<br/>含 title_path / content_type / chunk_strategy]
+    OUTPUT["输出 Chunk 列表<br/>含 title_path / content_type / chunk_strategy"]
 ```
 
 ### 内容格式智能检测
@@ -368,7 +368,7 @@ flowchart TD
 | Markdown 表格 | `^\|.+\|\s*$` | `\| 列1 \| 列2 \|` |
 | 表格分隔行 | `^\|[\s\-:|]+\|\s*$` | `\|---\|---\|` |
 
-这确保 Docling 输出的 Markdown（`doc_type="pdf"` 但内容是 `# 标题`）和原有解析器输出的 HTML（`doc_type="pdf"` 但内容是 `<h2>标题</h2>`）都能正确路由到对应的分块策略。
+这确保所有解析器输出（Docling HTML + 原有解析器 HTML）都能正确路由到 `_split_html()` 分块策略，而 `.md` 文档走 `_split_markdown()`。统一 HTML 格式后，`<h1>`/`<h2>`/`<h3>` 标题标签直接用于结构化分块和标题路径提取。
 
 ### 分块策略优先级
 
@@ -1064,7 +1064,7 @@ graph TB
 
 ## 文档处理流水线
 
-Celery 异步任务驱动文档处理流水线，从文档上传到索引构建全自动，支持 PDF/DOCX/PPTX/XLSX/HTML/Markdown/图片/视频/音频 多格式。Docling 统一解析器优先处理（版面分析 + 表格 + 公式 + OCR），降级到原有专用解析器。
+Celery 异步任务驱动文档处理流水线，从文档上传到索引构建全自动，支持 PDF/DOCX/PPTX/XLSX/HTML/Markdown/图片/视频/音频 多格式。Docling 统一解析器优先处理（版面分析 + 表格 + 公式 + OCR → HTML），降级到原有专用解析器。
 
 ```mermaid
 flowchart LR
@@ -1073,7 +1073,7 @@ flowchart LR
     CELERY --> PARSE[1. 文档解析<br/>延迟导入第三方库]
     PARSE -->|PDF| PYMUPDF[pymupdf 文本<br/>+ find_tables → HTML<br/>+ 图片 VLM 描述]
     PARSE -->|PPTX| PPTX[python-pptx 文本<br/>+ 表格 → HTML<br/>+ 内嵌图片 VLM]
-    PARSE -->|PDF / DOCX / PPTX<br/>XLSX / HTML / 图片 / 音频| DOCLING[Docling 统一解析<br/>Granite-Docling-258M<br/>版面分析 + 表格 + 公式 + OCR<br/>→ Markdown]
+    PARSE -->|PDF / DOCX / PPTX<br/>XLSX / HTML / 图片 / 音频| DOCLING["Docling 统一解析<br/>Granite-Docling-258M<br/>版面分析 + 表格 + 公式 + OCR<br/>→ HTML（&lt;h1&gt;/&lt;h2&gt;/&lt;table&gt;）"]
     PARSE -->|Docling 不可用| PYMUPDF[pymupdf<br/>表格 → HTML<br/>图片 VLM 描述<br/>扫描页 OCR]
     PARSE -->|Docling 不可用| PPTX[python-pptx<br/>表格 → HTML<br/>组合形状递归<br/>备注提取]
     PARSE -->|Docling 不可用| DOCX[python-docx<br/>表格 → HTML<br/>图片 VLM 描述<br/>页眉页脚]
@@ -1088,7 +1088,7 @@ flowchart LR
     VIDEO & AUDIO --> VCHUNK[2v. 视频/音频语义分块<br/>chunk_video_transcript<br/>时间窗口合并 + 关键帧对齐]
 
     CHUNK --> QA_CHECK{content_type<br/>路由}
-    QA_CHECK -->|faq| QA_SPLIT[Q&A 对分块]
+    QA_CHECK -->|faq| QA_SPLIT["Q&amp;A 对分块"]
     QA_CHECK -->|其他| STRUCT[结构化/语义/兜底]
 
     QA_SPLIT & STRUCT & VCHUNK --> EMBED[3. 向量化<br/>EmbeddingProvider]
@@ -1113,7 +1113,7 @@ flowchart LR
 
 - **延迟导入**：docling / pymupdf / python-docx / python-pptx / opensearchpy / pymilvus / ffmpeg / ASR / VLM 延迟导入，未安装时优雅降级
 - **向量存储适配器**：通过 `VectorStoreBase` 抽象层，按 `VECTOR_STORE` 配置切换 OpenSearch k-NN（默认）或 Milvus，业务代码零改动
-- **文档解析三级降级**：Docling 统一解析器（primary）→ 原有专用解析器（fallback）→ VLM 整页 OCR（兜底）。Docling 可用时统一输出 Markdown（版面分析 + 表格 + 公式 + OCR），不可用时降级到 pymupdf/python-docx/python-pptx/openpyxl 输出增强文本（纯文本 + HTML 表格 + 图片 VLM 描述）。chunker 通过 `_is_markdown()` 检测内容格式，自动选择 Markdown 或 HTML 分块策略，不依赖 doc_type
+- **文档解析三级降级**：Docling 统一解析器（primary）→ 原有专用解析器（fallback）→ VLM 整页 OCR（兜底）。Docling 可用时统一输出 HTML（`<h1>`/`<h2>` 标题 + `<table>` 表格 + 版面分析 + 公式 + OCR），与原有解析器输出格式一致，chunker 的 `_split_html()` 直接按 `<h>` 标签分块，无需格式检测
 - **关键帧 VLM 并发**：视频关键帧描述使用 `Semaphore(3)` + `asyncio.gather` 并发调用 VLM，替代串行逐帧处理，多关键帧场景延迟降低约 60%
 - **Chunk 元数据**：每个 Chunk 携带 `title_path`、`content_type`、`chunk_strategy`、`parent_id`
 - **视频 RAG 流程**：视频文档走专用管线 — ffmpeg 提取 16kHz mono 音轨 → ASR 转写为带时间戳片段 → ffmpeg 场景切换检测抽取关键帧 → VLM 逐帧描述 → `chunk_video_transcript` 按时间窗口（120s）合并转写片段并对齐关键帧描述，`title_path` 存时间戳标签（如 `00:00-02:15`）

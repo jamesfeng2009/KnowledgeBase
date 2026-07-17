@@ -2,16 +2,18 @@
 Docling 统一文档解析器 — 基于 IBM Granite-Docling-258M 模型。
 
 核心能力：
-    - 统一解析 PDF / DOCX / PPTX / XLSX / HTML / 图片 / 音频，输出标准 Markdown；
+    - 统一解析 PDF / DOCX / PPTX / XLSX / HTML / 图片 / 音频，输出 HTML；
     - AI 驱动版面分析（多栏布局理解、阅读顺序还原）；
     - 表格识别（无边框表格也能识别，保留行列结构）；
     - 公式识别（→ LaTeX）；
     - 扫描 PDF OCR（PaddleOCR 内置，自动选择 text/OCR 模式）。
 
 设计要点：
+    - 统一输出 HTML（含 <h1>/<h2>/<h3> 标题 + <table> 表格），
+      与原有解析器（pymupdf/python-docx/python-pptx/openpyxl）格式一致，
+      chunker 的 _split_html() 直接按 <h> 标签分块，无需格式检测；
     - Docling 不可用时优雅降级（返回空字符串，由 factory 路由到原有解析器）；
-    - 支持 VLM 图片描述增强（Docling 提取图片位置 → VLM 生成描述注入 Markdown）；
-    - 配置开关控制启用/降级模式。
+    - 支持 VLM 图片描述增强（Docling 提取图片位置 → VLM 生成描述注入 HTML）。
 
 许可证：MIT（免费商用），pip install docling 安装。
 """
@@ -37,12 +39,15 @@ _DOCLING_SUPPORTED_TYPES: set[str] = {
 
 
 class DoclingParser(DocumentParser):
-    """Docling 统一解析器 — 一行代码解析多格式文档为 Markdown。
+    """Docling 统一解析器 — 一行代码解析多格式文档为 HTML。
 
     使用方式::
 
         parser = DoclingParser()
-        markdown = await parser.parse("path/to/document.pdf")
+        html = await parser.parse("path/to/document.pdf")
+
+    统一输出 HTML（含 <h1>/<h2>/<h3> 标题标签 + <table> 表格），
+    与原有解析器格式一致，chunker 的 _split_html() 直接按 <h> 标签分块。
 
     Docling 内部自动选择解析策略：
         - 数字 PDF → text 模式（快速提取文本层）；
@@ -52,7 +57,7 @@ class DoclingParser(DocumentParser):
         - 音频 → 语音转文本。
 
     可选增强：
-        - VLM 图片描述：Docling 提取图片位置后，用 VLM 生成图片描述注入 Markdown。
+        - VLM 图片描述：Docling 提取图片位置后，用 VLM 生成图片描述注入 HTML。
     """
 
     def __init__(self) -> None:
@@ -85,13 +90,17 @@ class DoclingParser(DocumentParser):
             return None
 
     async def parse(self, file_path: str) -> str:
-        """解析文档为 Markdown 格式。
+        """解析文档为 HTML 格式。
+
+        统一输出 HTML（含 <h1>/<h2>/<h3> 标题标签 + <table> 表格），
+        与原有解析器（pymupdf/python-docx/python-pptx/openpyxl）输出格式一致，
+        chunker 的 _split_html() 可直接按 <h> 标签分块，无需格式检测。
 
         Args:
             file_path: 文档文件路径。
 
         Returns:
-            Markdown 格式的文档内容。Docling 不可用或解析失败时返回空字符串。
+            HTML 格式的文档内容。Docling 不可用或解析失败时返回空字符串。
         """
         converter = self._get_converter()
         if converter is None:
@@ -99,9 +108,9 @@ class DoclingParser(DocumentParser):
 
         try:
             result = converter.convert(file_path)
-            markdown: str = result.document.export_to_markdown()
+            html: str = result.document.export_to_html()
 
-            if not markdown or not markdown.strip():
+            if not html or not html.strip():
                 log.warning("docling.empty_result", file_path=file_path)
                 return ""
 
@@ -109,31 +118,31 @@ class DoclingParser(DocumentParser):
             settings = get_settings()
             vlm_enhance = getattr(settings, "DOCLING_VLM_IMAGE_ENHANCE", False)
             if vlm_enhance:
-                markdown = await self._enhance_with_vlm(markdown, result)
+                html = await self._enhance_with_vlm(html, result)
 
             log.info(
                 "docling.parsed",
                 file_path=file_path,
-                markdown_len=len(markdown),
+                html_len=len(html),
             )
-            return markdown
+            return html
 
         except Exception as exc:
             log.warning("docling.parse_failed", file_path=file_path, error=str(exc))
             return ""
 
-    async def _enhance_with_vlm(self, markdown: str, result: Any) -> str:
-        """VLM 图片描述增强 — 在 Markdown 中注入图片描述。
+    async def _enhance_with_vlm(self, html: str, result: Any) -> str:
+        """VLM 图片描述增强 — 在 HTML 中注入图片描述。
 
         Docling 提取文档结构后，对图片位置调用 VLM 生成描述，
-        将描述文本注入到 Markdown 对应位置。
+        将描述文本注入到 HTML 对应位置。
 
         Args:
-            markdown: Docling 生成的原始 Markdown。
+            html: Docling 生成的原始 HTML。
             result: Docling 转换结果对象。
 
         Returns:
-            增强后的 Markdown（图片描述注入到对应位置）。
+            增强后的 HTML（图片描述注入到对应位置）。
         """
         try:
             from app.vlm.provider import get_vision_provider
@@ -142,7 +151,7 @@ class DoclingParser(DocumentParser):
             # 尝试从 Docling 结果中提取图片
             pictures = self._extract_pictures(result)
             if not pictures:
-                return markdown
+                return html
 
             enhanced_parts: list[str] = []
             for pic_info in pictures:
@@ -153,20 +162,20 @@ class DoclingParser(DocumentParser):
                         mime_type=pic_info.get("mime_type", "image/png"),
                     )
                     if desc:
-                        enhanced_parts.append(f"\n[图片描述: {desc}]\n")
+                        enhanced_parts.append(f"<p>[图片描述: {desc}]</p>")
                 except Exception as exc:
                     log.debug("docling.vlm_enhance_failed", error=str(exc))
 
             if enhanced_parts:
-                return markdown + "\n" + "\n".join(enhanced_parts)
-            return markdown
+                return html + "\n" + "\n".join(enhanced_parts)
+            return html
 
         except ImportError:
             log.debug("docling.vlm_not_available_for_enhance")
-            return markdown
+            return html
         except Exception as exc:
             log.debug("docling.vlm_enhance_error", error=str(exc))
-            return markdown
+            return html
 
     @staticmethod
     def _extract_pictures(result: Any) -> list[dict[str, Any]]:

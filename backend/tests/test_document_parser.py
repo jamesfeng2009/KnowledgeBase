@@ -2303,11 +2303,11 @@ class TestDoclingParserParse:
 
     @pytest.mark.asyncio
     async def test_successful_parse(self) -> None:
-        """成功解析返回 Markdown。"""
+        """成功解析返回 HTML。"""
         from app.document.docling_parser import DoclingParser
 
         mock_result = MagicMock()
-        mock_result.document.export_to_markdown.return_value = "# 标题\n\n正文内容"
+        mock_result.document.export_to_html.return_value = "<h1>标题</h1><p>正文内容</p>"
 
         mock_converter = MagicMock()
         mock_converter.convert.return_value = mock_result
@@ -2320,16 +2320,16 @@ class TestDoclingParserParse:
             mock_settings.return_value.DOCLING_VLM_IMAGE_ENHANCE = False
             result = await parser.parse("/fake/doc.pdf")
 
-        assert "# 标题" in result
+        assert "<h1>标题</h1>" in result
         assert "正文内容" in result
 
     @pytest.mark.asyncio
     async def test_empty_result_returns_empty(self) -> None:
-        """Docling 返回空 Markdown 时返回空字符串。"""
+        """Docling 返回空 HTML 时返回空字符串。"""
         from app.document.docling_parser import DoclingParser
 
         mock_result = MagicMock()
-        mock_result.document.export_to_markdown.return_value = ""
+        mock_result.document.export_to_html.return_value = ""
 
         mock_converter = MagicMock()
         mock_converter.convert.return_value = mock_result
@@ -2365,7 +2365,7 @@ class TestDoclingParserParse:
         from app.document.docling_parser import DoclingParser
 
         mock_result = MagicMock()
-        mock_result.document.export_to_markdown.return_value = "# 文档"
+        mock_result.document.export_to_html.return_value = "<h1>文档</h1>"
         mock_result.document.pictures = []
 
         mock_converter = MagicMock()
@@ -2379,7 +2379,7 @@ class TestDoclingParserParse:
             mock_settings.return_value.DOCLING_VLM_IMAGE_ENHANCE = False
             result = await parser.parse("/fake/doc.pdf")
 
-        assert result == "# 文档"
+        assert result == "<h1>文档</h1>"
 
 
 class TestDoclingConfig:
@@ -2467,13 +2467,13 @@ class TestDocumentTasksDoclingIntegration:
         mock_doc.id = "test-id"
 
         mock_parser = MagicMock()
-        mock_parser.parse = AsyncMock(return_value="# Markdown 内容")
+        mock_parser.parse = AsyncMock(return_value="<h1>HTML 内容</h1>")
 
         with patch("app.document.factory.get_parser_with_fallback",
                     return_value=(mock_parser, "docling")):
             result = await _parse_document(mock_doc)
 
-        assert result == "# Markdown 内容"
+        assert result == "<h1>HTML 内容</h1>"
 
     @pytest.mark.asyncio
     async def test_parse_document_fallback_to_legacy(self) -> None:
