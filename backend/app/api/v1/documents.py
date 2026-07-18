@@ -131,7 +131,7 @@ async def upload_document_file(
     # 尝试上传到 MinIO
     file_path = None
     try:
-        from app.utils.minio_client import upload_file  # type: ignore[import-not-found]
+        from app.utils.minio_client import upload_file
 
         file_path = await upload_file(
             bucket="ekb-documents",
@@ -305,7 +305,7 @@ async def upload_document_image(
 
     image_url: str
     try:
-        from app.utils.minio_client import upload_file  # type: ignore[import-not-found]
+        from app.utils.minio_client import upload_file
 
         image_url = await upload_file(
             bucket="ekb-documents",

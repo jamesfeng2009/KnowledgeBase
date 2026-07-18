@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>阿里云部署补全清单 + Agent 全栈课程营销规划</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style>
+:root {
+  --brand: #4B3FE3;
+  --brand-light: #f3f0ff;
+  --accent: #27D2BF;
+  --danger: #dc2626;
+  --warning: #d97706;
+  --success: #059669;
+  --bg: #fafafa;
+  --surface: #ffffff;
+  --text: #18181b;
+  --text-muted: #71717a;
+  --border: #e4e4e7;
+  --font-sans: -apple-system, "PingFang SC", "Noto Sans CJK SC", sans-serif;
+  --font-mono: "SF Mono", "JetBrains Mono", monospace;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: var(--font-sans);
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.7;
+  padding: 40px 20px;
+}
+.container { max-width: 1000px; margin: 0 auto; }
+h1 {
+  font-size: 28px; font-weight: 700; margin-bottom: 8px;
+  background: linear-gradient(135deg, var(--brand), var(--accent));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+}
+.subtitle { color: var(--text-muted); font-size: 15px; margin-bottom: 40px; }
+h2 {
+  font-size: 22px; font-weight: 600; margin: 40px 0 16px;
+  padding-bottom: 8px; border-bottom: 2px solid var(--brand);
+  color: var(--brand);
+}
+h3 { font-size: 17px; font-weight: 600; margin: 24px 0 12px; color: var(--text); }
+h4 { font-size: 15px; font-weight: 600; margin: 16px 0 8px; color: var(--text); }
+p { margin-bottom: 12px; }
+ul, ol { margin: 12px 0 12px 24px; }
+li { margin-bottom: 6px; }
+code {
+  font-family: var(--font-mono); font-size: 13px;
+  background: var(--brand-light); color: var(--brand);
+  padding: 2px 6px; border-radius: 4px;
+}
+pre {
+  background: #1e1e2e; color: #cdd6f4; padding: 16px;
+  border-radius: 8px; overflow-x: auto; margin: 12px 0;
+  font-family: var(--font-mono); font-size: 13px; line-height: 1.6;
+}
+.card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px; padding: 20px; margin: 16px 0;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
+.card-danger { border-left: 4px solid var(--danger); }
+.card-warning { border-left: 4px solid var(--warning); }
+.card-success { border-left: 4px solid var(--success); }
+.card-brand { border-left: 4px solid var(--brand); }
+.badge {
+  display: inline-block; font-size: 11px; font-weight: 600;
+  padding: 2px 10px; border-radius: 10px; text-transform: uppercase;
+  margin-left: 8px;
+}
+.badge-danger { background: #fef2f2; color: var(--danger); }
+.badge-warning { background: #fffbeb; color: var(--warning); }
+.badge-success { background: #ecfdf5; color: var(--success); }
+table {
+  width: 100%; border-collapse: collapse; margin: 16px 0;
+  font-size: 14px;
+}
+th, td {
+  text-align: left; padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+th { background: var(--brand-light); font-weight: 600; color: var(--brand); }
+tr:hover { background: #fafafa; }
+.timeline { position: relative; padding-left: 32px; }
+.timeline::before {
+  content: ""; position: absolute; left: 10px; top: 0; bottom: 0;
+  width: 2px; background: var(--border);
+}
+.timeline-item { position: relative; margin-bottom: 24px; }
+.timeline-item::before {
+  content: ""; position: absolute; left: -28px; top: 4px;
+  width: 12px; height: 12px; border-radius: 50%;
+  background: var(--brand); border: 2px solid var(--surface);
+}
+.timeline-item.accent::before { background: var(--accent); }
+.timeline-item.warning::before { background: var(--warning); }
+.timeline-date { font-size: 12px; color: var(--text-muted); font-weight: 600; }
+.timeline-title { font-size: 16px; font-weight: 600; margin: 4px 0; }
+.timeline-content { font-size: 14px; color: var(--text-muted); }
+.highlight-box {
+  background: linear-gradient(135deg, var(--brand-light), #f0fdfa);
+  border: 1px solid var(--accent); border-radius: 8px;
+  padding: 16px; margin: 16px 0;
+}
+.highlight-box strong { color: var(--brand); }
+.metric-grid {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 16px 0;
+}
+.metric-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 14px; text-align: center;
+}
+.metric-value { font-size: 24px; font-weight: 700; color: var(--brand); }
+.metric-label { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+.funnel {
+  display: flex; flex-direction: column; align-items: center; gap: 8px; margin: 20px 0;
+}
+.funnel-level {
+  padding: 14px 24px; border-radius: 8px; text-align: center;
+  font-weight: 600; color: white;
+}
+.funnel-l1 { background: #6366f1; width: 90%; }
+.funnel-l2 { background: #8b5cf6; width: 75%; }
+.funnel-l3 { background: #a855f7; width: 60%; }
+.funnel-l4 { background: var(--brand); width: 45%; }
+.funnel-desc { font-size: 12px; color: var(--text-muted); font-weight: 400; }
+.toc {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 16px 24px; margin-bottom: 32px;
+}
+.toc-title { font-weight: 600; margin-bottom: 8px; color: var(--brand); }
+.toc ul { list-style: none; margin: 0; padding: 0; }
+.toc a { color: var(--text-muted); text-decoration: none; font-size: 14px; }
+.toc a:hover { color: var(--brand); }
+.section { margin-bottom: 48px; }
+.tag {
+  display: inline-block; font-size: 11px; padding: 2px 8px;
+  border-radius: 4px; margin: 2px;
+}
+.tag-p0 { background: #fef2f2; color: var(--danger); }
+.tag-p1 { background: #fffbeb; color: var(--warning); }
+.tag-p2 { background: #ecfdf5; color: var(--success); }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>阿里云部署补全清单 + Agent 全栈课程营销规划</h1>
+<p class="subtitle">2026-07-18 · 企业知识库项目</p>
+
+<div class="toc">
+  <div class="toc-title">目录</div>
+  <ul>
+    <li><a href="#part1">Part 1：阿里云部署 — 占位符扫描与补全清单</a></li>
+    <li><a href="#part2">Part 2：Agent 全栈课程营销规划</a></li>
+  </ul>
+</div>
+
+<!-- ==================== PART 1 ==================== -->
+
+<div class="section" id="part1">
+<h2>Part 1：阿里云部署 — 占位符扫描与补全清单</h2>
+
+<h3>扫描结果总览</h3>
+
+<div class="metric-grid">
+  <div class="metric-card">
+    <div class="metric-value">2</div>
+    <div class="metric-label">阻塞部署</div>
+  </div>
+  <div class="metric-card">
+    <div class="metric-value">5</div>
+    <div class="metric-label">影响功能</div>
+  </div>
+  <div class="metric-card">
+    <div class="metric-value">8</div>
+    <div class="metric-label">仅占位无害</div>
+  </div>
+</div>
+
+<h3>P0 阻塞部署（必须修复）</h3>
+
+<div class="card card-danger">
+  <h4>1. 数据库表初始化机制完全缺失 <span class="badge badge-danger">头号阻塞</span></h4>
+  <p><strong>文件</strong>：<code>app/main.py:30-36</code>（lifespan 仅配置日志）、<code>app/database.py</code>（仅创建 engine/session）</p>
+  <p><strong>问题</strong>：<code>alembic>=1.14.0</code> 已在 requirements.txt 声明，但全项目无 <code>alembic.ini</code>、无 <code>migrations/</code> 目录。<code>Base.metadata.create_all</code> 仅出现在 tests/conftest.py，生产代码从不调用。</p>
+  <p><strong>后果</strong>：部署到阿里云全新 PostgreSQL 后，uvicorn 能启动、<code>/health</code> 能通过，但<strong>任何触及数据库的 API 调用都会 500 报 "relation does not exist"</strong>。</p>
+  <p><strong>修复方向</strong>（三选一）：</p>
+  <ol>
+    <li>补 <code>alembic init</code> + 首版 migration（推荐生产环境）</li>
+    <li>在 lifespan 中调用 <code>Base.metadata.create_all</code>（demo 快速方案）</li>
+    <li>提供 <code>scripts/init_db.py</code> 初始化脚本</li>
+  </ol>
+</div>
+
+<div class="card card-danger">
+  <h4>2. docker-compose 健康检查与依赖不完整</h4>
+  <table>
+    <tr><th>文件</th><th>问题</th></tr>
+    <tr><td>docker-compose.yml L56-59</td><td>core-engine healthcheck 仅 <code>curl /health</code>，该端点不触 DB，表缺失时仍报 healthy</td></tr>
+    <tr><td>docker-compose.yml L29-36</td><td>minio 服务无 healthcheck</td></tr>
+    <tr><td>docker-compose.yml L127-156</td><td>milvus-etcd、milvus-minio 无 healthcheck，milvus depends_on 无 condition</td></tr>
+    <tr><td>docker-compose.yml L83-110</td><td>celery-worker/beat 不等待 schema 就绪</td></tr>
+  </table>
+</div>
+
+<h3>P1 影响功能（不阻塞启动，但功能缺失）</h3>
+
+<table>
+  <tr><th>#</th><th>文件</th><th>问题</th><th>Demo 必需?</th><th>标签</th></tr>
+  <tr>
+    <td>3</td>
+    <td><code>app/api/v1/documents.py:134,308</code></td>
+    <td>MinIO 客户端模块整个缺失（<code>app/utils/minio_client.py</code> 不存在，<code>minio</code> 包未在 requirements.txt）。图片上传走 except ImportError 分支，返回占位 URL，图片不会真正存入 MinIO</td>
+    <td>否</td>
+    <td><span class="tag tag-p1">P1</span></td>
+  </tr>
+  <tr>
+    <td>4</td>
+    <td><code>app/api/openapi/v1/webhooks.py</code></td>
+    <td>Webhook 订阅用内存字典存储 <code>_subscriptions: dict = {}</code>，uvicorn --workers 4 下数据四分五裂，重启即丢失，测试事件不会真正推送</td>
+    <td>否</td>
+    <td><span class="tag tag-p1">P1</span></td>
+  </tr>
+  <tr>
+    <td>5</td>
+    <td><code>app/connectors/{oa,erp,crm,mail}.py</code></td>
+    <td>四个企业系统连接器全部 <code>return []</code> 空实现（优雅降级，不阻塞）</td>
+    <td>否</td>
+    <td><span class="tag tag-p2">P2</span></td>
+  </tr>
+  <tr>
+    <td>6</td>
+    <td><code>app/mcp/server.py:419-513</code></td>
+    <td><code>query_oa_approval</code> 和 <code>create_it_ticket</code> 是显式 mock（返回写死的模拟数据）</td>
+    <td><strong>是</strong></td>
+    <td><span class="tag tag-p1">P1</span></td>
+  </tr>
+  <tr>
+    <td>7</td>
+    <td><code>app/api/openapi/v1/{connectors,multimedia}.py</code></td>
+    <td>6 个 OpenAPI 开放接口返回占位结构（内部 multimodal_service/asr 是真实实现，仅这层封装是占位）</td>
+    <td>否</td>
+    <td><span class="tag tag-p2">P2</span></td>
+  </tr>
+  <tr>
+    <td>8</td>
+    <td><code>tasks/multimodal_tasks.py:45-56</code></td>
+    <td><code>_process_document_images</code> 函数体被注释掉，直接 return，文档图片不会生成 VLM 描述 chunk</td>
+    <td>否</td>
+    <td><span class="tag tag-p1">P1</span></td>
+  </tr>
+</table>
+
+<h3>P2 仅占位无害（无需修改）</h3>
+
+<div class="card card-success">
+  <p>以下均为正常设计，<strong>无需修改即可部署</strong>：</p>
+  <ul>
+    <li><code>NotImplementedError</code> 全部为抽象基类方法（由子类实现）</li>
+    <li>vLLM/VLM 的 <code>api_key="dummy"</code> 是 vLLM 本地部署标准用法</li>
+    <li>LDAP 同步服务已完整实现（<code>ldap3</code> 真实连接，仅 LDAP_URL 为空时静默返回）</li>
+    <li>CrewAI 多 Agent 协作已实现，降级处理得当</li>
+    <li>前端 18 个页面的 <code>mockXxx()</code> 是 API 失败时的 fallback，非主路径</li>
+    <li>各处 <code>pass</code> 语句均为合法的异常吞咽/最佳努力清理</li>
+  </ul>
+</div>
+
+<h3>阿里云 Demo 最小修复清单（按优先级）</h3>
+
+<div class="highlight-box">
+  <p><strong>只需修复以下 3 项，即可在阿里云跑通核心 demo（上传文档 → 检索 → 问答）：</strong></p>
+</div>
+
+<table>
+  <tr><th>优先级</th><th>修复项</th><th>工作量</th><th>说明</th></tr>
+  <tr>
+    <td><span class="tag tag-p0">P0</span></td>
+    <td>数据库建表机制</td>
+    <td>0.5 天</td>
+    <td>lifespan 加 <code>Base.metadata.create_all</code>（demo 快速方案）或补 alembic</td>
+  </tr>
+  <tr>
+    <td><span class="tag tag-p0">P0</span></td>
+    <td>docker-compose healthcheck</td>
+    <td>0.5 天</td>
+    <td>给 minio 加 healthcheck，core-engine healthcheck 改为触 DB 端点</td>
+  </tr>
+  <tr>
+    <td><span class="tag tag-p1">P1</span></td>
+    <td>MinIO 客户端</td>
+    <td>1 天</td>
+    <td>补 <code>app/utils/minio_client.py</code> + requirements.txt 加 <code>minio</code></td>
+  </tr>
+</table>
+
+<p>其余占位符（连接器、webhook、multimodal_tasks、MCP mock 工具）在 demo 期间保留即可，不影响核心链路演示。MCP mock 工具（OA 审批、IT 工单）建议在 demo 文案中标注"模拟数据"。</p>
+
+</div>
+
+<!-- ==================== PART 2 ==================== -->
+
+<div class="section" id="part2">
+<h2>Part 2：Agent 全栈课程营销规划</h2>
+
+<h3>市场机会</h3>
+
+<div class="metric-grid">
+  <div class="metric-card">
+    <div class="metric-value">850万</div>
+    <div class="metric-label">AI 人才缺口</div>
+  </div>
+  <div class="metric-card">
+    <div class="metric-value">35.8%</div>
+    <div class="metric-label">训练营毕业率</div>
+  </div>
+  <div class="metric-card">
+    <div class="metric-value">7.8%</div>
+    <div class="metric-label">AI 混剪转化率</div>
+  </div>
+</div>
+
+<div class="highlight-box">
+  <p><strong>差异化定位</strong>：现有课程多偏向 LangChain 单一框架或 Web3 垂直场景，缺少端到端全栈 AI Agent（前端+后端+RAG+部署+商业化）。你的项目正好填补这个空白 — "上线即用的生产级 Agent" + "全栈实战"。</p>
+</div>
+
+<h3>课程变现漏斗设计</h3>
+
+<div class="funnel">
+  <div class="funnel-level funnel-l1">
+    L1 免费引流层（公域）
+    <div class="funnel-desc">抖音/小红书/B站/YouTube 短视频 + 公众号文章</div>
+  </div>
+  <div class="funnel-level funnel-l2">
+    L2 低价尝鲜层 ¥9.9-99
+    <div class="funnel-desc">小课/电子书/入门训练营体验课</div>
+  </div>
+  <div class="funnel-level funnel-l3">
+    L3 中价主力层 ¥199-999
+    <div class="funnel-desc">系统在线课程（10+ 小时视频）/ 付费专栏</div>
+  </div>
+  <div class="funnel-level funnel-l4">
+    L4 高价服务层 ¥1999-9999
+    <div class="funnel-desc">AI Agent 实战训练营（含答疑+作业+就业辅导）</div>
+  </div>
+</div>
+
+<h3>定价参考</h3>
+
+<table>
+  <tr><th>产品形式</th><th>新手定价</th><th>有口碑后</th><th>领域专家</th></tr>
+  <tr><td>单次咨询（1小时）</td><td>¥199-399</td><td>¥500-1000</td><td>¥1500-3000</td></tr>
+  <tr><td>小课（30-60分钟）</td><td>¥49-99</td><td>¥99-199</td><td>¥199-399</td></tr>
+  <tr><td>系统课程（10+小时）</td><td>¥199-399</td><td>¥399-999</td><td>¥999-2999</td></tr>
+  <tr><td>付费社群（年）</td><td>¥99-299</td><td>¥299-999</td><td>¥999-2999</td></tr>
+  <tr><td>实战训练营</td><td>¥1999-3999</td><td>¥3999-6999</td><td>¥6999-9999</td></tr>
+</table>
+
+<h3>抖音黄金 3 秒钩子（决定生死）</h3>
+
+<div class="card card-brand">
+  <h4>三种开头模板</h4>
+  <ol>
+    <li><strong>悬念前置法则</strong>（完播率 +40%）：
+      0.5 秒视觉悬念 → 1 秒灵魂拷问"你还在花 3 小时写 CRUD？" → 2 秒认知冲突（前后对比）</li>
+    <li><strong>痛点刺激模型</strong>（点击率 +65%）：
+      前 3 帧痛点场景（代码报错红屏/调试到凌晨）→ 数据具象化"每年浪费 300 小时" → 产品出场</li>
+    <li><strong>反常识开场</strong>：
+      首帧反认知画面（一句话让 AI Agent 生成全套后端）→ 震惊语气 → 2.5 秒切正确用法</li>
+  </ol>
+</div>
+
+<div class="card card-warning">
+  <h4>避坑：三域联动引流模型</h4>
+  <p>直接挂微信号触发限流概率 <strong>&gt;75%</strong>。成熟操盘手采用三层漏斗：</p>
+  <p><strong>内容域</strong>（抖音/小红书吸粉）→ <strong>中转域</strong>（B站/知乎建信任，设工具包领取入口）→ <strong>私域域</strong>（企微无痕转化）</p>
+</div>
+
+<h3>8 周前期营销排期</h3>
+
+<div class="timeline">
+
+  <div class="timeline-item warning">
+    <div class="timeline-date">Week 1-2 · 内容种草期</div>
+    <div class="timeline-title">搭建 5 平台账号矩阵 + 首批 10 条短视频</div>
+    <div class="timeline-content">
+      <strong>渠道产出：</strong><br>
+      • 抖音 5 条/周 × 2 = 10 条（黄金 3 秒钩子，AI Agent 应用案例）<br>
+      • 小红书 3 条/周 × 2 = 6 条（干货图文）<br>
+      • B站 1 条/周 × 2 = 2 条（8-15 分钟深度技术解析）<br>
+      • YouTube 1 条/周 × 2 = 2 条（中英双语字幕，同步 B站）<br>
+      • YouTube Shorts 5-7 条/周（从长视频拆解）<br>
+      • 公众号 2 篇/周 × 2 = 4 篇（行业报告、源码解读）<br><br>
+      <strong>关键动作：</strong>AI 混剪 5-10 版本分发，测试选题方向，根据完播率淘汰末位 50% 选题
+    </div>
+  </div>
+
+  <div class="timeline-item accent">
+    <div class="timeline-date">Week 3-4 · 私域沉淀期</div>
+    <div class="timeline-title">引流至企微/社群 + 付费专栏启动</div>
+    <div class="timeline-content">
+      <strong>渠道产出：</strong><br>
+      • 抖音 5 条/周 + 1 场直播（直播间动态活码引流）<br>
+      • 私域（企微）1对1 + 群运营，建立用户分层标签<br>
+      • 知识星球/小报童 每周 2 篇深度内容（¥99-199/年付费专栏）<br>
+      • B站/知乎 1 条长内容/周，设工具包领取入口<br><br>
+      <strong>关键动作：</strong>制作《AI Agent 开发工具包》（含 Trae/Cursor 配置、Prompt 模板、项目脚手架），在中转平台设领取入口引流企微
+    </div>
+  </div>
+
+  <div class="timeline-item">
+    <div class="timeline-date">Week 5 · 转化变现期</div>
+    <div class="timeline-title">推出 ¥9.9-49 低价体验课</div>
+    <div class="timeline-content">
+      测试付费意愿。付过 9.9 元的人，付 199 元的概率是没付过的 <strong>10 倍</strong>。<br>
+      体验课内容：1 小时直播"用 LangGraph 打造你的私人 AI 秘书"
+    </div>
+  </div>
+
+  <div class="timeline-item">
+    <div class="timeline-date">Week 6</div>
+    <div class="timeline-title">推出 ¥199-499 中价系统课（核心产品）</div>
+    <div class="timeline-content">
+      系统在线课程 10+ 小时视频，覆盖：前端 Astro + 后端 FastAPI + RAG 引擎 + Agent Loop + 部署上线全流程
+    </div>
+  </div>
+
+  <div class="timeline-item">
+    <div class="timeline-date">Week 7-8</div>
+    <div class="timeline-title">推出 ¥1999-4999 AI Agent 实战训练营</div>
+    <div class="timeline-content">
+      4 周课程 + 2 周项目实战 + 1v1 答辩 + 就业辅导<br>
+      定价策略：早鸟 ¥1999（前 50 名）→ 标准 ¥3999 → 末班车 ¥4999<br>
+      锚定效应：先展示 ¥9999 的"全年无限次 1v1 咨询"套餐<br>
+      招生目标：首期 100-200 人
+    </div>
+  </div>
+
+</div>
+
+<h3>平台组合策略</h3>
+
+<table>
+  <tr><th>平台</th><th>定位</th><th>分成</th><th>适合阶段</th></tr>
+  <tr><td><strong>抖音</strong></td><td>公域引流，短视频+直播</td><td>—</td><td>全程</td></tr>
+  <tr><td><strong>YouTube</strong></td><td>海外品牌+AdSense 广告分成</td><td>CPM 中文区 $2-8</td><td>全程</td></tr>
+  <tr><td><strong>B站</strong></td><td>中转域，深度技术内容建信任</td><td>—</td><td>Week 1 起</td></tr>
+  <tr><td><strong>小红书</strong></td><td>图文种草，女性开发者拓展</td><td>—</td><td>Week 1 起</td></tr>
+  <tr><td><strong>极客时间</strong></td><td>官方背书+走量</td><td>平台分成</td><td>有口碑后</td></tr>
+  <tr><td><strong>小鹅通（自营）</strong></td><td>完全掌控用户数据、私域沉淀</td><td>自主定价</td><td>Week 5 起</td></tr>
+</table>
+
+<h3>第一步行动清单（Top 5）</h3>
+
+<div class="card card-brand">
+  <ol>
+    <li><strong>竞品账号拆解</strong>（第 1 天）：对标 3-5 个 AI Agent 类抖音账号 + 3 个 YouTube 中文技术频道，记录黄金 3 秒开头模板、选题方向、引流方式</li>
+    <li><strong>搭建 5 平台账号矩阵</strong>（第 1-3 天）：抖音、小红书、B站、YouTube、公众号同步注册，统一品牌名/Logo/简介，突出"AI Agent 全栈"差异化定位</li>
+    <li><strong>制作第一批 10 条短视频</strong>（第 4-10 天）：选题围绕 5 个真实场景（自动化办公/客服 Agent/数据分析/代码 Review/内容创作），AI 混剪 5-10 版本分发</li>
+    <li><strong>建立中转域工具包</strong>（第 7-14 天）：制作《AI Agent 开发工具包》，在 B站/知乎深度文章末尾设领取入口，通过知识暗码引导用户搜索关键词跳转企微</li>
+    <li><strong>策划首期训练营预售</strong>（第 15-30 天）：4 周课程 + 2 周黑客松，早鸟 ¥1999（前 50 名），招生目标 100-200 人</li>
+  </ol>
+</div>
+
+<h3>抖音第一条视频开头脚本（可直接用）</h3>
+
+<pre>【场景】电脑屏幕上密密麻麻的 CRUD 代码，红光闪烁的报错信息
+【0-0.5秒】超近景特写：手指悬在键盘上，屏幕显示"Error: 500 Internal Server Error"
+【0.5-1秒】灵魂拷问（配音+字幕）：
+  "你还在花 3 小时写 CRUD 接口？"
+【1-2秒】认知冲突（左右分屏）：
+  左：传统方式 — 手写 Controller/Service/Repository，凌晨 2 点调试
+  右：AI Agent — 一句话生成全套后端，10 秒完成
+【2-3秒】产品出场：
+  "这就是 AI Agent 全栈开发，一个 Agent 搞定从需求到上线"
+【3-5秒】价值承诺：
+  "关注我，8 周带你从零搭建生产级 AI Agent，副业接单月入 3 万"</pre>
+
+<h3>风险提示</h3>
+
+<div class="card card-warning">
+  <ul>
+    <li><strong>交付风险</strong>："做课一时爽，交付火葬场"。卖之前明确付款后多久交付、交付形式、响应时间承诺</li>
+    <li><strong>退款政策</strong>：建议 7 天无理由退款（观看不超过 30% 可退），降低购买门槛又倒逼产品质量</li>
+    <li><strong>内容质量红线</strong>：一次翻车三年白干。只做你真正懂的事</li>
+    <li><strong>平台限流风险</strong>：直接导流微信号触发限流概率 >75%，必须用三域联动模型</li>
+    <li><strong>课程制作成本</strong>：一门课至少 50-100 小时投入，没有独立流量时平台分成会吃掉大部分利润</li>
+  </ul>
+</div>
+
+</div>
+
+</div>
+</body>
+</html>

@@ -29,9 +29,31 @@ log = get_logger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """应用生命周期管理 — 启动时初始化日志，关闭时记录日志。"""
+    """应用生命周期管理。
+
+    启动时：
+        - 配置结构化日志；
+        - 自动建表（AUTO_CREATE_TABLES=True 时，demo/开发模式用）。
+          生产环境应设为 False 并使用 alembic 迁移管理 schema。
+    关闭时：
+        - 记录停止日志。
+    """
     configure_logging()
     log.info("app.starting", app_name=settings.APP_NAME, version=settings.APP_VERSION)
+
+    # 自动建表 — demo/开发模式快速启动
+    # 导入 models 包确保所有 ORM 类注册到 Base.metadata
+    if settings.AUTO_CREATE_TABLES:
+        try:
+            from app.database import engine
+            from app.models import Base  # noqa: F401 — 触发所有模型注册
+
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+            log.info("app.tables_created")
+        except Exception as exc:
+            log.warning("app.table_creation_failed", error=str(exc))
+
     yield
     log.info("app.stopped", app_name=settings.APP_NAME)
 
@@ -98,9 +120,37 @@ app.include_router(openapi_router, prefix="/api")
 # --- 健康检查 ---
 @app.get("/health", response_model=ApiResponse, tags=["系统"])
 async def health_check() -> ApiResponse:
-    """健康检查端点 — 返回服务运行状态。"""
+    """健康检查端点 — 返回服务运行状态（不触 DB，用于存活探针）。"""
     return ApiResponse(
         code=0,
         data={"status": "ok", "app": settings.APP_NAME},
         message="success",
     )
+
+
+@app.get("/health/db", response_model=ApiResponse, tags=["系统"])
+async def health_check_db() -> ApiResponse:
+    """数据库健康检查 — 触 DB 连接，用于就绪探针。
+
+    docker-compose 的 core-engine healthcheck 使用此端点，
+    确保表已创建且 DB 连接正常后，才让 frontend 依赖启动。
+    """
+    from sqlalchemy import text
+
+    from app.database import async_session_factory
+
+    try:
+        async with async_session_factory() as session:
+            await session.execute(text("SELECT 1"))
+        return ApiResponse(
+            code=0,
+            data={"status": "ok", "database": "connected"},
+            message="success",
+        )
+    except Exception as exc:
+        log.error("health.db_failed", error=str(exc))
+        return ApiResponse(
+            code=500,
+            data={"status": "error", "database": str(exc)},
+            message="database connection failed",
+        )

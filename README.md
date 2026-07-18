@@ -76,7 +76,7 @@ EnterpriseKnowledge/
 │   │   ├── repositories/             # 数据访问层
 │   │   ├── schemas/                  # Pydantic 数据模型
 │   │   ├── services/                 # 业务逻辑层（21 个服务）
-│   │   ├── utils/                    # 工具（crypto/logger/sse）
+│   │   ├── utils/                    # 工具（crypto/logger/sse/minio_client）
 │   │   ├── asr/                      # ASR 语音转写（Whisper/FunASR）
 │   │   ├── vlm/                      # 视觉语言模型
 │   │   ├── video/                    # 视频处理（ffmpeg 音轨提取 + 关键帧抽取）
@@ -94,7 +94,7 @@ EnterpriseKnowledge/
 │   │   ├── deps.py                   # 依赖注入
 │   │   └── main.py                   # FastAPI 入口
 │   ├── tasks/                        # Celery 异步任务
-│   ├── tests/                        # 测试（847 项）
+│   ├── tests/                        # 测试（855 项）
 │   ├── celery_app.py                 # Celery 入口
 │   └── requirements.txt
 ├── collab-service/                   # Yjs 协作服务（Node.js + TypeScript）
@@ -1346,7 +1346,7 @@ docker compose --profile private up -d
 ```bash
 cd backend
 
-# 运行全部测试（847 项）
+# 运行全部测试（855 项）
 python -m pytest --tb=short -q
 
 # 运行特定模块测试
@@ -1385,8 +1385,9 @@ python -m pytest tests/test_eval.py -v                    # 离线评测（数�
 | `test_eval.py` | 55 | 数据集加载、Recall@K/MRR/NDCG 计算、Runner 集成、回归检测、DB 持久化、CLI 退出码 |
 | `test_skill_finder.py` | 58 | SkillMetadata 匹配分数、SkillRegistry 加载/索引/按需加载、SkillFinder 中英文匹配/阈值/fallback/max_skills、分词器、config 配置项、Server/MCPClient/Engine 集成 |
 | `test_dashscope_provider.py` | 27 | DashScopeProvider 继承 VLLMProvider、初始化、chat/tool_use、DashScopeEmbedder 维度/embed、factory 路由、config 配置项、向后兼容性 |
+| `test_minio_client.py` | 8 | MinIO upload/download/delete/exists、懒初始化、bucket 自动创建与缓存 |
 | 其他测试 | 215 | API 端点、服务层、模型层、记忆引擎等 |
-| **合计** | **847** | **全部通过，零回归** |
+| **合计** | **855** | **全部通过，零回归** |
 
 ---
 

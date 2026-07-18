@@ -34,6 +34,10 @@ services:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
     volumes: ["minio_data:/data"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      retries: 5
 
   # === 后端 API ===
   core-engine:
@@ -53,10 +57,13 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
+      minio: { condition: service_healthy }
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      # 触 DB 的健康检查 — 确保表已创建且连接正常
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health/db || exit 1"]
       interval: 10s
-      retries: 5
+      retries: 10
+      start_period: 30s
 
   # === 前端 ===
   frontend:
@@ -97,6 +104,7 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
+      core-engine: { condition: service_healthy }
 
   # === Celery Beat 定时任务 ===
   celery-beat:

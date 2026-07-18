@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://ekb:ekb@localhost:5432/ekb"
     DATABASE_POOL_SIZE: int = 10
     DATABASE_MAX_OVERFLOW: int = 20
+    # 启动时自动建表（demo/开发模式用，生产环境应使用 alembic 迁移）
+    AUTO_CREATE_TABLES: bool = True
 
     # === Redis ===
     REDIS_URL: str = "redis://localhost:6379/0"
