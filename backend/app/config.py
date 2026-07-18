@@ -122,6 +122,11 @@ class Settings(BaseSettings):
     # PDF 图片提取 + VLM 描述
     PDF_IMAGE_EXTRACTION_ENABLED: bool = True
     PDF_IMAGE_MAX_PER_DOC: int = 50
+    # PDF 图片上传对象存储 — 启用后图片上传 MinIO 保留 URL（对齐图片流程），
+    # 关闭时仅走 VLM 文本描述（当前模式）
+    PDF_IMAGE_UPLOAD_ENABLED: bool = False
+    # PDF 图片最小尺寸过滤 — 宽或高小于此值的图片跳过（剔除图标/装饰小图）
+    PDF_IMAGE_MIN_SIZE: int = 50
     # PDF 扫描页 OCR — get_text() 返回空时，页面渲染为图片调用 VLM 提取文字
     PDF_SCAN_OCR_ENABLED: bool = True
     PDF_SCAN_OCR_MAX_PAGES: int = 20  # 单个 PDF 最大 OCR 页数（防止大量扫描页打满 VLM）
@@ -132,10 +137,24 @@ class Settings(BaseSettings):
     DOCX_TABLE_EXTRACTION_ENABLED: bool = True
     DOCX_IMAGE_EXTRACTION_ENABLED: bool = True
     DOCX_IMAGE_MAX_PER_DOC: int = 50
+    # DOCX 图片上传对象存储 + 小图过滤（同 PDF）
+    DOCX_IMAGE_UPLOAD_ENABLED: bool = False
+    DOCX_IMAGE_MIN_SIZE: int = 50
+    # DOCX 分页检测 — 检测 <w:br type="page"/> 和 <w:lastRenderedPageBreak/>
+    # 启用后按实际页码分页，关闭时按段落序号排序（当前模式）
+    DOCX_PAGE_BREAK_DETECTION: bool = True
     # XLSX 电子表格解析 — openpyxl 读取，每 sheet 转 HTML 表格
     XLSX_TABLE_EXTRACTION_ENABLED: bool = True
     XLSX_MAX_ROWS_PER_SHEET: int = 500  # 每个 sheet 最大提取行数
     XLSX_MAX_SHEETS: int = 20  # 单个文件最大提取 sheet 数
+
+    # === 解析输出格式 + 分页分隔 ===
+    # 输出格式：html（默认，向后兼容）或 markdown（表格转 Markdown，图片用 ![](url)）
+    PARSER_OUTPUT_FORMAT: Literal["html", "markdown"] = "html"
+    # 分页分隔符 — 非空时在页码变化处插入，支持 {page} 占位符
+    # 示例："\n\n---\n<!-- page: {page} -->\n"
+    # 默认空字符串（不分页标记，向后兼容）
+    PAGE_SEPARATOR: str = ""
 
     # === 独立音频解析 ===
     # 音频文件（mp3/wav/m4a 等）通过 ASR 转写为文本，复用视频 RAG 的分块管线
@@ -236,10 +255,15 @@ class Settings(BaseSettings):
             raise ValueError(f"值必须为正整数，当前: {v}")
         return v
 
-    @field_validator("SKILL_MATCH_THRESHOLD", "RAG_RETRIEVAL_MAX_RETRIES")
+    @field_validator(
+        "SKILL_MATCH_THRESHOLD",
+        "RAG_RETRIEVAL_MAX_RETRIES",
+        "PDF_IMAGE_MIN_SIZE",
+        "DOCX_IMAGE_MIN_SIZE",
+    )
     @classmethod
     def validate_non_negative_int(cls, v: int) -> int:
-        """阈值/重试次数必须为非负整数。"""
+        """阈值/重试次数/最小尺寸必须为非负整数。"""
         if v < 0:
             raise ValueError(f"值必须为非负整数，当前: {v}")
         return v

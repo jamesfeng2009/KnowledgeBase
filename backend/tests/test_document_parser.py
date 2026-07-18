@@ -2591,3 +2591,411 @@ class TestDocumentTasksDoclingIntegration:
 
         result = DOCXParser._extract_headers_footers(mock_doc)
         assert len(result) == 0
+
+
+# ============================================================
+# 新增测试 — 图片上传、小图过滤、分页分隔符、Markdown 输出
+# ============================================================
+
+
+class TestImageStorageDimensions:
+    """image_storage.get_image_dimensions — 零依赖图片尺寸解析。"""
+
+    def test_png_dimensions(self):
+        """PNG 尺寸解析 — 构造最小 PNG 头。"""
+        from app.document.image_storage import get_image_dimensions
+
+        # PNG 签名 (8 bytes) + IHDR chunk (4 len + 4 type + 4 width + 4 height)
+        import struct
+
+        png_header = (
+            b"\x89PNG\r\n\x1a\n"  # PNG signature
+            + struct.pack(">I", 13)  # IHDR length
+            + b"IHDR"
+            + struct.pack(">II", 800, 600)  # width=800, height=600
+            + b"\x08\x02\x00\x00\x00"  # bit depth, color type, etc.
+        )
+        w, h = get_image_dimensions(png_header, "png")
+        assert w == 800
+        assert h == 600
+
+    def test_invalid_bytes_returns_zero(self):
+        """无效字节返回 (0, 0)。"""
+        from app.document.image_storage import get_image_dimensions
+
+        w, h = get_image_dimensions(b"not an image", "png")
+        assert w == 0
+        assert h == 0
+
+    def test_empty_bytes_returns_zero(self):
+        """空字节返回 (0, 0)。"""
+        from app.document.image_storage import get_image_dimensions
+
+        w, h = get_image_dimensions(b"", "png")
+        assert w == 0
+        assert h == 0
+
+    def test_auto_detect_png(self):
+        """无扩展名时自动检测 PNG。"""
+        from app.document.image_storage import get_image_dimensions
+
+        import struct
+
+        png_header = (
+            b"\x89PNG\r\n\x1a\n"
+            + struct.pack(">I", 13)
+            + b"IHDR"
+            + struct.pack(">II", 400, 300)
+            + b"\x08\x02\x00\x00\x00"
+        )
+        w, h = get_image_dimensions(png_header, "")
+        assert w == 400
+        assert h == 300
+
+
+class TestImageStorageFormat:
+    """image_storage.is_supported_format — 格式校验。"""
+
+    @pytest.mark.parametrize("ext", ["png", "jpg", "jpeg", "webp"])
+    def test_supported_formats(self, ext):
+        """支持的格式返回 True。"""
+        from app.document.image_storage import is_supported_format
+
+        assert is_supported_format(ext) is True
+
+    @pytest.mark.parametrize("ext", ["gif", "bmp", "tiff", "svg", ""])
+    def test_unsupported_formats(self, ext):
+        """不支持的格式返回 False。"""
+        from app.document.image_storage import is_supported_format
+
+        assert is_supported_format(ext) is False
+
+
+class TestImageStorageUpload:
+    """image_storage.upload_image — 小图过滤 + 上传。"""
+
+    @pytest.mark.asyncio
+    async def test_small_image_filtered(self):
+        """小于 min_size 的图片被过滤。"""
+        from app.document.image_storage import upload_image
+
+        import struct
+
+        # 构造 30x30 PNG（小于 50px 阈值）
+        png_header = (
+            b"\x89PNG\r\n\x1a\n"
+            + struct.pack(">I", 13)
+            + b"IHDR"
+            + struct.pack(">II", 30, 30)
+            + b"\x08\x02\x00\x00\x00"
+        )
+
+        url = await upload_image(
+            image_bytes=png_header,
+            ext="png",
+            doc_id="test-doc",
+            page=0,
+            idx=0,
+            min_size=50,
+            width=30,
+            height=30,
+        )
+        assert url is None
+
+    @pytest.mark.asyncio
+    async def test_unsupported_format_returns_none(self):
+        """不支持的格式返回 None。"""
+        from app.document.image_storage import upload_image
+
+        url = await upload_image(
+            image_bytes=b"fake-gif",
+            ext="gif",
+            doc_id="test-doc",
+            page=0,
+            idx=0,
+            min_size=50,
+        )
+        assert url is None
+
+    @pytest.mark.asyncio
+    async def test_empty_bytes_returns_none(self):
+        """空字节返回 None。"""
+        from app.document.image_storage import upload_image
+
+        url = await upload_image(
+            image_bytes=b"",
+            ext="png",
+            doc_id="test-doc",
+            page=0,
+            idx=0,
+        )
+        assert url is None
+
+    @pytest.mark.asyncio
+    async def test_upload_success_mocked(self):
+        """上传成功 — mock MinIO upload_file。"""
+        from app.document.image_storage import upload_image
+
+        import struct
+
+        # 构造 100x100 PNG
+        png_header = (
+            b"\x89PNG\r\n\x1a\n"
+            + struct.pack(">I", 13)
+            + b"IHDR"
+            + struct.pack(">II", 100, 100)
+            + b"\x08\x02\x00\x00\x00"
+        )
+
+        with patch("app.utils.minio_client.upload_file", new_callable=AsyncMock) as mock_upload:
+            mock_upload.return_value = "minio://ekb-documents/test-doc/page0_img0.png"
+
+            url = await upload_image(
+                image_bytes=png_header,
+                ext="png",
+                doc_id="test-doc",
+                page=0,
+                idx=0,
+                min_size=50,
+                width=100,
+                height=100,
+            )
+            assert url == "minio://ekb-documents/test-doc/page0_img0.png"
+            mock_upload.assert_called_once()
+
+
+class TestSectionsToTextMarkdown:
+    """sections_to_text — Markdown 输出格式。"""
+
+    def test_markdown_table_output(self):
+        """HTML 表格转为 Markdown 表格。"""
+        from app.document.base import DocumentParser, ParsedSection
+
+        html_table = (
+            "<table><tr><th>姓名</th><th>年龄</th></tr>"
+            "<tr><td>张三</td><td>25</td></tr></table>"
+        )
+        sections = [ParsedSection(kind="table", content=html_table, page=0)]
+        result = DocumentParser.sections_to_text(sections, output_format="markdown")
+        assert "| 姓名 | 年龄 |" in result
+        assert "| --- | --- |" in result
+        assert "| 张三 | 25 |" in result
+
+    def test_markdown_image_url(self):
+        """image_url 类型在 Markdown 中输出 ![](url)。"""
+        from app.document.base import DocumentParser, ParsedSection
+
+        sections = [
+            ParsedSection(
+                kind="image_url",
+                content="[图片描述: 架构图]",
+                page=0,
+                image_url="https://example.com/img.png",
+            )
+        ]
+        result = DocumentParser.sections_to_text(sections, output_format="markdown")
+        assert "![图片](https://example.com/img.png)" in result
+        assert "[图片描述: 架构图]" in result
+
+    def test_html_image_url(self):
+        """image_url 类型在 HTML 模式中输出 <img> 标签。"""
+        from app.document.base import DocumentParser, ParsedSection
+
+        sections = [
+            ParsedSection(
+                kind="image_url",
+                content="",
+                page=0,
+                image_url="https://example.com/img.png",
+            )
+        ]
+        result = DocumentParser.sections_to_text(sections, output_format="html")
+        assert '<img src="https://example.com/img.png"' in result
+
+    def test_markdown_image_url_no_description(self):
+        """image_url 无描述时只输出图片链接。"""
+        from app.document.base import DocumentParser, ParsedSection
+
+        sections = [
+            ParsedSection(
+                kind="image_url",
+                content="",
+                page=0,
+                image_url="https://example.com/img.png",
+            )
+        ]
+        result = DocumentParser.sections_to_text(sections, output_format="markdown")
+        assert "![图片](https://example.com/img.png)" in result
+
+
+class TestSectionsToTextPageSeparator:
+    """sections_to_text — 分页分隔符。"""
+
+    def test_page_separator_inserted(self):
+        """页码变化时插入分隔符。"""
+        from app.document.base import DocumentParser, ParsedSection
+
+        sections = [
+            ParsedSection(kind="text", content="第一页内容", page=0),
+            ParsedSection(kind="text", content="第二页内容", page=1),
+        ]
+        sep = "\n\n---\n<!-- page: {page} -->\n"
+        result = DocumentParser.sections_to_text(
+            sections, page_separator=sep
+        )
+        assert "第一页内容" in result
+        assert "第二页内容" in result
+        assert "---" in result
+        assert "<!-- page: 1 -->" in result
+
+    def test_no_separator_when_empty(self):
+        """空分隔符时不插入（默认行为，向后兼容）。"""
+        from app.document.base import DocumentParser, ParsedSection
+
+        sections = [
+            ParsedSection(kind="text", content="第一页", page=0),
+            ParsedSection(kind="text", content="第二页", page=1),
+        ]
+        result = DocumentParser.sections_to_text(sections, page_separator="")
+        assert "第一页" in result
+        assert "第二页" in result
+        assert "<!-- page:" not in result
+
+    def test_same_page_no_separator(self):
+        """同一页内不插入分隔符。"""
+        from app.document.base import DocumentParser, ParsedSection
+
+        sections = [
+            ParsedSection(kind="text", content="段落1", page=0),
+            ParsedSection(kind="text", content="段落2", page=0),
+        ]
+        result = DocumentParser.sections_to_text(
+            sections, page_separator="---{page}---"
+        )
+        assert "---0---" not in result  # 同页不插入
+
+    def test_page_placeholder_replaced(self):
+        """{page} 占位符被替换为实际页码。"""
+        from app.document.base import DocumentParser, ParsedSection
+
+        sections = [
+            ParsedSection(kind="text", content="页0", page=0),
+            ParsedSection(kind="text", content="页3", page=3),
+        ]
+        result = DocumentParser.sections_to_text(
+            sections, page_separator="[PAGE:{page}]"
+        )
+        assert "[PAGE:3]" in result
+        assert "[PAGE:0]" not in result  # 第一页不插入
+
+
+class TestSectionsToTextHtmlTable:
+    """_html_table_to_markdown — HTML 表格转 Markdown。"""
+
+    def test_simple_table(self):
+        """简单表格转换。"""
+        from app.document.base import DocumentParser
+
+        html = "<table><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></table>"
+        md = DocumentParser._html_table_to_markdown(html)
+        assert "| A | B |" in md
+        assert "| 1 | 2 |" in md
+
+    def test_pipe_escaped(self):
+        """管道符被转义。"""
+        from app.document.base import DocumentParser
+
+        html = "<table><tr><th>a|b</th></tr></table>"
+        md = DocumentParser._html_table_to_markdown(html)
+        assert "a\\|b" in md
+
+    def test_no_table_returns_original(self):
+        """无表格时返回原文。"""
+        from app.document.base import DocumentParser
+
+        text = "just plain text"
+        md = DocumentParser._html_table_to_markdown(text)
+        assert md == text
+
+    def test_empty_html(self):
+        """空 HTML 返回空。"""
+        from app.document.base import DocumentParser
+
+        assert DocumentParser._html_table_to_markdown("") == ""
+
+
+class TestDocxPageBreakDetection:
+    """DOCX 分页检测 — _has_page_break。"""
+
+    def test_explicit_page_break_detected(self):
+        """显式分页符 <w:br w:type="page"/> 被检测。"""
+        from app.document.docx_parser import DOCXParser
+
+        from lxml import etree
+
+        ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        xml = f'<w:p xmlns:w="{ns}"><w:r><w:br w:type="page"/></w:r></w:p>'
+        element = etree.fromstring(xml)
+        assert DOCXParser._has_page_break(element) is True
+
+    def test_last_rendered_page_break_detected(self):
+        """<w:lastRenderedPageBreak/> 被检测。"""
+        from app.document.docx_parser import DOCXParser
+
+        from lxml import etree
+
+        ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        xml = f'<w:p xmlns:w="{ns}"><w:r><w:lastRenderedPageBreak/></w:r></w:p>'
+        element = etree.fromstring(xml)
+        assert DOCXParser._has_page_break(element) is True
+
+    def test_no_page_break(self):
+        """无分页符返回 False。"""
+        from app.document.docx_parser import DOCXParser
+
+        from lxml import etree
+
+        ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        xml = f'<w:p xmlns:w="{ns}"><w:r><w:t>普通文本</w:t></w:r></w:p>'
+        element = etree.fromstring(xml)
+        assert DOCXParser._has_page_break(element) is False
+
+
+class TestParserBoolIntHelpers:
+    """DocumentParser._bool / _int — MagicMock 安全转换。"""
+
+    def test_bool_with_real_bool(self):
+        """真实 bool 值正常返回。"""
+        from app.document.base import DocumentParser
+
+        assert DocumentParser._bool(True, False) is True
+        assert DocumentParser._bool(False, True) is False
+
+    def test_bool_with_magic_mock_returns_default(self):
+        """MagicMock 返回默认值。"""
+        from app.document.base import DocumentParser
+
+        mock = MagicMock()
+        assert DocumentParser._bool(mock, True) is True
+        assert DocumentParser._bool(mock, False) is False
+
+    def test_int_with_real_int(self):
+        """真实 int 值正常返回。"""
+        from app.document.base import DocumentParser
+
+        assert DocumentParser._int(42, 0) == 42
+        assert DocumentParser._int(0, 50) == 0
+
+    def test_int_with_magic_mock_returns_default(self):
+        """MagicMock 返回默认值。"""
+        from app.document.base import DocumentParser
+
+        mock = MagicMock()
+        assert DocumentParser._int(mock, 50) == 50
+
+    def test_int_with_bool_returns_default(self):
+        """bool 不是 int，返回默认值（避免 True=1 的陷阱）。"""
+        from app.document.base import DocumentParser
+
+        assert DocumentParser._int(True, 50) == 50
+

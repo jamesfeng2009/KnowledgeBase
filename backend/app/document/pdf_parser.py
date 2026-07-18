@@ -1,14 +1,22 @@
 """
-PDF 文档解析器 — 单一职责：将 PDF 解析为增强文本（文本 + HTML 表格 + 图片描述）。
+PDF 文档解析器 — 单一职责：将 PDF 解析为增强文本（文本 + HTML 表格 + 图片描述/URL）。
 
-三阶段能力：
+四阶段能力：
     Phase 1: 表格提取 — pymupdf page.find_tables() → HTML <table> 标签；
-    Phase 2: 图片提取 — pymupdf get_images() → VLM.understand() → [图片描述: ...]；
-    Phase 3: 扫描页 OCR — get_text() 返回空时，页面渲染为图片 → VLM OCR。
+    Phase 2: 图片提取 — 小图过滤 + 格式校验 + 上传 MinIO 保留 URL（对齐图片流程）；
+    Phase 3: 图片描述 — VLM.understand() → [图片描述: ...]（可与 Phase 2 共存）；
+    Phase 4: 扫描页 OCR — get_text() 返回空时，页面渲染为图片 → VLM OCR。
+
+图片处理模式（由配置开关控制）：
+    - PDF_IMAGE_UPLOAD_ENABLED=True: 上传 MinIO 保留 URL → kind="image_url"
+      + VLM 描述（VLM 可用时同时生成描述，附在 URL 旁）
+    - PDF_IMAGE_UPLOAD_ENABLED=False: 仅 VLM 文本描述 → kind="image_desc"（默认）
+    - PDF_IMAGE_MIN_SIZE: 小图过滤阈值（宽或高 < 50px 跳过）
 
 遵循优雅降级：
     - pymupdf 未安装 / find_tables 不可用 → 退化为 page.get_text() 纯文本；
     - VLM 不可用 → 跳过图片描述和扫描页 OCR，只保留文本和表格；
+    - MinIO 不可用 → 跳过图片上传，降级为 VLM 文本描述；
     - 配置开关可单独关闭表格提取、图片提取或扫描页 OCR。
 """
 
@@ -39,7 +47,7 @@ _OCR_PROMPT: str = (
 
 
 class PDFParser(DocumentParser):
-    """PDF 解析器 — 文本 + 表格（Phase 1）+ 图片 VLM 描述（Phase 2）。
+    """PDF 解析器 — 文本 + 表格 + 图片 URL/VLM 描述 + 扫描页 OCR。
 
     使用 pymupdf (fitz) 完成所有提取，无额外依赖。
     """
@@ -51,7 +59,7 @@ class PDFParser(DocumentParser):
             file_path: PDF 文件路径。
 
         Returns:
-            增强文本（纯文本 + HTML 表格 + [图片描述]）。
+            增强文本（纯文本 + HTML 表格 + 图片描述/URL）。
             pymupdf 未安装或解析失败时返回空字符串。
         """
         try:
@@ -69,11 +77,14 @@ class PDFParser(DocumentParser):
             return ""
 
         settings = get_settings()
-        table_enabled = getattr(settings, "PDF_TABLE_EXTRACTION_ENABLED", True)
-        image_enabled = getattr(settings, "PDF_IMAGE_EXTRACTION_ENABLED", True)
-        max_images = getattr(settings, "PDF_IMAGE_MAX_PER_DOC", 50)
-        scan_ocr_enabled = getattr(settings, "PDF_SCAN_OCR_ENABLED", True)
-        scan_ocr_max_pages = getattr(settings, "PDF_SCAN_OCR_MAX_PAGES", 20)
+        # 使用 _bool()/_int() 辅助函数处理 MagicMock（测试场景）和真实 Settings
+        table_enabled = self._bool(getattr(settings, "PDF_TABLE_EXTRACTION_ENABLED", True), True)
+        image_enabled = self._bool(getattr(settings, "PDF_IMAGE_EXTRACTION_ENABLED", True), True)
+        max_images = self._int(getattr(settings, "PDF_IMAGE_MAX_PER_DOC", 50), 50)
+        scan_ocr_enabled = self._bool(getattr(settings, "PDF_SCAN_OCR_ENABLED", True), True)
+        scan_ocr_max_pages = self._int(getattr(settings, "PDF_SCAN_OCR_MAX_PAGES", 20), 20)
+        image_upload_enabled = self._bool(getattr(settings, "PDF_IMAGE_UPLOAD_ENABLED", False), False)
+        image_min_size = self._int(getattr(settings, "PDF_IMAGE_MIN_SIZE", 50), 50)
 
         sections: list[ParsedSection] = []
         image_count = 0
@@ -108,10 +119,15 @@ class PDFParser(DocumentParser):
                     table_sections = self._extract_tables(page, page_num)
                     sections.extend(table_sections)
 
-                # 3. 提取图片并 VLM 描述（Phase 2）
+                # 3. 提取图片（Phase 2 + Phase 3）
                 if image_enabled and image_count < max_images:
                     img_sections, img_count = await self._extract_images(
-                        doc, page, page_num, max_images - image_count
+                        doc,
+                        page,
+                        page_num,
+                        max_images - image_count,
+                        image_upload_enabled=image_upload_enabled,
+                        image_min_size=image_min_size,
                     )
                     sections.extend(img_sections)
                     image_count += img_count
@@ -125,10 +141,20 @@ class PDFParser(DocumentParser):
             pages=len(doc) if doc else 0,
             sections=len(sections),
             tables=sum(1 for s in sections if s.kind == "table"),
-            images=sum(1 for s in sections if s.kind == "image_desc"),
+            images=sum(1 for s in sections if s.kind in ("image_desc", "image_url")),
             scan_ocr=scan_ocr_count,
         )
-        return self.sections_to_text(sections)
+
+        # 使用配置中的输出格式和分页分隔符
+        output_format_raw = getattr(settings, "PARSER_OUTPUT_FORMAT", "html")
+        output_format = output_format_raw if isinstance(output_format_raw, str) else "html"
+        page_sep_raw = getattr(settings, "PAGE_SEPARATOR", "")
+        page_separator = page_sep_raw if isinstance(page_sep_raw, str) else ""
+        return self.sections_to_text(
+            sections,
+            output_format=output_format,
+            page_separator=page_separator,
+        )
 
     def _extract_tables(self, page: Any, page_num: int) -> list[ParsedSection]:
         """从 PDF 页面提取表格，转为 HTML <table> 标签。
@@ -200,17 +226,27 @@ class PDFParser(DocumentParser):
         page: Any,
         page_num: int,
         remaining: int,
+        image_upload_enabled: bool = False,
+        image_min_size: int = 50,
     ) -> tuple[list[ParsedSection], int]:
-        """从 PDF 页面提取图片并调用 VLM 生成描述。
+        """从 PDF 页面提取图片 — 支持上传 MinIO + VLM 描述 + 小图过滤。
+
+        处理模式：
+            - image_upload_enabled=True: 上传 MinIO → kind="image_url"
+              + VLM 描述（VLM 可用时同时生成）
+            - image_upload_enabled=False: 仅 VLM 描述 → kind="image_desc"
+            - image_min_size: 宽或高小于此值的图片跳过
 
         Args:
             doc: pymupdf Document 对象。
             page: pymupdf Page 对象。
             page_num: 页码。
             remaining: 本文档剩余可提取图片数。
+            image_upload_enabled: 是否上传图片到 MinIO。
+            image_min_size: 最小尺寸阈值（宽或高小于此值跳过）。
 
         Returns:
-            (图片描述 ParsedSection 列表, 实际提取的图片数)
+            (图片 ParsedSection 列表, 实际提取的图片数)
         """
         try:
             image_list = page.get_images(full=True)
@@ -223,13 +259,14 @@ class PDFParser(DocumentParser):
 
         # 限制数量
         image_list = image_list[:remaining]
-        descriptions: list[ParsedSection] = []
+        sections: list[ParsedSection] = []
         count = 0
 
-        # 并发调用 VLM
+        # VLM 并发控制
         semaphore = asyncio.Semaphore(_VLM_SEMAPHORE_LIMIT)
 
-        async def describe_image(xref: int) -> ParsedSection | None:
+        async def process_image(idx: int, xref: int) -> ParsedSection | None:
+            """处理单张图片 — 提取、过滤、上传/描述。"""
             try:
                 img_info = doc.extract_image(xref)
             except Exception as exc:
@@ -240,35 +277,93 @@ class PDFParser(DocumentParser):
             if not img_bytes:
                 return None
 
-            mime_type = img_info.get("ext", "png")
-            # 标准化 mime type
-            if mime_type == "jpg":
-                mime_type = "jpeg"
-            mime_type = f"image/{mime_type}"
+            ext = img_info.get("ext", "png")
+            img_width = img_info.get("width", 0) or 0
+            img_height = img_info.get("height", 0) or 0
 
+            # --- 小图过滤（仅在尺寸已知时过滤） ---
+            if image_min_size > 0:
+                from app.document.image_storage import get_image_dimensions
+
+                if img_width == 0 or img_height == 0:
+                    img_width, img_height = get_image_dimensions(img_bytes, ext)
+                # 仅当尺寸确认大于 0 时才比较（未知尺寸的图片不过滤）
+                if img_width > 0 and img_height > 0:
+                    if img_width < image_min_size or img_height < image_min_size:
+                        log.debug(
+                            "pdf.images.filtered_small",
+                            xref=xref,
+                            width=img_width,
+                            height=img_height,
+                            min_size=image_min_size,
+                        )
+                        return None
+
+            # 标准化扩展名
+            std_ext = ext.lower().lstrip(".")
+            if std_ext == "jpg":
+                std_ext = "jpeg"
+            mime_type = f"image/{std_ext}"
+
+            # --- VLM 描述（两种模式都尝试） ---
+            vlm_desc = ""
             async with semaphore:
-                desc = await self._vlm_describe(img_bytes, mime_type)
+                vlm_desc = await self._vlm_describe(img_bytes, mime_type)
 
-            if not desc or not desc.strip():
+            desc_text = ""
+            if vlm_desc and vlm_desc.strip():
+                desc_text = f"[图片描述: {vlm_desc.strip()}]"
+
+            # --- 图片上传模式 ---
+            if image_upload_enabled:
+                from app.document.image_storage import upload_image
+
+                url = await upload_image(
+                    image_bytes=img_bytes,
+                    ext=std_ext,
+                    doc_id=getattr(page, "_doc_id", "unknown"),
+                    page=page_num,
+                    idx=idx,
+                    min_size=0,  # 已过滤，不再重复
+                    width=img_width,
+                    height=img_height,
+                )
+                if url:
+                    return ParsedSection(
+                        kind="image_url",
+                        content=desc_text,
+                        page=page_num,
+                        image_url=url,
+                    )
+                # 上传失败，降级为描述模式
+                if desc_text:
+                    return ParsedSection(
+                        kind="image_desc",
+                        content=desc_text,
+                        page=page_num,
+                    )
                 return None
 
+            # --- 仅描述模式（当前默认） ---
+            if not desc_text:
+                return None
             return ParsedSection(
                 kind="image_desc",
-                content=f"[图片描述: {desc.strip()}]",
+                content=desc_text,
                 page=page_num,
             )
 
-        tasks = [describe_image(img[0]) for img in image_list]
+        tasks = [process_image(idx, img[0]) for idx, img in enumerate(image_list)]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         for result in results:
             if isinstance(result, ParsedSection):
-                descriptions.append(result)
+                sections.append(result)
                 count += 1
             elif isinstance(result, Exception):
-                log.warning("pdf.images.vlm_error", error=str(result))
+                log.warning("pdf.images.process_error", error=str(result))
 
-        return descriptions, count
+        return sections, count
 
     async def _vlm_describe(self, image: bytes, mime_type: str) -> str:
         """调用 VLM 理解图片内容 — 延迟导入，VLM 不可用时返回空字符串。
