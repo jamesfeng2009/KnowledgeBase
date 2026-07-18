@@ -42,7 +42,9 @@
 | **VLM** | Anthropic Claude Vision / vLLM (Pixtral) | SaaS / 私有双部署模式 |
 | **ASR** | OpenAI Whisper API / Faster-Whisper (私有) | 语音转写，视频 RAG |
 | **视频处理** | ffmpeg | 音轨提取 + 关键帧抽取 |
-| **文档解析** | Docling (IBM Granite-Docling-258M) + pymupdf + python-pptx + python-docx + openpyxl | Docling 统一解析 PDF/DOCX/PPTX/XLSX/HTML/图片/音频 → HTML（含 `<h1>`/`<h2>` 标题 + `<table>` 表格），降级到原有解析器 |
+| **文档解析** | Docling (IBM Granite-Docling-258M) + pymupdf + python-pptx + python-docx + openpyxl + pandas | Docling 统一解析 PDF/DOCX/PPTX/XLSX/HTML/图片/音频 → HTML（`<h1>`~`<h6>` 标题 + `<table>` 表格 + `<ul><li>` 列表），降级到原有解析器；图片上传 MinIO + 小图过滤 + VLM 描述；XLSX 双引擎降级（openpyxl → pandas）+ 列宽对齐 |
+| **数据库迁移** | Alembic + asyncpg + aiosqlite | 异步迁移引擎，启动时自动 `alembic upgrade head`，27 张表首版迁移 |
+| **配置校验** | Pydantic V2 (field_validator + model_validator) | DATABASE_URL 异步驱动校验、数值范围校验、CORS URL 校验、部署模式与 API Key 交叉校验 |
 | **限流** | 自研令牌桶中间件 | 按客户端（API Key/IP）限流，突发 + 持续控制 |
 | **协同服务** | Node.js + Yjs + WebSocket | CRDT 实时协同编辑 |
 | **反向代理** | Caddy | 自动 HTTPS + HTTP/3 |
@@ -82,19 +84,27 @@ EnterpriseKnowledge/
 │   │   ├── video/                    # 视频处理（ffmpeg 音轨提取 + 关键帧抽取）
 │   │   ├── document/                 # 文档解析器
 │   │   │   ├── docling_parser.py     # Docling 统一解析（primary，MIT，→ HTML）
-│   │   │   ├── pdf_parser.py         # PDF 解析（fallback，pymupdf + 表格 + VLM + 扫描页 OCR）
-│   │   │   ├── docx_parser.py        # DOCX 解析（fallback，python-docx + 表格 + 页眉页脚）
+│   │   │   ├── pdf_parser.py         # PDF 解析（fallback，pymupdf + 表格 + 图片上传/小图过滤 + VLM + 扫描页 OCR）
+│   │   │   ├── docx_parser.py        # DOCX 解析（fallback，python-docx + 标题层级 + 列表结构 + 表格 + 图片上传 + 页眉页脚 + 分页检测）
 │   │   │   ├── pptx_parser.py        # PPTX 解析（fallback，python-pptx + 组合形状递归 + 备注）
-│   │   │   ├── xlsx_parser.py        # XLSX 解析（fallback，openpyxl + sheet→HTML）
+│   │   │   ├── xlsx_parser.py        # XLSX 解析（fallback，openpyxl + pandas 降级 + sheet→HTML + 列宽对齐）
+│   │   │   ├── image_storage.py      # 图片对象存储（零依赖尺寸解析 + 小图过滤 + MinIO 上传）
 │   │   │   ├── factory.py            # 解析器工厂（Docling 优先 → 原有降级）
-│   │   │   └── base.py              # 解析器基类
+│   │   │   └── base.py              # 解析器基类（ParsedSection + sections_to_text + 分页分隔符）
+│   │   ├── utils/                    # 工具模块
+│   │   │   ├── migration.py          # Alembic 迁移运行器（run_migrations / stamp_head）
+│   │   │   ├── minio_client.py       # MinIO 对象存储客户端
+│   │   │   └── logger.py             # 结构化日志
 │   │   ├── eval/                     # 离线评测系统（数据集+Runner+回归基线+CLI）
-│   │   ├── config.py                 # 配置管理
+│   │   ├── config.py                 # 配置管理（Pydantic V2 + field_validator + model_validator）
 │   │   ├── database.py               # 数据库会话
 │   │   ├── deps.py                   # 依赖注入
-│   │   └── main.py                   # FastAPI 入口
+│   │   └── main.py                   # FastAPI 入口（lifespan → alembic upgrade head）
+│   ├── alembic/                      # Alembic 迁移脚本
+│   │   ├── env.py                    # 异步引擎 + 自动导入模型 + compare_type
+│   │   └── versions/                 # 迁移版本（首版 init schema：27 张表）
 │   ├── tasks/                        # Celery 异步任务
-│   ├── tests/                        # 测试（855 项）
+│   ├── tests/                        # 测试（958 项）
 │   ├── celery_app.py                 # Celery 入口
 │   └── requirements.txt
 ├── collab-service/                   # Yjs 协作服务（Node.js + TypeScript）
@@ -1073,18 +1083,27 @@ graph TB
 
 Celery 异步任务驱动文档处理流水线，从文档上传到索引构建全自动，支持 PDF/DOCX/PPTX/XLSX/HTML/Markdown/图片/视频/音频 多格式。Docling 统一解析器优先处理（版面分析 + 表格 + 公式 + OCR → HTML），降级到原有专用解析器。
 
+**P0-P2 解析增强**（对齐业界最佳实践）：
+- **DOCX 标题层级映射**：检测 `<w:pStyle>` 样式 → `<h1>`~`<h6>`，修复 chunker 结构化分块
+- **DOCX 列表结构保留**：检测 `<w:numPr>` → `<ul><li>`，保留列表语义
+- **图片上传 MinIO**：`PDF/DOCX_IMAGE_UPLOAD_ENABLED` 开启后图片上传保留 URL + VLM 描述
+- **小图过滤**：`PDF/DOCX_IMAGE_MIN_SIZE=50` 剔除图标/装饰小图（零依赖 PNG/JPEG/WebP 尺寸解析）
+- **XLSX 双引擎降级**：openpyxl 失败 → pandas.read_excel 兜底
+- **XLSX 列宽对齐**：合并单元格场景自动补齐短行为最大列数
+- **DOCX 分页检测**：`<w:br type="page"/>` + `<w:lastRenderedPageBreak/>` → 真实页码
+
 ```mermaid
 flowchart LR
     UPLOAD[文档上传] --> CELERY[Celery Task<br/>process_document<br/>max_retries=3]
 
     CELERY --> PARSE[1. 文档解析<br/>延迟导入第三方库]
-    PARSE -->|PDF| PYMUPDF[pymupdf 文本<br/>+ find_tables → HTML<br/>+ 图片 VLM 描述]
+    PARSE -->|PDF| PYMUPDF[pymupdf 文本<br/>+ find_tables → HTML<br/>+ 图片上传 MinIO / 小图过滤<br/>+ VLM 描述]
     PARSE -->|PPTX| PPTX[python-pptx 文本<br/>+ 表格 → HTML<br/>+ 内嵌图片 VLM]
-    PARSE -->|PDF / DOCX / PPTX<br/>XLSX / HTML / 图片 / 音频| DOCLING["Docling 统一解析<br/>Granite-Docling-258M<br/>版面分析 + 表格 + 公式 + OCR<br/>→ HTML（&lt;h1&gt;/&lt;h2&gt;/&lt;table&gt;）"]
-    PARSE -->|Docling 不可用| PYMUPDF[pymupdf<br/>表格 → HTML<br/>图片 VLM 描述<br/>扫描页 OCR]
+    PARSE -->|PDF / DOCX / PPTX<br/>XLSX / HTML / 图片 / 音频| DOCLING["Docling 统一解析<br/>Granite-Docling-258M<br/>版面分析 + 表格 + 公式 + OCR<br/>→ HTML（&lt;h1&gt;~&lt;h6&gt;/&lt;table&gt;/&lt;ul&gt;）"]
+    PARSE -->|Docling 不可用| PYMUPDF[pymupdf<br/>表格 → HTML<br/>图片上传 + VLM 描述<br/>小图过滤 + 扫描页 OCR]
     PARSE -->|Docling 不可用| PPTX[python-pptx<br/>表格 → HTML<br/>组合形状递归<br/>备注提取]
-    PARSE -->|Docling 不可用| DOCX[python-docx<br/>表格 → HTML<br/>图片 VLM 描述<br/>页眉页脚]
-    PARSE -->|Docling 不可用| XLSX[openpyxl<br/>每 sheet → HTML 表格]
+    PARSE -->|Docling 不可用| DOCX[python-docx<br/>标题层级 h1~h6<br/>列表结构 ul/li<br/>表格 → HTML<br/>图片上传 + VLM 描述<br/>分页检测 + 页眉页脚]
+    PARSE -->|Docling 不可用| XLSX[openpyxl + pandas 降级<br/>每 sheet → HTML 表格<br/>列宽对齐]
     PARSE -->|HTML| REGEX[正则去标签]
     PARSE -->|MD/TXT| DIRECT[直接返回]
     PARSE -->|视频| VIDEO[ffmpeg 提取音轨<br/>→ ASR 转写<br/>→ 关键帧 VLM 描述]
@@ -1317,6 +1336,36 @@ export DEPLOY_MODE=private_domestic
 docker compose --profile private up -d
 ```
 
+### 数据库迁移（Alembic）
+
+项目使用 Alembic 管理 PostgreSQL schema 迁移，启动时自动执行 `alembic upgrade head`。
+
+```bash
+# 修改 ORM 模型后生成新迁移
+cd backend
+alembic revision --autogenerate -m "add xxx table"
+
+# 升级到最新版本
+alembic upgrade head
+
+# 回滚一步
+alembic downgrade -1
+
+# 已有 create_all 建的库切换到 migration — 标记当前为 head，跳过首次迁移
+python -c "from app.utils.migration import stamp_head; stamp_head()"
+```
+
+**配置项**（`app/config.py`）：
+
+| 配置 | 默认 | 说明 |
+|------|------|------|
+| `AUTO_MIGRATE` | `True` | 启动时自动 `alembic upgrade head` |
+| `AUTO_CREATE_TABLES` | `False` | 兼容旧逻辑，直接 `create_all`（仅 demo） |
+
+**Pydantic V2 配置校验**：
+- `field_validator`：DATABASE_URL 必须用异步驱动（asyncpg/aiosqlite）、数值范围、CORS URL 格式
+- `model_validator`：部署模式与 API Key 交叉校验、生产环境 SECRET_KEY 安全校验
+
 ### 服务端口
 
 | 服务 | 端口 | 说明 |
@@ -1360,7 +1409,8 @@ python -m pytest tests/test_audit_workflow.py -v          # 审核流程串联
 python -m pytest tests/test_tool_guard.py -v              # MCP 工具调用守卫
 python -m pytest tests/test_skill_finder.py -v            # Find Skills 渐进式技能加载
 python -m pytest tests/test_video_rag.py -v               # 视频 RAG（ASR + 关键帧 VLM 并发）
-python -m pytest tests/test_document_parser.py -v         # 文档解析（Docling 统一解析 + PDF/PPT/DOCX/XLSX 表格+图片 VLM + 扫描页 OCR + 独立音频 ASR + 旧格式兜底）
+python -m pytest tests/test_document_parser.py -v         # 文档解析（Docling 统一解析 + PDF/DOCX/XLSX 表格+图片上传+小图过滤+VLM+扫描页OCR + 标题层级+列表结构+分页检测+XLSX降级+列宽对齐 + 独立音频 ASR + 旧格式兜底）
+python -m pytest tests/test_migration.py -v               # Alembic 迁移 + Pydantic V2 配置校验（field_validator + model_validator + 迁移文件 + 端到端 SQLite）
 python -m pytest tests/test_quality_guard.py -v           # RAG 质量守卫（检索+生成双层评估）
 python -m pytest tests/test_rate_limiter.py -v            # API 限流（令牌桶+客户端隔离+FastAPI 集成）
 python -m pytest tests/test_eval.py -v                    # 离线评测（数据集+Recall/MRR/NDCG+回归基线+CLI）
@@ -1379,15 +1429,16 @@ python -m pytest tests/test_eval.py -v                    # 离线评测（数�
 | `test_audit_workflow.py` | 19 | 文档审核流程串联、密级路由、AuditService.approve 触发发布 |
 | `test_tool_guard.py` | 30 | DangerousToolGuard 守卫拦截、确认管理、engine 集成 |
 | `test_video_rag.py` | 34 | ASR Provider 工厂、视频处理器、视频转写分块、document_tasks 集成、关键帧 VLM 并发 |
-| `test_document_parser.py` | 147 | Docling 统一解析、PDF 表格/图片 VLM/扫描页 OCR、PPTX 解析/组合形状递归/备注、DOCX 解析/页眉页脚、XLSX 解析、独立音频 ASR、旧格式兜底、factory 路由、document_tasks 集成、配置项 |
+| `test_document_parser.py` | 172 | Docling 统一解析、PDF 表格/图片上传/小图过滤/VLM/扫描页 OCR、PPTX 解析/组合形状递归/备注、DOCX 标题层级映射/列表结构/分页检测/图片上传/页眉页脚、XLSX 双引擎降级/列宽对齐、独立音频 ASR、旧格式兜底、factory 路由、document_tasks 集成、配置项 |
 | `test_quality_guard.py` | 33 | 检索质量检查、重试决策、生成质量评估、低置信度标记、engine 集成 |
 | `test_rate_limiter.py` | 16 | 令牌桶消费/补充、客户端隔离、API Key/IP 标识、429 响应、健康检查豁免 |
 | `test_eval.py` | 55 | 数据集加载、Recall@K/MRR/NDCG 计算、Runner 集成、回归检测、DB 持久化、CLI 退出码 |
 | `test_skill_finder.py` | 58 | SkillMetadata 匹配分数、SkillRegistry 加载/索引/按需加载、SkillFinder 中英文匹配/阈值/fallback/max_skills、分词器、config 配置项、Server/MCPClient/Engine 集成 |
 | `test_dashscope_provider.py` | 27 | DashScopeProvider 继承 VLLMProvider、初始化、chat/tool_use、DashScopeEmbedder 维度/embed、factory 路由、config 配置项、向后兼容性 |
 | `test_minio_client.py` | 8 | MinIO upload/download/delete/exists、懒初始化、bucket 自动创建与缓存 |
+| `test_migration.py` | 46 | Pydantic V2 field_validator（DATABASE_URL/数值/CORS）、model_validator（部署模式/SECRET_KEY）、迁移文件存在性/upgrade/downgrade、alembic env.py 配置、迁移 runner 端到端 SQLite |
 | 其他测试 | 215 | API 端点、服务层、模型层、记忆引擎等 |
-| **合计** | **855** | **全部通过，零回归** |
+| **合计** | **958** | **全部通过，零回归** |
 
 ---
 
