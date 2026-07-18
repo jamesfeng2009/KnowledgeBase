@@ -6,6 +6,7 @@ python-multipart>=0.0.12
 # === 数据库 ===
 sqlalchemy[asyncio]>=2.0.36
 asyncpg>=0.30.0
+aiosqlite>=0.20.0  # SQLite 异步驱动（开发/测试环境用）
 alembic>=1.14.0
 
 # === 缓存 ===

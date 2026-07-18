@@ -3,11 +3,18 @@
 
 遵循开闭原则：新增配置项只需在 Settings 类中添加字段，无需修改其他代码。
 遵循依赖倒置：所有模块通过依赖注入获取配置，不直接读取环境变量。
+
+Pydantic V2 校验策略：
+    - 结构性校验（URL 格式、数值范围）→ 硬错误，启动即失败；
+    - 运营性校验（API Key 缺失、默认密钥）→ warnings 警告，允许启动。
 """
 
+import warnings
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import urlparse
 
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -32,8 +39,11 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://ekb:ekb@localhost:5432/ekb"
     DATABASE_POOL_SIZE: int = 10
     DATABASE_MAX_OVERFLOW: int = 20
-    # 启动时自动建表（demo/开发模式用，生产环境应使用 alembic 迁移）
-    AUTO_CREATE_TABLES: bool = True
+    # 启动时自动执行 Alembic 迁移（alembic upgrade head）
+    # 开发/Demo 模式便捷开关；生产环境建议 CI/CD 中执行 alembic upgrade
+    AUTO_MIGRATE: bool = True
+    # 兼容旧逻辑 — 直接 create_all（不生成迁移文件，仅 demo 用）
+    AUTO_CREATE_TABLES: bool = False
 
     # === Redis ===
     REDIS_URL: str = "redis://localhost:6379/0"
@@ -190,6 +200,107 @@ class Settings(BaseSettings):
     LANGFUSE_PUBLIC_KEY: str = ""
     LANGFUSE_SECRET_KEY: str = ""
     LANGFUSE_HOST: str = "https://cloud.langfuse.com"
+
+    # ================================================================
+    # Pydantic V2 校验器 — 结构性校验硬失败，运营性校验发 warning
+    # ================================================================
+
+    @field_validator("DATABASE_URL")
+    @classmethod
+    def validate_database_url(cls, v: str) -> str:
+        """DATABASE_URL 必须使用异步驱动，否则 SQLAlchemy 异步引擎无法启动。"""
+        allowed = ("postgresql+asyncpg://", "sqlite+aiosqlite://")
+        if not v.startswith(allowed):
+            raise ValueError(
+                f"DATABASE_URL 必须使用异步驱动 ({' / '.join(allowed)})，"
+                f"当前值: {v}"
+            )
+        return v
+
+    @field_validator(
+        "DATABASE_POOL_SIZE",
+        "DATABASE_MAX_OVERFLOW",
+        "RATE_LIMIT_PER_MINUTE",
+        "RATE_LIMIT_BURST",
+        "SKILL_MAX_LOADED",
+        "ACCESS_TOKEN_EXPIRE_MINUTES",
+        "RAG_RETRIEVE_TOP_K",
+        "RAG_RERANK_TOP_K",
+        "RAG_MAX_ITERATIONS",
+        "RAG_RETRIEVAL_EXPAND_TOP_K",
+    )
+    @classmethod
+    def validate_positive_int(cls, v: int) -> int:
+        """数值配置必须为正整数。"""
+        if v <= 0:
+            raise ValueError(f"值必须为正整数，当前: {v}")
+        return v
+
+    @field_validator("SKILL_MATCH_THRESHOLD", "RAG_RETRIEVAL_MAX_RETRIES")
+    @classmethod
+    def validate_non_negative_int(cls, v: int) -> int:
+        """阈值/重试次数必须为非负整数。"""
+        if v < 0:
+            raise ValueError(f"值必须为非负整数，当前: {v}")
+        return v
+
+    @field_validator(
+        "RAG_RETRIEVAL_SCORE_THRESHOLD",
+        "EVAL_REGRESSION_THRESHOLD",
+        "VIDEO_KEYFRAME_SCENE_THRESHOLD",
+    )
+    @classmethod
+    def validate_float_0_1(cls, v: float) -> float:
+        """浮点阈值必须在 [0, 1] 范围内。"""
+        if not 0.0 <= v <= 1.0:
+            raise ValueError(f"值必须在 [0.0, 1.0] 范围内，当前: {v}")
+        return v
+
+    @field_validator("CORS_ORIGINS")
+    @classmethod
+    def validate_cors_origins(cls, v: list[str]) -> list[str]:
+        """CORS 来源必须是合法 URL（含 scheme 和 host）。"""
+        for origin in v:
+            parsed = urlparse(origin)
+            if not parsed.scheme or not parsed.netloc:
+                raise ValueError(
+                    f"CORS 来源必须是合法 URL (如 http://localhost:3000)，当前: {origin}"
+                )
+        return v
+
+    @model_validator(mode="after")
+    def validate_deploy_mode_keys(self) -> "Settings":
+        """根据部署模式校验必要的 API Key — 仅警告，不阻断启动。"""
+        if self.DEPLOY_MODE == "saas_dashscope" and not self.DASHSCOPE_API_KEY:
+            warnings.warn(
+                "DEPLOY_MODE=saas_dashscope 但未设置 DASHSCOPE_API_KEY，"
+                "LLM 调用将在运行时失败",
+                stacklevel=2,
+            )
+        if self.DEPLOY_MODE == "saas" and not any(
+            [self.ANTHROPIC_API_KEY, self.OPENAI_API_KEY, self.COHERE_API_KEY]
+        ):
+            warnings.warn(
+                "DEPLOY_MODE=saas 但未设置任何 LLM API Key "
+                "(ANTHROPIC_API_KEY / OPENAI_API_KEY / COHERE_API_KEY)",
+                stacklevel=2,
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_secret_key(self) -> "Settings":
+        """生产环境 (DEBUG=False) 不允许使用默认 SECRET_KEY — 仅警告。"""
+        if self.SECRET_KEY == "change-me-in-production" and not self.DEBUG:
+            warnings.warn(
+                "生产环境 (DEBUG=False) 使用默认 SECRET_KEY 极不安全，"
+                "请立即通过环境变量设置随机密钥",
+                stacklevel=2,
+            )
+        return self
+
+    # ================================================================
+    # 便捷属性
+    # ================================================================
 
     @property
     def is_saas(self) -> bool:

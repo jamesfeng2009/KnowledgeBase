@@ -33,16 +33,29 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     启动时：
         - 配置结构化日志；
-        - 自动建表（AUTO_CREATE_TABLES=True 时，demo/开发模式用）。
-          生产环境应设为 False 并使用 alembic 迁移管理 schema。
+        - 执行 Alembic 迁移（AUTO_MIGRATE=True 时，默认开启）。
+          自动运行 `alembic upgrade head`，确保 schema 与模型一致。
+        - 兼容旧逻辑：AUTO_CREATE_TABLES=True 时直接 create_all（仅 demo）。
     关闭时：
         - 记录停止日志。
     """
     configure_logging()
     log.info("app.starting", app_name=settings.APP_NAME, version=settings.APP_VERSION)
 
-    # 自动建表 — demo/开发模式快速启动
-    # 导入 models 包确保所有 ORM 类注册到 Base.metadata
+    # Alembic 迁移 — 生产级 schema 管理
+    if settings.AUTO_MIGRATE:
+        try:
+            from app.utils.migration import run_migrations
+
+            # 迁移在同步线程中执行（alembic 内部使用同步 SQLAlchemy）
+            import asyncio
+
+            result = await asyncio.to_thread(run_migrations, "head")
+            log.info("app.migration_done", result=result)
+        except Exception as exc:
+            log.warning("app.migration_failed", error=str(exc))
+
+    # 兼容旧逻辑 — 直接 create_all（不经过 migration，仅 demo 快速启动）
     if settings.AUTO_CREATE_TABLES:
         try:
             from app.database import engine
