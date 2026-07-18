@@ -7,6 +7,7 @@ Provider 工厂 — 单一职责：根据 DEPLOY_MODE 创建对应 LLM / Embeddi
 
 部署模式映射：
     saas              → AnthropicProvider（Claude Sonnet 4.6）
+    saas_dashscope    → DashScopeProvider（通义千问 Qwen，国内 SaaS）
     private_overseas  → VLLMProvider（Llama 3.3 70B）
     private_domestic  → VLLMProvider（Qwen 3 72B）
 
@@ -22,6 +23,7 @@ from functools import lru_cache
 from app.config import get_settings
 from app.llm.anthropic_provider import AnthropicProvider
 from app.llm.base import LLMProvider
+from app.llm.dashscope_provider import DashScopeProvider
 from app.llm.embedder import EmbeddingProvider, get_embedder
 from app.llm.vllm_provider import VLLMProvider
 
@@ -61,6 +63,12 @@ def register_llm_provider(
 def _make_anthropic_provider() -> AnthropicProvider:
     """SaaS 模式：Claude Sonnet 4.6。"""
     return AnthropicProvider()
+
+
+@register_llm_provider("saas_dashscope")
+def _make_dashscope_provider() -> DashScopeProvider:
+    """SaaS·国内模式：通义千问 Qwen via DashScope。"""
+    return DashScopeProvider()
 
 
 @register_llm_provider("private_overseas")

@@ -61,12 +61,23 @@ class Settings(BaseSettings):
     NEO4J_DATABASE: str = "neo4j"
 
     # === 部署模式（核心切换变量）===
-    DEPLOY_MODE: Literal["saas", "private_overseas", "private_domestic"] = "saas"
+    DEPLOY_MODE: Literal[
+        "saas", "saas_dashscope", "private_overseas", "private_domestic"
+    ] = "saas"
 
     # === SaaS 模式 API Keys ===
     ANTHROPIC_API_KEY: str = ""
     OPENAI_API_KEY: str = ""
     COHERE_API_KEY: str = ""
+
+    # === SaaS 模式·国内（通义千问 DashScope）===
+    # 阿里云通义千问，OpenAI 兼容接口，国内直连无需代理
+    # Qwen-7B 无限制免费，qwen-turbo/qwen-plus 有新用户免费额度
+    DASHSCOPE_API_KEY: str = ""
+    DASHSCOPE_BASE_URL: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    DASHSCOPE_LLM_MODEL: str = "qwen-turbo"
+    DASHSCOPE_EMBED_MODEL: str = "text-embedding-v3"
+    DASHSCOPE_EMBED_DIM: int = 1024
 
     # === 私有部署模型服务地址 ===
     VLLM_HOST: str = "llm-server"
@@ -180,8 +191,8 @@ class Settings(BaseSettings):
 
     @property
     def is_saas(self) -> bool:
-        """是否为 SaaS 模式。"""
-        return self.DEPLOY_MODE == "saas"
+        """是否为 SaaS 模式（含 Anthropic 和 DashScope）。"""
+        return self.DEPLOY_MODE in ("saas", "saas_dashscope")
 
     @property
     def is_private(self) -> bool:

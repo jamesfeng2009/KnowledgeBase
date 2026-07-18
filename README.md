@@ -32,7 +32,7 @@
 | **任务队列** | Celery + Redis | 异步文档处理、定时任务调度 |
 | **Agent 框架** | LangGraph（可选）+ CrewAI | Agent Loop 状态图 + 多 Agent 协作 |
 | **RAG 引擎** | LlamaIndex + 自研 Agentic RAG | 混合检索 + 重排 + 生成 |
-| **LLM** | Anthropic Claude / vLLM（Llama 3.3 / Qwen 3） | SaaS / 私有双部署模式 |
+| **LLM** | Anthropic Claude / DashScope 通义千问 / vLLM（Llama 3.3 / Qwen 3） | SaaS / SaaS·国内 / 私有三部署模式 |
 | **向量存储** | OpenSearch k-NN（默认）/ Milvus 2.4（可选） | 适配器模式，按 VECTOR_STORE 切换；HNSW + COSINE |
 | **全文检索** | OpenSearch 2.18 | BM25 + multi_match |
 | **图数据库** | Neo4j 5.26 | 知识图谱 + Graphiti 时序图谱 |
@@ -60,7 +60,9 @@ EnterpriseKnowledge/
 │   │   ├── agents/                   # 多 Agent 协作（CrewAI）
 │   │   ├── connectors/               # 企业连接器（OA/ERP/CRM/Mail）
 │   │   ├── core/                     # 模块注册表 + 权限
-│   │   ├── llm/                      # LLM Provider 抽象层
+│   │   ├── llm/                      # LLM Provider 抽象层（Anthropic / DashScope / vLLM）
+│   │   │   ├── dashscope_provider.py # 通义千问 Provider（saas_dashscope 模式，OpenAI 兼容）
+│   │   │   └── ...                   # anthropic / vllm / embedder / factory 等
 │   │   ├── mcp/                      # MCP 工具协议
 │   │   ├── memory/                   # 四级记忆引擎
 │   │   ├── models/                   # SQLAlchemy ORM 模型
@@ -92,7 +94,7 @@ EnterpriseKnowledge/
 │   │   ├── deps.py                   # 依赖注入
 │   │   └── main.py                   # FastAPI 入口
 │   ├── tasks/                        # Celery 异步任务
-│   ├── tests/                        # 测试（820 项）
+│   ├── tests/                        # 测试（847 项）
 │   ├── celery_app.py                 # Celery 入口
 │   └── requirements.txt
 ├── collab-service/                   # Yjs 协作服务（Node.js + TypeScript）
@@ -1131,7 +1133,7 @@ flowchart LR
 
 ## LLM Provider 抽象层
 
-通过注册表 + 装饰器工厂模式实现"环境变量切换，业务代码零改动"。三种部署模式映射不同 Provider 和模型。
+通过注册表 + 装饰器工厂模式实现"环境变量切换，业务代码零改动"。四种部署模式映射不同 Provider 和模型。
 
 ```mermaid
 graph TB
@@ -1141,6 +1143,10 @@ graph TB
 
     subgraph "SaaS 模式"
         ANTHROPIC[AnthropicProvider<br/>Claude Sonnet 4.6 / Opus 4.8<br/>Prompt Caching: cache_control<br/>CacheAligner: 检测易变内容]
+    end
+
+    subgraph "SaaS·国内模式"
+        DASHSCOPE[DashScopeProvider<br/>通义千问 Qwen<br/>OpenAI 兼容 API<br/>国内直连，Qwen-7B 免费]
     end
 
     subgraph "私有部署 - 海外"
@@ -1153,14 +1159,17 @@ graph TB
 
     subgraph "Embedding Provider"
         EMBED_OPENAI[OpenAI Embedder<br/>text-embedding-3-large<br/>3072 维]
+        EMBED_DASHSCOPE[DashScope Embedder<br/>text-embedding-v3<br/>1024 维]
         EMBED_TEI[TEI Embedder<br/>BGE-M3<br/>1024 维]
     end
 
     FACTORY -->|saas| ANTHROPIC
+    FACTORY -->|saas_dashscope| DASHSCOPE
     FACTORY -->|private_overseas| VLLM_OVERSEAS
     FACTORY -->|private_domestic| VLLM_DOMESTIC
 
     ANTHROPIC --> EMBED_OPENAI
+    DASHSCOPE --> EMBED_DASHSCOPE
     VLLM_OVERSEAS --> EMBED_TEI
     VLLM_DOMESTIC --> EMBED_TEI
 ```
@@ -1278,6 +1287,26 @@ cp backend/.env.example backend/.env
 docker compose up -d
 ```
 
+### SaaS·国内模式部署（通义千问，最省钱 demo 方案）
+
+```bash
+# 克隆仓库
+git clone https://github.com/jamesfeng2009/KnowledgeBase.git
+cd KnowledgeBase
+
+# 配置环境变量
+cp backend/.env.example backend/.env
+# 编辑 .env：
+#   DEPLOY_MODE=saas_dashscope
+#   DASHSCOPE_API_KEY=sk-xxx  （阿里云百炼平台获取）
+#   DASHSCOPE_LLM_MODEL=qwen-turbo  （或 qwen-plus / qwen-max）
+
+# 启动精简服务（demo 只需 7 个容器，无 GPU）
+docker compose up -d postgres redis minio opensearch core-engine frontend celery-worker
+```
+
+通义千问 Qwen-7B 无限制免费，qwen-turbo/qwen-plus 有新用户免费额度，demo 期间 API 费用接近 0 元。国内直连无需代理。
+
 ### 私有部署
 
 ```bash
@@ -1317,7 +1346,7 @@ docker compose --profile private up -d
 ```bash
 cd backend
 
-# 运行全部测试（820 项）
+# 运行全部测试（847 项）
 python -m pytest --tb=short -q
 
 # 运行特定模块测试
@@ -1355,8 +1384,9 @@ python -m pytest tests/test_eval.py -v                    # 离线评测（数�
 | `test_rate_limiter.py` | 16 | 令牌桶消费/补充、客户端隔离、API Key/IP 标识、429 响应、健康检查豁免 |
 | `test_eval.py` | 55 | 数据集加载、Recall@K/MRR/NDCG 计算、Runner 集成、回归检测、DB 持久化、CLI 退出码 |
 | `test_skill_finder.py` | 58 | SkillMetadata 匹配分数、SkillRegistry 加载/索引/按需加载、SkillFinder 中英文匹配/阈值/fallback/max_skills、分词器、config 配置项、Server/MCPClient/Engine 集成 |
+| `test_dashscope_provider.py` | 27 | DashScopeProvider 继承 VLLMProvider、初始化、chat/tool_use、DashScopeEmbedder 维度/embed、factory 路由、config 配置项、向后兼容性 |
 | 其他测试 | 215 | API 端点、服务层、模型层、记忆引擎等 |
-| **合计** | **820** | **全部通过，零回归** |
+| **合计** | **847** | **全部通过，零回归** |
 
 ---
 

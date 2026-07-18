@@ -83,6 +83,31 @@ class TEIEmbedder(EmbeddingProvider):
         return [list(map(float, vec)) for vec in data]
 
 
+class DashScopeEmbedder(EmbeddingProvider):
+    """SaaS·国内 Embedder — 通义千问 text-embedding-v3 via DashScope，1024 维。
+
+    DashScope 提供 OpenAI 兼容接口，复用 ``AsyncOpenAI`` 客户端。
+    国内直连无需代理，有新用户免费额度。
+    """
+
+    dim = 1024
+
+    def __init__(self) -> None:
+        self.client = AsyncOpenAI(
+            base_url=settings.DASHSCOPE_BASE_URL,
+            api_key=settings.DASHSCOPE_API_KEY,
+        )
+        self.model = settings.DASHSCOPE_EMBED_MODEL
+        # 动态读取维度配置（text-embedding-v3=1024, v2=1536）
+        self.dim = settings.DASHSCOPE_EMBED_DIM
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
+        resp = await self.client.embeddings.create(input=texts, model=self.model)
+        return [item.embedding for item in resp.data]
+
+
 def register_embedder(
     deploy_mode: str,
 ) -> Callable[[Callable[[], "EmbeddingProvider"]], Callable[[], "EmbeddingProvider"]]:
@@ -101,6 +126,12 @@ def register_embedder(
 def _make_openai_embedder() -> EmbeddingProvider:
     """SaaS：OpenAI text-embedding-3-large。"""
     return OpenAIEmbedder()
+
+
+@register_embedder("saas_dashscope")
+def _make_dashscope_embedder() -> EmbeddingProvider:
+    """SaaS·国内：通义千问 text-embedding-v3 via DashScope。"""
+    return DashScopeEmbedder()
 
 
 @register_embedder("private_overseas")
