@@ -813,7 +813,7 @@ class TestDOCXParserParse:
         with patch.dict(sys.modules, {"docx": mock_docx_module}):
             parser = DOCXParser()
             # 直接 mock 解析器方法，避免复杂的 docx 模块 mock
-            with patch.object(parser, "_extract_paragraph_text", return_value="这是段落文本"), \
+            with patch.object(parser, "_format_paragraph", return_value="这是段落文本"), \
                  patch.object(parser, "_extract_table_html", return_value="<table>\n<tr>\n<th>项目</th>\n</tr>\n<tr>\n<td>采购</td>\n</tr>\n</table>"), \
                  patch.object(parser, "_extract_images", AsyncMock(return_value=([], 0))):
                 result = await parser.parse("/fake/doc.docx")
@@ -853,7 +853,7 @@ class TestDOCXParserParse:
         import sys
         with patch.dict(sys.modules, {"docx": mock_docx_module}):
             parser = DOCXParser()
-            with patch.object(parser, "_extract_paragraph_text", return_value="文档内容"), \
+            with patch.object(parser, "_format_paragraph", return_value="文档内容"), \
                  patch("app.vlm.provider.get_vision_provider", return_value=mock_vlm):
                 result = await parser.parse("/fake/doc.docx")
 
@@ -895,7 +895,7 @@ class TestDOCXParserParse:
         import sys
         with patch.dict(sys.modules, {"docx": mock_docx_module}):
             parser = DOCXParser()
-            with patch.object(parser, "_extract_paragraph_text", return_value="文本"), \
+            with patch.object(parser, "_format_paragraph", return_value="文本"), \
                  patch("app.vlm.provider.get_vision_provider", return_value=mock_vlm), \
                  patch("app.document.docx_parser.get_settings") as mock_settings:
                 mock_settings.return_value.DOCX_TABLE_EXTRACTION_ENABLED = True
@@ -931,7 +931,7 @@ class TestDOCXParserParse:
         import sys
         with patch.dict(sys.modules, {"docx": mock_docx_module}):
             parser = DOCXParser()
-            with patch.object(parser, "_extract_paragraph_text", return_value="文本内容"), \
+            with patch.object(parser, "_format_paragraph", return_value="文本内容"), \
                  patch.object(parser, "_vlm_describe", AsyncMock(return_value="")):
                 result = await parser.parse("/fake/doc.docx")
 
@@ -2952,4 +2952,428 @@ class TestParserBoolIntHelpers:
         from app.document.base import DocumentParser
 
         assert DocumentParser._int(True, 50) == 50
+
+
+# ============================================================
+# P0: DOCX 标题层级映射测试
+# ============================================================
+
+
+class TestDocxHeadingMapping:
+    """DOCX 标题层级映射 — 段落样式检测为 HTML <h1>~<h4>。"""
+
+    @staticmethod
+    def _make_paragraph(style_id: str = "", text: str = "标题文本") -> Any:
+        """构造带样式 ID 的 <w:p> XML 元素。
+
+        Args:
+            style_id: 样式 ID（如 "Heading1", "Title"）。
+            text: 段落文本。
+
+        Returns:
+            lxml etree Element。
+        """
+        from lxml import etree
+
+        ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        # XML 转义文本
+        escaped_text = (
+            text.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
+        # 构造 <w:p><w:pPr><w:pStyle w:val="..."/></w:pPr><w:r><w:t>...</w:t></w:r></w:p>
+        if style_id:
+            xml = (
+                f'<w:p xmlns:w="{ns}">'
+                f'<w:pPr><w:pStyle w:val="{style_id}"/></w:pPr>'
+                f'<w:r><w:t>{escaped_text}</w:t></w:r>'
+                f'</w:p>'
+            )
+        else:
+            xml = (
+                f'<w:p xmlns:w="{ns}">'
+                f'<w:r><w:t>{escaped_text}</w:t></w:r>'
+                f'</w:p>'
+            )
+        return etree.fromstring(xml)
+
+    def test_heading1_outputs_h1(self):
+        """Heading1 样式 → <h1>。"""
+        from app.document.docx_parser import DOCXParser
+
+        element = self._make_paragraph("Heading1", "第一章 概述")
+        result = DOCXParser._style_to_heading(element, "第一章 概述")
+        assert result == "<h1>第一章 概述</h1>"
+
+    def test_heading2_outputs_h2(self):
+        """Heading2 样式 → <h2>。"""
+        from app.document.docx_parser import DOCXParser
+
+        element = self._make_paragraph("Heading2", "1.1 背景")
+        result = DOCXParser._style_to_heading(element, "1.1 背景")
+        assert result == "<h2>1.1 背景</h2>"
+
+    def test_heading3_outputs_h3(self):
+        """Heading3 样式 → <h3>。"""
+        from app.document.docx_parser import DOCXParser
+
+        element = self._make_paragraph("Heading3", "1.1.1 目标")
+        result = DOCXParser._style_to_heading(element, "1.1.1 目标")
+        assert result == "<h3>1.1.1 目标</h3>"
+
+    def test_heading4_outputs_h4(self):
+        """Heading4 样式 → <h4>。"""
+        from app.document.docx_parser import DOCXParser
+
+        element = self._make_paragraph("Heading4", "1.1.1.1 细节")
+        result = DOCXParser._style_to_heading(element, "1.1.1.1 细节")
+        assert result == "<h4>1.1.1.1 细节</h4>"
+
+    def test_title_outputs_h1(self):
+        """Title 样式 → <h1>（文档主标题）。"""
+        from app.document.docx_parser import DOCXParser
+
+        element = self._make_paragraph("Title", "企业知识库设计文档")
+        result = DOCXParser._style_to_heading(element, "企业知识库设计文档")
+        assert result == "<h1>企业知识库设计文档</h1>"
+
+    def test_heading5_supported(self):
+        """Heading5 样式 → <h5>（支持超过 4 级）。"""
+        from app.document.docx_parser import DOCXParser
+
+        element = self._make_paragraph("Heading5", "深层标题")
+        result = DOCXParser._style_to_heading(element, "深层标题")
+        assert result == "<h5>深层标题</h5>"
+
+    def test_heading6_capped_at_h6(self):
+        """Heading7 级别被截断到 <h6>（HTML 最深标题）。"""
+        from app.document.docx_parser import DOCXParser
+
+        element = self._make_paragraph("Heading7", "超深标题")
+        result = DOCXParser._style_to_heading(element, "超深标题")
+        assert result == "<h6>超深标题</h6>"
+
+    def test_non_heading_style_returns_empty(self):
+        """非标题样式返回空字符串。"""
+        from app.document.docx_parser import DOCXParser
+
+        element = self._make_paragraph("Normal", "普通正文")
+        result = DOCXParser._style_to_heading(element, "普通正文")
+        assert result == ""
+
+    def test_no_style_returns_empty(self):
+        """无样式（无 <w:pStyle>）返回空字符串。"""
+        from app.document.docx_parser import DOCXParser
+
+        element = self._make_paragraph("", "无样式文本")
+        result = DOCXParser._style_to_heading(element, "无样式文本")
+        assert result == ""
+
+    def test_heading_with_html_special_chars_escaped(self):
+        """标题文本中的 HTML 特殊字符被转义。"""
+        from app.document.docx_parser import DOCXParser
+
+        element = self._make_paragraph("Heading1", "A < B & C > D")
+        result = DOCXParser._style_to_heading(element, "A < B & C > D")
+        assert "&lt;" in result
+        assert "&amp;" in result
+        assert "&gt;" in result
+
+    def test_format_paragraph_heading(self):
+        """_format_paragraph 对标题段落输出 HTML 标题标签。"""
+        from app.document.docx_parser import DOCXParser
+
+        element = self._make_paragraph("Heading2", "第二章 设计")
+        result = DOCXParser._format_paragraph(element)
+        assert result == "<h2>第二章 设计</h2>"
+
+    def test_format_paragraph_normal_text(self):
+        """_format_paragraph 对普通段落输出纯文本（已转义）。"""
+        from app.document.docx_parser import DOCXParser
+
+        element = self._make_paragraph("Normal", "这是普通正文")
+        result = DOCXParser._format_paragraph(element)
+        assert result == "这是普通正文"
+
+    def test_format_paragraph_empty_returns_empty(self):
+        """_format_paragraph 对空段落返回空字符串。"""
+        from app.document.docx_parser import DOCXParser
+
+        from lxml import etree
+
+        ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        xml = f'<w:p xmlns:w="{ns}"><w:r><w:t></w:t></w:r></w:p>'
+        element = etree.fromstring(xml)
+        result = DOCXParser._format_paragraph(element)
+        assert result == ""
+
+
+# ============================================================
+# P1: DOCX 列表结构测试
+# ============================================================
+
+
+class TestDocxListStructure:
+    """DOCX 列表结构 — 检测 numPr 输出 <ul><li>。"""
+
+    @staticmethod
+    def _make_list_paragraph(text: str = "列表项") -> Any:
+        """构造带 numPr 的列表段落 XML。"""
+        from lxml import etree
+
+        ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        escaped_text = (
+            text.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
+        xml = (
+            f'<w:p xmlns:w="{ns}">'
+            f'<w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr>'
+            f'<w:r><w:t>{escaped_text}</w:t></w:r>'
+            f'</w:p>'
+        )
+        return etree.fromstring(xml)
+
+    @staticmethod
+    def _make_list_style_paragraph(style_id: str = "ListParagraph", text: str = "列表项") -> Any:
+        """构造 ListParagraph 样式的段落 XML。"""
+        from lxml import etree
+
+        ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        escaped_text = (
+            text.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
+        xml = (
+            f'<w:p xmlns:w="{ns}">'
+            f'<w:pPr><w:pStyle w:val="{style_id}"/></w:pPr>'
+            f'<w:r><w:t>{escaped_text}</w:t></w:r>'
+            f'</w:p>'
+        )
+        return etree.fromstring(xml)
+
+    @staticmethod
+    def _make_normal_paragraph(text: str = "普通文本") -> Any:
+        """构造普通段落 XML（无 numPr，无 ListParagraph 样式）。"""
+        from lxml import etree
+
+        ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        escaped_text = (
+            text.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
+        xml = (
+            f'<w:p xmlns:w="{ns}">'
+            f'<w:pPr><w:pStyle w:val="Normal"/></w:pPr>'
+            f'<w:r><w:t>{escaped_text}</w:t></w:r>'
+            f'</w:p>'
+        )
+        return etree.fromstring(xml)
+
+    def test_numPr_detected_as_list(self):
+        """含 <w:numPr> 的段落被识别为列表项。"""
+        from app.document.docx_parser import DOCXParser
+
+        element = self._make_list_paragraph("第一步")
+        assert DOCXParser._is_list_paragraph(element) is True
+
+    def test_list_paragraph_style_detected(self):
+        """ListParagraph 样式被识别为列表项。"""
+        from app.document.docx_parser import DOCXParser
+
+        element = self._make_list_style_paragraph("ListParagraph", "列表项")
+        assert DOCXParser._is_list_paragraph(element) is True
+
+    def test_normal_paragraph_not_list(self):
+        """普通段落（Normal 样式，无 numPr）不被识别为列表。"""
+        from app.document.docx_parser import DOCXParser
+
+        element = self._make_normal_paragraph("普通段落")
+        assert DOCXParser._is_list_paragraph(element) is False
+
+    def test_no_ppr_not_list(self):
+        """无 <w:pPr> 的段落不被识别为列表。"""
+        from app.document.docx_parser import DOCXParser
+
+        from lxml import etree
+
+        ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        xml = f'<w:p xmlns:w="{ns}"><w:r><w:t>无 pPr</w:t></w:r></w:p>'
+        element = etree.fromstring(xml)
+        assert DOCXParser._is_list_paragraph(element) is False
+
+    def test_format_paragraph_list_outputs_ul_li(self):
+        """_format_paragraph 对列表段落输出 <ul><li> 标签。"""
+        from app.document.docx_parser import DOCXParser
+
+        element = self._make_list_paragraph("第一条规则")
+        result = DOCXParser._format_paragraph(element)
+        assert "<ul><li>" in result
+        assert "第一条规则" in result
+        assert "</li></ul>" in result
+
+    def test_list_text_html_escaped(self):
+        """列表项文本中的 HTML 特殊字符被转义。"""
+        from app.document.docx_parser import DOCXParser
+
+        element = self._make_list_paragraph("A < B & C")
+        result = DOCXParser._format_paragraph(element)
+        assert "&lt;" in result
+        assert "&amp;" in result
+
+
+# ============================================================
+# P1: XLSX 降级旁路测试
+# ============================================================
+
+
+class TestXlsxFallback:
+    """XLSX 降级旁路 — openpyxl 失败时降级到 pandas。"""
+
+    @pytest.mark.asyncio
+    async def test_openpyxl_success_no_fallback(self):
+        """openpyxl 解析成功时不触发降级。"""
+        from app.document.xlsx_parser import XLSXParser
+
+        parser = XLSXParser()
+
+        # mock openpyxl 成功
+        mock_wb = MagicMock()
+        mock_ws = MagicMock()
+        mock_ws.max_row = 2
+        mock_ws.max_column = 2
+        mock_ws.title = "Sheet1"
+        # iter_rows(values_only=True) 返回值元组
+        mock_ws.iter_rows.return_value = [
+            ("A", "B"),
+            ("1", "2"),
+        ]
+        # 关键：sheetnames 是属性，需要返回真实列表
+        mock_wb.sheetnames = ["Sheet1"]
+        # workbook[sheet_name] 返回 worksheet
+        mock_wb.__getitem__ = MagicMock(return_value=mock_ws)
+
+        with patch("openpyxl.load_workbook", return_value=mock_wb):
+            result = await parser.parse("/fake/test.xlsx")
+
+        assert "<table>" in result
+        assert "<th>A</th>" in result
+        assert "<td>1</td>" in result
+
+    @pytest.mark.asyncio
+    async def test_openpyxl_failure_fallback_to_pandas(self):
+        """openpyxl 失败时降级到 pandas。"""
+        from app.document.xlsx_parser import XLSXParser
+
+        parser = XLSXParser()
+
+        # mock pandas 返回单 sheet dict（sheet_name=None 的返回格式）
+        import pandas as pd
+
+        def mock_read_excel(path, **kwargs):
+            if kwargs.get("sheet_name") is None:
+                return {
+                    "Sheet1": pd.DataFrame(
+                        {"姓名": ["张三", "李四"], "年龄": [25, 30]}
+                    )
+                }
+            return pd.DataFrame()
+
+        # mock openpyxl 抛异常，pandas 返回 dict
+        with patch("openpyxl.load_workbook", side_effect=Exception("openpyxl error")), \
+             patch("pandas.read_excel", side_effect=mock_read_excel):
+            result = await parser.parse("/fake/test.xlsx")
+
+        assert "<table>" in result
+        assert "张三" in result
+        assert "李四" in result
+
+    @pytest.mark.asyncio
+    async def test_both_failures_returns_empty(self):
+        """openpyxl 和 pandas 都失败时返回空字符串。"""
+        from app.document.xlsx_parser import XLSXParser
+
+        parser = XLSXParser()
+
+        with patch("openpyxl.load_workbook", side_effect=Exception("openpyxl error")), \
+             patch("pandas.read_excel", side_effect=Exception("pandas error")):
+            result = await parser.parse("/fake/test.xlsx")
+
+        assert result == ""
+
+    @pytest.mark.asyncio
+    async def test_fallback_preserves_multiple_sheets(self):
+        """pandas 降级时保留多 sheet。"""
+        from app.document.xlsx_parser import XLSXParser
+
+        parser = XLSXParser()
+
+        import pandas as pd
+
+        # pandas read_excel 用 sheet_name=None 返回所有 sheet 的 dict
+        def mock_read_excel(path, **kwargs):
+            if kwargs.get("sheet_name") is None:
+                return {
+                    "Sheet1": pd.DataFrame({"A": [1, 2]}),
+                    "Sheet2": pd.DataFrame({"B": [3, 4]}),
+                }
+            return pd.DataFrame()
+
+        with patch("openpyxl.load_workbook", side_effect=Exception("fail")), \
+             patch("pandas.read_excel", side_effect=mock_read_excel):
+            result = await parser.parse("/fake/test.xlsx")
+
+        assert "Sheet1" in result
+        assert "Sheet2" in result
+
+
+# ============================================================
+# P2: XLSX 列宽对齐测试
+# ============================================================
+
+
+class TestXlsxColumnAlignment:
+    """XLSX 列宽对齐 — 合并单元格场景补空。"""
+
+    def test_pad_short_row_to_max_columns(self):
+        """短行被补齐到最大列数。"""
+        from app.document.xlsx_parser import XLSXParser
+
+        # 模拟合并单元格导致行长度不一致
+        rows = [
+            ["A", "B", "C"],  # 3 列
+            ["1", "2"],       # 2 列（合并了第 3 列）
+            ["x", "y", "z"],  # 3 列
+        ]
+        # 找出最大列数
+        max_cols = max(len(r) for r in rows) if rows else 0
+        # 补齐
+        padded = [r + [""] * (max_cols - len(r)) for r in rows]
+
+        assert len(padded[1]) == 3
+        assert padded[1][2] == ""
+
+    def test_rows_to_html_with_uneven_lengths(self):
+        """_rows_to_html 处理不等长行。"""
+        from app.document.xlsx_parser import XLSXParser
+
+        # 构造不等长行（合并单元格场景）
+        rows = [
+            ["姓名", "年龄", "部门"],
+            ["张三", "25"],  # 缺少部门
+        ]
+        html = XLSXParser._rows_to_html(rows)
+
+        # 应该补齐为 3 列
+        assert "<th>姓名</th>" in html
+        assert "<th>年龄</th>" in html
+        assert "<th>部门</th>" in html
+        assert "<td>张三</td>" in html
+        assert "<td>25</td>" in html
+        # 补齐的空单元格
+        assert "<td></td>" in html
 
