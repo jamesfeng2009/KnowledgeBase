@@ -55,6 +55,28 @@ class MCPClient:
         """
         return await self._server.list_tools()
 
+    async def get_tools_by_names(self, names: list[str]) -> list[Tool]:
+        """按名称子集返回工具列表 — Find Skills 按需加载入口。
+
+        只有被 SkillFinder 匹配到的工具才会加载完整 schema，
+        避免全量加载浪费 token。
+
+        Args:
+            names: 需要加载的工具名称列表。
+
+        Returns:
+            匹配到的 Tool 列表（可能为空）。
+        """
+        return await self._server.list_tools_by_names(names)
+
+    def get_skill_index(self) -> list[dict]:
+        """返回轻量技能索引 — 供 SkillFinder 意图匹配。
+
+        索引仅含 name/category/tags/description，
+        token 开销极小（每个技能约 20-30 token）。
+        """
+        return self._server.get_skill_index()
+
     async def call_tool(self, tool_name: str, arguments: dict) -> str:
         """调用指定工具。
 

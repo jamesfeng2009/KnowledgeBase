@@ -125,6 +125,15 @@ class Settings(BaseSettings):
     # VLM 图片描述增强 — Docling 提取图片位置后用 VLM 生成描述注入 Markdown
     DOCLING_VLM_IMAGE_ENHANCE: bool = False
 
+    # === Find Skills 渐进式技能加载 ===
+    # 启用后 Agent Loop 先匹配相关技能再按需加载完整 schema，
+    # 避免工具数量增长后全量加载浪费 token。
+    SKILL_FINDER_ENABLED: bool = True
+    # 匹配阈值 — 分数低于此值的技能不加载（name +10 / category +5 / tag +8 / desc +3）
+    SKILL_MATCH_THRESHOLD: int = 5
+    # 单次最多加载的技能数 — 防止过多工具淹没 LLM 上下文
+    SKILL_MAX_LOADED: int = 10
+
     # === API 限流 ===
     RATE_LIMIT_ENABLED: bool = True
     RATE_LIMIT_PER_MINUTE: int = 60  # 每分钟请求数上限

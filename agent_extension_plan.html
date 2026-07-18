@@ -1,0 +1,1698 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent 工具编排扩展实施方案 · 企业知识库 RAG</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<style>
+:root {
+  --bg: #FAFAFC;
+  --bg2: #F2F2F7;
+  --ink: #1A1A2E;
+  --muted: #6B6B80;
+  --rule: rgba(26, 26, 46, 0.10);
+  --accent: #4B3FE3;
+  --accent-dark: #1A1759;
+  --accent2: #27D2BF;
+  --accent-soft: #F2F7FF;
+  --accent2-soft: #EAFBF8;
+  --danger: #E8463A;
+  --warning: #EFAA17;
+  --success: #1DC981;
+  --code-bg: #1E1E2E;
+  --code-ink: #CDD6F4;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: "SF Pro Text", "PingFang SC", -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 16px;
+  line-height: 1.75;
+  -webkit-font-smoothing: antialiased;
+}
+.container { max-width: 1100px; margin: 0 auto; padding: 0 24px; }
+
+/* Hero */
+.hero {
+  background: linear-gradient(135deg, #1A1759 0%, #4B3FE3 60%, #27D2BF 120%);
+  color: #fff;
+  padding: 84px 0 68px;
+  position: relative;
+  overflow: hidden;
+}
+.hero::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 80% 20%, rgba(39,210,191,0.28), transparent 50%);
+}
+.hero .container { position: relative; z-index: 1; }
+.hero .eyebrow {
+  display: inline-block;
+  font-size: 13px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  background: rgba(255,255,255,0.15);
+  padding: 6px 14px;
+  border-radius: 999px;
+  margin-bottom: 20px;
+  backdrop-filter: blur(4px);
+}
+.hero h1 { font-size: 40px; font-weight: 700; line-height: 1.2; margin-bottom: 18px; letter-spacing: -0.01em; }
+.hero .lede { font-size: 18px; line-height: 1.7; opacity: 0.94; max-width: 780px; }
+.hero .meta-row { display: flex; flex-wrap: wrap; gap: 28px; margin-top: 32px; font-size: 14px; opacity: 0.9; }
+.hero .meta-row span::before { content: '◆ '; color: var(--accent2); }
+
+/* Section */
+section { padding: 56px 0; border-top: 1px solid var(--rule); }
+section:first-of-type { border-top: none; }
+h2 { font-size: 28px; font-weight: 700; letter-spacing: -0.01em; margin-bottom: 8px; color: var(--ink); }
+.h2-num { display: inline-block; font-family: "Inter", system-ui, sans-serif; font-size: 14px; font-weight: 600; color: var(--accent); letter-spacing: 0.08em; margin-bottom: 8px; }
+.section-intro { color: var(--muted); font-size: 16px; margin-bottom: 32px; max-width: 860px; }
+h3 { font-size: 20px; font-weight: 600; margin: 36px 0 14px; color: var(--ink); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+h3 .tag { font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); letter-spacing: 0.04em; }
+h3 .tag.new { background: var(--accent2-soft); color: #0F766E; }
+h3 .tag.danger { background: #FFEAEA; color: var(--danger); }
+h4 { font-size: 16px; font-weight: 600; margin: 22px 0 8px; color: var(--ink); }
+p { margin-bottom: 14px; }
+strong { font-weight: 600; color: var(--ink); }
+mark.key { background: none; color: var(--accent); font-weight: 600; }
+
+/* Cards */
+.card { background: #fff; border: 1px solid var(--rule); border-radius: 12px; padding: 24px; margin-bottom: 20px; }
+.card.accent { border-left: 4px solid var(--accent); }
+.card.accent2 { border-left: 4px solid var(--accent2); }
+.card.warn { border-left: 4px solid var(--warning); background: #FFFBEB; }
+.card.danger { border-left: 4px solid var(--danger); background: #FFF5F4; }
+.card.success { border-left: 4px solid var(--success); background: #ECFDF5; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+@media (max-width: 768px) { .grid-2, .grid-3 { grid-template-columns: 1fr; } }
+
+/* Table */
+.table-wrap { overflow-x: auto; border: 1px solid var(--rule); border-radius: 10px; margin: 16px 0; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; min-width: 600px; }
+th { background: var(--bg2); text-align: left; padding: 12px 14px; font-weight: 600; color: var(--ink); border-bottom: 2px solid var(--rule); }
+td { padding: 11px 14px; border-bottom: 1px solid var(--rule); vertical-align: top; color: var(--ink); }
+tr:last-child td { border-bottom: none; }
+td .pill { display: inline-block; font-size: 12px; padding: 2px 8px; border-radius: 4px; font-weight: 500; }
+.pill.up { background: var(--accent2-soft); color: #0F766E; }
+.pill.fix { background: #FEF3C7; color: #92400E; }
+.pill.new { background: var(--accent-soft); color: var(--accent); }
+.pill.danger { background: #FFEAEA; color: var(--danger); }
+.pill.warn { background: #FFFBEB; color: #B45309; }
+
+/* Lists */
+ul.clean { list-style: none; padding: 0; }
+ul.clean li { padding: 8px 0 8px 24px; position: relative; border-bottom: 1px dashed var(--rule); }
+ul.clean li:last-child { border-bottom: none; }
+ul.clean li::before { content: '▸'; position: absolute; left: 4px; color: var(--accent); font-weight: 700; }
+ol.styled { padding-left: 22px; }
+ol.styled li { margin-bottom: 8px; padding-left: 4px; }
+
+/* Diagram */
+.diagram { margin: 28px 0; }
+.diagram .frame { background: #fff; border: 1px solid var(--rule); border-radius: 12px; padding: 24px; overflow-x: auto; }
+.diagram figcaption { font-size: 13px; color: var(--muted); margin-top: 12px; text-align: center; }
+.mermaid { display: flex; justify-content: center; }
+
+/* Code */
+pre.code {
+  background: var(--code-bg);
+  color: var(--code-ink);
+  border-radius: 10px;
+  padding: 18px 20px;
+  overflow-x: auto;
+  font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.65;
+  margin: 16px 0;
+}
+pre.code .kw { color: #CBA6F7; }
+pre.code .str { color: #A6E3A1; }
+pre.code .com { color: #7F849C; font-style: italic; }
+pre.code .fn { color: #89B4FA; }
+pre.code .cls { color: #F9E2AF; }
+pre.code .dec { color: #F38BA8; }
+code { font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace; font-size: 0.88em; background: var(--bg2); padding: 2px 6px; border-radius: 4px; color: var(--accent); }
+
+/* TOC */
+.toc { background: #fff; border: 1px solid var(--rule); border-radius: 12px; padding: 24px 28px; margin: 32px 0; }
+.toc h3 { margin-top: 0; }
+.toc ol { padding-left: 22px; columns: 2; column-gap: 32px; }
+@media (max-width: 640px) { .toc ol { columns: 1; } }
+.toc li { margin-bottom: 6px; font-size: 14px; }
+.toc a { color: var(--ink); text-decoration: none; }
+.toc a:hover { color: var(--accent); }
+
+/* Footer */
+footer { background: var(--accent-dark); color: #CFD8FF; padding: 40px 0; margin-top: 0; }
+footer .container { display: flex; flex-wrap: wrap; gap: 20px; justify-content: space-between; align-items: center; font-size: 14px; }
+footer a { color: var(--accent2); text-decoration: none; }
+
+/* Phase roadmap */
+.roadmap { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 24px 0; }
+@media (max-width: 768px) { .roadmap { grid-template-columns: 1fr; } }
+.phase { border-radius: 12px; padding: 18px; border-top: 4px solid; }
+.phase.p1 { border-color: var(--danger); background: #FFF1F0; }
+.phase.p2 { border-color: var(--warning); background: #FFFBEB; }
+.phase.p3 { border-color: var(--accent); background: var(--accent-soft); }
+.phase.p4 { border-color: var(--success); background: #ECFDF5; }
+.phase .plabel { font-size: 12px; font-weight: 700; letter-spacing: 0.08em; margin-bottom: 6px; }
+.phase.p1 .plabel { color: var(--danger); }
+.phase.p2 .plabel { color: #B45309; }
+.phase.p3 .plabel { color: var(--accent); }
+.phase.p4 .plabel { color: #15803D; }
+.phase h4 { margin: 0 0 10px; font-size: 15px; }
+.phase ul { padding-left: 18px; font-size: 13px; line-height: 1.6; }
+.phase li { margin-bottom: 4px; }
+
+/* callout */
+.callout { border-radius: 10px; padding: 16px 20px; margin: 20px 0; font-size: 15px; display: flex; gap: 12px; align-items: flex-start; }
+.callout .ic { font-size: 20px; line-height: 1.4; flex-shrink: 0; }
+.callout.info { background: var(--accent-soft); border-left: 4px solid var(--accent); }
+.callout.warn { background: #FFFBEB; border-left: 4px solid var(--warning); }
+.callout.win { background: #ECFDF5; border-left: 4px solid var(--success); }
+.callout.danger { background: #FFF5F4; border-left: 4px solid var(--danger); }
+
+/* Layer block */
+.layer-block { display: grid; grid-template-columns: 72px 1fr; gap: 0; margin-bottom: 16px; border: 1px solid var(--rule); border-radius: 12px; overflow: hidden; background: #fff; }
+.layer-block .lnum { background: var(--accent-soft); color: var(--accent); font-family: "Inter", system-ui, sans-serif; font-weight: 700; font-size: 20px; display: flex; align-items: center; justify-content: center; flex-direction: column; padding: 16px 8px; gap: 4px; }
+.layer-block .lnum small { font-size: 10px; font-weight: 500; letter-spacing: 0.06em; opacity: 0.7; }
+.layer-block .lbody { padding: 18px 22px; }
+.layer-block .ltitle { font-size: 17px; font-weight: 600; margin-bottom: 6px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.layer-block.focal { border: 2px solid var(--accent); box-shadow: 0 4px 20px rgba(75,63,227,0.12); }
+.layer-block.focal .lnum { background: var(--accent); color: #fff; }
+.layer-block.focal .lbody { background: linear-gradient(90deg, var(--accent-soft) 0%, #fff 40%); }
+
+/* Risk matrix */
+.risk-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin: 20px 0; }
+@media (max-width: 768px) { .risk-grid { grid-template-columns: 1fr; } }
+.risk-item { border-radius: 10px; padding: 16px; border: 1px solid var(--rule); background: #fff; }
+.risk-item h5 { font-size: 14px; font-weight: 600; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+.risk-item .risk-lvl { font-size: 11px; padding: 2px 8px; border-radius: 4px; font-weight: 600; }
+.risk-lvl.high { background: #FFEAEA; color: var(--danger); }
+.risk-lvl.med { background: #FFFBEB; color: #B45309; }
+.risk-lvl.low { background: #ECFDF5; color: #15803D; }
+.risk-item p { font-size: 13px; color: var(--muted); margin-bottom: 8px; }
+.risk-item .mitigation { font-size: 13px; color: var(--ink); }
+.risk-item .mitigation strong { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="container">
+    <span class="eyebrow">Agent 工具编排扩展 · 实施方案</span>
+    <h1>Agent 工具编排三项扩展<br>完整实施方案</h1>
+    <p class="lede">针对企业知识库 RAG 项目的 Agent Loop 工具调用链路，设计三项编排扩展——循环检测防死循环、并行工具调用提吞吐、动态授权增强筑安全。方案覆盖架构设计、模块划分、详细设计、接口定义、集成点、测试计划、实施顺序与风险分析，形成可落地的端到端工程蓝图。</p>
+    <div class="meta-row">
+      <span>循环检测</span>
+      <span>并行工具调用</span>
+      <span>动态授权增强</span>
+      <span>afterTool 审计 + RBAC + 参数级</span>
+    </div>
+  </div>
+</header>
+
+<div class="container">
+
+<nav class="toc">
+  <h3>文档目录</h3>
+  <ol>
+    <li><a href="#s1">架构设计：三项扩展整体架构</a></li>
+    <li><a href="#s2">模块划分：新增/修改文件清单</a></li>
+    <li><a href="#s3">详细设计：循环检测</a></li>
+    <li><a href="#s4">详细设计：并行工具调用</a></li>
+    <li><a href="#s5">详细设计：动态授权增强</a></li>
+    <li><a href="#s6">接口定义：关键类与方法签名</a></li>
+    <li><a href="#s7">集成点：与现有模块的衔接</a></li>
+    <li><a href="#s8">测试计划：三项扩展测试用例</a></li>
+    <li><a href="#s9">实施顺序：开发阶段与依赖</a></li>
+    <li><a href="#s10">风险分析：潜在风险与缓解</a></li>
+  </ol>
+</nav>
+
+<!-- ===================== 1. 架构设计 ===================== -->
+<section id="s1">
+  <span class="h2-num">SECTION 01</span>
+  <h2>架构设计：三项扩展整体架构</h2>
+  <p class="section-intro">三项扩展并非孤立，而是共同重塑 Agent Loop 的工具调用决策链。核心思路是将原本单一的 <code>beforeTool 守卫 → 执行</code> 升级为五阶段决策链：<mark class="key">beforeTool（安全检查）→ 循环检测 → RBAC（角色检查）→ 参数级（参数检查）→ 执行 → afterTool（审计）</mark>。循环检测在安全检查之后、真正执行之前拦截无效重复；并行调度在执行阶段对只读工具并发；动态授权则贯穿 beforeTool/RBAC/参数级/afterTool 四层。</p>
+
+  <h3>1.1 完整决策链架构 <span class="tag">核心</span></h3>
+  <div class="diagram">
+    <div class="frame">
+      <div class="mermaid">
+flowchart TD
+    START([LLM 返回 tool_use 列表]) --> COLLECT[收集本轮所有 tool_use<br/>扩展2: 并行调度入口]
+
+    COLLECT --> CLASSIFY{工具分类<br/>只读 / 写操作}
+
+    CLASSIFY -->|只读组| PARALLEL_CHECK[并行执行守卫链<br/>每个工具独立检查]
+    CLASSIFY -->|写操作组| SERIAL_CHECK[串行执行守卫链<br/>避免竞态]
+
+    PARALLEL_CHECK --> GUARD1
+    SERIAL_CHECK --> GUARD1
+
+    subgraph GUARD_CHAIN [守卫决策链 — 每个工具依次通过]
+        direction TB
+        GUARD1[① beforeTool 安全检查<br/>DangerousToolGuard<br/>HITL 确认拦截]
+        GUARD1 -->|ALLOW| LOOP[② 循环检测<br/>LoopDetector<br/>连续重复/环路检测]
+        GUARD1 -->|CONFIRM/BLOCK| REJECT[返回结构化错误给 LLM]
+
+        LOOP -->|正常| RBAC[③ RBAC 角色检查<br/>RBACAuthorizer<br/>角色权限矩阵]
+        LOOP -->|检测到循环| REJECT_LOOP[返回循环错误<br/>提示换策略]
+
+        RBAC -->|有权限| PARAM[④ 参数级检查<br/>ParamAuthorizer<br/>参数约束规则]
+        RBAC -->|无权限| REJECT_RBAC[返回权限不足错误]
+
+        PARAM -->|合法| EXEC[⑤ 执行工具<br/>MCPClient.call_tool]
+        PARAM -->|非法| REJECT_PARAM[返回参数违规错误]
+    end
+
+    EXEC --> AFTER[⑥ afterTool 审计 Hook<br/>ToolAuditHook<br/>记录成功/失败/耗时/参数摘要]
+    AFTER --> MERGE[结果按 tool_use_id 合并<br/>写入 state.tool_results]
+    REJECT --> MERGE
+    REJECT_LOOP --> MERGE
+    REJECT_RBAC --> MERGE
+    REJECT_PARAM --> MERGE
+    MERGE --> END_NODE([返回 think 继续循环])
+      </div>
+    </div>
+    <figcaption>图 1.1：Agent 工具调用六阶段决策链（beforeTool → 循环检测 → RBAC → 参数级 → 执行 → afterTool）</figcaption>
+  </div>
+
+  <h3>1.2 三项扩展职责边界 <span class="tag">分工</span></h3>
+  <div class="grid-3">
+    <div class="card accent">
+      <h4>扩展 1：循环检测</h4>
+      <p style="font-size:14px;color:var(--muted);">在守卫链第二阶段拦截。追踪 <code>tool_call_history</code>，检测连续重复调用与工具调用图中的环，超阈值返回结构化错误引导 LLM 换策略。</p>
+      <p style="font-size:13px;"><strong>决策点：</strong>beforeTool 之后、RBAC 之前</p>
+    </div>
+    <div class="card accent2">
+      <h4>扩展 2：并行工具调用</h4>
+      <p style="font-size:14px;color:var(--muted);">在执行阶段生效。收集同一轮 LLM 返回的所有 tool_use，只读工具用 <code>asyncio.gather</code> 并发，写工具保持串行，结果按 tool_use_id 合并。</p>
+      <p style="font-size:13px;"><strong>决策点：</strong>守卫链之后、MCP 调用阶段</p>
+    </div>
+    <div class="card success">
+      <h4>扩展 3：动态授权增强</h4>
+      <p style="font-size:14px;color:var(--muted);">贯穿守卫链。新增 afterTool 审计 Hook、RBAC 角色矩阵、参数级授权规则引擎，形成 beforeTool→RBAC→参数级→执行→afterTool 完整链路。</p>
+      <p style="font-size:13px;"><strong>决策点：</strong>守卫链 ③④⑥ 三层</p>
+    </div>
+  </div>
+
+  <h3>1.3 与现有 Agent Loop 的关系 <span class="tag">集成</span></h3>
+  <div class="diagram">
+    <div class="frame">
+      <div class="mermaid">
+flowchart LR
+    subgraph EXISTING [现有 Agent Loop — _run_decision_loop]
+        direction TB
+        THINK[think 节点<br/>LLM 决策]
+        THINK -->|tool_call| TC[_tool_call 方法]
+        TC --> ETU[_execute_tool_use<br/>串行单工具]
+        ETU --> GUARD[DangerousToolGuard.check]
+        GUARD --> MCP[MCPClient.call_tool]
+        MCP --> APPEND[追加到 tool_results]
+    end
+
+    subgraph EXTENDED [扩展后 Agent Loop]
+        direction TB
+        THINK2[think 节点] -->|tool_call| TC2[_tool_call 方法<br/>改造: 收集全部 tool_use]
+        TC2 --> SCHED[并行调度器<br/>只读并行 / 写串行]
+        SCHED --> CHAIN[守卫决策链]
+        CHAIN --> G1[① beforeTool]
+        G1 --> G2[② 循环检测<br/>新增]
+        G2 --> G3[③ RBAC<br/>新增]
+        G3 --> G4[④ 参数级<br/>新增]
+        G4 --> EXEC2[⑤ 执行]
+        EXEC2 --> G6[⑥ afterTool 审计<br/>新增]
+        G6 --> MERGE2[按 tool_use_id 合并]
+    end
+
+    EXISTING -.->|三项扩展改造| EXTENDED
+      </div>
+    </div>
+    <figcaption>图 1.2：现有 Agent Loop（左）与扩展后 Agent Loop（右）对比</figcaption>
+  </div>
+
+  <div class="callout info">
+    <span class="ic">ⓘ</span>
+    <div><strong>设计原则：</strong>三项扩展遵循项目既有架构准则——<strong>单一职责</strong>（每项扩展独立模块）、<strong>依赖倒置</strong>（通过构造注入 engine，可 Mock）、<strong>开闭原则</strong>（RBAC 规则、参数规则配置驱动，不改代码）。所有扩展对 <code>answer()</code> / <code>answer_with_graph()</code> 两条路径同时生效。</div>
+  </div>
+</section>
+
+<!-- ===================== 2. 模块划分 ===================== -->
+<section id="s2">
+  <span class="h2-num">SECTION 02</span>
+  <h2>模块划分：新增/修改文件清单</h2>
+  <p class="section-intro">遵循单一职责原则，三项扩展拆分为 4 个新文件 + 3 个修改文件。新增文件均位于 <code>backend/app/rag/</code> 目录下，与 <code>tool_guard.py</code> 平级，保持工具编排相关模块的内聚。</p>
+
+  <h3>2.1 新增文件 <span class="tag new">NEW</span></h3>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>文件路径</th><th>职责</th><th>所属扩展</th><th>核心类</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>app/rag/loop_detector.py</code></td>
+          <td>循环检测器。维护工具调用历史，检测连续重复调用与调用图环路，区分合法重试与无效循环，超阈值返回结构化错误。</td>
+          <td><span class="pill new">扩展 1</span></td>
+          <td><code>LoopDetector</code><br><code>LoopViolation</code></td>
+        </tr>
+        <tr>
+          <td><code>app/rag/tool_scheduler.py</code></td>
+          <td>并行工具调度器。分类只读/写工具，只读组 <code>asyncio.gather</code> 并发执行守卫链与 MCP 调用，写组串行，结果按 tool_use_id 合并。</td>
+          <td><span class="pill new">扩展 2</span></td>
+          <td><code>ToolScheduler</code><br><code>ScheduledToolResult</code></td>
+        </tr>
+        <tr>
+          <td><code>app/rag/rbac_authorizer.py</code></td>
+          <td>RBAC 角色授权器。基于用户角色（admin/kb_admin/editor/viewer）与工具权限矩阵判定是否允许调用，支持配置驱动。</td>
+          <td><span class="pill new">扩展 3</span></td>
+          <td><code>RBACAuthorizer</code><br><code>AuthzDecision</code></td>
+        </tr>
+        <tr>
+          <td><code>app/rag/param_authorizer.py</code></td>
+          <td>参数级授权规则引擎。对工具入参做字段级约束检查（如 document_create 限制 status=draft），支持 eq/in/regex 等操作符。</td>
+          <td><span class="pill new">扩展 3</span></td>
+          <td><code>ParamAuthorizer</code><br><code>ParamRule</code><br><code>AfterToolHook</code></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>2.2 修改文件 <span class="tag">MODIFY</span></h3>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>文件路径</th><th>修改内容</th><th>影响扩展</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>app/rag/engine.py</code></td>
+          <td>
+            <ul style="font-size:13px;padding-left:18px;">
+              <li><strong>AgentState</strong> 新增 <code>tool_call_history</code> / <code>user_role</code> 字段</li>
+              <li><strong>__init__</strong> 注入 <code>loop_detector</code> / <code>tool_scheduler</code> / <code>rbac_authorizer</code> / <code>param_authorizer</code> / <code>after_tool_hook</code></li>
+              <li><strong>_tool_call</strong> 改造为委托 <code>ToolScheduler</code> 并发调度（替代串行 <code>_execute_tool_use</code>）</li>
+              <li><strong>_execute_tool_use</strong> 内嵌完整六阶段守卫链</li>
+              <li><strong>answer()</strong> 初始化时重置 <code>LoopDetector</code>、传入 <code>user_role</code></li>
+            </ul>
+          </td>
+          <td><span class="pill new">全部</span></td>
+        </tr>
+        <tr>
+          <td><code>app/rag/tool_guard.py</code></td>
+          <td>
+            <ul style="font-size:13px;padding-left:18px;">
+              <li><strong>DangerousToolGuard</strong> 新增 <code>is_readonly(tool_name)</code> 方法供调度器分类</li>
+              <li>新增工具元数据 <code>_tool_metadata</code> 标记只读/写属性</li>
+              <li>保持 <code>check()</code> / <code>confirm()</code> 等现有接口不变（向后兼容）</li>
+            </ul>
+          </td>
+          <td><span class="pill new">扩展 2/3</span></td>
+        </tr>
+        <tr>
+          <td><code>app/mcp/server.py</code></td>
+          <td>
+            <ul style="font-size:13px;padding-left:18px;">
+              <li><strong>@mcp_tool 装饰器</strong> 新增可选 <code>readonly=True/False</code> 参数</li>
+              <li><strong>_tool_registry</strong> 记录只读标记供调度器查询</li>
+              <li>现有 5 个工具标注：<code>knowledge_search</code>/<code>document_get</code>/<code>query_oa_approval</code> 为 readonly，<code>document_create</code>/<code>create_it_ticket</code> 为 False</li>
+            </ul>
+          </td>
+          <td><span class="pill new">扩展 2</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>2.3 模块依赖关系 <span class="tag">依赖</span></h3>
+  <div class="diagram">
+    <div class="frame">
+      <div class="mermaid">
+graph TB
+    subgraph "新增模块"
+        LD[loop_detector.py<br/>LoopDetector]
+        TS[tool_scheduler.py<br/>ToolScheduler]
+        RBAC[rbac_authorizer.py<br/>RBACAuthorizer]
+        PA[param_authorizer.py<br/>ParamAuthorizer + AfterToolHook]
+    end
+
+    subgraph "现有模块（修改）"
+        ENG[engine.py<br/>AgenticRAGEngine]
+        TG[tool_guard.py<br/>DangerousToolGuard]
+        SRV[mcp/server.py<br/>KnowledgeBaseMCPServer]
+        CLI[mcp/client.py<br/>MCPClient]
+    end
+
+    subgraph "外部依赖"
+        MODEL[models/user.py<br/>User.role]
+        AUDIT[services/audit_service.py<br/>审计持久化]
+    end
+
+    ENG -->|注入| LD
+    ENG -->|注入| TS
+    ENG -->|注入| RBAC
+    ENG -->|注入| PA
+    ENG -->|调用| TG
+    ENG -->|调用| CLI
+
+    TS -->|查询只读属性| TG
+    TS -->|并发调用| ENG
+    TS -->|查询工具元数据| SRV
+
+    RBAC -->|读取角色| MODEL
+    PA -->|审计日志| AUDIT
+
+    LD -->|读取历史| ENG
+      </div>
+    </div>
+    <figcaption>图 2.1：模块依赖关系图（新增模块依赖注入 engine，engine 编排全部）</figcaption>
+  </div>
+</section>
+
+<!-- ===================== 3. 详细设计：循环检测 ===================== -->
+<section id="s3">
+  <span class="h2-num">SECTION 03</span>
+  <h2>详细设计：循环检测</h2>
+  <p class="section-intro">循环检测扩展解决 Agent Loop 中"LLM 反复调用同一工具相同参数却不前进"的死循环问题。现有防无限循环仅靠 <code>max_iterations=5</code> 计数，无法区分"5 次有效迭代"与"5 次原地打转"。本扩展在工具调用层引入细粒度循环检测，超阈值时返回结构化错误引导 LLM 更换策略。</p>
+
+  <h3>3.1 数据结构 <span class="tag">数据模型</span></h3>
+
+  <h4>AgentState 扩展字段</h4>
+  <pre class="code"><span class="kw">class</span> <span class="cls">AgentState</span>(TypedDict, total=<span class="kw">False</span>):
+    <span class="com"># ... 既有字段 ...</span>
+    query: <span class="cls">str</span>
+    user_id: <span class="cls">str</span>
+    session_id: <span class="cls">str</span>
+    messages: <span class="cls">list</span>[<span class="cls">Message</span>]
+    retrieved_docs: <span class="cls">list</span>[<span class="cls">dict</span>[<span class="cls">str</span>, <span class="cls">Any</span>]]
+    tool_results: <span class="cls">list</span>[<span class="cls">dict</span>[<span class="cls">str</span>, <span class="cls">Any</span>]]
+    answer: <span class="cls">str</span>
+    iteration: <span class="cls">int</span>
+    max_iterations: <span class="cls">int</span>
+    kb_ids: <span class="cls">list</span>[<span class="cls">str</span>] | <span class="kw">None</span>
+    memory_context: <span class="cls">str</span>
+
+    <span class="dec"># === 扩展 1 新增 ===</span>
+    tool_call_history: <span class="cls">list</span>[<span class="cls">ToolCallRecord</span>]  <span class="com"># 工具调用历史</span>
+    user_role: <span class="cls">str</span>  <span class="com"># 当前用户角色（扩展 3 共用）</span>
+
+    <span class="dec"># === 扩展 2 新增 ===</span>
+    parallel_tool_results: <span class="cls">dict</span>[<span class="cls">str</span>, <span class="cls">dict</span>]  <span class="com"># tool_use_id -> result</span></pre>
+
+  <h4>工具调用记录</h4>
+  <pre class="code"><span class="kw">from</span> dataclasses <span class="kw">import</span> dataclass, field
+<span class="kw">from</span> typing <span class="kw">import</span> Any
+<span class="kw">import</span> hashlib, json, time
+
+<span class="kw">@dataclass</span>
+<span class="kw">class</span> <span class="cls">ToolCallRecord</span>:
+    <span class="str">"""单次工具调用记录 — 循环检测的基础数据单元。"""</span>
+    tool_name: <span class="cls">str</span>
+    arguments: <span class="cls">dict</span>[<span class="cls">str</span>, <span class="cls">Any</span>]
+    tool_use_id: <span class="cls">str</span>
+    iteration: <span class="cls">int</span>
+    timestamp: <span class="cls">float</span> = field(default_factory=time.time)
+
+    <span class="kw">@property</span>
+    <span class="kw">def</span> <span class="fn">signature</span>(self) -> <span class="cls">str</span>:
+        <span class="str">"""调用签名 — 工具名 + 规范化参数的哈希，用于重复检测。"""</span>
+        <span class="com"># 规范化：按 key 排序后 JSON 序列化，确保参数顺序不影响比对</span>
+        canonical = json.dumps(
+            {<span class="str">"tool"</span>: self.tool_name, <span class="str">"args"</span>: self.arguments},
+            sort_keys=<span class="kw">True</span>, ensure_ascii=<span class="kw">False</span>,
+        )
+        <span class="kw">return</span> hashlib.sha256(canonical.encode()).hexdigest()[:16]
+
+    <span class="kw">@property</span>
+    <span class="kw">def</span> <span class="fn">tool_only_key</span>(self) -> <span class="cls">str</span>:
+        <span class="str">"""仅工具名键 — 用于调用图环路检测（A→B→A）。"""</span>
+        <span class="kw">return</span> self.tool_name</pre>
+
+  <h3>3.2 检测算法 <span class="tag">算法</span></h3>
+
+  <h4>检测 1：连续重复调用</h4>
+  <p>追踪最近 N 次调用的签名，若同一签名连续出现 ≥ 阈值次（默认 2 次），判定为无效循环。</p>
+  <pre class="code"><span class="kw">def</span> <span class="fn">_detect_consecutive_duplicate</span>(self, record: ToolCallRecord) -> LoopViolation | <span class="kw">None</span>:
+    <span class="str">"""检测连续重复调用 — 同一工具+相同参数连续出现 ≥ 阈值次。"""</span>
+    sig = record.signature
+    recent = self._history[-self._window_size:]  <span class="com"># 滑动窗口</span>
+
+    <span class="com"># 统计窗口内同签名连续出现次数</span>
+    consecutive = 0
+    <span class="kw">for</span> past <span class="kw">in</span> reversed(recent):
+        <span class="kw">if</span> past.signature == sig:
+            consecutive += 1
+        <span class="kw">else</span>:
+            <span class="kw">break</span>  <span class="com"># 遇到不同签名即中断连续性</span>
+
+    <span class="kw">if</span> consecutive >= self._max_consecutive:
+        <span class="kw">return</span> LoopViolation(
+            violation_type=<span class="str">"consecutive_duplicate"</span>,
+            tool_name=record.tool_name,
+            count=consecutive,
+            message=<span class="str">f"工具 {record.tool_name} 以相同参数连续调用 {consecutive} 次，疑似死循环"</span>,
+            suggestion=<span class="str">"请更换工具、调整参数或直接生成答案"</span>,
+        )
+    <span class="kw">return</span> <span class="kw">None</span></pre>
+
+  <h4>检测 2：工具调用图环路</h4>
+  <p>构建工具调用有向图（A→B 表示 B 紧随 A 被调用），用 DFS 检测环。识别 A→B→A 模式（长度 ≤ 阈值的环）。</p>
+  <pre class="code"><span class="kw">def</span> <span class="fn">_detect_cycle</span>(self, record: ToolCallRecord) -> LoopViolation | <span class="kw">None</span>:
+    <span class="str">"""检测工具调用图中的环 — 如 A→B→A 模式。"""</span>
+    <span class="kw">if</span> <span class="kw">len</span>(self._history) < 2:
+        <span class="kw">return</span> <span class="kw">None</span>
+
+    <span class="com"># 构建最近 K 次调用的工具名序列</span>
+    sequence = [r.tool_only_key <span class="kw">for</span> r <span class="kw">in</span> self._history[-self._cycle_window:]] + [record.tool_only_key]
+
+    <span class="com"># 检测序列末尾是否存在回文环（A...A 模式）</span>
+    <span class="com"># 检查长度 2~max_cycle_length 的环</span>
+    <span class="kw">for</span> cycle_len <span class="kw">in</span> <span class="fn">range</span>(2, self._max_cycle_length + 1):
+        <span class="kw">if</span> <span class="fn">len</span>(sequence) >= cycle_len * 2:
+            <span class="com"># 比较 [末尾 cycle_len 个] 与 [其前 cycle_len 个]</span>
+            tail = sequence[-cycle_len:]
+            prev = sequence[-cycle_len * 2:-cycle_len]
+            <span class="kw">if</span> tail == prev:
+                <span class="kw">return</span> LoopViolation(
+                    violation_type=<span class="str">"call_cycle"</span>,
+                    tool_name=record.tool_name,
+                    count=cycle_len,
+                    message=<span class="str">f"检测到工具调用环 {'→'.join(tail)}→{'→'.join(tail)}，长度 {cycle_len}"</span>,
+                    suggestion=<span class="str">"检测到循环调用模式，请尝试不同工具或直接生成答案"</span>,
+                )
+    <span class="kw">return</span> <span class="kw">None</span></pre>
+
+  <h4>检测 3：合法重试区分</h4>
+  <div class="card accent2">
+    <p><strong>关键设计：区分合法重试与无效循环。</strong>以下情况即使工具名相同也不视为循环：</p>
+    <ul class="clean" style="font-size:14px;">
+      <li><strong>参数不同：</strong>分页查询 offset 不同、查询关键词不同 → 签名不同，自然不触发</li>
+      <li><strong>工具结果为错误：</strong>上次调用返回 error，LLM 调整参数重试 → 标记 <code>is_retry_after_error=True</code> 放行</li>
+      <li><strong>显式重试标记：</strong>LLM 在 tool_use input 中带 <code>"_retry": true</code> → 跳过连续检测</li>
+    </ul>
+  </div>
+
+  <h3>3.3 阈值配置 <span class="tag">配置</span></h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>配置项</th><th>默认值</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td><code>max_consecutive</code></td><td><code>2</code></td><td>同一签名连续出现 ≥ 此值判定循环</td></tr>
+        <tr><td><code>window_size</code></td><td><code>5</code></td><td>连续检测滑动窗口大小</td></tr>
+        <tr><td><code>max_cycle_length</code></td><td><code>3</code></td><td>调用图环路检测的最大环长</td></tr>
+        <tr><td><code>cycle_window</code></td><td><code>10</code></td><td>环路检测回看的历史长度</td></tr>
+        <tr><td><code>max_total_calls</code></td><td><code>15</code></td><td>单次会话工具调用总数上限（兜底）</td></tr>
+        <tr><td><code>enabled</code></td><td><code>True</code></td><td>循环检测开关</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>3.4 与 AgentState 的集成 <span class="tag">集成</span></h3>
+  <div class="diagram">
+    <div class="frame">
+      <div class="mermaid">
+sequenceDiagram
+    participant Loop as _run_decision_loop
+    participant TC as _tool_call
+    participant LD as LoopDetector
+    participant State as AgentState
+    participant LLM
+
+    Note over State: tool_call_history = []
+    Loop->>TC: decision == "tool_call"
+    TC->>TC: 收集本轮 tool_use 列表
+    loop 每个工具（并行/串行）
+        TC->>LD: check_before_execute(record)
+        LD->>LD: _detect_consecutive_duplicate
+        LD->>LD: _detect_cycle
+        alt 正常
+            LD-->>TC: None (放行)
+            TC->>State: 执行工具，追加 tool_results
+            TC->>LD: record_call(record)
+            LD->>State: 追加 tool_call_history
+        else 检测到循环
+            LD-->>TC: LoopViolation
+            TC->>State: 追加结构化错误到 tool_results
+            TC->>LLM: 错误信息提示换策略
+        end
+    end
+      </div>
+    </div>
+    <figcaption>图 3.1：循环检测与 AgentState 的交互时序</figcaption>
+  </div>
+
+  <div class="callout warn">
+    <span class="ic">⚠</span>
+    <div><strong>注意：</strong>循环检测在 <code>beforeTool</code> 之后执行——即危险工具的 HITL 确认优先级更高。若工具被守卫拦截（需确认），不进入循环检测，也不记录到 history，避免"确认前的尝试"污染循环统计。</div>
+  </div>
+</section>
+
+<!-- ===================== 4. 详细设计：并行工具调用 ===================== -->
+<section id="s4">
+  <span class="h2-num">SECTION 04</span>
+  <h2>详细设计：并行工具调用</h2>
+  <p class="section-intro">现有 <code>_tool_call</code> 在 <code>async for chunk in self.llm.chat(...)</code> 循环内逐个 <code>await _execute_tool_use</code>，即 LLM 即使一次返回多个 tool_use，也会串行执行。本扩展改造为：收集同一轮全部 tool_use → 按只读/写分类 → 只读组 <code>asyncio.gather</code> 并发 → 写组串行 → 结果按 tool_use_id 合并。</p>
+
+  <h3>4.1 并发控制模型 <span class="tag">并发</span></h3>
+  <div class="diagram">
+    <div class="frame">
+      <div class="mermaid">
+flowchart TD
+    LLM[LLM 返回多个 tool_use] --> COLLECT[收集全部 tool_use<br/>不立即执行]
+    COLLECT --> SPLIT{按 readonly 分类}
+
+    SPLIT -->|只读组<br/>knowledge_search 等| READ_GROUP
+    SPLIT -->|写组<br/>document_create 等| WRITE_GROUP
+
+    subgraph READ_GROUP [只读组 — asyncio.gather 并发]
+        direction TB
+        R1[tool_use_1<br/>守卫链 → MCP] 
+        R2[tool_use_2<br/>守卫链 → MCP]
+        R3[tool_use_3<br/>守卫链 → MCP]
+        R1 -.->|并发| R2
+        R2 -.->|并发| R3
+    end
+
+    subgraph WRITE_GROUP [写组 — 串行执行]
+        direction TB
+        W1[tool_use_4<br/>守卫链 → MCP]
+        W1 --> W2[tool_use_5<br/>守卫链 → MCP]
+    end
+
+    READ_GROUP --> MERGE
+    WRITE_GROUP --> MERGE[结果合并<br/>按 tool_use_id 排序]
+    MERGE --> STATE[写入 state.tool_results]
+      </div>
+    </div>
+    <figcaption>图 4.1：并行工具调度模型（只读并发、写串行）</figcaption>
+  </div>
+
+  <h3>4.2 只读/写工具分离 <span class="tag">分类</span></h3>
+  <p>工具的只读属性由 <code>@mcp_tool(readonly=True)</code> 装饰器声明，注册时存入 <code>_tool_registry</code>。调度器通过 <code>DangerousToolGuard.is_readonly()</code> 查询。</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>工具名</th><th>readonly</th><th>执行方式</th><th>理由</th></tr></thead>
+      <tbody>
+        <tr><td><code>knowledge_search</code></td><td><span class="pill up">True</span></td><td>并行</td><td>纯查询，无副作用</td></tr>
+        <tr><td><code>document_get</code></td><td><span class="pill up">True</span></td><td>并行</td><td>纯查询，无副作用</td></tr>
+        <tr><td><code>query_oa_approval</code></td><td><span class="pill up">True</span></td><td>并行</td><td>纯查询，无副作用</td></tr>
+        <tr><td><code>document_create</code></td><td><span class="pill danger">False</span></td><td>串行</td><td>写操作，避免竞态</td></tr>
+        <tr><td><code>create_it_ticket</code></td><td><span class="pill danger">False</span></td><td>串行</td><td>写操作 + 不可逆，严格串行</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>4.3 并行执行核心逻辑 <span class="tag">实现</span></h3>
+  <pre class="code"><span class="kw">import</span> asyncio
+<span class="kw">from</span> typing <span class="kw">import</span> Any
+
+<span class="kw">class</span> <span class="cls">ToolScheduler</span>:
+    <span class="str">"""并行工具调度器 — 只读并发、写串行。"""</span>
+
+    <span class="kw">def</span> <span class="fn">__init__</span>(self, engine: <span class="str">"AgenticRAGEngine"</span>) -> <span class="kw">None</span>:
+        self._engine = engine
+
+    <span class="kw">async</span> <span class="kw">def</span> <span class="fn">schedule</span>(self, state: AgentState, tool_uses: <span class="cls">list</span>[ToolUse]) -> <span class="cls">list</span>[<span class="cls">dict</span>]:
+        <span class="str">"""调度执行一批 tool_use，返回按 tool_use_id 合并的结果列表。"""</span>
+        <span class="kw">if</span> <span class="kw">not</span> tool_uses:
+            <span class="kw">return</span> []
+
+        <span class="com"># 1. 按只读/写分类</span>
+        read_tools: <span class="cls">list</span>[ToolUse] = []
+        write_tools: <span class="cls">list</span>[ToolUse] = []
+        <span class="kw">for</span> tu <span class="kw">in</span> tool_uses:
+            <span class="kw">if</span> self._engine._tool_guard.is_readonly(tu[<span class="str">"name"</span>]):
+                read_tools.append(tu)
+            <span class="kw">else</span>:
+                write_tools.append(tu)
+
+        results: <span class="cls">list</span>[<span class="cls">dict</span>[<span class="cls">str</span>, <span class="cls">dict</span>]] = []
+
+        <span class="com"># 2. 只读组 — asyncio.gather 并发执行守卫链</span>
+        <span class="kw">if</span> read_tools:
+            read_results = <span class="kw">await</span> asyncio.gather(
+                *(self._engine._execute_tool_use(state, tu) <span class="kw">for</span> tu <span class="kw">in</span> read_tools),
+                return_exceptions=<span class="kw">True</span>,  <span class="com"># 单个失败不中断其他</span>
+            )
+            <span class="kw">for</span> tu, res <span class="kw">in</span> <span class="fn">zip</span>(read_tools, read_results):
+                results.append(self._wrap_result(tu, res))
+
+        <span class="com"># 3. 写组 — 严格串行执行（避免竞态）</span>
+        <span class="kw">for</span> tu <span class="kw">in</span> write_tools:
+            <span class="kw">try</span>:
+                <span class="kw">await</span> self._engine._execute_tool_use(state, tu)
+                results.append({<span class="str">"tool_use_id"</span>: tu[<span class="str">"id"</span>], <span class="str">"status"</span>: <span class="str">"ok"</span>})
+            <span class="kw">except</span> Exception <span class="kw">as</span> exc:
+                results.append(self._wrap_error(tu, exc))
+
+        <span class="com"># 4. 按 LLM 返回顺序（tool_use_id）合并</span>
+        id_order = {tu[<span class="str">"id"</span>]: idx <span class="kw">for</span> idx, tu <span class="kw">in</span> <span class="fn">enumerate</span>(tool_uses)}
+        results.sort(key=<span class="kw">lambda</span> r: id_order.get(r.get(<span class="str">"tool_use_id"</span>), <span class="fn">len</span>(tool_uses)))
+        <span class="kw">return</span> results
+
+    <span class="kw">@staticmethod</span>
+    <span class="kw">def</span> <span class="fn">_wrap_result</span>(tu: ToolUse, res: Any) -> <span class="cls">dict</span>:
+        <span class="str">"""包装 gather 结果（可能是异常）。"""</span>
+        <span class="kw">if</span> <span class="fn">isinstance</span>(res, Exception):
+            <span class="kw">return</span> {<span class="str">"tool_use_id"</span>: tu[<span class="str">"id"</span>], <span class="str">"tool"</span>: tu[<span class="str">"name"</span>],
+                    <span class="str">"status"</span>: <span class="str">"error"</span>, <span class="str">"error"</span>: <span class="fn">str</span>(res)}
+        <span class="kw">return</span> {<span class="str">"tool_use_id"</span>: tu[<span class="str">"id"</span>], <span class="str">"tool"</span>: tu[<span class="str">"name"</span>], <span class="str">"status"</span>: <span class="str">"ok"</span>}</pre>
+
+  <h3>4.4 错误处理与结果合并 <span class="tag">容错</span></h3>
+  <div class="grid-2">
+    <div class="card accent">
+      <h4>并发错误隔离</h4>
+      <ul class="clean" style="font-size:14px;">
+        <li><code>return_exceptions=True</code> 防止单个只读工具失败中断整组</li>
+        <li>每个工具结果独立带 <code>status: ok/error</code></li>
+        <li>异常被包装为结构化错误写入 tool_results</li>
+      </ul>
+    </div>
+    <div class="card accent2">
+      <h4>结果顺序保证</h4>
+      <ul class="clean" style="font-size:14px;">
+        <li>用 <code>tool_use_id</code> 建立 LLM 返回顺序索引</li>
+        <li>并发完成后按原始顺序排序合并</li>
+        <li>确保 LLM 收到的 tool_result 顺序与请求对应</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>4.5 _tool_call 方法改造 <span class="tag">改造</span></h3>
+  <pre class="code"><span class="com"># 改造前（engine.py L840-872）— 串行执行</span>
+<span class="kw">async</span> <span class="kw">def</span> <span class="fn">_tool_call</span>(self, state: AgentState) -> <span class="kw">None</span>:
+    tools = <span class="kw">await</span> self.mcp.get_tools_for_llm()
+    messages = [...]
+    <span class="kw">async</span> <span class="kw">for</span> chunk <span class="kw">in</span> self.llm.chat(messages, tools=tools, stream=<span class="kw">False</span>):
+        <span class="kw">if</span> <span class="fn">isinstance</span>(chunk, <span class="cls">dict</span>) <span class="kw">and</span> chunk.get(<span class="str">"type"</span>) == <span class="str">"tool_use"</span>:
+            <span class="kw">await</span> self._execute_tool_use(state, chunk)  <span class="com"># 串行</span>
+
+<span class="com"># 改造后 — 先收集后并行调度</span>
+<span class="kw">async</span> <span class="kw">def</span> <span class="fn">_tool_call</span>(self, state: AgentState) -> <span class="kw">None</span>:
+    tools = <span class="kw">await</span> self.mcp.get_tools_for_llm()
+    <span class="kw">if</span> <span class="kw">not</span> tools:
+        <span class="kw">return</span>
+    messages = [
+        {<span class="str">"role"</span>: <span class="str">"system"</span>, <span class="str">"content"</span>: <span class="str">"根据用户问题选择合适的工具调用..."</span>},
+        {<span class="str">"role"</span>: <span class="str">"user"</span>, <span class="str">"content"</span>: state[<span class="str">"query"</span>]},
+    ]
+
+    <span class="dec"># ① 先收集本轮全部 tool_use（不立即执行）</span>
+    collected: <span class="cls">list</span>[ToolUse] = []
+    <span class="kw">async</span> <span class="kw">for</span> chunk <span class="kw">in</span> self.llm.chat(messages, tools=tools, stream=<span class="kw">False</span>):
+        <span class="kw">if</span> <span class="fn">isinstance</span>(chunk, <span class="cls">dict</span>) <span class="kw">and</span> chunk.get(<span class="str">"type"</span>) == <span class="str">"tool_use"</span>:
+            collected.append(chunk)
+
+    <span class="kw">if</span> <span class="kw">not</span> collected:
+        <span class="kw">return</span>
+
+    <span class="dec"># ② 委托 ToolScheduler 并行调度</span>
+    <span class="kw">await</span> self._tool_scheduler.schedule(state, collected)</pre>
+
+  <div class="callout win">
+    <span class="ic">✓</span>
+    <div><strong>性能收益：</strong>当 LLM 一次返回 3 个只读工具调用（如同时查知识库 + 查 OA + 查文档详情），改造后并发执行，端到端延迟从 <code>3 × 单工具耗时</code> 降至 <code>max(3 × 单工具耗时)</code>，约 <strong>2-3 倍提速</strong>。</div>
+  </div>
+</section>
+
+<!-- ===================== 5. 详细设计：动态授权增强 ===================== -->
+<section id="s5">
+  <span class="h2-num">SECTION 05</span>
+  <h2>详细设计：动态授权增强</h2>
+  <p class="section-intro">现有守卫仅有 <code>beforeTool</code> 的 ALLOW/BLOCK/CONFIRM 三态，无 afterTool 审计、无 RBAC 角色控制、无参数级约束。本扩展构建完整的授权决策链：<mark class="key">beforeTool（安全检查）→ RBAC（角色检查）→ 参数级（参数检查）→ 执行 → afterTool（审计）</mark>，实现"谁能在什么条件下用什么参数调用什么工具"的全链路管控。</p>
+
+  <h3>5.1 afterTool Hook 接口 <span class="tag new">新增</span></h3>
+  <p>afterTool Hook 在工具执行完成后触发，负责审计日志记录。与 beforeTool 对称，形成完整的调用观测闭环。</p>
+
+  <pre class="code"><span class="kw">from</span> abc <span class="kw">import</span> ABC, abstractmethod
+<span class="kw">from</span> dataclasses <span class="kw">import</span> dataclass
+<span class="kw">from</span> typing <span class="kw">import</span> Any
+<span class="kw">import</span> time
+
+<span class="kw">@dataclass</span>
+<span class="kw">class</span> <span class="cls">ToolExecutionContext</span>:
+    <span class="str">"""工具执行上下文 — 贯穿 beforeTool/执行/afterTool 的元数据。"""</span>
+    tool_name: <span class="cls">str</span>
+    tool_input: <span class="cls">dict</span>[<span class="cls">str</span>, <span class="cls">Any</span>]
+    tool_use_id: <span class="cls">str</span>
+    user_id: <span class="cls">str</span>
+    user_role: <span class="cls">str</span>
+    session_id: <span class="cls">str</span>
+    iteration: <span class="cls">int</span>
+    start_time: <span class="cls">float</span> = 0.0
+
+<span class="kw">@dataclass</span>
+<span class="kw">class</span> <span class="cls">ToolExecutionOutcome</span>:
+    <span class="str">"""工具执行结果摘要 — 供 afterTool 审计。"""</span>
+    success: <span class="cls">bool</span>
+    result: Any = <span class="kw">None</span>
+    error: Exception | <span class="kw">None</span> = <span class="kw">None</span>
+    duration_ms: <span class="cls">float</span> = 0.0
+    result_summary: <span class="cls">str</span> = <span class="str">""</span>  <span class="com"># 参数 + 结果摘要（脱敏）</span>
+
+<span class="kw">class</span> <span class="cls">AfterToolHook</span>(ABC):
+    <span class="str">"""afterTool Hook 抽象接口 — 工具执行后审计。"""</span>
+
+    <span class="kw">@abstractmethod</span>
+    <span class="kw">async</span> <span class="kw">def</span> <span class="fn">after_tool</span>(
+        self,
+        ctx: ToolExecutionContext,
+        outcome: ToolExecutionOutcome,
+    ) -> <span class="kw">None</span>:
+        <span class="str">"""工具执行完成后回调。
+
+        Args:
+            ctx: 执行上下文（工具名/参数/用户/会话/迭代轮次）。
+            outcome: 执行结果摘要（成功/失败/耗时/结果摘要）。
+        """</span>
+        ...
+
+<span class="kw">class</span> <span class="cls">ToolAuditHook</span>(AfterToolHook):
+    <span class="str">"""默认 afterTool 实现 — 审计日志持久化。"""</span>
+
+    <span class="kw">def</span> <span class="fn">__init__</span>(self, audit_service: Any = <span class="kw">None</span>) -> <span class="kw">None</span>:
+        self._audit = audit_service  <span class="com"># 复用 app.services.audit_service</span>
+
+    <span class="kw">async</span> <span class="kw">def</span> <span class="fn">after_tool</span>(self, ctx: ToolExecutionContext, outcome: ToolExecutionOutcome) -> <span class="kw">None</span>:
+        log.info(
+            <span class="str">"tool_audit.after"</span>,
+            tool=ctx.tool_name,
+            user_id=ctx.user_id,
+            user_role=ctx.user_role,
+            session_id=ctx.session_id,
+            iteration=ctx.iteration,
+            success=outcome.success,
+            duration_ms=<span class="fn">round</span>(outcome.duration_ms, 2),
+            error=<span class="fn">str</span>(outcome.error) <span class="kw">if</span> outcome.error <span class="kw">else</span> <span class="kw">None</span>,
+            summary=outcome.result_summary[:200],
+        )
+        <span class="com"># 异步写入审计表（复用现有 AuditService，失败不阻断主流程）</span>
+        <span class="kw">if</span> self._audit <span class="kw">is</span> <span class="kw">not</span> <span class="kw">None</span>:
+            <span class="kw">try</span>:
+                <span class="kw">await</span> self._audit.record_tool_call(
+                    tool_name=ctx.tool_name,
+                    user_id=ctx.user_id,
+                    session_id=ctx.session_id,
+                    success=outcome.success,
+                    duration_ms=outcome.duration_ms,
+                    args_summary=outcome.result_summary,
+                )
+            <span class="kw">except</span> Exception <span class="kw">as</span> exc:
+                log.warning(<span class="str">"tool_audit.persist_error"</span>, error=<span class="fn">str</span>(exc))</pre>
+
+  <h3>5.2 RBAC 角色矩阵 <span class="tag new">新增</span></h3>
+  <p>基于 <code>User.role</code> 字段（admin/kb_admin/editor/viewer）构建工具权限矩阵。角色层级严格，高权限角色继承低权限的所有能力。</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>工具</th><th>viewer</th><th>editor</th><th>kb_admin</th><th>admin</th></tr></thead>
+      <tbody>
+        <tr><td><code>knowledge_search</code></td><td><span class="pill up">允许</span></td><td><span class="pill up">允许</span></td><td><span class="pill up">允许</span></td><td><span class="pill up">允许</span></td></tr>
+        <tr><td><code>document_get</code></td><td><span class="pill up">允许</span></td><td><span class="pill up">允许</span></td><td><span class="pill up">允许</span></td><td><span class="pill up">允许</span></td></tr>
+        <tr><td><code>query_oa_approval</code></td><td><span class="pill up">允许</span></td><td><span class="pill up">允许</span></td><td><span class="pill up">允许</span></td><td><span class="pill up">允许</span></td></tr>
+        <tr><td><code>document_create</code></td><td><span class="pill danger">拒绝</span></td><td><span class="pill warn">允许（仅 draft）</span></td><td><span class="pill up">允许</span></td><td><span class="pill up">允许</span></td></tr>
+        <tr><td><code>create_it_ticket</code></td><td><span class="pill danger">拒绝</span></td><td><span class="pill danger">拒绝</span></td><td><span class="pill warn">允许（需确认）</span></td><td><span class="pill up">允许</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <pre class="code"><span class="kw">from</span> enum <span class="kw">import</span> Enum
+<span class="kw">from</span> dataclasses <span class="kw">import</span> dataclass
+
+<span class="kw">class</span> <span class="cls">AuthzDecision</span>(Enum):
+    <span class="str">"""授权决策结果。"""</span>
+    ALLOW = <span class="str">"allow"</span>
+    DENY = <span class="str">"deny"</span>
+
+<span class="kw">@dataclass</span>
+<span class="kw">class</span> <span class="cls">AuthzResult</span>:
+    decision: AuthzDecision
+    reason: <span class="cls">str</span> = <span class="str">""</span>
+    required_role: <span class="cls">str</span> = <span class="str">""</span>
+    actual_role: <span class="cls">str</span> = <span class="str">""</span>
+
+    <span class="kw">@property</span>
+    <span class="kw">def</span> <span class="fn">allowed</span>(self) -> <span class="cls">bool</span>:
+        <span class="kw">return</span> self.decision == AuthzDecision.ALLOW
+
+<span class="com"># 角色 → 允许调用的工具集合（配置驱动，支持环境变量覆盖）</span>
+_DEFAULT_ROLE_MATRIX: <span class="cls">dict</span>[<span class="cls">str</span>, <span class="cls">set</span>[<span class="cls">str</span>]] = {
+    <span class="str">"viewer"</span>: {<span class="str">"knowledge_search"</span>, <span class="str">"document_get"</span>, <span class="str">"query_oa_approval"</span>},
+    <span class="str">"editor"</span>: {<span class="str">"knowledge_search"</span>, <span class="str">"document_get"</span>, <span class="str">"query_oa_approval"</span>, <span class="str">"document_create"</span>},
+    <span class="str">"kb_admin"</span>: {<span class="str">"knowledge_search"</span>, <span class="str">"document_get"</span>, <span class="str">"query_oa_approval"</span>, <span class="str">"document_create"</span>, <span class="str">"create_it_ticket"</span>},
+    <span class="str">"admin"</span>: {<span class="str">"*"</span>},  <span class="com"># 全部工具</span>
+}
+
+<span class="kw">class</span> <span class="cls">RBACAuthorizer</span>:
+    <span class="str">"""RBAC 角色授权器 — 基于角色矩阵判定工具调用权限。"""</span>
+
+    <span class="kw">def</span> <span class="fn">__init__</span>(self, role_matrix: <span class="cls">dict</span>[<span class="cls">str</span>, <span class="cls">set</span>[<span class="cls">str</span>]] | <span class="kw">None</span> = <span class="kw">None</span>) -> <span class="kw">None</span>:
+        self._matrix = role_matrix <span class="kw">or</span> _DEFAULT_ROLE_MATRIX
+
+    <span class="kw">def</span> <span class="fn">check</span>(self, role: <span class="cls">str</span>, tool_name: <span class="cls">str</span>) -> AuthzResult:
+        <span class="str">"""检查角色是否有权调用工具。"""</span>
+        allowed_tools = self._matrix.get(role, <span class="fn">set</span>())
+        <span class="kw">if</span> <span class="str">"*"</span> <span class="kw">in</span> allowed_tools <span class="kw">or</span> tool_name <span class="kw">in</span> allowed_tools:
+            <span class="kw">return</span> AuthzResult(decision=AuthzDecision.ALLOW, reason=<span class="str">"角色权限匹配"</span>,
+                             actual_role=role)
+        <span class="com"># 推断所需最低角色</span>
+        required = self._find_min_role(tool_name)
+        <span class="kw">return</span> AuthzResult(
+            decision=AuthzDecision.DENY,
+            reason=<span class="str">f"角色 {role} 无权调用 {tool_name}"</span>,
+            required_role=required, actual_role=role,
+        )
+
+    <span class="kw">def</span> <span class="fn">_find_min_role</span>(self, tool_name: <span class="cls">str</span>) -> <span class="cls">str</span>:
+        <span class="str">"""找到能调用该工具的最低权限角色。"""</span>
+        <span class="kw">for</span> role <span class="kw">in</span> [<span class="str">"viewer"</span>, <span class="str">"editor"</span>, <span class="str">"kb_admin"</span>, <span class="str">"admin"</span>]:
+            <span class="kw">if</span> tool_name <span class="kw">in</span> self._matrix.get(role, <span class="fn">set</span>()) <span class="kw">or</span> <span class="str">"*"</span> <span class="kw">in</span> self._matrix.get(role, <span class="fn">set</span>):
+                <span class="kw">return</span> role
+        <span class="kw">return</span> <span class="str">"admin"</span></pre>
+
+  <h3>5.3 参数级授权规则引擎 <span class="tag new">新增</span></h3>
+  <p>参数级授权在 RBAC 通过后，对工具入参做字段级约束。典型场景：<code>document_create</code> 对 editor 角色限制只能创建 <code>status=draft</code> 的文档，防止越权发布。</p>
+
+  <pre class="code"><span class="kw">from</span> enum <span class="kw">import</span> Enum
+<span class="kw">import</span> re
+
+<span class="kw">class</span> <span class="cls">ParamOperator</span>(Enum):
+    <span class="str">"""参数约束操作符。"""</span>
+    EQ = <span class="str">"eq"</span>          <span class="com"># 等于</span>
+    IN = <span class="str">"in"</span>          <span class="com"># 属于集合</span>
+    REGEX = <span class="str">"regex"</span>      <span class="com"># 正则匹配</span>
+    NOT_IN = <span class="str">"not_in"</span>    <span class="com"># 不属于集合</span>
+    RANGE = <span class="str">"range"</span>      <span class="com"># 数值范围 [min, max]</span>
+
+<span class="kw">@dataclass</span>
+<span class="kw">class</span> <span class="cls">ParamRule</span>:
+    <span class="str">"""单条参数约束规则。"""</span>
+    tool_name: <span class="cls">str</span>
+    field: <span class="cls">str</span>                    <span class="com"># 参数字段名</span>
+    operator: ParamOperator
+    value: Any                    <span class="com"># 约束值（集合/正则/范围）</span>
+    roles: <span class="cls">set</span>[<span class="cls">str</span>]               <span class="com"># 规则适用的角色集合</span>
+    message: <span class="cls">str</span> = <span class="str">""</span>             <span class="com"># 违规提示</span>
+
+<span class="com"># 默认参数级规则配置</span>
+_DEFAULT_PARAM_RULES: <span class="cls">list</span>[ParamRule] = [
+    ParamRule(
+        tool_name=<span class="str">"document_create"</span>,
+        field=<span class="str">"status"</span>,
+        operator=ParamOperator.EQ,
+        value=<span class="str">"draft"</span>,
+        roles={<span class="str">"editor"</span>},  <span class="com"># 仅 editor 受此约束，admin/kb_admin 不受限</span>
+        message=<span class="str">"editor 角色只能创建 draft 状态文档"</span>,
+    ),
+    ParamRule(
+        tool_name=<span class="str">"create_it_ticket"</span>,
+        field=<span class="str">"priority"</span>,
+        operator=ParamOperator.NOT_IN,
+        value={<span class="str">"urgent"</span>},
+        roles={<span class="str">"kb_admin"</span>, <span class="str">"editor"</span>},
+        message=<span class="str">"仅 admin 可创建 urgent 优先级工单"</span>,
+    ),
+    ParamRule(
+        tool_name=<span class="str">"knowledge_search"</span>,
+        field=<span class="str">"query"</span>,
+        operator=ParamOperator.REGEX,
+        value=<span class="str">r"^.{1,500}$"</span>,  <span class="com"># 查询长度限制</span>
+        roles={<span class="str">"*"</span>},
+        message=<span class="str">"查询关键词长度需在 1-500 字符"</span>,
+    ),
+]
+
+<span class="kw">class</span> <span class="cls">ParamAuthorizer</span>:
+    <span class="str">"""参数级授权规则引擎。"""</span>
+
+    <span class="kw">def</span> <span class="fn">__init__</span>(self, rules: <span class="cls">list</span>[ParamRule] | <span class="kw">None</span> = <span class="kw">None</span>) -> <span class="kw">None</span>:
+        self._rules = rules <span class="kw">or</span> _DEFAULT_PARAM_RULES
+
+    <span class="kw">def</span> <span class="fn">check</span>(self, tool_name: <span class="cls">str</span>, arguments: <span class="cls">dict</span>, role: <span class="cls">str</span>) -> AuthzResult:
+        <span class="str">"""检查工具参数是否符合角色约束规则。"""</span>
+        <span class="kw">for</span> rule <span class="kw">in</span> self._rules:
+            <span class="kw">if</span> rule.tool_name != tool_name:
+                <span class="kw">continue</span>
+            <span class="kw">if</span> <span class="str">"*"</span> <span class="kw">not</span> <span class="kw">in</span> rule.roles <span class="kw">and</span> role <span class="kw">not</span> <span class="kw">in</span> rule.roles:
+                <span class="kw">continue</span>  <span class="com"># 规则不适用于当前角色</span>
+            <span class="kw">if</span> rule.field <span class="kw">not</span> <span class="kw">in</span> arguments:
+                <span class="kw">continue</span>  <span class="com"># 参数未提供，跳过（由工具自身校验必填）</span>
+
+            val = arguments[rule.field]
+            <span class="kw">if</span> <span class="kw">not</span> self._match(val, rule.operator, rule.value):
+                <span class="kw">return</span> AuthzResult(
+                    decision=AuthzDecision.DENY,
+                    reason=<span class="str">f"参数违规: {rule.message}"</span>,
+                    actual_role=role,
+                )
+        <span class="kw">return</span> AuthzResult(decision=AuthzDecision.ALLOW, reason=<span class="str">"参数合规"</span>, actual_role=role)
+
+    <span class="kw">@staticmethod</span>
+    <span class="kw">def</span> <span class="fn">_match</span>(val: Any, op: ParamOperator, expected: Any) -> <span class="cls">bool</span>:
+        <span class="str">"""执行单条规则匹配。"""</span>
+        <span class="kw">if</span> op == ParamOperator.EQ:
+            <span class="kw">return</span> val == expected
+        <span class="kw">if</span> op == ParamOperator.IN:
+            <span class="kw">return</span> val <span class="kw">in</span> expected
+        <span class="kw">if</span> op == ParamOperator.NOT_IN:
+            <span class="kw">return</span> val <span class="kw">not</span> <span class="kw">in</span> expected
+        <span class="kw">if</span> op == ParamOperator.REGEX:
+            <span class="kw">return</span> <span class="kw">bool</span>(re.match(expected, <span class="fn">str</span>(val)))
+        <span class="kw">if</span> op == ParamOperator.RANGE:
+            <span class="kw">return</span> expected[0] <= val <= expected[1]
+        <span class="kw">return</span> <span class="kw">True</span></pre>
+
+  <h3>5.4 授权决策链编排 <span class="tag">编排</span></h3>
+  <div class="diagram">
+    <div class="frame">
+      <div class="mermaid">
+flowchart TD
+    CALL([工具调用请求]) --> G1{① beforeTool<br/>DangerousToolGuard}
+    G1 -->|CONFIRM/BLOCK| DENY1[拒绝: 需确认/危险]
+    G1 -->|ALLOW| G2{② 循环检测<br/>LoopDetector}
+    G2 -->|检测到循环| DENY2[拒绝: 循环错误<br/>提示换策略]
+    G2 -->|正常| G3{③ RBAC<br/>RBACAuthorizer}
+    G3 -->|DENY| DENY3[拒绝: 权限不足<br/>提示所需角色]
+    G3 -->|ALLOW| G4{④ 参数级<br/>ParamAuthorizer}
+    G4 -->|DENY| DENY4[拒绝: 参数违规<br/>提示约束规则]
+    G4 -->|ALLOW| EXEC[⑤ 执行<br/>MCPClient.call_tool]
+    EXEC --> G6[⑥ afterTool<br/>ToolAuditHook]
+    G6 --> LOG[审计日志: 成功/失败/耗时/参数摘要]
+    LOG --> DONE([返回结果])
+
+    DENY1 --> G6B[⑥ afterTool 审计<br/>记录拒绝事件]
+    DENY2 --> G6B
+    DENY3 --> G6B
+    DENY4 --> G6B
+    G6B --> DONE2([返回错误给 LLM])
+      </div>
+    </div>
+    <figcaption>图 5.1：六阶段授权决策链（含拒绝路径的审计覆盖）</figcaption>
+  </div>
+
+  <div class="callout info">
+    <span class="ic">ⓘ</span>
+    <div><strong>审计完整性：</strong>无论工具是成功执行还是被任一守卫拒绝，afterTool Hook 都会触发，记录"调用尝试 + 决策结果 + 耗时"。被拒绝的工具 <code>outcome.success=False</code>，error 记录拒绝原因，确保审计链无盲区。</div>
+  </div>
+</section>
+
+<!-- ===================== 6. 接口定义 ===================== -->
+<section id="s6">
+  <span class="h2-num">SECTION 06</span>
+  <h2>接口定义：关键类与方法签名</h2>
+  <p class="section-intro">汇总三项扩展涉及的全部关键类与方法签名，按模块组织。所有接口遵循项目既有风格——构造注入、可 Mock、配置驱动。</p>
+
+  <h3>6.1 循环检测接口 <span class="tag">扩展 1</span></h3>
+  <pre class="code"><span class="com"># app/rag/loop_detector.py</span>
+
+<span class="kw">@dataclass</span>
+<span class="kw">class</span> <span class="cls">LoopViolation</span>:
+    <span class="str">"""循环检测违规结果。"""</span>
+    violation_type: <span class="cls">str</span>        <span class="com"># consecutive_duplicate / call_cycle / total_exceeded</span>
+    tool_name: <span class="cls">str</span>
+    count: <span class="cls">int</span>
+    message: <span class="cls">str</span>
+    suggestion: <span class="cls">str</span>
+
+    <span class="kw">def</span> <span class="fn">to_error_dict</span>(self) -> <span class="cls">dict</span>:
+        <span class="str">"""转为返回给 LLM 的结构化错误。"""</span>
+        <span class="kw">return</span> {
+            <span class="str">"error"</span>: <span class="str">"loop_detected"</span>,
+            <span class="str">"type"</span>: self.violation_type,
+            <span class="str">"tool"</span>: self.tool_name,
+            <span class="str">"count"</span>: self.count,
+            <span class="str">"message"</span>: self.message,
+            <span class="str">"suggestion"</span>: self.suggestion,
+        }
+
+<span class="kw">@dataclass</span>
+<span class="kw">class</span> <span class="cls">LoopDetectorConfig</span>:
+    <span class="str">"""循环检测阈值配置。"""</span>
+    enabled: <span class="cls">bool</span> = <span class="kw">True</span>
+    max_consecutive: <span class="cls">int</span> = 2
+    window_size: <span class="cls">int</span> = 5
+    max_cycle_length: <span class="cls">int</span> = 3
+    cycle_window: <span class="cls">int</span> = 10
+    max_total_calls: <span class="cls">int</span> = 15
+
+<span class="kw">class</span> <span class="cls">LoopDetector</span>:
+    <span class="str">"""循环检测器 — 工具调用历史追踪与循环识别。"""</span>
+
+    <span class="kw">def</span> <span class="fn">__init__</span>(self, config: LoopDetectorConfig | <span class="kw">None</span> = <span class="kw">None</span>) -> <span class="kw">None</span>: ...
+
+    <span class="kw">def</span> <span class="fn">check_before_execute</span>(self, record: ToolCallRecord) -> LoopViolation | <span class="kw">None</span>:
+        <span class="str">"""执行前检查是否会触发循环（不记录历史）。"""</span> ...
+
+    <span class="kw">def</span> <span class="fn">record_call</span>(self, record: ToolCallRecord) -> <span class="kw">None</span>:
+        <span class="str">"""记录一次工具调用到历史（执行成功后调用）。"""</span> ...
+
+    <span class="kw">def</span> <span class="fn">reset</span>(self) -> <span class="kw">None</span>:
+        <span class="str">"""重置历史 — 新会话时调用。"""</span> ...
+
+    <span class="kw">def</span> <span class="fn">get_history</span>(self) -> <span class="cls">list</span>[ToolCallRecord]:
+        <span class="str">"""返回调用历史副本（供调试/审计）。"""</span> ...
+
+    <span class="kw">def</span> <span class="fn">get_stats</span>(self) -> <span class="cls">dict</span>:
+        <span class="str">"""返回统计信息（总调用数/唯一工具数/违规次数）。"""</span> ...</pre>
+
+  <h3>6.2 并行调度接口 <span class="tag">扩展 2</span></h3>
+  <pre class="code"><span class="com"># app/rag/tool_scheduler.py</span>
+
+<span class="kw">@dataclass</span>
+<span class="kw">class</span> <span class="cls">ScheduledToolResult</span>:
+    <span class="str">"""单工具调度结果。"""</span>
+    tool_use_id: <span class="cls">str</span>
+    tool_name: <span class="cls">str</span>
+    status: <span class="cls">str</span>           <span class="com"># ok / error / blocked / denied</span>
+    result: Any = <span class="kw">None</span>
+    error: <span class="cls">str</span> = <span class="str">""</span>
+    duration_ms: <span class="cls">float</span> = 0.0
+
+<span class="kw">@dataclass</span>
+<span class="kw">class</span> <span class="cls">SchedulerConfig</span>:
+    <span class="str">"""调度器配置。"""</span>
+    max_concurrency: <span class="cls">int</span> = 5         <span class="com"># 只读组最大并发数</span>
+    enabled: <span class="cls">bool</span> = <span class="kw">True</span>             <span class="com"># 并行调度开关（False 回退串行）</span>
+    write_strict_serial: <span class="cls">bool</span> = <span class="kw">True</span>  <span class="com"># 写工具严格串行</span>
+
+<span class="kw">class</span> <span class="cls">ToolScheduler</span>:
+    <span class="str">"""并行工具调度器。"""</span>
+
+    <span class="kw">def</span> <span class="fn">__init__</span>(
+        self,
+        engine: <span class="str">"AgenticRAGEngine"</span>,
+        config: SchedulerConfig | <span class="kw">None</span> = <span class="kw">None</span>,
+    ) -> <span class="kw">None</span>: ...
+
+    <span class="kw">async</span> <span class="kw">def</span> <span class="fn">schedule</span>(
+        self,
+        state: AgentState,
+        tool_uses: <span class="cls">list</span>[ToolUse],
+    ) -> <span class="cls">list</span>[ScheduledToolResult]:
+        <span class="str">"""调度执行一批 tool_use — 只读并发、写串行。
+
+        Args:
+            state: Agent 状态（含 tool_call_history / user_role）。
+            tool_uses: 本轮 LLM 返回的全部工具调用。
+
+        Returns:
+            按 tool_use_id 顺序排列的调度结果列表。
+        """</span> ...
+
+    <span class="kw">def</span> <span class="fn">classify</span>(self, tool_uses: <span class="cls">list</span>[ToolUse]) -> <span class="cls">tuple</span>[<span class="cls">list</span>[ToolUse], <span class="cls">list</span>[ToolUse]]:
+        <span class="str">"""分类只读/写工具，返回 (read_list, write_list)。"""</span> ...</pre>
+
+  <h3>6.3 授权增强接口 <span class="tag">扩展 3</span></h3>
+  <pre class="code"><span class="com"># app/rag/rbac_authorizer.py</span>
+
+<span class="kw">class</span> <span class="cls">RBACAuthorizer</span>:
+    <span class="str">"""RBAC 角色授权器。"""</span>
+
+    <span class="kw">def</span> <span class="fn">__init__</span>(self, role_matrix: <span class="cls">dict</span>[<span class="cls">str</span>, <span class="cls">set</span>[<span class="cls">str</span>]] | <span class="kw">None</span> = <span class="kw">None</span>) -> <span class="kw">None</span>: ...
+
+    <span class="kw">def</span> <span class="fn">check</span>(self, role: <span class="cls">str</span>, tool_name: <span class="cls">str</span>) -> AuthzResult:
+        <span class="str">"""检查角色是否有权调用工具。"""</span> ...
+
+    <span class="kw">def</span> <span class="fn">get_allowed_tools</span>(self, role: <span class="cls">str</span>) -> <span class="cls">set</span>[<span class="cls">str</span>]:
+        <span class="str">"""返回角色允许调用的工具集合（供前端展示）。"""</span> ...
+
+    <span class="kw">def</span> <span class="fn">add_role</span>(self, role: <span class="cls">str</span>, tools: <span class="cls">set</span>[<span class="cls">str</span>]) -> <span class="kw">None</span>:
+        <span class="str">"""动态添加角色（运行时扩展权限矩阵）。"""</span> ...
+
+
+<span class="com"># app/rag/param_authorizer.py</span>
+
+<span class="kw">class</span> <span class="cls">ParamAuthorizer</span>:
+    <span class="str">"""参数级授权规则引擎。"""</span>
+
+    <span class="kw">def</span> <span class="fn">__init__</span>(self, rules: <span class="cls">list</span>[ParamRule] | <span class="kw">None</span> = <span class="kw">None</span>) -> <span class="kw">None</span>: ...
+
+    <span class="kw">def</span> <span class="fn">check</span>(self, tool_name: <span class="cls">str</span>, arguments: <span class="cls">dict</span>, role: <span class="cls">str</span>) -> AuthzResult:
+        <span class="str">"""检查工具参数是否符合角色约束。"""</span> ...
+
+    <span class="kw">def</span> <span class="fn">add_rule</span>(self, rule: ParamRule) -> <span class="kw">None</span>:
+        <span class="str">"""动态添加参数规则。"""</span> ...
+
+    <span class="kw">def</span> <span class="fn">get_rules_for_tool</span>(self, tool_name: <span class="cls">str</span>) -> <span class="cls">list</span>[ParamRule]:
+        <span class="str">"""返回工具的所有参数规则（供调试）。"""</span> ...
+
+
+<span class="com"># app/rag/param_authorizer.py — afterTool Hook</span>
+
+<span class="kw">class</span> <span class="cls">AfterToolHook</span>(ABC):
+    <span class="str">"""afterTool Hook 抽象接口。"""</span>
+
+    <span class="kw">@abstractmethod</span>
+    <span class="kw">async</span> <span class="kw">def</span> <span class="fn">after_tool</span>(self, ctx: ToolExecutionContext, outcome: ToolExecutionOutcome) -> <span class="kw">None</span>: ...
+
+<span class="kw">class</span> <span class="cls">ToolAuditHook</span>(AfterToolHook):
+    <span class="str">"""默认 afterTool 实现 — 审计日志。"""</span>
+
+    <span class="kw">def</span> <span class="fn">__init__</span>(self, audit_service: Any = <span class="kw">None</span>) -> <span class="kw">None</span>: ...
+
+    <span class="kw">async</span> <span class="kw">def</span> <span class="fn">after_tool</span>(self, ctx: ToolExecutionContext, outcome: ToolExecutionOutcome) -> <span class="kw">None</span>: ...</pre>
+
+  <h3>6.4 engine.py 改造后接口 <span class="tag">改造</span></h3>
+  <pre class="code"><span class="kw">class</span> <span class="cls">AgenticRAGEngine</span>:
+    <span class="kw">def</span> <span class="fn">__init__</span>(
+        self,
+        llm: LLMProvider,
+        mcp_client: MCPClient,
+        retriever: HybridRetriever,
+        reranker: RerankerBase,
+        generator: Generator,
+        cache: TokenCache | <span class="kw">None</span> = <span class="kw">None</span>,
+        permission_filter: PermissionFilter | <span class="kw">None</span> = <span class="kw">None</span>,
+        max_iterations: <span class="cls">int</span> = _DEFAULT_MAX_ITERATIONS,
+        checkpointer: Any = <span class="kw">None</span>,
+        tool_guard: DangerousToolGuard | <span class="kw">None</span> = <span class="kw">None</span>,
+        quality_guard: Any = <span class="kw">None</span>,
+        <span class="dec"># === 三项扩展新增注入参数 ===</span>
+        loop_detector: LoopDetector | <span class="kw">None</span> = <span class="kw">None</span>,
+        tool_scheduler: ToolScheduler | <span class="kw">None</span> = <span class="kw">None</span>,
+        rbac_authorizer: RBACAuthorizer | <span class="kw">None</span> = <span class="kw">None</span>,
+        param_authorizer: ParamAuthorizer | <span class="kw">None</span> = <span class="kw">None</span>,
+        after_tool_hook: AfterToolHook | <span class="kw">None</span> = <span class="kw">None</span>,
+    ) -> <span class="kw">None</span>: ...
+
+    <span class="kw">async</span> <span class="kw">def</span> <span class="fn">_tool_call</span>(self, state: AgentState) -> <span class="kw">None</span>:
+        <span class="str">"""改造：收集全部 tool_use → 委托 ToolScheduler 并行调度。"""</span> ...
+
+    <span class="kw">async</span> <span class="kw">def</span> <span class="fn">_execute_tool_use</span>(self, state: AgentState, tool_use: ToolUse) -> <span class="kw">None</span>:
+        <span class="str">"""改造：内嵌六阶段守卫决策链。
+
+        链路: beforeTool → 循环检测 → RBAC → 参数级 → 执行 → afterTool
+        """</span> ...</pre>
+</section>
+
+<!-- ===================== 7. 集成点 ===================== -->
+<section id="s7">
+  <span class="h2-num">SECTION 07</span>
+  <h2>集成点：与现有模块的衔接</h2>
+  <p class="section-intro">三项扩展以<strong>最小侵入</strong>方式集成到现有 engine.py / tool_guard.py / server.py。所有扩展通过构造注入，未注入时回退到原有行为（向后兼容），确保现有 762 项测试零回归。</p>
+
+  <h3>7.1 engine.py 集成 <span class="tag">核心改造</span></h3>
+  <div class="layer-block focal">
+    <div class="lnum">A<small>ENGINE</small></div>
+    <div class="lbody">
+      <div class="ltitle">AgenticRAGEngine 改造 <span class="pill new">3 处</span></div>
+      <p style="font-size:14px;"><strong>① __init__ 注入扩展组件：</strong>新增 5 个可选注入参数（loop_detector / tool_scheduler / rbac_authorizer / param_authorizer / after_tool_hook），未注入时实例化默认实现或回退原逻辑。</p>
+      <p style="font-size:14px;"><strong>② AgentState 扩展字段：</strong>新增 <code>tool_call_history</code>（循环检测用）、<code>user_role</code>（RBAC 用）、<code>parallel_tool_results</code>（并行结果合并用）。在 <code>answer()</code> 初始化 state 时填充默认值并重置 LoopDetector。</p>
+      <p style="font-size:14px;"><strong>③ _execute_tool_use 嵌入守卫链：</strong>原方法仅做 beforeTool + MCP 调用，改造后依次执行 beforeTool → 循环检测 → RBAC → 参数级 → 执行 → afterTool 六阶段，每阶段拒绝都返回结构化错误给 LLM。</p>
+    </div>
+  </div>
+
+  <h4>集成代码骨架</h4>
+  <pre class="code"><span class="kw">async</span> <span class="kw">def</span> <span class="fn">_execute_tool_use</span>(self, state: AgentState, tool_use: ToolUse) -> <span class="kw">None</span>:
+    tool_name = tool_use.get(<span class="str">"name"</span>, <span class="str">""</span>)
+    tool_input = tool_use.get(<span class="str">"input"</span>, {})
+    tool_use_id = tool_use.get(<span class="str">"id"</span>, <span class="str">""</span>)
+    user_role = state.get(<span class="str">"user_role"</span>, <span class="str">"viewer"</span>)
+
+    ctx = ToolExecutionContext(
+        tool_name=tool_name, tool_input=tool_input, tool_use_id=tool_use_id,
+        user_id=state.get(<span class="str">"user_id"</span>, <span class="str">""</span>), user_role=user_role,
+        session_id=state.get(<span class="str">"session_id"</span>, <span class="str">""</span>),
+        iteration=state.get(<span class="str">"iteration"</span>, 0), start_time=time.time(),
+    )
+
+    <span class="dec"># ① beforeTool — 现有 DangerousToolGuard（保持不变）</span>
+    guard_result = self._tool_guard.check(tool_name, tool_input)
+    <span class="kw">if</span> guard_result.needs_confirmation:
+        <span class="kw">await</span> self._record_blocked(state, ctx, tool_name, tool_input, guard_result.reason)
+        <span class="kw">return</span>
+
+    <span class="dec"># ② 循环检测 — 扩展 1 新增</span>
+    <span class="kw">if</span> self._loop_detector <span class="kw">is</span> <span class="kw">not</span> <span class="kw">None</span>:
+        record = ToolCallRecord(tool_name, tool_input, tool_use_id, ctx.iteration)
+        violation = self._loop_detector.check_before_execute(record)
+        <span class="kw">if</span> violation <span class="kw">is</span> <span class="kw">not</span> <span class="kw">None</span>:
+            <span class="kw">await</span> self._record_violation(state, ctx, violation)
+            <span class="kw">return</span>
+
+    <span class="dec"># ③ RBAC — 扩展 3 新增</span>
+    <span class="kw">if</span> self._rbac_authorizer <span class="kw">is</span> <span class="kw">not</span> <span class="kw">None</span>:
+        rbac_result = self._rbac_authorizer.check(user_role, tool_name)
+        <span class="kw">if</span> <span class="kw">not</span> rbac_result.allowed:
+            <span class="kw">await</span> self._record_denied(state, ctx, rbac_result)
+            <span class="kw">return</span>
+
+    <span class="dec"># ④ 参数级 — 扩展 3 新增</span>
+    <span class="kw">if</span> self._param_authorizer <span class="kw">is</span> <span class="kw">not</span> <span class="kw">None</span>:
+        param_result = self._param_authorizer.check(tool_name, tool_input, user_role)
+        <span class="kw">if</span> <span class="kw">not</span> param_result.allowed:
+            <span class="kw">await</span> self._record_denied(state, ctx, param_result)
+            <span class="kw">return</span>
+
+    <span class="dec"># ⑤ 执行 — 现有 MCP 调用（保持不变）</span>
+    <span class="kw">try</span>:
+        result = <span class="kw">await</span> self.mcp.call_tool(tool_name, tool_input)
+        state[<span class="str">"tool_results"</span>].append({<span class="str">"tool"</span>: tool_name, <span class="str">"arguments"</span>: tool_input, <span class="str">"result"</span>: result, <span class="str">"content"</span>: result})
+        outcome = ToolExecutionOutcome(success=<span class="kw">True</span>, result=result, duration_ms=(time.time()-ctx.start_time)*1000, result_summary=self._summarize(result))
+        <span class="kw">if</span> self._loop_detector <span class="kw">is</span> <span class="kw">not</span> <span class="kw">None</span>:
+            self._loop_detector.record_call(ToolCallRecord(tool_name, tool_input, tool_use_id, ctx.iteration))
+    <span class="kw">except</span> Exception <span class="kw">as</span> exc:
+        outcome = ToolExecutionOutcome(success=<span class="kw">False</span>, error=exc, duration_ms=(time.time()-ctx.start_time)*1000)
+        state[<span class="str">"tool_results"</span>].append({<span class="str">"tool"</span>: tool_name, <span class="str">"arguments"</span>: tool_input, <span class="str">"result"</span>: <span class="fn">str</span>(exc), <span class="str">"content"</span>: <span class="fn">str</span>(exc)})
+
+    <span class="dec"># ⑥ afterTool — 扩展 3 新增</span>
+    <span class="kw">if</span> self._after_tool_hook <span class="kw">is</span> <span class="kw">not</span> <span class="kw">None</span>:
+        <span class="kw">try</span>:
+            <span class="kw">await</span> self._after_tool_hook.after_tool(ctx, outcome)
+        <span class="kw">except</span> Exception <span class="kw">as</span> hook_exc:
+            log.warning(<span class="str">"engine.after_tool_hook_error"</span>, error=<span class="fn">str</span>(hook_exc))</pre>
+
+  <h3>7.2 tool_guard.py 集成 <span class="tag">扩展 2/3</span></h3>
+  <div class="layer-block">
+    <div class="lnum">B<small>GUARD</small></div>
+    <div class="lbody">
+      <div class="ltitle">DangerousToolGuard 增量改造 <span class="pill new">向后兼容</span></div>
+      <p style="font-size:14px;">仅新增 <code>is_readonly(tool_name) -> bool</code> 方法供调度器查询工具只读属性。现有 <code>check()</code> / <code>confirm()</code> / <code>is_confirmed()</code> 等接口<strong>完全不变</strong>，现有 30 项 test_tool_guard 测试零回归。</p>
+      <pre class="code" style="margin-top:12px;"><span class="kw">def</span> <span class="fn">is_readonly</span>(self, tool_name: <span class="cls">str</span>) -> <span class="cls">bool</span>:
+    <span class="str">"""判断工具是否只读（供 ToolScheduler 分类）。"""</span>
+    <span class="kw">return</span> tool_name <span class="kw">in</span> self._safe</pre>
+    </div>
+  </div>
+
+  <h3>7.3 server.py 集成 <span class="tag">扩展 2</span></h3>
+  <div class="layer-block">
+    <div class="lnum">C<small>SERVER</small></div>
+    <div class="lbody">
+      <div class="ltitle">@mcp_tool 装饰器扩展 <span class="pill new">可选参数</span></div>
+      <p style="font-size:14px;"><code>@mcp_tool</code> 装饰器新增可选 <code>readonly=False</code> 参数，注册时存入 <code>_tool_registry</code>。现有工具定义<strong>不强制改动</strong>——未标注 readonly 的工具默认为写工具（保守策略）。</p>
+      <pre class="code" style="margin-top:12px;"><span class="kw">def</span> <span class="fn">mcp_tool</span>(name, description, parameters, readonly=<span class="kw">False</span>):
+    <span class="kw">def</span> <span class="fn">decorator</span>(func):
+        func._mcp_tool_name = name
+        func._mcp_tool_description = description
+        func._mcp_tool_parameters = parameters
+        func._mcp_tool_readonly = readonly  <span class="com"># 新增</span>
+        <span class="kw">return</span> func
+    <span class="kw">return</span> decorator
+
+<span class="com"># 现有工具标注示例</span>
+<span class="kw">@mcp_tool</span>(name=<span class="str">"knowledge_search"</span>, ..., readonly=<span class="kw">True</span>)
+<span class="kw">async</span> <span class="kw">def</span> <span class="fn">_tool_knowledge_search</span>(self, ...): ...</pre>
+    </div>
+  </div>
+
+  <h3>7.4 向后兼容性保证 <span class="tag">兼容</span></h3>
+  <div class="callout win">
+    <span class="ic">✓</span>
+    <div>
+      <strong>零回归策略：</strong>所有扩展组件通过构造注入，<code>None</code> 时回退原逻辑：
+      <ul style="font-size:14px;margin-top:8px;padding-left:20px;">
+        <li><code>loop_detector=None</code> → 跳过循环检测，行为同现状</li>
+        <li><code>tool_scheduler=None</code> → <code>_tool_call</code> 回退到串行 <code>_execute_tool_use</code></li>
+        <li><code>rbac_authorizer=None</code> + <code>param_authorizer=None</code> → 跳过角色/参数检查，仅 beforeTool 守卫生效</li>
+        <li><code>after_tool_hook=None</code> → 跳过审计日志</li>
+      </ul>
+      现有 <code>test_tool_guard.py</code>（30 项）、<code>test_rag_engine.py</code> 全部保持通过。
+    </div>
+  </div>
+</section>
+
+<!-- ===================== 8. 测试计划 ===================== -->
+<section id="s8">
+  <span class="h2-num">SECTION 08</span>
+  <h2>测试计划：三项扩展测试用例</h2>
+  <p class="section-intro">每项扩展设计至少 10 个测试点，覆盖正常路径、边界条件、异常场景与集成测试。新增测试文件：<code>tests/test_loop_detector.py</code> / <code>tests/test_tool_scheduler.py</code> / <code>tests/test_rbac_authorizer.py</code> / <code>tests/test_param_authorizer.py</code>，遵循现有 test_tool_guard.py 的测试组织风格。</p>
+
+  <h3>8.1 循环检测测试用例 <span class="tag">扩展 1 · 12 项</span></h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>#</th><th>测试点</th><th>场景</th><th>预期</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>无循环正常放行</td><td>首次调用 knowledge_search</td><td>check_before_execute 返回 None</td></tr>
+        <tr><td>2</td><td>连续重复检测触发</td><td>同工具同参数连续调用 2 次</td><td>第 2 次返回 consecutive_duplicate 违规</td></tr>
+        <tr><td>3</td><td>参数不同不触发</td><td>knowledge_search 连续调用但 query 参数不同</td><td>签名不同，不触发循环</td></tr>
+        <tr><td>4</td><td>分页查询合法重试</td><td>offset=0 与 offset=10 两次调用</td><td>参数不同，放行</td></tr>
+        <tr><td>5</td><td>调用图环路检测</td><td>A→B→A→B 序列（环长 2）</td><td>第 4 次返回 call_cycle 违规</td></tr>
+        <tr><td>6</td><td>环长 3 检测</td><td>A→B→C→A→B→C 序列</td><td>第 6 次返回 call_cycle，count=3</td></tr>
+        <tr><td>7</td><td>总调用数兜底</td><td>累计调用 16 次（超 max_total_calls=15）</td><td>第 16 次返回 total_exceeded 违规</td></tr>
+        <tr><td>8</td><td>错误后重试放行</td><td>上次返回 error，LLM 调整参数重试</td><td>is_retry_after_error 标记，放行</td></tr>
+        <tr><td>9</td><td>record_call 记录历史</td><td>执行成功后调用 record_call</td><td>get_history 长度 +1</td></tr>
+        <tr><td>10</td><td>reset 清空历史</td><td>记录 3 次后调用 reset</td><td>get_history 返回空列表</td></tr>
+        <tr><td>11</td><td>配置禁用</td><td>config.enabled=False</td><td>所有检测返回 None</td></tr>
+        <tr><td>12</td><td>engine 集成循环拦截</td><td>engine 注入 LoopDetector，模拟连续相同调用</td><td>tool_results 含 loop_detected 错误，MCP 未被调用</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>8.2 并行工具调用测试用例 <span class="tag">扩展 2 · 11 项</span></h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>#</th><th>测试点</th><th>场景</th><th>预期</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>只读工具并发执行</td><td>3 个 knowledge_search 同时返回</td><td>3 个工具并发，总耗时 ≈ max(单工具)</td></tr>
+        <tr><td>2</td><td>写工具串行执行</td><td>2 个 document_create</td><td>严格按顺序执行，第 2 个在第 1 个完成后开始</td></tr>
+        <tr><td>3</td><td>读写混合分组</td><td>2 只读 + 1 写</td><td>只读并发、写串行，互不干扰</td></tr>
+        <tr><td>4</td><td>结果按 tool_use_id 排序</td><td>并发完成后合并</td><td>结果顺序与 LLM 返回 tool_use 顺序一致</td></tr>
+        <tr><td>5</td><td>单工具失败不中断组</td><td>3 个只读，第 2 个抛异常</td><td>第 1、3 个正常完成，第 2 个返回 error</td></tr>
+        <tr><td>6</td><td>return_exceptions 隔离</td><td>asyncio.gather 异常处理</td><td>异常被包装为 ScheduledToolResult，不向上抛出</td></tr>
+        <tr><td>7</td><td>空 tool_use 列表</td><td>schedule([]) 调用</td><td>返回空列表，不报错</td></tr>
+        <tr><td>8</td><td>禁用并行回退串行</td><td>config.enabled=False</td><td>所有工具串行执行，行为同改造前</td></tr>
+        <tr><td>9</td><td>并发数限制</td><td>max_concurrency=2，5 个只读工具</td><td>最多 2 个并发，其余排队</td></tr>
+        <tr><td>10</td><td>classify 分类准确性</td><td>混合工具列表</td><td>readonly=True 进 read_list，False 进 write_list</td></tr>
+        <tr><td>11</td><td>engine 集成端到端</td><td>engine 注入 ToolScheduler，Mock LLM 返回多 tool_use</td><td>tool_results 数量正确，顺序正确</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>8.3 动态授权增强测试用例 <span class="tag">扩展 3 · 13 项</span></h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>#</th><th>测试点</th><th>场景</th><th>预期</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>viewer 调用只读工具放行</td><td>viewer + knowledge_search</td><td>RBAC ALLOW</td></tr>
+        <tr><td>2</td><td>viewer 调用写工具拒绝</td><td>viewer + document_create</td><td>RBAC DENY，提示需 editor 角色</td></tr>
+        <tr><td>3</td><td>admin 调用全部工具放行</td><td>admin + 任意工具</td><td>RBAC ALLOW（"*" 通配）</td></tr>
+        <tr><td>4</td><td>editor 创建非 draft 拒绝</td><td>editor + document_create(status=published)</td><td>参数级 DENY，提示仅可创建 draft</td></tr>
+        <tr><td>5</td><td>editor 创建 draft 放行</td><td>editor + document_create(status=draft)</td><td>参数级 ALLOW</td></tr>
+        <tr><td>6</td><td>admin 不受参数规则约束</td><td>admin + document_create(status=published)</td><td>规则 roles 不含 admin，ALLOW</td></tr>
+        <tr><td>7</td><td>查询长度超限拒绝</td><td>query 长度 600 字符</td><td>REGEX 规则不匹配，DENY</td></tr>
+        <tr><td>8</td><td>afterTool 成功审计</td><td>工具执行成功</td><td>after_tool 被调用，outcome.success=True，记录耗时</td></tr>
+        <tr><td>9</td><td>afterTool 失败审计</td><td>工具执行抛异常</td><td>after_tool 被调用，outcome.success=False，记录 error</td></tr>
+        <tr><td>10</td><td>拒绝路径也触发审计</td><td>RBAC DENY 的调用</td><td>after_tool 仍触发，记录拒绝原因</td></tr>
+        <tr><td>11</td><td>审计失败不阻断主流程</td><td>audit_service.record_tool_call 抛异常</td><td>主流程继续，仅 log.warning</td></tr>
+        <tr><td>12</td><td>自定义角色矩阵</td><td>注入自定义 role_matrix</td><td>check 按自定义矩阵决策</td></tr>
+        <tr><td>13</td><td>engine 六阶段链路集成</td><td>engine 注入全部组件，viewer 尝试 create</td><td>beforeTool 放行 → RBAC 拒绝 → afterTool 审计拒绝</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="callout info">
+    <span class="ic">ⓘ</span>
+    <div><strong>测试组织：</strong>遵循现有 <code>test_tool_guard.py</code> 风格——按类分组（TestLoopDetector / TestToolScheduler / TestRBACAuthorizer / TestParamAuthorizer / TestEngineIntegration），使用 <code>AsyncMock</code> Mock MCP 调用，<code>@pytest.mark.asyncio</code> 标记异步测试。预计新增测试 <strong>36 项</strong>，项目总测试数从 762 增至 798。</div>
+  </div>
+</section>
+
+<!-- ===================== 9. 实施顺序 ===================== -->
+<section id="s9">
+  <span class="h2-num">SECTION 09</span>
+  <h2>实施顺序：开发阶段与依赖</h2>
+  <p class="section-intro">推荐按"低耦合优先、可独立验证"原则分 4 个阶段实施。每阶段交付可测试的独立单元，降低集成风险。扩展 1（循环检测）与扩展 3 的 RBAC/参数级可在扩展 2（并行调度）之前完成，因为并行调度依赖前两者的守卫链稳定。</p>
+
+  <div class="roadmap">
+    <div class="phase p1">
+      <div class="plabel">PHASE 1 · 基础</div>
+      <h4>扩展 1：循环检测</h4>
+      <ul>
+        <li>新建 loop_detector.py</li>
+        <li>AgentState 加 tool_call_history</li>
+        <li>engine __init__ 注入</li>
+        <li>_execute_tool_use 嵌入阶段 ②</li>
+        <li>test_loop_detector.py（12 项）</li>
+      </ul>
+    </div>
+    <div class="phase p2">
+      <div class="plabel">PHASE 2 · 安全</div>
+      <h4>扩展 3a：RBAC + 参数级</h4>
+      <ul>
+        <li>新建 rbac_authorizer.py</li>
+        <li>新建 param_authorizer.py（含 AfterToolHook）</li>
+        <li>AgentState 加 user_role</li>
+        <li>_execute_tool_use 嵌入阶段 ③④⑥</li>
+        <li>test_rbac / test_param（13 项）</li>
+      </ul>
+    </div>
+    <div class="phase p3">
+      <div class="plabel">PHASE 3 · 性能</div>
+      <h4>扩展 2：并行调度</h4>
+      <ul>
+        <li>tool_guard 加 is_readonly</li>
+        <li>server @mcp_tool 加 readonly</li>
+        <li>新建 tool_scheduler.py</li>
+        <li>_tool_call 改造委托调度器</li>
+        <li>test_tool_scheduler（11 项）</li>
+      </ul>
+    </div>
+    <div class="phase p4">
+      <div class="plabel">PHASE 4 · 集成</div>
+      <h4>端到端集成 + 回归</h4>
+      <ul>
+        <li>engine 六阶段链路联调</li>
+        <li>并行 + 循环 + 授权联合测试</li>
+        <li>全量回归 762 项测试</li>
+        <li>LangFuse trace 字段扩展</li>
+        <li>文档更新（README）</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>9.1 依赖关系图 <span class="tag">依赖</span></h3>
+  <div class="diagram">
+    <div class="frame">
+      <div class="mermaid">
+flowchart TD
+    P1[Phase 1: 循环检测<br/>loop_detector.py<br/>独立可测]
+    P2[Phase 2: RBAC + 参数级<br/>rbac_authorizer.py<br/>param_authorizer.py<br/>独立可测]
+    P3[Phase 3: 并行调度<br/>tool_scheduler.py<br/>依赖 is_readonly]
+    P4[Phase 4: 集成联调<br/>六阶段链路<br/>依赖 P1+P2+P3]
+
+    P1 --> P4
+    P2 --> P4
+    P3 --> P4
+
+    P1 -.->|提供阶段②给| P3
+    P2 -.->|提供阶段③④⑥给| P3
+
+    P1a[tool_guard.is_readonly<br/>server @mcp_tool readonly] --> P3
+      </div>
+    </div>
+    <figcaption>图 9.1：四阶段实施依赖关系（Phase 1/2 可并行开发，Phase 3 依赖基础改造，Phase 4 集成全部）</figcaption>
+  </div>
+
+  <h3>9.2 各阶段工作量预估 <span class="tag">估时</span></h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>阶段</th><th>新建文件</th><th>修改文件</th><th>新增测试</th><th>预估工时</th></tr></thead>
+      <tbody>
+        <tr><td>Phase 1</td><td>loop_detector.py</td><td>engine.py</td><td>12 项</td><td>1.5 天</td></tr>
+        <tr><td>Phase 2</td><td>rbac_authorizer.py, param_authorizer.py</td><td>engine.py</td><td>13 项</td><td>2 天</td></tr>
+        <tr><td>Phase 3</td><td>tool_scheduler.py</td><td>tool_guard.py, server.py, engine.py</td><td>11 项</td><td>2 天</td></tr>
+        <tr><td>Phase 4</td><td>—</td><td>engine.py, README.md</td><td>集成测试</td><td>1 天</td></tr>
+        <tr><td><strong>合计</strong></td><td><strong>4 文件</strong></td><td><strong>3 文件</strong></td><td><strong>36 项</strong></td><td><strong>6.5 天</strong></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ===================== 10. 风险分析 ===================== -->
+<section id="s10">
+  <span class="h2-num">SECTION 10</span>
+  <h2>风险分析：潜在风险与缓解</h2>
+  <p class="section-intro">识别三项扩展在性能、安全、正确性、兼容性四个维度的潜在风险，并给出针对性缓解措施。所有风险均控制在"不阻断主流程"范围内——扩展组件异常时降级为原有行为。</p>
+
+  <h3>10.1 风险矩阵 <span class="tag">风险</span></h3>
+  <div class="risk-grid">
+    <div class="risk-item">
+      <h5>R1: 循环误判阻断合法调用 <span class="risk-lvl med">中</span></h5>
+      <p>分页查询、错误重试等合法场景被循环检测误判为死循环，导致 Agent 无法获取数据。</p>
+      <p class="mitigation"><strong>缓解：</strong>① 签名包含规范化参数，参数不同即不触发；② <code>is_retry_after_error</code> 标记放行错误重试；③ <code>enabled=False</code> 可全局关闭；④ 单元测试覆盖分页/重试场景。</p>
+    </div>
+    <div class="risk-item">
+      <h5>R2: 并行调用引发资源竞争 <span class="risk-lvl med">中</span></h5>
+      <p>多个只读工具并发访问数据库，连接池耗尽或触发限流。</p>
+      <p class="mitigation"><strong>缓解：</strong>① <code>max_concurrency=5</code> 限制并发上限；② 只读工具无写副作用，竞态风险低；③ 数据库连接池配置独立监控；④ 异常隔离不扩散。</p>
+    </div>
+    <div class="risk-item">
+      <h5>R3: RBAC 角色配置错误锁死 <span class="risk-lvl high">高</span></h5>
+      <p>角色矩阵配置过严，导致所有用户无法调用工具，Agent 功能瘫痪。</p>
+      <p class="mitigation"><strong>缓解：</strong>① admin 角色通配 "*" 兜底；② 配置热加载，无需重启；③ <code>rbac_authorizer=None</code> 可完全禁用回退；④ 上线前在测试环境验证全角色矩阵。</p>
+    </div>
+    <div class="risk-item">
+      <h5>R4: afterTool 审计拖慢主流程 <span class="risk-lvl low">低</span></h5>
+      <p>审计日志持久化（写库）增加每次工具调用延迟。</p>
+      <p class="mitigation"><strong>缓解：</strong>① afterTool 异常不阻断主流程（try/except 包裹）；② 审计写入可改为 Celery 异步任务；③ <code>after_tool_hook=None</code> 可禁用；④ 仅记录摘要不记全量参数。</p>
+    </div>
+    <div class="risk-item">
+      <h5>R5: 并行结果顺序错乱 <span class="risk-lvl low">低</span></h5>
+      <p>asyncio.gather 并发完成后结果顺序与 LLM 期望不一致，导致 LLM 困惑。</p>
+      <p class="mitigation"><strong>缓解：</strong>① 用 tool_use_id 建立顺序索引，合并后按原序排序；② 测试用例验证顺序保证；③ zip(gather) 保留输入顺序对应关系。</p>
+    </div>
+    <div class="risk-item">
+      <h5>R6: 守卫链阶段间状态泄漏 <span class="risk-lvl med">中</span></h5>
+      <p>某阶段拒绝后未正确返回，后续阶段仍执行，导致越权调用。</p>
+      <p class="mitigation"><strong>缓解：</strong>① 每阶段拒绝后 <code>return</code> 提前退出；② 集成测试验证拒绝路径不调用 MCP；③ 阶段间无共享可变状态。</p>
+    </div>
+    <div class="risk-item">
+      <h5>R7: 向后兼容性破坏 <span class="risk-lvl high">高</span></h5>
+      <p>engine.py 改造导致现有 762 项测试回归。</p>
+      <p class="mitigation"><strong>缓解：</strong>① 所有扩展参数默认 None，回退原逻辑；② 现有 test_tool_guard/test_rag_engine 不改；③ CI 全量回归门禁；④ 分阶段合并，每阶段独立验证。</p>
+    </div>
+    <div class="risk-item">
+      <h5>R8: 参数规则配置膨胀 <span class="risk-lvl low">低</span></h5>
+      <p>随工具增多，参数规则配置复杂度上升，维护困难。</p>
+      <p class="mitigation"><strong>缓解：</strong>① 规则配置外置 YAML 文件；② <code>get_rules_for_tool</code> 支持调试查询；③ 规则按工具名索引，查找 O(1)；④ 文档化每个规则的业务含义。</p>
+    </div>
+    <div class="risk-item">
+      <h5>R9: 循环检测内存增长 <span class="risk-lvl low">低</span></h5>
+      <p>tool_call_history 无限增长，长会话内存溢出。</p>
+      <p class="mitigation"><strong>缓解：</strong>① <code>max_total_calls=15</code> 兜底限制；② 滑动窗口 window_size=5 仅保留近期；③ reset() 在新会话时清空；④ 历史仅存签名哈希不存全量参数。</p>
+    </div>
+  </div>
+
+  <h3>10.2 降级策略汇总 <span class="tag">降级</span></h3>
+  <div class="card warn">
+    <h4>三层降级保障</h4>
+    <table style="margin-top:12px;">
+      <thead><tr><th>层级</th><th>触发条件</th><th>降级行为</th></tr></thead>
+      <tbody>
+        <tr><td>L1 组件级</td><td>单个扩展组件初始化失败</td><td>该组件设为 None，跳过对应阶段</td></tr>
+        <tr><td>L2 调用级</td><td>单个工具的守卫链阶段抛异常</td><td>try/except 捕获，记录日志，按拒绝处理</td></tr>
+        <tr><td>L3 全局级</td><td>扩展引发批量故障</td><td>环境变量 <code>AGENT_TOOL_EXTENSIONS_ENABLED=False</code> 全局关闭</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="callout danger">
+    <span class="ic">⚠</span>
+    <div><strong>最高风险项：</strong>R3（RBAC 锁死）与 R7（兼容性破坏）为高风险。上线前必须在 staging 环境用全部 4 种角色（admin/kb_admin/editor/viewer）跑通端到端 Agent Loop 验证，并确认现有 762 项测试零回归后方可发布。</div>
+  </div>
+</section>
+
+</div>
+
+<footer>
+  <div class="container">
+    <div>
+      <strong style="color:#fff;">Agent 工具编排扩展实施方案</strong><br>
+      <span style="opacity:0.8;">企业知识库 RAG · 循环检测 + 并行调度 + 动态授权</span>
+    </div>
+    <div style="text-align:right;">
+      <span>4 新建文件 · 3 修改文件 · 36 新增测试 · 6.5 天工时</span><br>
+      <a href="#s1">回到顶部</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'base',
+    themeVariables: {
+      primaryColor: '#F2F7FF',
+      primaryTextColor: '#1A1A2E',
+      primaryBorderColor: '#4B3FE3',
+      lineColor: '#4B3FE3',
+      secondaryColor: '#EAFBF8',
+      tertiaryColor: '#FAFAFC',
+      fontFamily: '"SF Pro Text", "PingFang SC", -apple-system, sans-serif',
+      fontSize: '14px',
+    },
+    flowchart: { htmlLabels: true, curve: 'basis', padding: 16 },
+    sequence: { actorMargin: 50, boxMargin: 8, mirrorActors: false },
+  });
+</script>
+
+</body>
+</html>

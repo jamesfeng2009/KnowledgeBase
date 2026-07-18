@@ -35,6 +35,10 @@ def mcp_tool(
     name: str,
     description: str,
     parameters: dict[str, Any],
+    *,
+    category: str = "general",
+    tags: list[str] | None = None,
+    skill_description: str = "",
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """装饰器：将方法注册为 MCP 工具。
 
@@ -42,16 +46,28 @@ def mcp_tool(
     ``_scan_tools`` 会自动收集，``list_tools`` / ``call_tool`` 自动分发，
     无需修改 ``KnowledgeBaseMCPServer`` 的任何既有代码。
 
+    渐进式技能加载（Find Skills）：``category`` / ``tags`` / ``skill_description``
+    用于构建轻量技能索引，Agent Loop 先匹配相关技能再按需加载完整 schema，
+    避免工具数量增长后全量加载浪费 token。
+
     Args:
         name: 工具名称（对应 LLM function calling 的 function name）。
         description: 工具描述，供 LLM 决策调用。
         parameters: 工具入参 JSON Schema（``{"type": "object", "properties": ...}``）。
+        category: 工具分类（如 ``search`` / ``document`` / ``workflow`` / ``analytics``），
+            用于 Find Skills 分组匹配。
+        tags: 工具标签列表（如 ``["全文检索", "知识库"]``），用于关键词匹配。
+        skill_description: 技能详细描述（比 ``description`` 更长，仅在技能激活时加载，
+            空时回退到 ``description``）。
     """
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         func._mcp_tool_name = name  # type: ignore[attr-defined]
         func._mcp_tool_description = description  # type: ignore[attr-defined]
         func._mcp_tool_parameters = parameters  # type: ignore[attr-defined]
+        func._mcp_tool_category = category  # type: ignore[attr-defined]
+        func._mcp_tool_tags = tags or []  # type: ignore[attr-defined]
+        func._mcp_tool_skill_description = skill_description or description  # type: ignore[attr-defined]
         return func
 
     return decorator
@@ -93,6 +109,18 @@ class KnowledgeBaseMCPServer:
 
         在 ``__init__`` 中调用一次，后续 ``list_tools`` / ``call_tool``
         直接查表，避免每次调用都遍历 ``dir(self)``。
+
+        注册表结构::
+
+            {
+                "knowledge_search": {
+                    "handler": method,
+                    "definition": Tool(...),
+                    "category": "search",
+                    "tags": ["全文检索", "知识库"],
+                    "skill_description": "...",
+                },
+            }
         """
         for attr_name in dir(self):
             if attr_name.startswith("__"):
@@ -101,7 +129,7 @@ class KnowledgeBaseMCPServer:
             if not callable(method):
                 continue
             tool_name = getattr(method, "_mcp_tool_name", None)
-            if tool_name is None:
+            if tool_name is None or not isinstance(tool_name, str):
                 continue
             self._tool_registry[tool_name] = {
                 "handler": method,
@@ -109,6 +137,12 @@ class KnowledgeBaseMCPServer:
                     name=tool_name,
                     description=getattr(method, "_mcp_tool_description", ""),
                     parameters=getattr(method, "_mcp_tool_parameters", {}),
+                ),
+                "category": getattr(method, "_mcp_tool_category", "general"),
+                "tags": getattr(method, "_mcp_tool_tags", []),
+                "skill_description": getattr(
+                    method, "_mcp_tool_skill_description",
+                    getattr(method, "_mcp_tool_description", ""),
                 ),
             }
         log.debug(
@@ -127,6 +161,41 @@ class KnowledgeBaseMCPServer:
         返回的 ``Tool`` 列表可直接传给 ``LLMProvider.chat(tools=...)``。
         """
         return [entry["definition"] for entry in self._tool_registry.values()]
+
+    async def list_tools_by_names(self, names: list[str]) -> list[Tool]:
+        """按名称子集返回工具列表 — Find Skills 按需加载入口。
+
+        只有被 SkillFinder 匹配到的工具才会加载完整 schema，
+        避免全量加载浪费 token。未找到的名称静默跳过。
+
+        Args:
+            names: 需要加载的工具名称列表。
+
+        Returns:
+            匹配到的 Tool 列表（可能为空）。
+        """
+        result: list[Tool] = []
+        for name in names:
+            entry = self._tool_registry.get(name)
+            if entry is not None:
+                result.append(entry["definition"])
+        return result
+
+    def get_skill_index(self) -> list[dict[str, Any]]:
+        """返回轻量技能索引 — 仅 name / category / tags / description。
+
+        用于 SkillFinder 意图匹配，token 开销极小（每个技能约 20-30 token），
+        对比全量加载 schema（每个工具 200-500 token）。
+        """
+        return [
+            {
+                "name": name,
+                "category": entry.get("category", "general"),
+                "tags": entry.get("tags", []),
+                "description": entry.get("skill_description", entry["definition"]["description"]),
+            }
+            for name, entry in self._tool_registry.items()
+        ]
 
     async def call_tool(self, tool_name: str, arguments: dict) -> str:
         """调用指定工具并返回结果（JSON 字符串）。
@@ -192,6 +261,9 @@ class KnowledgeBaseMCPServer:
             },
             "required": ["query"],
         },
+        category="search",
+        tags=["全文检索", "知识库", "搜索", "search", "文档"],
+        skill_description="在企业知识库中按关键词进行全文检索，返回匹配的文档列表。支持限定特定知识库范围。",
     )
     async def _tool_knowledge_search(
         self,
@@ -251,6 +323,9 @@ class KnowledgeBaseMCPServer:
             },
             "required": ["doc_id"],
         },
+        category="document",
+        tags=["文档", "详情", "查看", "document", "get"],
+        skill_description="获取指定文档的详细信息，包括标题、内容、状态、密级等字段。需要提供文档 ID。",
     )
     async def _tool_document_get(self, doc_id: str) -> str:
         """获取文档详情 — 通过 DocumentRepository 查询单条记录。"""
@@ -297,6 +372,9 @@ class KnowledgeBaseMCPServer:
             },
             "required": ["title", "content", "kb_id"],
         },
+        category="document",
+        tags=["文档", "创建", "新建", "create", "写入", "draft"],
+        skill_description="在指定知识库中创建新文档，文档初始状态为 draft 草稿。需要提供标题、内容和目标知识库 ID。",
     )
     async def _tool_document_create(
         self,
@@ -355,6 +433,9 @@ class KnowledgeBaseMCPServer:
             },
             "required": ["bill_no"],
         },
+        category="workflow",
+        tags=["OA", "审批", "流程", "查询", "approval", "单据"],
+        skill_description="查询 OA 系统的审批流程状态，包括当前审批节点、提交人、审批意见等信息。需要提供单据编号。",
     )
     async def _tool_query_oa_approval(self, bill_no: str) -> str:
         """查询 OA 审批状态 — Mock 实现。
@@ -405,6 +486,9 @@ class KnowledgeBaseMCPServer:
             },
             "required": ["title", "description"],
         },
+        category="workflow",
+        tags=["IT", "工单", "创建", "ticket", "服务台", "报修"],
+        skill_description="创建 IT 服务台工单，支持设置优先级（low/normal/high/urgent）。需要提供工单标题和问题描述。",
     )
     async def _tool_create_it_ticket(
         self,

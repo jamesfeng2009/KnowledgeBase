@@ -66,6 +66,11 @@ EnterpriseKnowledge/
 │   │   ├── models/                   # SQLAlchemy ORM 模型
 │   │   ├── observability/            # LangFuse 追踪 + LLM Judge
 │   │   ├── rag/                      # Agentic RAG 引擎（含 vector_store 适配层）
+│   │   │   ├── engine.py             # Agent Loop（含 Find Skills 按需加载）
+│   │   │   ├── skill_registry.py     # Skill 注册表（轻量索引 + 按需加载）
+│   │   │   ├── skill_finder.py       # Find Skills 匹配引擎（中英文分词 + 多维评分）
+│   │   │   ├── tool_guard.py         # MCP 工具调用守卫（HITL 三态守卫）
+│   │   │   └── ...                   # chunker / retriever / reranker / generator 等
 │   │   ├── repositories/             # 数据访问层
 │   │   ├── schemas/                  # Pydantic 数据模型
 │   │   ├── services/                 # 业务逻辑层（21 个服务）
@@ -87,7 +92,7 @@ EnterpriseKnowledge/
 │   │   ├── deps.py                   # 依赖注入
 │   │   └── main.py                   # FastAPI 入口
 │   ├── tasks/                        # Celery 异步任务
-│   ├── tests/                        # 测试（762 项）
+│   ├── tests/                        # 测试（820 项）
 │   ├── celery_app.py                 # Celery 入口
 │   └── requirements.txt
 ├── collab-service/                   # Yjs 协作服务（Node.js + TypeScript）
@@ -1117,6 +1122,7 @@ flowchart LR
 - **关键帧 VLM 并发**：视频关键帧描述使用 `Semaphore(3)` + `asyncio.gather` 并发调用 VLM，替代串行逐帧处理，多关键帧场景延迟降低约 60%
 - **Chunk 元数据**：每个 Chunk 携带 `title_path`、`content_type`、`chunk_strategy`、`parent_id`
 - **视频 RAG 流程**：视频文档走专用管线 — ffmpeg 提取 16kHz mono 音轨 → ASR 转写为带时间戳片段 → ffmpeg 场景切换检测抽取关键帧 → VLM 逐帧描述 → `chunk_video_transcript` 按时间窗口（120s）合并转写片段并对齐关键帧描述，`title_path` 存时间戳标签（如 `00:00-02:15`）
+- **Find Skills 渐进式技能加载**：Agent Loop 每轮按用户查询匹配相关技能，只加载匹配工具的完整 schema（按需加载），避免工具数量增长后全量加载浪费 token。`SkillRegistry` 维护轻量索引（name/category/tags/description，每个技能约 20-30 token），`SkillFinder` 用中英文分词 + 多维度评分（name +10 / category +5 / tag +8 / desc +3）匹配，阈值过滤 + `max_skills` 限制。无匹配时 fallback 到全量加载（零回归保证）。配置项：`SKILL_FINDER_ENABLED` / `SKILL_MATCH_THRESHOLD` / `SKILL_MAX_LOADED`
 - **重试机制**：`max_retries=3`，`default_retry_delay=60`
 - **链式触发**：文档处理完成后自动触发智能处理（摘要/标签/分类/行动项/FAQ）
 - **审核流程串联**：按文档密级自动路由 — `confidential`/`secret` 进入 `pending_review` 状态并提交 AuditFlow 审核；`public`/`internal` 直接发布。审核通过后 `AuditService.approve` 自动触发 `_publish_document` 将状态更新为 `published`
@@ -1311,7 +1317,7 @@ docker compose --profile private up -d
 ```bash
 cd backend
 
-# 运行全部测试（762 项）
+# 运行全部测试（820 项）
 python -m pytest --tb=short -q
 
 # 运行特定模块测试
@@ -1323,6 +1329,7 @@ python -m pytest tests/test_document_tasks_chunker.py -v  # 文档分块接入
 python -m pytest tests/test_vector_store.py -v            # 向量存储适配器
 python -m pytest tests/test_audit_workflow.py -v          # 审核流程串联
 python -m pytest tests/test_tool_guard.py -v              # MCP 工具调用守卫
+python -m pytest tests/test_skill_finder.py -v            # Find Skills 渐进式技能加载
 python -m pytest tests/test_video_rag.py -v               # 视频 RAG（ASR + 关键帧 VLM 并发）
 python -m pytest tests/test_document_parser.py -v         # 文档解析（Docling 统一解析 + PDF/PPT/DOCX/XLSX 表格+图片 VLM + 扫描页 OCR + 独立音频 ASR + 旧格式兜底）
 python -m pytest tests/test_quality_guard.py -v           # RAG 质量守卫（检索+生成双层评估）
@@ -1347,8 +1354,9 @@ python -m pytest tests/test_eval.py -v                    # 离线评测（数�
 | `test_quality_guard.py` | 33 | 检索质量检查、重试决策、生成质量评估、低置信度标记、engine 集成 |
 | `test_rate_limiter.py` | 16 | 令牌桶消费/补充、客户端隔离、API Key/IP 标识、429 响应、健康检查豁免 |
 | `test_eval.py` | 55 | 数据集加载、Recall@K/MRR/NDCG 计算、Runner 集成、回归检测、DB 持久化、CLI 退出码 |
+| `test_skill_finder.py` | 58 | SkillMetadata 匹配分数、SkillRegistry 加载/索引/按需加载、SkillFinder 中英文匹配/阈值/fallback/max_skills、分词器、config 配置项、Server/MCPClient/Engine 集成 |
 | 其他测试 | 215 | API 端点、服务层、模型层、记忆引擎等 |
-| **合计** | **762** | **全部通过，零回归** |
+| **合计** | **820** | **全部通过，零回归** |
 
 ---
 

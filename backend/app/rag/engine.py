@@ -193,6 +193,29 @@ class AgenticRAGEngine:
         # 检索重试计数（每次 answer 调用时重置）
         self._retrieval_retry_count: int = 0
 
+        # Find Skills 渐进式技能加载 — 按需加载工具 schema，避免全量加载浪费 token
+        # 启动时从 MCP Server 构建轻量技能索引，Agent Loop 每轮按查询匹配相关技能
+        self._skill_finder: Any = None
+        self._skill_registry: Any = None
+        try:
+            from app.config import get_settings
+            from app.rag.skill_finder import SkillFinder
+            from app.rag.skill_registry import SkillRegistry
+
+            settings = get_settings()
+            if getattr(settings, "SKILL_FINDER_ENABLED", True):
+                self._skill_registry = SkillRegistry()
+                # 延迟加载：首次 _tool_call 时从 mcp_client 构建
+                self._skill_finder = SkillFinder(
+                    registry=self._skill_registry,
+                    match_threshold=getattr(settings, "SKILL_MATCH_THRESHOLD", 5),
+                    max_skills=getattr(settings, "SKILL_MAX_LOADED", 10),
+                )
+        except Exception as exc:
+            log.warning("engine.skill_finder_init_failed", error=str(exc))
+            self._skill_finder = None
+            self._skill_registry = None
+
     # ------------------------------------------------------------------
     # 对外入口
     # ------------------------------------------------------------------
@@ -843,12 +866,14 @@ class AgenticRAGEngine:
 
         将 MCP 工具列表传给 LLM，由 LLM 决定调用哪个工具及入参，
         再通过 MCPClient.call_tool_from_llm 转发执行。
+
+        Find Skills 渐进式技能加载：
+            - SKILL_FINDER_ENABLED=True 时，先从用户查询匹配相关技能，
+              只加载匹配工具的完整 schema（按需加载，节省 token）；
+            - SKILL_FINDER_ENABLED=False 或匹配失败时，fallback 到全量加载。
         """
-        try:
-            tools = await self.mcp.get_tools_for_llm()
-        except Exception as exc:
-            log.warning("engine.tool_call.list_error", error=str(exc))
-            return
+        # Find Skills 渐进式技能加载 — 按需加载工具 schema
+        tools = await self._get_tools_for_query(state["query"])
 
         if not tools:
             log.info("engine.tool_call.no_tools")
@@ -870,6 +895,46 @@ class AgenticRAGEngine:
                     await self._execute_tool_use(state, chunk)
         except Exception as exc:
             log.error("engine.tool_call.error", error=str(exc))
+
+    async def _get_tools_for_query(self, query: str) -> list[Tool]:
+        """获取工具列表 — Find Skills 按需加载或全量加载。
+
+        Args:
+            query: 用户查询，用于技能匹配。
+
+        Returns:
+            传给 LLM 的 Tool 列表。
+        """
+        # Find Skills 渐进式技能加载
+        if self._skill_finder is not None and self._skill_registry is not None:
+            try:
+                # 首次调用时从 MCP Server 构建轻量技能索引（延迟加载）
+                if not self._skill_registry.get_all_names():
+                    self._skill_registry.load_from_server(self.mcp._server)
+
+                # 匹配相关技能并按需加载完整 schema
+                matched_names = self._skill_finder.find_relevant_skills(query)
+                if matched_names:
+                    tools = await self._skill_registry.load_tools(matched_names)
+                    if tools:
+                        log.debug(
+                            "engine.skill_finder.loaded",
+                            query=query[:80],
+                            matched=matched_names,
+                            loaded=len(tools),
+                        )
+                        return tools
+                    # 加载失败（工具名不存在），fallback 到全量
+                    log.warning("engine.skill_finder.load_empty_fallback")
+            except Exception as exc:
+                log.warning("engine.skill_finder.error", error=str(exc))
+
+        # Fallback: 全量加载所有工具
+        try:
+            return await self.mcp.get_tools_for_llm()
+        except Exception as exc:
+            log.warning("engine.tool_call.list_error", error=str(exc))
+            return []
 
     async def _execute_tool_use(self, state: AgentState, tool_use: ToolUse) -> None:
         """执行单个 ToolUse — 通过 MCPClient 调用并将结果存入 state。
