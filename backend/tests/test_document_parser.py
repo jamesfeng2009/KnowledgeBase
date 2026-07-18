@@ -458,6 +458,7 @@ class TestPPTXParserParse:
 
         mock_shape = MagicMock()
         mock_shape.has_table = False
+        mock_shape.has_chart = False
         mock_shape.has_text_frame = True
         mock_shape.text_frame = mock_text_frame
         mock_shape.shape_type = MagicMock()
@@ -470,6 +471,7 @@ class TestPPTXParserParse:
 
         mock_slide = MagicMock()
         mock_slide.shapes = mock_shapes
+        mock_slide.has_notes_slide = False  # 无演讲者备注
 
         mock_prs = MagicMock()
         mock_prs.slides = [mock_slide]
@@ -1828,6 +1830,7 @@ class TestPPTXGroupShapeRecursion:
 
         mock_shape = MagicMock()
         mock_shape.has_table = False
+        mock_shape.has_chart = False
         mock_shape.has_text_frame = True
         mock_shape.text_frame.text = "普通文本"
         mock_shape.shape_type = MagicMock()
@@ -1847,6 +1850,7 @@ class TestPPTXGroupShapeRecursion:
         # 模拟子形状
         mock_child = MagicMock()
         mock_child.has_table = False
+        mock_child.has_chart = False
         mock_child.has_text_frame = True
         mock_child.text_frame.text = "组合内文本"
         mock_child.shape_type = MagicMock()
@@ -1855,6 +1859,7 @@ class TestPPTXGroupShapeRecursion:
         # 模拟 GROUP 形状（value=6）
         mock_group = MagicMock()
         mock_group.has_table = False
+        mock_group.has_chart = False
         mock_group.has_text_frame = False
         mock_group.shape_type = MagicMock()
         mock_group.shape_type.value = 6
@@ -1874,6 +1879,7 @@ class TestPPTXGroupShapeRecursion:
         # 最内层文本形状
         mock_inner = MagicMock()
         mock_inner.has_table = False
+        mock_inner.has_chart = False
         mock_inner.has_text_frame = True
         mock_inner.text_frame.text = "嵌套文本"
         mock_inner.shape_type = MagicMock()
@@ -1882,6 +1888,7 @@ class TestPPTXGroupShapeRecursion:
         # 中间 GROUP
         mock_mid_group = MagicMock()
         mock_mid_group.has_table = False
+        mock_mid_group.has_chart = False
         mock_mid_group.has_text_frame = False
         mock_mid_group.shape_type = MagicMock()
         mock_mid_group.shape_type.value = 6
@@ -1890,6 +1897,7 @@ class TestPPTXGroupShapeRecursion:
         # 外层 GROUP
         mock_outer_group = MagicMock()
         mock_outer_group.has_table = False
+        mock_outer_group.has_chart = False
         mock_outer_group.has_text_frame = False
         mock_outer_group.shape_type = MagicMock()
         mock_outer_group.shape_type.value = 6
@@ -3376,4 +3384,574 @@ class TestXlsxColumnAlignment:
         assert "<td>25</td>" in html
         # 补齐的空单元格
         assert "<td></td>" in html
+
+
+# ============================================================
+# PPTX P0-P2 增强：GROUP 递归 + 图片上传 + 小图过滤 + 图表 + 列宽对齐
+# ============================================================
+
+
+class TestPptxGroupRecursion:
+    """P0: GROUP 组合形状递归提取 — 表格/图片/图表不再丢失。"""
+
+    @staticmethod
+    def _make_shape(shape_type_val: int, has_table: bool = False, has_chart: bool = False,
+                    text: str = "", has_text_frame: bool = False,
+                    child_shapes: list = None, image_blob: bytes = None) -> MagicMock:
+        """构造 mock 形状对象。
+
+        Args:
+            shape_type_val: 形状类型值（6=GROUP, 13=PICTURE, 其他=普通）。
+            has_table: 是否有表格。
+            has_chart: 是否有图表。
+            text: 文本内容。
+            has_text_frame: 是否有文本框。
+            child_shapes: 子形状列表（GROUP 用）。
+            image_blob: 图片二进制数据（PICTURE 用）。
+        """
+        shape = MagicMock()
+        # shape_type 属性
+        shape_type = MagicMock()
+        shape_type.value = shape_type_val
+        shape.shape_type = shape_type
+        # 表格
+        shape.has_table = has_table
+        if has_table:
+            mock_table = MagicMock()
+            mock_row = MagicMock()
+            mock_cell = MagicMock()
+            mock_cell.text = "单元格"
+            mock_row.cells = [mock_cell]
+            mock_table.rows = [mock_row]
+            shape.table = mock_table
+        # 图表
+        shape.has_chart = has_chart
+        if has_chart:
+            shape.chart = MagicMock()
+        # 文本框
+        shape.has_text_frame = has_text_frame
+        if has_text_frame:
+            mock_tf = MagicMock()
+            mock_tf.text = text
+            shape.text_frame = mock_tf
+        # GROUP 子形状
+        if shape_type_val == 6 and child_shapes is not None:
+            shape.shapes = child_shapes
+        # 图片
+        if shape_type_val == 13 and image_blob is not None:
+            mock_image = MagicMock()
+            mock_image.blob = image_blob
+            mock_image.ext = "png"
+            shape.image = mock_image
+        return shape
+
+    def test_get_shape_type_value_normal(self):
+        """普通形状返回类型值。"""
+        from app.document.pptx_parser import PPTXParser
+
+        shape = MagicMock()
+        shape_type = MagicMock()
+        shape_type.value = 13
+        shape.shape_type = shape_type
+        assert PPTXParser._get_shape_type_value(shape) == 13
+
+    def test_get_shape_type_value_none(self):
+        """shape_type 为 None 时返回 None。"""
+        from app.document.pptx_parser import PPTXParser
+
+        shape = MagicMock()
+        shape.shape_type = None
+        assert PPTXParser._get_shape_type_value(shape) is None
+
+    def test_get_shape_type_value_exception(self):
+        """异常时返回 None。"""
+        from app.document.pptx_parser import PPTXParser
+
+        shape = MagicMock()
+        type(shape).shape_type = PropertyMock(side_effect=Exception("error"))
+        assert PPTXParser._get_shape_type_value(shape) is None
+
+    def test_collect_tables_top_level(self):
+        """顶层表格被提取。"""
+        from app.document.pptx_parser import PPTXParser
+
+        parser = PPTXParser()
+        shape = self._make_shape(1, has_table=True)  # 普通形状带表格
+        sections: list = []
+        parser._collect_tables(shape, 0, sections, depth=0)
+        assert len(sections) == 1
+        assert sections[0].kind == "table"
+        assert "<table>" in sections[0].content
+
+    def test_collect_tables_in_group(self):
+        """P0: GROUP 组合形状内的表格被递归提取。"""
+        from app.document.pptx_parser import PPTXParser
+
+        parser = PPTXParser()
+        # 构造 GROUP 内含一个表格
+        inner_table = self._make_shape(1, has_table=True)
+        group = self._make_shape(6, child_shapes=[inner_table])
+
+        sections: list = []
+        parser._collect_tables(group, 0, sections, depth=0)
+        assert len(sections) == 1
+        assert sections[0].kind == "table"
+
+    def test_collect_tables_nested_group(self):
+        """P0: 嵌套 GROUP 内的表格被提取（多层组合）。"""
+        from app.document.pptx_parser import PPTXParser
+
+        parser = PPTXParser()
+        inner_table = self._make_shape(1, has_table=True)
+        inner_group = self._make_shape(6, child_shapes=[inner_table])
+        outer_group = self._make_shape(6, child_shapes=[inner_group])
+
+        sections: list = []
+        parser._collect_tables(outer_group, 0, sections, depth=0)
+        assert len(sections) == 1
+
+    def test_collect_tables_depth_limit(self):
+        """递归深度超过 5 层时停止。"""
+        from app.document.pptx_parser import PPTXParser
+
+        parser = PPTXParser()
+        shape = self._make_shape(1, has_table=True)
+        sections: list = []
+        parser._collect_tables(shape, 0, sections, depth=6)
+        assert len(sections) == 0  # 超过深度限制，不处理
+
+
+class TestPptxChartExtraction:
+    """P2: 图表数据提取 — has_chart → 数据点文本。"""
+
+    def test_extract_chart_data_bar_chart(self):
+        """柱状图数据被提取为文本。"""
+        from app.document.pptx_parser import PPTXParser
+
+        chart = MagicMock()
+        plot = MagicMock()
+        series = MagicMock()
+        series.name = "销售额"
+        series.values = [100, 200, 300]
+        categories_mock = MagicMock()
+        plot.categories = ["Q1", "Q2", "Q3"]
+        plot.series = [series]
+        chart.plots = [plot]
+
+        result = PPTXParser._extract_chart_data(chart)
+        assert "销售额" in result
+        assert "Q1: 100" in result
+        assert "Q2: 200" in result
+        assert "Q3: 300" in result
+
+    def test_extract_chart_data_empty(self):
+        """空图表返回空字符串。"""
+        from app.document.pptx_parser import PPTXParser
+
+        chart = MagicMock()
+        plot = MagicMock()
+        plot.categories = None
+        series = MagicMock()
+        series.name = None
+        series.values = None
+        plot.series = [series]
+        chart.plots = [plot]
+
+        result = PPTXParser._extract_chart_data(chart)
+        # 即使空数据也有"系列:"行
+        assert "系列" in result
+
+    def test_extract_chart_data_exception(self):
+        """异常时返回空字符串。"""
+        from app.document.pptx_parser import PPTXParser
+
+        chart = MagicMock()
+        type(chart).plots = PropertyMock(side_effect=Exception("error"))
+        result = PPTXParser._extract_chart_data(chart)
+        assert result == ""
+
+    def test_collect_charts_in_group(self):
+        """P0: GROUP 内的图表被递归提取。"""
+        from app.document.pptx_parser import PPTXParser
+
+        parser = PPTXParser()
+
+        # 构造 mock 图表
+        chart = MagicMock()
+        plot = MagicMock()
+        series = MagicMock()
+        series.name = "数据"
+        series.values = [1, 2]
+        plot.categories = ["A", "B"]
+        plot.series = [series]
+        chart.plots = [plot]
+
+        inner_shape = MagicMock()
+        inner_shape.has_chart = True
+        inner_shape.chart = chart
+        inner_shape.shape_type = MagicMock()
+        inner_shape.shape_type.value = 3  # 非 GROUP
+        inner_shape.has_table = False
+
+        group = MagicMock()
+        group.has_table = False
+        group.has_chart = False
+        group.shape_type = MagicMock()
+        group.shape_type.value = 6  # GROUP
+        group.shapes = [inner_shape]
+
+        sections: list = []
+        parser._collect_charts(group, 0, sections, depth=0)
+        assert len(sections) == 1
+        assert "[图表数据]" in sections[0].content
+
+
+class TestPptxImageUploadAndFilter:
+    """P1: 图片上传 MinIO + 小图过滤。"""
+
+    @pytest.mark.asyncio
+    async def test_small_image_filtered(self):
+        """P1: 小于 min_size 的图片被过滤。"""
+        from app.document.pptx_parser import PPTXParser
+        import struct
+
+        parser = PPTXParser()
+
+        # 构造 30x30 PNG（小于 50px）
+        png_header = (
+            b"\x89PNG\r\n\x1a\n"
+            + struct.pack(">I", 13)
+            + b"IHDR"
+            + struct.pack(">II", 30, 30)
+            + b"\x08\x02\x00\x00\x00"
+        )
+
+        shape = MagicMock()
+        shape.shape_type = MagicMock()
+        shape.shape_type.value = 13
+        shape.image.blob = png_header
+        shape.image.ext = "png"
+
+        semaphore = asyncio.Semaphore(3)
+        sections, count = await parser._extract_images_recursive(
+            MagicMock(), 0, MagicMock(), semaphore, 1,
+            image_upload_enabled=False,
+            image_min_size=50,
+        )
+        # 由于 mock slide.shapes 为空，返回空列表
+        assert sections == []
+
+    @pytest.mark.asyncio
+    async def test_image_upload_mode_mocked(self):
+        """P1: 图片上传模式 — mock MinIO upload_image。"""
+        from app.document.pptx_parser import PPTXParser
+        import struct
+
+        parser = PPTXParser()
+
+        # 构造 100x100 PNG
+        png_header = (
+            b"\x89PNG\r\n\x1a\n"
+            + struct.pack(">I", 13)
+            + b"IHDR"
+            + struct.pack(">II", 100, 100)
+            + b"\x08\x02\x00\x00\x00"
+        )
+
+        # mock slide 含一个图片形状
+        image_shape = MagicMock()
+        image_shape.shape_type = MagicMock()
+        image_shape.shape_type.value = 13
+        image_shape.image.blob = png_header
+        image_shape.image.ext = "png"
+
+        mock_slide = MagicMock()
+        mock_slide.shapes = [image_shape]
+
+        semaphore = asyncio.Semaphore(3)
+
+        with patch("app.document.pptx_parser.PPTXParser._vlm_describe",
+                   new_callable=AsyncMock, return_value="架构图"), \
+             patch("app.document.image_storage.upload_image",
+                   new_callable=AsyncMock,
+                   return_value="minio://ekb/pptx/page0_img0.png"):
+            sections, count = await parser._extract_images_recursive(
+                mock_slide, 0, MagicMock(), semaphore, 1,
+                image_upload_enabled=True,
+                image_min_size=50,
+            )
+
+        assert count == 1
+        assert sections[0].kind == "image_url"
+        assert sections[0].image_url == "minio://ekb/pptx/page0_img0.png"
+        assert "[图片描述: 架构图]" in sections[0].content
+
+    @pytest.mark.asyncio
+    async def test_image_upload_fallback_to_desc(self):
+        """P1: 上传失败时降级为 VLM 描述。"""
+        from app.document.pptx_parser import PPTXParser
+        import struct
+
+        parser = PPTXParser()
+
+        png_header = (
+            b"\x89PNG\r\n\x1a\n"
+            + struct.pack(">I", 13)
+            + b"IHDR"
+            + struct.pack(">II", 100, 100)
+            + b"\x08\x02\x00\x00\x00"
+        )
+
+        image_shape = MagicMock()
+        image_shape.shape_type = MagicMock()
+        image_shape.shape_type.value = 13
+        image_shape.image.blob = png_header
+        image_shape.image.ext = "png"
+
+        mock_slide = MagicMock()
+        mock_slide.shapes = [image_shape]
+
+        semaphore = asyncio.Semaphore(3)
+
+        with patch("app.document.pptx_parser.PPTXParser._vlm_describe",
+                   new_callable=AsyncMock, return_value="流程图"), \
+             patch("app.document.image_storage.upload_image",
+                   new_callable=AsyncMock, return_value=None):  # 上传失败
+            sections, count = await parser._extract_images_recursive(
+                mock_slide, 0, MagicMock(), semaphore, 1,
+                image_upload_enabled=True,
+                image_min_size=50,
+            )
+
+        assert count == 1
+        assert sections[0].kind == "image_desc"  # 降级为描述
+        assert "[图片描述: 流程图]" in sections[0].content
+
+
+class TestPptxGroupImageRecursion:
+    """P0: GROUP 组合形状内的图片递归提取。"""
+
+    def test_collect_image_shapes_top_level(self):
+        """顶层图片被收集。"""
+        from app.document.pptx_parser import PPTXParser
+
+        parser = PPTXParser()
+        shape = MagicMock()
+        shape.shape_type = MagicMock()
+        shape.shape_type.value = 13  # PICTURE
+
+        image_shapes: list = []
+        parser._collect_image_shapes(shape, image_shapes, 5, depth=0)
+        assert len(image_shapes) == 1
+
+    def test_collect_image_shapes_in_group(self):
+        """P0: GROUP 内的图片被递归收集。"""
+        from app.document.pptx_parser import PPTXParser
+
+        parser = PPTXParser()
+
+        inner_image = MagicMock()
+        inner_image.shape_type = MagicMock()
+        inner_image.shape_type.value = 13
+
+        group = MagicMock()
+        group.shape_type = MagicMock()
+        group.shape_type.value = 6  # GROUP
+        group.shapes = [inner_image]
+
+        image_shapes: list = []
+        parser._collect_image_shapes(group, image_shapes, 5, depth=0)
+        assert len(image_shapes) == 1
+
+    def test_collect_image_shapes_nested_group(self):
+        """P0: 嵌套 GROUP 内的图片被收集。"""
+        from app.document.pptx_parser import PPTXParser
+
+        parser = PPTXParser()
+
+        inner_image = MagicMock()
+        inner_image.shape_type = MagicMock()
+        inner_image.shape_type.value = 13
+
+        inner_group = MagicMock()
+        inner_group.shape_type = MagicMock()
+        inner_group.shape_type.value = 6
+        inner_group.shapes = [inner_image]
+
+        outer_group = MagicMock()
+        outer_group.shape_type = MagicMock()
+        outer_group.shape_type.value = 6
+        outer_group.shapes = [inner_group]
+
+        image_shapes: list = []
+        parser._collect_image_shapes(outer_group, image_shapes, 5, depth=0)
+        assert len(image_shapes) == 1
+
+    def test_collect_image_shapes_respects_remaining(self):
+        """收集数量不超过 remaining 限制。"""
+        from app.document.pptx_parser import PPTXParser
+
+        parser = PPTXParser()
+
+        img1 = MagicMock()
+        img1.shape_type = MagicMock()
+        img1.shape_type.value = 13
+        img2 = MagicMock()
+        img2.shape_type = MagicMock()
+        img2.shape_type.value = 13
+
+        # 构造 GROUP 包含 2 个图片，但 remaining=1
+        group = MagicMock()
+        group.shape_type = MagicMock()
+        group.shape_type.value = 6  # GROUP
+        group.shapes = [img1, img2]
+
+        image_shapes: list = []
+        parser._collect_image_shapes(group, image_shapes, 1, depth=0)
+        assert len(image_shapes) == 1  # remaining=1 只收集 1 个
+
+
+class TestPptxTableColumnAlignment:
+    """P1: 表格列宽对齐 — 合并单元格补空。"""
+
+    def test_rows_to_html_pads_short_rows(self):
+        """短行被补齐到最大列数。"""
+        from app.document.pptx_parser import PPTXParser
+
+        rows = [
+            ["A", "B", "C"],
+            ["1", "2"],       # 缺少第 3 列
+        ]
+        html = PPTXParser._rows_to_html(rows)
+        assert "<th>A</th>" in html
+        assert "<th>B</th>" in html
+        assert "<th>C</th>" in html
+        assert "<td>1</td>" in html
+        assert "<td>2</td>" in html
+        assert "<td></td>" in html  # 补齐的空单元格
+
+    def test_rows_to_html_empty(self):
+        """空行列表返回空字符串。"""
+        from app.document.pptx_parser import PPTXParser
+
+        assert PPTXParser._rows_to_html([]) == ""
+
+    def test_rows_to_html_html_escaped(self):
+        """特殊字符被转义。"""
+        from app.document.pptx_parser import PPTXParser
+
+        rows = [["A < B & C"]]
+        html = PPTXParser._rows_to_html(rows)
+        assert "&lt;" in html
+        assert "&amp;" in html
+
+
+class TestPptxConfigSafety:
+    """P0: 配置读取用 _bool()/_int() 安全转换。"""
+
+    @pytest.mark.asyncio
+    async def test_parse_with_magic_mock_settings(self):
+        """MagicMock 设置场景下不崩溃。"""
+        from app.document.pptx_parser import PPTXParser
+
+        parser = PPTXParser()
+
+        # mock Presentation 返回空 slides
+        mock_prs = MagicMock()
+        mock_prs.slides = []
+
+        # 需要 mock pptx 模块和 MSO_SHAPE_TYPE 枚举
+        mock_pptx_module = MagicMock()
+        mock_pptx_module.Presentation = MagicMock(return_value=mock_prs)
+        mock_mso_shape_type = MagicMock()
+
+        with patch.dict("sys.modules", {
+            "pptx": mock_pptx_module,
+            "pptx.enum": MagicMock(),
+            "pptx.enum.shapes": MagicMock(),
+            "pptx.enum.shapes.MSO_SHAPE_TYPE": mock_mso_shape_type,
+        }):
+            # get_settings 返回 MagicMock（模拟测试场景）
+            with patch("app.document.pptx_parser.get_settings") as mock_settings:
+                mock_settings.return_value = MagicMock()
+                result = await parser.parse("/fake/test.pptx")
+
+        # 不崩溃，返回空字符串
+        assert result == ""
+
+
+class TestPptxShapeTextCollection:
+    """_collect_shape_text — GROUP 内文本递归收集。"""
+
+    def test_text_from_normal_shape(self):
+        """普通形状文本被收集。"""
+        from app.document.pptx_parser import PPTXParser
+
+        parser = PPTXParser()
+        shape = MagicMock()
+        shape.has_table = False
+        shape.has_chart = False
+        shape.has_text_frame = True
+        shape.shape_type = MagicMock()
+        shape.shape_type.value = 1  # 普通形状
+        shape.text_frame.text = "普通文本"
+
+        text_parts: list = []
+        parser._collect_shape_text(shape, text_parts, depth=0)
+        assert "普通文本" in text_parts
+
+    def test_text_from_group_child(self):
+        """P0: GROUP 子形状的文本被递归收集。"""
+        from app.document.pptx_parser import PPTXParser
+
+        parser = PPTXParser()
+
+        child = MagicMock()
+        child.has_table = False
+        child.has_chart = False
+        child.has_text_frame = True
+        child.shape_type = MagicMock()
+        child.shape_type.value = 1
+        child.text_frame.text = "子形状文本"
+
+        group = MagicMock()
+        group.has_table = False
+        group.has_chart = False
+        group.has_text_frame = False
+        group.shape_type = MagicMock()
+        group.shape_type.value = 6  # GROUP
+        group.shapes = [child]
+
+        text_parts: list = []
+        parser._collect_shape_text(group, text_parts, depth=0)
+        assert "子形状文本" in text_parts
+
+    def test_table_shape_skipped_in_text(self):
+        """表格形状在文本收集中被跳过。"""
+        from app.document.pptx_parser import PPTXParser
+
+        parser = PPTXParser()
+        shape = MagicMock()
+        shape.has_table = True
+
+        text_parts: list = []
+        parser._collect_shape_text(shape, text_parts, depth=0)
+        assert len(text_parts) == 0
+
+    def test_picture_shape_skipped_in_text(self):
+        """图片形状在文本收集中被跳过。"""
+        from app.document.pptx_parser import PPTXParser
+
+        parser = PPTXParser()
+        shape = MagicMock()
+        shape.has_table = False
+        shape.has_chart = False
+        shape.has_text_frame = True
+        shape.text_frame.text = "不应出现"
+        shape.shape_type = MagicMock()
+        shape.shape_type.value = 13  # PICTURE
+
+        text_parts: list = []
+        parser._collect_shape_text(shape, text_parts, depth=0)
+        assert len(text_parts) == 0
 

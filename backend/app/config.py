@@ -133,6 +133,9 @@ class Settings(BaseSettings):
     # PPTX 图片提取 + VLM 描述
     PPTX_IMAGE_EXTRACTION_ENABLED: bool = True
     PPTX_IMAGE_MAX_PER_DOC: int = 50
+    # PPTX 图片上传对象存储 + 小图过滤（对齐 PDF/DOCX）
+    PPTX_IMAGE_UPLOAD_ENABLED: bool = False
+    PPTX_IMAGE_MIN_SIZE: int = 50
     # DOCX 表格提取 + 图片 VLM 描述
     DOCX_TABLE_EXTRACTION_ENABLED: bool = True
     DOCX_IMAGE_EXTRACTION_ENABLED: bool = True
@@ -259,6 +262,7 @@ class Settings(BaseSettings):
         "RAG_RETRIEVAL_MAX_RETRIES",
         "PDF_IMAGE_MIN_SIZE",
         "DOCX_IMAGE_MIN_SIZE",
+        "PPTX_IMAGE_MIN_SIZE",
     )
     @classmethod
     def validate_non_negative_int(cls, v: int) -> int:

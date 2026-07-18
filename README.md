@@ -86,7 +86,7 @@ EnterpriseKnowledge/
 │   │   │   ├── docling_parser.py     # Docling 统一解析（primary，MIT，→ HTML）
 │   │   │   ├── pdf_parser.py         # PDF 解析（fallback，pymupdf + 表格 + 图片上传/小图过滤 + VLM + 扫描页 OCR）
 │   │   │   ├── docx_parser.py        # DOCX 解析（fallback，python-docx + 标题层级 + 列表结构 + 表格 + 图片上传 + 页眉页脚 + 分页检测）
-│   │   │   ├── pptx_parser.py        # PPTX 解析（fallback，python-pptx + 组合形状递归 + 备注）
+│   │   │   ├── pptx_parser.py        # PPTX 解析（fallback，python-pptx + GROUP 递归 + 图表数据 + 图片上传/小图过滤 + 备注）
 │   │   │   ├── xlsx_parser.py        # XLSX 解析（fallback，openpyxl + pandas 降级 + sheet→HTML + 列宽对齐）
 │   │   │   ├── image_storage.py      # 图片对象存储（零依赖尺寸解析 + 小图过滤 + MinIO 上传）
 │   │   │   ├── factory.py            # 解析器工厂（Docling 优先 → 原有降级）
@@ -104,7 +104,7 @@ EnterpriseKnowledge/
 │   │   ├── env.py                    # 异步引擎 + 自动导入模型 + compare_type
 │   │   └── versions/                 # 迁移版本（首版 init schema：27 张表）
 │   ├── tasks/                        # Celery 异步任务
-│   ├── tests/                        # 测试（958 项）
+│   ├── tests/                        # 测试（984 项）
 │   ├── celery_app.py                 # Celery 入口
 │   └── requirements.txt
 ├── collab-service/                   # Yjs 协作服务（Node.js + TypeScript）
@@ -1086,10 +1086,12 @@ Celery 异步任务驱动文档处理流水线，从文档上传到索引构建�
 **P0-P2 解析增强**（对齐业界最佳实践）：
 - **DOCX 标题层级映射**：检测 `<w:pStyle>` 样式 → `<h1>`~`<h6>`，修复 chunker 结构化分块
 - **DOCX 列表结构保留**：检测 `<w:numPr>` → `<ul><li>`，保留列表语义
-- **图片上传 MinIO**：`PDF/DOCX_IMAGE_UPLOAD_ENABLED` 开启后图片上传保留 URL + VLM 描述
-- **小图过滤**：`PDF/DOCX_IMAGE_MIN_SIZE=50` 剔除图标/装饰小图（零依赖 PNG/JPEG/WebP 尺寸解析）
+- **PPTX GROUP 递归提取**：组合形状内的表格/图表/图片递归提取（修复数据丢失）
+- **PPTX 图表数据提取**：`has_chart` → 数据点文本（柱状图/饼图/折线图）
+- **图片上传 MinIO**：`PDF/DOCX/PPTX_IMAGE_UPLOAD_ENABLED` 开启后图片上传保留 URL + VLM 描述
+- **小图过滤**：`PDF/DOCX/PPTX_IMAGE_MIN_SIZE=50` 剔除图标/装饰小图（零依赖 PNG/JPEG/WebP 尺寸解析）
 - **XLSX 双引擎降级**：openpyxl 失败 → pandas.read_excel 兜底
-- **XLSX 列宽对齐**：合并单元格场景自动补齐短行为最大列数
+- **XLSX/PPTX 列宽对齐**：合并单元格场景自动补齐短行为最大列数
 - **DOCX 分页检测**：`<w:br type="page"/>` + `<w:lastRenderedPageBreak/>` → 真实页码
 
 ```mermaid
@@ -1101,7 +1103,7 @@ flowchart LR
     PARSE -->|PPTX| PPTX[python-pptx 文本<br/>+ 表格 → HTML<br/>+ 内嵌图片 VLM]
     PARSE -->|PDF / DOCX / PPTX<br/>XLSX / HTML / 图片 / 音频| DOCLING["Docling 统一解析<br/>Granite-Docling-258M<br/>版面分析 + 表格 + 公式 + OCR<br/>→ HTML（&lt;h1&gt;~&lt;h6&gt;/&lt;table&gt;/&lt;ul&gt;）"]
     PARSE -->|Docling 不可用| PYMUPDF[pymupdf<br/>表格 → HTML<br/>图片上传 + VLM 描述<br/>小图过滤 + 扫描页 OCR]
-    PARSE -->|Docling 不可用| PPTX[python-pptx<br/>表格 → HTML<br/>组合形状递归<br/>备注提取]
+    PARSE -->|Docling 不可用| PPTX[python-pptx<br/>GROUP 递归表格/图表/图片<br/>图片上传 + VLM 描述<br/>小图过滤 + 列宽对齐<br/>演讲者备注]
     PARSE -->|Docling 不可用| DOCX[python-docx<br/>标题层级 h1~h6<br/>列表结构 ul/li<br/>表格 → HTML<br/>图片上传 + VLM 描述<br/>分页检测 + 页眉页脚]
     PARSE -->|Docling 不可用| XLSX[openpyxl + pandas 降级<br/>每 sheet → HTML 表格<br/>列宽对齐]
     PARSE -->|HTML| REGEX[正则去标签]
@@ -1429,7 +1431,7 @@ python -m pytest tests/test_eval.py -v                    # 离线评测（数�
 | `test_audit_workflow.py` | 19 | 文档审核流程串联、密级路由、AuditService.approve 触发发布 |
 | `test_tool_guard.py` | 30 | DangerousToolGuard 守卫拦截、确认管理、engine 集成 |
 | `test_video_rag.py` | 34 | ASR Provider 工厂、视频处理器、视频转写分块、document_tasks 集成、关键帧 VLM 并发 |
-| `test_document_parser.py` | 172 | Docling 统一解析、PDF 表格/图片上传/小图过滤/VLM/扫描页 OCR、PPTX 解析/组合形状递归/备注、DOCX 标题层级映射/列表结构/分页检测/图片上传/页眉页脚、XLSX 双引擎降级/列宽对齐、独立音频 ASR、旧格式兜底、factory 路由、document_tasks 集成、配置项 |
+| `test_document_parser.py` | 230 | Docling 统一解析、PDF 表格/图片上传/小图过滤/VLM/扫描页 OCR、PPTX GROUP 递归/图表数据/图片上传/小图过滤/列宽对齐/备注、DOCX 标题层级映射/列表结构/分页检测/图片上传/页眉页脚、XLSX 双引擎降级/列宽对齐、独立音频 ASR、旧格式兜底、factory 路由、document_tasks 集成、配置项 |
 | `test_quality_guard.py` | 33 | 检索质量检查、重试决策、生成质量评估、低置信度标记、engine 集成 |
 | `test_rate_limiter.py` | 16 | 令牌桶消费/补充、客户端隔离、API Key/IP 标识、429 响应、健康检查豁免 |
 | `test_eval.py` | 55 | 数据集加载、Recall@K/MRR/NDCG 计算、Runner 集成、回归检测、DB 持久化、CLI 退出码 |
@@ -1438,7 +1440,7 @@ python -m pytest tests/test_eval.py -v                    # 离线评测（数�
 | `test_minio_client.py` | 8 | MinIO upload/download/delete/exists、懒初始化、bucket 自动创建与缓存 |
 | `test_migration.py` | 46 | Pydantic V2 field_validator（DATABASE_URL/数值/CORS）、model_validator（部署模式/SECRET_KEY）、迁移文件存在性/upgrade/downgrade、alembic env.py 配置、迁移 runner 端到端 SQLite |
 | 其他测试 | 215 | API 端点、服务层、模型层、记忆引擎等 |
-| **合计** | **958** | **全部通过，零回归** |
+| **合计** | **984** | **全部通过，零回归** |
 
 ---
 
