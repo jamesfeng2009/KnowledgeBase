@@ -145,14 +145,11 @@ class PDFParser(DocumentParser):
             scan_ocr=scan_ocr_count,
         )
 
-        # 使用配置中的输出格式和分页分隔符
-        output_format_raw = getattr(settings, "PARSER_OUTPUT_FORMAT", "html")
-        output_format = output_format_raw if isinstance(output_format_raw, str) else "html"
+        # 使用配置中的分页分隔符
         page_sep_raw = getattr(settings, "PAGE_SEPARATOR", "")
         page_separator = page_sep_raw if isinstance(page_sep_raw, str) else ""
         return self.sections_to_text(
             sections,
-            output_format=output_format,
             page_separator=page_separator,
         )
 

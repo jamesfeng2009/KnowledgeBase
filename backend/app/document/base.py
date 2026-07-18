@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
@@ -87,26 +86,28 @@ class DocumentParser(ABC):
     @staticmethod
     def sections_to_text(
         sections: list[ParsedSection],
-        output_format: str = "html",
         page_separator: str = "",
     ) -> str:
-        """将 ParsedSection 列表合并为增强文本字符串。
+        """将 ParsedSection 列表合并为增强文本字符串（HTML 格式）。
 
-        按页码排序，各片段用空行分隔。表格和图片保持原样，
-        纯文本片段直接拼接。
+        按页码排序，各片段用空行分隔。表格保持 HTML <table>，
+        图片用 <img> 标签，纯文本片段直接拼接。
+
+        为何用 HTML 而非 Markdown：
+            - 表格必须用 HTML：合并单元格、跨行跨列无法用 Markdown 表达
+              （业界共识：RAGFlow DeepDoc、Unstructured 都把表格存为 HTML）；
+            - HTML 标签语义明确，chunker 可按 <h1>/<h2> 结构化分块；
+            - 向量模型能识别 HTML 结构，检索准确率更高。
 
         Args:
             sections: ParsedSection 列表。
-            output_format: 输出格式 — "html"（默认）或 "markdown"。
-                - html: 表格保持 HTML <table>，图片用 <img> 标签
-                - markdown: 表格转为 Markdown 语法，图片用 ![](url) 语法
             page_separator: 页码分隔符，非空时在页码变化处插入。
                 支持 ``{page}`` 占位符，替换为实际页码。
                 例：``"\\n\\n---\\n<!-- page: {page} -->\\n"``
                 默认空字符串（不分页标记，向后兼容）。
 
         Returns:
-            合并后的增强文本字符串。
+            合并后的增强文本字符串（HTML 格式）。
         """
         if not sections:
             return ""
@@ -116,7 +117,7 @@ class DocumentParser(ABC):
         prev_page: int | None = None
 
         for sec in sorted_sections:
-            text = DocumentParser._format_section(sec, output_format)
+            text = DocumentParser._format_section(sec)
             if not text:
                 continue
 
@@ -131,15 +132,14 @@ class DocumentParser(ABC):
         return "\n\n".join(parts)
 
     @staticmethod
-    def _format_section(sec: ParsedSection, output_format: str) -> str:
-        """格式化单个 ParsedSection 为字符串。
+    def _format_section(sec: ParsedSection) -> str:
+        """格式化单个 ParsedSection 为 HTML 字符串。
 
         Args:
             sec: ParsedSection 实例。
-            output_format: "html" 或 "markdown"。
 
         Returns:
-            格式化后的文本。空字符串表示跳过。
+            格式化后的 HTML 文本。空字符串表示跳过。
         """
         content = sec.content.strip()
 
@@ -147,12 +147,11 @@ class DocumentParser(ABC):
             return content
 
         if sec.kind == "table":
-            if output_format == "markdown":
-                return DocumentParser._html_table_to_markdown(content)
+            # 表格保持 HTML <table> — 保留合并单元格结构
             return content
 
         if sec.kind == "image_desc":
-            # 纯 VLM 文本描述，两种格式都一样
+            # 纯 VLM 文本描述
             return content
 
         if sec.kind == "image_url":
@@ -160,69 +159,9 @@ class DocumentParser(ABC):
             if not url:
                 # 无 URL 时退化为描述
                 return content
-            if output_format == "markdown":
-                img_md = f"![图片]({url})"
-                # 同时有 VLM 描述时追加
-                if content:
-                    return f"{img_md}\n\n{content}"
-                return img_md
-            # HTML 模式
             img_html = f'<p><img src="{url}" alt="图片"/></p>'
             if content:
                 return f"{img_html}\n<p>{content}</p>"
             return img_html
 
         return content
-
-    @staticmethod
-    def _html_table_to_markdown(html: str) -> str:
-        """将 HTML <table> 转为 Markdown 表格语法。
-
-        简易解析：提取 <tr> 行，<th>/<td> 单元格。
-        第一行视为表头，自动插入分隔行 |---|---|。
-
-        Args:
-            html: HTML <table> 标签字符串。
-
-        Returns:
-            Markdown 表格字符串。解析失败时返回原 HTML。
-        """
-        if not html or "<table" not in html.lower():
-            return html
-
-        rows: list[list[str]] = []
-        # 提取所有 <tr>...</tr>
-        tr_pattern = re.compile(r"<tr>(.*?)</tr>", re.DOTALL | re.IGNORECASE)
-        cell_pattern = re.compile(
-            r"<t[hd][^>]*>(.*?)</t[hd]>", re.DOTALL | re.IGNORECASE
-        )
-
-        for tr_match in tr_pattern.finditer(html):
-            row_cells = []
-            for cell_match in cell_pattern.finditer(tr_match.group(1)):
-                cell_text = cell_match.group(1).strip()
-                # 转义 Markdown 表格中的管道符
-                cell_text = cell_text.replace("|", "\\|")
-                row_cells.append(cell_text)
-            if row_cells:
-                rows.append(row_cells)
-
-        if not rows:
-            return html
-
-        # 构造 Markdown 表格
-        lines: list[str] = []
-        # 表头
-        header = rows[0]
-        col_count = len(header)
-        lines.append("| " + " | ".join(header) + " |")
-        # 分隔行
-        lines.append("| " + " | ".join(["---"] * col_count) + " |")
-        # 数据行
-        for row in rows[1:]:
-            # 补齐列数（合并单元格时可能不对齐）
-            while len(row) < col_count:
-                row.append("")
-            lines.append("| " + " | ".join(row[:col_count]) + " |")
-
-        return "\n".join(lines)

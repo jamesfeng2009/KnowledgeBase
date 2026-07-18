@@ -148,12 +148,11 @@ class Settings(BaseSettings):
     XLSX_MAX_ROWS_PER_SHEET: int = 500  # 每个 sheet 最大提取行数
     XLSX_MAX_SHEETS: int = 20  # 单个文件最大提取 sheet 数
 
-    # === 解析输出格式 + 分页分隔 ===
-    # 输出格式：html（默认，向后兼容）或 markdown（表格转 Markdown，图片用 ![](url)）
-    PARSER_OUTPUT_FORMAT: Literal["html", "markdown"] = "html"
+    # === 分页分隔 ===
     # 分页分隔符 — 非空时在页码变化处插入，支持 {page} 占位符
     # 示例："\n\n---\n<!-- page: {page} -->\n"
     # 默认空字符串（不分页标记，向后兼容）
+    # 业界最佳实践：分页信息应进 chunk metadata，当前先用分隔符，未来演进
     PAGE_SEPARATOR: str = ""
 
     # === 独立音频解析 ===

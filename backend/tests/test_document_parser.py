@@ -2764,11 +2764,11 @@ class TestImageStorageUpload:
             mock_upload.assert_called_once()
 
 
-class TestSectionsToTextMarkdown:
-    """sections_to_text — Markdown 输出格式。"""
+class TestSectionsToTextHtmlOutput:
+    """sections_to_text — HTML 输出格式（唯一支持的格式）。"""
 
-    def test_markdown_table_output(self):
-        """HTML 表格转为 Markdown 表格。"""
+    def test_table_keeps_html(self):
+        """表格保持 HTML <table> 格式（不转 Markdown）。"""
         from app.document.base import DocumentParser, ParsedSection
 
         html_table = (
@@ -2776,13 +2776,15 @@ class TestSectionsToTextMarkdown:
             "<tr><td>张三</td><td>25</td></tr></table>"
         )
         sections = [ParsedSection(kind="table", content=html_table, page=0)]
-        result = DocumentParser.sections_to_text(sections, output_format="markdown")
-        assert "| 姓名 | 年龄 |" in result
-        assert "| --- | --- |" in result
-        assert "| 张三 | 25 |" in result
+        result = DocumentParser.sections_to_text(sections)
+        assert "<table>" in result
+        assert "<th>姓名</th>" in result
+        # 不应出现 Markdown 表格语法
+        assert "| 姓名 |" not in result
+        assert "| --- |" not in result
 
-    def test_markdown_image_url(self):
-        """image_url 类型在 Markdown 中输出 ![](url)。"""
+    def test_image_url_outputs_img_tag(self):
+        """image_url 类型输出 <img> 标签。"""
         from app.document.base import DocumentParser, ParsedSection
 
         sections = [
@@ -2793,27 +2795,14 @@ class TestSectionsToTextMarkdown:
                 image_url="https://example.com/img.png",
             )
         ]
-        result = DocumentParser.sections_to_text(sections, output_format="markdown")
-        assert "![图片](https://example.com/img.png)" in result
-        assert "[图片描述: 架构图]" in result
-
-    def test_html_image_url(self):
-        """image_url 类型在 HTML 模式中输出 <img> 标签。"""
-        from app.document.base import DocumentParser, ParsedSection
-
-        sections = [
-            ParsedSection(
-                kind="image_url",
-                content="",
-                page=0,
-                image_url="https://example.com/img.png",
-            )
-        ]
-        result = DocumentParser.sections_to_text(sections, output_format="html")
+        result = DocumentParser.sections_to_text(sections)
         assert '<img src="https://example.com/img.png"' in result
+        assert "[图片描述: 架构图]" in result
+        # 不应出现 Markdown 图片语法
+        assert "![图片]" not in result
 
-    def test_markdown_image_url_no_description(self):
-        """image_url 无描述时只输出图片链接。"""
+    def test_image_url_no_description(self):
+        """image_url 无描述时只输出 <img> 标签。"""
         from app.document.base import DocumentParser, ParsedSection
 
         sections = [
@@ -2824,8 +2813,8 @@ class TestSectionsToTextMarkdown:
                 image_url="https://example.com/img.png",
             )
         ]
-        result = DocumentParser.sections_to_text(sections, output_format="markdown")
-        assert "![图片](https://example.com/img.png)" in result
+        result = DocumentParser.sections_to_text(sections)
+        assert '<img src="https://example.com/img.png"' in result
 
 
 class TestSectionsToTextPageSeparator:
@@ -2887,41 +2876,6 @@ class TestSectionsToTextPageSeparator:
         )
         assert "[PAGE:3]" in result
         assert "[PAGE:0]" not in result  # 第一页不插入
-
-
-class TestSectionsToTextHtmlTable:
-    """_html_table_to_markdown — HTML 表格转 Markdown。"""
-
-    def test_simple_table(self):
-        """简单表格转换。"""
-        from app.document.base import DocumentParser
-
-        html = "<table><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></table>"
-        md = DocumentParser._html_table_to_markdown(html)
-        assert "| A | B |" in md
-        assert "| 1 | 2 |" in md
-
-    def test_pipe_escaped(self):
-        """管道符被转义。"""
-        from app.document.base import DocumentParser
-
-        html = "<table><tr><th>a|b</th></tr></table>"
-        md = DocumentParser._html_table_to_markdown(html)
-        assert "a\\|b" in md
-
-    def test_no_table_returns_original(self):
-        """无表格时返回原文。"""
-        from app.document.base import DocumentParser
-
-        text = "just plain text"
-        md = DocumentParser._html_table_to_markdown(text)
-        assert md == text
-
-    def test_empty_html(self):
-        """空 HTML 返回空。"""
-        from app.document.base import DocumentParser
-
-        assert DocumentParser._html_table_to_markdown("") == ""
 
 
 class TestDocxPageBreakDetection:
