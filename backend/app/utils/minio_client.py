@@ -246,6 +246,10 @@ def _strip_etag_quotes(etag: Any) -> str:
     boto3 的 ETag 通常带双引号(如 ``"abc123"``),统一 strip 以保持
     与 minio SDK 原返回格式一致,避免下游对账逻辑歧义。
 
+    用于:
+        - ``upload_part`` 返回值规范化(存入 localStorage / 前端对账)
+        - ``list_parts`` 返回值规范化(断点续传比对)
+
     Args:
         etag: 原始 ETag 值(boto3 返回的字符串)。
 
@@ -259,6 +263,35 @@ def _strip_etag_quotes(etag: Any) -> str:
     if s.startswith('"') and s.endswith('"'):
         s = s[1:-1]
     return s
+
+
+def _ensure_etag_quotes(etag: Any) -> str:
+    """确保 ETag 带双引号 — 符合 S3 CompleteMultipartUpload 规范。
+
+    S3 协议规范要求 CompleteMultipartUpload 请求体的 ETag 字段为 RFC 2616
+    entity-tag,必须带双引号。AWS S3 严格服务端不带引号会返回 InvalidPart;
+    MinIO 宽松接受两种格式,但为兼容 AWS S3 / RustFS 等严格实现,统一加引号。
+
+    用于:
+        - ``complete_multipart_upload`` 提交给 S3 前的格式规范化
+
+    与 ``_strip_etag_quotes`` 配对使用:
+        - 内部对账比较用去引号格式(保证两侧一致)
+        - 提交给 S3 用带引号格式(符合规范)
+
+    Args:
+        etag: ETag 值(可能带引号也可能不带)。
+
+    Returns:
+        带双引号的 ETag 字符串。
+    """
+    if not etag:
+        return ""
+    s = str(etag)
+    # 已带引号则原样返回,否则加引号
+    if s.startswith('"') and s.endswith('"'):
+        return s
+    return f'"{s}"'
 
 
 async def init_multipart_upload(
@@ -379,10 +412,13 @@ async def complete_multipart_upload(
     def _complete() -> str:
         client = _get_client()
         # 转换为 boto3 要求的 MultipartUpload 结构(PascalCase)
+        # 关键:ETag 必须带双引号才符合 S3 CompleteMultipartUpload 规范
+        # (RFC 2616 entity-tag)。AWS S3 严格服务端不带引号会返回 InvalidPart。
+        # 内部对账用去引号格式(_strip_etag_quotes),提交给 S3 用带引号格式。
         boto_parts = [
             {
                 "PartNumber": p["part_number"],
-                "ETag": p["etag"],
+                "ETag": _ensure_etag_quotes(p["etag"]),
             }
             for p in parts
         ]

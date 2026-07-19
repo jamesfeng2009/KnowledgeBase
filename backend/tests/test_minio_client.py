@@ -172,13 +172,25 @@ class TestMinioClient:
             assert mock_boto3.client.call_count == 1
 
     def test_strip_etag_quotes(self) -> None:
-        """_strip_etag_quotes 去除 boto3 ETag 的双引号。"""
+        """_strip_etag_quotes 去除 boto3 ETag 的双引号(用于内部对账)。"""
         import app.utils.minio_client as mc
 
         assert mc._strip_etag_quotes('"abc123"') == "abc123"
         assert mc._strip_etag_quotes("abc123") == "abc123"
         assert mc._strip_etag_quotes("") == ""
         assert mc._strip_etag_quotes(None) == ""
+
+    def test_ensure_etag_quotes(self) -> None:
+        """_ensure_etag_quotes 确保 ETag 带双引号(用于提交给 S3 complete)。"""
+        import app.utils.minio_client as mc
+
+        # 不带引号 → 加引号
+        assert mc._ensure_etag_quotes("abc123") == '"abc123"'
+        # 已带引号 → 原样返回
+        assert mc._ensure_etag_quotes('"abc123"') == '"abc123"'
+        # 空值处理
+        assert mc._ensure_etag_quotes("") == ""
+        assert mc._ensure_etag_quotes(None) == ""
 
     def test_init_multipart_upload(self) -> None:
         """init_multipart_upload 调用 boto3 create_multipart_upload。"""
@@ -230,7 +242,12 @@ class TestMinioClient:
         assert call_kwargs["Body"] == b"chunk-data"
 
     def test_complete_multipart_upload(self) -> None:
-        """complete_multipart_upload 转换为 boto3 PascalCase 格式。"""
+        """complete_multipart_upload 转换为 boto3 PascalCase 格式,ETag 加回双引号。
+
+        模拟真实断点续传场景:前端从 localStorage 读取的 ETag 不带引号
+        (因为 upload_part 返回时已 _strip_etag_quotes 去引号),
+        提交给 S3 complete 时必须加回双引号才符合 S3 规范。
+        """
         import app.utils.minio_client as mc
         mc._client = None
 
@@ -243,17 +260,41 @@ class TestMinioClient:
                 object_name="kb1/video.mp4",
                 upload_id="upload-xxx",
                 parts=[
-                    {"part_number": 1, "etag": "etag-1"},
+                    {"part_number": 1, "etag": "etag-1"},  # 不带引号(来自 localStorage)
                     {"part_number": 2, "etag": "etag-2"},
                 ],
             ))
 
         assert result == "minio://ekb-documents/kb1/video.mp4"
         call_kwargs = mock_s3.complete_multipart_upload.call_args.kwargs
-        # 验证转换为 boto3 的 PascalCase 格式
+        # 验证转换为 boto3 的 PascalCase 格式,且 ETag 加回了双引号
         assert call_kwargs["MultipartUpload"]["Parts"] == [
-            {"PartNumber": 1, "ETag": "etag-1"},
-            {"PartNumber": 2, "ETag": "etag-2"},
+            {"PartNumber": 1, "ETag": '"etag-1"'},
+            {"PartNumber": 2, "ETag": '"etag-2"'},
+        ]
+
+    def test_complete_multipart_upload_etag_already_quoted(self) -> None:
+        """complete 时 ETag 已带引号则原样提交(幂等,不重复加引号)。"""
+        import app.utils.minio_client as mc
+        mc._client = None
+
+        mock_s3 = MagicMock()
+
+        with patch("app.utils.minio_client._get_client", return_value=mock_s3):
+            import asyncio
+            asyncio.run(mc.complete_multipart_upload(
+                bucket="ekb-documents",
+                object_name="kb1/video.mp4",
+                upload_id="upload-xxx",
+                parts=[
+                    {"part_number": 1, "etag": '"etag-1"'},  # 已带引号
+                ],
+            ))
+
+        call_kwargs = mock_s3.complete_multipart_upload.call_args.kwargs
+        # 已带引号的 ETag 原样提交,不会变成 ""etag-1""
+        assert call_kwargs["MultipartUpload"]["Parts"] == [
+            {"PartNumber": 1, "ETag": '"etag-1"'},
         ]
 
     def test_abort_multipart_upload(self) -> None:
