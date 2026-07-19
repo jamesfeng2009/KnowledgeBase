@@ -1,0 +1,194 @@
+---
+/**
+ * Modal.astro - 模态对话框组件
+ *
+ * 支持三种尺寸、标题栏、可关闭按钮与底部插槽。
+ * 客户端 JS 通过事件委托实现：
+ *   - 点击 [data-modal-open="id"] 打开对应模态
+ *   - 点击 overlay 空白区域关闭
+ *   - 点击 [data-modal-close] 关闭
+ *   - ESC 键关闭所有已打开模态
+ *
+ * @example
+ * <Modal id="confirm-modal" title="确认操作" size="sm">
+ *   <p>确定要删除这条记录吗？</p>
+ *   <div class="modal-footer" slot="footer">
+ *     <Button variant="ghost" data-modal-close>取消</Button>
+ *     <Button variant="danger">确认删除</Button>
+ *   </div>
+ * </Modal>
+ * <Button data-modal-open="confirm-modal">打开</Button>
+ */
+interface Props {
+  id?: string;
+  title?: string;
+  open?: boolean;
+  size?: 'sm' | 'md' | 'lg';
+  closeable?: boolean;
+}
+
+const { id, title = '', open = false, size = 'md', closeable = true } = Astro.props;
+---
+
+<div class:list={['modal-overlay', { 'is-open': open }]} data-modal id={id}>
+  <div class={`modal modal-${size}`} role="dialog" aria-modal="true">
+    {title && (
+      <div class="modal-header">
+        <h3 class="modal-title">{title}</h3>
+        {closeable && (
+          <button class="modal-close" type="button" aria-label="关闭" data-modal-close>×</button>
+        )}
+      </div>
+    )}
+    <div class="modal-body"><slot /></div>
+    <slot name="footer" />
+  </div>
+</div>
+
+<script>
+  // 使用事件委托，兼容动态插入的 Modal 元素
+  function initModalEvents() {
+    // 点击事件：处理打开、关闭、overlay 点击
+    document.addEventListener('click', (e) => {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+
+      // 1. 点击 [data-modal-open] 打开对应模态
+      const openTrigger = target.closest('[data-modal-open]');
+      if (openTrigger) {
+        const targetId = openTrigger.getAttribute('data-modal-open');
+        let modal: Element | null = null;
+        if (targetId) {
+          modal = document.getElementById(targetId);
+        } else {
+          modal = document.querySelector('[data-modal]');
+        }
+        modal?.classList.add('is-open');
+        return;
+      }
+
+      // 2. 点击 [data-modal-close] 关闭
+      const closeTrigger = target.closest('[data-modal-close]');
+      if (closeTrigger) {
+        const modal = closeTrigger.closest('[data-modal]');
+        modal?.classList.remove('is-open');
+        return;
+      }
+
+      // 3. 点击 overlay 空白区域关闭（点击 .modal-overlay 本身而非其子元素）
+      if (target.hasAttribute && target.hasAttribute('data-modal')) {
+        target.classList.remove('is-open');
+      }
+    });
+
+    // ESC 键关闭所有已打开模态
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        document.querySelectorAll('[data-modal].is-open').forEach((modal) => {
+          modal.classList.remove('is-open');
+        });
+      }
+    });
+  }
+
+  initModalEvents();
+</script>
+
+<style>
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity var(--transition), visibility var(--transition);
+    padding: var(--space-4);
+  }
+
+  .modal-overlay.is-open {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  .modal {
+    background: var(--surface);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-xl);
+    max-height: 90vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    transform: scale(0.95);
+    transition: transform var(--transition);
+  }
+
+  .modal-overlay.is-open .modal {
+    transform: scale(1);
+  }
+
+  .modal-sm {
+    width: 400px;
+    max-width: 90vw;
+  }
+
+  .modal-md {
+    width: 600px;
+    max-width: 90vw;
+  }
+
+  .modal-lg {
+    width: 800px;
+    max-width: 90vw;
+  }
+
+  .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-5) var(--space-6);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .modal-title {
+    font-size: var(--text-lg);
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .modal-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    font-size: var(--text-xl);
+    color: var(--text-muted);
+    border-radius: var(--radius);
+    transition: all var(--transition-fast);
+    flex-shrink: 0;
+  }
+
+  .modal-close:hover {
+    background: var(--surface-hover);
+    color: var(--text);
+  }
+
+  .modal-body {
+    padding: var(--space-6);
+    overflow-y: auto;
+    flex: 1;
+  }
+
+  /* footer 插槽内容来自父组件，需用 :global 穿透 scoped 限制 */
+  :global(.modal-footer) {
+    padding: var(--space-4) var(--space-6);
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-3);
+  }
+</style>

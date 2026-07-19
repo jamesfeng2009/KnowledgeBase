@@ -1,6 +1,10 @@
 /**
  * SSE (Server-Sent Events) 流式输出工具
  * 支持 POST 请求 + SSE 流式响应读取
+ *
+ * NOTE: chat/index.astro 使用内联 fetch + ReadableStream 实现 SSE，未引用本封装；
+ * 但 admin/feedback.astro 已通过 streamChat 使用本封装。保留供 P4-3 统一
+ * 迁移 chat 页面 SSE 实现到本封装时复用。
  */
 
 import { API_BASE } from './api';

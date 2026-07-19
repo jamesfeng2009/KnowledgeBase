@@ -2,6 +2,7 @@
 /**
  * 标签管理页面
  * 标签列表 + 标签分组 + 合并标签 + 标签使用统计
+ * 数据来源：GET /api/v1/admin/tags（若后端无独立标签 API，标签通过文档智能处理自动提取）
  */
 import DefaultLayout from '@/layouts/DefaultLayout.astro';
 
@@ -44,13 +45,17 @@ const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '标签�
           <button class="btn btn-outline btn-sm" id="merge-btn">合并标签</button>
         </div>
       </div>
-      <div id="tag-groups"></div>
+      <div id="tag-groups">
+        <div class="loading-state">加载中...</div>
+      </div>
     </div>
 
     <!-- 标签使用统计 -->
     <div class="card">
       <div class="card-header"><h3>使用统计（Top 10）</h3></div>
-      <div id="tag-stats"></div>
+      <div id="tag-stats">
+        <div class="loading-state">加载中...</div>
+      </div>
     </div>
   </div>
 </DefaultLayout>
@@ -121,79 +126,145 @@ const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '标签�
     background: var(--primary);
     border-radius: var(--radius-full);
   }
+  .loading-state {
+    text-align: center;
+    padding: var(--space-6);
+    color: var(--text-muted);
+  }
+  .empty-state {
+    text-align: center;
+    padding: var(--space-6);
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+  }
+  .error-state {
+    text-align: center;
+    padding: var(--space-6);
+    color: var(--danger);
+    font-size: var(--text-sm);
+  }
 </style>
 
 <script>
-  const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
+  import { API_BASE } from '@/lib/api';
+
   const TOKEN_KEY = 'ekb_access_token';
 
-  let tags: any[] = [];
-  let selectedTags: Set<string> = new Set();
-
-  function mockTags() {
-    return [
-      { id: 't1', name: '人事', group: '业务领域', count: 48 },
-      { id: 't2', name: '财务', group: '业务领域', count: 36 },
-      { id: 't3', name: '技术', group: '业务领域', count: 120 },
-      { id: 't4', name: '产品', group: '业务领域', count: 64 },
-      { id: 't5', name: '流程', group: '文档类型', count: 28 },
-      { id: 't6', name: '指南', group: '文档类型', count: 45 },
-      { id: 't7', name: '规范', group: '文档类型', count: 32 },
-      { id: 't8', name: 'API', group: '技术', count: 52 },
-      { id: 't9', name: '架构', group: '技术', count: 38 },
-      { id: 't10', name: '安全', group: '技术', count: 20 },
-      { id: 't11', name: '培训', group: '其他', count: 16 },
-      { id: 't12', name: '废弃', group: '其他', count: 0 },
-    ];
+  interface Tag {
+    id: string;
+    name: string;
+    group: string;
+    count: number;
   }
 
-  async function loadTags() {
+  let tags: Tag[] = [];
+  let selectedTags: Set<string> = new Set();
+  let apiAvailable = true;
+
+  /** 统一鉴权 fetch */
+  async function authFetch(path: string, options: RequestInit = {}): Promise<Response> {
     const token = localStorage.getItem(TOKEN_KEY);
     if (!token) {
       window.location.href = '/auth/login';
-      return;
+      throw new Error('未登录');
     }
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${token}`,
+      ...(options.headers as Record<string, string> | undefined),
+    };
+    const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+    if (res.status === 401) {
+      localStorage.removeItem(TOKEN_KEY);
+      window.location.href = '/auth/login';
+      throw new Error('登录已过期，请重新登录');
+    }
+    return res;
+  }
+
+  async function extractData<T>(res: Response): Promise<T> {
+    const result = await res.json().catch(() => null);
+    if (result && typeof result === 'object' && 'data' in result && 'code' in result) {
+      return result.data as T;
+    }
+    return result as T;
+  }
+
+  function normalizeTag(raw: Record<string, unknown>): Tag {
+    return {
+      id: String(raw.id || raw.tag_id || raw.name || ''),
+      name: String(raw.name || raw.tag || raw.label || '未命名'),
+      group: String(raw.group || raw.category || raw.type || '其他'),
+      count: typeof raw.count === 'number' ? raw.count : (typeof raw.usage_count === 'number' ? raw.usage_count : 0),
+    };
+  }
+
+  async function loadTags(): Promise<void> {
+    const groupsEl = document.getElementById('tag-groups')!;
+    const statsEl = document.getElementById('tag-stats')!;
+    groupsEl.innerHTML = '<div class="loading-state">加载中...</div>';
+    statsEl.innerHTML = '<div class="loading-state">加载中...</div>';
+
     try {
-      const res = await fetch(`${API_BASE}/api/v1/admin/tags`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.ok) {
-        const result = await res.json();
-        tags = result.data?.items || result.data || [];
-      } else if (res.status === 401) {
-        window.location.href = '/auth/login';
+      const res = await authFetch('/api/v1/admin/tags');
+      if (res.status === 404) {
+        apiAvailable = false;
+        tags = [];
+      } else if (res.ok) {
+        const raw = await extractData<unknown>(res);
+        const arr = Array.isArray(raw) ? raw : ((raw as { items?: unknown[] })?.items || []);
+        tags = (arr as Record<string, unknown>[]).map(normalizeTag);
+      } else {
+        apiAvailable = false;
+        tags = [];
+      }
+    } catch (err) {
+      // 401 已在 authFetch 处理；其他错误显示空状态
+      if (err instanceof Error && err.message.includes('登录')) {
         return;
       }
-      if (tags.length === 0) tags = mockTags();
-    } catch {
-      tags = mockTags();
+      apiAvailable = false;
+      tags = [];
     }
+
+    if (!apiAvailable || tags.length === 0) {
+      groupsEl.innerHTML = '<div class="empty-state">暂无标签数据，文档智能处理后将自动生成</div>';
+      statsEl.innerHTML = '<div class="empty-state">暂无标签使用统计</div>';
+      updateStats();
+      return;
+    }
+
     renderTags();
     renderStats();
     updateStats();
   }
 
-  function renderTags() {
+  function renderTags(): void {
     const keyword = (document.getElementById('tag-search') as HTMLInputElement).value.trim().toLowerCase();
     const list = keyword ? tags.filter((t) => t.name.toLowerCase().includes(keyword)) : tags;
 
     // 按分组归类
-    const groups: Record<string, any[]> = {};
+    const groups: Record<string, Tag[]> = {};
     list.forEach((t) => {
       if (!groups[t.group]) groups[t.group] = [];
       groups[t.group].push(t);
     });
 
-    document.getElementById('tag-groups')!.innerHTML = Object.entries(groups)
+    const container = document.getElementById('tag-groups')!;
+    const groupKeys = Object.keys(groups);
+    if (groupKeys.length === 0) {
+      container.innerHTML = '<div class="empty-state">未找到匹配的标签</div>';
+      return;
+    }
+    container.innerHTML = groupKeys
       .map(
-        ([group, items]) => `
+        (group) => `
       <div class="tag-group">
-        <div class="tag-group-title">${escapeHtml(group)} (${items.length})</div>
+        <div class="tag-group-title">${escapeHtml(group)} (${groups[group].length})</div>
         <div class="tag-list">
-          ${items
+          ${groups[group]
             .map(
               (t) => `
-            <span class="tag-item ${selectedTags.has(t.id) ? 'selected' : ''}" data-id="${t.id}">
+            <span class="tag-item ${selectedTags.has(t.id) ? 'selected' : ''}" data-id="${escapeHtml(t.id)}">
               ${escapeHtml(t.name)}
               <span class="tag-count">${t.count}</span>
             </span>`
@@ -214,10 +285,15 @@ const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '标签�
     });
   }
 
-  function renderStats() {
+  function renderStats(): void {
     const sorted = [...tags].sort((a, b) => b.count - a.count).slice(0, 10);
     const max = sorted[0]?.count || 1;
-    document.getElementById('tag-stats')!.innerHTML = sorted
+    const container = document.getElementById('tag-stats')!;
+    if (sorted.length === 0 || sorted.every((t) => t.count === 0)) {
+      container.innerHTML = '<div class="empty-state">暂无标签使用统计</div>';
+      return;
+    }
+    container.innerHTML = sorted
       .map(
         (t) => `
       <div class="stat-bar-item">
@@ -233,55 +309,38 @@ const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '标签�
       .join('');
   }
 
-  function updateStats() {
+  function updateStats(): void {
     const setText = (id: string, v: string | number) => {
       const el = document.getElementById(id);
       if (el) el.textContent = String(v);
     };
     setText('stat-total', tags.length);
     setText('stat-groups', new Set(tags.map((t) => t.group)).size);
-    setText('stat-popular', tags.sort((a, b) => b.count - a.count)[0]?.name || '--');
+    const sorted = [...tags].sort((a, b) => b.count - a.count);
+    setText('stat-popular', sorted[0]?.name || '--');
     setText('stat-unused', tags.filter((t) => t.count === 0).length);
   }
 
-  function escapeHtml(s: string): string {
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  function escapeHtml(s: unknown): string {
+    return String(s ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
   }
 
   document.getElementById('tag-search')?.addEventListener('input', renderTags);
+
   document.getElementById('create-tag-btn')?.addEventListener('click', () => {
-    const name = prompt('输入标签名称：');
-    if (name) {
-      const group = prompt('输入分组名称：', '其他') || '其他';
-      tags.push({ id: 't' + Date.now(), name, group, count: 0 });
-      renderTags();
-      updateStats();
-      alert('标签已创建');
-    }
+    alert('标签通过文档智能处理自动提取，可在文档详情页编辑');
   });
+
   document.getElementById('merge-btn')?.addEventListener('click', () => {
     if (selectedTags.size < 2) {
       alert('请选择至少 2 个标签进行合并');
       return;
     }
-    const selected = tags.filter((t) => selectedTags.has(t.id));
-    const keepName = prompt(`将合并 ${selected.map((t) => t.name).join('、')}，保留哪个标签名称？`, selected[0].name);
-    if (keepName) {
-      const keep = selected.find((t) => t.name === keepName);
-      if (keep) {
-        selected.forEach((t) => {
-          if (t.id !== keep.id) {
-            keep.count += t.count;
-            tags = tags.filter((x) => x.id !== t.id);
-          }
-        });
-        selectedTags.clear();
-        renderTags();
-        renderStats();
-        updateStats();
-        alert('标签已合并');
-      }
-    }
+    alert('标签合并功能需要后端支持');
   });
 
   loadTags();

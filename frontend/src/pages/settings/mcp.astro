@@ -1,0 +1,823 @@
+---
+/**
+ * MCP 工具协议管理页面
+ * 列出 / 查看 / 调用后端暴露的 MCP 工具，支持外部 AI Agent 集成。
+ *
+ * 数据来源：
+ *   - GET  /api/v1/openapi/mcp/tools                  工具列表
+ *   - GET  /api/v1/openapi/mcp/tools/{name}/schema    工具 Schema
+ *   - POST /api/v1/openapi/mcp/tools/{name}/invoke    工具调用
+ *
+ * 认证方式：X-API-Key header，需具备 mcp:use 权限。
+ */
+import DefaultLayout from '@/layouts/DefaultLayout.astro';
+import PageHeader from '@/components/common/PageHeader.astro';
+
+const breadcrumb = [
+  { label: '设置', href: '/settings/tenant' },
+  { label: 'MCP 工具' },
+];
+---
+
+<DefaultLayout title="MCP 工具协议" breadcrumb={breadcrumb}>
+  <div class="settings-nav" style="margin-bottom: var(--space-5);">
+    <a href="/settings/tenant" class="settings-nav-item">租户设置</a>
+    <a href="/settings/api" class="settings-nav-item">API 密钥</a>
+    <a href="/settings/llm" class="settings-nav-item">LLM 配置</a>
+    <a href="/settings/mcp" class="settings-nav-item active">MCP 工具</a>
+    <a href="/settings/system" class="settings-nav-item">系统设置</a>
+  </div>
+
+  <PageHeader title="MCP 工具协议" subtitle="查看和调用知识库 MCP 工具，支持外部 AI Agent 集成" />
+
+  <!-- API Key 配置区 -->
+  <div class="card apikey-card">
+    <div class="apikey-row">
+      <div class="apikey-info">
+        <div class="apikey-title">API Key</div>
+        <div class="apikey-desc">
+          调用 MCP 工具需要具备 <code>mcp:use</code> 权限的 API 密钥。请在
+          <a href="/settings/api" class="apikey-link">API 密钥</a> 页面创建后填入。
+        </div>
+      </div>
+      <div class="apikey-input-wrap">
+        <input
+          type="password"
+          id="mcp-apikey-input"
+          class="form-input apikey-input"
+          placeholder="粘贴 API Key（含 mcp:use 权限）"
+          autocomplete="off"
+        />
+        <button type="button" class="btn btn-primary btn-sm" id="mcp-apikey-save">保存</button>
+      </div>
+    </div>
+    <div id="apikey-warn" class="apikey-warn" style="display: none;">
+      请在 API 密钥页面配置具有 mcp:use 权限的密钥
+    </div>
+  </div>
+
+  <!-- 工具列表 -->
+  <div id="tools-container" class="tools-grid">
+    <div class="loading-state">加载中...</div>
+  </div>
+
+  <!-- 调用工具弹窗 -->
+  <div class="modal-overlay" id="invoke-modal" style="display: none;">
+    <div class="modal" style="max-width: 640px;">
+      <div class="modal-header">
+        <div>
+          <h3 id="invoke-modal-title" class="modal-title">调用工具</h3>
+          <p id="invoke-modal-desc" class="modal-subtitle"></p>
+        </div>
+        <button type="button" class="btn btn-ghost btn-sm" id="invoke-modal-close">✕</button>
+      </div>
+      <div class="modal-body">
+        <form id="invoke-form">
+          <div id="invoke-form-fields"></div>
+          <div class="modal-footer" style="padding: 0; border-top: none; margin-top: var(--space-4);">
+            <button type="button" class="btn btn-ghost" id="invoke-cancel">取消</button>
+            <button type="submit" class="btn btn-primary" id="invoke-submit">调用</button>
+          </div>
+        </form>
+        <div id="invoke-result-wrap" class="invoke-result-wrap" style="display: none;">
+          <div class="invoke-result-label">执行结果</div>
+          <pre id="invoke-result" class="json-pre"></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+</DefaultLayout>
+
+<style>
+  .settings-nav {
+    display: flex;
+    gap: var(--space-1);
+    border-bottom: 1px solid var(--border);
+  }
+  .settings-nav-item {
+    padding: var(--space-3) var(--space-5);
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    border-bottom: 2px solid transparent;
+    text-decoration: none;
+    transition: all var(--transition-fast);
+  }
+  .settings-nav-item:hover {
+    color: var(--primary);
+  }
+  .settings-nav-item.active {
+    color: var(--primary);
+    border-bottom-color: var(--primary);
+    font-weight: 500;
+  }
+
+  .apikey-card {
+    margin-bottom: var(--space-5);
+  }
+  .apikey-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+    flex-wrap: wrap;
+  }
+  .apikey-info {
+    flex: 1;
+    min-width: 240px;
+  }
+  .apikey-title {
+    font-size: var(--text-md);
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: var(--space-1);
+  }
+  .apikey-desc {
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+  }
+  .apikey-desc code {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    background: var(--surface-muted);
+    padding: 2px var(--space-2);
+    border-radius: var(--radius-xs);
+    color: var(--primary);
+  }
+  .apikey-link {
+    color: var(--primary);
+    text-decoration: none;
+  }
+  .apikey-link:hover {
+    text-decoration: underline;
+  }
+  .apikey-input-wrap {
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
+  }
+  .apikey-input {
+    width: 320px;
+    max-width: 100%;
+  }
+  .apikey-warn {
+    margin-top: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    font-size: var(--text-sm);
+    color: var(--warning);
+    background: var(--warning-bg);
+    border-radius: var(--radius);
+  }
+
+  .tools-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: var(--space-4);
+  }
+  .tool-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: var(--space-5);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    transition: box-shadow var(--transition-fast), border-color var(--transition-fast);
+  }
+  .tool-card:hover {
+    box-shadow: var(--shadow-md);
+    border-color: var(--primary-light);
+  }
+  .tool-card-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-3);
+  }
+  .tool-name {
+    font-family: var(--font-mono);
+    font-size: var(--text-md);
+    font-weight: 600;
+    color: var(--text);
+    word-break: break-all;
+  }
+  .tool-param-count {
+    flex-shrink: 0;
+    padding: 2px var(--space-2);
+    font-size: var(--text-xs);
+    color: var(--info);
+    background: var(--info-bg);
+    border-radius: var(--radius-full);
+    white-space: nowrap;
+  }
+  .tool-desc {
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    line-height: var(--lh-normal);
+    min-height: 2.4em;
+  }
+  .tool-actions {
+    display: flex;
+    gap: var(--space-2);
+    margin-top: var(--space-1);
+  }
+  .tool-detail {
+    border-top: 1px solid var(--border-light);
+    padding-top: var(--space-3);
+    display: none;
+  }
+  .tool-detail.is-open {
+    display: block;
+  }
+  .tool-detail-section {
+    margin-bottom: var(--space-3);
+  }
+  .tool-detail-label {
+    font-size: var(--text-xs);
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: var(--space-2);
+  }
+  .param-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+  .param-item {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    align-items: baseline;
+    font-size: var(--text-sm);
+  }
+  .param-name {
+    font-family: var(--font-mono);
+    color: var(--text);
+    font-weight: 500;
+  }
+  .param-type {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--primary);
+    background: var(--primary-bg);
+    padding: 1px var(--space-2);
+    border-radius: var(--radius-xs);
+  }
+  .param-required {
+    font-size: var(--text-xs);
+    color: var(--danger);
+  }
+  .param-desc {
+    color: var(--text-muted);
+    flex-basis: 100%;
+    margin-left: 0;
+  }
+  .json-pre {
+    margin: 0;
+    padding: var(--space-3);
+    background: var(--surface-muted);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--text);
+    overflow-x: auto;
+    line-height: var(--lh-normal);
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 360px;
+    overflow-y: auto;
+  }
+
+  /* Modal */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: var(--space-4);
+  }
+  .modal {
+    background: var(--surface);
+    border-radius: var(--radius-lg);
+    width: 100%;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: var(--shadow-xl);
+    display: flex;
+    flex-direction: column;
+  }
+  .modal-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    padding: var(--space-5) var(--space-6);
+    border-bottom: 1px solid var(--border);
+    gap: var(--space-3);
+  }
+  .modal-title {
+    font-size: var(--text-lg);
+    font-weight: 600;
+    color: var(--text);
+    margin: 0;
+  }
+  .modal-subtitle {
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    margin: var(--space-1) 0 0 0;
+  }
+  .modal-body {
+    padding: var(--space-5) var(--space-6);
+  }
+  .modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-3);
+  }
+  .form-group {
+    margin-bottom: var(--space-4);
+  }
+  .form-label {
+    display: block;
+    font-size: var(--text-sm);
+    font-weight: 500;
+    color: var(--text);
+    margin-bottom: var(--space-2);
+  }
+  .form-label .req {
+    color: var(--danger);
+    margin-left: 2px;
+  }
+  .form-hint {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    margin-top: var(--space-1);
+  }
+  .form-input {
+    width: 100%;
+    padding: var(--space-2) var(--space-3);
+    font-size: var(--text-sm);
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-sizing: border-box;
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+    font-family: inherit;
+  }
+  .form-input:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px var(--primary-bg);
+  }
+  textarea.form-input {
+    font-family: var(--font-mono);
+    resize: vertical;
+    min-height: 96px;
+  }
+  /* 开关 */
+  .switch {
+    position: relative;
+    display: inline-block;
+    width: 44px;
+    height: 24px;
+    flex-shrink: 0;
+  }
+  .switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+  .switch-slider {
+    position: absolute;
+    cursor: pointer;
+    inset: 0;
+    background: var(--border-dark);
+    border-radius: var(--radius-full);
+    transition: background var(--transition-fast);
+  }
+  .switch-slider::before {
+    content: '';
+    position: absolute;
+    height: 18px;
+    width: 18px;
+    left: 3px;
+    bottom: 3px;
+    background: var(--surface);
+    border-radius: 50%;
+    transition: transform var(--transition-fast);
+  }
+  .switch input:checked + .switch-slider {
+    background: var(--primary);
+  }
+  .switch input:checked + .switch-slider::before {
+    transform: translateX(20px);
+  }
+  .switch-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+  }
+
+  .invoke-result-wrap {
+    margin-top: var(--space-5);
+    border-top: 1px solid var(--border-light);
+    padding-top: var(--space-4);
+  }
+  .invoke-result-label {
+    font-size: var(--text-xs);
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: var(--space-2);
+  }
+
+  .loading-state {
+    text-align: center;
+    padding: var(--space-8);
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    grid-column: 1 / -1;
+  }
+  .empty-state {
+    text-align: center;
+    padding: var(--space-8);
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    grid-column: 1 / -1;
+  }
+  .empty-state a {
+    color: var(--primary);
+    text-decoration: none;
+  }
+  .empty-state a:hover {
+    text-decoration: underline;
+  }
+</style>
+
+<script>
+  import {
+    listMcpTools,
+    invokeMcpTool,
+    getMcpToolSchema,
+    getMcpApiKey,
+    setMcpApiKey,
+  } from '@/lib/apis/mcp';
+  import type { McpTool, McpToolResult } from '@/lib/apis/mcp';
+  import { ApiError } from '@/lib/api';
+
+  /** JSON Schema 参数定义（properties 内单个参数的结构） */
+  interface ParamSchema {
+    type?: string;
+    description?: string;
+    default?: unknown;
+    enum?: unknown[];
+  }
+
+  /** 解析后的参数元信息 */
+  interface ParamMeta {
+    name: string;
+    type: string;
+    description: string;
+    required: boolean;
+    hasEnum: boolean;
+    enumValues: unknown[];
+  }
+
+  let tools: McpTool[] = [];
+  let currentTool: McpTool | null = null;
+
+  /** 是否为 401 / 403 类鉴权错误 */
+  function isAuthError(err: unknown): boolean {
+    return err instanceof ApiError && (err.status === 401 || err.status === 403);
+  }
+
+  function escapeHtml(s: unknown): string {
+    return String(s ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  /** 获取 properties 对象（兼容 parameters.properties 与 parameters 直接是 properties 的情况） */
+  function getProperties(tool: McpTool): Record<string, ParamSchema> | null {
+    const params = tool.parameters;
+    if (!params || typeof params !== 'object') return null;
+    const props = (params as { properties?: unknown }).properties;
+    if (props && typeof props === 'object' && !Array.isArray(props)) {
+      return props as Record<string, ParamSchema>;
+    }
+    return null;
+  }
+
+  /** 获取必填参数数组 */
+  function getRequired(tool: McpTool): string[] {
+    const params = tool.parameters;
+    if (!params || typeof params !== 'object') return [];
+    const req = (params as { required?: unknown }).required;
+    return Array.isArray(req) ? (req as unknown[]).map((v) => String(v)) : [];
+  }
+
+  /** 统计参数数量 */
+  function countParams(tool: McpTool): number {
+    const props = getProperties(tool);
+    return props ? Object.keys(props).length : 0;
+  }
+
+  /** 解析参数列表为元信息数组 */
+  function parseParams(tool: McpTool): ParamMeta[] {
+    const props = getProperties(tool);
+    if (!props) return [];
+    const required = getRequired(tool);
+    return Object.entries(props).map(([name, schema]) => ({
+      name,
+      type: String(schema?.type || 'any'),
+      description: String(schema?.description || ''),
+      required: required.includes(name),
+      hasEnum: Array.isArray(schema?.enum),
+      enumValues: Array.isArray(schema?.enum) ? (schema?.enum as unknown[]) : [],
+    }));
+  }
+
+  /** 渲染工具列表 */
+  function renderTools(): void {
+    const container = document.getElementById('tools-container')!;
+    if (tools.length === 0) {
+      container.innerHTML =
+        '<div class="empty-state">暂无可用的 MCP 工具<br/>请确认后端已注册工具且 API Key 具备 <code>mcp:use</code> 权限</div>';
+      return;
+    }
+    container.innerHTML = tools
+      .map((tool) => {
+        const count = countParams(tool);
+        const params = parseParams(tool);
+        const paramListHtml =
+          params.length > 0
+            ? params
+                .map(
+                  (p) => `
+              <div class="param-item">
+                <span class="param-name">${escapeHtml(p.name)}</span>
+                <span class="param-type">${escapeHtml(p.type)}</span>
+                ${p.required ? '<span class="param-required">必填</span>' : ''}
+                ${p.description ? `<span class="param-desc">${escapeHtml(p.description)}</span>` : ''}
+              </div>`
+                )
+                .join('')
+            : '<div class="param-desc">无参数</div>';
+        return `
+          <div class="tool-card" data-tool-name="${escapeHtml(tool.name)}">
+            <div class="tool-card-header">
+              <div class="tool-name">${escapeHtml(tool.name)}</div>
+              <span class="tool-param-count">${count} 个参数</span>
+            </div>
+            <div class="tool-desc">${escapeHtml(tool.description || '暂无描述')}</div>
+            <div class="tool-actions">
+              <button type="button" class="btn btn-ghost btn-sm" data-action="detail">查看详情</button>
+              <button type="button" class="btn btn-primary btn-sm" data-action="invoke">调用</button>
+            </div>
+            <div class="tool-detail">
+              <div class="tool-detail-section">
+                <div class="tool-detail-label">参数列表</div>
+                <div class="param-list">${paramListHtml}</div>
+              </div>
+              <div class="tool-detail-section">
+                <div class="tool-detail-label">完整 Schema</div>
+                <pre class="json-pre">${escapeHtml(JSON.stringify(tool.parameters, null, 2))}</pre>
+              </div>
+            </div>
+          </div>`;
+      })
+      .join('');
+
+    // 绑定事件
+    container.querySelectorAll<HTMLElement>('.tool-card').forEach((card) => {
+      const toolName = card.dataset.toolName || '';
+      card.querySelector<HTMLButtonElement>('[data-action="detail"]')?.addEventListener('click', () => {
+        card.querySelector('.tool-detail')?.classList.toggle('is-open');
+      });
+      card.querySelector<HTMLButtonElement>('[data-action="invoke"]')?.addEventListener('click', () => {
+        openInvokeModal(toolName);
+      });
+    });
+  }
+
+  /** 加载工具列表 */
+  async function loadTools(): Promise<void> {
+    const container = document.getElementById('tools-container')!;
+    if (!getMcpApiKey()) {
+      container.innerHTML = '';
+      showApiKeyWarn(true);
+      return;
+    }
+    showApiKeyWarn(false);
+    container.innerHTML = '<div class="loading-state">加载中...</div>';
+    try {
+      tools = await listMcpTools();
+      renderTools();
+    } catch (err) {
+      if (isAuthError(err)) {
+        container.innerHTML = '';
+        showApiKeyWarn(true);
+        return;
+      }
+      const msg = err instanceof Error ? err.message : '网络异常';
+      container.innerHTML = `<div class="empty-state">加载工具列表失败：${escapeHtml(msg)}<br/><button class="btn btn-outline btn-sm" id="retry-tools" style="margin-top: var(--space-3);">重试</button></div>`;
+      document.getElementById('retry-tools')?.addEventListener('click', loadTools);
+    }
+  }
+
+  /** 显示/隐藏 API Key 警告 */
+  function showApiKeyWarn(show: boolean): void {
+    const warn = document.getElementById('apikey-warn')!;
+    warn.style.display = show ? 'block' : 'none';
+  }
+
+  // ===== API Key 输入框初始化 =====
+  const apiKeyInput = document.getElementById('mcp-apikey-input') as HTMLInputElement | null;
+  if (apiKeyInput) {
+    apiKeyInput.value = getMcpApiKey() || '';
+  }
+  document.getElementById('mcp-apikey-save')?.addEventListener('click', () => {
+    const value = apiKeyInput?.value?.trim() || '';
+    setMcpApiKey(value);
+    alert(value ? 'API Key 已保存' : 'API Key 已清除');
+    loadTools();
+  });
+
+  // ===== 调用弹窗 =====
+  const invokeModal = document.getElementById('invoke-modal')!;
+  const invokeForm = document.getElementById('invoke-form') as HTMLFormElement | null;
+  const invokeFormFields = document.getElementById('invoke-form-fields')!;
+  const invokeResultWrap = document.getElementById('invoke-result-wrap')!;
+  const invokeResult = document.getElementById('invoke-result')!;
+
+  function closeInvokeModal(): void {
+    invokeModal.style.display = 'none';
+    if (invokeForm) invokeForm.reset();
+    invokeResultWrap.style.display = 'none';
+    invokeResult.textContent = '';
+    currentTool = null;
+  }
+
+  document.getElementById('invoke-modal-close')?.addEventListener('click', closeInvokeModal);
+  document.getElementById('invoke-cancel')?.addEventListener('click', closeInvokeModal);
+  invokeModal.addEventListener('click', (e) => {
+    if (e.target === invokeModal) closeInvokeModal();
+  });
+
+  /** 根据 Schema 渲染单个参数表单字段 */
+  function renderField(meta: ParamMeta): string {
+    const requiredMark = meta.required ? '<span class="req">*</span>' : '';
+    const labelHtml = `<label class="form-label">${escapeHtml(meta.name)}${requiredMark}</label>`;
+    const descHtml = meta.description
+      ? `<div class="form-hint">${escapeHtml(meta.description)}</div>`
+      : '';
+
+    let control = '';
+    switch (meta.type) {
+      case 'boolean':
+        control = `
+          <div class="switch-row">
+            <label class="switch">
+              <input type="checkbox" name="${escapeHtml(meta.name)}" data-field-type="boolean" />
+              <span class="switch-slider"></span>
+            </label>
+            <span class="form-hint" style="margin-top: 0;">开关（默认关闭）</span>
+          </div>`;
+        break;
+      case 'number':
+      case 'integer':
+        control = `<input type="number" class="form-input" name="${escapeHtml(meta.name)}" data-field-type="number" placeholder="请输入数字" step="any" />`;
+        break;
+      case 'string':
+      default:
+        if (meta.hasEnum) {
+          const opts = meta.enumValues
+            .map(
+              (v) =>
+                `<option value="${escapeHtml(String(v))}">${escapeHtml(String(v))}</option>`
+            )
+            .join('');
+          control = `<select class="form-input" name="${escapeHtml(meta.name)}" data-field-type="string"><option value="">请选择...</option>${opts}</select>`;
+        } else {
+          control = `<input type="text" class="form-input" name="${escapeHtml(meta.name)}" data-field-type="string" placeholder="请输入 ${escapeHtml(meta.name)}" />`;
+        }
+        break;
+    }
+    return `<div class="form-group">${labelHtml}${control}${descHtml}</div>`;
+  }
+
+  /** 打开调用弹窗 */
+  async function openInvokeModal(toolName: string): Promise<void> {
+    const tool = tools.find((t) => t.name === toolName) || null;
+    if (!tool) {
+      // 列表里没有时尝试拉取最新 schema
+      try {
+        currentTool = await getMcpToolSchema(toolName);
+      } catch (err) {
+        if (isAuthError(err)) {
+          showApiKeyWarn(true);
+          return;
+        }
+        alert(err instanceof Error ? err.message : '获取工具信息失败');
+        return;
+      }
+    } else {
+      currentTool = tool;
+    }
+
+    const titleEl = document.getElementById('invoke-modal-title')!;
+    const descEl = document.getElementById('invoke-modal-desc')!;
+    titleEl.textContent = `调用工具：${currentTool.name}`;
+    descEl.textContent = currentTool.description || '';
+
+    const params = parseParams(currentTool);
+    if (params.length === 0) {
+      invokeFormFields.innerHTML = '<div class="form-hint">该工具无入参，可直接点击「调用」</div>';
+    } else {
+      invokeFormFields.innerHTML = params.map(renderField).join('');
+    }
+
+    invokeResultWrap.style.display = 'none';
+    invokeResult.textContent = '';
+    invokeModal.style.display = 'flex';
+  }
+
+  /** 收集表单数据并转换为对应类型 */
+  function collectArgs(): Record<string, unknown> {
+    const args: Record<string, unknown> = {};
+    if (!currentTool) return args;
+    const params = parseParams(currentTool);
+    for (const p of params) {
+      const el = invokeForm?.elements.namedItem(p.name) as HTMLInputElement | HTMLSelectElement | null;
+      if (!el) continue;
+      if (p.type === 'boolean') {
+        args[p.name] = (el as HTMLInputElement).checked;
+      } else if (p.type === 'number' || p.type === 'integer') {
+        const raw = (el as HTMLInputElement).value;
+        if (raw === '') {
+          if (p.required) throw new Error(`参数 ${p.name} 必填`);
+          continue;
+        }
+        const num = Number(raw);
+        if (Number.isNaN(num)) throw new Error(`参数 ${p.name} 不是合法数字`);
+        args[p.name] = p.type === 'integer' ? Math.trunc(num) : num;
+      } else {
+        const raw = (el as HTMLInputElement | HTMLSelectElement).value;
+        if (raw === '') {
+          if (p.required) throw new Error(`参数 ${p.name} 必填`);
+          continue;
+        }
+        args[p.name] = raw;
+      }
+    }
+    return args;
+  }
+
+  invokeForm?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!currentTool) return;
+    let args: Record<string, unknown>;
+    try {
+      args = collectArgs();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : '参数校验失败');
+      return;
+    }
+
+    const submitBtn = document.getElementById('invoke-submit') as HTMLButtonElement | null;
+    const originalText = submitBtn?.textContent || '调用';
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.textContent = '调用中...';
+    }
+
+    try {
+      const res: McpToolResult = await invokeMcpTool(currentTool.name, args);
+      invokeResultWrap.style.display = 'block';
+      invokeResult.textContent = JSON.stringify(res.result, null, 2);
+    } catch (err) {
+      if (isAuthError(err)) {
+        showApiKeyWarn(true);
+        closeInvokeModal();
+        return;
+      }
+      alert(err instanceof Error ? err.message : '调用失败');
+    } finally {
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = originalText;
+      }
+    }
+  });
+
+  // 初始化
+  loadTools();
+</script>

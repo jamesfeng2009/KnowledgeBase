@@ -20,12 +20,6 @@ export interface Expert {
   answer_count: number;
 }
 
-export interface Expertise {
-  area: string;
-  score: number;
-  document_count: number;
-}
-
 export interface Contributor {
   user_id: string;
   name: string;
@@ -47,9 +41,4 @@ export function findExperts(keyword: string, topK = 5): Promise<Expert[]> {
 /** 获取全站贡献排行榜 */
 export function getTopContributors(days = 30, topK = 10): Promise<Contributor[]> {
   return getData<Contributor[]>(`${BASE}/top`, { days, top_k: topK });
-}
-
-/** 获取用户的专业领域 */
-export function getUserExpertise(userId: string): Promise<Expertise[]> {
-  return getData<Expertise[]>(`${BASE}/${userId}/expertise`);
 }

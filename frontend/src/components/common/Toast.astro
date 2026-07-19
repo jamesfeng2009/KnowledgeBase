@@ -1,0 +1,133 @@
+---
+/**
+ * Toast.astro - 全局通知容器组件
+ *
+ * 放置在 DefaultLayout 底部，提供 window.ekbToast 全局 API：
+ *   - ekbToast.show(message, type?, duration?)
+ *   - ekbToast.success(msg, duration?)
+ *   - ekbToast.error(msg, duration?)
+ *   - ekbToast.warning(msg, duration?)
+ *   - ekbToast.info(msg, duration?)
+ *
+ * 通知元素由 JS 动态创建，因此样式使用 is:global。
+ *
+ * @example
+ * // 在任意客户端脚本中调用
+ * window.ekbToast.success('保存成功');
+ * window.ekbToast.error('网络错误，请重试', 5000);
+ */
+---
+
+<div class="toast-container" id="toast-container" data-toast-container></div>
+
+<script>
+  type ToastType = 'info' | 'success' | 'warning' | 'error';
+
+  function showToast(message: string, type: ToastType = 'info', duration?: number) {
+    const container = document.getElementById('toast-container');
+    if (!container) return;
+
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.textContent = message;
+    container.appendChild(toast);
+
+    // 下一帧添加 show 类以触发进入动画
+    requestAnimationFrame(() => toast.classList.add('show'));
+
+    const dur = duration ?? 3000;
+    setTimeout(() => {
+      toast.classList.remove('show');
+      // 等待退出动画完成后再移除 DOM
+      setTimeout(() => toast.remove(), 300);
+    }, dur);
+  }
+
+  const ekbToast: EkbToastAPI = {
+    show: showToast,
+    success(msg, dur) {
+      showToast(msg, 'success', dur);
+    },
+    error(msg, dur) {
+      showToast(msg, 'error', dur);
+    },
+    warning(msg, dur) {
+      showToast(msg, 'warning', dur);
+    },
+    info(msg, dur) {
+      showToast(msg, 'info', dur);
+    },
+  };
+
+  window.ekbToast = ekbToast;
+</script>
+
+<style is:global>
+  .toast-container {
+    position: fixed;
+    top: var(--space-6);
+    right: var(--space-6);
+    z-index: 2000;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    pointer-events: none;
+  }
+
+  .toast {
+    display: flex;
+    align-items: center;
+    min-width: 280px;
+    max-width: 400px;
+    padding: var(--space-3) var(--space-5);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
+    font-size: var(--text-base);
+    color: var(--text);
+    opacity: 0;
+    transform: translateX(100%);
+    transition:
+      opacity var(--transition-slow),
+      transform var(--transition-slow);
+    pointer-events: auto;
+  }
+
+  .toast.show {
+    opacity: 1;
+    transform: translateX(0);
+  }
+
+  /* 语义色左边框 */
+  .toast-success {
+    border-left: 4px solid var(--success);
+  }
+
+  .toast-error {
+    border-left: 4px solid var(--danger);
+  }
+
+  .toast-warning {
+    border-left: 4px solid var(--warning);
+  }
+
+  .toast-info {
+    border-left: 4px solid var(--info);
+  }
+
+  /* 移动端适配 */
+  @media (max-width: 768px) {
+    .toast-container {
+      top: var(--space-3);
+      right: var(--space-3);
+      left: var(--space-3);
+    }
+
+    .toast {
+      min-width: auto;
+      max-width: none;
+      width: 100%;
+    }
+  }
+</style>

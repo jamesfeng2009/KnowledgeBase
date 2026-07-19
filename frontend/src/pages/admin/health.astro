@@ -1,9 +1,11 @@
 ---
 /**
  * 知识健康度页面
- * 整体健康度评分（环形图） + 各知识库健康度 + 低质量文档列表 + 质量趋势
+ * 整体健康度评分（环形图） + 各知识库健康度 + 低质量文档列表 + 新鲜度分布
+ * 数据来源：getCoverage() / getFreshness() / getDashboard() / GET /api/v1/admin/health
  */
 import DefaultLayout from '@/layouts/DefaultLayout.astro';
+import HealthRing from '@/components/admin/HealthRing.astro';
 
 const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '知识健康度' }];
 ---
@@ -14,63 +16,12 @@ const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '知识�
     <button class="btn btn-outline btn-sm" id="scan-btn">🔍 重新扫描</button>
   </div>
 
-  <div style="display: grid; grid-template-columns: 1fr 2fr; gap: var(--space-5); margin-bottom: var(--space-6);">
-    <!-- 整体健康度环形图 -->
+  <!-- 加载/错误/重试容器（JS 加载前展示 HealthRing 骨架，加载后由 JS 接管渲染） -->
+  <div id="health-root">
     <div class="card text-center">
       <div class="card-header"><h3>整体健康度</h3></div>
-      <div class="health-ring-wrapper">
-        <canvas id="health-ring" width="200" height="200"></canvas>
-        <div class="health-ring-center">
-          <div class="health-ring-score" id="health-score">--</div>
-          <div class="text-muted" style="font-size: var(--text-sm);">健康度评分</div>
-        </div>
-      </div>
-      <div style="display: flex; justify-content: space-around; margin-top: var(--space-4);">
-        <div>
-          <div class="text-muted" style="font-size: var(--text-xs);">优质</div>
-          <div style="font-size: var(--text-xl); font-weight: 600; color: var(--success);" id="good-count">--</div>
-        </div>
-        <div>
-          <div class="text-muted" style="font-size: var(--text-xs);">待改进</div>
-          <div style="font-size: var(--text-xl); font-weight: 600; color: var(--warning);" id="warn-count">--</div>
-        </div>
-        <div>
-          <div class="text-muted" style="font-size: var(--text-xs);">低质量</div>
-          <div style="font-size: var(--text-xl); font-weight: 600; color: var(--danger);" id="bad-count">--</div>
-        </div>
-      </div>
+      <HealthRing value={0} size="lg" label="加载中..." color="primary" />
     </div>
-
-    <!-- 各知识库健康度 -->
-    <div class="card">
-      <div class="card-header"><h3>各知识库健康度</h3></div>
-      <div id="kb-health-list"></div>
-    </div>
-  </div>
-
-  <!-- 低质量文档列表 -->
-  <div class="card" style="margin-bottom: var(--space-6);">
-    <div class="card-header"><h3>低质量文档（建议优化）</h3></div>
-    <div style="overflow-x: auto;">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>文档名称</th>
-            <th>知识库</th>
-            <th>问题</th>
-            <th>评分</th>
-            <th>操作</th>
-          </tr>
-        </thead>
-        <tbody id="low-quality-list"></tbody>
-      </table>
-    </div>
-  </div>
-
-  <!-- 质量趋势 -->
-  <div class="card">
-    <div class="card-header"><h3>质量趋势（近 30 天）</h3></div>
-    <canvas id="quality-trend" style="width: 100%; height: 200px;"></canvas>
   </div>
 </DefaultLayout>
 
@@ -138,106 +89,261 @@ const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '知识�
     border-radius: var(--radius-full);
     transition: width var(--transition);
   }
+  .loading-state {
+    text-align: center;
+    padding: var(--space-8);
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+  }
+  .error-state {
+    text-align: center;
+    padding: var(--space-8);
+    color: var(--danger);
+    font-size: var(--text-sm);
+  }
+  .empty-state {
+    text-align: center;
+    padding: var(--space-6);
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+  }
+  .retry-btn {
+    margin-top: var(--space-3);
+  }
 </style>
 
 <script>
-  const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
+  import { getCoverage, getFreshness, getDashboard } from '@/lib/apis/analytics';
+  import { API_BASE } from '@/lib/api';
+
   const TOKEN_KEY = 'ekb_access_token';
 
-  function mockData() {
-    return {
-      score: 82,
-      good: 980,
-      warn: 186,
-      bad: 82,
-      kbs: [
-        { name: '公司制度', score: 88, color: 'var(--success)' },
-        { name: '产品文档', score: 76, color: 'var(--warning)' },
-        { name: '技术文档', score: 92, color: 'var(--success)' },
-        { name: '历史归档', score: 45, color: 'var(--danger)' },
-      ],
-      lowQuality: [
-        { id: 'd1', title: '旧版产品说明', kb: '产品文档', issue: '内容过时', score: 35 },
-        { id: 'd2', title: '废弃 API 文档', kb: '技术文档', issue: '重复内容', score: 42 },
-        { id: 'd3', title: '2019 年制度汇编', kb: '公司制度', issue: '已过期', score: 28 },
-        { id: 'd4', title: '测试文档草稿', kb: '技术文档', issue: '内容不完整', score: 38 },
-      ],
-    };
+  interface HealthData {
+    score: number;
+    good: number;
+    warn: number;
+    bad: number;
+    totalDocs: number;
+    kbs: Array<{ name: string; score: number; color: string }>;
+    lowQuality: Array<{ id: string; title: string; kb: string; issue: string; score: number }>;
   }
 
-  async function loadHealth() {
+  /** 拉取后端 /admin/health 返回的明细数据（知识库健康度 / 低质量文档） */
+  async function fetchAdminHealth(): Promise<{
+    kbs?: Array<{ name?: string; score?: number; kb_name?: string; health_score?: number }>;
+    low_quality?: Array<Record<string, unknown>>;
+    lowQuality?: Array<Record<string, unknown>>;
+  } | null> {
     const token = localStorage.getItem(TOKEN_KEY);
     if (!token) {
       window.location.href = '/auth/login';
-      return;
+      return null;
     }
-    let data: any;
     try {
       const res = await fetch(`${API_BASE}/api/v1/admin/health`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (res.ok) {
-        const result = await res.json();
-        data = result.data || result;
-      } else if (res.status === 401) {
+      if (res.status === 401) {
+        localStorage.removeItem(TOKEN_KEY);
         window.location.href = '/auth/login';
-        return;
-      } else {
-        data = mockData();
+        return null;
       }
+      if (!res.ok) return null;
+      const result = await res.json();
+      return (result.data || result) as Record<string, unknown> as {
+        kbs?: Array<{ name?: string; score?: number; kb_name?: string; health_score?: number }>;
+        low_quality?: Array<Record<string, unknown>>;
+        lowQuality?: Array<Record<string, unknown>>;
+      };
     } catch {
-      data = mockData();
+      return null;
     }
+  }
+
+  function scoreColor(score: number): string {
+    if (score >= 80) return 'var(--success)';
+    if (score >= 60) return 'var(--warning)';
+    return 'var(--danger)';
+  }
+
+  /** 综合健康度评分：覆盖率与新鲜率的加权平均 */
+  function computeScore(coverageRate: number, freshRate: number): number {
+    const cov = coverageRate <= 1 ? coverageRate * 100 : coverageRate;
+    const fresh = freshRate <= 1 ? freshRate * 100 : freshRate;
+    return Math.round(cov * 0.5 + fresh * 0.5);
+  }
+
+  async function loadHealth(): Promise<void> {
+    const root = document.getElementById('health-root')!;
+    root.innerHTML = '<div class="loading-state" id="health-loading">加载中...</div>';
+
+    let coverage, freshness, dashboard;
+    try {
+      [coverage, freshness, dashboard] = await Promise.all([
+        getCoverage(),
+        getFreshness(),
+        getDashboard(30),
+      ]);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '加载失败';
+      root.innerHTML = `
+        <div class="error-state">
+          <div>加载健康度数据失败：${escapeHtml(msg)}</div>
+          <button class="btn btn-outline btn-sm retry-btn" id="retry-btn">重试</button>
+        </div>`;
+      document.getElementById('retry-btn')?.addEventListener('click', loadHealth);
+      return;
+    }
+
+    const adminHealth = await fetchAdminHealth();
+
+    const data: HealthData = {
+      score: computeScore(coverage.rate, freshness.fresh_rate),
+      good: freshness.fresh,
+      warn: freshness.stale,
+      bad: freshness.expired,
+      totalDocs: dashboard.total_documents,
+      kbs: (adminHealth?.kbs || []).map((kb) => {
+        const score = typeof kb.score === 'number' ? kb.score : (typeof kb.health_score === 'number' ? kb.health_score : 0);
+        return {
+          name: kb.name || kb.kb_name || '未命名',
+          score,
+          color: scoreColor(score),
+        };
+      }),
+      lowQuality: (adminHealth?.low_quality || adminHealth?.lowQuality || []).map((d) => {
+        const obj = d as Record<string, unknown>;
+        const score = typeof obj.score === 'number' ? obj.score : (typeof obj.quality_score === 'number' ? obj.quality_score : 0);
+        return {
+          id: String(obj.id || obj.doc_id || ''),
+          title: String(obj.title || obj.name || '未命名文档'),
+          kb: String(obj.kb || obj.kb_name || '-'),
+          issue: String(obj.issue || obj.reason || obj.problem || '需优化'),
+          score,
+        };
+      }),
+    };
+
     renderHealth(data);
   }
 
-  function renderHealth(data: any) {
-    document.getElementById('health-score')!.textContent = String(data.score);
-    document.getElementById('good-count')!.textContent = String(data.good);
-    document.getElementById('warn-count')!.textContent = String(data.warn);
-    document.getElementById('bad-count')!.textContent = String(data.bad);
+  function renderHealth(data: HealthData): void {
+    const root = document.getElementById('health-root')!;
+    root.innerHTML = `
+      <div style="display: grid; grid-template-columns: 1fr 2fr; gap: var(--space-5); margin-bottom: var(--space-6);">
+        <!-- 整体健康度环形图 -->
+        <div class="card text-center">
+          <div class="card-header"><h3>整体健康度</h3></div>
+          <div class="health-ring-wrapper">
+            <canvas id="health-ring" width="200" height="200"></canvas>
+            <div class="health-ring-center">
+              <div class="health-ring-score" id="health-score">${data.score}</div>
+              <div class="text-muted" style="font-size: var(--text-sm);">健康度评分</div>
+              <div class="text-muted" style="font-size: var(--text-xs); margin-top: var(--space-1);">文档总数 ${data.totalDocs}</div>
+            </div>
+          </div>
+          <div style="display: flex; justify-content: space-around; margin-top: var(--space-4);">
+            <div>
+              <div class="text-muted" style="font-size: var(--text-xs);">优质</div>
+              <div style="font-size: var(--text-xl); font-weight: 600; color: var(--success);">${data.good}</div>
+            </div>
+            <div>
+              <div class="text-muted" style="font-size: var(--text-xs);">待改进</div>
+              <div style="font-size: var(--text-xl); font-weight: 600; color: var(--warning);">${data.warn}</div>
+            </div>
+            <div>
+              <div class="text-muted" style="font-size: var(--text-xs);">低质量</div>
+              <div style="font-size: var(--text-xl); font-weight: 600; color: var(--danger);">${data.bad}</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 各知识库健康度 -->
+        <div class="card">
+          <div class="card-header"><h3>各知识库健康度</h3></div>
+          <div id="kb-health-list"></div>
+        </div>
+      </div>
+
+      <!-- 低质量文档列表 -->
+      <div class="card" style="margin-bottom: var(--space-6);">
+        <div class="card-header"><h3>低质量文档（建议优化）</h3></div>
+        <div style="overflow-x: auto;">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>文档名称</th>
+                <th>知识库</th>
+                <th>问题</th>
+                <th>评分</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="low-quality-list"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 新鲜度分布 -->
+      <div class="card">
+        <div class="card-header"><h3>知识新鲜度分布</h3></div>
+        <canvas id="quality-trend" style="width: 100%; height: 200px;"></canvas>
+      </div>
+    `;
 
     drawRing(data.score);
 
-    document.getElementById('kb-health-list')!.innerHTML = data.kbs
-      .map(
-        (kb: any) => `
-      <div class="kb-health-item">
-        <div class="kb-health-name">${escapeHtml(kb.name)}</div>
-        <div class="kb-health-bar">
-          <div class="kb-health-bar-fill" style="width: ${kb.score}%; background: ${kb.color};"></div>
-        </div>
-        <div style="width: 40px; text-align: right; font-size: var(--text-sm); font-weight: 500; color: ${kb.color};">${kb.score}</div>
-      </div>`
-      )
-      .join('');
+    const kbList = document.getElementById('kb-health-list')!;
+    if (data.kbs.length === 0) {
+      kbList.innerHTML = '<div class="empty-state">暂无知识库健康度数据</div>';
+    } else {
+      kbList.innerHTML = data.kbs
+        .map(
+          (kb) => `
+        <div class="kb-health-item">
+          <div class="kb-health-name">${escapeHtml(kb.name)}</div>
+          <div class="kb-health-bar">
+            <div class="kb-health-bar-fill" style="width: ${kb.score}%; background: ${kb.color};"></div>
+          </div>
+          <div style="width: 40px; text-align: right; font-size: var(--text-sm); font-weight: 500; color: ${kb.color};">${kb.score}</div>
+        </div>`
+        )
+        .join('');
+    }
 
-    document.getElementById('low-quality-list')!.innerHTML = data.lowQuality
-      .map(
-        (d: any) => `
-      <tr>
-        <td>${escapeHtml(d.title)}</td>
-        <td class="text-muted">${escapeHtml(d.kb)}</td>
-        <td><span class="badge badge-warning">${escapeHtml(d.issue)}</span></td>
-        <td><span style="color: var(--danger); font-weight: 600;">${d.score}</span></td>
-        <td>
-          <button class="btn btn-ghost btn-sm" data-id="${d.id}">优化</button>
-        </td>
-      </tr>`
-      )
-      .join('');
+    const lowList = document.getElementById('low-quality-list')!;
+    if (data.lowQuality.length === 0) {
+      lowList.innerHTML = '<tr><td colspan="5" class="empty-state">暂无低质量文档，知识库状态良好</td></tr>';
+    } else {
+      lowList.innerHTML = data.lowQuality
+        .map(
+          (d) => `
+        <tr>
+          <td>${escapeHtml(d.title)}</td>
+          <td class="text-muted">${escapeHtml(d.kb)}</td>
+          <td><span class="badge badge-warning">${escapeHtml(d.issue)}</span></td>
+          <td><span style="color: var(--danger); font-weight: 600;">${d.score}</span></td>
+          <td>
+            <button class="btn btn-ghost btn-sm" data-id="${escapeHtml(d.id)}">优化</button>
+          </td>
+        </tr>`
+        )
+        .join('');
 
-    document.querySelectorAll('#low-quality-list button').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        window.location.href = `/knowledge/detail?id=${(btn as HTMLElement).dataset.id}`;
+      lowList.querySelectorAll('button').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const id = (btn as HTMLElement).dataset.id;
+          if (id) window.location.href = `/knowledge/detail?id=${encodeURIComponent(id)}`;
+        });
       });
-    });
+    }
 
-    drawTrend();
+    drawTrend(data);
   }
 
-  function drawRing(score: number) {
-    const canvas = document.getElementById('health-ring') as HTMLCanvasElement;
+  function drawRing(score: number): void {
+    const canvas = document.getElementById('health-ring') as HTMLCanvasElement | null;
+    if (!canvas) return;
     const ctx = canvas.getContext('2d')!;
     const cx = 100;
     const cy = 100;
@@ -260,8 +366,10 @@ const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '知识�
     ctx.stroke();
   }
 
-  function drawTrend() {
-    const canvas = document.getElementById('quality-trend') as HTMLCanvasElement;
+  /** 新鲜度分布柱状图（fresh / stale / expired） */
+  function drawTrend(data: HealthData): void {
+    const canvas = document.getElementById('quality-trend') as HTMLCanvasElement | null;
+    if (!canvas) return;
     const ctx = canvas.getContext('2d')!;
     canvas.width = canvas.offsetWidth * 2;
     canvas.height = 200 * 2;
@@ -269,10 +377,16 @@ const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '知识�
     const w = canvas.offsetWidth;
     const h = 200;
 
-    const data = Array.from({ length: 30 }, (_, i) => 70 + Math.sin(i / 3) * 8 + i * 0.5);
-    const max = 100;
-    const pad = 30;
+    const bars = [
+      { label: '新鲜', value: data.good, color: '#00B884' },
+      { label: '陈旧', value: data.warn, color: '#FF9500' },
+      { label: '过期', value: data.bad, color: '#FF3B5C' },
+    ];
+    const max = Math.max(...bars.map((b) => b.value), 1);
+    const pad = 40;
+    const barWidth = (w - pad * 2) / bars.length / 2;
 
+    // 网格线
     ctx.strokeStyle = '#F0F1F5';
     ctx.lineWidth = 1;
     for (let i = 0; i <= 4; i++) {
@@ -283,31 +397,48 @@ const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '知识�
       ctx.stroke();
     }
 
-    ctx.strokeStyle = '#00B884';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    data.forEach((v, i) => {
-      const x = pad + ((w - pad * 2) / (data.length - 1)) * i;
-      const y = h - pad - ((h - pad * 2) * v) / max;
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
+    // 柱状
+    bars.forEach((b, i) => {
+      const x = pad + ((w - pad * 2) / bars.length) * i + ((w - pad * 2) / bars.length - barWidth) / 2;
+      const barH = ((h - pad * 2) * b.value) / max;
+      const y = h - pad - barH;
+      ctx.fillStyle = b.color;
+      ctx.fillRect(x, y, barWidth, barH);
+
+      // 数值标签
+      ctx.fillStyle = '#333';
+      ctx.font = '12px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(String(b.value), x + barWidth / 2, y - 6);
+
+      // 类别标签
+      ctx.fillStyle = '#666';
+      ctx.fillText(b.label, x + barWidth / 2, h - pad + 18);
     });
-    ctx.stroke();
-
-    ctx.lineTo(w - pad, h - pad);
-    ctx.lineTo(pad, h - pad);
-    ctx.closePath();
-    ctx.fillStyle = 'rgba(0, 184, 132, 0.1)';
-    ctx.fill();
   }
 
-  function escapeHtml(s: string): string {
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  function escapeHtml(s: unknown): string {
+    return String(s ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
   }
 
-  document.getElementById('scan-btn')?.addEventListener('click', () => {
-    alert('正在重新扫描知识健康度...');
-    setTimeout(loadHealth, 1000);
+  document.getElementById('scan-btn')?.addEventListener('click', async () => {
+    const btn = document.getElementById('scan-btn') as HTMLButtonElement;
+    const original = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '🔍 扫描中...';
+    try {
+      await loadHealth();
+      alert('知识健康度已重新扫描');
+    } catch {
+      alert('扫描失败，请稍后重试');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = original;
+    }
   });
 
   loadHealth();

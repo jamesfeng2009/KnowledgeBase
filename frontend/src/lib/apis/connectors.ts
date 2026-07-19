@@ -1,6 +1,10 @@
 /**
  * 企业连接器 API 封装
  * 对接后端 connectors.py 路由
+ *
+ * NOTE: 当前文件整体为 dead code（getConnectors/testConnector/toggleConnector
+ * 三个函数均未被任何页面或组件引用）。前端尚未提供连接器管理页面。
+ * 保留本文件供 P5 连接器管理页面对接使用，不删除。
  */
 import { getData, postData, putData } from '../api';
 

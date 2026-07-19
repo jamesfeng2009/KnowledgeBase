@@ -1,6 +1,10 @@
 /**
  * 对话输入框组件
  * Enter 发送，Shift+Enter 换行；流式输出时禁用输入
+ *
+ * NOTE: 当前 dead code。chat/index.astro 使用内联 HTML 实现对话输入，
+ * 未挂载本组件。本组件为 SKILL 规范要求的对话组件，保留供 P4-2
+ * 重构 chat 页面使用组件化方案时挂载。
  */
 import { useState, type KeyboardEvent } from 'react';
 

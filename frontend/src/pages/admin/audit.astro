@@ -2,8 +2,10 @@
 /**
  * 审核工作流页面
  * 待审核列表 + 审核流程步骤 + 批准/拒绝操作 + 审核历史
+ * 数据来源：GET /api/v1/audit/pending、POST /api/v1/audit/{id}/approve|reject
  */
 import DefaultLayout from '@/layouts/DefaultLayout.astro';
+import StatCard from '@/components/common/StatCard.astro';
 
 const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '审核工作流' }];
 ---
@@ -15,22 +17,10 @@ const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '审核�
 
   <!-- 统计 -->
   <div class="grid grid-cols-4" style="margin-bottom: var(--space-5);">
-    <div class="card">
-      <div class="text-muted" style="font-size: var(--text-sm);">待审核</div>
-      <div style="font-size: var(--text-3xl); font-weight: 600; color: var(--warning);" id="stat-pending">--</div>
-    </div>
-    <div class="card">
-      <div class="text-muted" style="font-size: var(--text-sm);">已通过</div>
-      <div style="font-size: var(--text-3xl); font-weight: 600; color: var(--success);" id="stat-approved">--</div>
-    </div>
-    <div class="card">
-      <div class="text-muted" style="font-size: var(--text-sm);">已拒绝</div>
-      <div style="font-size: var(--text-3xl); font-weight: 600; color: var(--danger);" id="stat-rejected">--</div>
-    </div>
-    <div class="card">
-      <div class="text-muted" style="font-size: var(--text-sm);">本月审核</div>
-      <div style="font-size: var(--text-3xl); font-weight: 600; color: var(--info);" id="stat-total">--</div>
-    </div>
+    <StatCard label="待审核" value="--" color="warning" id="stat-pending" />
+    <StatCard label="已通过" value="--" color="success" id="stat-approved" />
+    <StatCard label="已拒绝" value="--" color="danger" id="stat-rejected" />
+    <StatCard label="总审核数" value="--" color="info" id="stat-total" />
   </div>
 
   <!-- 待审核列表 -->
@@ -44,20 +34,8 @@ const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '审核�
   <!-- 审核历史 -->
   <div class="card">
     <div class="card-header"><h3>审核历史</h3></div>
-    <div style="overflow-x: auto;">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>内容</th>
-            <th>类型</th>
-            <th>提交人</th>
-            <th>审核人</th>
-            <th>结果</th>
-            <th>时间</th>
-          </tr>
-        </thead>
-        <tbody id="history-list"></tbody>
-      </table>
+    <div id="history-container">
+      <div class="loading-state">加载中...</div>
     </div>
   </div>
 </DefaultLayout>
@@ -97,6 +75,9 @@ const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '审核�
     font-size: var(--text-xs);
     color: var(--text-muted);
     margin-top: var(--space-1);
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
   }
   .audit-steps {
     display: flex;
@@ -106,6 +87,7 @@ const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '审核�
     background: var(--surface-muted);
     border-radius: var(--radius);
     margin: var(--space-3) 0;
+    flex-wrap: wrap;
   }
   .audit-step {
     display: flex;
@@ -155,71 +137,122 @@ const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '审核�
     padding: var(--space-6);
     color: var(--text-muted);
   }
+  .empty-state {
+    text-align: center;
+    padding: var(--space-6);
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+  }
+  .error-state {
+    text-align: center;
+    padding: var(--space-6);
+    color: var(--danger);
+    font-size: var(--text-sm);
+  }
 </style>
 
 <script>
-  const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
-  const TOKEN_KEY = 'ekb_access_token';
+  import { getPendingAudits, approveAudit, rejectAudit, type AuditItem } from '@/lib/apis/audit';
+  import { ApiError } from '@/lib/api';
 
-  function mockPending() {
-    return [
-      { id: 'a1', title: 'API 设计规范 V2', type: '文档发布', submitter: '李四', time: '10 分钟前', steps: ['提交', '初审', '复审', '发布'], current: 1 },
-      { id: 'a2', title: '报销管理办法修订', type: '文档更新', submitter: '张三', time: '1 小时前', steps: ['提交', '审核', '发布'], current: 1 },
-      { id: 'a3', title: 'Q3 产品需求文档', type: '文档发布', submitter: '王五', time: '3 小时前', steps: ['提交', '初审', '复审', '发布'], current: 2 },
-    ];
+  /** 规范化审核项（兼容后端不同字段命名） */
+  function normalizeItem(raw: Record<string, unknown>): AuditItem & {
+    title: string;
+    type: string;
+    submitter: string;
+    time: string;
+    steps: string[];
+    current: number;
+    reviewer?: string;
+  } {
+    const typeStr = String(raw.type || raw.action || raw.resource_type || '文档');
+    const stepsRaw = Array.isArray(raw.steps) ? (raw.steps as unknown[]) : ['提交', '审核', '发布'];
+    return {
+      id: String(raw.id || raw.doc_id || raw.resource_id || ''),
+      resource_type: typeStr,
+      resource_id: String(raw.resource_id || raw.id || ''),
+      status: (typeof raw.status === 'string' ? (raw.status as AuditItem['status']) : 'pending'),
+      priority: typeof raw.priority === 'string' ? raw.priority : 'normal',
+      submitted_by: String(raw.submitter || raw.submitter_name || raw.author || raw.submitted_by || '-'),
+      submitted_at: String(raw.time || raw.created_at || raw.submitted_at || '-'),
+      comment: typeof raw.comment === 'string' ? raw.comment : undefined,
+      title: String(raw.title || raw.name || '未命名内容'),
+      type: typeStr,
+      submitter: String(raw.submitter || raw.submitter_name || raw.author || raw.submitted_by || '-'),
+      time: String(raw.time || raw.created_at || raw.submitted_at || '-'),
+      steps: stepsRaw.map((s) => String(s)),
+      current: typeof raw.current === 'number' ? raw.current : (typeof raw.current_step === 'number' ? raw.current_step : 0),
+      reviewer: typeof raw.reviewer === 'string' ? raw.reviewer : (typeof raw.reviewer_name === 'string' ? raw.reviewer_name : undefined),
+    };
   }
 
-  function mockHistory() {
-    return [
-      { title: '员工手册 V3.2', type: '文档更新', submitter: '张三', reviewer: '管理员', result: 'approved', time: '2026-07-05 14:30' },
-      { title: '差旅报销指南', type: '文档发布', submitter: '李四', reviewer: '管理员', result: 'approved', time: '2026-07-04 10:15' },
-      { title: '废弃技术方案', type: '文档删除', submitter: '钱七', reviewer: '管理员', result: 'rejected', time: '2026-07-03 16:45' },
-      { title: '安全管理制度', type: '文档发布', submitter: '赵六', reviewer: '管理员', result: 'approved', time: '2026-07-02 09:20' },
-    ];
+  /** 从接口返回值中提取数组（兼容数组 / { items: [] } / 分页对象） */
+  function toItems(raw: unknown): Record<string, unknown>[] {
+    if (Array.isArray(raw)) return raw as Record<string, unknown>[];
+    if (raw && typeof raw === 'object') {
+      const obj = raw as { items?: unknown[] };
+      if (Array.isArray(obj.items)) return obj.items as Record<string, unknown>[];
+    }
+    return [];
   }
 
-  async function loadPending() {
-    const token = localStorage.getItem(TOKEN_KEY);
-    if (!token) {
-      window.location.href = '/auth/login';
+  let historySupported = true;
+
+  /** 判断是否为 401/未登录错误（已在底层处理跳转，业务层需静默退出） */
+  function isAuthError(err: unknown): boolean {
+    return err instanceof ApiError && err.status === 401;
+  }
+
+  async function loadPending(): Promise<void> {
+    const container = document.getElementById('pending-list')!;
+    container.innerHTML = '<div class="loading-state">加载中...</div>';
+
+    let list: ReturnType<typeof normalizeItem>[] = [];
+    try {
+      const page = await getPendingAudits(1, 20);
+      list = toItems(page).map(normalizeItem);
+    } catch (err) {
+      if (isAuthError(err)) return;
+      const msg = err instanceof Error ? err.message : '网络异常';
+      container.innerHTML = `
+        <div class="error-state">
+          <div>加载待审核列表失败：${escapeHtml(msg)}</div>
+          <button class="btn btn-outline btn-sm" id="retry-pending" style="margin-top: var(--space-3);">重试</button>
+        </div>`;
+      document.getElementById('retry-pending')?.addEventListener('click', loadPending);
       return;
     }
-    let list: any[] = [];
-    try {
-      const res = await fetch(`${API_BASE}/api/v1/admin/audit/pending`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.ok) {
-        const result = await res.json();
-        list = result.data?.items || result.data || [];
-      } else if (res.status === 401) {
-        window.location.href = '/auth/login';
-        return;
-      }
-    } catch {
-      // ignore
-    }
-    if (list.length === 0) list = mockPending();
+
     renderPending(list);
-    updateStats();
-    renderHistory();
+    await loadHistory(list.length);
+    updateStats(list.length);
   }
 
-  function updateStats() {
+  function updateStats(pendingCount: number): void {
     const setText = (id: string, v: number) => {
       const el = document.getElementById(id);
       if (el) el.textContent = String(v);
     };
-    setText('stat-pending', 3);
-    setText('stat-approved', 28);
-    setText('stat-rejected', 4);
-    setText('stat-total', 35);
+    setText('stat-pending', pendingCount);
+
+    // 已通过/已驳回从历史记录取
+    const historyRows = document.querySelectorAll('#history-list tr');
+    let approved = 0;
+    let rejected = 0;
+    historyRows.forEach((row) => {
+      const resultEl = row.querySelector('.badge-success, .badge-danger');
+      if (resultEl?.classList.contains('badge-success')) approved++;
+      else if (resultEl?.classList.contains('badge-danger')) rejected++;
+    });
+    setText('stat-approved', approved);
+    setText('stat-rejected', rejected);
+    setText('stat-total', approved + rejected + pendingCount);
   }
 
-  function renderPending(list: any[]) {
+  function renderPending(list: ReturnType<typeof normalizeItem>[]): void {
     const container = document.getElementById('pending-list')!;
     if (list.length === 0) {
-      container.innerHTML = '<div class="loading-state">暂无待审核内容</div>';
+      container.innerHTML = '<div class="empty-state">暂无待审核内容</div>';
       return;
     }
     const typeIcon: Record<string, string> = { '文档发布': '📄', '文档更新': '✏️', '文档删除': '🗑️' };
@@ -245,9 +278,9 @@ const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '审核�
           </div>
         </div>
         <div style="display: flex; gap: var(--space-2);">
-          <button class="btn btn-primary btn-sm" data-action="approve" data-id="${item.id}">批准</button>
-          <button class="btn btn-danger btn-sm" data-action="reject" data-id="${item.id}">拒绝</button>
-          <button class="btn btn-ghost btn-sm" data-action="view" data-id="${item.id}">查看</button>
+          <button class="btn btn-primary btn-sm" data-action="approve" data-id="${escapeHtml(item.id)}">批准</button>
+          <button class="btn btn-danger btn-sm" data-action="reject" data-id="${escapeHtml(item.id)}">拒绝</button>
+          <button class="btn btn-ghost btn-sm" data-action="view" data-id="${escapeHtml(item.id)}">查看</button>
         </div>
       </div>`
       )
@@ -258,57 +291,152 @@ const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '审核�
         const action = (btn as HTMLElement).dataset.action!;
         const id = (btn as HTMLElement).dataset.id!;
         if (action === 'view') {
-          window.location.href = `/knowledge/detail?id=${id}`;
+          window.location.href = `/knowledge/detail?id=${encodeURIComponent(id)}`;
         } else {
-          const reason = action === 'reject' ? prompt('请输入拒绝原因：') || '' : '';
+          const reason = action === 'reject' ? (prompt('请输入拒绝原因：') || '') : '';
           await doAudit(id, action, reason);
         }
       });
     });
   }
 
-  async function doAudit(id: string, action: string, reason: string) {
-    const token = localStorage.getItem(TOKEN_KEY);
+  async function doAudit(id: string, action: string, reason: string): Promise<void> {
     try {
-      const res = await fetch(`${API_BASE}/api/v1/admin/audit/${id}/${action}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ reason }),
-      });
-      if (res.ok) {
-        alert(action === 'approve' ? '已批准' : '已拒绝');
-        loadPending();
+      if (action === 'approve') {
+        await approveAudit(id, reason || undefined);
       } else {
-        alert('操作失败');
+        await rejectAudit(id, reason || undefined);
       }
-    } catch {
-      alert('网络异常');
+      alert(action === 'approve' ? '已批准' : '已拒绝');
+      await loadPending();
+    } catch (err) {
+      if (isAuthError(err)) return;
+      const msg = err instanceof Error ? err.message : '网络异常';
+      alert(msg);
     }
   }
 
-  function renderHistory() {
-    const list = mockHistory();
+  async function loadHistory(pendingCount: number): Promise<void> {
+    const container = document.getElementById('history-container')!;
+    if (!historySupported) {
+      container.innerHTML = '<div class="empty-state">审核历史功能需要后端支持</div>';
+      updateStats(pendingCount);
+      return;
+    }
+
+    let approvedList: ReturnType<typeof normalizeItem>[] = [];
+    let rejectedList: ReturnType<typeof normalizeItem>[] = [];
+
+    try {
+      // 并发拉取已通过 / 已拒绝列表，单个失败时静默置空
+      const [resA, resR] = await Promise.allSettled([
+        getPendingAudits(1, 20, 'approved'),
+        getPendingAudits(1, 20, 'rejected'),
+      ]);
+
+      // 两个请求都失败：认为后端不支持状态过滤
+      if (resA.status === 'rejected' && resR.status === 'rejected') {
+        historySupported = false;
+        container.innerHTML = '<div class="empty-state">审核历史功能需要后端支持</div>';
+        updateStats(pendingCount);
+        return;
+      }
+
+      if (resA.status === 'fulfilled') {
+        approvedList = toItems(resA.value).map(normalizeItem);
+      }
+      if (resR.status === 'fulfilled') {
+        rejectedList = toItems(resR.value).map(normalizeItem);
+      }
+    } catch (err) {
+      if (isAuthError(err)) return;
+      const msg = err instanceof Error ? err.message : '网络异常';
+      container.innerHTML = `
+        <div class="error-state">
+          <div>加载审核历史失败：${escapeHtml(msg)}</div>
+          <button class="btn btn-outline btn-sm" id="retry-history" style="margin-top: var(--space-3);">重试</button>
+        </div>`;
+      document.getElementById('retry-history')?.addEventListener('click', () => loadHistory(pendingCount));
+      return;
+    }
+
+    const history: Array<ReturnType<typeof normalizeItem> & { result: 'approved' | 'rejected' }> = [
+      ...approvedList.map((h) => ({ ...h, result: 'approved' as const })),
+      ...rejectedList.map((h) => ({ ...h, result: 'rejected' as const })),
+    ];
+
+    renderHistory(history);
+  }
+
+  function renderHistory(
+    list: Array<ReturnType<typeof normalizeItem> & { result: 'approved' | 'rejected' }>
+  ): void {
+    const container = document.getElementById('history-container')!;
     const resultMap: Record<string, { label: string; badge: string }> = {
       approved: { label: '已通过', badge: 'badge-success' },
       rejected: { label: '已拒绝', badge: 'badge-danger' },
     };
-    document.getElementById('history-list')!.innerHTML = list
-      .map(
-        (h) => `
-      <tr>
-        <td>${escapeHtml(h.title)}</td>
-        <td><span class="badge badge-primary">${escapeHtml(h.type)}</span></td>
-        <td class="text-muted">${escapeHtml(h.submitter)}</td>
-        <td class="text-muted">${escapeHtml(h.reviewer)}</td>
-        <td><span class="badge ${resultMap[h.result].badge}">${resultMap[h.result].label}</span></td>
-        <td class="text-muted">${escapeHtml(h.time)}</td>
-      </tr>`
-      )
-      .join('');
+
+    if (list.length === 0) {
+      container.innerHTML = `
+        <div style="overflow-x: auto;">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>内容</th>
+                <th>类型</th>
+                <th>提交人</th>
+                <th>审核人</th>
+                <th>结果</th>
+                <th>时间</th>
+              </tr>
+            </thead>
+            <tbody id="history-list">
+              <tr><td colspan="6" class="empty-state">暂无审核历史</td></tr>
+            </tbody>
+          </table>
+        </div>`;
+      return;
+    }
+
+    container.innerHTML = `
+      <div style="overflow-x: auto;">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>内容</th>
+              <th>类型</th>
+              <th>提交人</th>
+              <th>审核人</th>
+              <th>结果</th>
+              <th>时间</th>
+            </tr>
+          </thead>
+          <tbody id="history-list">
+            ${list
+              .map(
+                (h) => `
+              <tr>
+                <td>${escapeHtml(h.title)}</td>
+                <td><span class="badge badge-primary">${escapeHtml(h.type)}</span></td>
+                <td class="text-muted">${escapeHtml(h.submitter)}</td>
+                <td class="text-muted">${escapeHtml(h.reviewer || '-')}</td>
+                <td><span class="badge ${resultMap[h.result].badge}">${resultMap[h.result].label}</span></td>
+                <td class="text-muted">${escapeHtml(h.time)}</td>
+              </tr>`
+              )
+              .join('')}
+          </tbody>
+        </table>
+      </div>`;
   }
 
-  function escapeHtml(s: string): string {
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  function escapeHtml(s: unknown): string {
+    return String(s ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
   }
 
   loadPending();

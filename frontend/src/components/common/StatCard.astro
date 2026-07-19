@@ -1,0 +1,119 @@
+---
+/**
+ * StatCard.astro - 统计卡片组件
+ *
+ * 用于展示单个关键指标（如知识库数量、文档总数、本周新增等）。
+ * 在仪表盘、知识首页、管理后台等 15+ 页面中重复出现。
+ *
+ * 复用 global.css 中的 .card 基础样式，通过 CSS 变量驱动语义色，
+ * 不硬编码颜色值。支持可选的 id 属性以便客户端 JS 动态更新数值，
+ * 支持可选图标与趋势文本。
+ *
+ * @example
+ * <StatCard label="知识库" value="--" color="primary" id="stat-kb" />
+ * <StatCard label="文档总数" value="1280" color="success" id="stat-doc" trend="+12%" />
+ * <StatCard label="本周新增" value="36" color="warning" icon="📈" />
+ */
+interface Props {
+  /** 标签文本（如"知识库"） */
+  label: string;
+  /** 显示值，默认 "--" */
+  value?: string;
+  /** 数值颜色语义，默认 primary */
+  color?: 'primary' | 'success' | 'warning' | 'danger' | 'info';
+  /** 可选 id 属性，用于 JS 动态更新 */
+  id?: string;
+  /** 可选 emoji 图标 */
+  icon?: string;
+  /** 可选趋势文本（如 "+12%"） */
+  trend?: string;
+}
+
+const {
+  label,
+  value = '--',
+  color = 'primary',
+  id,
+  icon,
+  trend,
+} = Astro.props;
+---
+
+<div class="card stat-card" data-color={color}>
+  <div class="stat-card-top">
+    {icon && <span class="stat-card-icon" aria-hidden="true">{icon}</span>}
+    <div class="stat-card-label text-muted">{label}</div>
+  </div>
+  <div class="stat-card-value" id={id} data-stat-value>{value}</div>
+  {trend && <div class="stat-card-trend" data-trend-color={color}>{trend}</div>}
+</div>
+
+<style>
+  .stat-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .stat-card-top {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .stat-card-label {
+    font-size: var(--text-sm);
+  }
+
+  .stat-card-icon {
+    font-size: var(--text-lg);
+    line-height: 1;
+  }
+
+  .stat-card-value {
+    font-size: var(--text-3xl);
+    font-weight: 600;
+    line-height: var(--lh-tight);
+  }
+
+  /*
+   * 数值颜色：通过 data-color 属性映射到对应语义 CSS 变量。
+   * 避免硬编码颜色，统一使用设计系统变量。
+   */
+  .stat-card[data-color='primary'] .stat-card-value {
+    color: var(--primary);
+  }
+  .stat-card[data-color='success'] .stat-card-value {
+    color: var(--success);
+  }
+  .stat-card[data-color='warning'] .stat-card-value {
+    color: var(--warning);
+  }
+  .stat-card[data-color='danger'] .stat-card-value {
+    color: var(--danger);
+  }
+  .stat-card[data-color='info'] .stat-card-value {
+    color: var(--info);
+  }
+
+  .stat-card-trend {
+    font-size: var(--text-xs);
+    font-weight: 500;
+  }
+
+  .stat-card-trend[data-trend-color='primary'] {
+    color: var(--primary);
+  }
+  .stat-card-trend[data-trend-color='success'] {
+    color: var(--success);
+  }
+  .stat-card-trend[data-trend-color='warning'] {
+    color: var(--warning);
+  }
+  .stat-card-trend[data-trend-color='danger'] {
+    color: var(--danger);
+  }
+  .stat-card-trend[data-trend-color='info'] {
+    color: var(--info);
+  }
+</style>

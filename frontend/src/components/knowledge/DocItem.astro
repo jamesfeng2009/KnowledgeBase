@@ -1,0 +1,128 @@
+---
+/**
+ * DocItem.astro - 文档列表项组件
+ *
+ * 展示单个文档的图标、标题、摘要、标签与时间，点击跳转到文档详情。
+ * 样式沿用原 knowledge/index.astro 的 .doc-item 结构（参见原文件 109 行后），
+ * 通过 CSS 变量驱动语义色，不硬编码颜色。
+ *
+ * 说明：使用 `<style is:global>` 而非 scoped，与 common/Button.astro 保持一致——
+ * 因为 knowledge/index.astro 的客户端 JS 会动态生成同 class 的 .doc-item 元素，
+ * is:global 可确保服务端渲染与 JS 动态生成的列表项均能命中样式。
+ *
+ * @example
+ * <DocItem doc={doc} />
+ * <DocItem doc={doc} showKb />
+ */
+interface Props {
+  /** 文档数据 */
+  doc: {
+    id: string;
+    title: string;
+    kb_name?: string;
+    updated_at: string;
+    summary?: string;
+    tags?: string[];
+  };
+  /** 是否显示所属知识库 */
+  showKb?: boolean;
+  /** 可选跳转链接，默认 `/knowledge/{doc.id}` */
+  href?: string;
+}
+
+const { doc, showKb = false, href } = Astro.props;
+
+const linkHref = href ?? `/knowledge/${doc.id}`;
+
+// 相对时间格式化
+function formatTime(ts: string): string {
+  if (!ts) return '';
+  const t = new Date(ts).getTime();
+  if (isNaN(t)) return String(ts);
+  const diff = Date.now() - t;
+  if (diff < 0) return '刚刚';
+  if (diff < 3600000) return Math.floor(diff / 60000) + ' 分钟前';
+  if (diff < 86400000) return Math.floor(diff / 3600000) + ' 小时前';
+  if (diff < 86400000 * 30) return Math.floor(diff / 86400000) + ' 天前';
+  const d = new Date(t);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+const tags = Array.isArray(doc.tags) ? doc.tags.slice(0, 4) : [];
+---
+
+<a href={linkHref} class="doc-item">
+  <span class="doc-item-icon" aria-hidden="true">📄</span>
+  <div class="doc-item-body">
+    <div class="doc-item-title">{doc.title}</div>
+    {doc.summary && <div class="doc-item-summary">{doc.summary}</div>}
+    <div class="doc-item-meta">
+      {showKb && doc.kb_name && <span class="doc-item-kb">{doc.kb_name}</span>}
+      <span>{formatTime(doc.updated_at)}</span>
+    </div>
+    {tags.length > 0 && (
+      <div class="doc-item-tags">
+        {tags.map((t) => <span class="tag">{t}</span>)}
+      </div>
+    )}
+  </div>
+  <span class="doc-item-arrow text-muted" aria-hidden="true">›</span>
+</a>
+
+<style is:global>
+  .doc-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) 0;
+    border-bottom: 1px solid var(--border-light);
+    text-decoration: none;
+    color: inherit;
+  }
+  .doc-item:last-child {
+    border-bottom: none;
+  }
+  .doc-item-icon {
+    font-size: 20px;
+    flex-shrink: 0;
+  }
+  .doc-item-body {
+    flex: 1;
+    min-width: 0;
+  }
+  .doc-item-title {
+    font-size: var(--text-base);
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .doc-item-summary {
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    margin-top: var(--space-1);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .doc-item-meta {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    margin-top: var(--space-1);
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  .doc-item-kb {
+    color: var(--primary);
+  }
+  .doc-item-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+    margin-top: var(--space-2);
+  }
+  .doc-item-arrow {
+    flex-shrink: 0;
+  }
+</style>

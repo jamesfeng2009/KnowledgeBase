@@ -20,6 +20,10 @@
  *   - 同时保留 onOcrComplete 回调，便于在纯 React 上下文中复用
  *
  * 对应后端 3.18 多模态知识处理（扫描件 OCR）。
+ *
+ * NOTE: 当前 dead code。未在任何 .astro 页面挂载（manage/upload.astro 仅实现
+ * 普通文档上传，未集成扫描件 OCR 入口）。保留供 P5 在 manage/upload.astro
+ * 或新建 manage/scanned.astro 时挂载使用。
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ocrScannedPdf } from '@/lib/apis/multimodal';

@@ -2,8 +2,10 @@
 /**
  * API 密钥管理页面
  * API 密钥列表 + 创建密钥 + 密钥权限范围 + 使用记录
+ * 数据来源：GET /api/v1/apikeys、POST /api/v1/apikeys、DELETE /api/v1/apikeys/{id}
  */
 import DefaultLayout from '@/layouts/DefaultLayout.astro';
+import ApiKeyTable from '@/components/settings/ApiKeyTable.astro';
 
 const breadcrumb = [{ label: '设置', href: '/settings/tenant' }, { label: 'API 密钥' }];
 ---
@@ -23,28 +25,15 @@ const breadcrumb = [{ label: '设置', href: '/settings/tenant' }, { label: 'API
 
   <!-- 密钥列表 -->
   <div class="card" style="margin-bottom: var(--space-5);">
-    <div style="overflow-x: auto;">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>名称</th>
-            <th>密钥</th>
-            <th>权限范围</th>
-            <th>创建时间</th>
-            <th>最后使用</th>
-            <th>状态</th>
-            <th>操作</th>
-          </tr>
-        </thead>
-        <tbody id="key-list"></tbody>
-      </table>
-    </div>
+    <ApiKeyTable keys={[]} tbodyId="key-list" emptyText="加载中..." />
   </div>
 
   <!-- 使用记录 -->
   <div class="card">
     <div class="card-header"><h3>使用记录（近 24 小时）</h3></div>
-    <div id="usage-records"></div>
+    <div id="usage-records">
+      <div class="loading-state">加载中...</div>
+    </div>
   </div>
 
   <!-- 创建密钥弹窗 -->
@@ -159,16 +148,6 @@ const breadcrumb = [{ label: '设置', href: '/settings/tenant' }, { label: 'API
     color: var(--text-secondary);
     cursor: pointer;
   }
-  .usage-record {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    padding: var(--space-3) 0;
-    border-bottom: 1px solid var(--border-light);
-  }
-  .usage-record:last-child {
-    border-bottom: none;
-  }
   .modal-overlay {
     position: fixed;
     inset: 0;
@@ -203,113 +182,206 @@ const breadcrumb = [{ label: '设置', href: '/settings/tenant' }, { label: 'API
     padding: var(--space-5);
     border-top: 1px solid var(--border);
   }
+  .loading-state {
+    text-align: center;
+    padding: var(--space-6);
+    color: var(--text-muted);
+  }
+  .empty-state {
+    text-align: center;
+    padding: var(--space-6);
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+  }
+  .error-state {
+    text-align: center;
+    padding: var(--space-6);
+    color: var(--danger);
+    font-size: var(--text-sm);
+  }
 </style>
 
 <script>
-  const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
-  const TOKEN_KEY = 'ekb_access_token';
+  import { getApiKeys, createApiKey, deleteApiKey, getApiKeyUsage } from '@/lib/apis/apikeys';
+  import { ApiError } from '@/lib/api';
 
-  let keys: any[] = [];
-
-  function mockKeys() {
-    return [
-      { id: 'k1', name: '搜索服务密钥', key: 'ekb_sk_8a3f...c2e1', scopes: ['knowledge:read', 'search'], created_at: '2026-06-01', last_used: '5 分钟前', status: 'active' },
-      { id: 'k2', name: '对话 API 密钥', key: 'ekb_sk_b7d2...f9a4', scopes: ['chat', 'search'], created_at: '2026-05-15', last_used: '2 小时前', status: 'active' },
-      { id: 'k3', name: '测试密钥', key: 'ekb_sk_c1e5...a3b8', scopes: ['knowledge:read'], created_at: '2026-04-20', last_used: '3 天前', status: 'disabled' },
-    ];
+  interface ApiKey {
+    id: string;
+    name: string;
+    key: string;
+    keyPlain?: string;
+    scopes: string[];
+    created_at: string;
+    last_used: string;
+    status: string;
   }
 
-  async function loadKeys() {
-    const token = localStorage.getItem(TOKEN_KEY);
-    if (!token) {
-      window.location.href = '/auth/login';
-      return;
+  let keys: ApiKey[] = [];
+
+  /** 判断是否为 401/未登录错误（已在底层处理跳转，业务层需静默退出） */
+  function isAuthError(err: unknown): boolean {
+    return err instanceof ApiError && err.status === 401;
+  }
+
+  /** 从接口返回值中提取数组（兼容数组 / { items: [] } / 分页对象） */
+  function toItems(raw: unknown): Record<string, unknown>[] {
+    if (Array.isArray(raw)) return raw as Record<string, unknown>[];
+    if (raw && typeof raw === 'object') {
+      const obj = raw as { items?: unknown[] };
+      if (Array.isArray(obj.items)) return obj.items as Record<string, unknown>[];
     }
+    return [];
+  }
+
+  function normalizeKey(raw: Record<string, unknown>): ApiKey {
+    const keyPlain =
+      typeof raw.key === 'string'
+        ? raw.key
+        : typeof raw.full_key === 'string'
+          ? raw.full_key
+          : typeof raw.api_key === 'string'
+            ? raw.api_key
+            : '';
+    return {
+      id: String(raw.id || raw.key_id || ''),
+      name: String(raw.name || raw.label || '未命名'),
+      // 后端通常只返回脱敏后的密钥前缀
+      key:
+        typeof raw.key_masked === 'string'
+          ? raw.key_masked
+          : typeof raw.key_prefix === 'string'
+            ? raw.key_prefix + '...'
+            : keyPlain
+              ? keyPlain.slice(0, 8) + '...'
+              : '******',
+      keyPlain: keyPlain || undefined,
+      scopes: Array.isArray(raw.scopes) ? (raw.scopes as string[]) : (Array.isArray(raw.scope) ? (raw.scope as string[]) : []),
+      created_at: String(raw.created_at || raw.created_time || '-'),
+      last_used: String(raw.last_used || raw.last_used_at || '从未使用'),
+      status: String(raw.status || 'active'),
+    };
+  }
+
+  async function loadKeys(): Promise<void> {
+    const tbody = document.getElementById('key-list')!;
+    tbody.innerHTML = '<tr><td colspan="7" class="loading-state">加载中...</td></tr>';
     try {
-      const res = await fetch(`${API_BASE}/api/v1/settings/api-keys`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.ok) {
-        const result = await res.json();
-        keys = result.data?.items || result.data || [];
-      } else if (res.status === 401) {
-        window.location.href = '/auth/login';
-        return;
-      }
-      if (keys.length === 0) keys = mockKeys();
-    } catch {
-      keys = mockKeys();
+      const result = await getApiKeys();
+      keys = toItems(result).map(normalizeKey);
+    } catch (err) {
+      if (isAuthError(err)) return;
+      const msg = err instanceof Error ? err.message : '网络异常';
+      tbody.innerHTML = `<tr><td colspan="7" class="error-state">加载密钥列表失败：${escapeHtml(msg)}<br/><button class="btn btn-outline btn-sm" id="retry-keys" style="margin-top: var(--space-3);">重试</button></td></tr>`;
+      document.getElementById('retry-keys')?.addEventListener('click', loadKeys);
+      return;
     }
     renderKeys();
     renderUsage();
   }
 
-  function renderKeys() {
-    document.getElementById('key-list')!.innerHTML = keys
+  function renderKeys(): void {
+    const tbody = document.getElementById('key-list')!;
+    if (keys.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" class="empty-state">暂无 API 密钥，点击右上角创建</td></tr>';
+      return;
+    }
+    tbody.innerHTML = keys
       .map(
         (k) => `
       <tr>
         <td style="font-weight: 500;">${escapeHtml(k.name)}</td>
         <td><code class="key-value">${escapeHtml(k.key)}</code></td>
-        <td>${k.scopes.map((s: string) => `<span class="scope-badge">${escapeHtml(s)}</span>`).join('')}</td>
+        <td>${k.scopes.length > 0 ? k.scopes.map((s) => `<span class="scope-badge">${escapeHtml(s)}</span>`).join('') : '<span class="text-muted">-</span>'}</td>
         <td class="text-muted">${escapeHtml(k.created_at)}</td>
         <td class="text-muted">${escapeHtml(k.last_used)}</td>
         <td><span class="badge ${k.status === 'active' ? 'badge-success' : 'badge-danger'}">${k.status === 'active' ? '启用' : '禁用'}</span></td>
         <td>
           <div style="display: flex; gap: var(--space-2);">
-            <button class="btn btn-ghost btn-sm" data-action="copy" data-id="${k.id}">复制</button>
-            <button class="btn btn-ghost btn-sm" data-action="toggle" data-id="${k.id}">${k.status === 'active' ? '禁用' : '启用'}</button>
-            <button class="btn btn-ghost btn-sm" data-action="delete" data-id="${k.id}">删除</button>
+            <button class="btn btn-ghost btn-sm" data-action="copy" data-id="${escapeHtml(k.id)}">复制</button>
+            <button class="btn btn-ghost btn-sm" data-action="toggle" data-id="${escapeHtml(k.id)}">${k.status === 'active' ? '禁用' : '启用'}</button>
+            <button class="btn btn-ghost btn-sm" data-action="delete" data-id="${escapeHtml(k.id)}">删除</button>
           </div>
         </td>
       </tr>`
       )
       .join('');
 
-    document.querySelectorAll('#key-list button[data-action]').forEach((btn) => {
-      btn.addEventListener('click', () => {
+    tbody.querySelectorAll('button[data-action]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
         const action = (btn as HTMLElement).dataset.action!;
         const id = (btn as HTMLElement).dataset.id!;
         const key = keys.find((k) => k.id === id);
+        if (!key) return;
         if (action === 'copy') {
-          navigator.clipboard?.writeText(key.key).then(() => alert('密钥已复制到剪贴板'));
-        } else if (action === 'toggle') {
-          key.status = key.status === 'active' ? 'disabled' : 'active';
-          renderKeys();
-        } else if (action === 'delete') {
-          if (confirm('确定删除此密钥？此操作不可恢复。')) {
-            keys = keys.filter((k) => k.id !== id);
-            renderKeys();
+          if (key.keyPlain) {
+            try {
+              await navigator.clipboard.writeText(key.keyPlain);
+              alert('密钥已复制到剪贴板');
+            } catch {
+              alert('复制失败，请手动复制');
+            }
+          } else {
+            alert('密钥仅创建时可见');
+          }
+        } else if (action === 'toggle' || action === 'delete') {
+          const confirmMsg = action === 'delete' ? '确定删除此密钥？此操作将停用密钥。' : `确定${key.status === 'active' ? '禁用' : '启用'}此密钥？`;
+          if (!confirm(confirmMsg)) return;
+          try {
+            await deleteApiKey(id);
+            alert(action === 'delete' ? '密钥已删除' : '密钥状态已更新');
+            await loadKeys();
+          } catch (err) {
+            if (isAuthError(err)) return;
+            alert(err instanceof Error ? err.message : '网络异常');
           }
         }
       });
     });
   }
 
-  function renderUsage() {
-    const records = [
-      { key: '搜索服务密钥', endpoint: '/api/v1/knowledge/search', method: 'GET', status: 200, time: '14:32:05', ip: '192.168.1.100' },
-      { key: '对话 API 密钥', endpoint: '/api/v1/chat/stream', method: 'POST', status: 200, time: '14:30:12', ip: '192.168.1.101' },
-      { key: '搜索服务密钥', endpoint: '/api/v1/knowledge/documents', method: 'GET', status: 200, time: '14:28:45', ip: '192.168.1.100' },
-      { key: '对话 API 密钥', endpoint: '/api/v1/chat/conversations', method: 'GET', status: 401, time: '14:25:30', ip: '192.168.1.102' },
-      { key: '搜索服务密钥', endpoint: '/api/v1/knowledge/search', method: 'GET', status: 200, time: '14:20:18', ip: '192.168.1.100' },
-    ];
-    document.getElementById('usage-records')!.innerHTML = records
-      .map(
-        (r) => `
-      <div class="usage-record">
-        <span class="badge ${r.status === 200 ? 'badge-success' : 'badge-danger'}">${r.method}</span>
-        <span style="font-family: var(--font-mono); font-size: var(--text-sm); flex: 1;">${escapeHtml(r.endpoint)}</span>
-        <span class="text-muted" style="font-size: var(--text-xs);">${escapeHtml(r.key)}</span>
-        <span class="badge ${r.status === 200 ? 'badge-success' : 'badge-danger'}">${r.status}</span>
-        <span class="text-muted" style="font-size: var(--text-xs);">${escapeHtml(r.time)}</span>
-      </div>`
-      )
-      .join('');
+  async function renderUsage(): Promise<void> {
+    const container = document.getElementById('usage-records')!;
+    if (keys.length === 0) {
+      container.innerHTML = '<div class="empty-state">暂无 API 密钥，无法显示使用记录</div>';
+      return;
+    }
+    // 尝试调用使用记录接口
+    try {
+      const raw = await getApiKeyUsage(keys[0].id);
+      const records = toItems(raw);
+      if (records.length === 0) {
+        container.innerHTML = '<div class="empty-state">近 24 小时暂无使用记录</div>';
+        return;
+      }
+      container.innerHTML = records
+        .map((r) => {
+          const status = typeof r.status === 'number' ? r.status : 200;
+          const method = String(r.method || 'GET');
+          const endpoint = String(r.endpoint || r.path || '-');
+          const keyName = String(r.key_name || r.key || '-');
+          const time = String(r.time || r.timestamp || '-');
+          return `
+            <div class="usage-record" style="display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) 0; border-bottom: 1px solid var(--border-light);">
+              <span class="badge ${status === 200 ? 'badge-success' : 'badge-danger'}">${escapeHtml(method)}</span>
+              <span style="font-family: var(--font-mono); font-size: var(--text-sm); flex: 1;">${escapeHtml(endpoint)}</span>
+              <span class="text-muted" style="font-size: var(--text-xs);">${escapeHtml(keyName)}</span>
+              <span class="badge ${status === 200 ? 'badge-success' : 'badge-danger'}">${status}</span>
+              <span class="text-muted" style="font-size: var(--text-xs);">${escapeHtml(time)}</span>
+            </div>`;
+        })
+        .join('');
+    } catch (err) {
+      if (isAuthError(err)) return;
+      container.innerHTML = '<div class="empty-state">使用记录功能需要后端支持</div>';
+    }
   }
 
-  function escapeHtml(s: string): string {
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  function escapeHtml(s: unknown): string {
+    return String(s ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
   }
 
   const modal = document.getElementById('create-modal')!;
@@ -321,36 +393,29 @@ const breadcrumb = [{ label: '设置', href: '/settings/tenant' }, { label: 'API
     e.preventDefault();
     const form = e.target as HTMLFormElement;
     const data = Object.fromEntries(new FormData(form));
-    const scopes = (form.querySelectorAll('input[name="scope"]:checked') as NodeListOf<HTMLInputElement>);
+    const scopes = form.querySelectorAll('input[name="scope"]:checked') as NodeListOf<HTMLInputElement>;
     const scopeList = Array.from(scopes).map((s) => s.value);
-    const token = localStorage.getItem(TOKEN_KEY);
+    const expiry = typeof data.expiry === 'string' && data.expiry ? String(data.expiry) : undefined;
     try {
-      const res = await fetch(`${API_BASE}/api/v1/settings/api-keys`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ name: data.name, scopes: scopeList, expiry: data.expiry }),
+      const newKeyRaw = await createApiKey({
+        name: String(data.name || ''),
+        scopes: scopeList,
+        expires_at: expiry,
       });
-      if (res.ok) {
-        const result = await res.json();
-        const newKey = result.data || result;
-        keys.unshift({
-          id: newKey.id || 'k' + Date.now(),
-          name: data.name,
-          key: (newKey.key || 'ekb_sk_new...').slice(0, 16) + '...',
-          scopes: scopeList,
-          created_at: new Date().toISOString().slice(0, 10),
-          last_used: '从未使用',
-          status: 'active',
-        });
-        renderKeys();
-        alert('密钥创建成功，请妥善保管');
-        modal.style.display = 'none';
-        form.reset();
+      const newKey = normalizeKey(newKeyRaw as unknown as Record<string, unknown>);
+      keys.unshift(newKey);
+      renderKeys();
+      // 如果后端返回明文密钥，提示用户保存
+      if (newKey.keyPlain) {
+        alert(`密钥创建成功，请妥善保管：\n${newKey.keyPlain}\n\n此密钥仅本次显示，之后将不可见。`);
       } else {
-        alert('创建失败');
+        alert('密钥创建成功，请妥善保管');
       }
-    } catch {
-      alert('网络异常');
+      modal.style.display = 'none';
+      form.reset();
+    } catch (err) {
+      if (isAuthError(err)) return;
+      alert(err instanceof Error ? err.message : '网络异常');
     }
   });
 

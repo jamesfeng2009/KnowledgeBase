@@ -1,0 +1,128 @@
+---
+/**
+ * AuditStep.astro - 审核流程步骤指示器组件
+ *
+ * 横向展示审核流程的各步骤，每个步骤由圆点 + 标签 + 连接线组成。
+ * 状态颜色全部使用 CSS 变量，禁止硬编码。
+ *
+ * 状态色映射：
+ * - pending  灰色（border-dark）
+ * - active   主色（primary），带光晕
+ * - done     成功色（success）
+ * - rejected 危险色（danger）
+ *
+ * @example
+ * <AuditStep steps={[{ label: '提交', status: 'done' }, { label: '审核', status: 'active' }, { label: '发布', status: 'pending' }]} />
+ * <AuditStep steps={[{ label: '提交' }, { label: '审核' }, { label: '发布' }]} current={1} />
+ */
+interface Step {
+  label: string;
+  status?: 'pending' | 'active' | 'done' | 'rejected';
+}
+
+interface Props {
+  steps: Step[];
+  /** 当前步骤索引（若 step 未显式声明 status，则据此推断） */
+  current?: number;
+}
+
+const { steps, current } = Astro.props;
+
+/** 解析每个步骤的最终状态 */
+function resolveStatus(step: Step, index: number): NonNullable<Step['status']> {
+  if (step.status) return step.status;
+  if (typeof current === 'number') {
+    if (index < current) return 'done';
+    if (index === current) return 'active';
+  }
+  return 'pending';
+}
+
+const resolvedSteps = steps.map((step, index) => ({
+  label: step.label,
+  status: resolveStatus(step, index),
+}));
+---
+
+<div class="audit-steps" role="list">
+  {
+    resolvedSteps.map((step, index) => (
+      <div class={`audit-step audit-step-${step.status}`} role="listitem">
+        <span class="audit-step-dot" />
+        <span class="audit-step-label">{step.label}</span>
+        {index < resolvedSteps.length - 1 && <span class="audit-step-line" />}
+      </div>
+    ))
+  }
+</div>
+
+<style>
+  .audit-steps {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+    background: var(--surface-muted);
+    border-radius: var(--radius);
+    flex-wrap: wrap;
+  }
+
+  .audit-step {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+  }
+
+  .audit-step-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--border-dark);
+    flex-shrink: 0;
+    transition: background var(--transition), box-shadow var(--transition);
+  }
+
+  .audit-step-label {
+    white-space: nowrap;
+  }
+
+  /* pending：灰色（默认） */
+  .audit-step-pending {
+    color: var(--text-muted);
+  }
+
+  /* active：主色 + 光晕 */
+  .audit-step-active {
+    color: var(--primary);
+    font-weight: 500;
+  }
+  .audit-step-active .audit-step-dot {
+    background: var(--primary);
+    box-shadow: 0 0 0 3px var(--primary-bg);
+  }
+
+  /* done：成功色 */
+  .audit-step-done {
+    color: var(--success);
+  }
+  .audit-step-done .audit-step-dot {
+    background: var(--success);
+  }
+
+  /* rejected：危险色 */
+  .audit-step-rejected {
+    color: var(--danger);
+  }
+  .audit-step-rejected .audit-step-dot {
+    background: var(--danger);
+  }
+
+  .audit-step-line {
+    width: 24px;
+    height: 1px;
+    background: var(--border);
+    flex-shrink: 0;
+  }
+</style>

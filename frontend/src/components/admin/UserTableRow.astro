@@ -1,0 +1,100 @@
+---
+/**
+ * UserTableRow.astro - 用户表格行组件
+ *
+ * 渲染用户管理表格的单行（<tr>），表头 thead 由父页面定义。
+ * 复用 global.css 的 .data-table / .badge / .avatar 全局样式，
+ * 组件特有的行内布局通过 scoped <style> 补充。
+ * 颜色全部使用 CSS 变量，禁止硬编码。
+ *
+ * 角色徽章：admin=danger / editor=primary / viewer=info
+ * 状态徽章：active=success / inactive=muted / pending=warning
+ *
+ * @example
+ * <UserTableRow user={user} />
+ */
+import Avatar from '@/components/common/Avatar.astro';
+
+interface User {
+  id: string;
+  name: string;
+  email: string;
+  dept_name?: string;
+  role: string;
+  status: string;
+  last_login?: string;
+  avatar_url?: string;
+}
+
+interface Props {
+  user: User;
+}
+
+const { user } = Astro.props;
+
+/** 角色徽章映射：admin=danger / editor=primary / viewer=info */
+const roleMap: Record<string, { label: string; variant: string }> = {
+  admin: { label: '管理员', variant: 'badge-danger' },
+  editor: { label: '编辑者', variant: 'badge-primary' },
+  viewer: { label: '查看者', variant: 'badge-info' },
+};
+const roleInfo = roleMap[user.role] || { label: user.role, variant: 'badge-info' };
+
+/** 状态徽章映射：active=success / inactive=muted / pending=warning */
+const statusMap: Record<string, { label: string; variant: string }> = {
+  active: { label: '启用', variant: 'badge-success' },
+  inactive: { label: '禁用', variant: 'badge-muted' },
+  pending: { label: '待激活', variant: 'badge-warning' },
+};
+const statusInfo = statusMap[user.status] || { label: user.status, variant: 'badge-muted' };
+
+const isActive = user.status === 'active';
+---
+
+<tr class="user-row" data-user-id={user.id}>
+  <td>
+    <div class="user-cell">
+      <Avatar src={user.avatar_url} name={user.name} size="sm" userId={user.id} />
+      <span class="user-name">{user.name}</span>
+    </div>
+  </td>
+  <td class="text-muted">{user.email}</td>
+  <td>{user.dept_name || '-'}</td>
+  <td><span class={`badge ${roleInfo.variant}`}>{roleInfo.label}</span></td>
+  <td><span class={`badge ${statusInfo.variant}`}>{statusInfo.label}</span></td>
+  <td class="text-muted">{user.last_login || '从未登录'}</td>
+  <td>
+    <div class="row-actions">
+      <button class="btn btn-ghost btn-sm" data-action="role" data-id={user.id}>角色</button>
+      <button class="btn btn-ghost btn-sm" data-action="toggle" data-id={user.id}>
+        {isActive ? '禁用' : '启用'}
+      </button>
+    </div>
+  </td>
+</tr>
+
+<style is:global>
+  /* 表格行样式需 is:global，因 <tr> 会被注入父页面的 <tbody> 中 */
+  .user-row .user-cell {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-weight: 500;
+  }
+
+  .user-row .row-actions {
+    display: flex;
+    gap: var(--space-2);
+  }
+
+  /* 补充 global.css 中缺失的 badge-muted 与 badge-info 变体 */
+  .badge-muted {
+    background: var(--surface-hover);
+    color: var(--text-muted);
+  }
+
+  .badge-info {
+    background: var(--info-bg);
+    color: var(--info);
+  }
+</style>

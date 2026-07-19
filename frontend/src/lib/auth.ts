@@ -35,15 +35,6 @@ export function getToken(): string | null {
 }
 
 /**
- * 设置 Token
- * @param token - JWT Token 字符串
- */
-export function setToken(token: string): void {
-  if (typeof window === 'undefined') return;
-  localStorage.setItem(TOKEN_KEY, token);
-}
-
-/**
  * 移除 Token（登出时调用）
  */
 export function removeToken(): void {
@@ -83,6 +74,10 @@ export async function getCurrentUser(): Promise<User | null> {
 /**
  * 登出
  * 清除 Token 并跳转登录页
+ *
+ * NOTE: 当前 dead code。DefaultLayout.astro 在顶部栏内联实现了登出逻辑
+ * （直接调用 localStorage.removeItem + location.href），
+ * 未引用本封装。保留供 P5 统一认证流程对接使用。
  */
 export function logout(): void {
   removeToken();
@@ -94,6 +89,9 @@ export function logout(): void {
 /**
  * 路由守卫：检查认证状态，未登录则跳转登录页
  * 在需要认证的页面客户端脚本中调用
+ *
+ * NOTE: 当前 dead code。各页面通过 middleware.ts + 内联 TOKEN_KEY 检查实现
+ * 路由守卫，未引用本封装。保留供 P5 统一路由守卫改造使用。
  *
  * @example
  * ```typescript
@@ -113,7 +111,6 @@ export function requireAuth(): void {
 
 export default {
   getToken,
-  setToken,
   removeToken,
   isAuthenticated,
   getCurrentUser,

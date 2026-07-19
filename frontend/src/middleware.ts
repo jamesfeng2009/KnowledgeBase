@@ -28,7 +28,7 @@ export function isPublicPath(pathname: string): boolean {
   return PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p));
 }
 
-export const onRequest = defineMiddleware((context, next) => {
+export const onRequest = defineMiddleware((_context, next) => {
   // 当前采用客户端 Token 守卫，中间件放行所有请求
   // 如需 SSR 模式下的服务端鉴权，可在此读取 Cookie 中的 Token 并校验
   return next();

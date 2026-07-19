@@ -40,14 +40,24 @@ export interface WhiteboardMinutes {
 
 // ===== API 方法 =====
 
-/** 图片智能解析（VLM 生成描述和标签） */
+/**
+ * 图片智能解析（VLM 生成描述和标签）
+ *
+ * NOTE: 当前 dead code。未在任何页面或组件中被引用，但保留供 P5
+ * 多模态解析能力对接使用（如 manage/upload.astro 可扩展图片预解析）。
+ */
 export function analyzeImage(file: File): Promise<ImageAnalysisResult> {
   const formData = new FormData();
   formData.append('file', file);
   return upload<ImageAnalysisResult>(`${BASE}/image`, formData);
 }
 
-/** 表格结构化（VLM 识别行列结构） */
+/**
+ * 表格结构化（VLM 识别行列结构）
+ *
+ * NOTE: 当前 dead code。未在任何页面或组件中被引用，但保留供 P5
+ * 多模态解析能力对接使用（如 manage/upload.astro 可扩展表格识别）。
+ */
 export function analyzeTable(file: File): Promise<TableStructureResult> {
   const formData = new FormData();
   formData.append('file', file);

@@ -52,18 +52,55 @@ const breadcrumb = [{ label: '知识', href: '/knowledge' }, { label: '问答社
     <!-- 热门标签 -->
     <div class="card">
       <div class="card-header"><h3>热门标签</h3></div>
-      <div style="display: flex; flex-wrap: wrap; gap: var(--space-2);">
-        <span class="tag" data-tag="报销">报销 (32)</span>
-        <span class="tag" data-tag="入职">入职 (28)</span>
-        <span class="tag" data-tag="年假">年假 (24)</span>
-        <span class="tag" data-tag="社保">社保 (18)</span>
-        <span class="tag" data-tag="考核">考核 (15)</span>
-        <span class="tag" data-tag="报销">报销 (32)</span>
-        <span class="tag" data-tag="合同">合同 (12)</span>
+      <div id="hot-tags" style="display: flex; flex-wrap: wrap; gap: var(--space-2);">
+        <div class="loading-state">加载中...</div>
       </div>
     </div>
   </div>
 </DefaultLayout>
+
+<!-- 提问弹窗 -->
+<div class="modal-overlay" id="ask-modal" style="display: none;">
+  <div class="modal" style="max-width: 560px;">
+    <div class="modal-header">
+      <h3>发布问题</h3>
+      <button class="btn btn-ghost btn-sm" id="close-ask-modal">✕</button>
+    </div>
+    <form id="ask-form">
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">问题标题 *</label>
+          <input type="text" class="form-input" name="title" required placeholder="一句话描述你的问题" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">问题内容 *</label>
+          <textarea class="form-textarea" name="content" required placeholder="详细描述你的问题..." style="min-height: 150px;"></textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label">标签（逗号分隔）</label>
+          <input type="text" class="form-input" name="tags" placeholder="如：报销, 流程" />
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-ghost" id="cancel-ask">取消</button>
+        <button type="submit" class="btn btn-primary">发布</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- 问题详情弹窗 -->
+<div class="modal-overlay" id="detail-modal" style="display: none;">
+  <div class="modal" style="max-width: 680px;">
+    <div class="modal-header">
+      <h3>问题详情</h3>
+      <button class="btn btn-ghost btn-sm" id="close-detail-modal">✕</button>
+    </div>
+    <div class="modal-body" id="detail-body">
+      <div class="loading-state">加载中...</div>
+    </div>
+  </div>
+</div>
 
 <style>
   .tabs {
@@ -77,6 +114,11 @@ const breadcrumb = [{ label: '知识', href: '/knowledge' }, { label: '问答社
     color: var(--text-muted);
     border-bottom: 2px solid transparent;
     transition: all var(--transition-fast);
+    background: transparent;
+    border-left: none;
+    border-right: none;
+    border-top: none;
+    cursor: pointer;
   }
   .tab.active {
     color: var(--primary);
@@ -120,75 +162,160 @@ const breadcrumb = [{ label: '知识', href: '/knowledge' }, { label: '问答社
     padding: var(--space-8);
     color: var(--text-muted);
   }
+  .empty-state {
+    text-align: center;
+    padding: var(--space-8);
+    color: var(--text-muted);
+  }
+  .error-state {
+    text-align: center;
+    padding: var(--space-8);
+    color: var(--danger);
+  }
   .card .tag {
     cursor: pointer;
+  }
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+  .modal {
+    background: var(--surface);
+    border-radius: var(--radius-lg);
+    width: 100%;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: var(--shadow-xl);
+  }
+  .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-5);
+    border-bottom: 1px solid var(--border);
+  }
+  .modal-body {
+    padding: var(--space-5);
+  }
+  .modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-3);
+    padding: var(--space-5);
+    border-top: 1px solid var(--border);
+  }
+  .answer-item {
+    padding: var(--space-3) 0;
+    border-bottom: 1px solid var(--border-light);
+  }
+  .answer-item:last-child {
+    border-bottom: none;
+  }
+  .answer-item-meta {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    margin-bottom: var(--space-1);
+  }
+  .answer-item-content {
+    font-size: var(--text-sm);
+    color: var(--text);
+    line-height: var(--lh-relaxed);
   }
 </style>
 
 <script>
-  const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
-  const TOKEN_KEY = 'ekb_access_token';
+  import { getSearchHotwords, type KeywordCount } from '@/lib/apis/analytics';
+  import { getQuestions, getQuestion, createQuestion } from '@/lib/apis/qa';
+
+  interface Question {
+    id: string;
+    title: string;
+    content?: string;
+    status: string;
+    answers?: number;
+    views?: number;
+    tags?: string[];
+    author?: string;
+    created_at?: string;
+  }
+
+  interface Answer {
+    id: string;
+    content: string;
+    author?: string;
+    created_at?: string;
+  }
 
   let currentStatus = 'all';
 
-  function mockQuestions() {
-    return [
-      { id: 'q1', title: '差旅报销的审批流程是怎样的？', status: 'solved', answers: 3, views: 128, tags: ['报销', '流程'], author: '张三', created_at: '2 小时前' },
-      { id: 'q2', title: '新员工入职需要准备哪些材料？', status: 'open', answers: 0, views: 56, tags: ['入职'], author: '李四', created_at: '5 小时前' },
-      { id: 'q3', title: '年假可以折算成工资吗？', status: 'solved', answers: 2, views: 89, tags: ['年假'], author: '王五', created_at: '昨天' },
-      { id: 'q4', title: '社保公积金缴纳比例是多少？', status: 'open', answers: 1, views: 45, tags: ['社保'], author: '赵六', created_at: '2 天前' },
-      { id: 'q5', title: '季度考核的评分标准是什么？', status: 'solved', answers: 4, views: 201, tags: ['考核'], author: '钱七', created_at: '3 天前' },
-    ];
+  /** 从接口返回值中提取问题数组（兼容数组 / { items: [] } / 分页对象） */
+  function toQuestions(raw: unknown): Question[] {
+    const arr = Array.isArray(raw)
+      ? raw
+      : raw && typeof raw === 'object' && Array.isArray((raw as { items?: unknown[] }).items)
+        ? (raw as { items: unknown[] }).items
+        : [];
+    return arr as Question[];
   }
 
+  function escapeHtml(s: string): string {
+    return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function isToday(iso?: string): boolean {
+    if (!iso) return false;
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return false;
+    const today = new Date();
+    return d.getFullYear() === today.getFullYear()
+      && d.getMonth() === today.getMonth()
+      && d.getDate() === today.getDate();
+  }
+
+  // ===== 问题列表 =====
   async function loadQuestions() {
-    const token = localStorage.getItem(TOKEN_KEY);
-    if (!token) {
-      window.location.href = '/auth/login';
-      return;
-    }
-    let questions: any[] = [];
+    const container = document.getElementById('question-list')!;
+    container.innerHTML = '<div class="loading-state">加载中...</div>';
     try {
-      const res = await fetch(`${API_BASE}/api/v1/knowledge/questions?status=${currentStatus}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.ok) {
-        const result = await res.json();
-        questions = result.data?.items || result.data || [];
-      } else if (res.status === 401) {
-        window.location.href = '/auth/login';
-        return;
-      }
-    } catch {
-      // ignore
+      const result = await getQuestions(
+        currentStatus === 'all' ? undefined : { status: currentStatus }
+      );
+      const questions = toQuestions(result);
+      renderQuestions(questions);
+      updateStats(questions);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '未知错误';
+      container.innerHTML = `<div class="error-state">问题加载失败：${escapeHtml(msg)}<br/><button class="btn btn-outline btn-sm" id="retry-questions" style="margin-top: var(--space-3);">重试</button></div>`;
+      document.getElementById('retry-questions')?.addEventListener('click', loadQuestions);
     }
-    if (questions.length === 0) questions = mockQuestions();
-    renderQuestions(questions);
-    updateStats();
   }
 
-  function updateStats() {
-    const all = mockQuestions();
-    const setText = (id: string, v: number) => {
+  function updateStats(questions: Question[]) {
+    const setText = (id: string, v: number | string) => {
       const el = document.getElementById(id);
       if (el) el.textContent = String(v);
     };
-    setText('stat-all', all.length);
-    setText('stat-open', all.filter((q) => q.status === 'open').length);
-    setText('stat-solved', all.filter((q) => q.status === 'solved').length);
-    setText('stat-today', 2);
+    setText('stat-all', questions.length);
+    setText('stat-open', questions.filter((q) => q.status === 'open').length);
+    setText('stat-solved', questions.filter((q) => q.status === 'solved').length);
+    setText('stat-today', questions.filter((q) => isToday(q.created_at)).length);
   }
 
-  function renderQuestions(questions: any[]) {
+  function renderQuestions(questions: Question[]) {
     const container = document.getElementById('question-list')!;
     if (questions.length === 0) {
-      container.innerHTML = '<div class="loading-state">暂无问题</div>';
+      container.innerHTML = '<div class="empty-state">暂无问题</div>';
       return;
     }
     container.innerHTML = questions
       .map(
         (q) => `
-      <div class="question-item" data-id="${q.id}">
+      <div class="question-item" data-id="${escapeHtml(q.id)}">
         <div class="question-item-header">
           <span class="badge ${q.status === 'solved' ? 'badge-success' : 'badge-warning'}">${q.status === 'solved' ? '已解决' : '待回答'}</span>
           <span class="question-item-title">${escapeHtml(q.title)}</span>
@@ -198,7 +325,7 @@ const breadcrumb = [{ label: '知识', href: '/knowledge' }, { label: '问答社
           <span>${q.views || 0} 浏览</span>
           <span>${escapeHtml(q.author || '匿名')}</span>
           <span>${escapeHtml(q.created_at || '')}</span>
-          ${q.tags?.map((t: string) => `<span class="tag">${escapeHtml(t)}</span>`).join('') || ''}
+          ${q.tags?.map((t) => `<span class="tag">${escapeHtml(t)}</span>`).join('') || ''}
         </div>
       </div>`
       )
@@ -206,15 +333,114 @@ const breadcrumb = [{ label: '知识', href: '/knowledge' }, { label: '问答社
 
     container.querySelectorAll('.question-item').forEach((el) => {
       el.addEventListener('click', () => {
-        alert('查看问题详情：' + (el as HTMLElement).dataset.id);
+        const id = (el as HTMLElement).dataset.id;
+        if (id) openQuestionDetail(id);
       });
     });
   }
 
-  function escapeHtml(s: string): string {
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  // ===== 问题详情 =====
+  async function openQuestionDetail(id: string) {
+    const modal = document.getElementById('detail-modal')!;
+    const body = document.getElementById('detail-body')!;
+    modal.style.display = 'flex';
+    body.innerHTML = '<div class="loading-state">加载中...</div>';
+    try {
+      const data = (await getQuestion(id)) as unknown as Question & { answers?: Answer[] };
+      const answers: Answer[] = data?.answers || [];
+      body.innerHTML = `
+        <div style="margin-bottom: var(--space-4);">
+          <h3 style="font-size: var(--text-lg); margin-bottom: var(--space-2);">${escapeHtml(data.title || '')}</h3>
+          <div class="text-muted" style="font-size: var(--text-xs);">
+            ${escapeHtml(data.author || '匿名')} · ${escapeHtml(data.created_at || '')} · ${data.answers || answers.length || 0} 回答
+          </div>
+          ${data.tags && data.tags.length ? `<div style="margin-top: var(--space-2);">${data.tags.map((t) => `<span class="tag">${escapeHtml(t)}</span>`).join('')}</div>` : ''}
+        </div>
+        <div style="padding: var(--space-3); background: var(--surface-muted); border-radius: var(--radius); margin-bottom: var(--space-4); font-size: var(--text-sm); line-height: var(--lh-relaxed);">
+          ${escapeHtml(data.content || '（无详细内容）')}
+        </div>
+        <h4 style="font-size: var(--text-md); margin-bottom: var(--space-3);">回答列表（${answers.length}）</h4>
+        ${answers.length === 0
+          ? '<div class="empty-state">暂无回答，快来发表第一条吧</div>'
+          : answers.map((a) => `
+            <div class="answer-item">
+              <div class="answer-item-meta">${escapeHtml(a.author || '匿名')} · ${escapeHtml(a.created_at || '')}</div>
+              <div class="answer-item-content">${escapeHtml(a.content || '')}</div>
+            </div>
+          `).join('')
+        }
+      `;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '未知错误';
+      body.innerHTML = `<div class="error-state">问题详情加载失败：${escapeHtml(msg)}<br/><button class="btn btn-outline btn-sm" id="retry-detail" style="margin-top: var(--space-3);">重试</button></div>`;
+      document.getElementById('retry-detail')?.addEventListener('click', () => openQuestionDetail(id));
+    }
   }
 
+  // ===== 热门标签云（从搜索热词取） =====
+  async function loadHotTags() {
+    const container = document.getElementById('hot-tags')!;
+    try {
+      const data: KeywordCount[] = await getSearchHotwords(30, 10);
+      if (!data || data.length === 0) {
+        container.innerHTML = '<div class="empty-state">暂无热门标签</div>';
+        return;
+      }
+      container.innerHTML = data
+        .map((t) => `<span class="tag" data-tag="${escapeHtml(t.keyword)}">${escapeHtml(t.keyword)} (${t.count})</span>`)
+        .join('');
+      container.querySelectorAll('.tag').forEach((el) => {
+        el.addEventListener('click', () => {
+          const tag = (el as HTMLElement).dataset.tag!;
+          window.location.href = `/knowledge/search?q=${encodeURIComponent(tag)}`;
+        });
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '未知错误';
+      container.innerHTML = `<div class="error-state">热门标签加载失败：${escapeHtml(msg)}</div>`;
+    }
+  }
+
+  // ===== 提问弹窗 =====
+  const askModal = document.getElementById('ask-modal')!;
+  document.getElementById('ask-btn')?.addEventListener('click', () => {
+    (document.getElementById('ask-form') as HTMLFormElement).reset();
+    askModal.style.display = 'flex';
+  });
+  document.getElementById('close-ask-modal')?.addEventListener('click', () => (askModal.style.display = 'none'));
+  document.getElementById('cancel-ask')?.addEventListener('click', () => (askModal.style.display = 'none'));
+  document.getElementById('close-detail-modal')?.addEventListener('click', () => {
+    (document.getElementById('detail-modal') as HTMLElement).style.display = 'none';
+  });
+
+  document.getElementById('ask-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.target as HTMLFormElement;
+    const data = Object.fromEntries(new FormData(form));
+    const tags = (data.tags as string || '').split(',').map((t) => t.trim()).filter(Boolean);
+    const submitBtn = form.querySelector('button[type="submit"]') as HTMLButtonElement;
+    submitBtn.disabled = true;
+    submitBtn.textContent = '发布中...';
+    try {
+      await createQuestion({
+        title: String(data.title),
+        content: String(data.content),
+        tags,
+      });
+      alert('问题发布成功');
+      askModal.style.display = 'none';
+      form.reset();
+      loadQuestions();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '未知错误';
+      alert('问题发布失败：' + msg);
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = '发布';
+    }
+  });
+
+  // ===== 状态筛选 =====
   document.querySelectorAll('.tab').forEach((el) => {
     el.addEventListener('click', () => {
       document.querySelectorAll('.tab').forEach((e) => e.classList.remove('active'));
@@ -224,16 +450,6 @@ const breadcrumb = [{ label: '知识', href: '/knowledge' }, { label: '问答社
     });
   });
 
-  document.getElementById('ask-btn')?.addEventListener('click', () => {
-    alert('提问功能：请输入您的问题');
-  });
-
-  document.querySelectorAll('.card .tag').forEach((el) => {
-    el.addEventListener('click', () => {
-      const tag = (el as HTMLElement).dataset.tag!;
-      window.location.href = `/knowledge/search?tag=${tag}`;
-    });
-  });
-
   loadQuestions();
+  loadHotTags();
 </script>

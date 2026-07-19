@@ -1,0 +1,136 @@
+---
+/**
+ * HealthRing.astro - 健康度环形指示器组件
+ *
+ * 基于 SVG 的环形进度指示器，用于展示健康度评分、覆盖率等百分比指标。
+ * 颜色全部使用 CSS 变量，禁止硬编码。
+ *
+ * @example
+ * <HealthRing value={85} label="健康度" />
+ * <HealthRing value={45} size="lg" color="danger" label="覆盖率" />
+ */
+interface Props {
+  /** 百分比值 0-100 */
+  value: number;
+  /** 尺寸：sm=120px / md=160px / lg=200px */
+  size?: 'sm' | 'md' | 'lg';
+  /** 中心标签（显示在数值下方） */
+  label?: string;
+  /** 颜色：auto 根据值自动选择（>=80 success / >=60 warning / 否则 danger） */
+  color?: 'auto' | 'primary' | 'success' | 'warning' | 'danger';
+}
+
+const { value, size = 'md', label, color = 'auto' } = Astro.props;
+
+// 尺寸配置：px 尺寸 / 描边宽度 / 圆半径
+const sizeConfig: Record<'sm' | 'md' | 'lg', { px: number; stroke: number; r: number }> = {
+  sm: { px: 120, stroke: 12, r: 54 },
+  md: { px: 160, stroke: 14, r: 73 },
+  lg: { px: 200, stroke: 16, r: 92 },
+};
+
+const cfg = sizeConfig[size];
+const cx = cfg.px / 2;
+const cy = cfg.px / 2;
+const circumference = 2 * Math.PI * cfg.r;
+
+// 限制 0-100
+const clamped = Math.max(0, Math.min(100, value));
+const dashOffset = circumference - (clamped / 100) * circumference;
+
+// 解析颜色
+function resolveColor(c: Props['color'], v: number): string {
+  if (c === 'primary') return 'var(--primary)';
+  if (c === 'success') return 'var(--success)';
+  if (c === 'warning') return 'var(--warning)';
+  if (c === 'danger') return 'var(--danger)';
+  // auto
+  if (v >= 80) return 'var(--success)';
+  if (v >= 60) return 'var(--warning)';
+  return 'var(--danger)';
+}
+
+const ringColor = resolveColor(color, clamped);
+
+// 中心数值字号
+const scoreFont = size === 'lg' ? 'var(--text-5xl)' : size === 'sm' ? 'var(--text-3xl)' : 'var(--text-4xl)';
+---
+
+<div class={`health-ring health-ring-${size}`} style={`--ring-color: ${ringColor};`}>
+  <svg
+    width={cfg.px}
+    height={cfg.px}
+    viewBox={`0 0 ${cfg.px} ${cfg.px}`}
+    class="health-ring-svg"
+    role="img"
+    aria-label={`健康度 ${clamped}%`}
+  >
+    {/* 背景圆环 */}
+    <circle
+      cx={cx}
+      cy={cy}
+      r={cfg.r}
+      fill="none"
+      stroke="var(--border-light)"
+      stroke-width={cfg.stroke}
+    />
+    {/* 进度圆环 */}
+    <circle
+      cx={cx}
+      cy={cy}
+      r={cfg.r}
+      fill="none"
+      stroke="var(--ring-color)"
+      stroke-width={cfg.stroke}
+      stroke-linecap="round"
+      stroke-dasharray={circumference}
+      stroke-dashoffset={dashOffset}
+      transform={`rotate(-90 ${cx} ${cy})`}
+      class="health-ring-progress"
+    />
+  </svg>
+  <div class="health-ring-center">
+    <div class="health-ring-score" style={`font-size: ${scoreFont};`}>{clamped}</div>
+    {label && <div class="health-ring-label">{label}</div>}
+  </div>
+</div>
+
+<style>
+  .health-ring {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .health-ring-svg {
+    display: block;
+  }
+
+  /* 进度圆环过渡动画 */
+  .health-ring-progress {
+    transition: stroke-dashoffset var(--transition-slow), stroke var(--transition);
+  }
+
+  .health-ring-center {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    text-align: center;
+    pointer-events: none;
+  }
+
+  .health-ring-score {
+    font-weight: 600;
+    color: var(--ring-color, var(--primary));
+    line-height: 1.1;
+  }
+
+  .health-ring-label {
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    margin-top: var(--space-1);
+    white-space: nowrap;
+  }
+</style>

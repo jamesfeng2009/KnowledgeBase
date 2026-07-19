@@ -1,0 +1,67 @@
+---
+/**
+ * Avatar.astro - 头像组件
+ *
+ * 支持图片头像与首字母占位两种模式。
+ * 当未提供 src 时，根据 name 首字母 + userId 哈希生成稳定背景色。
+ * 颜色算法与 lib/collab.ts 的 getUserColor 保持一致。
+ *
+ * @example
+ * <Avatar name="张三" userId="u123" />
+ * <Avatar src="/avatar.jpg" name="李四" size="lg" />
+ */
+interface Props {
+  src?: string;
+  name?: string;
+  size?: 'sm' | 'md' | 'lg';
+  userId?: string;
+}
+
+const { src, name = '', size = 'md', userId = '' } = Astro.props;
+
+const initials = name.charAt(0).toUpperCase() || 'U';
+
+// 颜色池与 collab.ts CURSOR_COLORS 保持一致
+const colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E2'];
+
+let hash = 0;
+for (let i = 0; i < userId.length; i++) {
+  hash = ((hash << 5) - hash) + userId.charCodeAt(i);
+  hash |= 0;
+}
+// 有 userId 时使用哈希色，无 userId 时回退到主色（通过 CSS 变量）
+const color = userId ? colors[Math.abs(hash) % colors.length] : null;
+---
+
+<div class={`avatar avatar-${size}`} style={color ? `--avatar-bg: ${color}` : undefined}>
+  {src ? <img src={src} alt={name} class="avatar-img" /> : <span class="avatar-initial">{initials}</span>}
+</div>
+
+<style>
+  /*
+   * 覆盖 global.css .avatar 的 background，改用 --avatar-bg 变量。
+   * 未设置 --avatar-bg 时回退到 --primary（与全局默认一致）。
+   */
+  .avatar {
+    background: var(--avatar-bg, var(--primary));
+  }
+
+  /* md 尺寸（与 global.css 默认 .avatar 一致，显式声明以便 avatar-md 类命中） */
+  .avatar-md {
+    width: 36px;
+    height: 36px;
+    font-size: var(--text-sm);
+  }
+
+  .avatar-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: inherit;
+  }
+
+  .avatar-initial {
+    line-height: 1;
+    text-transform: uppercase;
+  }
+</style>

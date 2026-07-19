@@ -452,7 +452,8 @@ const docId = Astro.url.searchParams.get('id') || 'new';
 </style>
 
 <script>
-  import { getDocument, getDocumentSummary } from '@/lib/apis/knowledge';
+  import { getDocument, getDocumentSummary, getDocumentVersions, type DocVersion } from '@/lib/apis/knowledge';
+  import { getRecommendations, type Recommendation } from '@/lib/apis/graph';
   import { getComments, createComment, resolveComment } from '@/lib/apis/comments';
 
   const TOKEN_KEY = 'ekb_access_token';
@@ -467,25 +468,25 @@ const docId = Astro.url.searchParams.get('id') || 'new';
       window.location.href = '/auth/login';
       return;
     }
+    const container = document.getElementById('doc-content')!;
+    container.innerHTML = '<div class="loading-state">加载中...</div>';
     try {
-      let doc: any;
-      try {
-        doc = await getDocument(docId);
-      } catch {
-        // 接口失败时回退到 mock 数据，保证页面可预览
-        // 401 由 api 层自动跳转登录页，这里静默回退
-        doc = mockDoc();
-      }
+      // 接口失败时显示错误 + 重试，不再回退到 mock 数据
+      const doc = await getDocument(docId);
       renderDoc(doc);
       // 拉取解析摘要补充元信息（页数、字符数、警告）
       loadParseSummary();
       // 绑定评论区事件并加载评论列表
       bindCommentEvents();
       loadComments();
-    } catch {
-      renderDoc(mockDoc());
-      bindCommentEvents();
-      loadComments();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '未知错误';
+      container.innerHTML = `
+        <div class="loading-state" style="color: var(--danger);">
+          <p>文档加载失败：${escapeHtml(msg)}</p>
+          <button class="btn btn-outline btn-sm" id="retry-doc" style="margin-top: var(--space-3);">重试</button>
+        </div>`;
+      document.getElementById('retry-doc')?.addEventListener('click', loadDoc);
     }
   }
 
@@ -510,44 +511,6 @@ const docId = Astro.url.searchParams.get('id') || 'new';
     } catch {
       // 静默处理：解析摘要获取失败不影响主流程
     }
-  }
-
-  function mockDoc(): any {
-    return {
-      id: docId,
-      title: '员工差旅报销管理办法',
-      kb_name: '公司制度',
-      author: '人力资源部',
-      created_at: '2026-06-15',
-      updated_at: '2026-07-01',
-      version: 'V3.2',
-      tags: ['财务', '报销', '制度'],
-      category: '制度规范',
-      summary: '',
-      parse_status: 'completed',
-      page_count: 12,
-      char_count: 8420,
-      views: 1280,
-      content: `
-        <h2>一、总则</h2>
-        <p>为规范公司员工差旅报销管理，特制定本办法。适用于公司全体正式员工。</p>
-        <h2>二、差旅审批流程</h2>
-        <ol>
-          <li>出差前填写《出差申请单》，注明出差事由、地点、时间</li>
-          <li>部门负责人审批（3 个工作日内出差由部门经理审批）</li>
-          <li>分管副总审批（3 个工作日以上出差）</li>
-          <li>出差结束后 5 个工作日内提交报销申请</li>
-        </ol>
-        <h2>三、费用标准</h2>
-        <p>交通费、住宿费、餐饮补贴等按照公司《差旅标准表》执行，使用 <code>报销系统</code> 在线提交。</p>
-        <h3>交通费</h3>
-        <ul>
-          <li>飞机：经济舱（管理层可商务舱）</li>
-          <li>火车：高铁二等座（管理层可一等座）</li>
-          <li>市内交通：实报实销，每日上限 200 元</li>
-        </ul>
-      `,
-    };
   }
 
   /** 渲染解析状态提示条内容 */
@@ -930,48 +893,67 @@ const docId = Astro.url.searchParams.get('id') || 'new';
     return String(s).replace(/["\\]/g, '\\$&');
   }
 
-  function renderRelated() {
-    const docs = [
-      { id: 'r1', title: '费用报销操作指南', icon: '📘' },
-      { id: 'r2', title: '差旅标准表', icon: '📊' },
-      { id: 'r3', title: '财务管理制度汇编', icon: '📄' },
-    ];
-    document.getElementById('related-docs')!.innerHTML = docs
-      .map(
-        (d) => `<div class="related-item" data-id="${d.id}"><span>${d.icon}</span> ${escapeHtml(d.title)}</div>`
-      )
-      .join('');
-    document.querySelectorAll('.related-item').forEach((el) => {
-      el.addEventListener('click', () => {
-        window.location.href = `/knowledge/detail?id=${(el as HTMLElement).dataset.id}`;
+  /** 渲染相关文档：调用 getRecommendations 取真实推荐 */
+  async function renderRelated() {
+    const container = document.getElementById('related-docs')!;
+    container.innerHTML = '<div class="loading-state">加载中...</div>';
+    try {
+      const data: Recommendation[] = await getRecommendations(docId, 3);
+      if (!data || data.length === 0) {
+        container.innerHTML = '<div class="loading-state">暂无相关文档</div>';
+        return;
+      }
+      container.innerHTML = data
+        .map(
+          (d) => `<div class="related-item" data-id="${escapeHtml(d.doc_id)}" title="${escapeHtml(d.reason || '')}"><span>📄</span> ${escapeHtml(d.title)}</div>`
+        )
+        .join('');
+      container.querySelectorAll('.related-item').forEach((el) => {
+        el.addEventListener('click', () => {
+          const id = (el as HTMLElement).dataset.id;
+          if (id) window.location.href = `/knowledge/detail?id=${encodeURIComponent(id)}`;
+        });
       });
-    });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '未知错误';
+      container.innerHTML = `<div class="loading-state" style="color: var(--danger);">相关文档加载失败：${escapeHtml(msg)}<br/><button class="btn btn-outline btn-sm" id="retry-related" style="margin-top: var(--space-2);">重试</button></div>`;
+      document.getElementById('retry-related')?.addEventListener('click', renderRelated);
+    }
   }
 
-  function renderVersions() {
-    const versions = [
-      { version: 'V3.2', time: '2026-07-01', author: '张三', note: '新增远程办公章节' },
-      { version: 'V3.1', time: '2026-05-10', author: '李四', note: '调整差旅标准' },
-      { version: 'V3.0', time: '2026-01-15', author: '王五', note: '全面修订' },
-      { version: 'V2.0', time: '2025-06-01', author: '赵六', note: '初版' },
-    ];
-    document.getElementById('version-history')!.innerHTML = versions
-      .map(
-        (v) => `
-      <div class="version-item" data-version="${v.version}">
-        <div class="version-item-header">
-          <span style="font-weight: 500; color: var(--primary);">${v.version}</span>
-          <span class="text-muted" style="font-size: var(--text-xs);">${v.time}</span>
-        </div>
-        <div class="version-item-meta">${escapeHtml(v.note)} · ${escapeHtml(v.author)}</div>
-      </div>`
-      )
-      .join('');
-    document.querySelectorAll('.version-item').forEach((el) => {
-      el.addEventListener('click', () => {
-        alert('查看版本：' + (el as HTMLElement).dataset.version);
+  /** 渲染版本历史：调用 getDocumentVersions 取真实数据 */
+  async function renderVersions() {
+    const container = document.getElementById('version-history')!;
+    container.innerHTML = '<div class="loading-state">加载中...</div>';
+    try {
+      const versions: DocVersion[] = await getDocumentVersions(docId);
+      if (!versions || versions.length === 0) {
+        container.innerHTML = '<div class="loading-state">暂无版本历史</div>';
+        return;
+      }
+      container.innerHTML = versions
+        .map(
+          (v) => `
+        <div class="version-item" data-version="${escapeHtml(v.id)}" data-doc="${escapeHtml(docId)}">
+          <div class="version-item-header">
+            <span style="font-weight: 500; color: var(--primary);">V${escapeHtml(String(v.version))}</span>
+            <span class="text-muted" style="font-size: var(--text-xs);">${escapeHtml(v.created_at || '')}</span>
+          </div>
+          <div class="version-item-meta">${escapeHtml(v.preview || '无说明')} · ${escapeHtml(v.author || '未知')}</div>
+        </div>`
+        )
+        .join('');
+      container.querySelectorAll('.version-item').forEach((el) => {
+        el.addEventListener('click', () => {
+          const ver = (el as HTMLElement).dataset.version;
+          alert('查看版本详情：V' + ver);
+        });
       });
-    });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '未知错误';
+      container.innerHTML = `<div class="loading-state" style="color: var(--danger);">版本历史加载失败：${escapeHtml(msg)}<br/><button class="btn btn-outline btn-sm" id="retry-versions" style="margin-top: var(--space-2);">重试</button></div>`;
+      document.getElementById('retry-versions')?.addEventListener('click', renderVersions);
+    }
   }
 
   function escapeHtml(s: string): string {

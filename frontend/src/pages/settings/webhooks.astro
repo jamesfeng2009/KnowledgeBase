@@ -1,0 +1,621 @@
+---
+/**
+ * Webhook 订阅管理页面
+ * 功能：可订阅事件展示 + 创建订阅 + 已有订阅管理（localStorage）+ 测试事件
+ * 数据来源：
+ *   - GET  /api/v1/openapi/webhooks/events
+ *   - POST /api/v1/openapi/webhooks/subscribe
+ *   - DELETE /api/v1/openapi/webhooks/subscribe/{sub_id}
+ *   - POST /api/v1/openapi/webhooks/test
+ *
+ * 注意：openapi 端点使用 API Key（X-API-Key）认证，需 scope: webhook:manage。
+ * 后端使用内存存储，无"列出已有订阅"端点，订阅记录由前端持久化到 localStorage
+ * （key: ekb_webhook_subs）。
+ */
+import DefaultLayout from '@/layouts/DefaultLayout.astro';
+import { PageHeader } from '@/components/common';
+
+const breadcrumb = [{ label: '设置', href: '/settings/tenant' }, { label: 'Webhook 订阅' }];
+---
+
+<DefaultLayout title="Webhook 订阅" breadcrumb={breadcrumb}>
+  <div class="settings-nav" style="margin-bottom: var(--space-5);">
+    <a href="/settings/tenant" class="settings-nav-item">租户设置</a>
+    <a href="/settings/api" class="settings-nav-item">API 密钥</a>
+    <a href="/settings/llm" class="settings-nav-item">LLM 配置</a>
+    <a href="/settings/webhooks" class="settings-nav-item active">Webhook 订阅</a>
+    <a href="/settings/system" class="settings-nav-item">系统设置</a>
+  </div>
+
+  <PageHeader title="Webhook 订阅" subtitle="订阅知识库变更事件，接收实时推送通知" />
+
+  <!-- API Key 配置 -->
+  <div class="card" style="margin-bottom: var(--space-5);">
+    <div class="card-header">
+      <h3>API Key 配置</h3>
+      <a href="/settings/api" class="btn btn-outline btn-sm">前往 API 密钥页</a>
+    </div>
+    <div class="apikey-row">
+      <input
+        type="password"
+        class="form-input"
+        id="apikey-input"
+        placeholder="粘贴具有 webhook:manage 权限的 API Key"
+        autocomplete="off"
+      />
+      <button type="button" class="btn btn-primary btn-sm" id="save-apikey-btn">保存</button>
+      <button type="button" class="btn btn-ghost btn-sm" id="clear-apikey-btn">清除</button>
+    </div>
+    <div id="apikey-status" class="apikey-status text-muted">加载中...</div>
+  </div>
+
+  <!-- 可订阅事件展示 -->
+  <div class="card" style="margin-bottom: var(--space-5);">
+    <div class="card-header"><h3>可订阅事件</h3></div>
+    <div id="events-grid" class="events-grid">
+      <div class="loading-state">加载中...</div>
+    </div>
+  </div>
+
+  <!-- 创建订阅表单 -->
+  <div class="card" style="margin-bottom: var(--space-5);">
+    <div class="card-header"><h3>创建订阅</h3></div>
+    <form id="subscribe-form">
+      <div class="form-group">
+        <label class="form-label">回调 URL *</label>
+        <input
+          type="url"
+          class="form-input"
+          name="url"
+          required
+          placeholder="https://your-server.com/webhook"
+        />
+      </div>
+      <div class="form-group">
+        <label class="form-label">订阅事件 *</label>
+        <div id="event-checkboxes" class="event-checkboxes">
+          <div class="text-muted">加载中...</div>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">签名密钥（选填）</label>
+        <input
+          type="text"
+          class="form-input"
+          name="secret"
+          placeholder="用于校验回调签名"
+        />
+      </div>
+      <div style="display: flex; justify-content: flex-end;">
+        <button type="submit" class="btn btn-primary">订阅</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- 已有订阅列表 -->
+  <div class="card" style="margin-bottom: var(--space-5);">
+    <div class="card-header">
+      <h3>已有订阅</h3>
+      <span class="text-muted" style="font-size: var(--text-sm);">订阅记录保存在本地浏览器</span>
+    </div>
+    <div id="subs-list">
+      <div class="loading-state">加载中...</div>
+    </div>
+  </div>
+
+  <!-- 测试事件 -->
+  <div class="card">
+    <div class="card-header"><h3>发送测试事件</h3></div>
+    <form id="test-form">
+      <div class="form-group">
+        <label class="form-label">目标 URL（选填）</label>
+        <input
+          type="url"
+          class="form-input"
+          name="test_url"
+          placeholder="为空则推送给所有订阅"
+        />
+      </div>
+      <div class="form-group">
+        <label class="form-label">事件类型</label>
+        <input
+          type="text"
+          class="form-input"
+          name="test_event"
+          value="test.event"
+          placeholder="test.event"
+        />
+      </div>
+      <div style="display: flex; justify-content: flex-end;">
+        <button type="submit" class="btn btn-outline">发送测试事件</button>
+      </div>
+    </form>
+  </div>
+</DefaultLayout>
+
+<style>
+  .settings-nav {
+    display: flex;
+    gap: var(--space-1);
+    border-bottom: 1px solid var(--border);
+  }
+  .settings-nav-item {
+    padding: var(--space-3) var(--space-5);
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    border-bottom: 2px solid transparent;
+    text-decoration: none;
+    transition: all var(--transition-fast);
+  }
+  .settings-nav-item:hover {
+    color: var(--primary);
+  }
+  .settings-nav-item.active {
+    color: var(--primary);
+    border-bottom-color: var(--primary);
+    font-weight: 500;
+  }
+  .apikey-row {
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
+  }
+  .apikey-row .form-input {
+    flex: 1;
+  }
+  .apikey-status {
+    margin-top: var(--space-3);
+    font-size: var(--text-sm);
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  .events-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: var(--space-3);
+  }
+  .event-card {
+    padding: var(--space-4);
+    background: var(--surface-muted);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius);
+    transition: border-color var(--transition-fast);
+  }
+  .event-card:hover {
+    border-color: var(--primary-light);
+  }
+  .event-code {
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--primary);
+    margin-bottom: var(--space-1);
+    word-break: break-all;
+  }
+  .event-desc {
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+  }
+  .event-checkboxes {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    background: var(--surface-muted);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius);
+  }
+  .event-check-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+  .event-check-name {
+    font-family: var(--font-mono);
+    color: var(--text);
+  }
+  .event-check-desc {
+    font-size: var(--text-xs);
+  }
+  .sub-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: var(--space-4) 0;
+    border-bottom: 1px solid var(--border-light);
+  }
+  .sub-item:last-child {
+    border-bottom: none;
+  }
+  .sub-info {
+    flex: 1;
+    min-width: 0;
+  }
+  .sub-url {
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    color: var(--text);
+    margin-bottom: var(--space-2);
+    word-break: break-all;
+  }
+  .sub-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  .event-tag {
+    display: inline-block;
+    padding: 2px var(--space-2);
+    font-size: var(--text-xs);
+    background: var(--info-bg);
+    color: var(--info);
+    border-radius: var(--radius-xs);
+    font-family: var(--font-mono);
+  }
+  .sub-actions {
+    display: flex;
+    gap: var(--space-2);
+    flex-shrink: 0;
+  }
+  .loading-state {
+    text-align: center;
+    padding: var(--space-6);
+    color: var(--text-muted);
+  }
+  .empty-state {
+    text-align: center;
+    padding: var(--space-6);
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+  }
+  .error-state {
+    text-align: center;
+    padding: var(--space-6);
+    color: var(--danger);
+    font-size: var(--text-sm);
+  }
+</style>
+
+<script>
+  import {
+    getWebhookEvents,
+    subscribeWebhook,
+    unsubscribeWebhook,
+    sendTestEvent,
+    getOpenApiKey,
+    setOpenApiKey,
+    clearOpenApiKey,
+  } from '@/lib/apis/webhooks';
+  import type { WebhookEvent, WebhookSubscription } from '@/lib/apis/webhooks';
+  import { ApiError } from '@/lib/api';
+
+  /** localStorage 存储已创建订阅的 key */
+  const SUBS_STORAGE_KEY = 'ekb_webhook_subs';
+
+  let events: WebhookEvent[] = [];
+  let subs: WebhookSubscription[] = [];
+
+  /** 判断是否为 401/未授权错误（API Key 缺失或无效） */
+  function isAuthError(err: unknown): boolean {
+    return err instanceof ApiError && err.status === 401;
+  }
+
+  /** HTML 转义，防止注入 */
+  function escapeHtml(s: unknown): string {
+    return String(s ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  /** ISO 时间转本地可读格式 */
+  function formatTime(iso?: string): string {
+    if (!iso) return '-';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    return d.toLocaleString('zh-CN');
+  }
+
+  /** 从 localStorage 读取已保存的订阅列表 */
+  function loadSubsFromStorage(): WebhookSubscription[] {
+    try {
+      const raw = localStorage.getItem(SUBS_STORAGE_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? (parsed as WebhookSubscription[]) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /** 将订阅列表写入 localStorage */
+  function saveSubsToStorage(list: WebhookSubscription[]): void {
+    localStorage.setItem(SUBS_STORAGE_KEY, JSON.stringify(list));
+  }
+
+  /** 渲染 API Key 配置状态 */
+  function renderApiKeyStatus(): void {
+    const statusEl = document.getElementById('apikey-status');
+    const inputEl = document.getElementById('apikey-input') as HTMLInputElement | null;
+    const key = getOpenApiKey();
+    if (key) {
+      const masked = key.length > 8 ? `${key.slice(0, 4)}****${key.slice(-4)}` : '****';
+      if (statusEl) {
+        statusEl.innerHTML =
+          `<span class="badge badge-success">已配置</span>` +
+          `<span>当前密钥：${escapeHtml(masked)}</span>`;
+      }
+      if (inputEl) inputEl.value = key;
+    } else {
+      if (statusEl) {
+        statusEl.innerHTML =
+          `<span class="badge badge-warning">未配置</span>` +
+          `<span>请先在 API 密钥页面创建具有 webhook:manage 权限的密钥，并在此填入</span>`;
+      }
+      if (inputEl) inputEl.value = '';
+    }
+  }
+
+  /** 加载可订阅事件列表 */
+  async function loadEvents(): Promise<void> {
+    const gridEl = document.getElementById('events-grid');
+    const checkEl = document.getElementById('event-checkboxes');
+    if (gridEl) gridEl.innerHTML = '<div class="loading-state">加载中...</div>';
+    if (checkEl) checkEl.innerHTML = '<div class="text-muted">加载中...</div>';
+    try {
+      events = await getWebhookEvents();
+    } catch (err) {
+      if (isAuthError(err)) {
+        const msg = escapeHtml((err as Error).message);
+        if (gridEl) gridEl.innerHTML = `<div class="empty-state">${msg}</div>`;
+        if (checkEl) checkEl.innerHTML = `<div class="text-muted">请先配置 API Key</div>`;
+        return;
+      }
+      const msg = err instanceof Error ? err.message : '网络异常';
+      if (gridEl) {
+        gridEl.innerHTML =
+          `<div class="error-state">加载事件列表失败：${escapeHtml(msg)}` +
+          `<br/><button class="btn btn-outline btn-sm" id="retry-events" style="margin-top: var(--space-3);">重试</button></div>`;
+        document.getElementById('retry-events')?.addEventListener('click', () => void loadEvents());
+      }
+      if (checkEl) checkEl.innerHTML = '<div class="text-muted">事件列表加载失败</div>';
+      return;
+    }
+    renderEventsGrid();
+    renderEventCheckboxes();
+  }
+
+  /** 渲染事件卡片网格 */
+  function renderEventsGrid(): void {
+    const container = document.getElementById('events-grid');
+    if (!container) return;
+    if (events.length === 0) {
+      container.innerHTML = '<div class="empty-state">暂无可订阅事件</div>';
+      return;
+    }
+    container.innerHTML = events
+      .map(
+        (ev) => `
+      <div class="event-card">
+        <div class="event-code">${escapeHtml(ev.event)}</div>
+        <div class="event-desc">${escapeHtml(ev.description)}</div>
+      </div>`
+      )
+      .join('');
+  }
+
+  /** 渲染订阅表单中的事件多选 */
+  function renderEventCheckboxes(): void {
+    const container = document.getElementById('event-checkboxes');
+    if (!container) return;
+    if (events.length === 0) {
+      container.innerHTML = '<div class="text-muted">暂无可订阅事件</div>';
+      return;
+    }
+    container.innerHTML = events
+      .map(
+        (ev) => `
+      <label class="event-check-item">
+        <input type="checkbox" name="event" value="${escapeHtml(ev.event)}" />
+        <span class="event-check-name">${escapeHtml(ev.event)}</span>
+        <span class="event-check-desc">${escapeHtml(ev.description)}</span>
+      </label>`
+      )
+      .join('');
+  }
+
+  /** 渲染已有订阅列表 */
+  function renderSubs(): void {
+    const container = document.getElementById('subs-list');
+    if (!container) return;
+    if (subs.length === 0) {
+      container.innerHTML =
+        '<div class="empty-state">暂无订阅记录。创建订阅后，订阅信息会保存在本地以便管理。</div>';
+      return;
+    }
+    container.innerHTML = subs
+      .map(
+        (s) => `
+      <div class="sub-item" data-id="${escapeHtml(s.id)}">
+        <div class="sub-info">
+          <div class="sub-url">${escapeHtml(s.url)}</div>
+          <div class="sub-meta">
+            ${s.events.map((ev) => `<span class="event-tag">${escapeHtml(ev)}</span>`).join('')}
+            <span class="badge ${s.is_active ? 'badge-success' : 'badge-danger'}">${s.is_active ? '启用' : '停用'}</span>
+            <span class="text-muted">创建：${escapeHtml(formatTime(s.created_at))}</span>
+          </div>
+        </div>
+        <div class="sub-actions">
+          <button class="btn btn-outline btn-sm" data-action="test" data-id="${escapeHtml(s.id)}">测试</button>
+          <button class="btn btn-ghost btn-sm" data-action="unsubscribe" data-id="${escapeHtml(s.id)}">取消订阅</button>
+        </div>
+      </div>`
+      )
+      .join('');
+
+    container.querySelectorAll('button[data-action]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const el = btn as HTMLButtonElement;
+        const action = el.dataset.action;
+        const id = el.dataset.id;
+        if (!action || !id) return;
+        if (action === 'test') {
+          void handleTestSub(id);
+        } else if (action === 'unsubscribe') {
+          void handleUnsubscribe(id);
+        }
+      });
+    });
+  }
+
+  /** 对单条订阅发送测试事件 */
+  async function handleTestSub(id: string): Promise<void> {
+    const sub = subs.find((s) => s.id === id);
+    if (!sub) return;
+    try {
+      const result = await sendTestEvent({ url: sub.url });
+      alert(
+        `测试事件已发送\n` +
+          `事件：${result.event}\n` +
+          `目标数：${result.targets}\n` +
+          `状态：${result.status}\n` +
+          `消息：${result.message}`
+      );
+    } catch (err) {
+      if (isAuthError(err)) {
+        alert((err as Error).message);
+        return;
+      }
+      alert(err instanceof Error ? err.message : '测试事件发送失败');
+    }
+  }
+
+  /** 取消订阅并从本地移除 */
+  async function handleUnsubscribe(id: string): Promise<void> {
+    if (!confirm('确定取消此订阅？取消后将不再向该 URL 推送事件。')) return;
+    try {
+      await unsubscribeWebhook(id);
+      subs = subs.filter((s) => s.id !== id);
+      saveSubsToStorage(subs);
+      renderSubs();
+      alert('已取消订阅');
+    } catch (err) {
+      if (isAuthError(err)) {
+        alert((err as Error).message);
+        return;
+      }
+      alert(err instanceof Error ? err.message : '取消订阅失败');
+    }
+  }
+
+  /** 绑定 API Key 保存/清除 */
+  function bindApiKeySection(): void {
+    document.getElementById('save-apikey-btn')?.addEventListener('click', () => {
+      const input = document.getElementById('apikey-input') as HTMLInputElement | null;
+      if (!input) return;
+      const key = input.value.trim();
+      if (!key) {
+        alert('请输入 API Key');
+        return;
+      }
+      setOpenApiKey(key);
+      renderApiKeyStatus();
+      alert('API Key 已保存');
+      void loadEvents();
+    });
+    document.getElementById('clear-apikey-btn')?.addEventListener('click', () => {
+      if (!confirm('确定清除已保存的 API Key？')) return;
+      clearOpenApiKey();
+      renderApiKeyStatus();
+      events = [];
+      renderEventsGrid();
+      renderEventCheckboxes();
+    });
+  }
+
+  /** 绑定创建订阅表单 */
+  function bindSubscribeForm(): void {
+    document.getElementById('subscribe-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const form = e.target as HTMLFormElement;
+      const urlInput = form.querySelector<HTMLInputElement>('input[name="url"]');
+      const secretInput = form.querySelector<HTMLInputElement>('input[name="secret"]');
+      const url = urlInput?.value.trim() ?? '';
+      const secret = secretInput?.value.trim() ?? '';
+      const checked = form.querySelectorAll<HTMLInputElement>('input[name="event"]:checked');
+      const eventList = Array.from(checked).map((c) => c.value);
+      if (!url) {
+        alert('请填写回调 URL');
+        return;
+      }
+      if (eventList.length === 0) {
+        alert('请至少选择一个事件类型');
+        return;
+      }
+      try {
+        const sub = await subscribeWebhook({
+          url,
+          events: eventList,
+          secret: secret || undefined,
+        });
+        sub.created_at = new Date().toISOString();
+        subs.unshift(sub);
+        saveSubsToStorage(subs);
+        renderSubs();
+        alert('订阅创建成功');
+        form.reset();
+        renderEventCheckboxes();
+      } catch (err) {
+        if (isAuthError(err)) {
+          alert((err as Error).message);
+          return;
+        }
+        alert(err instanceof Error ? err.message : '订阅失败，请重试');
+      }
+    });
+  }
+
+  /** 绑定测试事件表单 */
+  function bindTestForm(): void {
+    document.getElementById('test-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const form = e.target as HTMLFormElement;
+      const urlInput = form.querySelector<HTMLInputElement>('input[name="test_url"]');
+      const eventInput = form.querySelector<HTMLInputElement>('input[name="test_event"]');
+      const url = urlInput?.value.trim() || undefined;
+      const event = eventInput?.value.trim() || undefined;
+      try {
+        const result = await sendTestEvent({ url, event });
+        alert(
+          `测试事件已发送\n` +
+            `事件：${result.event}\n` +
+            `目标数：${result.targets}\n` +
+            `状态：${result.status}\n` +
+            `消息：${result.message}`
+        );
+      } catch (err) {
+        if (isAuthError(err)) {
+          alert((err as Error).message);
+          return;
+        }
+        alert(err instanceof Error ? err.message : '测试事件发送失败');
+      }
+    });
+  }
+
+  // ===== 初始化 =====
+  renderApiKeyStatus();
+  bindApiKeySection();
+  bindSubscribeForm();
+  bindTestForm();
+  subs = loadSubsFromStorage();
+  renderSubs();
+  void loadEvents();
+</script>

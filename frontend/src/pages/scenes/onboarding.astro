@@ -1,7 +1,8 @@
 ---
 /**
  * 新员工入职场景
- * 入职流程引导 + 公司知识库推荐 + 常见问题 + AI 助手对话入口
+ * 入职流程引导 + 公司知识库推荐 + 必读文档 + 常见问题 + AI 助手对话入口 + 团队成员
+ * 所有数据从后端 API 动态加载，支持 skeleton 加载态 / 错误重试 / 空状态
  */
 import DefaultLayout from '@/layouts/DefaultLayout.astro';
 
@@ -10,86 +11,235 @@ const breadcrumb = [{ label: '场景应用', href: '/scenes/onboarding' }, { lab
 
 <DefaultLayout title="新员工入职" breadcrumb={breadcrumb}>
   <!-- 欢迎横幅 -->
-  <div class="card" style="background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%); border: none; color: white; margin-bottom: var(--space-6);">
-    <h1 style="color: white; font-size: var(--text-3xl); margin-bottom: var(--space-3);">欢迎加入公司</h1>
-    <p style="color: rgba(255,255,255,0.9); font-size: var(--text-md); line-height: var(--lh-relaxed); max-width: 600px;">
-      恭喜您成为我们的一员！这里是为您准备的入职指南，帮助您快速了解公司文化、熟悉工作流程、融入团队。
-    </p>
-    <a href="/chat?agent=onboarding" class="btn btn-lg" style="background: white; color: var(--primary); margin-top: var(--space-4);">
-      💬 向 AI 助手提问
-    </a>
+  <div class="card welcome-banner">
+    <div class="welcome-text">
+      <h1 class="welcome-title">欢迎加入公司<span id="welcome-name"></span></h1>
+      <p class="welcome-desc">
+        恭喜您成为我们的一员！这里是为您准备的入职指南，帮助您快速了解公司文化、熟悉工作流程、融入团队。
+      </p>
+    </div>
+    <div class="welcome-action">
+      <div class="quick-question-box">
+        <input
+          type="text"
+          class="quick-question-input"
+          id="quick-question-input"
+          placeholder="向 AI 助手提问，例如：入职需要准备哪些材料？"
+        />
+        <button class="btn btn-lg quick-question-btn" id="quick-question-btn">提问</button>
+      </div>
+      <a href="/chat?agent=onboarding" class="welcome-chat-link">前往 AI 对话 ›</a>
+    </div>
+  </div>
+
+  <!-- 入职进度统计 -->
+  <div class="grid grid-cols-3 progress-stats">
+    <div class="card stat-card">
+      <div class="stat-label">入职进度</div>
+      <div class="stat-value" id="stat-progress">--</div>
+      <div class="progress-bar-wrapper">
+        <div class="progress-bar" id="progress-bar-fill" style="width: 0%;"></div>
+      </div>
+    </div>
+    <div class="card stat-card">
+      <div class="stat-label">推荐知识库</div>
+      <div class="stat-value" id="stat-kb-count">--</div>
+      <div class="stat-sub text-muted" id="stat-kb-sub">个待加入</div>
+    </div>
+    <div class="card stat-card">
+      <div class="stat-label">入职天数</div>
+      <div class="stat-value" id="stat-days">--</div>
+      <div class="stat-sub text-muted">天</div>
+    </div>
   </div>
 
   <!-- 入职流程引导 -->
   <div class="page-header">
-    <h2 style="font-size: var(--text-xl);">入职流程引导</h2>
+    <h2 class="section-title">入职流程引导</h2>
   </div>
-  <div class="onboarding-steps" style="margin-bottom: var(--space-6);">
-    <div class="onboarding-step done">
-      <div class="step-number">✓</div>
-      <div class="step-content">
-        <div class="step-title">账号激活</div>
-        <div class="step-desc">您的账号已激活，可以登录系统</div>
-      </div>
-    </div>
-    <div class="onboarding-step done">
-      <div class="step-number">✓</div>
-      <div class="step-content">
-        <div class="step-title">个人信息填写</div>
-        <div class="step-desc">基本信息已完善</div>
-      </div>
-    </div>
-    <div class="onboarding-step current">
-      <div class="step-number">3</div>
-      <div class="step-content">
-        <div class="step-title">阅读公司制度</div>
-        <div class="step-desc">了解公司规章制度和流程</div>
-        <a href="/knowledge/search?tag=制度" class="btn btn-outline btn-sm" style="margin-top: var(--space-2);">前往阅读</a>
-      </div>
-    </div>
-    <div class="onboarding-step">
-      <div class="step-number">4</div>
-      <div class="step-content">
-        <div class="step-title">配置办公设备</div>
-        <div class="step-desc">领取并配置办公设备</div>
-      </div>
-    </div>
-    <div class="onboarding-step">
-      <div class="step-number">5</div>
-      <div class="step-content">
-        <div class="step-title">导师对接</div>
-        <div class="step-desc">与入职导师见面，制定学习计划</div>
-      </div>
-    </div>
-    <div class="onboarding-step">
-      <div class="step-number">6</div>
-      <div class="step-content">
-        <div class="step-title">入职培训</div>
-        <div class="step-desc">参加公司组织的入职培训</div>
-      </div>
-    </div>
+  <div class="onboarding-steps" id="onboarding-steps">
+    <div class="skeleton skeleton-step"></div>
+    <div class="skeleton skeleton-step"></div>
+    <div class="skeleton skeleton-step"></div>
   </div>
 
-  <div style="display: grid; grid-template-columns: 2fr 1fr; gap: var(--space-5);">
-    <!-- 公司知识库推荐 -->
-    <div class="card">
-      <div class="card-header"><h3>推荐知识库</h3></div>
-      <div class="kb-recommend-list" id="kb-recommend"></div>
+  <div class="onboarding-grid">
+    <!-- 左列：推荐知识库 + 必读文档 -->
+    <div class="onboarding-left">
+      <!-- 推荐知识库 -->
+      <div class="card">
+        <div class="card-header">
+          <h3>推荐知识库</h3>
+        </div>
+        <div class="kb-recommend-list" id="kb-recommend">
+          <div class="skeleton skeleton-item"></div>
+          <div class="skeleton skeleton-item"></div>
+          <div class="skeleton skeleton-item"></div>
+        </div>
+      </div>
+
+      <!-- 必读文档 -->
+      <div class="card">
+        <div class="card-header">
+          <h3>必读文档</h3>
+        </div>
+        <div class="doc-list" id="doc-list">
+          <div class="skeleton skeleton-item"></div>
+          <div class="skeleton skeleton-item"></div>
+          <div class="skeleton skeleton-item"></div>
+        </div>
+      </div>
     </div>
 
-    <!-- 常见问题 -->
-    <div class="card">
-      <div class="card-header"><h3>常见问题</h3></div>
-      <div class="faq-list" id="faq-list"></div>
+    <!-- 右列：常见问题 + 团队成员 -->
+    <div class="onboarding-right">
+      <!-- 常见问题 -->
+      <div class="card">
+        <div class="card-header">
+          <h3>常见问题</h3>
+        </div>
+        <div class="faq-list" id="faq-list">
+          <div class="skeleton skeleton-item"></div>
+          <div class="skeleton skeleton-item"></div>
+          <div class="skeleton skeleton-item"></div>
+        </div>
+      </div>
+
+      <!-- 认识团队 -->
+      <div class="card" id="team-members">
+        <div class="card-header">
+          <h3>认识团队</h3>
+          <a href="/knowledge/experts" class="btn btn-ghost btn-sm">全部专家</a>
+        </div>
+        <div class="team-list" id="team-list">
+          <div class="skeleton skeleton-item"></div>
+          <div class="skeleton skeleton-item"></div>
+          <div class="skeleton skeleton-item"></div>
+        </div>
+      </div>
     </div>
   </div>
 </DefaultLayout>
 
 <style>
+  /* 欢迎横幅 */
+  .welcome-banner {
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+    border: none;
+    color: white;
+    margin-bottom: var(--space-6);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-5);
+    flex-wrap: wrap;
+  }
+  .welcome-title {
+    color: white;
+    font-size: var(--text-3xl);
+    margin-bottom: var(--space-3);
+  }
+  .welcome-desc {
+    color: rgba(255, 255, 255, 0.9);
+    font-size: var(--text-md);
+    line-height: var(--lh-relaxed);
+    max-width: 560px;
+  }
+  .welcome-action {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-2);
+    min-width: 340px;
+    flex: 1;
+    max-width: 480px;
+  }
+  .quick-question-box {
+    display: flex;
+    gap: var(--space-2);
+    background: white;
+    border-radius: var(--radius);
+    padding: var(--space-1);
+  }
+  .quick-question-input {
+    flex: 1;
+    border: none;
+    outline: none;
+    padding: var(--space-2) var(--space-3);
+    font-size: var(--text-sm);
+    background: transparent;
+    color: var(--text);
+    border-radius: var(--radius);
+  }
+  .quick-question-btn {
+    background: var(--primary);
+    color: white;
+    border: none;
+    white-space: nowrap;
+  }
+  .quick-question-btn:hover {
+    background: var(--primary-dark);
+    color: white;
+  }
+  .welcome-chat-link {
+    color: rgba(255, 255, 255, 0.9);
+    font-size: var(--text-sm);
+    text-align: right;
+    text-decoration: none;
+  }
+  .welcome-chat-link:hover {
+    color: white;
+    text-decoration: underline;
+  }
+
+  /* 进度统计 */
+  .progress-stats {
+    margin-bottom: var(--space-6);
+    gap: var(--space-4);
+  }
+  .stat-card {
+    text-align: center;
+  }
+  .stat-label {
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    margin-bottom: var(--space-2);
+  }
+  .stat-value {
+    font-size: var(--text-3xl);
+    font-weight: 600;
+    color: var(--primary);
+    line-height: 1.2;
+  }
+  .stat-sub {
+    font-size: var(--text-xs);
+    margin-top: var(--space-1);
+  }
+  .progress-bar-wrapper {
+    margin-top: var(--space-3);
+    height: 6px;
+    background: var(--surface-muted);
+    border-radius: var(--radius-full);
+    overflow: hidden;
+  }
+  .progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, var(--primary), var(--primary-dark));
+    border-radius: var(--radius-full);
+    transition: width 0.6s ease;
+  }
+
+  /* 区块标题 */
+  .section-title {
+    font-size: var(--text-xl);
+  }
+
+  /* 入职流程步骤 */
   .onboarding-steps {
     display: flex;
     flex-direction: column;
     gap: var(--space-4);
+    margin-bottom: var(--space-6);
   }
   .onboarding-step {
     display: flex;
@@ -100,6 +250,7 @@ const breadcrumb = [{ label: '场景应用', href: '/scenes/onboarding' }, { lab
     border: 1px solid var(--border);
     border-radius: var(--radius);
     position: relative;
+    transition: border-color var(--transition-fast), background var(--transition-fast);
   }
   .onboarding-step::before {
     content: '';
@@ -129,7 +280,7 @@ const breadcrumb = [{ label: '场景应用', href: '/scenes/onboarding' }, { lab
   .onboarding-step.done .step-number {
     background: var(--success);
     border-color: var(--success);
-    color: var(--text-white);
+    color: white;
   }
   .onboarding-step.current {
     border-color: var(--primary);
@@ -138,7 +289,7 @@ const breadcrumb = [{ label: '场景应用', href: '/scenes/onboarding' }, { lab
   .onboarding-step.current .step-number {
     background: var(--primary);
     border-color: var(--primary);
-    color: var(--text-white);
+    color: white;
   }
   .step-content {
     flex: 1;
@@ -156,15 +307,40 @@ const breadcrumb = [{ label: '场景应用', href: '/scenes/onboarding' }, { lab
     font-size: var(--text-sm);
     color: var(--text-muted);
   }
+  .step-link {
+    display: inline-block;
+    margin-top: var(--space-2);
+  }
+
+  /* 两列网格 */
+  .onboarding-grid {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: var(--space-5);
+  }
+  .onboarding-left,
+  .onboarding-right {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-5);
+  }
+
+  /* 推荐知识库项 */
   .kb-recommend-item {
     display: flex;
     align-items: center;
     gap: var(--space-3);
     padding: var(--space-3) 0;
     border-bottom: 1px solid var(--border-light);
+    text-decoration: none;
+    color: inherit;
+    transition: background var(--transition-fast);
   }
   .kb-recommend-item:last-child {
     border-bottom: none;
+  }
+  .kb-recommend-item:hover {
+    background: var(--surface-hover);
   }
   .kb-recommend-icon {
     width: 40px;
@@ -175,7 +351,73 @@ const breadcrumb = [{ label: '场景应用', href: '/scenes/onboarding' }, { lab
     align-items: center;
     justify-content: center;
     font-size: 20px;
+    flex-shrink: 0;
   }
+  .kb-recommend-info {
+    flex: 1;
+    min-width: 0;
+  }
+  .kb-recommend-name {
+    font-weight: 500;
+    font-size: var(--text-sm);
+    color: var(--text);
+  }
+  .kb-recommend-desc {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .kb-recommend-meta {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+
+  /* 文档项 */
+  .doc-item {
+    display: block;
+    padding: var(--space-3) 0;
+    border-bottom: 1px solid var(--border-light);
+    text-decoration: none;
+    color: inherit;
+    transition: background var(--transition-fast);
+  }
+  .doc-item:last-child {
+    border-bottom: none;
+  }
+  .doc-item:hover {
+    background: var(--surface-hover);
+  }
+  .doc-title {
+    font-size: var(--text-sm);
+    font-weight: 500;
+    color: var(--text);
+    margin-bottom: var(--space-1);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .doc-item:hover .doc-title {
+    color: var(--primary);
+  }
+  .doc-summary {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .doc-meta {
+    display: flex;
+    gap: var(--space-3);
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    margin-top: var(--space-1);
+  }
+
+  /* FAQ 项 */
   .faq-item {
     padding: var(--space-3) 0;
     border-bottom: 1px solid var(--border-light);
@@ -191,72 +433,730 @@ const breadcrumb = [{ label: '场景应用', href: '/scenes/onboarding' }, { lab
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: var(--space-2);
   }
   .faq-item:hover .faq-question {
     color: var(--primary);
   }
+  .faq-arrow {
+    color: var(--text-muted);
+    flex-shrink: 0;
+    transition: transform var(--transition-fast);
+  }
+  .faq-item.open .faq-arrow {
+    transform: rotate(90deg);
+  }
+  .faq-answer {
+    display: none;
+    margin-top: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    background: var(--surface-muted);
+    border-radius: var(--radius);
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+    line-height: var(--lh-relaxed);
+  }
+  .faq-item.open .faq-answer {
+    display: block;
+  }
+  .faq-answer-link {
+    display: inline-block;
+    margin-top: var(--space-2);
+    color: var(--primary);
+    font-size: var(--text-xs);
+    text-decoration: none;
+  }
+  .faq-answer-link:hover {
+    text-decoration: underline;
+  }
+
+  /* 团队成员 */
+  .team-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) 0;
+    border-bottom: 1px solid var(--border-light);
+    text-decoration: none;
+    color: inherit;
+    transition: background var(--transition-fast);
+  }
+  .team-item:last-child {
+    border-bottom: none;
+  }
+  .team-item:hover {
+    background: var(--surface-hover);
+  }
+  .team-avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: var(--primary-bg);
+    color: var(--primary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    font-size: var(--text-sm);
+    flex-shrink: 0;
+    overflow: hidden;
+  }
+  .team-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .team-info {
+    flex: 1;
+    min-width: 0;
+  }
+  .team-name {
+    font-size: var(--text-sm);
+    font-weight: 500;
+    color: var(--text);
+  }
+  .team-tags {
+    display: flex;
+    gap: var(--space-1);
+    margin-top: var(--space-1);
+    flex-wrap: wrap;
+  }
+  .team-tag {
+    font-size: var(--text-xs);
+    padding: 2px 8px;
+    background: var(--primary-bg);
+    color: var(--primary);
+    border-radius: var(--radius-full);
+  }
+  .team-score {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    flex-shrink: 0;
+    text-align: right;
+  }
+  .team-score-value {
+    font-weight: 600;
+    color: var(--warning);
+  }
+
+  /* 骨架屏 */
+  .skeleton {
+    background: linear-gradient(
+      90deg,
+      var(--surface-muted) 25%,
+      var(--surface-hover) 50%,
+      var(--surface-muted) 75%
+    );
+    background-size: 200% 100%;
+    animation: skeleton-pulse 1.5s ease-in-out infinite;
+    border-radius: var(--radius);
+  }
+  @keyframes skeleton-pulse {
+    0% {
+      background-position: 200% 0;
+    }
+    100% {
+      background-position: -200% 0;
+    }
+  }
+  .skeleton-step {
+    height: 72px;
+  }
+  .skeleton-item {
+    height: 48px;
+    margin: var(--space-3) 0;
+  }
+
+  /* 错误状态 */
+  .state-error {
+    padding: var(--space-6) var(--space-3);
+    text-align: center;
+  }
+  .state-error-msg {
+    font-size: var(--text-sm);
+    font-weight: 500;
+    color: var(--danger);
+    margin-bottom: var(--space-1);
+  }
+  .state-error-detail {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    word-break: break-all;
+    margin-bottom: var(--space-3);
+  }
+
+  /* 空状态 */
+  .state-empty {
+    padding: var(--space-6) var(--space-3);
+    text-align: center;
+  }
+  .state-empty-icon {
+    font-size: 32px;
+    margin-bottom: var(--space-2);
+  }
+  .state-empty-msg {
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+  }
+
+  /* 响应式 */
+  @media (max-width: 768px) {
+    .welcome-banner {
+      flex-direction: column;
+      align-items: stretch;
+    }
+    .welcome-action {
+      min-width: 100%;
+      max-width: 100%;
+    }
+    .onboarding-grid {
+      grid-template-columns: 1fr;
+    }
+    .progress-stats {
+      grid-template-columns: 1fr !important;
+    }
+  }
 </style>
 
 <script>
-  function renderKbRecommend() {
-    const kbs = [
-      { icon: '📋', name: '员工手册', desc: '公司文化、价值观、行为规范', docs: 12 },
-      { icon: '💼', name: '薪酬福利', desc: '薪资、社保、公积金、福利政策', docs: 8 },
-      { icon: '📅', name: '考勤休假', desc: '考勤规则、请假流程、假期制度', docs: 15 },
-      { icon: '🔧', name: '办公指南', desc: '设备使用、系统操作、常用工具', docs: 20 },
+  import { getKnowledgeBases, searchKnowledge } from '@/lib/apis/knowledge';
+  import { getPopularDocs, getDashboard } from '@/lib/apis/analytics';
+  import { getTopContributors } from '@/lib/apis/experts';
+  import { getCurrentUser } from '@/lib/auth';
+  import { ApiError } from '@/lib/api';
+
+  // ===== 类型定义 =====
+  interface UserProfile {
+    id: string;
+    email: string;
+    name: string;
+    avatar?: string;
+    role?: string;
+    tenant_id?: string;
+    department?: string;
+    title?: string;
+    created_at?: string;
+  }
+
+  interface OnboardingStep {
+    num: number;
+    title: string;
+    desc: string;
+    status: 'done' | 'current' | 'pending';
+    link?: string;
+    linkText?: string;
+  }
+
+  // ===== 常量 =====
+  const TOKEN_KEY = 'ekb_access_token';
+  const ONBOARDING_KEYWORDS = ['入职', '新员工', '手册', '制度', '培训', '新人', '规章', '员工手册'];
+  const KB_ICONS = ['📋', '💼', '📅', '🔧', '📚', '🏢', '📌', '📄'];
+
+  // ===== 工具函数 =====
+  function escapeHtml(s: unknown): string {
+    return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function isOnboardingKb(name: string, desc: string): boolean {
+    const text = (name + ' ' + desc).toLowerCase();
+    return ONBOARDING_KEYWORDS.some((kw) => text.includes(kw.toLowerCase()));
+  }
+
+  function getKbIcon(name: string): string {
+    const idx = name.charCodeAt(0) % KB_ICONS.length;
+    return KB_ICONS[idx];
+  }
+
+  function getInitial(name: string): string {
+    return (name || '?').charAt(0).toUpperCase();
+  }
+
+  function calcDaysSince(dateStr: string | undefined): number {
+    if (!dateStr) return 0;
+    try {
+      const d = new Date(dateStr);
+      if (isNaN(d.getTime())) return 0;
+      const diff = Date.now() - d.getTime();
+      return Math.max(0, Math.floor(diff / (1000 * 60 * 60 * 24)));
+    } catch {
+      return 0;
+    }
+  }
+
+  // ===== 状态渲染 =====
+  function showSkeleton(container: HTMLElement, count: number, itemHeight = '48px'): void {
+    container.innerHTML = Array.from({ length: count })
+      .map(() => `<div class="skeleton" style="height: ${itemHeight}; margin: var(--space-3) 0;"></div>`)
+      .join('');
+  }
+
+  function showError(container: HTMLElement, msg: string, retryFn: () => void): void {
+    container.innerHTML = `
+      <div class="state-error">
+        <div class="state-error-msg">加载失败</div>
+        <div class="state-error-detail">${escapeHtml(msg)}</div>
+        <button class="btn btn-outline btn-sm" data-retry>重试</button>
+      </div>`;
+    container.querySelector('[data-retry]')?.addEventListener('click', retryFn);
+  }
+
+  function showEmpty(container: HTMLElement, icon: string, msg: string): void {
+    container.innerHTML = `
+      <div class="state-empty">
+        <div class="state-empty-icon">${icon}</div>
+        <div class="state-empty-msg">${escapeHtml(msg)}</div>
+      </div>`;
+  }
+
+  // ===== 加载用户信息 =====
+  async function loadUser(): Promise<UserProfile | null> {
+    try {
+      const user = await getCurrentUser();
+      return (user as UserProfile | null) || null;
+    } catch {
+      return null;
+    }
+  }
+
+  function renderWelcome(user: UserProfile | null): void {
+    const nameEl = document.getElementById('welcome-name');
+    if (nameEl && user?.name) {
+      nameEl.textContent = `，${user.name}`;
+    }
+  }
+
+  // ===== 入职流程步骤 =====
+  function buildOnboardingSteps(user: UserProfile | null, hasOnboardingKb: boolean, hasTeamMembers: boolean): OnboardingStep[] {
+    const profileComplete = !!(user?.name && user?.email);
+
+    const steps: OnboardingStep[] = [
+      {
+        num: 1,
+        title: '账号激活',
+        desc: '您的账号已激活，可以登录系统',
+        status: 'done',
+      },
+      {
+        num: 2,
+        title: '完善个人信息',
+        desc: '补充姓名、部门、职位等基本信息',
+        status: profileComplete ? 'done' : 'pending',
+        link: '/settings/tenant',
+        linkText: '前往完善',
+      },
+      {
+        num: 3,
+        title: '阅读新员工手册',
+        desc: '了解公司文化、价值观、行为规范和规章制度',
+        status: 'pending',
+        link: `/knowledge/search?q=${encodeURIComponent('新员工手册')}`,
+        linkText: '前往阅读',
+      },
+      {
+        num: 4,
+        title: '完成入职培训',
+        desc: '学习入职培训课程，掌握工作流程和工具使用',
+        status: 'pending',
+        link: `/knowledge/search?q=${encodeURIComponent('入职培训')}`,
+        linkText: '前往学习',
+      },
+      {
+        num: 5,
+        title: '加入部门知识库',
+        desc: hasOnboardingKb ? '浏览推荐知识库，加入与您部门相关的内容' : '暂无推荐知识库，可前往知识库页面浏览',
+        status: 'pending',
+        link: '/knowledge',
+        linkText: '查看知识库',
+      },
+      {
+        num: 6,
+        title: '认识团队成员',
+        desc: hasTeamMembers ? '了解部门活跃成员，向专家提问' : '暂无团队成员数据',
+        status: 'pending',
+        link: '/knowledge/experts',
+        linkText: '查看专家',
+      },
     ];
-    document.getElementById('kb-recommend')!.innerHTML = kbs
+
+    // 将第一个未完成的步骤标记为 current
+    const firstPendingIdx = steps.findIndex((s) => s.status === 'pending');
+    if (firstPendingIdx >= 0) {
+      steps[firstPendingIdx].status = 'current';
+    }
+    return steps;
+  }
+
+  function renderOnboardingSteps(steps: OnboardingStep[]): void {
+    const container = document.getElementById('onboarding-steps');
+    if (!container) return;
+    if (steps.length === 0) {
+      showEmpty(container, '📋', '暂无入职流程数据');
+      return;
+    }
+    container.innerHTML = steps
+      .map((step) => {
+        const numContent = step.status === 'done' ? '✓' : String(step.num);
+        const linkHtml =
+          step.link && step.linkText
+            ? `<a href="${escapeHtml(step.link)}" class="btn btn-outline btn-sm step-link">${escapeHtml(step.linkText)}</a>`
+            : '';
+        return `
+        <div class="onboarding-step ${step.status}">
+          <div class="step-number">${numContent}</div>
+          <div class="step-content">
+            <div class="step-title">${escapeHtml(step.title)}</div>
+            <div class="step-desc">${escapeHtml(step.desc)}</div>
+            ${linkHtml}
+          </div>
+        </div>`;
+      })
+      .join('');
+  }
+
+  // ===== 进度统计 =====
+  function renderProgressStats(steps: OnboardingStep[], kbCount: number, user: UserProfile | null): void {
+    const doneCount = steps.filter((s) => s.status === 'done').length;
+    const total = steps.length;
+    const progressEl = document.getElementById('stat-progress');
+    const barEl = document.getElementById('progress-bar-fill');
+    if (progressEl) progressEl.textContent = `${doneCount}/${total}`;
+    if (barEl) barEl.style.width = `${total > 0 ? (doneCount / total) * 100 : 0}%`;
+
+    const kbCountEl = document.getElementById('stat-kb-count');
+    if (kbCountEl) kbCountEl.textContent = String(kbCount);
+
+    const days = calcDaysSince(user?.created_at);
+    const daysEl = document.getElementById('stat-days');
+    if (daysEl) daysEl.textContent = String(days > 0 ? days : 1);
+  }
+
+  // ===== 推荐知识库 =====
+  interface KbItem {
+    id: string;
+    name: string;
+    description: string;
+    document_count?: number;
+  }
+
+  async function loadKnowledgeBases(): Promise<{ recommended: KbItem[]; total: number }> {
+    const res = await getKnowledgeBases(1, 50);
+    const all = (res?.items || []) as KbItem[];
+    let recommended = all.filter((kb) => isOnboardingKb(kb.name, kb.description || ''));
+    // 如果没有匹配入职关键词的，按文档数排序取前 4 个
+    if (recommended.length === 0 && all.length > 0) {
+      recommended = [...all]
+        .sort((a, b) => (b.document_count || 0) - (a.document_count || 0))
+        .slice(0, 4);
+    } else {
+      recommended = recommended.slice(0, 6);
+    }
+    return { recommended, total: all.length };
+  }
+
+  function renderKnowledgeBases(recommended: KbItem[]): void {
+    const container = document.getElementById('kb-recommend');
+    if (!container) return;
+    if (recommended.length === 0) {
+      showEmpty(container, '📚', '暂无推荐知识库');
+      return;
+    }
+    container.innerHTML = recommended
       .map(
         (kb) => `
-      <div class="kb-recommend-item">
-        <div class="kb-recommend-icon">${kb.icon}</div>
-        <div style="flex: 1;">
-          <div style="font-weight: 500; font-size: var(--text-sm);">${escapeHtml(kb.name)}</div>
-          <div class="text-muted" style="font-size: var(--text-xs);">${escapeHtml(kb.desc)}</div>
+      <a href="/knowledge/search?kb=${encodeURIComponent(kb.id)}" class="kb-recommend-item">
+        <div class="kb-recommend-icon">${getKbIcon(kb.name)}</div>
+        <div class="kb-recommend-info">
+          <div class="kb-recommend-name">${escapeHtml(kb.name)}</div>
+          <div class="kb-recommend-desc">${escapeHtml(kb.description || '暂无描述')}</div>
         </div>
-        <button class="btn btn-outline btn-sm">查看</button>
-      </div>`
+        <div class="kb-recommend-meta">${kb.document_count || 0} 篇</div>
+      </a>`,
       )
       .join('');
-    document.querySelectorAll('.kb-recommend-item button').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        window.location.href = '/knowledge/search';
-      });
-    });
   }
 
-  function renderFaq() {
-    const faqs = [
-      { q: '入职需要准备哪些材料？', a: '身份证、学历证书、银行卡、体检报告等' },
-      { q: '社保公积金缴纳比例是多少？', a: '养老保险单位 16% 个人 8%，公积金各 12%' },
-      { q: '年假有多少天？', a: '工龄 1-10 年 5 天，10-20 年 10 天，20 年以上 15 天' },
-      { q: '入职导师怎么分配？', a: '由部门负责人指定，通常为同岗位资深员工' },
-      { q: '电脑设备如何领取？', a: '入职当天到 IT 部门领取，需签字确认' },
-      { q: '试用期为多久？', a: '通常为 3 个月，表现优秀可缩短' },
-    ];
-    document.getElementById('faq-list')!.innerHTML = faqs
+  // ===== 必读文档 =====
+  async function loadMustReadDocs(): Promise<void> {
+    const container = document.getElementById('doc-list');
+    if (!container) return;
+    showSkeleton(container, 4, '52px');
+    try {
+      // 优先搜索新员工相关文档
+      const res = await searchKnowledge({
+        q: '新员工 入职 手册 制度',
+        page: 1,
+        page_size: 5,
+      });
+      let docs = (res?.items || []).map((r) => ({
+        id: r.id,
+        title: r.title,
+        summary: r.highlight || r.content || '',
+        kb_name: r.kb_name || '',
+        view_count: 0,
+      }));
+
+      // 如果搜索无结果，回退到热门文档
+      if (docs.length === 0) {
+        const popular = await getPopularDocs(30, 5);
+        docs = (popular || []).map((d) => ({
+          id: d.doc_id,
+          title: d.title,
+          summary: '',
+          kb_name: d.kb_name || '',
+          view_count: d.view_count || 0,
+        }));
+      }
+
+      renderMustReadDocs(docs);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) return; // 已跳转登录
+      showError(container, err instanceof Error ? err.message : String(err), loadMustReadDocs);
+    }
+  }
+
+  function renderMustReadDocs(
+    docs: Array<{ id: string; title: string; summary: string; kb_name: string; view_count: number }>,
+  ): void {
+    const container = document.getElementById('doc-list');
+    if (!container) return;
+    if (docs.length === 0) {
+      showEmpty(container, '📄', '暂无必读文档');
+      return;
+    }
+    container.innerHTML = docs
       .map(
-        (f) => `
-      <div class="faq-item" data-q="${escapeHtml(f.q)}">
-        <div class="faq-question">
-          <span>${escapeHtml(f.q)}</span>
-          <span style="color: var(--text-muted);">›</span>
+        (d) => `
+      <a href="/knowledge/detail?id=${encodeURIComponent(d.id)}" class="doc-item">
+        <div class="doc-title">${escapeHtml(d.title)}</div>
+        ${d.summary ? `<div class="doc-summary">${escapeHtml(d.summary)}</div>` : ''}
+        <div class="doc-meta">
+          ${d.kb_name ? `<span>📂 ${escapeHtml(d.kb_name)}</span>` : ''}
+          ${d.view_count > 0 ? `<span>👁 ${d.view_count} 次浏览</span>` : ''}
         </div>
-      </div>`
+      </a>`,
       )
       .join('');
-    document.querySelectorAll('.faq-item').forEach((el) => {
+  }
+
+  // ===== 常见问题 =====
+  async function loadFaq(): Promise<void> {
+    const container = document.getElementById('faq-list');
+    if (!container) return;
+    showSkeleton(container, 4, '44px');
+    try {
+      // 搜索 FAQ 相关文档
+      const res = await searchKnowledge({
+        q: 'FAQ 常见问题 新员工',
+        page: 1,
+        page_size: 6,
+      });
+      let faqs = (res?.items || []).map((r) => ({
+        id: r.id,
+        question: r.title,
+        answer: r.highlight || r.content || '',
+      }));
+
+      // 如果搜索无结果，回退到热门文档作为 FAQ
+      if (faqs.length === 0) {
+        const popular = await getPopularDocs(30, 6);
+        faqs = (popular || []).map((d) => ({
+          id: d.doc_id,
+          question: d.title,
+          answer: '',
+        }));
+      }
+
+      renderFaq(faqs);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) return;
+      showError(container, err instanceof Error ? err.message : String(err), loadFaq);
+    }
+  }
+
+  function renderFaq(faqs: Array<{ id: string; question: string; answer: string }>): void {
+    const container = document.getElementById('faq-list');
+    if (!container) return;
+    if (faqs.length === 0) {
+      showEmpty(container, '❓', '暂无常见问题');
+      return;
+    }
+    container.innerHTML = faqs
+      .map(
+        (f, idx) => `
+      <div class="faq-item" data-idx="${idx}">
+        <div class="faq-question">
+          <span>${escapeHtml(f.question)}</span>
+          <span class="faq-arrow">›</span>
+        </div>
+        <div class="faq-answer">
+          ${f.answer ? escapeHtml(f.answer) : '点击下方链接查看完整文档'}
+          <a href="/knowledge/detail?id=${encodeURIComponent(f.id)}" class="faq-answer-link">查看完整文档 ›</a>
+        </div>
+      </div>`,
+      )
+      .join('');
+
+    // 点击展开/收起
+    container.querySelectorAll('.faq-item').forEach((el) => {
       el.addEventListener('click', () => {
-        const q = (el as HTMLElement).dataset.q!;
-        window.location.href = `/chat?q=${encodeURIComponent(q)}`;
+        el.classList.toggle('open');
       });
     });
   }
 
-  function escapeHtml(s: string): string {
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  // ===== 团队成员 =====
+  async function loadTeamMembers(): Promise<boolean> {
+    const container = document.getElementById('team-list');
+    if (!container) return false;
+    showSkeleton(container, 4, '52px');
+    try {
+      const members = await getTopContributors(30, 5);
+      renderTeamMembers(members || []);
+      return (members || []).length > 0;
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) return false;
+      showError(container, err instanceof Error ? err.message : String(err), () => void loadTeamMembers());
+      return false;
+    }
   }
 
-  renderKbRecommend();
-  renderFaq();
+  function renderTeamMembers(
+    members: Array<{
+      user_id: string;
+      name: string;
+      avatar: string | null;
+      department: string | null;
+      contribution_score: number;
+      document_count: number;
+      answer_count: number;
+    }>,
+  ): void {
+    const container = document.getElementById('team-list');
+    if (!container) return;
+    if (members.length === 0) {
+      showEmpty(container, '👥', '暂无团队成员数据');
+      return;
+    }
+    container.innerHTML = members
+      .map((m) => {
+        const avatarHtml = m.avatar
+          ? `<img src="${escapeHtml(m.avatar)}" alt="${escapeHtml(m.name)}" />`
+          : escapeHtml(getInitial(m.name));
+        return `
+      <a href="/knowledge/experts?q=${encodeURIComponent(m.name)}" class="team-item">
+        <div class="team-avatar">${avatarHtml}</div>
+        <div class="team-info">
+          <div class="team-name">${escapeHtml(m.name)}</div>
+          <div class="team-tags">
+            ${m.department ? `<span class="team-tag">${escapeHtml(m.department)}</span>` : ''}
+            <span class="team-tag">文档 ${m.document_count || 0}</span>
+            <span class="team-tag">回答 ${m.answer_count || 0}</span>
+          </div>
+        </div>
+        <div class="team-score">
+          <div class="team-score-value">${m.contribution_score || 0}</div>
+          <div>贡献分</div>
+        </div>
+      </a>`;
+      })
+      .join('');
+  }
+
+  // ===== 快速提问 =====
+  function initQuickQuestion(): void {
+    const input = document.getElementById('quick-question-input') as HTMLInputElement | null;
+    const btn = document.getElementById('quick-question-btn');
+    if (!input || !btn) return;
+
+    const submit = () => {
+      const q = input.value.trim();
+      if (!q) {
+        alert('请输入您的问题');
+        input.focus();
+        return;
+      }
+      window.location.href = `/chat?q=${encodeURIComponent(q)}&agent=onboarding`;
+    };
+
+    btn.addEventListener('click', submit);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        submit();
+      }
+    });
+  }
+
+  // ===== 入职流程引导（含 KB 和团队数据依赖） =====
+  async function loadOnboardingSteps(user: UserProfile | null): Promise<void> {
+    const container = document.getElementById('onboarding-steps');
+    if (!container) return;
+    // skeleton 已在 HTML 中
+
+    try {
+      // 并行加载知识库和仪表盘数据
+      const [kbResult, dashboardResult] = await Promise.allSettled([
+        loadKnowledgeBases(),
+        getDashboard(30).catch(() => null),
+      ]);
+
+      const recommended =
+        kbResult.status === 'fulfilled' ? kbResult.value.recommended : [];
+      const hasOnboardingKb = recommended.length > 0;
+
+      // 渲染推荐知识库
+      renderKnowledgeBases(recommended);
+
+      // 先用占位渲染步骤（团队数据稍后更新）
+      const steps = buildOnboardingSteps(user, hasOnboardingKb, false);
+      renderOnboardingSteps(steps);
+      renderProgressStats(steps, recommended.length, user);
+
+      // 加载团队数据后更新步骤 6
+      const hasTeam = await loadTeamMembers();
+      const finalSteps = buildOnboardingSteps(user, hasOnboardingKb, hasTeam);
+      renderOnboardingSteps(finalSteps);
+      renderProgressStats(finalSteps, recommended.length, user);
+
+      // 加载必读文档和 FAQ（不阻塞步骤渲染）
+      void loadMustReadDocs();
+      void loadFaq();
+
+      // 仪表盘数据可用于补充统计（当前用 KB 数和天数已足够，此处保留以备扩展）
+      if (dashboardResult.status === 'fulfilled') {
+        // 可在此处使用 dashboardResult.value 补充统计
+      }
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) return;
+      showError(
+        container,
+        err instanceof Error ? err.message : String(err),
+        () => void loadOnboardingSteps(user),
+      );
+      // 即使步骤加载失败，也尝试渲染其余区域
+      void loadMustReadDocs();
+      void loadFaq();
+      void loadTeamMembers();
+    }
+  }
+
+  // ===== 初始化 =====
+  async function init(): Promise<void> {
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (!token) {
+      window.location.href = '/auth/login';
+      return;
+    }
+
+    initQuickQuestion();
+
+    // 加载用户信息
+    const user = await loadUser();
+    renderWelcome(user);
+
+    // 加载入职流程（内含知识库、文档、FAQ、团队）
+    await loadOnboardingSteps(user);
+  }
+
+  init();
 </script>

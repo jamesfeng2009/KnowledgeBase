@@ -1,0 +1,208 @@
+---
+/**
+ * TenantCard.astro - 租户信息卡片组件
+ *
+ * 展示租户名称、套餐徽章、用户数、文档数以及存储使用进度条。
+ * 套餐徽章与进度条配色复用 CSS 变量，无硬编码颜色。
+ *
+ * @example
+ * <TenantCard tenant={tenant} />
+ */
+export interface TenantInfo {
+  id: string;
+  name: string;
+  plan: 'free' | 'pro' | 'enterprise';
+  user_count: number;
+  doc_count: number;
+  storage_used: number;
+  storage_limit: number;
+  created_at: string;
+}
+
+interface Props {
+  /** 租户信息 */
+  tenant: TenantInfo;
+}
+
+const PLAN_LABELS: Record<TenantInfo['plan'], string> = {
+  free: '免费版',
+  pro: '专业版',
+  enterprise: '企业版',
+};
+
+const { tenant } = Astro.props;
+const planLabel = PLAN_LABELS[tenant.plan] || tenant.plan;
+
+// 存储使用百分比：无上限或上限为 0 时按 0 处理
+const storagePct =
+  tenant.storage_limit > 0
+    ? Math.min(100, (tenant.storage_used / tenant.storage_limit) * 100)
+    : 0;
+const storageClass =
+  storagePct >= 100 ? 'progress-fill danger' : storagePct >= 80 ? 'progress-fill warning' : 'progress-fill';
+
+// 格式化字节为 GB（保留 2 位小数）
+function formatBytes(bytes: number): string {
+  const gb = bytes / 1073741824;
+  return gb.toFixed(2) + ' GB';
+}
+const storageText =
+  tenant.storage_limit > 0
+    ? `${formatBytes(tenant.storage_used)} / ${formatBytes(tenant.storage_limit)}`
+    : `${formatBytes(tenant.storage_used)} / 不限`;
+---
+
+<div class="tenant-card" data-tenant-id={tenant.id}>
+  <div class="tenant-header">
+    <div class="tenant-title">
+      <h3 class="tenant-name">{tenant.name}</h3>
+      <span class={`badge badge-plan-${tenant.plan}`}>{planLabel}</span>
+    </div>
+    <span class="tenant-id">ID: {tenant.id}</span>
+  </div>
+
+  <div class="tenant-stats">
+    <div class="stat-item">
+      <div class="stat-label">用户数</div>
+      <div class="stat-value">{tenant.user_count}</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-label">文档数</div>
+      <div class="stat-value">{tenant.doc_count}</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-label">创建时间</div>
+      <div class="stat-value stat-date">{tenant.created_at}</div>
+    </div>
+  </div>
+
+  <div class="storage-section">
+    <div class="storage-header">
+      <span class="stat-label">存储使用</span>
+      <span class="storage-text">{storageText}</span>
+    </div>
+    <div class="progress-bar">
+      <div class={storageClass} style={`width: ${storagePct.toFixed(1)}%;`}></div>
+    </div>
+    <div class="storage-meta">{storagePct.toFixed(1)}% 已使用</div>
+  </div>
+</div>
+
+<style>
+  .tenant-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: var(--space-5);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    box-shadow: var(--shadow-xs);
+  }
+  .tenant-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+  }
+  .tenant-title {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+  }
+  .tenant-name {
+    margin: 0;
+    font-size: var(--text-lg);
+    font-weight: 600;
+    color: var(--text);
+  }
+  .tenant-id {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .badge-plan-free {
+    background: var(--surface-muted);
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+  }
+  .badge-plan-pro {
+    background: var(--info-bg);
+    color: var(--info);
+  }
+  .badge-plan-enterprise {
+    background: var(--primary-bg);
+    color: var(--primary);
+  }
+  .tenant-stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--space-4);
+    padding: var(--space-4) 0;
+    border-top: 1px solid var(--border-light);
+    border-bottom: 1px solid var(--border-light);
+  }
+  .stat-item {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+  .stat-label {
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+  }
+  .stat-value {
+    font-size: var(--text-xl);
+    font-weight: 600;
+    color: var(--text);
+  }
+  .stat-date {
+    font-size: var(--text-sm);
+    font-weight: 500;
+  }
+  .storage-section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+  .storage-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .storage-text {
+    font-size: var(--text-sm);
+    color: var(--text);
+    font-weight: 500;
+  }
+  .progress-bar {
+    height: 6px;
+    background: var(--surface-muted);
+    border-radius: var(--radius-full);
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    background: var(--primary);
+    border-radius: var(--radius-full);
+    transition: width var(--transition-slow), background var(--transition-fast);
+  }
+  .progress-fill.warning {
+    background: var(--warning);
+  }
+  .progress-fill.danger {
+    background: var(--danger);
+  }
+  .storage-meta {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+  }
+  @media (max-width: 768px) {
+    .tenant-stats {
+      grid-template-columns: 1fr;
+      gap: var(--space-3);
+    }
+  }
+</style>

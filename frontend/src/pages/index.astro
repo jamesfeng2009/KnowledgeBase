@@ -2,54 +2,63 @@
 /**
  * 首页 - 工作台
  * 显示欢迎信息和功能概览
+ * 数据来源：
+ *   - GET /api/v1/stats/overview  四项核心统计（文档/知识库/对话/活跃用户）
+ *   - getDashboard()              六项运营指标（搜索/文档/用户/零点击/覆盖率/新鲜度）
  */
 import DefaultLayout from '@/layouts/DefaultLayout.astro';
 
 const breadcrumb = [{ label: '工作台' }];
 
-// 功能概览数据
+// 功能概览卡片配置：保留导航能力，badge 改为展示真实运营指标
 const features = [
   {
     icon: '💬',
     title: 'AI 智能对话',
     desc: '基于 Agentic RAG 的智能问答，支持流式输出和引用溯源，快速获取知识答案。',
     route: '/chat',
-    badge: '核心功能',
+    metricKey: 'total_searches',
+    metricLabel: '搜索',
   },
   {
     icon: '📚',
     title: '知识库管理',
     desc: '集中管理企业知识资产，支持多格式文档上传、自动解析和智能分类。',
     route: '/knowledge',
-    badge: '知识',
+    metricKey: 'total_documents',
+    metricLabel: '文档',
   },
   {
     icon: '🔍',
     title: '语义搜索',
     desc: '基于向量检索的语义搜索，理解意图而非关键词匹配，精准定位相关知识。',
     route: '/knowledge/search',
-    badge: '搜索',
+    metricKey: 'zero_click_rate',
+    metricLabel: '零点击率',
   },
   {
     icon: '✏️',
     title: '协同编辑',
     desc: '基于 Yjs 的实时协同编辑，支持多人同时编辑文档，变更自动同步。',
     route: '/manage/editor',
-    badge: '协作',
+    metricKey: 'total_users',
+    metricLabel: '用户',
   },
   {
     icon: '📊',
     title: '运营看板',
     desc: '系统运行状态监控、使用统计分析和审计日志，全面掌握平台运营情况。',
     route: '/admin',
-    badge: '管理',
+    metricKey: 'coverage_rate',
+    metricLabel: '覆盖率',
   },
   {
     icon: '⚙️',
     title: '系统设置',
     desc: '租户管理、API 密钥配置、LLM 模型选择和系统参数配置。',
     route: '/settings/system',
-    badge: '系统',
+    metricKey: 'freshness_rate',
+    metricLabel: '新鲜度',
   },
 ];
 ---
@@ -78,22 +87,26 @@ const features = [
 
   <!-- 统计概览 -->
   <section style="margin-top: var(--space-6);">
+    <div id="stats-error" class="block-error" style="display: none; margin-bottom: var(--space-3);">
+      <span class="block-error-msg" id="stats-error-msg">统计数据加载失败</span>
+      <button class="btn btn-outline btn-sm" type="button" id="stats-retry">重试</button>
+    </div>
     <div class="grid grid-cols-4">
       <div class="card">
         <div class="text-muted" style="font-size: var(--text-sm); margin-bottom: var(--space-2);">文档总数</div>
-        <div style="font-size: var(--text-4xl); font-weight: 600; color: var(--primary);" id="stat-docs">--</div>
+        <div class="stat-value" id="stat-docs"><div class="skeleton-bar"></div></div>
       </div>
       <div class="card">
         <div class="text-muted" style="font-size: var(--text-sm); margin-bottom: var(--space-2);">知识库数</div>
-        <div style="font-size: var(--text-4xl); font-weight: 600; color: var(--success);" id="stat-kbs">--</div>
+        <div class="stat-value" id="stat-kbs"><div class="skeleton-bar"></div></div>
       </div>
       <div class="card">
         <div class="text-muted" style="font-size: var(--text-sm); margin-bottom: var(--space-2);">对话次数</div>
-        <div style="font-size: var(--text-4xl); font-weight: 600; color: var(--warning);" id="stat-chats">--</div>
+        <div class="stat-value" id="stat-chats"><div class="skeleton-bar"></div></div>
       </div>
       <div class="card">
         <div class="text-muted" style="font-size: var(--text-sm); margin-bottom: var(--space-2);">活跃用户</div>
-        <div style="font-size: var(--text-4xl); font-weight: 600; color: var(--info);" id="stat-users">--</div>
+        <div class="stat-value" id="stat-users"><div class="skeleton-bar"></div></div>
       </div>
     </div>
   </section>
@@ -103,12 +116,18 @@ const features = [
     <div class="page-header">
       <h2 class="page-title" style="font-size: var(--text-xl);">功能概览</h2>
     </div>
+    <div id="dashboard-error" class="block-error" style="display: none; margin-bottom: var(--space-3);">
+      <span class="block-error-msg" id="dashboard-error-msg">运营数据加载失败</span>
+      <button class="btn btn-outline btn-sm" type="button" id="dashboard-retry">重试</button>
+    </div>
     <div class="grid grid-cols-3">
       {features.map((feature) => (
         <a href={feature.route} class="card feature-card" style="text-decoration: none;">
           <div style="display: flex; align-items: flex-start; justify-content: space-between;">
             <div class="feature-card-icon">{feature.icon}</div>
-            <span class="badge badge-primary">{feature.badge}</span>
+            <span class="badge badge-primary feature-metric" data-metric={feature.metricKey} data-label={feature.metricLabel}>
+              <span class="metric-loading">加载中</span>
+            </span>
           </div>
           <h3 class="feature-card-title">{feature.title}</h3>
           <p class="feature-card-desc">{feature.desc}</p>
@@ -121,41 +140,211 @@ const features = [
   </section>
 </DefaultLayout>
 
+<style>
+  .stat-value {
+    font-size: var(--text-4xl);
+    font-weight: 600;
+    min-height: 40px;
+    display: flex;
+    align-items: center;
+  }
+  .stat-value.is-error {
+    color: var(--text-muted);
+    font-size: var(--text-2xl);
+  }
+  /* 骨架屏动画 */
+  .skeleton-bar {
+    display: inline-block;
+    width: 80px;
+    height: 28px;
+    border-radius: var(--radius-sm);
+    background: linear-gradient(90deg, var(--surface-muted) 25%, var(--surface-hover) 50%, var(--surface-muted) 75%);
+    background-size: 200% 100%;
+    animation: skeleton-loading 1.4s ease-in-out infinite;
+  }
+  @keyframes skeleton-loading {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+  /* 错误提示条 */
+  .block-error {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    background: var(--danger-bg, #fef2f2);
+    border: 1px solid var(--danger, #ef4444);
+    border-radius: var(--radius);
+    color: var(--danger, #ef4444);
+    font-size: var(--text-sm);
+  }
+  .block-error-msg {
+    flex: 1;
+    word-break: break-all;
+  }
+  /* 卡片指标徽章 */
+  .feature-metric {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    min-width: 56px;
+    justify-content: center;
+  }
+  .feature-metric .metric-value {
+    font-weight: 600;
+  }
+  .feature-metric .metric-loading {
+    font-size: var(--text-xs);
+    opacity: 0.7;
+  }
+  .feature-metric.is-error {
+    background: var(--surface-muted);
+    color: var(--text-muted);
+  }
+</style>
+
 <script>
-  // 加载统计数据
-  async function loadStats() {
-    const token = localStorage.getItem('ekb_access_token');
-    if (!token) return;
+  import { getDashboard, type DashboardData } from '@/lib/apis/analytics';
+  import { ApiError } from '@/lib/api';
 
-    const apiBase = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
+  const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
+  const TOKEN_KEY = 'ekb_access_token';
 
+  const STAT_IDS = ['stat-docs', 'stat-kbs', 'stat-chats', 'stat-users'] as const;
+
+  function el(id: string): HTMLElement {
+    return document.getElementById(id) as HTMLElement;
+  }
+
+  function escapeHtml(s: string): string {
+    return String(s ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  // ===== 统计概览（/api/v1/stats/overview）=====
+
+  function showStatsSkeleton(): void {
+    STAT_IDS.forEach((id) => {
+      const node = el(id);
+      node.classList.remove('is-error');
+      node.innerHTML = '<div class="skeleton-bar"></div>';
+    });
+  }
+
+  function setStat(id: string, value: number | string): void {
+    const node = el(id);
+    node.classList.remove('is-error');
+    node.textContent = String(value);
+  }
+
+  function showStatsError(msg: string): void {
+    STAT_IDS.forEach((id) => {
+      const node = el(id);
+      node.classList.add('is-error');
+      node.textContent = '--';
+    });
+    el('stats-error-msg').textContent = '统计数据加载失败：' + msg;
+    el('stats-error').style.display = 'flex';
+  }
+
+  function hideStatsError(): void {
+    el('stats-error').style.display = 'none';
+  }
+
+  async function loadStats(): Promise<void> {
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (!token) {
+      window.location.href = '/auth/login';
+      return;
+    }
+    showStatsSkeleton();
+    hideStatsError();
     try {
-      const response = await fetch(`${apiBase}/api/v1/stats/overview`, {
+      const response = await fetch(`${API_BASE}/api/v1/stats/overview`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-
-      if (response.ok) {
-        const result = await response.json();
-        const data = result.data || result;
-
-        const setText = (id: string, value: number | string) => {
-          const el = document.getElementById(id);
-          if (el) el.textContent = String(value);
-        };
-
-        setText('stat-docs', data.total_documents ?? 0);
-        setText('stat-kbs', data.total_knowledge_bases ?? 0);
-        setText('stat-chats', data.total_conversations ?? 0);
-        setText('stat-users', data.active_users ?? 0);
+      if (response.status === 401) {
+        localStorage.removeItem(TOKEN_KEY);
+        window.location.href = '/auth/login';
+        return;
       }
-    } catch {
-      // 统计数据加载失败，静默处理
-      ['stat-docs', 'stat-kbs', 'stat-chats', 'stat-users'].forEach((id) => {
-        const el = document.getElementById(id);
-        if (el) el.textContent = '0';
-      });
+      if (!response.ok) {
+        throw new Error(`请求失败 (${response.status})`);
+      }
+      const result = await response.json();
+      const data = result.data || result;
+
+      setStat('stat-docs', data.total_documents ?? 0);
+      setStat('stat-kbs', data.total_knowledge_bases ?? 0);
+      setStat('stat-chats', data.total_conversations ?? 0);
+      setStat('stat-users', data.active_users ?? 0);
+    } catch (err) {
+      showStatsError(err instanceof Error ? err.message : String(err));
     }
   }
 
+  // ===== 功能概览指标（getDashboard）=====
+
+  function showMetricsLoading(): void {
+    document.querySelectorAll<HTMLElement>('.feature-metric').forEach((node) => {
+      node.classList.remove('is-error');
+      node.innerHTML = '<span class="metric-loading">加载中</span>';
+    });
+  }
+
+  function showMetricsError(msg: string): void {
+    document.querySelectorAll<HTMLElement>('.feature-metric').forEach((node) => {
+      node.classList.add('is-error');
+      node.innerHTML = '<span class="metric-loading">--</span>';
+    });
+    el('dashboard-error-msg').textContent = '运营数据加载失败：' + msg;
+    el('dashboard-error').style.display = 'flex';
+  }
+
+  function hideDashboardError(): void {
+    el('dashboard-error').style.display = 'none';
+  }
+
+  /** 将指标值格式化为展示文本 */
+  function formatMetric(key: string, value: unknown): string {
+    if (value == null || value === '') return '--';
+    if (key.endsWith('_rate')) {
+      const num = typeof value === 'number' ? value : Number(value);
+      if (isNaN(num)) return '--';
+      // 兼容 0-1 小数与 0-100 百分比
+      const pct = num <= 1 ? num * 100 : num;
+      return pct.toFixed(1) + '%';
+    }
+    const num = typeof value === 'number' ? value : Number(value);
+    if (!isNaN(num)) return num.toLocaleString('zh-CN');
+    return String(value);
+  }
+
+  async function loadDashboard(): Promise<void> {
+    showMetricsLoading();
+    hideDashboardError();
+    try {
+      const data: DashboardData = await getDashboard(30);
+      document.querySelectorAll<HTMLElement>('.feature-metric').forEach((node) => {
+        const key = node.dataset.metric || '';
+        const label = node.dataset.label || '';
+        const raw = (data as unknown as Record<string, unknown>)[key];
+        node.classList.remove('is-error');
+        node.innerHTML = `<span class="metric-loading">${escapeHtml(label)}</span><span class="metric-value">${escapeHtml(formatMetric(key, raw))}</span>`;
+      });
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) return; // 已跳转登录
+      showMetricsError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  // 事件绑定
+  el('stats-retry').addEventListener('click', loadStats);
+  el('dashboard-retry').addEventListener('click', loadDashboard);
+
   loadStats();
+  loadDashboard();
 </script>

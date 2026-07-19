@@ -1,0 +1,117 @@
+---
+/**
+ * Button.astro - 通用按钮组件
+ *
+ * 支持五种语义变体（primary/secondary/ghost/danger/success）、
+ * 三种尺寸（sm/md/lg）、加载态与链接渲染。
+ * 当传入 href 时渲染为 <a>，否则渲染为 <button>。
+ *
+ * @example
+ * <Button variant="primary" size="md">确认</Button>
+ * <Button variant="ghost" href="/cancel">取消</Button>
+ * <Button variant="primary" loading>保存中</Button>
+ */
+interface Props {
+  variant?: 'primary' | 'secondary' | 'ghost' | 'danger' | 'success';
+  size?: 'sm' | 'md' | 'lg';
+  type?: 'button' | 'submit' | 'reset';
+  disabled?: boolean;
+  loading?: boolean;
+  href?: string;
+  class?: string;
+}
+
+const {
+  variant = 'primary',
+  size = 'md',
+  type = 'button',
+  disabled = false,
+  loading = false,
+  href,
+  class: className = '',
+} = Astro.props;
+
+const classes = `btn btn-${variant} btn-${size} ${loading ? 'is-loading' : ''} ${className}`.trim();
+const Tag = href ? 'a' : 'button';
+const isDisabled = disabled || loading;
+---
+
+<Tag
+  class={classes}
+  type={!href ? type : undefined}
+  href={href}
+  disabled={!href ? isDisabled : undefined}
+  aria-disabled={href && isDisabled ? 'true' : undefined}
+>
+  {loading && <span class="btn-spinner" />}
+  <slot />
+</Tag>
+
+<style is:global>
+  /*
+   * 补充 global.css 中缺失的按钮变体与状态样式。
+   * 复用全局 CSS 变量，不硬编码颜色。
+   * 使用 is:global 以确保动态标签（<a>/<button>）均能命中样式。
+   */
+
+  /* === secondary：描边中性按钮 === */
+  .btn-secondary {
+    background: var(--surface);
+    color: var(--text);
+    border-color: var(--border-dark);
+  }
+  .btn-secondary:hover {
+    background: var(--surface-hover);
+    border-color: var(--text-muted);
+    color: var(--text);
+  }
+
+  /* === success：成功操作按钮 === */
+  .btn-success {
+    background: var(--success);
+    color: var(--text-white);
+    border-color: var(--success);
+  }
+  .btn-success:hover {
+    opacity: 0.9;
+    color: var(--text-white);
+  }
+
+  /* === md 尺寸（与 global.css 默认 .btn 一致，显式声明以便 btn-md 类命中） === */
+  .btn-md {
+    padding: var(--space-3) var(--space-5);
+    font-size: var(--text-base);
+  }
+
+  /* === 禁用态（针对 <a> 渲染时无原生 disabled 属性） === */
+  .btn[aria-disabled='true'] {
+    pointer-events: none;
+    opacity: 0.6;
+  }
+
+  /* === 加载态 === */
+  .btn.is-loading {
+    position: relative;
+    pointer-events: none;
+    opacity: 0.75;
+  }
+
+  /* === 加载旋转图标 === */
+  .btn-spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid currentColor;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: btn-spin 0.8s linear infinite;
+    flex-shrink: 0;
+    opacity: 0.8;
+  }
+
+  @keyframes btn-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+</style>

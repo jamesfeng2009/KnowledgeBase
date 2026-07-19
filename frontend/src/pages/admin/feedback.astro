@@ -1,7 +1,8 @@
 ---
 /**
  * 反馈管理页面
- * 反馈列表 + 反馈统计 + 反馈处理流程 + 改进建议
+ * 反馈列表 + 反馈统计 + 反馈处理流程 + AI 改进建议
+ * 数据来源：GET /api/v1/feedback、PUT /api/v1/feedback/{id}/respond|status、POST /api/v1/chat/stream
  */
 import DefaultLayout from '@/layouts/DefaultLayout.astro';
 
@@ -33,43 +34,21 @@ const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '反馈�
     </div>
   </div>
 
-  <!-- 反馈类型分布 -->
+  <!-- 反馈类型分布 + AI 改进建议 -->
   <div class="grid grid-cols-2" style="margin-bottom: var(--space-5);">
     <div class="card">
       <div class="card-header"><h3>反馈类型分布</h3></div>
-      <div id="type-distribution"></div>
+      <div id="type-distribution">
+        <div class="loading-state">加载中...</div>
+      </div>
     </div>
     <div class="card">
-      <div class="card-header"><h3>改进建议（AI 生成）</h3></div>
+      <div class="card-header">
+        <h3>改进建议（AI 生成）</h3>
+        <button class="btn btn-primary btn-sm" id="generate-suggestions-btn">点击生成 AI 改进建议</button>
+      </div>
       <div id="suggestions">
-        <div class="suggestion-item">
-          <span class="suggestion-priority high">高</span>
-          <div>
-            <div style="font-weight: 500; font-size: var(--text-sm);">优化搜索响应速度</div>
-            <div class="text-muted" style="font-size: var(--text-xs);">23 条反馈提及搜索慢，建议增加缓存层</div>
-          </div>
-        </div>
-        <div class="suggestion-item">
-          <span class="suggestion-priority medium">中</span>
-          <div>
-            <div style="font-weight: 500; font-size: var(--text-sm);">增强移动端适配</div>
-            <div class="text-muted" style="font-size: var(--text-xs);">15 条反馈反映手机端体验不佳</div>
-          </div>
-        </div>
-        <div class="suggestion-item">
-          <span class="suggestion-priority medium">中</span>
-          <div>
-            <div style="font-weight: 500; font-size: var(--text-sm);">补充搜索结果排序</div>
-            <div class="text-muted" style="font-size: var(--text-xs);">8 条反馈希望按相关度/时间排序</div>
-          </div>
-        </div>
-        <div class="suggestion-item">
-          <span class="suggestion-priority low">低</span>
-          <div>
-            <div style="font-weight: 500; font-size: var(--text-sm);">增加深色模式</div>
-            <div class="text-muted" style="font-size: var(--text-xs);">5 条反馈建议增加夜间模式</div>
-          </div>
-        </div>
+        <div class="empty-state">点击上方按钮，让 AI 分析反馈数据并生成改进建议</div>
       </div>
     </div>
   </div>
@@ -118,6 +97,7 @@ const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '反馈�
     align-items: center;
     gap: var(--space-2);
     margin-bottom: var(--space-2);
+    flex-wrap: wrap;
   }
   .feedback-item-title {
     font-weight: 500;
@@ -135,6 +115,7 @@ const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '反馈�
     gap: var(--space-3);
     font-size: var(--text-xs);
     color: var(--text-muted);
+    flex-wrap: wrap;
   }
   .type-bar-item {
     margin-bottom: var(--space-3);
@@ -155,47 +136,38 @@ const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '反馈�
     height: 100%;
     border-radius: var(--radius-full);
   }
-  .suggestion-item {
-    display: flex;
-    align-items: flex-start;
-    gap: var(--space-3);
-    padding: var(--space-3) 0;
-    border-bottom: 1px solid var(--border-light);
-  }
-  .suggestion-item:last-child {
-    border-bottom: none;
-  }
-  .suggestion-priority {
-    width: 24px;
-    height: 24px;
-    border-radius: var(--radius-sm);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: var(--text-xs);
-    font-weight: 600;
-    color: var(--text-white);
-    flex-shrink: 0;
-  }
-  .suggestion-priority.high {
-    background: var(--danger);
-  }
-  .suggestion-priority.medium {
-    background: var(--warning);
-  }
-  .suggestion-priority.low {
-    background: var(--info);
-  }
   .loading-state {
     text-align: center;
     padding: var(--space-6);
     color: var(--text-muted);
   }
+  .empty-state {
+    text-align: center;
+    padding: var(--space-6);
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+  }
+  .error-state {
+    text-align: center;
+    padding: var(--space-6);
+    color: var(--danger);
+    font-size: var(--text-sm);
+  }
+  .suggestion-text {
+    font-size: var(--text-sm);
+    color: var(--text);
+    line-height: var(--lh-relaxed);
+    white-space: pre-wrap;
+  }
+  .suggestion-text p {
+    margin: 0 0 var(--space-2) 0;
+  }
 </style>
 
 <script>
-  const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
-  const TOKEN_KEY = 'ekb_access_token';
+  import { getFeedbacks, respondFeedback, updateFeedbackStatus } from '@/lib/apis/feedback';
+  import { ApiError } from '@/lib/api';
+  import { streamChat } from '@/lib/sse';
 
   const typeMap: Record<string, { label: string; badge: string; color: string }> = {
     bug: { label: '问题反馈', badge: 'badge-danger', color: 'var(--danger)' },
@@ -208,81 +180,123 @@ const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '反馈�
     resolved: { label: '已解决', badge: 'badge-success' },
   };
 
-  function mockFeedbacks() {
-    return [
-      { id: 'f1', type: 'bug', title: '搜索结果加载缓慢', content: '输入关键词后，搜索结果需要 5 秒以上才显示，影响使用体验。', user: '张三', status: 'pending', time: '2 小时前' },
-      { id: 'f2', type: 'feature', title: '希望增加文档收藏功能', content: '经常需要查阅某些文档，希望可以收藏到个人书签。', user: '李四', status: 'processing', time: '昨天' },
-      { id: 'f3', type: 'experience', title: '移动端排版有问题', content: '手机端访问时，侧边栏菜单无法正常展开。', user: '王五', status: 'pending', time: '2 天前' },
-      { id: 'f4', type: 'feature', title: '希望支持 Markdown 编辑', content: '协同编辑器如果能支持 Markdown 语法会方便很多。', user: '赵六', status: 'resolved', time: '3 天前' },
-      { id: 'f5', type: 'bug', title: '导出 PDF 格式错误', content: '导出 PDF 时部分表格显示错位。', user: '钱七', status: 'resolved', time: '5 天前' },
-    ];
+  interface Feedback {
+    id: string;
+    type: string;
+    title: string;
+    content: string;
+    user: string;
+    status: string;
+    time: string;
   }
 
-  async function loadFeedbacks() {
-    const token = localStorage.getItem(TOKEN_KEY);
-    if (!token) {
-      window.location.href = '/auth/login';
+  let allFeedbacks: Feedback[] = [];
+
+  /** 判断是否为 401/未登录错误（已在底层处理跳转，业务层需静默退出） */
+  function isAuthError(err: unknown): boolean {
+    return err instanceof ApiError && err.status === 401;
+  }
+
+  /** 从接口返回值中提取数组（兼容数组 / { items: [] } / 分页对象） */
+  function toItems(raw: unknown): Record<string, unknown>[] {
+    if (Array.isArray(raw)) return raw as Record<string, unknown>[];
+    if (raw && typeof raw === 'object') {
+      const obj = raw as { items?: unknown[] };
+      if (Array.isArray(obj.items)) return obj.items as Record<string, unknown>[];
+    }
+    return [];
+  }
+
+  function normalizeFeedback(raw: Record<string, unknown>): Feedback {
+    return {
+      id: String(raw.id || raw.feedback_id || ''),
+      type: String(raw.type || raw.category || 'experience'),
+      title: String(raw.title || raw.subject || '无标题'),
+      content: String(raw.content || raw.message || raw.description || ''),
+      user: String(raw.user || raw.user_name || raw.submitter || '匿名'),
+      status: String(raw.status || 'pending'),
+      time: String(raw.time || raw.created_at || raw.submitted_at || '-'),
+    };
+  }
+
+  async function loadFeedbacks(): Promise<void> {
+    const container = document.getElementById('feedback-list')!;
+    const typeDist = document.getElementById('type-distribution')!;
+    container.innerHTML = '<div class="loading-state">加载中...</div>';
+    typeDist.innerHTML = '<div class="loading-state">加载中...</div>';
+
+    let list: Feedback[] = [];
+    try {
+      const result = await getFeedbacks();
+      list = toItems(result).map(normalizeFeedback);
+    } catch (err) {
+      if (isAuthError(err)) return;
+      const msg = err instanceof Error ? err.message : '网络异常';
+      container.innerHTML = `
+        <div class="error-state">
+          <div>加载反馈列表失败：${escapeHtml(msg)}</div>
+          <button class="btn btn-outline btn-sm" id="retry-feedback" style="margin-top: var(--space-3);">重试</button>
+        </div>`;
+      document.getElementById('retry-feedback')?.addEventListener('click', loadFeedbacks);
       return;
     }
-    let list: any[] = [];
-    try {
-      const res = await fetch(`${API_BASE}/api/v1/admin/feedback`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.ok) {
-        const result = await res.json();
-        list = result.data?.items || result.data || [];
-      } else if (res.status === 401) {
-        window.location.href = '/auth/login';
-        return;
-      }
-    } catch {
-      // ignore
-    }
-    if (list.length === 0) list = mockFeedbacks();
-    renderList(list);
-    renderTypeDist(list);
-    updateStats(list);
+
+    allFeedbacks = list;
+    renderList();
+    renderTypeDist();
+    updateStats();
   }
 
-  function updateStats(list: any[]) {
+  /** 满意度：正面反馈占比（非 bug 类型视为正面反馈） */
+  function computeSatisfaction(list: Feedback[]): string {
+    if (list.length === 0) return '--';
+    const positive = list.filter((f) => f.type !== 'bug').length;
+    return `${Math.round((positive / list.length) * 100)}%`;
+  }
+
+  function updateStats(): void {
     const setText = (id: string, v: string | number) => {
       const el = document.getElementById(id);
       if (el) el.textContent = String(v);
     };
-    setText('stat-total', list.length);
-    setText('stat-pending', list.filter((f) => f.status === 'pending').length);
-    setText('stat-resolved', list.filter((f) => f.status === 'resolved').length);
-    setText('stat-satisfaction', '92%');
+    setText('stat-total', allFeedbacks.length);
+    setText('stat-pending', allFeedbacks.filter((f) => f.status === 'pending').length);
+    setText('stat-resolved', allFeedbacks.filter((f) => f.status === 'resolved').length);
+    setText('stat-satisfaction', computeSatisfaction(allFeedbacks));
   }
 
-  function renderTypeDist(list: any[]) {
+  function renderTypeDist(): void {
+    const container = document.getElementById('type-distribution')!;
+    if (allFeedbacks.length === 0) {
+      container.innerHTML = '<div class="empty-state">暂无反馈数据</div>';
+      return;
+    }
     const counts: Record<string, number> = {};
-    list.forEach((f) => {
+    allFeedbacks.forEach((f) => {
       counts[f.type] = (counts[f.type] || 0) + 1;
     });
     const max = Math.max(...Object.values(counts), 1);
-    document.getElementById('type-distribution')!.innerHTML = Object.entries(counts)
+    container.innerHTML = Object.entries(counts)
       .map(
         ([type, count]) => `
       <div class="type-bar-item">
         <div class="type-bar-header">
-          <span>${typeMap[type]?.label || type}</span>
+          <span>${typeMap[type]?.label || escapeHtml(type)}</span>
           <span class="text-muted">${count} 条</span>
         </div>
         <div class="type-bar">
-          <div class="type-bar-fill" style="width: ${(count / max) * 100}%; background: ${typeMap[type]?.color};"></div>
+          <div class="type-bar-fill" style="width: ${(count / max) * 100}%; background: ${typeMap[type]?.color || 'var(--primary)'};"></div>
         </div>
       </div>`
       )
       .join('');
   }
 
-  function renderList(list: any[]) {
+  function renderList(): void {
     const typeFilter = (document.getElementById('feedback-type') as HTMLSelectElement).value;
     const statusFilter = (document.getElementById('feedback-status') as HTMLSelectElement).value;
 
-    const filtered = list.filter((f) => {
+    const filtered = allFeedbacks.filter((f) => {
       if (typeFilter && f.type !== typeFilter) return false;
       if (statusFilter && f.status !== statusFilter) return false;
       return true;
@@ -290,32 +304,36 @@ const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '反馈�
 
     const container = document.getElementById('feedback-list')!;
     if (filtered.length === 0) {
-      container.innerHTML = '<div class="loading-state">暂无反馈</div>';
+      container.innerHTML = '<div class="empty-state">暂无反馈</div>';
       return;
     }
     container.innerHTML = filtered
       .map(
-        (f) => `
-      <div class="feedback-item">
-        <div class="avatar avatar-sm">${escapeHtml(f.user.charAt(0))}</div>
-        <div class="feedback-item-body">
-          <div class="feedback-item-header">
-            <span class="feedback-item-title">${escapeHtml(f.title)}</span>
-            <span class="badge ${typeMap[f.type].badge}">${typeMap[f.type].label}</span>
-            <span class="badge ${statusMap[f.status].badge}">${statusMap[f.status].label}</span>
+        (f) => {
+          const typeInfo = typeMap[f.type] || { label: f.type, badge: 'badge-warning' };
+          const statusInfo = statusMap[f.status] || { label: f.status, badge: 'badge-warning' };
+          return `
+        <div class="feedback-item">
+          <div class="avatar avatar-sm">${escapeHtml(f.user.charAt(0))}</div>
+          <div class="feedback-item-body">
+            <div class="feedback-item-header">
+              <span class="feedback-item-title">${escapeHtml(f.title)}</span>
+              <span class="badge ${typeInfo.badge}">${escapeHtml(typeInfo.label)}</span>
+              <span class="badge ${statusInfo.badge}">${escapeHtml(statusInfo.label)}</span>
+            </div>
+            <p class="feedback-item-content">${escapeHtml(f.content)}</p>
+            <div class="feedback-item-meta">
+              <span>提交人：${escapeHtml(f.user)}</span>
+              <span>${escapeHtml(f.time)}</span>
+            </div>
           </div>
-          <p class="feedback-item-content">${escapeHtml(f.content)}</p>
-          <div class="feedback-item-meta">
-            <span>提交人：${escapeHtml(f.user)}</span>
-            <span>${escapeHtml(f.time)}</span>
+          <div style="display: flex; flex-direction: column; gap: var(--space-2);">
+            ${f.status === 'pending' ? `<button class="btn btn-primary btn-sm" data-action="process" data-id="${escapeHtml(f.id)}">开始处理</button>` : ''}
+            ${f.status === 'processing' ? `<button class="btn btn-success btn-sm" data-action="resolve" data-id="${escapeHtml(f.id)}">标记解决</button>` : ''}
+            <button class="btn btn-ghost btn-sm" data-action="reply" data-id="${escapeHtml(f.id)}">回复</button>
           </div>
-        </div>
-        <div style="display: flex; flex-direction: column; gap: var(--space-2);">
-          ${f.status === 'pending' ? `<button class="btn btn-primary btn-sm" data-action="process" data-id="${f.id}">开始处理</button>` : ''}
-          ${f.status === 'processing' ? `<button class="btn btn-success btn-sm" data-action="resolve" data-id="${f.id}">标记解决</button>` : ''}
-          <button class="btn btn-ghost btn-sm" data-action="reply" data-id="${f.id}">回复</button>
-        </div>
-      </div>`
+        </div>`;
+        }
       )
       .join('');
 
@@ -325,39 +343,91 @@ const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '反馈�
         const id = (btn as HTMLElement).dataset.id!;
         if (action === 'reply') {
           const reply = prompt('输入回复内容：');
-          if (reply) {
+          if (!reply) return;
+          try {
+            await respondFeedback(id, reply);
             alert('回复已发送');
+          } catch (err) {
+            if (isAuthError(err)) return;
+            alert(err instanceof Error ? err.message : '网络异常');
           }
         } else {
-          const token = localStorage.getItem(TOKEN_KEY);
           const newStatus = action === 'process' ? 'processing' : 'resolved';
           try {
-            await fetch(`${API_BASE}/api/v1/admin/feedback/${id}`, {
-              method: 'PUT',
-              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-              body: JSON.stringify({ status: newStatus }),
-            });
-            loadFeedbacks();
-          } catch {
-            alert('操作失败');
+            await updateFeedbackStatus(id, newStatus);
+            const fb = allFeedbacks.find((f) => f.id === id);
+            if (fb) fb.status = newStatus;
+            renderList();
+            updateStats();
+          } catch (err) {
+            if (isAuthError(err)) return;
+            alert(err instanceof Error ? err.message : '网络异常');
           }
         }
       });
     });
   }
 
-  function escapeHtml(s: string): string {
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  /** 调用 AI 生成改进建议 */
+  async function generateSuggestions(): Promise<void> {
+    const btn = document.getElementById('generate-suggestions-btn') as HTMLButtonElement;
+    const container = document.getElementById('suggestions')!;
+    if (allFeedbacks.length === 0) {
+      alert('暂无反馈数据可供分析');
+      return;
+    }
+
+    const original = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '生成中...';
+    container.innerHTML = '<div class="loading-state">AI 正在分析反馈数据...</div>';
+
+    // 构造反馈摘要供 AI 分析
+    const summary = allFeedbacks
+      .slice(0, 50)
+      .map((f, i) => `${i + 1}. [${typeMap[f.type]?.label || f.type}][${statusMap[f.status]?.label || f.status}] ${f.title}：${f.content}`)
+      .join('\n');
+
+    const prompt = `请基于以下用户反馈数据，分析并生成 3-5 条具体的改进建议。每条建议请按优先级（高/中/低）标注，并简要说明原因。反馈数据：\n${summary}`;
+
+    let fullText = '';
+    try {
+      await streamChat('/api/v1/chat/stream', { query: prompt, agent_type: 'qa' }, {
+        onChunk: (text) => {
+          fullText += text;
+          container.innerHTML = `<div class="suggestion-text">${escapeHtml(fullText)}</div>`;
+        },
+        onDone: () => {
+          if (!fullText) {
+            container.innerHTML = '<div class="empty-state">AI 未返回有效建议，请稍后重试</div>';
+          }
+        },
+        onError: (err) => {
+          container.innerHTML = `<div class="error-state">生成失败：${escapeHtml(err.message)}<br/><button class="btn btn-outline btn-sm" id="retry-suggest" style="margin-top: var(--space-3);">重试</button></div>`;
+          document.getElementById('retry-suggest')?.addEventListener('click', generateSuggestions);
+        },
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '网络异常';
+      container.innerHTML = `<div class="error-state">生成失败：${escapeHtml(msg)}<br/><button class="btn btn-outline btn-sm" id="retry-suggest" style="margin-top: var(--space-3);">重试</button></div>`;
+      document.getElementById('retry-suggest')?.addEventListener('click', generateSuggestions);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = original;
+    }
   }
 
-  document.getElementById('feedback-type')?.addEventListener('change', () => {
-    const list = mockFeedbacks();
-    renderList(list);
-  });
-  document.getElementById('feedback-status')?.addEventListener('change', () => {
-    const list = mockFeedbacks();
-    renderList(list);
-  });
+  function escapeHtml(s: unknown): string {
+    return String(s ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  document.getElementById('feedback-type')?.addEventListener('change', renderList);
+  document.getElementById('feedback-status')?.addEventListener('change', renderList);
+  document.getElementById('generate-suggestions-btn')?.addEventListener('click', generateSuggestions);
 
   loadFeedbacks();
 </script>

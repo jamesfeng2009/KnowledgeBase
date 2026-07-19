@@ -1,7 +1,8 @@
 ---
 /**
  * LLM 配置页面
- * 当前模型配置 + 模型切换 + 温度/Token 限制 + API Key 管理（脱敏显示）
+ * LLM 配置表单 + 模型选择 + API Key 管理 + 测试连接
+ * 数据来源：GET /api/v1/settings/llm、PUT /api/v1/settings/llm
  */
 import DefaultLayout from '@/layouts/DefaultLayout.astro';
 
@@ -16,82 +17,12 @@ const breadcrumb = [{ label: '设置', href: '/settings/tenant' }, { label: 'LLM
     <a href="/settings/system" class="settings-nav-item">系统设置</a>
   </div>
 
-  <!-- 当前模型 -->
-  <div class="card" style="margin-bottom: var(--space-5);">
-    <div class="card-header"><h3>当前模型配置</h3></div>
-    <div class="grid grid-cols-2">
-      <div class="config-item">
-        <div class="text-muted" style="font-size: var(--text-sm);">对话模型</div>
-        <div style="font-size: var(--text-lg); font-weight: 600; color: var(--primary);" id="current-chat-model">--</div>
-      </div>
-      <div class="config-item">
-        <div class="text-muted" style="font-size: var(--text-sm);">嵌入模型</div>
-        <div style="font-size: var(--text-lg); font-weight: 600; color: var(--success);" id="current-embed-model">--</div>
-      </div>
-      <div class="config-item">
-        <div class="text-muted" style="font-size: var(--text-sm);">温度参数</div>
-        <div style="font-size: var(--text-lg); font-weight: 600;" id="current-temp">--</div>
-      </div>
-      <div class="config-item">
-        <div class="text-muted" style="font-size: var(--text-sm);">最大 Token</div>
-        <div style="font-size: var(--text-lg); font-weight: 600;" id="current-tokens">--</div>
-      </div>
-    </div>
+  <div class="page-header">
+    <h1 class="page-title">LLM 配置</h1>
   </div>
 
-  <!-- 模型切换 -->
-  <div class="card" style="margin-bottom: var(--space-5);">
-    <div class="card-header"><h3>模型切换</h3></div>
-    <form id="llm-form">
-      <div class="form-group">
-        <label class="form-label">对话模型</label>
-        <select class="form-input" name="chat_model" id="chat-model-select">
-          <option value="gpt-4o">GPT-4o（推荐，综合能力强）</option>
-          <option value="gpt-4o-mini">GPT-4o mini（快速，成本低）</option>
-          <option value="claude-3.5-sonnet">Claude 3.5 Sonnet（长文本优秀）</option>
-          <option value="deepseek-v3">DeepSeek V3（国产，性价比高）</option>
-          <option value="qwen-max">通义千问 Max（国产）</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label class="form-label">嵌入模型</label>
-        <select class="form-input" name="embed_model" id="embed-model-select">
-          <option value="text-embedding-3-large">text-embedding-3-large（推荐）</option>
-          <option value="text-embedding-3-small">text-embedding-3-small（经济）</option>
-          <option value="bge-large-zh">BGE Large 中文（国产）</option>
-          <option value="m3e-large">M3E Large（国产）</option>
-        </select>
-      </div>
-      <div class="grid grid-cols-2">
-        <div class="form-group">
-          <label class="form-label">温度参数（0-1）</label>
-          <div style="display: flex; align-items: center; gap: var(--space-3);">
-            <input type="range" min="0" max="1" step="0.1" value="0.7" name="temperature" id="temp-range" style="flex: 1;" />
-            <span id="temp-value" style="min-width: 30px; font-weight: 600;">0.7</span>
-          </div>
-          <div class="text-muted" style="font-size: var(--text-xs); margin-top: var(--space-1);">值越低回答越确定，值越高越有创造性</div>
-        </div>
-        <div class="form-group">
-          <label class="form-label">最大输出 Token</label>
-          <input type="number" class="form-input" name="max_tokens" value="4096" min="256" max="32768" />
-          <div class="text-muted" style="font-size: var(--text-xs); margin-top: var(--space-1);">单次回复的最大 Token 数</div>
-        </div>
-      </div>
-      <div class="form-group">
-        <label class="form-label">系统提示词（可选）</label>
-        <textarea class="form-textarea" name="system_prompt" placeholder="自定义系统提示词，影响所有对话的 AI 行为">你是一个企业知识库助手，请基于知识库内容回答用户问题，回答要准确、简洁、专业。</textarea>
-      </div>
-      <button type="submit" class="btn btn-primary">保存配置</button>
-    </form>
-  </div>
-
-  <!-- API Key 管理 -->
-  <div class="card">
-    <div class="card-header">
-      <h3>API Key 管理</h3>
-      <button class="btn btn-outline btn-sm" id="add-key-btn">＋ 添加 Key</button>
-    </div>
-    <div id="api-key-list"></div>
+  <div id="llm-root">
+    <div class="loading-state">加载中...</div>
   </div>
 </DefaultLayout>
 
@@ -117,158 +48,509 @@ const breadcrumb = [{ label: '设置', href: '/settings/tenant' }, { label: 'LLM
     border-bottom-color: var(--primary);
     font-weight: 500;
   }
-  .config-item {
-    padding: var(--space-3) 0;
+  .config-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-5);
   }
-  .api-key-item {
+  .provider-list {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-3);
+  }
+  .provider-item {
     display: flex;
     align-items: center;
     gap: var(--space-3);
-    padding: var(--space-3) 0;
-    border-bottom: 1px solid var(--border-light);
+    padding: var(--space-3) var(--space-4);
+    border: 2px solid var(--border);
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: all var(--transition-fast);
   }
-  .api-key-item:last-child {
-    border-bottom: none;
+  .provider-item:hover {
+    border-color: var(--primary);
   }
-  .api-key-provider {
-    width: 100px;
+  .provider-item.selected {
+    border-color: var(--primary);
+    background: var(--primary-bg);
+  }
+  .provider-logo {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+  }
+  .provider-name {
     font-weight: 500;
     font-size: var(--text-sm);
   }
-  .api-key-value {
-    flex: 1;
-    font-family: var(--font-mono);
+  .provider-desc {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+  }
+  .model-option {
+    padding: var(--space-3) var(--space-4);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    margin-bottom: var(--space-2);
+  }
+  .model-option:hover {
+    border-color: var(--primary);
+  }
+  .model-option.selected {
+    border-color: var(--primary);
+    background: var(--primary-bg);
+  }
+  .model-option-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--space-1);
+  }
+  .model-option-name {
+    font-weight: 500;
     font-size: var(--text-sm);
+  }
+  .model-option-price {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+  }
+  .model-option-desc {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+  }
+  .key-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: var(--space-2);
     background: var(--surface-muted);
-    padding: var(--space-1) var(--space-2);
-    border-radius: var(--radius-xs);
+  }
+  .key-value {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+    flex: 1;
+  }
+  .loading-state {
+    text-align: center;
+    padding: var(--space-8);
+    color: var(--text-muted);
+  }
+  .empty-state {
+    text-align: center;
+    padding: var(--space-4);
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+  }
+  .error-state {
+    text-align: center;
+    padding: var(--space-6);
+    color: var(--danger);
+    font-size: var(--text-sm);
   }
 </style>
 
 <script>
-  const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
-  const TOKEN_KEY = 'ekb_access_token';
+  import { getLlmConfig, updateLlmConfig } from '@/lib/apis/settings';
+  import { ApiError } from '@/lib/api';
+  import { streamChat } from '@/lib/sse';
+  import { removeToken } from '@/lib/auth';
 
-  function mockConfig() {
-    return {
-      chat_model: 'gpt-4o',
-      embed_model: 'text-embedding-3-large',
-      temperature: 0.7,
-      max_tokens: 4096,
-    };
+  const providers = [
+    { id: 'openai', name: 'OpenAI', desc: 'GPT 系列模型', logo: '🤖' },
+    { id: 'anthropic', name: 'Anthropic', desc: 'Claude 系列模型', logo: '🧠' },
+    { id: 'deepseek', name: 'DeepSeek', desc: '国产高性价比', logo: '🌊' },
+    { id: 'qwen', name: '通义千问', desc: '阿里云大模型', logo: '☁️' },
+    { id: 'zhipu', name: '智谱 AI', desc: 'GLM 系列模型', logo: '✨' },
+    { id: 'azure', name: 'Azure OpenAI', desc: '企业级部署', logo: '🔷' },
+  ];
+
+  const modelsByProvider: Record<string, Array<{ id: string; name: string; desc: string; price: string }>> = {
+    openai: [
+      { id: 'gpt-4o', name: 'GPT-4o', desc: '最强多模态模型', price: '$5/M tokens' },
+      { id: 'gpt-4o-mini', name: 'GPT-4o mini', desc: '高性价比', price: '$0.15/M tokens' },
+      { id: 'gpt-4-turbo', name: 'GPT-4 Turbo', desc: '长上下文', price: '$10/M tokens' },
+    ],
+    anthropic: [
+      { id: 'claude-3-5-sonnet', name: 'Claude 3.5 Sonnet', desc: '最强推理', price: '$3/M tokens' },
+      { id: 'claude-3-opus', name: 'Claude 3 Opus', desc: '复杂任务', price: '$15/M tokens' },
+      { id: 'claude-3-haiku', name: 'Claude 3 Haiku', desc: '快速响应', price: '$0.25/M tokens' },
+    ],
+    deepseek: [
+      { id: 'deepseek-chat', name: 'DeepSeek Chat', desc: '通用对话', price: '¥1/M tokens' },
+      { id: 'deepseek-coder', name: 'DeepSeek Coder', desc: '代码生成', price: '¥2/M tokens' },
+    ],
+    qwen: [
+      { id: 'qwen-max', name: 'Qwen Max', desc: '最强版本', price: '¥0.04/K tokens' },
+      { id: 'qwen-plus', name: 'Qwen Plus', desc: '均衡版本', price: '¥0.0008/K tokens' },
+    ],
+    zhipu: [
+      { id: 'glm-4', name: 'GLM-4', desc: '通用大模型', price: '¥0.1/K tokens' },
+      { id: 'glm-4-flash', name: 'GLM-4 Flash', desc: '快速版本', price: '免费' },
+    ],
+    azure: [
+      { id: 'gpt-4o', name: 'GPT-4o (Azure)', desc: '企业部署', price: '$5/M tokens' },
+      { id: 'gpt-4', name: 'GPT-4 (Azure)', desc: '稳定版本', price: '$10/M tokens' },
+    ],
+  };
+
+  interface LlmConfig {
+    provider: string;
+    model: string;
+    apiKey: string;
+    baseUrl: string;
+    temperature: number;
+    maxTokens: number;
+    apiKeys: Array<{ id: string; key: string; label: string }>;
   }
 
-  async function loadConfig() {
-    const token = localStorage.getItem(TOKEN_KEY);
-    if (!token) {
-      window.location.href = '/auth/login';
-      return;
-    }
-    let config: any;
+  let config: LlmConfig = {
+    provider: 'openai',
+    model: 'gpt-4o-mini',
+    apiKey: '',
+    baseUrl: '',
+    temperature: 0.7,
+    maxTokens: 2048,
+    apiKeys: [],
+  };
+
+  /** 判断是否为 401/未登录错误（已在底层处理跳转，业务层需静默退出） */
+  function isAuthError(err: unknown): boolean {
+    return err instanceof ApiError && err.status === 401;
+  }
+
+  async function loadConfig(): Promise<void> {
+    const root = document.getElementById('llm-root')!;
+    root.innerHTML = '<div class="loading-state">加载中...</div>';
     try {
-      const res = await fetch(`${API_BASE}/api/v1/settings/llm`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.ok) {
-        const result = await res.json();
-        config = result.data || result;
-      } else if (res.status === 401) {
-        window.location.href = '/auth/login';
-        return;
+      const raw = (await getLlmConfig()) as unknown as Record<string, unknown> | null;
+      const cfg = raw || {};
+      config = {
+        provider: typeof cfg.provider === 'string' ? cfg.provider : 'openai',
+        model: typeof cfg.model === 'string' ? cfg.model : 'gpt-4o-mini',
+        apiKey: typeof cfg.api_key === 'string' ? cfg.api_key : (typeof cfg.apiKey === 'string' ? cfg.apiKey : ''),
+        baseUrl: typeof cfg.base_url === 'string' ? cfg.base_url : (typeof cfg.baseUrl === 'string' ? cfg.baseUrl : ''),
+        temperature: typeof cfg.temperature === 'number' ? cfg.temperature : 0.7,
+        maxTokens: typeof cfg.max_tokens === 'number' ? cfg.max_tokens : (typeof cfg.maxTokens === 'number' ? cfg.maxTokens : 2048),
+        apiKeys: Array.isArray(cfg.api_keys)
+          ? (cfg.api_keys as Record<string, unknown>[]).map((k, i) => ({
+              id: String(k.id || i),
+              key: String(k.key || k.api_key || '******'),
+              label: String(k.label || k.name || `Key ${i + 1}`),
+            }))
+          : Array.isArray(cfg.apiKeys)
+          ? (cfg.apiKeys as Record<string, unknown>[]).map((k, i) => ({
+              id: String(k.id || i),
+              key: String(k.key || k.api_key || '******'),
+              label: String(k.label || k.name || `Key ${i + 1}`),
+            }))
+          : [],
+      };
+    } catch (err) {
+      if (isAuthError(err)) return;
+      // 404 视为后端无配置，使用默认值
+      if (err instanceof ApiError && err.status === 404) {
+        // 使用默认 config，继续渲染
       } else {
-        config = mockConfig();
+        const msg = err instanceof Error ? err.message : '网络异常';
+        root.innerHTML = `
+          <div class="error-state">
+            <div>加载 LLM 配置失败：${escapeHtml(msg)}</div>
+            <button class="btn btn-outline btn-sm" id="retry-load" style="margin-top: var(--space-3);">重试</button>
+          </div>`;
+        document.getElementById('retry-load')?.addEventListener('click', loadConfig);
+        return;
       }
-    } catch {
-      config = mockConfig();
     }
-
-    document.getElementById('current-chat-model')!.textContent = config.chat_model || 'gpt-4o';
-    document.getElementById('current-embed-model')!.textContent = config.embed_model || 'text-embedding-3-large';
-    document.getElementById('current-temp')!.textContent = String(config.temperature || 0.7);
-    document.getElementById('current-tokens')!.textContent = String(config.max_tokens || 4096);
-
-    (document.getElementById('chat-model-select') as HTMLSelectElement).value = config.chat_model || 'gpt-4o';
-    (document.getElementById('embed-model-select') as HTMLSelectElement).value = config.embed_model || 'text-embedding-3-large';
-    (document.getElementById('temp-range') as HTMLInputElement).value = String(config.temperature || 0.7);
-    document.getElementById('temp-value')!.textContent = String(config.temperature || 0.7);
-
-    renderApiKeys();
+    renderConfig();
   }
 
-  function renderApiKeys() {
-    const keys = [
-      { provider: 'OpenAI', key: 'sk-proj-abc...xyz', status: 'active' },
-      { provider: 'Anthropic', key: 'sk-ant-def...uvw', status: 'active' },
-      { provider: 'DeepSeek', key: 'sk-ds-ghi...rst', status: 'inactive' },
-    ];
-    document.getElementById('api-key-list')!.innerHTML = keys
-      .map(
-        (k) => `
-      <div class="api-key-item">
-        <div class="api-key-provider">${escapeHtml(k.provider)}</div>
-        <code class="api-key-value">${escapeHtml(k.key)}</code>
-        <span class="badge ${k.status === 'active' ? 'badge-success' : 'badge-warning'}">${k.status === 'active' ? '已启用' : '未启用'}</span>
-        <button class="btn btn-ghost btn-sm" data-provider="${k.provider}">编辑</button>
-      </div>`
-      )
-      .join('');
+  function renderConfig(): void {
+    const root = document.getElementById('llm-root')!;
+    const hasApiKeys = config.apiKeys.length > 0;
+    root.innerHTML = `
+      <form id="llm-form">
+        <div class="config-grid">
+          <!-- 服务商选择 -->
+          <div class="card">
+            <div class="card-header"><h3>服务商</h3></div>
+            <div class="provider-list" id="provider-list">
+              ${providers
+                .map(
+                  (p) => `
+                <div class="provider-item ${p.id === config.provider ? 'selected' : ''}" data-provider="${escapeHtml(p.id)}">
+                  <div class="provider-logo">${p.logo}</div>
+                  <div>
+                    <div class="provider-name">${escapeHtml(p.name)}</div>
+                    <div class="provider-desc">${escapeHtml(p.desc)}</div>
+                  </div>
+                </div>`
+                )
+                .join('')}
+            </div>
+          </div>
 
-    document.querySelectorAll('.api-key-item button').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const provider = (btn as HTMLElement).dataset.provider!;
-        const key = prompt(`输入 ${provider} 的 API Key：`);
-        if (key) {
-          alert(`${provider} API Key 已更新`);
+          <!-- 模型选择 -->
+          <div class="card">
+            <div class="card-header"><h3>模型</h3></div>
+            <div id="model-list">
+              ${(modelsByProvider[config.provider] || [])
+                .map(
+                  (m) => `
+                <div class="model-option ${m.id === config.model ? 'selected' : ''}" data-model="${escapeHtml(m.id)}">
+                  <div class="model-option-header">
+                    <span class="model-option-name">${escapeHtml(m.name)}</span>
+                    <span class="model-option-price">${escapeHtml(m.price)}</span>
+                  </div>
+                  <div class="model-option-desc">${escapeHtml(m.desc)}</div>
+                </div>`
+                )
+                .join('') || '<div class="empty-state">该服务商暂无可用模型</div>'}
+            </div>
+          </div>
+        </div>
+
+        <!-- API 配置 -->
+        <div class="card" style="margin-top: var(--space-5);">
+          <div class="card-header"><h3>API 配置</h3></div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4);">
+            <div class="form-group">
+              <label class="form-label">API Key *</label>
+              <input type="password" class="form-input" id="api-key" value="${escapeHtml(config.apiKey)}" placeholder="sk-..." />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Base URL（可选）</label>
+              <input type="text" class="form-input" id="base-url" value="${escapeHtml(config.baseUrl)}" placeholder="https://api.openai.com/v1" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">温度（Temperature）: <span id="temp-value">${config.temperature}</span></label>
+              <input type="range" class="form-input" id="temperature" min="0" max="2" step="0.1" value="${config.temperature}" style="padding: 0;" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">最大 Token 数</label>
+              <input type="number" class="form-input" id="max-tokens" value="${config.maxTokens}" min="1" max="32768" />
+            </div>
+          </div>
+        </div>
+
+        ${hasApiKeys ? `
+        <!-- API Key 管理（从 LLM 配置的 api_keys 字段渲染） -->
+        <div class="card" style="margin-top: var(--space-5);">
+          <div class="card-header">
+            <h3>API Key 管理</h3>
+            <button type="button" class="btn btn-primary btn-sm" id="add-key-btn">＋ 添加 Key</button>
+          </div>
+          <div id="api-keys-list">
+            ${config.apiKeys
+              .map(
+                (k) => `
+              <div class="key-item">
+                <span class="badge badge-primary">${escapeHtml(k.label)}</span>
+                <code class="key-value">${escapeHtml(k.key)}</code>
+                <button type="button" class="btn btn-ghost btn-sm" data-action="edit-key" data-id="${escapeHtml(k.id)}">编辑</button>
+                <button type="button" class="btn btn-ghost btn-sm" data-action="delete-key" data-id="${escapeHtml(k.id)}">删除</button>
+              </div>`
+              )
+              .join('')}
+          </div>
+        </div>` : ''}
+
+        <!-- 测试与保存 -->
+        <div class="card" style="margin-top: var(--space-5);">
+          <div style="display: flex; justify-content: flex-end; gap: var(--space-3);">
+            <button type="button" class="btn btn-outline" id="test-btn">🧪 测试连接</button>
+            <button type="submit" class="btn btn-primary">保存配置</button>
+          </div>
+        </div>
+      </form>
+    `;
+
+    bindProviderClick();
+    bindModelClick();
+    bindTempSlider();
+    bindFormSubmit();
+    bindKeyActions();
+  }
+
+  function bindProviderClick(): void {
+    document.querySelectorAll('.provider-item').forEach((el) => {
+      el.addEventListener('click', () => {
+        const providerId = (el as HTMLElement).dataset.provider!;
+        config.provider = providerId;
+        // 切换服务商时默认选第一个模型
+        const models = modelsByProvider[providerId] || [];
+        if (models.length > 0 && !models.find((m) => m.id === config.model)) {
+          config.model = models[0].id;
+        }
+        renderConfig();
+      });
+    });
+  }
+
+  function bindModelClick(): void {
+    document.querySelectorAll('.model-option').forEach((el) => {
+      el.addEventListener('click', () => {
+        config.model = (el as HTMLElement).dataset.model!;
+        renderConfig();
+      });
+    });
+  }
+
+  function bindTempSlider(): void {
+    const slider = document.getElementById('temperature') as HTMLInputElement | null;
+    const valueEl = document.getElementById('temp-value');
+    slider?.addEventListener('input', () => {
+      if (valueEl) valueEl.textContent = slider.value;
+    });
+  }
+
+  function bindKeyActions(): void {
+    document.getElementById('add-key-btn')?.addEventListener('click', async () => {
+      const key = prompt('请输入新的 API Key：');
+      if (!key) return;
+      const label = prompt('请输入 Key 的标签（可选）：') || `Key ${config.apiKeys.length + 1}`;
+      // 通过 updateLlmConfig 提交新 Key
+      const newKeys = [...config.apiKeys, { id: String(Date.now()), key, label }];
+      const payload = {
+        ...buildPayload(),
+        api_keys: newKeys.map((k) => ({ id: k.id, key: k.key, label: k.label })),
+      };
+      try {
+        await updateLlmConfig(payload);
+        config.apiKeys = newKeys;
+        renderConfig();
+        alert('API Key 已添加');
+      } catch (err) {
+        if (isAuthError(err)) return;
+        alert(err instanceof Error ? err.message : '网络异常');
+      }
+    });
+
+    document.querySelectorAll('button[data-action="edit-key"]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const id = (btn as HTMLElement).dataset.id!;
+        const existing = config.apiKeys.find((k) => k.id === id);
+        if (!existing) return;
+        const newKey = prompt('请输入新的 API Key：', existing.key);
+        if (!newKey || newKey === existing.key) return;
+        const updatedKeys = config.apiKeys.map((k) => (k.id === id ? { ...k, key: newKey } : k));
+        const payload = {
+          ...buildPayload(),
+          api_keys: updatedKeys.map((k) => ({ id: k.id, key: k.key, label: k.label })),
+        };
+        try {
+          await updateLlmConfig(payload);
+          config.apiKeys = updatedKeys;
+          renderConfig();
+          alert('API Key 已更新');
+        } catch (err) {
+          if (isAuthError(err)) return;
+          alert(err instanceof Error ? err.message : '网络异常');
+        }
+      });
+    });
+
+    document.querySelectorAll('button[data-action="delete-key"]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const id = (btn as HTMLElement).dataset.id!;
+        if (!confirm('确定删除此 API Key？')) return;
+        const updatedKeys = config.apiKeys.filter((k) => k.id !== id);
+        const payload = {
+          ...buildPayload(),
+          api_keys: updatedKeys.map((k) => ({ id: k.id, key: k.key, label: k.label })),
+        };
+        try {
+          await updateLlmConfig(payload);
+          config.apiKeys = updatedKeys;
+          renderConfig();
+          alert('API Key 已删除');
+        } catch (err) {
+          if (isAuthError(err)) return;
+          alert(err instanceof Error ? err.message : '网络异常');
         }
       });
     });
   }
 
-  function escapeHtml(s: string): string {
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  function buildPayload(): Record<string, unknown> {
+    return {
+      provider: config.provider,
+      model: config.model,
+      api_key: (document.getElementById('api-key') as HTMLInputElement).value,
+      base_url: (document.getElementById('base-url') as HTMLInputElement).value,
+      temperature: parseFloat((document.getElementById('temperature') as HTMLInputElement).value),
+      max_tokens: parseInt((document.getElementById('max-tokens') as HTMLInputElement).value, 10),
+    };
   }
 
-  // 温度滑块
-  document.getElementById('temp-range')?.addEventListener('input', (e) => {
-    document.getElementById('temp-value')!.textContent = (e.target as HTMLInputElement).value;
-  });
-
-  // 保存配置
-  document.getElementById('llm-form')?.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const form = e.target as HTMLFormElement;
-    const data = Object.fromEntries(new FormData(form));
-    const token = localStorage.getItem(TOKEN_KEY);
-    try {
-      const res = await fetch(`${API_BASE}/api/v1/settings/llm`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({
-          chat_model: data.chat_model,
-          embed_model: data.embed_model,
-          temperature: parseFloat(data.temperature as string),
-          max_tokens: parseInt(data.max_tokens as string),
-          system_prompt: data.system_prompt,
-        }),
-      });
-      if (res.ok) {
-        alert('配置已保存');
-        loadConfig();
-      } else {
-        alert('保存失败');
+  function bindFormSubmit(): void {
+    document.getElementById('llm-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const payload = {
+        ...buildPayload(),
+        api_keys: config.apiKeys.map((k) => ({ id: k.id, key: k.key, label: k.label })),
+      };
+      try {
+        await updateLlmConfig(payload);
+        alert('LLM 配置已保存');
+      } catch (err) {
+        if (isAuthError(err)) return;
+        alert(err instanceof Error ? err.message : '网络异常');
       }
-    } catch {
-      alert('网络异常');
-    }
-  });
+    });
 
-  document.getElementById('add-key-btn')?.addEventListener('click', () => {
-    const provider = prompt('输入服务商名称（如 OpenAI、Anthropic）：');
-    if (provider) {
-      const key = prompt(`输入 ${provider} 的 API Key：`);
-      if (key) alert('API Key 已添加');
-    }
-  });
+    document.getElementById('test-btn')?.addEventListener('click', async () => {
+      const btn = document.getElementById('test-btn') as HTMLButtonElement;
+      const original = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = '🧪 测试中...';
+      let errMsg: string | null = null;
+      try {
+        // 通过 sse.ts 统一封装的 streamChat 发送一个简单请求测试连接
+        await streamChat(
+          '/api/v1/chat/stream',
+          { query: '你好', agent_type: 'qa' },
+          {
+            onChunk: () => { /* 仅验证连接，忽略流式内容 */ },
+            onError: (err) => { errMsg = err.message; },
+          }
+        );
+      } catch (err) {
+        // streamChat 内部已捕获并转交 onError；此处兜底处理未捕获异常
+        errMsg = err instanceof Error ? err.message : '网络异常';
+      }
+      if (errMsg) {
+        // 401 时清除 Token 并跳转登录页
+        if (errMsg.includes('(401)')) {
+          removeToken();
+          window.location.href = '/auth/login';
+          return;
+        }
+        alert(`连接测试失败：${errMsg}`);
+      } else {
+        alert('连接测试成功');
+      }
+      btn.disabled = false;
+      btn.textContent = original;
+    });
+  }
+
+  function escapeHtml(s: unknown): string {
+    return String(s ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
 
   loadConfig();
 </script>

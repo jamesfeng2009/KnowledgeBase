@@ -33,6 +33,16 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
         <div class="chat-sidebar-search">
           <input type="text" class="form-input" id="conv-search" placeholder="搜索对话..." />
         </div>
+        <div class="chat-sidebar-stats">
+          <div class="chat-stat-item">
+            <span class="chat-stat-label">今日对话</span>
+            <span class="chat-stat-value" id="stat-today">0</span>
+          </div>
+          <div class="chat-stat-item">
+            <span class="chat-stat-label">本周对话</span>
+            <span class="chat-stat-value" id="stat-week">0</span>
+          </div>
+        </div>
         <div class="chat-conversation-list" id="conversation-list">
           <div class="chat-empty-hint">暂无对话，点击「新建对话」开始</div>
         </div>
@@ -114,28 +124,70 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
           window.location.href = '/auth/login';
           return;
         }
+        showConvListLoading();
         try {
           const res = await fetch(`${API_BASE}/api/v1/chat/conversations`, {
             headers: { Authorization: `Bearer ${token}` },
           });
-          if (res.ok) {
-            const result = await res.json();
-            conversations = result.data?.items || result.data || [];
-            renderConversationList();
-          } else if (res.status === 401) {
+          if (res.status === 401) {
             window.location.href = '/auth/login';
+            return;
           }
-        } catch {
-          conversations = mockConversations();
+          if (!res.ok) {
+            throw new Error(`请求失败 (${res.status})`);
+          }
+          const result = await res.json();
+          conversations = result.data?.items || result.data || [];
           renderConversationList();
+          updateConvStats();
+        } catch (err) {
+          showConvListError(err instanceof Error ? err.message : String(err));
         }
       }
 
-      function mockConversations() {
-        return [
-          { id: 'mock-1', title: '公司报销流程', messages: [] },
-          { id: 'mock-2', title: '年假政策咨询', messages: [] },
-        ];
+      /** 会话列表加载中 */
+      function showConvListLoading() {
+        convListEl.innerHTML = '<div class="chat-empty-hint">加载中...</div>';
+      }
+
+      /** 会话列表加载失败 - 显示错误信息 + 重试按钮 */
+      function showConvListError(msg: string) {
+        convListEl.innerHTML = `
+          <div class="chat-list-error">
+            <div class="chat-list-error-msg">会话列表加载失败</div>
+            <div class="chat-list-error-detail">${escapeHtml(msg)}</div>
+            <button class="btn btn-outline btn-sm" id="conv-retry-btn">重试</button>
+          </div>`;
+        document.getElementById('conv-retry-btn')?.addEventListener('click', loadConversations);
+      }
+
+      /** 从会话列表计算今日/本周对话数 */
+      function updateConvStats() {
+        const now = Date.now();
+        const toTs = (c: any): number => {
+          if (typeof c.created_at === 'number') return c.created_at;
+          if (typeof c.created_at === 'string') {
+            const t = new Date(c.created_at).getTime();
+            return isNaN(t) ? 0 : t;
+          }
+          if (c.updated_at) {
+            const t = new Date(c.updated_at).getTime();
+            return isNaN(t) ? 0 : t;
+          }
+          return 0;
+        };
+        const today = conversations.filter((c) => {
+          const ts = toTs(c);
+          return ts > 0 && now - ts < 86400000;
+        }).length;
+        const week = conversations.filter((c) => {
+          const ts = toTs(c);
+          return ts > 0 && now - ts < 86400000 * 7;
+        }).length;
+        const todayEl = $('stat-today');
+        const weekEl = $('stat-week');
+        if (todayEl) todayEl.textContent = String(today);
+        if (weekEl) weekEl.textContent = String(week);
       }
 
       function renderConversationList() {
@@ -243,16 +295,8 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
           return;
         }
 
-        // 创建新会话
-        if (!currentConvId) {
-          currentConvId = 'conv-' + Date.now();
-          conversations.unshift({
-            id: currentConvId,
-            title: query.slice(0, 20),
-            messages: [],
-          });
-          renderConversationList();
-        }
+        // 新会话不预先创建本地 ID：首次发消息时由后端自动创建会话
+        const isNewConversation = !currentConvId;
 
         // 渲染用户消息
         renderMessage('user', query);
@@ -280,10 +324,17 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
             },
             body: JSON.stringify({
               query,
-              conversation_id: currentConvId,
+              // 仅在已有会话时携带 conversation_id，新会话由后端自动创建
+              ...(currentConvId ? { conversation_id: currentConvId } : {}),
               agent_type: currentAgent,
             }),
           });
+
+          if (res.status === 401) {
+            localStorage.removeItem(TOKEN_KEY);
+            window.location.href = '/auth/login';
+            return;
+          }
 
           if (!res.ok || !res.body) {
             throw new Error('流式连接失败');
@@ -329,9 +380,27 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
             handleSSEEvent('', buffer.trim().slice(5).trim(), contentEl, sources, streamState);
           }
 
-          // 最终一次渲染（去掉光标），并保存到会话历史
+          // 最终一次渲染（去掉光标）
           contentEl.innerHTML = `<div class="markdown-body">${renderMarkdownStream(streamState.fullText)}</div>`;
-          conv?.messages.push({ role: 'assistant', content: streamState.fullText });
+
+          if (isNewConversation) {
+            // 后端已自动创建会话，重新拉取列表以获取真实会话 ID，并保留当前已渲染的消息
+            await loadConversations();
+            if (conversations.length > 0) {
+              currentConvId = conversations[0].id;
+              const newConv = conversations.find((c) => c.id === currentConvId);
+              if (newConv) {
+                newConv.title = newConv.title || query.slice(0, 20);
+                newConv.messages = [
+                  { role: 'user', content: query },
+                  { role: 'assistant', content: streamState.fullText },
+                ];
+              }
+              renderConversationList();
+            }
+          } else {
+            conv?.messages.push({ role: 'assistant', content: streamState.fullText });
+          }
         } catch (err) {
           contentEl.innerHTML =
             '<span class="text-danger">连接异常：' +
@@ -1003,6 +1072,48 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
         color: var(--text-muted);
         font-size: var(--text-sm);
         padding: var(--space-8);
+      }
+      /* 侧边栏统计 */
+      .chat-sidebar-stats {
+        display: flex;
+        gap: var(--space-2);
+        padding: 0 var(--space-4) var(--space-3);
+      }
+      .chat-stat-item {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-1);
+        padding: var(--space-2) var(--space-3);
+        background: var(--surface-muted);
+        border-radius: var(--radius);
+      }
+      .chat-stat-label {
+        font-size: var(--text-xs);
+        color: var(--text-muted);
+      }
+      .chat-stat-value {
+        font-size: var(--text-lg);
+        font-weight: 600;
+        color: var(--primary);
+      }
+      /* 会话列表错误状态 */
+      .chat-list-error {
+        text-align: center;
+        padding: var(--space-6) var(--space-4);
+        color: var(--text-muted);
+      }
+      .chat-list-error-msg {
+        font-size: var(--text-sm);
+        font-weight: 500;
+        color: var(--danger);
+        margin-bottom: var(--space-1);
+      }
+      .chat-list-error-detail {
+        font-size: var(--text-xs);
+        color: var(--text-muted);
+        margin-bottom: var(--space-3);
+        word-break: break-all;
       }
       @media (max-width: 1024px) {
         .chat-right { display: none; }

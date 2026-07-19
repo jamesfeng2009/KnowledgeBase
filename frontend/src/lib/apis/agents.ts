@@ -42,7 +42,12 @@ export function createAgent(data: { name: string; type: string; description?: st
   return postData<Agent>(BASE, data);
 }
 
-/** 更新 Agent 配置 */
+/**
+ * 更新 Agent 配置
+ *
+ * NOTE: 当前 dead code。chat/agent.astro 已实现创建/查看/调用 Agent，
+ * 但尚未提供编辑入口。保留供 P4/P5 Agent 管理页编辑功能对接使用。
+ */
 export function updateAgent(agentId: string, data: Partial<Agent>): Promise<Agent> {
   return putData<Agent>(`${BASE}/${agentId}`, data);
 }

@@ -1,0 +1,157 @@
+---
+/**
+ * Tabs.astro - 标签页切换组件
+ *
+ * 支持两种视觉变体：
+ *   - underline：底部下划线（默认）
+ *   - pill：胶囊式背景高亮
+ *
+ * 点击 tab 时在容器上派发 tab-change 自定义事件（bubbles: true），
+ * detail 为 { value: string }。父组件可监听该事件执行业务逻辑。
+ *
+ * @example
+ * <Tabs
+ *   tabs={[
+ *     { label: '全部', value: 'all' },
+ *     { label: '已完成', value: 'done' },
+ *   ]}
+ *   active="all"
+ *   variant="underline"
+ * />
+ */
+interface TabItem {
+  label: string;
+  value: string;
+  icon?: string;
+}
+
+interface Props {
+  tabs: TabItem[];
+  active?: string;
+  variant?: 'underline' | 'pill';
+}
+
+const { tabs, active = '', variant = 'underline' } = Astro.props;
+---
+
+<div class={`tabs tabs-${variant}`} data-tabs>
+  {tabs.map((tab) => (
+    <button
+      class:list={['tab', { active: active === tab.value }]}
+      data-tab-value={tab.value}
+      type="button"
+      role="tab"
+      aria-selected={active === tab.value ? 'true' : 'false'}
+    >
+      {tab.icon && <span class="tab-icon">{tab.icon}</span>}
+      {tab.label}
+    </button>
+  ))}
+</div>
+
+<script>
+  function initTabs() {
+    document.querySelectorAll('[data-tabs]').forEach((container) => {
+      container.addEventListener('click', (e) => {
+        const target = e.target as HTMLElement | null;
+        if (!target) return;
+
+        const tab = target.closest('[data-tab-value]');
+        if (!tab || !container.contains(tab)) return;
+
+        const value = tab.getAttribute('data-tab-value');
+        if (!value) return;
+
+        // 更新激活态
+        container.querySelectorAll('.tab').forEach((t) => t.classList.remove('active'));
+        tab.classList.add('active');
+
+        // 更新 aria-selected
+        container.querySelectorAll('[role="tab"]').forEach((t) => {
+          t.setAttribute('aria-selected', t === tab ? 'true' : 'false');
+        });
+
+        // 派发自定义事件，供父组件监听
+        container.dispatchEvent(
+          new CustomEvent('tab-change', {
+            detail: { value },
+            bubbles: true,
+          })
+        );
+      });
+    });
+  }
+
+  initTabs();
+</script>
+
+<style>
+  .tabs {
+    display: flex;
+  }
+
+  /* === underline 变体：底部下划线 === */
+  .tabs-underline {
+    border-bottom: 1px solid var(--border);
+    gap: var(--space-1);
+  }
+
+  .tabs-underline .tab {
+    padding: var(--space-3) var(--space-4);
+    font-size: var(--text-base);
+    color: var(--text-secondary);
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    transition: all var(--transition-fast);
+    cursor: pointer;
+    margin-bottom: -1px;
+    white-space: nowrap;
+  }
+
+  .tabs-underline .tab:hover {
+    color: var(--primary);
+  }
+
+  .tabs-underline .tab.active {
+    color: var(--primary);
+    border-bottom-color: var(--primary);
+    font-weight: 500;
+  }
+
+  /* === pill 变体：胶囊式 === */
+  .tabs-pill {
+    gap: var(--space-2);
+    padding: var(--space-1);
+    background: var(--surface-muted);
+    border-radius: var(--radius);
+  }
+
+  .tabs-pill .tab {
+    padding: var(--space-2) var(--space-4);
+    font-size: var(--text-base);
+    color: var(--text-secondary);
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    transition: all var(--transition-fast);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .tabs-pill .tab:hover {
+    color: var(--text);
+    background: var(--surface-hover);
+  }
+
+  .tabs-pill .tab.active {
+    color: var(--primary);
+    background: var(--surface);
+    box-shadow: var(--shadow-sm);
+    font-weight: 500;
+  }
+
+  .tab-icon {
+    margin-right: var(--space-1);
+  }
+</style>

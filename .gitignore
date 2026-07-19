@@ -40,3 +40,11 @@ collab-service/node_modules/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Frontend build output
+frontend/dist/
+frontend/node_modules/
+
+# Gap analysis reports (deliverables, not source code)
+frontend-gap-analysis/
+frontend-gap-report-v2/

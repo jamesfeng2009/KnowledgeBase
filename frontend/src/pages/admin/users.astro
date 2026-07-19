@@ -2,6 +2,7 @@
 /**
  * 用户管理页面
  * 用户列表表格 + 角色管理 + 部门组织树 + LDAP 同步按钮
+ * 数据来源：GET /api/v1/users、PUT /api/v1/users/{id}/role、GET /api/v1/departments、POST /api/v1/users/sync-ldap
  */
 import DefaultLayout from '@/layouts/DefaultLayout.astro';
 
@@ -22,12 +23,8 @@ const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '用户�
     <div class="card">
       <div class="card-header"><h3>部门</h3></div>
       <div id="org-tree">
-        <div class="org-node" data-dept="all" style="font-weight: 600;">🏢 全部</div>
-        <div class="org-node" data-dept="tech" style="padding-left: var(--space-4);">💻 技术部</div>
-        <div class="org-node" data-dept="product" style="padding-left: var(--space-4);">📦 产品部</div>
-        <div class="org-node" data-dept="hr" style="padding-left: var(--space-4);">👥 人力资源部</div>
-        <div class="org-node" data-dept="finance" style="padding-left: var(--space-4);">💰 财务部</div>
-        <div class="org-node" data-dept="ops" style="padding-left: var(--space-4);">⚙️ 运营部</div>
+        <div class="org-node active" data-dept="all" style="font-weight: 600;">🏢 全部</div>
+        <div class="loading-state" style="padding: var(--space-3);">加载中...</div>
       </div>
     </div>
 
@@ -117,56 +114,126 @@ const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '用户�
     padding: var(--space-8);
     color: var(--text-muted);
   }
+  .empty-state {
+    text-align: center;
+    padding: var(--space-6);
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+  }
+  .error-state {
+    text-align: center;
+    padding: var(--space-6);
+    color: var(--danger);
+    font-size: var(--text-sm);
+  }
 </style>
 
 <script>
-  const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
-  const TOKEN_KEY = 'ekb_access_token';
+  import { getUsers, updateUserRole, getDepartments, syncLdap } from '@/lib/apis/users';
+  import { ApiError } from '@/lib/api';
 
-  let currentDept = 'all';
-  let users: any[] = [];
-
-  function mockUsers() {
-    return [
-      { id: 'u1', name: '张三', email: 'zhangsan@company.com', dept: 'tech', dept_name: '技术部', role: 'admin', status: 'active', last_login: '2 分钟前' },
-      { id: 'u2', name: '李四', email: 'lisi@company.com', dept: 'product', dept_name: '产品部', role: 'editor', status: 'active', last_login: '1 小时前' },
-      { id: 'u3', name: '王五', email: 'wangwu@company.com', dept: 'hr', dept_name: '人力资源部', role: 'editor', status: 'active', last_login: '昨天' },
-      { id: 'u4', name: '赵六', email: 'zhaoliu@company.com', dept: 'finance', dept_name: '财务部', role: 'viewer', status: 'active', last_login: '3 天前' },
-      { id: 'u5', name: '钱七', email: 'qianqi@company.com', dept: 'tech', dept_name: '技术部', role: 'viewer', status: 'disabled', last_login: '7 天前' },
-      { id: 'u6', name: '孙八', email: 'sunba@company.com', dept: 'ops', dept_name: '运营部', role: 'editor', status: 'active', last_login: '5 小时前' },
-    ];
+  interface User {
+    id: string;
+    name: string;
+    email: string;
+    dept: string;
+    dept_name: string;
+    role: string;
+    status: string;
+    last_login: string;
   }
 
-  async function loadUsers() {
-    const token = localStorage.getItem(TOKEN_KEY);
-    if (!token) {
-      window.location.href = '/auth/login';
-      return;
+  let currentDept = 'all';
+  let users: User[] = [];
+
+  /** 判断是否为 401/未登录错误（已在底层处理跳转，业务层需静默退出） */
+  function isAuthError(err: unknown): boolean {
+    return err instanceof ApiError && err.status === 401;
+  }
+
+  /** 从接口返回值中提取数组（兼容数组 / { items: [] } / 分页对象） */
+  function toItems(raw: unknown): Record<string, unknown>[] {
+    if (Array.isArray(raw)) return raw as Record<string, unknown>[];
+    if (raw && typeof raw === 'object') {
+      const obj = raw as { items?: unknown[] };
+      if (Array.isArray(obj.items)) return obj.items as Record<string, unknown>[];
     }
+    return [];
+  }
+
+  /** 规范化用户对象（兼容后端不同字段命名） */
+  function normalizeUser(raw: Record<string, unknown>): User {
+    return {
+      id: String(raw.id || raw.user_id || ''),
+      name: String(raw.name || raw.username || raw.display_name || '-'),
+      email: String(raw.email || '-'),
+      dept: String(raw.dept || raw.department || raw.dept_id || ''),
+      dept_name: String(raw.dept_name || raw.department_name || raw.department || '-'),
+      role: String(raw.role || 'viewer'),
+      status: String(raw.status || 'active'),
+      last_login: String(raw.last_login || raw.last_login_at || '从未登录'),
+    };
+  }
+
+  async function loadDepartments(): Promise<void> {
+    const tree = document.getElementById('org-tree')!;
     try {
-      const res = await fetch(`${API_BASE}/api/v1/admin/users`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.ok) {
-        const result = await res.json();
-        users = result.data?.items || result.data || [];
-      } else if (res.status === 401) {
-        window.location.href = '/auth/login';
-        return;
+      const depts = (await getDepartments()) as unknown as Record<string, unknown>[];
+      const arr = Array.isArray(depts) ? depts : [];
+      if (arr.length === 0) {
+        tree.innerHTML = '<div class="org-node active" data-dept="all" style="font-weight: 600;">🏢 全部</div><div class="empty-state" style="padding: var(--space-3);">暂无部门数据</div>';
+      } else {
+        tree.innerHTML =
+          '<div class="org-node active" data-dept="all" style="font-weight: 600;">🏢 全部</div>' +
+          arr
+            .map(
+              (d) =>
+                `<div class="org-node" data-dept="${escapeHtml(String(d.id || d.code || ''))}" style="padding-left: var(--space-4);">${escapeHtml(String(d.name || d.dept_name || '未命名'))}</div>`
+            )
+            .join('');
       }
-      if (users.length === 0) users = mockUsers();
-    } catch {
-      users = mockUsers();
+      bindOrgNodes();
+    } catch (err) {
+      if (isAuthError(err)) return;
+      const msg = err instanceof Error ? err.message : '网络异常';
+      tree.innerHTML = `<div class="org-node active" data-dept="all" style="font-weight: 600;">🏢 全部</div><div class="error-state" style="padding: var(--space-3);">${escapeHtml(msg)}</div>`;
+      bindOrgNodes();
+    }
+  }
+
+  function bindOrgNodes(): void {
+    document.querySelectorAll('.org-node').forEach((el) => {
+      el.addEventListener('click', () => {
+        document.querySelectorAll('.org-node').forEach((e) => e.classList.remove('active'));
+        el.classList.add('active');
+        currentDept = (el as HTMLElement).dataset.dept || 'all';
+        renderTable();
+      });
+    });
+  }
+
+  async function loadUsers(): Promise<void> {
+    const body = document.getElementById('user-table-body')!;
+    body.innerHTML = '<tr><td colspan="7" class="loading-state">加载中...</td></tr>';
+    try {
+      const result = await getUsers();
+      users = toItems(result).map(normalizeUser);
+    } catch (err) {
+      if (isAuthError(err)) return;
+      const msg = err instanceof Error ? err.message : '网络异常';
+      body.innerHTML = `<tr><td colspan="7" class="error-state">加载用户列表失败：${escapeHtml(msg)}<br/><button class="btn btn-outline btn-sm" id="retry-users" style="margin-top: var(--space-3);">重试</button></td></tr>`;
+      document.getElementById('retry-users')?.addEventListener('click', loadUsers);
+      return;
     }
     renderTable();
   }
 
-  function renderTable() {
+  function renderTable(): void {
     const keyword = (document.getElementById('user-search') as HTMLInputElement).value.trim().toLowerCase();
     const roleFilter = (document.getElementById('role-filter') as HTMLSelectElement).value;
 
-    let list = users.filter((u) => {
-      if (currentDept !== 'all' && u.dept !== currentDept) return false;
+    const list = users.filter((u) => {
+      if (currentDept !== 'all' && u.dept !== currentDept && u.dept_name !== currentDept) return false;
       if (keyword && !u.name.toLowerCase().includes(keyword) && !u.email.toLowerCase().includes(keyword)) return false;
       if (roleFilter && u.role !== roleFilter) return false;
       return true;
@@ -180,77 +247,100 @@ const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '用户�
 
     const body = document.getElementById('user-table-body')!;
     if (list.length === 0) {
-      body.innerHTML = '<tr><td colspan="7" class="loading-state">暂无用户</td></tr>';
+      body.innerHTML = '<tr><td colspan="7" class="empty-state">暂无用户</td></tr>';
       return;
     }
     body.innerHTML = list
       .map(
-        (u) => `
-      <tr>
-        <td>
-          <div class="user-cell">
-            <div class="avatar avatar-sm">${escapeHtml(u.name.charAt(0))}</div>
-            ${escapeHtml(u.name)}
-          </div>
-        </td>
-        <td class="text-muted">${escapeHtml(u.email)}</td>
-        <td>${escapeHtml(u.dept_name)}</td>
-        <td><span class="badge ${roleMap[u.role].badge}">${roleMap[u.role].label}</span></td>
-        <td><span class="badge ${u.status === 'active' ? 'badge-success' : 'badge-danger'}">${u.status === 'active' ? '启用' : '禁用'}</span></td>
-        <td class="text-muted">${escapeHtml(u.last_login)}</td>
-        <td>
-          <div style="display: flex; gap: var(--space-2);">
-            <button class="btn btn-ghost btn-sm" data-action="role" data-id="${u.id}">角色</button>
-            <button class="btn btn-ghost btn-sm" data-action="toggle" data-id="${u.id}">${u.status === 'active' ? '禁用' : '启用'}</button>
-          </div>
-        </td>
-      </tr>`
+        (u) => {
+          const roleInfo = roleMap[u.role] || { label: u.role, badge: 'badge-warning' };
+          return `
+        <tr>
+          <td>
+            <div class="user-cell">
+              <div class="avatar avatar-sm">${escapeHtml(u.name.charAt(0))}</div>
+              ${escapeHtml(u.name)}
+            </div>
+          </td>
+          <td class="text-muted">${escapeHtml(u.email)}</td>
+          <td>${escapeHtml(u.dept_name)}</td>
+          <td><span class="badge ${roleInfo.badge}">${escapeHtml(roleInfo.label)}</span></td>
+          <td><span class="badge ${u.status === 'active' ? 'badge-success' : 'badge-danger'}">${u.status === 'active' ? '启用' : '禁用'}</span></td>
+          <td class="text-muted">${escapeHtml(u.last_login)}</td>
+          <td>
+            <div style="display: flex; gap: var(--space-2);">
+              <button class="btn btn-ghost btn-sm" data-action="role" data-id="${escapeHtml(u.id)}">角色</button>
+              <button class="btn btn-ghost btn-sm" data-action="toggle" data-id="${escapeHtml(u.id)}">${u.status === 'active' ? '禁用' : '启用'}</button>
+            </div>
+          </td>
+        </tr>`;
+        }
       )
       .join('');
 
     body.querySelectorAll('button[data-action]').forEach((btn) => {
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', async () => {
         const action = (btn as HTMLElement).dataset.action!;
         const id = (btn as HTMLElement).dataset.id!;
         const user = users.find((u) => u.id === id);
+        if (!user) return;
         if (action === 'role') {
           const newRole = prompt(`修改 ${user.name} 的角色（admin/editor/viewer）:`, user.role);
-          if (newRole && ['admin', 'editor', 'viewer'].includes(newRole)) {
-            user.role = newRole;
-            renderTable();
-            alert('角色已更新');
+          if (newRole && ['admin', 'editor', 'viewer'].includes(newRole) && newRole !== user.role) {
+            try {
+              await updateUserRole(id, newRole);
+              user.role = newRole;
+              renderTable();
+              alert('角色已更新');
+            } catch (err) {
+              if (isAuthError(err)) return;
+              alert(err instanceof Error ? err.message : '网络异常');
+            }
           }
         } else if (action === 'toggle') {
-          user.status = user.status === 'active' ? 'disabled' : 'active';
-          renderTable();
+          alert('启用/禁用功能开发中');
         }
       });
     });
   }
 
-  function escapeHtml(s: string): string {
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  function escapeHtml(s: unknown): string {
+    return String(s ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
   }
-
-  // 部门选择
-  document.querySelectorAll('.org-node').forEach((el) => {
-    el.addEventListener('click', () => {
-      document.querySelectorAll('.org-node').forEach((e) => e.classList.remove('active'));
-      el.classList.add('active');
-      currentDept = (el as HTMLElement).dataset.dept!;
-      renderTable();
-    });
-  });
 
   document.getElementById('user-search')?.addEventListener('input', renderTable);
   document.getElementById('role-filter')?.addEventListener('change', renderTable);
-  document.getElementById('ldap-btn')?.addEventListener('click', () => {
-    alert('正在从 LDAP 同步用户信息...');
-  });
-  document.getElementById('invite-btn')?.addEventListener('click', () => {
-    const email = prompt('请输入被邀请人的邮箱：');
-    if (email) alert(`邀请链接已发送至 ${email}`);
+
+  document.getElementById('ldap-btn')?.addEventListener('click', async () => {
+    const btn = document.getElementById('ldap-btn') as HTMLButtonElement;
+    const original = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '🔄 同步中...';
+    try {
+      await syncLdap();
+      alert('LDAP 同步已完成');
+      await loadUsers();
+    } catch (err) {
+      if (isAuthError(err)) return;
+      alert(err instanceof Error ? err.message : '网络异常');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = original;
+    }
   });
 
+  document.getElementById('invite-btn')?.addEventListener('click', () => {
+    const email = prompt('请输入被邀请人的邮箱：');
+    if (email) {
+      alert('邀请功能开发中');
+    }
+  });
+
+  // 初始化
+  loadDepartments();
   loadUsers();
 </script>

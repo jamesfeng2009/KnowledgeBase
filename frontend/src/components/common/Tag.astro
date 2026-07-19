@@ -1,0 +1,70 @@
+---
+/**
+ * Tag.astro - 标签组件
+ *
+ * 支持自定义颜色与可移除（带 × 按钮）。
+ * 复用 global.css 的 .tag / .tag-removable 基础样式，
+ * 通过 scoped 样式覆盖 global.css 中 .tag-removable::after 的伪元素 "x"，
+ * 改用真实的 <button> 元素以支持无障碍交互。
+ *
+ * @example
+ * <Tag>前端</Tag>
+ * <Tag removable>React</Tag>
+ * <Tag color="#FF6B6B">紧急</Tag>
+ */
+interface Props {
+  removable?: boolean;
+  color?: string;
+}
+
+const { removable = false, color } = Astro.props;
+
+const tagClass = `tag ${removable ? 'tag-removable' : ''} ${color ? 'tag-custom-color' : ''}`.trim();
+---
+
+<span class={tagClass} style={color ? `--tag-color: ${color}` : undefined}>
+  <span class="tag-text"><slot /></span>
+  {removable && (
+    <button class="tag-remove" type="button" aria-label="移除标签">×</button>
+  )}
+</span>
+
+<style>
+  /*
+   * 覆盖 global.css 中 .tag-removable::after { content: "x" } 的伪元素，
+   * 改用下方真实的 .tag-remove 按钮元素。
+   */
+  .tag-removable::after {
+    content: none;
+  }
+
+  /* 自定义颜色：通过 --tag-color CSS 变量驱动 */
+  .tag-custom-color {
+    color: var(--tag-color);
+    border-color: var(--tag-color);
+  }
+
+  .tag-text {
+    line-height: inherit;
+  }
+
+  .tag-remove {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    margin-left: var(--space-1);
+    margin-right: calc(var(--space-1) * -1);
+    font-size: var(--text-base);
+    line-height: 1;
+    color: var(--text-muted);
+    border-radius: var(--radius-full);
+    transition: all var(--transition-fast);
+  }
+
+  .tag-remove:hover {
+    background: var(--danger-bg);
+    color: var(--danger);
+  }
+</style>

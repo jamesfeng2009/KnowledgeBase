@@ -163,6 +163,16 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '知识库
     padding: var(--space-8);
     color: var(--text-muted);
   }
+  .empty-state {
+    text-align: center;
+    padding: var(--space-8);
+    color: var(--text-muted);
+  }
+  .error-state {
+    text-align: center;
+    padding: var(--space-8);
+    color: var(--danger);
+  }
   .modal-overlay {
     position: fixed;
     inset: 0;
@@ -243,57 +253,52 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '知识库
 </style>
 
 <script>
-  const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
-  const TOKEN_KEY = 'ekb_access_token';
+  import {
+    getKnowledgeBases,
+    createKnowledgeBase,
+    updateKnowledgeBase,
+    deleteKnowledgeBase,
+    type KnowledgeBase,
+  } from '@/lib/apis/knowledge';
+  import { getData } from '@/lib/api';
 
-  let kbs: any[] = [];
+  const BASE = '/api/v1';
 
-  function mockKbs() {
-    return [
-      { id: 'kb-1', name: '公司制度', icon: '📋', desc: '规章制度、流程规范', doc_count: 128, members: 8, status: 'active', updated_at: '2026-07-01' },
-      { id: 'kb-2', name: '产品文档', icon: '📦', desc: '产品说明、需求文档', doc_count: 86, members: 12, status: 'active', updated_at: '2026-06-28' },
-      { id: 'kb-3', name: '技术文档', icon: '⚙️', desc: 'API、架构、开发规范', doc_count: 245, members: 15, status: 'active', updated_at: '2026-07-05' },
-      { id: 'kb-4', name: '历史归档', icon: '📁', desc: '过期和归档文档', doc_count: 56, members: 3, status: 'archived', updated_at: '2025-12-01' },
-    ];
+  let kbs: KnowledgeBase[] = [];
+
+  function escapeHtml(s: string): string {
+    return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
+  // ===== 加载知识库列表 =====
   async function loadKbs() {
-    const token = localStorage.getItem(TOKEN_KEY);
-    if (!token) {
-      window.location.href = '/auth/login';
-      return;
-    }
+    const body = document.getElementById('kb-table-body')!;
+    body.innerHTML = '<tr><td colspan="7" class="loading-state">加载中...</td></tr>';
     try {
-      const res = await fetch(`${API_BASE}/api/v1/knowledge/bases`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.ok) {
-        const result = await res.json();
-        kbs = result.data?.items || result.data || [];
-      } else if (res.status === 401) {
-        window.location.href = '/auth/login';
-        return;
-      }
-      if (kbs.length === 0) kbs = mockKbs();
-    } catch {
-      kbs = mockKbs();
+      const res = await getKnowledgeBases(1, 100);
+      kbs = res?.items || [];
+      renderTable();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '未知错误';
+      body.innerHTML = `<tr><td colspan="7" class="error-state">知识库加载失败：${escapeHtml(msg)}<br/><button class="btn btn-outline btn-sm" id="retry-kbs" style="margin-top: var(--space-3);">重试</button></td></tr>`;
+      document.getElementById('retry-kbs')?.addEventListener('click', loadKbs);
     }
-    renderTable();
   }
 
   function renderTable() {
     const keyword = (document.getElementById('kb-search') as HTMLInputElement).value.trim().toLowerCase();
     const status = (document.getElementById('kb-status') as HTMLSelectElement).value;
 
+    // 本地过滤：搜索关键字 + 状态
     let list = kbs.filter((k) => {
       if (keyword && !k.name.toLowerCase().includes(keyword)) return false;
-      if (status && k.status !== status) return false;
+      if (status && (k.visibility || 'active') !== status) return false;
       return true;
     });
 
     const body = document.getElementById('kb-table-body')!;
     if (list.length === 0) {
-      body.innerHTML = '<tr><td colspan="7" class="loading-state">暂无知识库</td></tr>';
+      body.innerHTML = '<tr><td colspan="7" class="empty-state">暂无知识库</td></tr>';
       return;
     }
 
@@ -303,20 +308,20 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '知识库
       <tr>
         <td>
           <div class="kb-name-cell">
-            <div class="kb-name-icon">${k.icon || '📚'}</div>
+            <div class="kb-name-icon">📚</div>
             ${escapeHtml(k.name)}
           </div>
         </td>
-        <td class="text-muted">${escapeHtml(k.desc || '')}</td>
-        <td>${k.doc_count || 0}</td>
-        <td>${k.members || 0} 人</td>
-        <td><span class="badge ${k.status === 'active' ? 'badge-success' : 'badge-warning'}">${k.status === 'active' ? '启用' : '归档'}</span></td>
+        <td class="text-muted">${escapeHtml(k.description || '')}</td>
+        <td>${k.document_count || 0}</td>
+        <td>--</td>
+        <td><span class="badge ${(k.visibility || 'active') === 'archived' ? 'badge-warning' : 'badge-success'}">${(k.visibility || 'active') === 'archived' ? '归档' : '启用'}</span></td>
         <td class="text-muted">${escapeHtml(k.updated_at || '')}</td>
         <td>
           <div class="action-btns">
-            <button class="btn btn-ghost btn-sm" data-action="edit" data-id="${k.id}">编辑</button>
-            <button class="btn btn-ghost btn-sm" data-action="member" data-id="${k.id}">成员</button>
-            <button class="btn btn-ghost btn-sm" data-action="delete" data-id="${k.id}">删除</button>
+            <button class="btn btn-ghost btn-sm" data-action="edit" data-id="${escapeHtml(k.id)}">编辑</button>
+            <button class="btn btn-ghost btn-sm" data-action="member" data-id="${escapeHtml(k.id)}">成员</button>
+            <button class="btn btn-ghost btn-sm" data-action="delete" data-id="${escapeHtml(k.id)}">删除</button>
           </div>
         </td>
       </tr>`
@@ -328,6 +333,7 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '知识库
         const action = (btn as HTMLElement).dataset.action!;
         const id = (btn as HTMLElement).dataset.id!;
         const kb = kbs.find((k) => k.id === id);
+        if (!kb) return;
         if (action === 'edit') openEditModal(kb);
         else if (action === 'member') openMemberModal(kb);
         else if (action === 'delete') deleteKb(kb);
@@ -342,48 +348,68 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '知识库
     document.getElementById('kb-modal')!.style.display = 'flex';
   }
 
-  function openEditModal(kb: any) {
+  function openEditModal(kb: KnowledgeBase) {
     (document.getElementById('modal-title') as HTMLElement).textContent = '编辑知识库';
     const form = document.getElementById('kb-form') as HTMLFormElement;
     (form.querySelector('input[name="id"]') as HTMLInputElement).value = kb.id;
     (form.querySelector('input[name="name"]') as HTMLInputElement).value = kb.name;
-    (form.querySelector('textarea[name="description"]') as HTMLTextAreaElement).value = kb.desc || '';
+    (form.querySelector('textarea[name="description"]') as HTMLTextAreaElement).value = kb.description || '';
+    if (kb.visibility) {
+      (form.querySelector('select[name="visibility"]') as HTMLSelectElement).value = kb.visibility;
+    }
     document.getElementById('kb-modal')!.style.display = 'flex';
   }
 
-  function openMemberModal(kb: any) {
-    const members = [
-      { name: '张三', role: '管理员', email: 'zhangsan@company.com' },
-      { name: '李四', role: '编辑者', email: 'lisi@company.com' },
-      { name: '王五', role: '查看者', email: 'wangwu@company.com' },
-    ];
-    document.getElementById('member-list')!.innerHTML = members
-      .map(
-        (m) => `
-      <div class="member-row">
-        <div class="avatar avatar-sm">${escapeHtml(m.name.charAt(0))}</div>
-        <div style="flex: 1;">
-          <div style="font-size: var(--text-sm); font-weight: 500;">${escapeHtml(m.name)}</div>
-          <div class="text-muted" style="font-size: var(--text-xs);">${escapeHtml(m.email)}</div>
-        </div>
-        <span class="badge badge-primary">${escapeHtml(m.role)}</span>
-        <button class="btn btn-ghost btn-sm">移除</button>
-      </div>`
-      )
-      .join('');
-    document.getElementById('member-modal')!.style.display = 'flex';
-  }
-
-  function deleteKb(kb: any) {
-    if (confirm(`确定删除知识库「${kb.name}」吗？此操作不可恢复。`)) {
-      kbs = kbs.filter((k) => k.id !== kb.id);
-      renderTable();
-      alert('删除成功');
+  // ===== 成员管理 =====
+  async function openMemberModal(kb: KnowledgeBase) {
+    const modal = document.getElementById('member-modal')!;
+    const listEl = document.getElementById('member-list')!;
+    modal.style.display = 'flex';
+    listEl.innerHTML = '<div class="loading-state">加载中...</div>';
+    try {
+      // 调用 GET /api/v1/knowledge/{kb_id}/members
+      const result = await getData<any[] | { items: any[] }>(`${BASE}/knowledge/${kb.id}/members`);
+      let members: any[] = [];
+      if (Array.isArray(result)) {
+        members = result;
+      } else if (result && Array.isArray(result.items)) {
+        members = result.items;
+      }
+      if (members.length === 0) {
+        listEl.innerHTML = '<div class="empty-state">该知识库暂无成员</div>';
+        return;
+      }
+      listEl.innerHTML = members
+        .map(
+          (m) => `
+        <div class="member-row">
+          <div class="avatar avatar-sm">${escapeHtml((m.name || m.user_name || '?').charAt(0).toUpperCase())}</div>
+          <div style="flex: 1;">
+            <div style="font-size: var(--text-sm); font-weight: 500;">${escapeHtml(m.name || m.user_name || '未知')}</div>
+            <div class="text-muted" style="font-size: var(--text-xs);">${escapeHtml(m.email || '')}</div>
+          </div>
+          <span class="badge badge-primary">${escapeHtml(m.role || '成员')}</span>
+        </div>`
+        )
+        .join('');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '未知错误';
+      // 后端无此接口时显示友好提示
+      listEl.innerHTML = `<div class="empty-state">成员管理功能开发中<br/><span class="text-muted" style="font-size: var(--text-xs);">${escapeHtml(msg)}</span></div>`;
     }
   }
 
-  function escapeHtml(s: string): string {
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  // ===== 删除知识库 =====
+  async function deleteKb(kb: KnowledgeBase) {
+    if (!confirm(`确定删除知识库「${kb.name}」吗？此操作不可恢复。`)) return;
+    try {
+      await deleteKnowledgeBase(kb.id);
+      alert('删除成功');
+      await loadKbs();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '未知错误';
+      alert('删除失败：' + msg);
+    }
   }
 
   document.getElementById('create-kb-btn')?.addEventListener('click', openCreateModal);
@@ -391,26 +417,38 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '知识库
   document.getElementById('cancel-btn')?.addEventListener('click', () => (document.getElementById('kb-modal')!.style.display = 'none'));
   document.getElementById('close-member-modal')?.addEventListener('click', () => (document.getElementById('member-modal')!.style.display = 'none'));
 
+  // ===== 表单提交：区分新建（POST）和更新（PUT） =====
   document.getElementById('kb-form')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const form = e.target as HTMLFormElement;
-    const data = Object.fromEntries(new FormData(form));
-    const token = localStorage.getItem(TOKEN_KEY);
+    const formData = Object.fromEntries(new FormData(form));
+    const id = (formData.id as string) || '';
+    const payload = {
+      name: formData.name as string,
+      description: (formData.description as string) || undefined,
+      visibility: formData.visibility as string,
+    };
+    const submitBtn = form.querySelector('button[type="submit"]') as HTMLButtonElement;
+    submitBtn.disabled = true;
+    submitBtn.textContent = '保存中...';
     try {
-      const res = await fetch(`${API_BASE}/api/v1/knowledge/bases`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify(data),
-      });
-      if (res.ok) {
-        alert(data.id ? '更新成功' : '创建成功');
-        document.getElementById('kb-modal')!.style.display = 'none';
-        loadKbs();
+      if (id) {
+        // 编辑：调用 PUT 更新
+        await updateKnowledgeBase(id, payload);
+        alert('更新成功');
       } else {
-        alert('操作失败');
+        // 新建：调用 POST 创建
+        await createKnowledgeBase(payload);
+        alert('创建成功');
       }
-    } catch {
-      alert('网络异常');
+      document.getElementById('kb-modal')!.style.display = 'none';
+      await loadKbs();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '未知错误';
+      alert('操作失败：' + msg);
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = '保存';
     }
   });
 

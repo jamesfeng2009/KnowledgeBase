@@ -4,6 +4,7 @@
  * 包含顶部导航栏、可折叠侧边栏和主内容区
  */
 import '@/styles/global.css';
+import Toast from '@/components/common/Toast.astro';
 
 interface BreadcrumbItem {
   label: string;
@@ -87,6 +88,8 @@ const navConfig = [
       { label: '租户设置', route: '/settings/tenant', icon: 'tenant' },
       { label: 'API 密钥', route: '/settings/api', icon: 'api' },
       { label: 'LLM 配置', route: '/settings/llm', icon: 'llm' },
+      { label: 'Webhook 订阅', route: '/settings/webhooks', icon: 'webhook' },
+      { label: 'MCP 工具', route: '/settings/mcp', icon: 'mcp' },
       { label: '系统设置', route: '/settings/system', icon: 'settings' },
     ],
   },
@@ -155,6 +158,8 @@ const currentPath = Astro.url.pathname;
                       {item.icon === 'tenant' && '🏢'}
                       {item.icon === 'api' && '🔑'}
                       {item.icon === 'llm' && '🧠'}
+                      {item.icon === 'webhook' && '🔔'}
+                      {item.icon === 'mcp' && '🔌'}
                       {item.icon === 'settings' && '⚙️'}
                     </span>
                     <span class="sidebar-item-text">{item.label}</span>
@@ -202,6 +207,10 @@ const currentPath = Astro.url.pathname;
               id="global-search"
             />
             <div class="topbar-actions">
+              <a href="/notifications" class="topbar-notification" id="notification-bell" title="通知中心">
+                <span class="topbar-notification-icon">🔔</span>
+                <span class="topbar-notification-badge" id="notification-badge">0</span>
+              </a>
               <div class="topbar-user" id="user-menu-trigger">
                 <div class="avatar avatar-sm" id="user-avatar">U</div>
                 <span class="topbar-user-name" id="user-name">用户</span>
@@ -216,6 +225,9 @@ const currentPath = Astro.url.pathname;
             <slot />
           </div>
         </main>
+
+        <!-- 全局 Toast 通知容器（position:fixed，DOM 位置不影响视觉） -->
+        <Toast />
       </div>
     </div>
 
@@ -294,11 +306,72 @@ const currentPath = Astro.url.pathname;
         }
       });
 
+      // 加载未读通知数量（右上角红点）
+      async function loadUnreadCount() {
+        try {
+          const { getUnreadCount } = await import('@/lib/apis/notifications');
+          const count = await getUnreadCount();
+          const badge = document.getElementById('notification-badge');
+          if (!badge) return;
+          if (count > 0) {
+            badge.textContent = count > 99 ? '99+' : String(count);
+            badge.style.display = 'inline-flex';
+          } else {
+            badge.style.display = 'none';
+          }
+        } catch {
+          // 通知数加载失败，静默隐藏红点，不影响主流程
+          const badge = document.getElementById('notification-badge');
+          if (badge) badge.style.display = 'none';
+        }
+      }
+
       loadUser();
+      loadUnreadCount();
     </script>
 
     <style>
       /* 全局样式已在 global.css 中定义 */
+      /* 右上角通知铃铛 + 未读红点 */
+      .topbar-notification {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 36px;
+        height: 36px;
+        border-radius: var(--radius);
+        color: var(--text-secondary);
+        text-decoration: none;
+        transition: background var(--transition-fast), color var(--transition-fast);
+      }
+      .topbar-notification:hover {
+        background: var(--surface-hover);
+        color: var(--primary);
+      }
+      .topbar-notification-icon {
+        font-size: var(--text-lg);
+        line-height: 1;
+      }
+      .topbar-notification-badge {
+        position: absolute;
+        top: 2px;
+        right: 2px;
+        min-width: 18px;
+        height: 18px;
+        padding: 0 5px;
+        box-sizing: border-box;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        background: var(--danger, #ef4444);
+        color: #fff;
+        font-size: var(--text-xs);
+        font-weight: 600;
+        border-radius: var(--radius-full);
+        line-height: 1;
+        border: 2px solid var(--surface, #fff);
+      }
     </style>
   </body>
 </html>

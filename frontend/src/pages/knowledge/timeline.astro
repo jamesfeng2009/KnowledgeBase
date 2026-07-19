@@ -23,9 +23,6 @@ const breadcrumb = [{ label: '知识', href: '/knowledge' }, { label: '变更时
       </select>
       <select class="form-input" id="filter-kb" style="width: 160px;">
         <option value="">全部知识库</option>
-        <option value="kb-1">公司制度</option>
-        <option value="kb-2">产品文档</option>
-        <option value="kb-3">技术文档</option>
       </select>
     </div>
   </div>
@@ -85,6 +82,7 @@ const breadcrumb = [{ label: '知识', href: '/knowledge' }, { label: '变更时
     border-radius: var(--radius);
     padding: var(--space-4);
     transition: all var(--transition-fast);
+    cursor: pointer;
   }
   .timeline-item-card:hover {
     box-shadow: var(--shadow-md);
@@ -128,53 +126,96 @@ const breadcrumb = [{ label: '知识', href: '/knowledge' }, { label: '变更时
     padding: var(--space-12);
     color: var(--text-muted);
   }
+  .error-state {
+    text-align: center;
+    padding: var(--space-8);
+    color: var(--danger);
+  }
 </style>
 
 <script>
-  const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
-  const TOKEN_KEY = 'ekb_access_token';
+  import { getKnowledgeBases, type KnowledgeBase } from '@/lib/apis/knowledge';
+  import { getData } from '@/lib/api';
 
-  function mockTimeline() {
-    const now = Date.now();
-    return [
-      { id: '1', doc_id: 'd1', title: '员工手册 V3.2', type: 'version', desc: '文档更新至 V3.2 版本，新增远程办公章节', kb_name: '公司制度', author: '张三', created_at: now - 3600000 },
-      { id: '2', doc_id: 'd2', title: 'API 设计规范', type: 'create', desc: '新建文档，定义 RESTful API 设计规范', kb_name: '技术文档', author: '李四', created_at: now - 7200000 },
-      { id: '3', doc_id: 'd3', title: '2024 年度财报', type: 'expire', desc: '文档已超过有效期，标记为过期', kb_name: '公司制度', author: '系统', created_at: now - 86400000 },
-      { id: '4', doc_id: 'd4', title: '旧版产品需求', type: 'merge', desc: '合并到「产品需求汇总 V2」', kb_name: '产品文档', author: '王五', created_at: now - 86400000 },
-      { id: '5', doc_id: 'd5', title: '报销管理办法', type: 'update', desc: '更新报销标准，调整差旅住宿上限', kb_name: '公司制度', author: '赵六', created_at: now - 86400000 * 2 },
-      { id: '6', doc_id: 'd6', title: '废弃技术方案', type: 'delete', desc: '技术方案已废弃，从知识库移除', kb_name: '技术文档', author: '钱七', created_at: now - 86400000 * 5 },
-    ];
+  const BASE = '/api/v1';
+
+  interface TimelineItem {
+    id: string;
+    doc_id: string;
+    title: string;
+    type: string;
+    desc?: string;
+    kb_id?: string;
+    kb_name?: string;
+    author?: string;
+    created_at: string | number;
   }
 
-  async function loadTimeline() {
-    const token = localStorage.getItem(TOKEN_KEY);
-    if (!token) {
-      window.location.href = '/auth/login';
-      return;
-    }
-    let items: any[] = [];
+  let allItems: TimelineItem[] = [];
+
+  function escapeHtml(s: string): string {
+    return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function formatTime(ts: string | number): string {
+    if (!ts) return '';
+    const t = typeof ts === 'number' ? ts : new Date(ts).getTime();
+    if (isNaN(t)) return String(ts);
+    const d = new Date(t);
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  }
+
+  // ===== 加载知识库筛选下拉框 =====
+  async function loadKbFilter() {
+    const select = document.getElementById('filter-kb') as HTMLSelectElement | null;
+    if (!select) return;
     try {
-      const res = await fetch(`${API_BASE}/api/v1/knowledge/timeline`, {
-        headers: { Authorization: `Bearer ${token}` },
+      const res = await getKnowledgeBases(1, 100);
+      const kbs: KnowledgeBase[] = res?.items || [];
+      const current = select.value;
+      select.innerHTML = '<option value="">全部知识库</option>';
+      kbs.forEach((kb) => {
+        const opt = document.createElement('option');
+        opt.value = kb.id;
+        opt.textContent = kb.name;
+        select.appendChild(opt);
       });
-      if (res.ok) {
-        const result = await res.json();
-        items = result.data?.items || result.data || [];
-      } else if (res.status === 401) {
-        window.location.href = '/auth/login';
-        return;
-      }
-    } catch {
-      // ignore
+      if (current) select.value = current;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '未知错误';
+      const opt = document.createElement('option');
+      opt.disabled = true;
+      opt.textContent = '知识库加载失败：' + msg;
+      select.appendChild(opt);
     }
-    if (items.length === 0) items = mockTimeline();
-    renderTimeline(items);
   }
 
-  function renderTimeline(items: any[]) {
+  // ===== 加载时间线 =====
+  async function loadTimeline() {
+    const container = document.getElementById('timeline-container')!;
+    container.innerHTML = '<div class="loading-state">加载中...</div>';
+    try {
+      const result = await getData<TimelineItem[] | { items: TimelineItem[] }>(`${BASE}/knowledge/timeline`);
+      let items: TimelineItem[] = [];
+      if (Array.isArray(result)) {
+        items = result;
+      } else if (result && Array.isArray(result.items)) {
+        items = result.items;
+      }
+      allItems = items;
+      renderTimeline(items);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '未知错误';
+      container.innerHTML = `<div class="error-state">时间线加载失败：${escapeHtml(msg)}<br/><button class="btn btn-outline btn-sm" id="retry-timeline" style="margin-top: var(--space-3);">重试</button></div>`;
+      document.getElementById('retry-timeline')?.addEventListener('click', loadTimeline);
+    }
+  }
+
+  function renderTimeline(items: TimelineItem[]) {
     const typeFilter = (document.getElementById('filter-type') as HTMLSelectElement).value;
     const kbFilter = (document.getElementById('filter-kb') as HTMLSelectElement).value;
 
+    // 本地过滤：类型 + 知识库
     let list = items.filter((i) => {
       if (typeFilter && i.type !== typeFilter) return false;
       if (kbFilter && i.kb_id !== kbFilter) return false;
@@ -188,7 +229,7 @@ const breadcrumb = [{ label: '知识', href: '/knowledge' }, { label: '变更时
     }
 
     // 按日期分组
-    const groups: Record<string, any[]> = {};
+    const groups: Record<string, TimelineItem[]> = {};
     list.forEach((i) => {
       const date = new Date(i.created_at);
       const today = new Date();
@@ -223,16 +264,16 @@ const breadcrumb = [{ label: '知识', href: '/knowledge' }, { label: '变更时
       .map(
         ([label, group]) => `
       <div class="timeline-group">
-        <div class="timeline-group-title">${label}</div>
+        <div class="timeline-group-title">${escapeHtml(label)}</div>
         ${group
           .map(
             (i) => `
           <div class="timeline-item">
-            <div class="timeline-item-dot ${i.type}"></div>
-            <div class="timeline-item-card" data-doc="${i.doc_id}">
+            <div class="timeline-item-dot ${escapeHtml(i.type)}"></div>
+            <div class="timeline-item-card" data-doc="${escapeHtml(i.doc_id)}">
               <div class="timeline-item-header">
                 <div class="timeline-item-title">${escapeHtml(i.title)}</div>
-                <div class="timeline-item-time">${formatTime(i.created_at)}</div>
+                <div class="timeline-item-time">${escapeHtml(formatTime(i.created_at))}</div>
               </div>
               <p class="timeline-item-desc">${escapeHtml(i.desc || '')}</p>
               <div class="timeline-item-footer">
@@ -251,22 +292,17 @@ const breadcrumb = [{ label: '知识', href: '/knowledge' }, { label: '变更时
     container.querySelectorAll('.timeline-item-card').forEach((el) => {
       el.addEventListener('click', () => {
         const docId = (el as HTMLElement).dataset.doc;
-        window.location.href = `/knowledge/detail?id=${docId}`;
+        if (docId) window.location.href = `/knowledge/detail?id=${encodeURIComponent(docId)}`;
       });
     });
   }
 
-  function formatTime(ts: number): string {
-    const d = new Date(ts);
-    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-  }
+  // 类型筛选：本地过滤，无需重新请求
+  document.getElementById('filter-type')?.addEventListener('change', () => renderTimeline(allItems));
+  // 知识库筛选：本地过滤
+  document.getElementById('filter-kb')?.addEventListener('change', () => renderTimeline(allItems));
 
-  function escapeHtml(s: string): string {
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  }
-
-  document.getElementById('filter-type')?.addEventListener('change', () => loadTimeline());
-  document.getElementById('filter-kb')?.addEventListener('change', () => loadTimeline());
-
+  // 初始化
+  loadKbFilter();
   loadTimeline();
 </script>

@@ -1,6 +1,10 @@
 /**
  * AI 对话消息组件
  * 渲染用户与 AI 消息的不同气泡样式，AI 消息中的 [1] [2] 引用标注渲染为可点击元素
+ *
+ * NOTE: 当前 dead code。chat/index.astro 使用内联 HTML 实现消息渲染，
+ * 未挂载本组件。本组件为 SKILL 规范要求的对话组件，保留供 P4-2
+ * 重构 chat 页面使用组件化方案时挂载。
  */
 import { Fragment } from 'react';
 import type { Source } from './CitationPanel';

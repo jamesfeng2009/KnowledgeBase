@@ -1,7 +1,8 @@
 ---
 /**
  * 系统设置页面
- * 站点名称、Logo + 默认语言 + 功能开关 + 系统状态
+ * 功能开关 + 站点设置 + 系统状态 + 版本检查
+ * 数据来源：GET /api/v1/settings/system、PUT /api/v1/settings/system
  */
 import DefaultLayout from '@/layouts/DefaultLayout.astro';
 
@@ -16,106 +17,12 @@ const breadcrumb = [{ label: '设置', href: '/settings/tenant' }, { label: '系
     <a href="/settings/system" class="settings-nav-item active">系统设置</a>
   </div>
 
-  <!-- 站点设置 -->
-  <div class="card" style="margin-bottom: var(--space-5);">
-    <div class="card-header"><h3>站点设置</h3></div>
-    <form id="site-form">
-      <div class="grid grid-cols-2">
-        <div class="form-group">
-          <label class="form-label">站点名称</label>
-          <input type="text" class="form-input" name="site_name" value="企业知识库" />
-        </div>
-        <div class="form-group">
-          <label class="form-label">默认语言</label>
-          <select class="form-input" name="language">
-            <option value="zh-CN" selected>简体中文</option>
-            <option value="en-US">English</option>
-            <option value="ja-JP">日本語</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label class="form-label">时区</label>
-          <select class="form-input" name="timezone">
-            <option value="Asia/Shanghai" selected>Asia/Shanghai (UTC+8)</option>
-            <option value="UTC">UTC</option>
-            <option value="America/New_York">America/New_York</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label class="form-label">站点 Logo</label>
-          <div class="logo-upload">
-            <div class="logo-preview">E</div>
-            <div>
-              <button type="button" class="btn btn-outline btn-sm">上传 Logo</button>
-              <div class="text-muted" style="font-size: var(--text-xs); margin-top: var(--space-1);">建议尺寸 128x128，支持 PNG/SVG</div>
-            </div>
-          </div>
-        </div>
-      </div>
-      <button type="submit" class="btn btn-primary">保存设置</button>
-    </form>
+  <div class="page-header">
+    <h1 class="page-title">系统设置</h1>
   </div>
 
-  <!-- 功能开关 -->
-  <div class="card" style="margin-bottom: var(--space-5);">
-    <div class="card-header"><h3>功能开关</h3></div>
-    <div id="feature-switches"></div>
-  </div>
-
-  <!-- 系统状态 -->
-  <div class="card">
-    <div class="card-header">
-      <h3>系统状态</h3>
-      <span class="badge badge-success">运行正常</span>
-    </div>
-    <div class="grid grid-cols-3">
-      <div class="status-item">
-        <div class="status-header">
-          <span class="status-dot success"></span>
-          <span style="font-weight: 500;">API 服务</span>
-        </div>
-        <div class="text-muted" style="font-size: var(--text-xs); margin-top: var(--space-1);">响应时间 45ms</div>
-      </div>
-      <div class="status-item">
-        <div class="status-header">
-          <span class="status-dot success"></span>
-          <span style="font-weight: 500;">数据库</span>
-        </div>
-        <div class="text-muted" style="font-size: var(--text-xs); margin-top: var(--space-1);">连接正常</div>
-      </div>
-      <div class="status-item">
-        <div class="status-header">
-          <span class="status-dot success"></span>
-          <span style="font-weight: 500;">向量数据库</span>
-        </div>
-        <div class="text-muted" style="font-size: var(--text-xs); margin-top: var(--space-1);">索引正常</div>
-      </div>
-      <div class="status-item">
-        <div class="status-header">
-          <span class="status-dot success"></span>
-          <span style="font-weight: 500;">对象存储</span>
-        </div>
-        <div class="text-muted" style="font-size: var(--text-xs); margin-top: var(--space-1);">可用空间 92%</div>
-      </div>
-      <div class="status-item">
-        <div class="status-header">
-          <span class="status-dot warning"></span>
-          <span style="font-weight: 500;">LLM 服务</span>
-        </div>
-        <div class="text-muted" style="font-size: var(--text-xs); margin-top: var(--space-1);">响应略慢，延迟 1.2s</div>
-      </div>
-      <div class="status-item">
-        <div class="status-header">
-          <span class="status-dot success"></span>
-          <span style="font-weight: 500;">消息队列</span>
-        </div>
-        <div class="text-muted" style="font-size: var(--text-xs); margin-top: var(--space-1);">积压 0 条</div>
-      </div>
-    </div>
-    <div style="margin-top: var(--space-4); padding-top: var(--space-4); border-top: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center;">
-      <div class="text-muted" style="font-size: var(--text-sm);">系统版本 v2.4.1 · 上次更新 2026-07-01</div>
-      <button class="btn btn-outline btn-sm" id="check-update">检查更新</button>
-    </div>
+  <div id="system-root">
+    <div class="loading-state">加载中...</div>
   </div>
 </DefaultLayout>
 
@@ -141,47 +48,34 @@ const breadcrumb = [{ label: '设置', href: '/settings/tenant' }, { label: '系
     border-bottom-color: var(--primary);
     font-weight: 500;
   }
-  .logo-upload {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-  }
-  .logo-preview {
-    width: 48px;
-    height: 48px;
-    border-radius: var(--radius);
-    background: var(--primary);
-    color: var(--text-white);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: var(--text-2xl);
-    font-weight: 700;
-  }
-  .feature-switch-item {
+  .feature-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: var(--space-3) 0;
+    padding: var(--space-4) 0;
     border-bottom: 1px solid var(--border-light);
   }
-  .feature-switch-item:last-child {
+  .feature-row:last-child {
     border-bottom: none;
   }
-  .feature-switch-label {
-    font-size: var(--text-sm);
-    color: var(--text);
+  .feature-info {
+    flex: 1;
   }
-  .feature-switch-desc {
-    font-size: var(--text-xs);
+  .feature-name {
+    font-size: var(--text-base);
+    font-weight: 500;
+    color: var(--text);
+    margin-bottom: var(--space-1);
+  }
+  .feature-desc {
+    font-size: var(--text-sm);
     color: var(--text-muted);
-    margin-top: var(--space-1);
   }
   .switch {
     position: relative;
     display: inline-block;
-    width: 40px;
-    height: 22px;
+    width: 44px;
+    height: 24px;
     flex-shrink: 0;
   }
   .switch input {
@@ -195,114 +89,391 @@ const breadcrumb = [{ label: '设置', href: '/settings/tenant' }, { label: '系
     inset: 0;
     background: var(--border-dark);
     border-radius: var(--radius-full);
-    transition: var(--transition);
+    transition: var(--transition-fast);
   }
-  .switch-slider::before {
-    content: '';
+  .switch-slider:before {
     position: absolute;
-    height: 16px;
-    width: 16px;
+    content: '';
+    height: 18px;
+    width: 18px;
     left: 3px;
     bottom: 3px;
     background: var(--surface);
     border-radius: 50%;
-    transition: var(--transition);
+    transition: var(--transition-fast);
   }
   .switch input:checked + .switch-slider {
     background: var(--primary);
   }
-  .switch input:checked + .switch-slider::before {
-    transform: translateX(18px);
+  .switch input:checked + .switch-slider:before {
+    transform: translateX(20px);
   }
-  .status-item {
-    padding: var(--space-3) 0;
+  .stat-row {
+    display: flex;
+    justify-content: space-between;
+    padding: var(--space-2) 0;
+    font-size: var(--text-sm);
+    border-bottom: 1px solid var(--border-light);
   }
-  .status-header {
+  .stat-row:last-child {
+    border-bottom: none;
+  }
+  .loading-state {
+    text-align: center;
+    padding: var(--space-8);
+    color: var(--text-muted);
+  }
+  .empty-state {
+    text-align: center;
+    padding: var(--space-4);
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+  }
+  .error-state {
+    text-align: center;
+    padding: var(--space-6);
+    color: var(--danger);
+    font-size: var(--text-sm);
+  }
+  .logo-preview {
+    width: 80px;
+    height: 80px;
+    border: 2px dashed var(--border);
+    border-radius: var(--radius);
     display: flex;
     align-items: center;
-    gap: var(--space-2);
-  }
-  .status-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-  }
-  .status-dot.success {
-    background: var(--success);
-    box-shadow: 0 0 0 3px var(--success-bg);
-  }
-  .status-dot.warning {
-    background: var(--warning);
-    box-shadow: 0 0 0 3px var(--warning-bg);
-  }
-  .status-dot.danger {
-    background: var(--danger);
-    box-shadow: 0 0 0 3px var(--danger-bg);
+    justify-content: center;
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    margin-top: var(--space-2);
   }
 </style>
 
 <script>
-  const features = [
-    { key: 'ai_chat', name: 'AI 智能对话', desc: '启用 AI 对话功能', enabled: true },
-    { key: 'semantic_search', name: '语义搜索', desc: '基于向量的语义搜索', enabled: true },
-    { key: 'collab_edit', name: '协同编辑', desc: '多人实时协同编辑文档', enabled: true },
-    { key: 'knowledge_graph', name: '知识图谱', desc: '自动构建知识图谱', enabled: true },
-    { key: 'auto_summary', name: 'AI 自动摘要', desc: '文档上传后自动生成摘要', enabled: true },
-    { key: 'audit_workflow', name: '审核工作流', desc: '文档发布需审核', enabled: false },
-    { key: 'sso', name: 'SSO 单点登录', desc: '集成企业 SSO 登录', enabled: false },
-    { key: 'guest_access', name: '访客访问', desc: '允许外部访客查看公开知识', enabled: false },
-  ];
+  import { getSystemConfig, updateSystemConfig } from '@/lib/apis/settings';
+  import { getData, ApiError } from '@/lib/api';
 
-  function renderSwitches() {
-    document.getElementById('feature-switches')!.innerHTML = features
-      .map(
-        (f) => `
-      <div class="feature-switch-item">
-        <div>
-          <div class="feature-switch-label">${escapeHtml(f.name)}</div>
-          <div class="feature-switch-desc">${escapeHtml(f.desc)}</div>
+  interface SystemConfig {
+    features: Array<{ key: string; name: string; desc: string; enabled: boolean }>;
+    siteName: string;
+    siteUrl: string;
+    siteLogo: string;
+    description: string;
+    primaryColor: string;
+    language: string;
+    timezone: string;
+    status: {
+      version: string;
+      uptime: string;
+      docsCount: number;
+      usersCount: number;
+      storageUsed: string;
+      lastBackup: string;
+    };
+  }
+
+  const defaultConfig: SystemConfig = {
+    features: [
+      { key: 'search', name: '智能搜索', desc: '允许用户使用 AI 增强搜索', enabled: true },
+      { key: 'chat', name: 'AI 对话', desc: '允许用户与知识库进行对话', enabled: true },
+      { key: 'feedback', name: '用户反馈', desc: '允许用户提交反馈', enabled: true },
+      { key: 'auto_index', name: '自动索引', desc: '上传文档后自动建立索引', enabled: true },
+      { key: 'audit', name: '审核工作流', desc: '文档发布前需要审核', enabled: false },
+      { key: 'sso', name: '单点登录', desc: '启用企业 SSO 登录', enabled: false },
+    ],
+    siteName: '企业知识库',
+    siteUrl: '',
+    siteLogo: '',
+    description: '',
+    primaryColor: '#0066FF',
+    language: 'zh-CN',
+    timezone: 'Asia/Shanghai',
+    status: {
+      version: '-',
+      uptime: '-',
+      docsCount: 0,
+      usersCount: 0,
+      storageUsed: '-',
+      lastBackup: '-',
+    },
+  };
+
+  let config: SystemConfig = JSON.parse(JSON.stringify(defaultConfig));
+
+  /** 判断是否为 401/未登录错误（已在底层处理跳转，业务层需静默退出） */
+  function isAuthError(err: unknown): boolean {
+    return err instanceof ApiError && err.status === 401;
+  }
+
+  async function loadConfig(): Promise<void> {
+    const root = document.getElementById('system-root')!;
+    root.innerHTML = '<div class="loading-state">加载中...</div>';
+    try {
+      const raw = (await getSystemConfig()) as unknown as Record<string, unknown> | null;
+      if (raw) applyRemoteConfig(raw);
+    } catch (err) {
+      if (isAuthError(err)) return;
+      // 404 视为后端无配置，使用默认值
+      if (err instanceof ApiError && err.status === 404) {
+        // 使用默认 config，继续渲染
+      } else {
+        const msg = err instanceof Error ? err.message : '网络异常';
+        root.innerHTML = `
+          <div class="error-state">
+            <div>加载系统设置失败：${escapeHtml(msg)}</div>
+            <button class="btn btn-outline btn-sm" id="retry-load" style="margin-top: var(--space-3);">重试</button>
+          </div>`;
+        document.getElementById('retry-load')?.addEventListener('click', loadConfig);
+        return;
+      }
+    }
+    renderConfig();
+  }
+
+  function applyRemoteConfig(raw: Record<string, unknown>): void {
+    // 站点设置
+    if (typeof raw.site_name === 'string') config.siteName = raw.site_name;
+    else if (typeof raw.siteName === 'string') config.siteName = raw.siteName;
+    if (typeof raw.site_url === 'string') config.siteUrl = raw.site_url;
+    else if (typeof raw.siteUrl === 'string') config.siteUrl = raw.siteUrl;
+    if (typeof raw.site_logo === 'string') config.siteLogo = raw.site_logo;
+    else if (typeof raw.siteLogo === 'string') config.siteLogo = raw.siteLogo;
+    if (typeof raw.description === 'string') config.description = raw.description;
+    if (typeof raw.primary_color === 'string') config.primaryColor = raw.primary_color;
+    else if (typeof raw.primaryColor === 'string') config.primaryColor = raw.primaryColor;
+    if (typeof raw.language === 'string') config.language = raw.language;
+    if (typeof raw.timezone === 'string') config.timezone = raw.timezone;
+
+    // 功能开关：合并后端返回的状态
+    const remoteFeatures = (raw.features || raw.feature_flags || {}) as Record<string, boolean>;
+    config.features.forEach((f) => {
+      if (typeof remoteFeatures[f.key] === 'boolean') {
+        f.enabled = remoteFeatures[f.key];
+      }
+    });
+
+    // 系统状态
+    const status = (raw.status || raw.system_status || {}) as Record<string, unknown>;
+    if (typeof status.version === 'string') config.status.version = status.version;
+    if (typeof status.uptime === 'string') config.status.uptime = status.uptime;
+    if (typeof status.docs_count === 'number') config.status.docsCount = status.docs_count;
+    else if (typeof status.docsCount === 'number') config.status.docsCount = status.docsCount;
+    if (typeof status.users_count === 'number') config.status.usersCount = status.users_count;
+    else if (typeof status.usersCount === 'number') config.status.usersCount = status.usersCount;
+    if (typeof status.storage_used === 'string') config.status.storageUsed = status.storage_used;
+    else if (typeof status.storageUsed === 'string') config.status.storageUsed = status.storageUsed;
+    if (typeof status.last_backup === 'string') config.status.lastBackup = status.last_backup;
+    else if (typeof status.lastBackup === 'string') config.status.lastBackup = status.lastBackup;
+  }
+
+  function renderConfig(): void {
+    const root = document.getElementById('system-root')!;
+    root.innerHTML = `
+      <!-- 功能开关 -->
+      <div class="card" style="margin-bottom: var(--space-5);">
+        <div class="card-header"><h3>功能开关</h3></div>
+        <div id="features-list">
+          ${config.features
+            .map(
+              (f) => `
+            <div class="feature-row">
+              <div class="feature-info">
+                <div class="feature-name">${escapeHtml(f.name)}</div>
+                <div class="feature-desc">${escapeHtml(f.desc)}</div>
+              </div>
+              <label class="switch">
+                <input type="checkbox" data-feature="${escapeHtml(f.key)}" ${f.enabled ? 'checked' : ''} />
+                <span class="switch-slider"></span>
+              </label>
+            </div>`
+            )
+            .join('')}
         </div>
-        <label class="switch">
-          <input type="checkbox" data-key="${f.key}" ${f.enabled ? 'checked' : ''} />
-          <span class="switch-slider"></span>
-        </label>
-      </div>`
-      )
-      .join('');
+      </div>
 
-    document.querySelectorAll('#feature-switches input[type="checkbox"]').forEach((el) => {
-      el.addEventListener('change', async (e) => {
-        const key = (el as HTMLInputElement).dataset.key!;
-        const enabled = (el as HTMLInputElement).checked;
-        const f = features.find((x) => x.key === key);
-        if (f) f.enabled = enabled;
-        const token = localStorage.getItem('ekb_access_token');
-        const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
+      <!-- 站点设置 -->
+      <div class="card" style="margin-bottom: var(--space-5);">
+        <div class="card-header"><h3>站点设置</h3></div>
+        <form id="site-form">
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4);">
+            <div class="form-group">
+              <label class="form-label">站点名称</label>
+              <input type="text" class="form-input" name="site_name" value="${escapeHtml(config.siteName)}" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">站点 URL</label>
+              <input type="text" class="form-input" name="site_url" value="${escapeHtml(config.siteUrl)}" placeholder="https://kb.example.com" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">站点描述</label>
+              <input type="text" class="form-input" name="description" value="${escapeHtml(config.description)}" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">主色调</label>
+              <input type="color" class="form-input" name="primary_color" value="${escapeHtml(config.primaryColor)}" style="height: 40px; padding: 4px;" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">默认语言</label>
+              <select class="form-input" name="language">
+                <option value="zh-CN" ${config.language === 'zh-CN' ? 'selected' : ''}>简体中文</option>
+                <option value="en" ${config.language === 'en' ? 'selected' : ''}>English</option>
+                <option value="ja" ${config.language === 'ja' ? 'selected' : ''}>日本語</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">时区</label>
+              <select class="form-input" name="timezone">
+                <option value="Asia/Shanghai" ${config.timezone === 'Asia/Shanghai' ? 'selected' : ''}>Asia/Shanghai (UTC+8)</option>
+                <option value="UTC" ${config.timezone === 'UTC' ? 'selected' : ''}>UTC</option>
+                <option value="America/New_York" ${config.timezone === 'America/New_York' ? 'selected' : ''}>America/New_York</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group" style="margin-top: var(--space-4);">
+            <label class="form-label">站点 Logo</label>
+            <button type="button" class="btn btn-outline btn-sm" id="upload-logo-btn">上传 Logo</button>
+            ${config.siteLogo ? `<img src="${escapeHtml(config.siteLogo)}" alt="Logo" style="max-height: 80px; margin-top: var(--space-2); border-radius: var(--radius);" />` : '<div class="logo-preview">暂无 Logo</div>'}
+          </div>
+          <div style="display: flex; justify-content: flex-end; margin-top: var(--space-4);">
+            <button type="submit" class="btn btn-primary">保存站点设置</button>
+          </div>
+        </form>
+      </div>
+
+      <!-- 系统状态 -->
+      <div class="card">
+        <div class="card-header">
+          <h3>系统状态</h3>
+          <button type="button" class="btn btn-outline btn-sm" id="check-update-btn">检查更新</button>
+        </div>
+        <div>
+          <div class="stat-row">
+            <span class="text-muted">系统版本</span>
+            <span style="font-weight: 500;">${escapeHtml(config.status.version)}</span>
+          </div>
+          <div class="stat-row">
+            <span class="text-muted">运行时间</span>
+            <span>${escapeHtml(config.status.uptime)}</span>
+          </div>
+          <div class="stat-row">
+            <span class="text-muted">文档总数</span>
+            <span>${config.status.docsCount}</span>
+          </div>
+          <div class="stat-row">
+            <span class="text-muted">用户总数</span>
+            <span>${config.status.usersCount}</span>
+          </div>
+          <div class="stat-row">
+            <span class="text-muted">存储使用</span>
+            <span>${escapeHtml(config.status.storageUsed)}</span>
+          </div>
+          <div class="stat-row">
+            <span class="text-muted">最近备份</span>
+            <span>${escapeHtml(config.status.lastBackup)}</span>
+          </div>
+        </div>
+      </div>
+    `;
+
+    bindFeatureToggles();
+    bindSiteForm();
+    bindUpdateCheck();
+    bindLogoUpload();
+  }
+
+  function bindFeatureToggles(): void {
+    document.querySelectorAll('input[data-feature]').forEach((el) => {
+      el.addEventListener('change', async () => {
+        const input = el as HTMLInputElement;
+        const key = input.dataset.feature!;
+        const enabled = input.checked;
+        const feature = config.features.find((f) => f.key === key);
+        if (feature) feature.enabled = enabled;
         try {
-          await fetch(`${API_BASE}/api/v1/settings/features/${key}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-            body: JSON.stringify({ enabled }),
-          });
-        } catch {
-          // ignore
+          const featuresPayload: Record<string, boolean> = {};
+          config.features.forEach((f) => (featuresPayload[f.key] = f.enabled));
+          await updateSystemConfig({ features: featuresPayload });
+          alert(`「${feature?.name || key}」已${enabled ? '启用' : '关闭'}`);
+        } catch (err) {
+          // 回滚 UI
+          input.checked = !enabled;
+          if (feature) feature.enabled = !enabled;
+          if (isAuthError(err)) return;
+          alert(err instanceof Error ? err.message : '网络异常');
         }
       });
     });
   }
 
-  function escapeHtml(s: string): string {
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  function bindSiteForm(): void {
+    document.getElementById('site-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const form = e.target as HTMLFormElement;
+      const data = Object.fromEntries(new FormData(form));
+      const payload: Record<string, unknown> = {
+        site_name: data.site_name,
+        site_url: data.site_url,
+        description: data.description,
+        primary_color: data.primary_color,
+        language: data.language,
+        timezone: data.timezone,
+      };
+      try {
+        await updateSystemConfig(payload);
+        alert('站点设置已保存');
+        // 同步本地状态
+        config.siteName = String(data.site_name);
+        config.siteUrl = String(data.site_url);
+        config.description = String(data.description);
+        config.primaryColor = String(data.primary_color);
+        config.language = String(data.language);
+        config.timezone = String(data.timezone);
+      } catch (err) {
+        if (isAuthError(err)) return;
+        alert(err instanceof Error ? err.message : '网络异常');
+      }
+    });
   }
 
-  document.getElementById('site-form')?.addEventListener('submit', (e) => {
-    e.preventDefault();
-    alert('站点设置已保存');
-  });
+  function bindUpdateCheck(): void {
+    document.getElementById('check-update-btn')?.addEventListener('click', async () => {
+      const btn = document.getElementById('check-update-btn') as HTMLButtonElement;
+      const original = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = '检查中...';
+      try {
+        // 版本检查端点不在 settings 封装覆盖范围内，使用统一 getData 层
+        const raw = (await getData('/api/v1/settings/system/version')) as unknown as Record<string, unknown> | null;
+        const latest = String(raw?.latest_version || raw?.version || '');
+        const current = config.status.version;
+        if (latest && latest !== current && latest !== '-') {
+          alert(`发现新版本：${latest}\n当前版本：${current}\n\n请联系管理员升级。`);
+        } else {
+          alert('当前为最新版本');
+        }
+      } catch (err) {
+        if (isAuthError(err)) return;
+        alert('当前为最新版本');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = original;
+      }
+    });
+  }
 
-  document.getElementById('check-update')?.addEventListener('click', () => {
-    alert('当前已是最新版本 v2.4.1');
-  });
+  function bindLogoUpload(): void {
+    document.getElementById('upload-logo-btn')?.addEventListener('click', () => {
+      alert('Logo 上传功能开发中');
+    });
+  }
 
-  renderSwitches();
+  function escapeHtml(s: unknown): string {
+    return String(s ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  loadConfig();
 </script>

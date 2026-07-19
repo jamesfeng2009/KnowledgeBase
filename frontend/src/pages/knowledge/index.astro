@@ -4,6 +4,8 @@
  * 知识库卡片网格 + 最近浏览文档 + 热门标签云 + 知识统计概览
  */
 import DefaultLayout from '@/layouts/DefaultLayout.astro';
+import { StatCard, PageHeader } from '@/components/common';
+import { KbCard, DocItem } from '@/components/knowledge';
 
 const breadcrumb = [{ label: '知识', href: '/knowledge' }, { label: '知识首页' }];
 ---
@@ -11,29 +13,16 @@ const breadcrumb = [{ label: '知识', href: '/knowledge' }, { label: '知识首
 <DefaultLayout title="知识首页" breadcrumb={breadcrumb}>
   <!-- 统计概览 -->
   <div class="grid grid-cols-4" style="margin-bottom: var(--space-6);">
-    <div class="card">
-      <div class="text-muted" style="font-size: var(--text-sm);">知识库</div>
-      <div style="font-size: var(--text-3xl); font-weight: 600; color: var(--primary);" id="stat-kb">--</div>
-    </div>
-    <div class="card">
-      <div class="text-muted" style="font-size: var(--text-sm);">文档总数</div>
-      <div style="font-size: var(--text-3xl); font-weight: 600; color: var(--success);" id="stat-doc">--</div>
-    </div>
-    <div class="card">
-      <div class="text-muted" style="font-size: var(--text-sm);">本周新增</div>
-      <div style="font-size: var(--text-3xl); font-weight: 600; color: var(--warning);" id="stat-week">--</div>
-    </div>
-    <div class="card">
-      <div class="text-muted" style="font-size: var(--text-sm);">搜索次数</div>
-      <div style="font-size: var(--text-3xl); font-weight: 600; color: var(--info);" id="stat-search">--</div>
-    </div>
+    <StatCard label="知识库" value="--" color="primary" id="stat-kb" />
+    <StatCard label="文档总数" value="--" color="success" id="stat-doc" />
+    <StatCard label="本周新增" value="--" color="warning" id="stat-week" />
+    <StatCard label="搜索次数" value="--" color="info" id="stat-search" />
   </div>
 
-  <!-- 知识库卡片 -->
-  <div class="page-header">
-    <h2 style="font-size: var(--text-xl);">知识库</h2>
+  <!-- 知识库 -->
+  <PageHeader title="知识首页">
     <a href="/manage/kb" class="btn btn-outline btn-sm">管理知识库</a>
-  </div>
+  </PageHeader>
   <div class="grid grid-cols-3" id="kb-grid" style="margin-bottom: var(--space-8);">
     <div class="loading-state">加载中...</div>
   </div>
@@ -60,81 +49,20 @@ const breadcrumb = [{ label: '知识', href: '/knowledge' }, { label: '知识首
       </div>
     </div>
   </div>
+
+  {/*
+    引入 KbCard / DocItem 组件各渲染一次，用以注入它们的 is:global 样式。
+    下方客户端 JS 动态生成的 .kb-card / .doc-item 元素会复用这些全局样式，
+    因此可从本页 <style> 中移除 .kb-card / .doc-item 相关 CSS。
+    此容器视觉隐藏，不影响布局。
+  */}
+  <div style="position:absolute;width:0;height:0;overflow:hidden;visibility:hidden;" aria-hidden="true">
+    <KbCard kb={{ id: '__seed__', name: '', description: '', doc_count: 0, updated_at: '' }} />
+    <DocItem doc={{ id: '__seed__', title: '', updated_at: '' }} />
+  </div>
 </DefaultLayout>
 
 <style>
-  .kb-card {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-3);
-    cursor: pointer;
-    text-decoration: none;
-    color: inherit;
-  }
-  .kb-card-header {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-  }
-  .kb-card-icon {
-    width: 44px;
-    height: 44px;
-    border-radius: var(--radius);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 22px;
-    flex-shrink: 0;
-  }
-  .kb-card-title {
-    font-size: var(--text-lg);
-    font-weight: 600;
-    color: var(--text);
-  }
-  .kb-card-desc {
-    font-size: var(--text-sm);
-    color: var(--text-muted);
-    line-height: var(--lh-relaxed);
-    flex: 1;
-  }
-  .kb-card-footer {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding-top: var(--space-3);
-    border-top: 1px solid var(--border);
-    font-size: var(--text-xs);
-    color: var(--text-muted);
-  }
-  .doc-item {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    padding: var(--space-3) 0;
-    border-bottom: 1px solid var(--border-light);
-  }
-  .doc-item:last-child {
-    border-bottom: none;
-  }
-  .doc-item-icon {
-    font-size: 20px;
-  }
-  .doc-item-body {
-    flex: 1;
-    min-width: 0;
-  }
-  .doc-item-title {
-    font-size: var(--text-base);
-    color: var(--text);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .doc-item-meta {
-    font-size: var(--text-xs);
-    color: var(--text-muted);
-    margin-top: var(--space-1);
-  }
   .tag-cloud-item {
     cursor: pointer;
   }
@@ -143,78 +71,104 @@ const breadcrumb = [{ label: '知识', href: '/knowledge' }, { label: '知识首
     padding: var(--space-6);
     color: var(--text-muted);
   }
+  .error-state {
+    text-align: center;
+    padding: var(--space-6);
+    color: var(--danger);
+  }
+  .empty-state {
+    text-align: center;
+    padding: var(--space-6);
+    color: var(--text-muted);
+  }
+  .skeleton-line {
+    height: 14px;
+    background: var(--surface-muted);
+    border-radius: var(--radius-xs);
+    margin-bottom: var(--space-2);
+    animation: skeleton-shimmer 1.4s ease-in-out infinite;
+  }
+  @keyframes skeleton-shimmer {
+    0% { opacity: 0.6; }
+    50% { opacity: 1; }
+    100% { opacity: 0.6; }
+  }
 </style>
 
 <script>
-  const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
-  const TOKEN_KEY = 'ekb_access_token';
+  import { getKnowledgeBases, getDocuments, type KnowledgeBase, type Document } from '@/lib/apis/knowledge';
+  import { getDashboard, getSearchHotwords, type KeywordCount } from '@/lib/apis/analytics';
 
   const kbColors = ['var(--primary)', 'var(--success)', 'var(--warning)', 'var(--info)', '#8B5CF6', '#EC4899'];
   const kbBgs = ['var(--primary-bg)', 'var(--success-bg)', 'var(--warning-bg)', 'var(--info-bg)', '#F3E8FF', '#FCE7F3'];
+  const kbIcons = ['📚', '📋', '📦', '⚙️', '📁', '🗂️'];
 
-  function mockKbs() {
-    return [
-      { id: 'kb-1', name: '公司制度', icon: '📋', desc: '公司规章制度、流程规范、人事政策等', doc_count: 128, updated_at: Date.now() - 3600000 },
-      { id: 'kb-2', name: '产品文档', icon: '📦', desc: '产品说明书、需求文档、设计稿', doc_count: 86, updated_at: Date.now() - 86400000 },
-      { id: 'kb-3', name: '技术文档', icon: '⚙️', desc: 'API 文档、架构设计、开发规范', doc_count: 245, updated_at: Date.now() - 7200000 },
-    ];
+  function escapeHtml(s: string): string {
+    return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
+  function formatTime(ts: string | number): string {
+    if (!ts) return '';
+    const t = typeof ts === 'number' ? ts : new Date(ts).getTime();
+    if (isNaN(t)) return String(ts);
+    const diff = Date.now() - t;
+    if (diff < 0) return '刚刚';
+    if (diff < 3600000) return Math.floor(diff / 60000) + ' 分钟前';
+    if (diff < 86400000) return Math.floor(diff / 3600000) + ' 小时前';
+    if (diff < 86400000 * 30) return Math.floor(diff / 86400000) + ' 天前';
+    const d = new Date(t);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+
+  function getDocIcon(docType: string): string {
+    const map: Record<string, string> = {
+      pdf: '📄', md: '📝', docx: '📘', doc: '📘',
+      xlsx: '📊', xls: '📊', pptx: '📙', ppt: '📙',
+      txt: '📃', mp4: '🎬', mp3: '🎵', png: '🖼️', jpg: '🖼️',
+    };
+    return map[(docType || '').toLowerCase()] || '📄';
+  }
+
+  // ===== 知识库卡片 =====
   async function loadKbs() {
-    const token = localStorage.getItem(TOKEN_KEY);
-    if (!token) {
-      window.location.href = '/auth/login';
-      return;
-    }
+    const grid = document.getElementById('kb-grid')!;
+    grid.innerHTML = `
+      <div class="loading-state">
+        <div class="skeleton-line" style="width: 80%;"></div>
+        <div class="skeleton-line" style="width: 60%;"></div>
+        <div class="skeleton-line" style="width: 90%;"></div>
+      </div>`;
     try {
-      const res = await fetch(`${API_BASE}/api/v1/knowledge/bases`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      let kbs: any[] = [];
-      if (res.ok) {
-        const result = await res.json();
-        kbs = result.data?.items || result.data || [];
-      } else if (res.status === 401) {
-        window.location.href = '/auth/login';
+      const res = await getKnowledgeBases(1, 100);
+      const kbs: KnowledgeBase[] = res?.items || [];
+      if (kbs.length === 0) {
+        grid.innerHTML = '<div class="empty-state">暂无知识库，请先创建</div>';
         return;
       }
-      if (kbs.length === 0) kbs = mockKbs();
       renderKbs(kbs);
-      updateStats(kbs);
-    } catch {
-      const kbs = mockKbs();
-      renderKbs(kbs);
-      updateStats(kbs);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '未知错误';
+      grid.innerHTML = `<div class="error-state">知识库加载失败：${escapeHtml(msg)}<br/><button class="btn btn-outline btn-sm" id="retry-kbs" style="margin-top: var(--space-3);">重试</button></div>`;
+      document.getElementById('retry-kbs')?.addEventListener('click', loadKbs);
     }
   }
 
-  function updateStats(kbs: any[]) {
-    const total = kbs.reduce((s, k) => s + (k.doc_count || 0), 0);
-    const setText = (id: string, v: number) => {
-      const el = document.getElementById(id);
-      if (el) el.textContent = String(v);
-    };
-    setText('stat-kb', kbs.length);
-    setText('stat-doc', total);
-    setText('stat-week', 12);
-    setText('stat-search', 1024);
-  }
-
-  function renderKbs(kbs: any[]) {
+  function renderKbs(kbs: KnowledgeBase[]) {
     document.getElementById('kb-grid')!.innerHTML = kbs
       .map((kb, i) => {
         const color = kbColors[i % kbColors.length];
         const bg = kbBgs[i % kbBgs.length];
+        const icon = kbIcons[i % kbIcons.length];
         return `
-        <a href="/knowledge/search?kb=${kb.id}" class="card kb-card">
+        <a href="/knowledge/search?kb=${encodeURIComponent(kb.id)}" class="card kb-card">
           <div class="kb-card-header">
-            <div class="kb-card-icon" style="background: ${bg};">${kb.icon || '📚'}</div>
+            <div class="kb-card-icon" style="background: ${bg};">${icon}</div>
             <div>
               <div class="kb-card-title">${escapeHtml(kb.name)}</div>
-              <div class="text-muted" style="font-size: var(--text-xs);">${kb.doc_count || 0} 篇文档</div>
+              <div class="text-muted" style="font-size: var(--text-xs);">${kb.document_count || 0} 篇文档</div>
             </div>
           </div>
-          <p class="kb-card-desc">${escapeHtml(kb.desc || '')}</p>
+          <p class="kb-card-desc">${escapeHtml(kb.description || '')}</p>
           <div class="kb-card-footer">
             <span>更新于 ${formatTime(kb.updated_at)}</span>
             <span style="color: ${color};">浏览 ›</span>
@@ -224,68 +178,115 @@ const breadcrumb = [{ label: '知识', href: '/knowledge' }, { label: '知识首
       .join('');
   }
 
-  function renderRecentDocs() {
-    const docs = [
-      { id: 'd1', title: '员工手册 V3.2', kb: '公司制度', type: 'pdf', time: '2 小时前' },
-      { id: 'd2', title: '用户中心架构设计', kb: '技术文档', type: 'md', time: '昨天' },
-      { id: 'd3', title: 'Q3 产品需求文档', kb: '产品文档', type: 'docx', time: '3 天前' },
-      { id: 'd4', title: '差旅报销管理办法', kb: '公司制度', type: 'pdf', time: '5 天前' },
-    ];
-    const typeIcon: Record<string, string> = { pdf: '📄', md: '📝', docx: '📘', xlsx: '📊' };
-    document.getElementById('recent-docs')!.innerHTML = docs
-      .map(
-        (d) => `
-      <a href="/knowledge/detail?id=${d.id}" class="doc-item" style="text-decoration: none; color: inherit;">
-        <span class="doc-item-icon">${typeIcon[d.type] || '📄'}</span>
-        <div class="doc-item-body">
-          <div class="doc-item-title">${escapeHtml(d.title)}</div>
-          <div class="doc-item-meta">${d.kb} · ${d.time}</div>
-        </div>
-        <span class="text-muted">›</span>
-      </a>`
-      )
-      .join('');
+  // ===== 统计概览 =====
+  async function loadStats() {
+    const setText = (id: string, v: number | string) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = String(v);
+    };
+    try {
+      // 知识库数量 + 文档总数：从 dashboard 拉取
+      const d = await getDashboard(30);
+      setText('stat-doc', d.total_documents ?? '--');
+      setText('stat-search', d.total_searches ?? '--');
+      // 本周新增：取近 7 天文档总数粗略估算（dashboard 没有 week_new，用近 7 天 dashboard 数据推算）
+      try {
+        const d7 = await getDashboard(7);
+        setText('stat-week', d7.total_documents ?? 0);
+      } catch {
+        setText('stat-week', 0);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '未知错误';
+      ['stat-doc', 'stat-search', 'stat-week'].forEach((id) => setText(id, '--'));
+      alert('统计数据加载失败：' + msg);
+    }
+    // 知识库数量单独拉取
+    try {
+      const res = await getKnowledgeBases(1, 1);
+      setText('stat-kb', res?.total ?? res?.items?.length ?? 0);
+    } catch {
+      setText('stat-kb', '--');
+    }
   }
 
-  function renderTagCloud() {
-    const tags = [
-      { name: '人事', count: 48, size: 18 },
-      { name: '财务', count: 36, size: 16 },
-      { name: '技术', count: 120, size: 22 },
-      { name: '产品', count: 64, size: 18 },
-      { name: '流程', count: 28, size: 14 },
-      { name: 'API', count: 52, size: 17 },
-      { name: '安全', count: 20, size: 14 },
-      { name: '培训', count: 16, size: 13 },
-    ];
-    document.getElementById('tag-cloud')!.innerHTML = tags
-      .map(
-        (t) => `
-      <span class="tag tag-cloud-item" style="font-size: ${t.size}px;" data-tag="${t.name}">
-        ${t.name} <span class="text-muted">(${t.count})</span>
-      </span>`
-      )
-      .join('');
-    document.querySelectorAll('.tag-cloud-item').forEach((el) => {
-      el.addEventListener('click', () => {
-        const tag = (el as HTMLElement).dataset.tag!;
-        window.location.href = `/knowledge/search?tag=${tag}`;
+  // ===== 最近文档 =====
+  async function renderRecentDocs() {
+    const container = document.getElementById('recent-docs')!;
+    container.innerHTML = `
+      <div class="loading-state">
+        <div class="skeleton-line" style="width: 90%;"></div>
+        <div class="skeleton-line" style="width: 70%;"></div>
+        <div class="skeleton-line" style="width: 80%;"></div>
+        <div class="skeleton-line" style="width: 60%;"></div>
+      </div>`;
+    try {
+      const res = await getDocuments({ page: 1, size: 4 });
+      const docs: Document[] = res?.items || [];
+      if (docs.length === 0) {
+        container.innerHTML = '<div class="empty-state">暂无文档</div>';
+        return;
+      }
+      container.innerHTML = docs
+        .map(
+          (d) => `
+        <a href="/knowledge/detail?id=${encodeURIComponent(d.id)}" class="doc-item" style="text-decoration: none; color: inherit;">
+          <span class="doc-item-icon">${getDocIcon(d.doc_type)}</span>
+          <div class="doc-item-body">
+            <div class="doc-item-title">${escapeHtml(d.title)}</div>
+            <div class="doc-item-meta">${escapeHtml(d.category || d.doc_type || '')} · ${formatTime(d.updated_at || d.created_at)}</div>
+          </div>
+          <span class="text-muted">›</span>
+        </a>`
+        )
+        .join('');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '未知错误';
+      container.innerHTML = `<div class="error-state">最近文档加载失败：${escapeHtml(msg)}<br/><button class="btn btn-outline btn-sm" id="retry-recent" style="margin-top: var(--space-3);">重试</button></div>`;
+      document.getElementById('retry-recent')?.addEventListener('click', renderRecentDocs);
+    }
+  }
+
+  // ===== 热门标签云（取搜索热词） =====
+  async function renderTagCloud() {
+    const container = document.getElementById('tag-cloud')!;
+    container.innerHTML = '<div class="loading-state">加载中...</div>';
+    try {
+      const data: KeywordCount[] = await getSearchHotwords(30, 30);
+      if (!data || data.length === 0) {
+        container.innerHTML = '<div class="empty-state">暂无热门标签</div>';
+        return;
+      }
+      const counts = data.map((i) => i.count);
+      const min = Math.min(...counts);
+      const max = Math.max(...counts);
+      const minSize = 13;
+      const maxSize = 22;
+      container.innerHTML = data
+        .map((t) => {
+          const ratio = max === min ? 0.5 : (t.count - min) / (max - min);
+          const size = Math.round(minSize + ratio * (maxSize - minSize));
+          return `
+        <span class="tag tag-cloud-item" style="font-size: ${size}px;" data-tag="${escapeHtml(t.keyword)}">
+          ${escapeHtml(t.keyword)} <span class="text-muted">(${t.count})</span>
+        </span>`;
+        })
+        .join('');
+      container.querySelectorAll('.tag-cloud-item').forEach((el) => {
+        el.addEventListener('click', () => {
+          const tag = (el as HTMLElement).dataset.tag!;
+          window.location.href = `/knowledge/search?q=${encodeURIComponent(tag)}`;
+        });
       });
-    });
-  }
-
-  function formatTime(ts: number): string {
-    const diff = Date.now() - ts;
-    if (diff < 3600000) return Math.floor(diff / 60000) + ' 分钟前';
-    if (diff < 86400000) return Math.floor(diff / 3600000) + ' 小时前';
-    return Math.floor(diff / 86400000) + ' 天前';
-  }
-
-  function escapeHtml(s: string): string {
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '未知错误';
+      container.innerHTML = `<div class="error-state">热门标签加载失败：${escapeHtml(msg)}<br/><button class="btn btn-outline btn-sm" id="retry-tags" style="margin-top: var(--space-3);">重试</button></div>`;
+      document.getElementById('retry-tags')?.addEventListener('click', renderTagCloud);
+    }
   }
 
   loadKbs();
+  loadStats();
   renderRecentDocs();
   renderTagCloud();
 </script>

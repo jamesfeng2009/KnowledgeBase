@@ -129,6 +129,22 @@ const breadcrumb = [{ label: '场景应用', href: '/scenes/it-helpdesk' }, { la
       </form>
     </div>
   </div>
+
+  <!-- 工单详情弹窗 -->
+  <div class="modal-overlay" id="detail-modal" style="display: none;">
+    <div class="modal" style="max-width: 640px;">
+      <div class="modal-header">
+        <h3>工单详情</h3>
+        <button class="btn btn-ghost btn-sm" id="close-detail-modal">✕</button>
+      </div>
+      <div class="modal-body" id="detail-modal-body">
+        <!-- 动态填充 -->
+      </div>
+      <div class="modal-footer" id="detail-modal-footer">
+        <!-- 动态填充 -->
+      </div>
+    </div>
+  </div>
 </DefaultLayout>
 
 <style>
@@ -194,11 +210,146 @@ const breadcrumb = [{ label: '场景应用', href: '/scenes/it-helpdesk' }, { la
     padding: var(--space-5);
     border-top: 1px solid var(--border);
   }
+  /* 工单列表错误状态 */
+  .ticket-error-cell {
+    padding: var(--space-8) !important;
+    text-align: center;
+  }
+  .ticket-error {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  .ticket-error-msg {
+    font-size: var(--text-sm);
+    font-weight: 500;
+    color: var(--danger);
+  }
+  .ticket-error-detail {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    word-break: break-all;
+    max-width: 400px;
+  }
+  /* 工单详情字段 */
+  .detail-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2) 0;
+    border-bottom: 1px solid var(--border-light);
+    font-size: var(--text-sm);
+    flex-wrap: wrap;
+  }
+  .detail-label {
+    color: var(--text-muted);
+    min-width: 64px;
+  }
+  .detail-block {
+    margin-top: var(--space-3);
+  }
+  .detail-block .detail-label {
+    display: block;
+    margin-bottom: var(--space-2);
+  }
+  .detail-content {
+    padding: var(--space-3);
+    background: var(--surface-muted);
+    border-radius: var(--radius);
+    font-size: var(--text-sm);
+    line-height: var(--lh-relaxed);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .ai-streaming-hint {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    padding: var(--space-2) 0;
+  }
+  /* AI 解答 Markdown 渲染（精简样式） */
+  #ai-solution-content .markdown-body,
+  .detail-content.markdown-body {
+    background: transparent;
+    padding: 0;
+    white-space: normal;
+  }
+  .markdown-body h1,
+  .markdown-body h2,
+  .markdown-body h3 {
+    margin: var(--space-3) 0 var(--space-2);
+    font-weight: 600;
+  }
+  .markdown-body h1 { font-size: var(--text-lg); }
+  .markdown-body h2 { font-size: var(--text-md); }
+  .markdown-body h3 { font-size: var(--text-sm); }
+  .markdown-body p {
+    margin: var(--space-2) 0;
+  }
+  .markdown-body ul,
+  .markdown-body ol {
+    margin: var(--space-2) 0;
+    padding-left: var(--space-5);
+  }
+  .markdown-body ul { list-style: disc; }
+  .markdown-body ol { list-style: decimal; }
+  .markdown-body li {
+    margin: var(--space-1) 0;
+  }
+  .markdown-body code:not(.hljs) {
+    padding: 2px 5px;
+    background: var(--surface-muted);
+    border-radius: var(--radius-xs);
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+    color: var(--danger);
+  }
+  .markdown-body pre {
+    margin: var(--space-2) 0;
+    padding: var(--space-3);
+    background: var(--surface-muted);
+    border-radius: var(--radius);
+    overflow-x: auto;
+    font-size: var(--text-sm);
+  }
+  .markdown-body pre code {
+    background: transparent;
+    color: var(--text);
+    padding: 0;
+  }
+  .markdown-body blockquote {
+    margin: var(--space-2) 0;
+    padding: var(--space-1) var(--space-3);
+    border-left: 3px solid var(--primary);
+    background: var(--primary-bg);
+    border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
+    color: var(--text-secondary);
+  }
+  .markdown-body strong { font-weight: 600; }
+  .markdown-body table {
+    width: 100%;
+    margin: var(--space-2) 0;
+    border-collapse: collapse;
+    font-size: var(--text-sm);
+  }
+  .markdown-body th,
+  .markdown-body td {
+    padding: var(--space-1) var(--space-2);
+    border: 1px solid var(--border);
+    text-align: left;
+  }
+  .markdown-body th {
+    background: var(--surface-muted);
+    font-weight: 600;
+  }
 </style>
 
 <script>
-  const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
-  const TOKEN_KEY = 'ekb_access_token';
+  import { renderMarkdownStream } from '@/lib/markdown';
+  import { getTickets, createTicket, updateTicket } from '@/lib/apis/tickets';
+  import { createSSEStream } from '@/lib/sse';
+  import { ApiError } from '@/lib/api';
+  import { removeToken } from '@/lib/auth';
 
   const categoryMap: Record<string, { label: string; badge: string }> = {
     hardware: { label: '硬件设备', badge: 'badge-primary' },
@@ -218,42 +369,67 @@ const breadcrumb = [{ label: '场景应用', href: '/scenes/it-helpdesk' }, { la
     resolved: { label: '已解决', badge: 'badge-success' },
   };
 
+  function getCategory(c: string) {
+    return categoryMap[c] || { label: c || '未分类', badge: 'badge-primary' };
+  }
+  function getPriority(p: string) {
+    return priorityMap[p] || { label: p || '中', badge: 'badge-warning' };
+  }
+  function getStatus(s: string) {
+    return statusMap[s] || { label: s || '未知', badge: 'badge-primary' };
+  }
+
   let tickets: any[] = [];
 
-  function mockTickets() {
-    return [
-      { id: 'T-2026-001', title: '电脑无法连接 Wi-Fi', category: 'network', priority: 'high', status: 'progress', created_at: '2026-07-06 09:30', ai_solved: false },
-      { id: 'T-2026-002', title: 'Outlook 邮件发送失败', category: 'software', priority: 'medium', status: 'open', created_at: '2026-07-06 10:15', ai_solved: false },
-      { id: 'T-2026-003', title: 'VPN 账号无法登录', category: 'account', priority: 'urgent', status: 'progress', created_at: '2026-07-06 11:00', ai_solved: false },
-      { id: 'T-2026-004', title: '打印机无法连接', category: 'hardware', priority: 'medium', status: 'resolved', created_at: '2026-07-05 14:20', ai_solved: true },
-      { id: 'T-2026-005', title: '系统登录密码重置', category: 'account', priority: 'low', status: 'resolved', created_at: '2026-07-05 16:45', ai_solved: true },
-      { id: 'T-2026-006', title: 'Excel 文件损坏', category: 'software', priority: 'medium', status: 'resolved', created_at: '2026-07-04 09:10', ai_solved: true },
-    ];
+  /** 判断是否为 401/未登录错误（已在底层处理跳转，业务层需静默退出） */
+  function isAuthError(err: unknown): boolean {
+    return err instanceof ApiError && err.status === 401;
+  }
+
+  /** 从接口返回值中提取数组（兼容数组 / { items: [] } / { data: ... } 嵌套） */
+  function toItems(raw: unknown): any[] {
+    if (Array.isArray(raw)) return raw;
+    if (raw && typeof raw === 'object') {
+      const obj = raw as { items?: unknown[]; data?: unknown };
+      if (Array.isArray(obj.items)) return obj.items as any[];
+      if (obj.data !== undefined) return toItems(obj.data);
+    }
+    return [];
   }
 
   async function loadTickets() {
-    const token = localStorage.getItem(TOKEN_KEY);
-    if (!token) {
-      window.location.href = '/auth/login';
-      return;
-    }
+    showTicketLoading();
     try {
-      const res = await fetch(`${API_BASE}/api/v1/tickets`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.ok) {
-        const result = await res.json();
-        tickets = result.data?.items || result.data || [];
-      } else if (res.status === 401) {
-        window.location.href = '/auth/login';
-        return;
-      }
-      if (tickets.length === 0) tickets = mockTickets();
-    } catch {
-      tickets = mockTickets();
+      const result = await getTickets();
+      tickets = toItems(result);
+      renderTickets();
+      updateStats();
+    } catch (err) {
+      if (isAuthError(err)) return;
+      showTicketError(err instanceof Error ? err.message : String(err));
     }
-    renderTickets();
-    updateStats();
+  }
+
+  function showTicketLoading() {
+    const body = document.getElementById('ticket-list')!;
+    body.innerHTML = '<tr><td colspan="7" class="loading-state">加载中...</td></tr>';
+  }
+
+  function showTicketError(msg: string) {
+    const body = document.getElementById('ticket-list')!;
+    body.innerHTML = `
+      <tr><td colspan="7" class="ticket-error-cell">
+        <div class="ticket-error">
+          <div class="ticket-error-msg">工单列表加载失败</div>
+          <div class="ticket-error-detail">${escapeHtml(msg)}</div>
+          <button class="btn btn-outline btn-sm" id="ticket-retry-btn">重试</button>
+        </div>
+      </td></tr>`;
+    ['stat-open', 'stat-progress', 'stat-resolved', 'stat-ai'].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = '--';
+    });
+    document.getElementById('ticket-retry-btn')?.addEventListener('click', loadTickets);
   }
 
   function updateStats() {
@@ -285,31 +461,33 @@ const breadcrumb = [{ label: '场景应用', href: '/scenes/it-helpdesk' }, { la
       return;
     }
     body.innerHTML = list
-      .map(
-        (t) => `
-      <tr data-id="${t.id}">
-        <td><code style="font-size: var(--text-xs);">${escapeHtml(t.id)}</code></td>
+      .map((t) => {
+        const cat = getCategory(t.category);
+        const pri = getPriority(t.priority);
+        const sts = getStatus(t.status);
+        return `
+      <tr data-id="${escapeHtml(String(t.id))}">
+        <td><code style="font-size: var(--text-xs);">${escapeHtml(String(t.id))}</code></td>
         <td style="font-weight: 500;">${escapeHtml(t.title)}</td>
-        <td><span class="badge ${categoryMap[t.category].badge}">${categoryMap[t.category].label}</span></td>
-        <td><span class="badge ${priorityMap[t.priority].badge}">${priorityMap[t.priority].label}</span></td>
-        <td><span class="badge ${statusMap[t.status].badge}">${statusMap[t.status].label}</span></td>
-        <td class="text-muted">${escapeHtml(t.created_at)}</td>
-        <td>
-          <button class="btn btn-ghost btn-sm">详情</button>
-        </td>
-      </tr>`
-      )
+        <td><span class="badge ${cat.badge}">${escapeHtml(cat.label)}</span></td>
+        <td><span class="badge ${pri.badge}">${escapeHtml(pri.label)}</span></td>
+        <td><span class="badge ${sts.badge}">${escapeHtml(sts.label)}</span></td>
+        <td class="text-muted">${escapeHtml(String(t.created_at))}</td>
+        <td><button class="btn btn-ghost btn-sm">详情</button></td>
+      </tr>`;
+      })
       .join('');
 
     body.querySelectorAll('tr[data-id]').forEach((tr) => {
       tr.addEventListener('click', () => {
-        alert('查看工单详情：' + (tr as HTMLElement).dataset.id);
+        const id = (tr as HTMLElement).dataset.id!;
+        openDetailModal(id);
       });
     });
   }
 
   function escapeHtml(s: string): string {
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
   // 弹窗
@@ -318,67 +496,212 @@ const breadcrumb = [{ label: '场景应用', href: '/scenes/it-helpdesk' }, { la
   document.getElementById('close-modal')?.addEventListener('click', () => (modal.style.display = 'none'));
   document.getElementById('cancel-btn')?.addEventListener('click', () => (modal.style.display = 'none'));
 
-  // AI 解答
+  // AI 解答（SSE 流式接收，使用 renderMarkdownStream 渲染返回内容）
   document.getElementById('ai-solve-btn')?.addEventListener('click', async () => {
     const desc = (document.querySelector('textarea[name="description"]') as HTMLTextAreaElement).value.trim();
     if (!desc) {
       alert('请先描述问题');
       return;
     }
-    const token = localStorage.getItem(TOKEN_KEY);
-    document.getElementById('ai-solve-btn')!.textContent = 'AI 分析中...';
+    const solveBtn = document.getElementById('ai-solve-btn') as HTMLButtonElement;
+    const solutionBox = document.getElementById('ai-solution')!;
+    const contentBox = document.getElementById('ai-solution-content')!;
+    solveBtn.disabled = true;
+    solveBtn.textContent = 'AI 分析中...';
+    solutionBox.style.display = 'block';
+    contentBox.innerHTML = '<div class="ai-streaming-hint">正在生成解答...</div>';
+
+    let fullText = '';
     try {
-      const res = await fetch(`${API_BASE}/api/v1/chat/stream`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ query: desc, agent_type: 'qa' }),
-      });
-      if (res.ok) {
-        document.getElementById('ai-solution-content')!.textContent =
-          '根据您的问题描述，建议尝试以下方案：1. 检查网络连接是否正常；2. 重启相关设备；3. 如仍无法解决，请提交工单由 IT 人员处理。';
-        document.getElementById('ai-solution')!.style.display = 'block';
-        // 自动分类
-        (document.getElementById('ticket-category-input') as HTMLSelectElement).value = 'network';
+      // 通过 sse.ts 统一封装的 createSSEStream 接收流式解答（统一处理 Token / 401 / SSE 解析）
+      for await (const event of createSSEStream('/api/v1/chat/stream', { query: desc, agent_type: 'qa' })) {
+        const { text, error } = parseStreamEvent(event.type, event.data);
+        if (error) {
+          fullText += `\n\n> **[错误]** ${error}\n`;
+        } else if (text) {
+          fullText += text;
+        }
+        if (fullText) {
+          contentBox.innerHTML = `<div class="markdown-body">${renderMarkdownStream(fullText)}</div>`;
+        }
       }
-    } catch {
-      document.getElementById('ai-solution-content')!.textContent =
-        'AI 暂时无法分析，请直接提交工单，IT 人员将为您处理。';
-      document.getElementById('ai-solution')!.style.display = 'block';
+
+      if (fullText) {
+        contentBox.innerHTML = `<div class="markdown-body">${renderMarkdownStream(fullText)}</div>`;
+      } else {
+        contentBox.innerHTML = '<div class="ai-streaming-hint">AI 未返回有效内容，请直接提交工单</div>';
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // createSSEStream 未内置 401 跳转，此处补充处理
+      if (msg.includes('(401)')) {
+        removeToken();
+        window.location.href = '/auth/login';
+        return;
+      }
+      contentBox.innerHTML =
+        '<div class="ai-streaming-hint">AI 解答失败：' +
+        escapeHtml(msg) +
+        '</div>';
+    } finally {
+      solveBtn.disabled = false;
+      solveBtn.textContent = '🤖 AI 尝试解答';
     }
-    document.getElementById('ai-solve-btn')!.textContent = '🤖 AI 尝试解答';
   });
 
-  document.getElementById('accept-ai')?.addEventListener('click', () => {
-    alert('已采纳 AI 解答，工单将自动关闭');
-    modal.style.display = 'none';
-    (document.getElementById('ticket-form') as HTMLFormElement).reset();
-    document.getElementById('ai-solution')!.style.display = 'none';
+  /** 解析 SSE 事件，提取文本或错误信息（兼容字符串与已解析对象） */
+  function parseStreamEvent(type: string, data: unknown): { text?: string; error?: string } {
+    let parsed: any = data;
+    if (typeof data === 'string') {
+      try {
+        parsed = JSON.parse(data);
+      } catch {
+        parsed = data;
+      }
+    }
+    const evtType = type || parsed?.type || 'message';
+    if (evtType === 'error') {
+      return { error: parsed?.message || '未知错误' };
+    }
+    // token / chunk / message / delta 等事件 - 提取文本片段
+    const text =
+      parsed?.text ||
+      parsed?.delta ||
+      parsed?.content ||
+      (typeof parsed === 'string' ? parsed : '');
+    return text ? { text } : {};
+  }
+
+  // 采纳 AI 解答：创建工单后调用 updateTicket 更新状态为 resolved
+  document.getElementById('accept-ai')?.addEventListener('click', async () => {
+    const form = document.getElementById('ticket-form') as HTMLFormElement;
+    const data = Object.fromEntries(new FormData(form)) as Record<string, string>;
+    if (!data.title || !data.description) {
+      alert('请先填写标题和问题描述');
+      return;
+    }
+    const acceptBtn = document.getElementById('accept-ai') as HTMLButtonElement;
+    acceptBtn.disabled = true;
+    acceptBtn.textContent = '处理中...';
+    try {
+      // 1. 创建工单（标记 AI 已解决）
+      const created = (await createTicket({
+        title: String(data.title),
+        description: String(data.description),
+        category: String(data.category || ''),
+        priority: String(data.priority || 'medium'),
+      })) as unknown as { id?: string };
+      const ticketId = created?.id;
+
+      // 2. 采纳 AI 解答 - 调用 updateTicket 更新工单状态为已解决
+      if (ticketId) {
+        try {
+          await updateTicket(String(ticketId), { status: 'resolved', ai_solved: true });
+        } catch {
+          alert('工单已创建，但自动关闭失败，请稍后在列表中手动处理');
+        }
+      }
+      alert('已采纳 AI 解答，工单已关闭');
+      modal.style.display = 'none';
+      form.reset();
+      document.getElementById('ai-solution')!.style.display = 'none';
+      loadTickets();
+    } catch (err) {
+      if (isAuthError(err)) return;
+      alert('采纳失败：' + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      acceptBtn.disabled = false;
+      acceptBtn.textContent = '采纳并关闭工单';
+    }
   });
 
   document.getElementById('ticket-form')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const form = e.target as HTMLFormElement;
     const data = Object.fromEntries(new FormData(form));
-    const token = localStorage.getItem(TOKEN_KEY);
     try {
-      const res = await fetch(`${API_BASE}/api/v1/tickets`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify(data),
+      await createTicket({
+        title: String(data.title),
+        description: String(data.description),
+        category: String(data.category || ''),
+        priority: String(data.priority || 'medium'),
       });
-      if (res.ok) {
-        alert('工单已提交，IT 人员将尽快处理');
-        modal.style.display = 'none';
-        form.reset();
-        document.getElementById('ai-solution')!.style.display = 'none';
-        loadTickets();
-      } else {
-        alert('提交失败');
-      }
-    } catch {
-      alert('网络异常');
+      alert('工单已提交，IT 人员将尽快处理');
+      modal.style.display = 'none';
+      form.reset();
+      document.getElementById('ai-solution')!.style.display = 'none';
+      loadTickets();
+    } catch (err) {
+      if (isAuthError(err)) return;
+      alert('提交失败：' + (err instanceof Error ? err.message : '网络异常'));
     }
   });
+
+  // ===== 工单详情弹窗 =====
+  const detailModal = document.getElementById('detail-modal')!;
+  const detailBody = document.getElementById('detail-modal-body')!;
+  const detailFooter = document.getElementById('detail-modal-footer')!;
+
+  document.getElementById('close-detail-modal')?.addEventListener('click', () => (detailModal.style.display = 'none'));
+  detailModal.addEventListener('click', (e) => {
+    if (e.target === detailModal) detailModal.style.display = 'none';
+  });
+
+  function openDetailModal(id: string) {
+    const t = tickets.find((x) => String(x.id) === String(id));
+    if (!t) {
+      alert('未找到工单信息');
+      return;
+    }
+    const cat = getCategory(t.category);
+    const pri = getPriority(t.priority);
+    const sts = getStatus(t.status);
+    detailBody.innerHTML = `
+      <div class="detail-row"><span class="detail-label">工单号</span><code>${escapeHtml(String(t.id))}</code></div>
+      <div class="detail-row"><span class="detail-label">标题</span><span style="font-weight:500;">${escapeHtml(t.title)}</span></div>
+      <div class="detail-row">
+        <span class="detail-label">分类</span><span class="badge ${cat.badge}">${escapeHtml(cat.label)}</span>
+        <span class="detail-label" style="margin-left:var(--space-4);">优先级</span><span class="badge ${pri.badge}">${escapeHtml(pri.label)}</span>
+        <span class="detail-label" style="margin-left:var(--space-4);">状态</span><span class="badge ${sts.badge}">${escapeHtml(sts.label)}</span>
+      </div>
+      <div class="detail-row"><span class="detail-label">提交时间</span><span class="text-muted">${escapeHtml(String(t.created_at))}</span></div>
+      ${t.description ? `<div class="detail-block"><div class="detail-label">问题描述</div><div class="detail-content">${escapeHtml(t.description)}</div></div>` : ''}
+      ${t.ai_solution ? `<div class="detail-block"><div class="detail-label">AI 解答</div><div class="detail-content markdown-body">${renderMarkdownStream(t.ai_solution)}</div></div>` : ''}
+      ${t.ai_solved ? '<div class="badge badge-success">AI 已解决</div>' : ''}
+    `;
+    if (t.status === 'resolved') {
+      detailFooter.innerHTML = '<button class="btn btn-ghost" id="detail-close-btn">关闭</button>';
+    } else {
+      detailFooter.innerHTML =
+        '<button class="btn btn-ghost" id="detail-close-btn">关闭</button>' +
+        '<button class="btn btn-primary" id="detail-resolve-btn">标记为已解决</button>';
+      document.getElementById('detail-resolve-btn')?.addEventListener('click', () => resolveTicket(t.id));
+    }
+    document.getElementById('detail-close-btn')?.addEventListener('click', () => (detailModal.style.display = 'none'));
+    detailModal.style.display = 'flex';
+  }
+
+  /** 调用 updateTicket 更新状态为 resolved */
+  async function resolveTicket(id: string) {
+    const btn = document.getElementById('detail-resolve-btn') as HTMLButtonElement | null;
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = '处理中...';
+    }
+    try {
+      await updateTicket(id, { status: 'resolved', ai_solved: true });
+      alert('工单已标记为已解决');
+      detailModal.style.display = 'none';
+      loadTickets();
+    } catch (err) {
+      if (isAuthError(err)) return;
+      alert('关闭工单失败：' + (err instanceof Error ? err.message : String(err)));
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = '标记为已解决';
+      }
+    }
+  }
 
   document.getElementById('ticket-status')?.addEventListener('change', renderTickets);
   document.getElementById('ticket-category')?.addEventListener('change', renderTickets);

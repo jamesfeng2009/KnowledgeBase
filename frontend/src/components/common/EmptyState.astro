@@ -1,0 +1,106 @@
+---
+/**
+ * EmptyState.astro - 空状态/加载状态/错误状态组件
+ *
+ * 统一页面中"无数据/加载中/加载失败"三类占位展示，
+ * 替代散落各处的 .loading-state / .empty-state / .error-state 内联结构。
+ * 通过 CSS 变量驱动语义色，不硬编码颜色。
+ *
+ * @example
+ * <EmptyState type="loading" message="正在加载知识库..." />
+ * <EmptyState type="empty" message="暂无文档" icon="📄" />
+ * <EmptyState type="error" message="加载失败，请重试" />
+ */
+interface Props {
+  /** 状态类型 */
+  type: 'loading' | 'empty' | 'error';
+  /** 提示文本 */
+  message?: string;
+  /** 可选图标（emoji 或字符） */
+  icon?: string;
+}
+
+const {
+  type,
+  message,
+  icon,
+} = Astro.props;
+
+const defaultMessages: Record<Props['type'], string> = {
+  loading: '加载中...',
+  empty: '暂无数据',
+  error: '加载失败',
+};
+
+const displayMessage = message ?? defaultMessages[type];
+
+const defaultIcons: Record<Props['type'], string> = {
+  loading: '⏳',
+  empty: '📭',
+  error: '⚠️',
+};
+
+const displayIcon = icon ?? defaultIcons[type];
+---
+
+<div class="state-wrap" data-state={type}>
+  <span class="state-icon" aria-hidden="true">{displayIcon}</span>
+  {type === 'loading' && <span class="state-spinner" aria-hidden="true" />}
+  <p class="state-message">{displayMessage}</p>
+  <slot />
+</div>
+
+<style>
+  .state-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    text-align: center;
+    padding: var(--space-6);
+    color: var(--text-muted);
+  }
+
+  .state-icon {
+    font-size: var(--text-2xl);
+    line-height: 1;
+  }
+
+  .state-message {
+    font-size: var(--text-sm);
+    line-height: var(--lh-normal);
+    margin: 0;
+  }
+
+  /* 加载态：旋转指示器 */
+  .state-spinner {
+    display: none;
+    width: 16px;
+    height: 16px;
+    border: 2px solid var(--border);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: state-spin 0.8s linear infinite;
+  }
+
+  .state-wrap[data-state='loading'] .state-spinner {
+    display: inline-block;
+  }
+
+  @keyframes state-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  /* 错误态：使用语义色 */
+  .state-wrap[data-state='error'] {
+    color: var(--danger);
+  }
+
+  /* 空状态：使用弱化色 */
+  .state-wrap[data-state='empty'] {
+    color: var(--text-muted);
+  }
+</style>

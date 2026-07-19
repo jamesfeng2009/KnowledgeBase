@@ -257,70 +257,44 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '会议纪
 </style>
 
 <script>
-  const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
-  const TOKEN_KEY = 'ekb_access_token';
+  import { getData, postData } from '@/lib/api';
 
-  function mockMinutes() {
-    return [
-      {
-        id: 'm1',
-        title: 'Q3 产品评审会',
-        date: '2026-07-05',
-        location: '一号会议室',
-        attendees: '张三、李四、王五',
-        content: '本次会议讨论了 Q3 产品迭代计划，确定了核心功能优先级和排期...',
-        has_recording: true,
-        ai_summarized: true,
-      },
-      {
-        id: 'm2',
-        title: '技术架构评审',
-        date: '2026-07-03',
-        location: '线上会议',
-        attendees: '技术团队全体',
-        content: '评审微服务架构改造方案，讨论服务拆分粒度和数据一致性保障策略...',
-        has_recording: false,
-        ai_summarized: false,
-      },
-      {
-        id: 'm3',
-        title: '月度运营复盘',
-        date: '2026-06-30',
-        location: '二号会议室',
-        attendees: '运营团队',
-        content: '复盘 6 月运营数据，分析用户增长趋势和内容质量提升方案...',
-        has_recording: true,
-        ai_summarized: true,
-      },
-    ];
+  const BASE = '/api/v1';
+
+  interface MinutesItem {
+    id: string;
+    title: string;
+    date?: string;
+    location?: string;
+    attendees?: string;
+    content?: string;
+    has_recording?: boolean;
+    ai_summarized?: boolean;
   }
+
+  let allMinutes: MinutesItem[] = [];
 
   async function loadMinutes() {
-    const token = localStorage.getItem(TOKEN_KEY);
-    if (!token) {
-      window.location.href = '/auth/login';
-      return;
-    }
-    let list: any[] = [];
+    const container = document.getElementById('minutes-list')!;
+    container.innerHTML = '<div class="loading-state">加载中...</div>';
     try {
-      const res = await fetch(`${API_BASE}/api/v1/manage/minutes`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.ok) {
-        const result = await res.json();
-        list = result.data?.items || result.data || [];
-      } else if (res.status === 401) {
-        window.location.href = '/auth/login';
-        return;
+      const result = await getData<MinutesItem[] | { items: MinutesItem[] }>(`${BASE}/manage/minutes`);
+      let list: MinutesItem[] = [];
+      if (Array.isArray(result)) {
+        list = result;
+      } else if (result && Array.isArray(result.items)) {
+        list = result.items;
       }
-    } catch {
-      // ignore
+      allMinutes = list;
+      renderList(list);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '未知错误';
+      container.innerHTML = `<div class="loading-state" style="color: var(--danger);">会议纪要加载失败：${escapeHtml(msg)}<br/><button class="btn btn-outline btn-sm" id="retry-minutes" style="margin-top: var(--space-3);">重试</button></div>`;
+      document.getElementById('retry-minutes')?.addEventListener('click', loadMinutes);
     }
-    if (list.length === 0) list = mockMinutes();
-    renderList(list);
   }
 
-  function renderList(list: any[]) {
+  function renderList(list: MinutesItem[]) {
     const container = document.getElementById('minutes-list')!;
     if (list.length === 0) {
       container.innerHTML = '<div class="loading-state">暂无会议纪要</div>';
@@ -329,7 +303,7 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '会议纪
     container.innerHTML = list
       .map(
         (m) => `
-      <div class="minutes-item" data-id="${m.id}">
+      <div class="minutes-item" data-id="${escapeHtml(m.id)}">
         <div class="minutes-item-header">
           <div class="minutes-item-title">${escapeHtml(m.title)}</div>
           <div style="display: flex; gap: var(--space-2);">
@@ -344,9 +318,9 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '会议纪
         </div>
         <p class="minutes-item-content">${escapeHtml(m.content || '')}</p>
         <div class="minutes-item-footer">
-          <button class="btn btn-ghost btn-sm" data-action="view" data-id="${m.id}">查看详情</button>
-          ${!m.ai_summarized ? `<button class="btn btn-outline btn-sm" data-action="ai" data-id="${m.id}">AI 整理</button>` : ''}
-          <button class="btn btn-ghost btn-sm" data-action="edit" data-id="${m.id}">编辑</button>
+          <button class="btn btn-ghost btn-sm" data-action="view" data-id="${escapeHtml(m.id)}">查看详情</button>
+          ${!m.ai_summarized ? `<button class="btn btn-outline btn-sm" data-action="ai" data-id="${escapeHtml(m.id)}">AI 整理</button>` : ''}
+          <button class="btn btn-ghost btn-sm" data-action="edit" data-id="${escapeHtml(m.id)}">编辑</button>
         </div>
       </div>`
       )
@@ -357,29 +331,47 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '会议纪
         e.stopPropagation();
         const action = (btn as HTMLElement).dataset.action!;
         const id = (btn as HTMLElement).dataset.id!;
-        if (action === 'view') alert('查看纪要详情：' + id);
+        if (action === 'view') toggleMinutesDetail(id);
         else if (action === 'ai') aiSummarize(id);
-        else if (action === 'edit') alert('编辑纪要：' + id);
+        else if (action === 'edit') window.location.href = `/manage/editor?id=${encodeURIComponent(id)}`;
       });
     });
   }
 
+  /** 展开 / 收起会议纪要详情视图 */
+  function toggleMinutesDetail(id: string) {
+    const item = document.querySelector(`.minutes-item[data-id="${CSS.escape(id)}"]`) as HTMLElement | null;
+    if (!item) return;
+    const existingDetail = item.querySelector('.minutes-detail');
+    if (existingDetail) {
+      existingDetail.remove();
+      return;
+    }
+    const m = allMinutes.find((x) => x.id === id);
+    if (!m) return;
+    const detail = document.createElement('div');
+    detail.className = 'minutes-detail';
+    detail.style.cssText = 'padding-top: var(--space-3); margin-top: var(--space-3); border-top: 1px dashed var(--border); font-size: var(--text-sm); color: var(--text-secondary); line-height: var(--lh-relaxed); white-space: pre-wrap;';
+    detail.textContent = [
+      `会议日期：${m.date || '未填写'}`,
+      `会议地点：${m.location || '未填写'}`,
+      `参会人员：${m.attendees || '未填写'}`,
+      '',
+      '会议内容：',
+      m.content || '（暂无内容）',
+    ].join('\n');
+    item.appendChild(detail);
+  }
+
   async function aiSummarize(id: string) {
-    const token = localStorage.getItem(TOKEN_KEY);
     alert('AI 正在整理会议纪要，请稍候...');
     try {
-      const res = await fetch(`${API_BASE}/api/v1/manage/minutes/${id}/ai-summarize`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.ok) {
-        alert('AI 整理完成');
-        loadMinutes();
-      } else {
-        alert('AI 整理失败');
-      }
-    } catch {
-      alert('网络异常');
+      await postData(`${BASE}/manage/minutes/${id}/ai-summarize`, {});
+      alert('AI 整理完成');
+      await loadMinutes();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '未知错误';
+      alert('AI 整理失败：' + msg);
     }
   }
 
@@ -400,27 +392,89 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '会议纪
     e.preventDefault();
     const form = e.target as HTMLFormElement;
     const data = Object.fromEntries(new FormData(form));
-    const token = localStorage.getItem(TOKEN_KEY);
+    const submitBtn = form.querySelector('button[type="submit"]') as HTMLButtonElement;
+    submitBtn.disabled = true;
+    submitBtn.textContent = '创建中...';
     try {
-      const res = await fetch(`${API_BASE}/api/v1/manage/minutes`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify(data),
-      });
-      if (res.ok) {
-        alert('纪要创建成功');
-        modal.style.display = 'none';
-        form.reset();
-        // 重置为手动填写标签页，下次打开默认显示
-        switchTab('manual');
-        loadMinutes();
-      } else {
-        alert('创建失败');
-      }
-    } catch {
-      alert('网络异常');
+      await postData(`${BASE}/manage/minutes`, data);
+      alert('纪要创建成功');
+      modal.style.display = 'none';
+      form.reset();
+      // 重置为手动填写标签页，下次打开默认显示
+      switchTab('manual');
+      await loadMinutes();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '未知错误';
+      alert('创建失败：' + msg);
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = '创建';
     }
   });
+
+  // === 录音上传区（audio-zone）：支持音频文件上传转写 ===
+  function bindAudioUpload(): void {
+    const zone = document.getElementById('audio-zone');
+    if (!zone) return;
+    const allowedTypes = ['audio/mpeg', 'audio/wav', 'audio/x-wav', 'audio/mp4', 'audio/x-m4a', 'audio/aac'];
+
+    const handleFile = async (file: File) => {
+      if (!allowedTypes.includes(file.type) && !/\.(mp3|wav|m4a|aac)$/i.test(file.name)) {
+        alert('不支持的音频格式，请上传 mp3、wav 或 m4a 文件');
+        return;
+      }
+      const originalHtml = zone.innerHTML;
+      zone.innerHTML = '<span class="text-muted">⏳ 正在上传并转写录音...</span>';
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        const result = await postData<any>(`${BASE}/multimodal/transcribe`, formData);
+        // 将转写文本回填到会议内容
+        const contentTextarea = document.querySelector<HTMLTextAreaElement>('textarea[name="content"]');
+        const transcript = (result && (result.transcript || result.text || result.content)) || '';
+        if (transcript && contentTextarea) {
+          const prefix = contentTextarea.value.trim() ? contentTextarea.value + '\n\n' : '';
+          contentTextarea.value = prefix + '【录音转写】\n' + transcript;
+        }
+        alert('录音转写完成，已填入会议内容');
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : '未知错误';
+        // 后端无此接口时显示友好提示
+        alert('录音转写功能开发中：' + msg);
+      } finally {
+        zone.innerHTML = originalHtml;
+      }
+    };
+
+    // 点击上传
+    zone.addEventListener('click', () => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'audio/*,.mp3,.wav,.m4a';
+      input.style.display = 'none';
+      input.addEventListener('change', () => {
+        const file = input.files?.[0];
+        if (file) handleFile(file);
+        input.remove();
+      });
+      document.body.appendChild(input);
+      input.click();
+    });
+
+    // 拖拽上传
+    zone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      zone.classList.add('dragover');
+    });
+    zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+    zone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      zone.classList.remove('dragover');
+      const file = e.dataTransfer?.files?.[0];
+      if (file) handleFile(file);
+    });
+  }
+  bindAudioUpload();
 
   // === 创建方式标签页切换 ===
   function switchTab(tabName: string): void {

@@ -1,0 +1,277 @@
+---
+/**
+ * LlmConfigForm.astro - LLM 配置表单组件
+ *
+ * 服务端渲染 LLM 配置表单，包含服务商选择、模型名称、API Base、
+ * 温度滑块、Max Tokens 以及 API Key 管理列表。
+ * 所有表单字段使用 name 属性，便于页面 JS 通过 FormData 读取。
+ *
+ * @example
+ * <LlmConfigForm config={config} />
+ */
+export interface LlmApiKey {
+  id: string;
+  name: string;
+  key_prefix: string;
+}
+
+export interface LlmConfig {
+  provider: string;
+  model: string;
+  api_base?: string;
+  temperature: number;
+  max_tokens: number;
+  api_keys?: LlmApiKey[];
+}
+
+interface Props {
+  /** LLM 配置数据；未提供时使用默认值 */
+  config?: LlmConfig;
+}
+
+const defaultConfig: LlmConfig = {
+  provider: 'openai',
+  model: '',
+  api_base: '',
+  temperature: 0.7,
+  max_tokens: 2048,
+  api_keys: [],
+};
+
+const config = { ...defaultConfig, ...Astro.props.config };
+const apiKeys = config.api_keys ?? [];
+
+// 服务商选项（任务约定：openai/azure/anthropic/qwen/deepseek）
+const providers: Array<{ value: string; label: string; desc: string }> = [
+  { value: 'openai', label: 'OpenAI', desc: 'GPT 系列模型' },
+  { value: 'azure', label: 'Azure OpenAI', desc: '企业级部署' },
+  { value: 'anthropic', label: 'Anthropic', desc: 'Claude 系列模型' },
+  { value: 'qwen', label: '通义千问', desc: '阿里云大模型' },
+  { value: 'deepseek', label: 'DeepSeek', desc: '国产高性价比' },
+];
+---
+
+<form class="llm-config-form" id="llm-config-form">
+  <!-- 服务商选择 -->
+  <div class="form-section">
+    <label class="form-label">服务商</label>
+    <div class="provider-list">
+      {
+        providers.map((p) => (
+          <label class={`provider-item ${p.value === config.provider ? 'selected' : ''}`}>
+            <input
+              type="radio"
+              name="provider"
+              value={p.value}
+              checked={p.value === config.provider}
+            />
+            <div class="provider-info">
+              <div class="provider-name">{p.label}</div>
+              <div class="provider-desc">{p.desc}</div>
+            </div>
+          </label>
+        ))
+      }
+    </div>
+  </div>
+
+  <!-- 模型与 API 配置 -->
+  <div class="form-grid">
+    <div class="form-group">
+      <label class="form-label" for="llm-model">模型名称</label>
+      <input
+        type="text"
+        class="form-input"
+        id="llm-model"
+        name="model"
+        value={config.model}
+        placeholder="如：gpt-4o-mini"
+      />
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="llm-api-base">API Base URL</label>
+      <input
+        type="text"
+        class="form-input"
+        id="llm-api-base"
+        name="api_base"
+        value={config.api_base ?? ''}
+        placeholder="https://api.openai.com/v1"
+      />
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="llm-temperature">
+        温度（Temperature）: <span class="temp-value" data-temp-value>{config.temperature}</span>
+      </label>
+      <input
+        type="range"
+        class="form-input range-input"
+        id="llm-temperature"
+        name="temperature"
+        min="0"
+        max="2"
+        step="0.1"
+        value={config.temperature}
+      />
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="llm-max-tokens">最大 Token 数</label>
+      <input
+        type="number"
+        class="form-input"
+        id="llm-max-tokens"
+        name="max_tokens"
+        value={config.max_tokens}
+        min="1"
+        max="32768"
+      />
+    </div>
+  </div>
+
+  <!-- API Key 管理 -->
+  <div class="form-section">
+    <div class="section-header">
+      <label class="form-label">API Key 管理</label>
+      <button type="button" class="btn btn-primary btn-sm" data-action="add-key">＋ 添加 Key</button>
+    </div>
+    <div class="api-key-list" data-api-key-list>
+      {
+        apiKeys.length > 0 ? (
+          apiKeys.map((k) => (
+            <div class="key-item">
+              <span class="badge badge-primary">{k.name}</span>
+              <code class="key-value">{k.key_prefix}***</code>
+              <button type="button" class="btn btn-ghost btn-sm" data-action="edit-key" data-id={k.id}>
+                编辑
+              </button>
+              <button type="button" class="btn btn-ghost btn-sm" data-action="delete-key" data-id={k.id}>
+                删除
+              </button>
+            </div>
+          ))
+        ) : (
+          <div class="empty-state">暂无 API Key，点击「添加 Key」创建</div>
+        )
+      }
+    </div>
+  </div>
+
+  <!-- 操作按钮 -->
+  <div class="form-actions">
+    <button type="button" class="btn btn-outline" data-action="test-connection">🧪 测试连接</button>
+    <button type="submit" class="btn btn-primary">保存配置</button>
+  </div>
+</form>
+
+<style>
+  .llm-config-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-5);
+  }
+  .form-section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+  .form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-4);
+  }
+  .provider-list {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-3);
+  }
+  .provider-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    border: 2px solid var(--border);
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+  .provider-item:hover {
+    border-color: var(--primary);
+  }
+  .provider-item.selected {
+    border-color: var(--primary);
+    background: var(--primary-bg);
+  }
+  .provider-item input[type='radio'] {
+    accent-color: var(--primary);
+  }
+  .provider-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .provider-name {
+    font-weight: 500;
+    font-size: var(--text-sm);
+    color: var(--text);
+  }
+  .provider-desc {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+  }
+  .range-input {
+    padding: 0;
+    height: auto;
+    accent-color: var(--primary);
+  }
+  .temp-value {
+    color: var(--primary);
+    font-weight: 600;
+  }
+  .section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .api-key-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+  .key-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-muted);
+  }
+  .key-value {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+    flex: 1;
+    background: var(--surface);
+    padding: 2px var(--space-2);
+    border-radius: var(--radius-xs);
+  }
+  .empty-state {
+    text-align: center;
+    padding: var(--space-4);
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    border: 1px dashed var(--border);
+    border-radius: var(--radius);
+  }
+  .form-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-3);
+  }
+  @media (max-width: 768px) {
+    .form-grid,
+    .provider-list {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

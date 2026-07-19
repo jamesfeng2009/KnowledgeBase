@@ -1,0 +1,160 @@
+---
+/**
+ * ApiKeyTable.astro - API Key 表格组件
+ *
+ * 服务端渲染 API Key 列表表格，包含表头、表体、空状态。
+ * 列顺序与 settings/api.astro 页面的 JS 渲染逻辑保持一致，
+ * 以便在 JS 动态渲染场景下复用同一份表头结构。
+ *
+ * @example
+ * // 纯 SSR 场景
+ * <ApiKeyTable keys={keys} />
+ * // 与页面 JS 配合（JS 会替换 tbody 内容）
+ * <ApiKeyTable keys={[]} tbodyId="key-list" emptyText="加载中..." />
+ */
+export interface ApiKeyRow {
+  id: string;
+  name: string;
+  key_prefix: string;
+  permissions: string[];
+  status: 'active' | 'disabled';
+  created_at: string;
+  last_used?: string;
+}
+
+interface Props {
+  /** API Key 列表 */
+  keys: ApiKeyRow[];
+  /** 可选：tbody 元素 id，便于页面 JS 接管渲染（如动态加载场景） */
+  tbodyId?: string;
+  /** 可选：空状态文案，默认 "暂无 API Key" */
+  emptyText?: string;
+}
+
+const { keys, tbodyId, emptyText = '暂无 API Key' } = Astro.props;
+
+const hasKeys = keys.length > 0;
+const colCount = 7;
+---
+
+<div class="api-key-table-wrap">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>名称</th>
+        <th>密钥</th>
+        <th>权限范围</th>
+        <th>创建时间</th>
+        <th>最后使用</th>
+        <th>状态</th>
+        <th>操作</th>
+      </tr>
+    </thead>
+    <tbody id={tbodyId}>
+      {
+        hasKeys ? (
+          keys.map((k) => (
+            <tr>
+              <td class="col-name">{k.name}</td>
+              <td>
+                <code class="key-value">{k.key_prefix}***</code>
+              </td>
+              <td>
+                {k.permissions.length > 0 ? (
+                  k.permissions.map((p) => <span class="scope-badge">{p}</span>)
+                ) : (
+                  <span class="text-muted">-</span>
+                )}
+              </td>
+              <td class="text-muted">{k.created_at}</td>
+              <td class="text-muted">{k.last_used || '从未使用'}</td>
+              <td>
+                <span class={`badge ${k.status === 'active' ? 'badge-success' : 'badge-danger'}`}>
+                  {k.status === 'active' ? '启用' : '禁用'}
+                </span>
+              </td>
+              <td>
+                <div class="row-actions">
+                  <button class="btn btn-ghost btn-sm" type="button" data-action="copy" data-id={k.id}>
+                    复制
+                  </button>
+                  <button class="btn btn-ghost btn-sm" type="button" data-action="toggle" data-id={k.id}>
+                    {k.status === 'active' ? '禁用' : '启用'}
+                  </button>
+                  <button class="btn btn-ghost btn-sm" type="button" data-action="delete" data-id={k.id}>
+                    删除
+                  </button>
+                </div>
+              </td>
+            </tr>
+          ))
+        ) : (
+          <tr>
+            <td colspan={colCount} class="empty-state">{emptyText}</td>
+          </tr>
+        )
+      }
+    </tbody>
+  </table>
+</div>
+
+<style>
+  .api-key-table-wrap {
+    overflow-x: auto;
+  }
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .data-table th {
+    text-align: left;
+    padding: var(--space-3) var(--space-4);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-muted);
+    white-space: nowrap;
+  }
+  .data-table td {
+    padding: var(--space-3) var(--space-4);
+    font-size: var(--text-sm);
+    color: var(--text);
+    border-bottom: 1px solid var(--border-light);
+    vertical-align: middle;
+  }
+  .col-name {
+    font-weight: 500;
+    color: var(--text);
+  }
+  .key-value {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    background: var(--surface-muted);
+    color: var(--text-secondary);
+    padding: 2px var(--space-2);
+    border-radius: var(--radius-xs);
+  }
+  .scope-badge {
+    display: inline-block;
+    padding: 2px var(--space-2);
+    margin: 1px;
+    font-size: var(--text-xs);
+    background: var(--primary-bg);
+    color: var(--primary);
+    border-radius: var(--radius-xs);
+  }
+  .row-actions {
+    display: flex;
+    gap: var(--space-2);
+  }
+  .empty-state {
+    text-align: center;
+    padding: var(--space-6);
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+  }
+  .text-muted {
+    color: var(--text-muted);
+  }
+</style>

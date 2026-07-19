@@ -1,0 +1,248 @@
+---
+/**
+ * SystemForm.astro - 系统设置表单组件
+ *
+ * 服务端渲染系统设置表单，包含站点名称、公司名称、语言、时区
+ * 以及功能开关列表。所有表单字段使用 name 属性，便于页面 JS 读取。
+ *
+ * @example
+ * <SystemForm config={config} />
+ */
+export interface SystemConfig {
+  site_name: string;
+  company_name: string;
+  language: string;
+  timezone: string;
+  features: { [key: string]: boolean };
+}
+
+interface Props {
+  /** 系统配置数据；未提供时使用默认值 */
+  config?: SystemConfig;
+}
+
+const defaultConfig: SystemConfig = {
+  site_name: '',
+  company_name: '',
+  language: 'zh-CN',
+  timezone: 'Asia/Shanghai',
+  features: {},
+};
+
+const config = { ...defaultConfig, ...Astro.props.config };
+
+// 已知功能开关的展示文案；未知 key 回退为 key 本身
+const FEATURE_LABELS: Record<string, { name: string; desc: string }> = {
+  search: { name: '智能搜索', desc: '允许用户使用 AI 增强搜索' },
+  chat: { name: 'AI 对话', desc: '允许用户与知识库进行对话' },
+  feedback: { name: '用户反馈', desc: '允许用户提交反馈' },
+  auto_index: { name: '自动索引', desc: '上传文档后自动建立索引' },
+  audit: { name: '审核工作流', desc: '文档发布前需要审核' },
+  sso: { name: '单点登录', desc: '启用企业 SSO 登录' },
+};
+
+const featureEntries = Object.entries(config.features);
+
+const languageOptions: Array<{ value: string; label: string }> = [
+  { value: 'zh-CN', label: '简体中文' },
+  { value: 'en', label: 'English' },
+  { value: 'ja', label: '日本語' },
+];
+
+const timezoneOptions: Array<{ value: string; label: string }> = [
+  { value: 'Asia/Shanghai', label: 'Asia/Shanghai (UTC+8)' },
+  { value: 'UTC', label: 'UTC' },
+  { value: 'America/New_York', label: 'America/New_York' },
+];
+---
+
+<form class="system-form" id="system-form">
+  <!-- 站点设置 -->
+  <div class="form-grid">
+    <div class="form-group">
+      <label class="form-label" for="system-site-name">站点名称</label>
+      <input
+        type="text"
+        class="form-input"
+        id="system-site-name"
+        name="site_name"
+        value={config.site_name}
+        placeholder="如：企业知识库"
+      />
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="system-company-name">公司名称</label>
+      <input
+        type="text"
+        class="form-input"
+        id="system-company-name"
+        name="company_name"
+        value={config.company_name}
+        placeholder="如：XX 科技有限公司"
+      />
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="system-language">语言</label>
+      <select class="form-input" id="system-language" name="language">
+        {
+          languageOptions.map((o) => (
+            <option value={o.value} selected={o.value === config.language}>
+              {o.label}
+            </option>
+          ))
+        }
+      </select>
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="system-timezone">时区</label>
+      <select class="form-input" id="system-timezone" name="timezone">
+        {
+          timezoneOptions.map((o) => (
+            <option value={o.value} selected={o.value === config.timezone}>
+              {o.label}
+            </option>
+          ))
+        }
+      </select>
+    </div>
+  </div>
+
+  <!-- 功能开关 -->
+  <div class="features-section">
+    <label class="form-label">功能开关</label>
+    <div class="features-list">
+      {
+        featureEntries.length > 0 ? (
+          featureEntries.map(([key, enabled]) => {
+            const meta = FEATURE_LABELS[key] || { name: key, desc: '' };
+            return (
+              <div class="feature-row">
+                <div class="feature-info">
+                  <div class="feature-name">{meta.name}</div>
+                  {meta.desc && <div class="feature-desc">{meta.desc}</div>}
+                </div>
+                <label class="switch">
+                  <input
+                    type="checkbox"
+                    name="features"
+                    value={key}
+                    checked={enabled}
+                  />
+                  <span class="switch-slider"></span>
+                </label>
+              </div>
+            );
+          })
+        ) : (
+          <div class="empty-state">暂无功能开关</div>
+        )
+      }
+    </div>
+  </div>
+
+  <!-- 操作按钮 -->
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">保存设置</button>
+  </div>
+</form>
+
+<style>
+  .system-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-5);
+  }
+  .form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-4);
+  }
+  .features-section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+  .features-list {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .feature-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-4);
+    border-bottom: 1px solid var(--border-light);
+    gap: var(--space-4);
+  }
+  .feature-row:last-child {
+    border-bottom: none;
+  }
+  .feature-info {
+    flex: 1;
+    min-width: 0;
+  }
+  .feature-name {
+    font-size: var(--text-base);
+    font-weight: 500;
+    color: var(--text);
+    margin-bottom: var(--space-1);
+  }
+  .feature-desc {
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+  }
+  .switch {
+    position: relative;
+    display: inline-block;
+    width: 44px;
+    height: 24px;
+    flex-shrink: 0;
+  }
+  .switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+  .switch-slider {
+    position: absolute;
+    cursor: pointer;
+    inset: 0;
+    background: var(--border-dark);
+    border-radius: var(--radius-full);
+    transition: var(--transition-fast);
+  }
+  .switch-slider::before {
+    content: '';
+    position: absolute;
+    height: 18px;
+    width: 18px;
+    left: 3px;
+    bottom: 3px;
+    background: var(--surface);
+    border-radius: 50%;
+    transition: var(--transition-fast);
+  }
+  .switch input:checked + .switch-slider {
+    background: var(--primary);
+  }
+  .switch input:checked + .switch-slider::before {
+    transform: translateX(20px);
+  }
+  .empty-state {
+    text-align: center;
+    padding: var(--space-4);
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+  }
+  .form-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-3);
+  }
+  @media (max-width: 768px) {
+    .form-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

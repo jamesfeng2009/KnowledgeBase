@@ -1,0 +1,122 @@
+---
+/**
+ * KbCard.astro - 知识库卡片组件
+ *
+ * 展示单个知识库的图标、名称、描述、文档数与更新时间，点击跳转到知识库详情。
+ * 样式沿用原 knowledge/index.astro 的 .kb-card 结构（参见原文件 66-108 行），
+ * 通过 CSS 变量驱动语义色，不硬编码颜色。
+ *
+ * 说明：使用 `<style is:global>` 而非 scoped，与 common/Button.astro 保持一致——
+ * 因为 knowledge/index.astro 的客户端 JS 会动态生成同 class 的 .kb-card 元素，
+ * is:global 可确保服务端渲染与 JS 动态生成的卡片均能命中样式。
+ *
+ * @example
+ * <KbCard kb={kb} />
+ * <KbCard kb={kb} href={`/manage/kb?id=${kb.id}`} />
+ */
+interface Props {
+  /** 知识库数据 */
+  kb: {
+    id: string;
+    name: string;
+    description: string;
+    doc_count: number;
+    updated_at: string;
+    icon?: string;
+  };
+  /** 可选跳转链接，默认 `/knowledge?id={kb.id}` */
+  href?: string;
+}
+
+const { kb, href } = Astro.props;
+
+const linkHref = href ?? `/knowledge?id=${kb.id}`;
+
+// 基于知识库 id 确定性映射到 4 种语义色，避免硬编码颜色
+const colorKeys = ['primary', 'success', 'warning', 'info'] as const;
+let hash = 0;
+for (let i = 0; i < kb.id.length; i++) {
+  hash = (hash * 31 + kb.id.charCodeAt(i)) >>> 0;
+}
+const colorKey = colorKeys[hash % colorKeys.length];
+const iconVar = `var(--${colorKey})`;
+const iconBgVar = `var(--${colorKey}-bg)`;
+
+// 默认图标
+const icon = kb.icon || '📚';
+
+// 相对时间格式化
+function formatTime(ts: string): string {
+  if (!ts) return '';
+  const t = new Date(ts).getTime();
+  if (isNaN(t)) return String(ts);
+  const diff = Date.now() - t;
+  if (diff < 0) return '刚刚';
+  if (diff < 3600000) return Math.floor(diff / 60000) + ' 分钟前';
+  if (diff < 86400000) return Math.floor(diff / 3600000) + ' 小时前';
+  if (diff < 86400000 * 30) return Math.floor(diff / 86400000) + ' 天前';
+  const d = new Date(t);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+---
+
+<a href={linkHref} class="card kb-card">
+  <div class="kb-card-header">
+    <div class="kb-card-icon" style={`background: ${iconBgVar};`}>{icon}</div>
+    <div>
+      <div class="kb-card-title">{kb.name}</div>
+      <div class="text-muted" style="font-size: var(--text-xs);">{kb.doc_count || 0} 篇文档</div>
+    </div>
+  </div>
+  <p class="kb-card-desc">{kb.description}</p>
+  <div class="kb-card-footer">
+    <span>更新于 {formatTime(kb.updated_at)}</span>
+    <span style={`color: ${iconVar};`}>浏览 ›</span>
+  </div>
+</a>
+
+<style is:global>
+  .kb-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    cursor: pointer;
+    text-decoration: none;
+    color: inherit;
+  }
+  .kb-card-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+  }
+  .kb-card-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: var(--radius);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+    flex-shrink: 0;
+  }
+  .kb-card-title {
+    font-size: var(--text-lg);
+    font-weight: 600;
+    color: var(--text);
+  }
+  .kb-card-desc {
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    line-height: var(--lh-relaxed);
+    flex: 1;
+  }
+  .kb-card-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--border);
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+  }
+</style>

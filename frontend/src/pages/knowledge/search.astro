@@ -71,19 +71,13 @@ const breadcrumb = [{ label: '知识', href: '/knowledge' }, { label: '知识搜
         <div class="filter-section">
           <div class="filter-label">知识库</div>
           <div id="filter-kb">
-            <label class="filter-item"><input type="checkbox" checked /> 全部知识库</label>
-            <label class="filter-item"><input type="checkbox" /> 公司制度</label>
-            <label class="filter-item"><input type="checkbox" /> 产品文档</label>
-            <label class="filter-item"><input type="checkbox" /> 技术文档</label>
+            <div class="loading-state" style="padding: var(--space-2) 0; text-align: left;">加载中...</div>
           </div>
         </div>
         <div class="filter-section">
           <div class="filter-label">标签</div>
           <div id="filter-tags" style="display: flex; flex-wrap: wrap; gap: var(--space-2);">
-            <span class="tag" data-tag="人事">人事</span>
-            <span class="tag" data-tag="技术">技术</span>
-            <span class="tag" data-tag="产品">产品</span>
-            <span class="tag" data-tag="财务">财务</span>
+            <div class="loading-state" style="padding: var(--space-2) 0; text-align: left;">加载中...</div>
           </div>
         </div>
         <div class="filter-section">
@@ -385,9 +379,9 @@ const breadcrumb = [{ label: '知识', href: '/knowledge' }, { label: '知识搜
 </style>
 
 <script>
-  import { unifiedSearch, type ExternalSearchResult } from '@/lib/apis/knowledge';
+  import { unifiedSearch, searchKnowledge, getKnowledgeBases, type ExternalSearchResult, type SearchResult } from '@/lib/apis/knowledge';
+  import { logSearch, getSearchHotwords } from '@/lib/apis/analytics';
 
-  const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
   const TOKEN_KEY = 'ekb_access_token';
 
   let searchType = 'hybrid';
@@ -396,12 +390,79 @@ const breadcrumb = [{ label: '知识', href: '/knowledge' }, { label: '知识搜
   let lastUnifiedResults: Record<string, ExternalSearchResult[]> = {};
   let activeSourceTab = 'all';
   let lastUnifiedQuery = '';
+  const selectedKbIds = new Set<string>();
 
   // 从 URL 读取参数
   const params = new URLSearchParams(window.location.search);
   const initQ = params.get('q') || params.get('tag') || '';
+  const initKb = params.get('kb') || '';
   if (initQ) {
     (document.getElementById('search-input') as HTMLInputElement).value = initQ;
+  }
+  if (initKb) selectedKbIds.add(initKb);
+
+  function escapeHtml(s: string): string {
+    return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  // ===== 加载知识库筛选面板 =====
+  async function loadKbFilters() {
+    const container = document.getElementById('filter-kb')!;
+    try {
+      const res = await getKnowledgeBases(1, 100);
+      const kbs = res?.items || [];
+      if (kbs.length === 0) {
+        container.innerHTML = '<div class="text-muted" style="font-size: var(--text-sm); padding: var(--space-2) 0;">暂无知识库</div>';
+        return;
+      }
+      container.innerHTML = kbs
+        .map(
+          (kb) => `
+        <label class="filter-item">
+          <input type="checkbox" value="${escapeHtml(kb.id)}" ${selectedKbIds.has(kb.id) ? 'checked' : ''} />
+          ${escapeHtml(kb.name)} <span class="text-muted">(${kb.document_count || 0})</span>
+        </label>`
+        )
+        .join('');
+      container.querySelectorAll('input[type="checkbox"]').forEach((el) => {
+        el.addEventListener('change', () => {
+          const id = (el as HTMLInputElement).value;
+          if ((el as HTMLInputElement).checked) selectedKbIds.add(id);
+          else selectedKbIds.delete(id);
+          if ((document.getElementById('search-input') as HTMLInputElement).value.trim() && searchMode === 'knowledge') {
+            doSearch();
+          }
+        });
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '未知错误';
+      container.innerHTML = `<div class="text-muted" style="font-size: var(--text-sm); padding: var(--space-2) 0; color: var(--danger);">知识库加载失败：${escapeHtml(msg)}</div>`;
+    }
+  }
+
+  // ===== 加载标签筛选面板（取搜索热词） =====
+  async function loadTagFilters() {
+    const container = document.getElementById('filter-tags')!;
+    try {
+      const data = await getSearchHotwords(30, 10);
+      if (!data || data.length === 0) {
+        container.innerHTML = '<div class="text-muted" style="font-size: var(--text-sm); padding: var(--space-2) 0;">暂无标签</div>';
+        return;
+      }
+      container.innerHTML = data
+        .map((t) => `<span class="tag" data-tag="${escapeHtml(t.keyword)}">${escapeHtml(t.keyword)}</span>`)
+        .join('');
+      container.querySelectorAll('.tag').forEach((el) => {
+        el.addEventListener('click', () => {
+          const tag = (el as HTMLElement).dataset.tag!;
+          (document.getElementById('search-input') as HTMLInputElement).value = tag;
+          doSearch();
+        });
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '未知错误';
+      container.innerHTML = `<div class="text-muted" style="font-size: var(--text-sm); padding: var(--space-2) 0; color: var(--danger);">标签加载失败：${escapeHtml(msg)}</div>`;
+    }
   }
 
   async function doSearch() {
@@ -424,57 +485,43 @@ const breadcrumb = [{ label: '知识', href: '/knowledge' }, { label: '知识搜
     container.innerHTML = '<div class="search-hint"><div class="spinner" style="margin: 0 auto;"></div><p class="text-muted" style="margin-top: var(--space-3);">搜索中...</p></div>';
 
     try {
-      const res = await fetch(
-        `${API_BASE}/api/v1/knowledge/search?q=${encodeURIComponent(query)}&type=${searchType}`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      let results: any[] = [];
-      if (res.ok) {
-        const result = await res.json();
-        results = result.data?.items || result.data || [];
+      const searchParams: { q: string; kb_ids?: string; search_type?: string; page?: number; page_size?: number } = {
+        q: query,
+        search_type: searchType,
+        page: 1,
+        page_size: 20,
+      };
+      if (selectedKbIds.size > 0) {
+        searchParams.kb_ids = Array.from(selectedKbIds).join(',');
       }
-      if (results.length === 0) {
-        results = mockResults(query);
+      const timeRange = (document.getElementById('filter-time') as HTMLSelectElement).value;
+      if (timeRange) {
+        // 后端如未支持 days 参数，仅作为本地筛选条件传递
+        (searchParams as Record<string, string | number>).days = Number(timeRange);
       }
+      const res = await searchKnowledge(searchParams);
+      const results: SearchResult[] = res?.items || [];
       renderResults(results, query);
-    } catch {
-      renderResults(mockResults(query), query);
+      // 记录搜索行为（失败静默，不影响主流程）
+      try {
+        await logSearch(query, results.length, 'knowledge');
+      } catch {
+        // 静默
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '未知错误';
+      container.innerHTML = `
+        <div class="search-hint">
+          <div style="font-size: 48px;">⚠️</div>
+          <h3>搜索失败</h3>
+          <p class="text-muted">${escapeHtml(msg)}</p>
+          <button class="btn btn-outline btn-sm" id="retry-search" style="margin-top: var(--space-3);">重试</button>
+        </div>`;
+      document.getElementById('retry-search')?.addEventListener('click', doSearch);
     }
   }
 
-  function mockResults(query: string): any[] {
-    return [
-      {
-        id: 'd1',
-        title: '员工差旅报销管理办法',
-        snippet: `本规定明确了员工出差${query}的申请、审批和报销流程，包括交通、住宿、餐饮等费用标准...`,
-        kb_name: '公司制度',
-        score: 0.95,
-        tags: ['财务', '人事'],
-        updated_at: '2026-06-15',
-      },
-      {
-        id: 'd2',
-        title: '费用报销操作指南',
-        snippet: `详细的${query}操作步骤说明，包含系统截图和常见问题解答...`,
-        kb_name: '公司制度',
-        score: 0.88,
-        tags: ['财务'],
-        updated_at: '2026-05-20',
-      },
-      {
-        id: 'd3',
-        title: '财务管理制度汇编',
-        snippet: `包含预算管理、${query}、资金管理等多个模块的综合性制度文件...`,
-        kb_name: '公司制度',
-        score: 0.82,
-        tags: ['财务', '管理'],
-        updated_at: '2026-04-10',
-      },
-    ];
-  }
-
-  function renderResults(results: any[], query: string) {
+  function renderResults(results: SearchResult[], query: string) {
     const container = document.getElementById('search-results')!;
     if (results.length === 0) {
       container.innerHTML = `
@@ -491,14 +538,13 @@ const breadcrumb = [{ label: '知识', href: '/knowledge' }, { label: '知识搜
       ${results
         .map(
           (r) => `
-        <div class="result-item" data-id="${r.id}">
+        <div class="result-item" data-id="${escapeHtml(r.id)}">
           <div class="result-item-title">${highlightText(r.title, query)}</div>
-          <p class="result-item-snippet">${highlightText(r.snippet, query)}</p>
+          <p class="result-item-snippet">${highlightText(r.highlight || r.content, query)}</p>
           <div class="result-item-meta">
-            <span class="badge badge-primary">${escapeHtml(r.kb_name)}</span>
+            <span class="badge badge-primary">${escapeHtml(r.kb_name || '')}</span>
             <span>相关度 ${Math.round((r.score || 0) * 100)}%</span>
-            ${r.tags?.map((t: string) => `<span class="tag">${escapeHtml(t)}</span>`).join('') || ''}
-            <span>${escapeHtml(r.updated_at || '')}</span>
+            <span>${escapeHtml(r.doc_type || '')}</span>
           </div>
         </div>`
         )
@@ -506,20 +552,18 @@ const breadcrumb = [{ label: '知识', href: '/knowledge' }, { label: '知识搜
 
     container.querySelectorAll('.result-item').forEach((el) => {
       el.addEventListener('click', () => {
-        window.location.href = `/knowledge/detail?id=${(el as HTMLElement).dataset.id}`;
+        const id = (el as HTMLElement).dataset.id;
+        if (id) window.location.href = `/knowledge/detail?id=${encodeURIComponent(id)}`;
       });
     });
   }
 
   function highlightText(text: string, query: string): string {
+    if (!text) return '';
     if (!query) return escapeHtml(text);
     const escaped = escapeHtml(text);
     const reg = new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
     return escaped.replace(reg, '<span class="highlight">$1</span>');
-  }
-
-  function escapeHtml(s: string): string {
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
   // ===== 统一搜索（跨系统） =====
@@ -543,12 +587,26 @@ const breadcrumb = [{ label: '知识', href: '/knowledge' }, { label: '知识搜
       lastUnifiedResults = result || {};
       lastUnifiedQuery = query;
       activeSourceTab = 'all';
+      // 统一搜索同样记录搜索行为
+      const totalCount = SOURCE_ORDER.reduce((sum, s) => sum + (lastUnifiedResults[s]?.length || 0), 0);
+      try {
+        await logSearch(query, totalCount, 'unified');
+      } catch {
+        // 静默
+      }
       renderUnifiedResults(lastUnifiedResults, query);
     } catch (err) {
-      alert('统一搜索失败：' + (err instanceof Error ? err.message : '未知错误'));
+      const msg = err instanceof Error ? err.message : '未知错误';
+      container.innerHTML = `
+        <div class="search-hint">
+          <div style="font-size: 48px;">⚠️</div>
+          <h3>统一搜索失败</h3>
+          <p class="text-muted">${escapeHtml(msg)}</p>
+          <button class="btn btn-outline btn-sm" id="retry-unified" style="margin-top: var(--space-3);">重试</button>
+        </div>`;
+      document.getElementById('retry-unified')?.addEventListener('click', () => doUnifiedSearch(query));
       lastUnifiedResults = {};
       lastUnifiedQuery = query;
-      renderUnifiedResults({}, query);
     }
   }
 
@@ -660,12 +718,11 @@ const breadcrumb = [{ label: '知识', href: '/knowledge' }, { label: '知识搜
     });
   });
 
-  document.querySelectorAll('#filter-tags .tag').forEach((el) => {
-    el.addEventListener('click', () => {
-      const tag = (el as HTMLElement).dataset.tag!;
-      (document.getElementById('search-input') as HTMLInputElement).value = tag;
+  // 时间范围筛选：变更后触发重新搜索
+  document.getElementById('filter-time')?.addEventListener('change', () => {
+    if (searchMode === 'knowledge' && (document.getElementById('search-input') as HTMLInputElement).value.trim()) {
       doSearch();
-    });
+    }
   });
 
   // 搜索模式切换：知识库搜索 / 统一搜索
@@ -714,6 +771,10 @@ const breadcrumb = [{ label: '知识', href: '/knowledge' }, { label: '知识搜
       }
     });
   });
+
+  // 初始化：加载知识库 + 标签筛选
+  loadKbFilters();
+  loadTagFilters();
 
   // 如果有初始查询，自动搜索
   if (initQ) doSearch();

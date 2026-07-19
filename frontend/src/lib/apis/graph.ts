@@ -68,7 +68,12 @@ export function getRecommendations(docId: string, topK = 5): Promise<Recommendat
   return getData<Recommendation[]>(`${BASE}/recommendations/${docId}`, { top_k: topK });
 }
 
-/** 从文档构建知识图谱 */
+/**
+ * 从文档构建知识图谱
+ *
+ * NOTE: 当前 dead code。未在任何页面或组件中被引用，但保留供 admin
+ * 图谱管理页对接使用（admin 可能需要从文档手动构建图谱）。
+ */
 export function buildGraphFromDocument(docId: string, useRules = true, useLlm = true): Promise<{ nodes_created: number; edges_created: number }> {
   return postData<{ nodes_created: number; edges_created: number }>(`${BASE}/documents/${docId}/build-graph?use_rules=${useRules}&use_llm=${useLlm}`);
 }

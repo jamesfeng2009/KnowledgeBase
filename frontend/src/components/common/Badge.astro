@@ -1,0 +1,42 @@
+---
+/**
+ * Badge.astro - 徽章组件
+ *
+ * 用于状态标记、计数显示等场景。
+ * 复用 global.css 中的 .badge / .badge-primary / .badge-success /
+ * .badge-warning / .badge-danger 类，补充 info 变体与尺寸类。
+ *
+ * @example
+ * <Badge variant="success">已通过</Badge>
+ * <Badge variant="warning" size="sm">待审核</Badge>
+ */
+interface Props {
+  variant?: 'primary' | 'success' | 'warning' | 'danger' | 'info';
+  size?: 'sm' | 'md';
+}
+
+const { variant = 'primary', size = 'md' } = Astro.props;
+---
+
+<span class={`badge badge-${variant} badge-${size}`}><slot /></span>
+
+<style>
+  /* 补充 global.css 中缺失的 info 变体 */
+  .badge-info {
+    background: var(--info-bg);
+    color: var(--info);
+  }
+
+  /* sm 尺寸：更紧凑 */
+  .badge-sm {
+    padding: 1px var(--space-1);
+    font-size: var(--text-xs);
+    line-height: 1.4;
+  }
+
+  /* md 尺寸：默认大小（显式声明以便 badge-md 类命中） */
+  .badge-md {
+    padding: 2px var(--space-2);
+    font-size: var(--text-xs);
+  }
+</style>

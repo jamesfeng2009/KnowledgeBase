@@ -1,0 +1,58 @@
+---
+/**
+ * PageHeader.astro - 页面头部组件
+ *
+ * 统一各页面的标题区域结构，左侧展示标题与可选副标题，
+ * 右侧通过默认插槽接收操作按钮/链接。
+ * 复用 global.css 中的 .page-header / .page-title 类。
+ *
+ * @example
+ * <PageHeader title="用户管理" />
+ * <PageHeader title="知识首页" subtitle="浏览所有知识库与文档">
+ *   <Button variant="primary" href="/manage/kb">管理知识库</Button>
+ * </PageHeader>
+ */
+interface Props {
+  /** 页面标题 */
+  title: string;
+  /** 可选副标题 */
+  subtitle?: string;
+}
+
+const { title, subtitle } = Astro.props;
+---
+
+<div class="page-header page-header-comp">
+  <div class="page-header-left">
+    <h1 class="page-title">{title}</h1>
+    {subtitle && <p class="page-header-subtitle text-muted">{subtitle}</p>}
+  </div>
+  <div class="page-header-actions">
+    <slot />
+  </div>
+</div>
+
+<style>
+  .page-header-comp {
+    align-items: center;
+  }
+
+  .page-header-left {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    min-width: 0;
+  }
+
+  .page-header-subtitle {
+    font-size: var(--text-sm);
+    line-height: var(--lh-normal);
+  }
+
+  .page-header-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    flex-shrink: 0;
+  }
+</style>

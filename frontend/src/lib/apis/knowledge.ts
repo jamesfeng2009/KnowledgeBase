@@ -2,7 +2,7 @@
  * 知识库与文档 API 封装
  * 对接后端 knowledge.py + documents.py 路由
  */
-import { getData, postData, putData, delData, upload, type PageResponse } from '../api';
+import { getData, postData, putData, delData, type PageResponse } from '../api';
 
 const BASE = '/api/v1';
 
@@ -64,10 +64,6 @@ export function getKnowledgeBases(page = 1, size = 20): Promise<PageResponse<Kno
   return getData<PageResponse<KnowledgeBase>>(`${BASE}/knowledge`, { page, size });
 }
 
-export function getKnowledgeBase(kbId: string): Promise<KnowledgeBase> {
-  return getData<KnowledgeBase>(`${BASE}/knowledge/${kbId}`);
-}
-
 export function createKnowledgeBase(data: { name: string; description?: string; visibility?: string }): Promise<KnowledgeBase> {
   return postData<KnowledgeBase>(`${BASE}/knowledge`, data);
 }
@@ -78,10 +74,6 @@ export function updateKnowledgeBase(kbId: string, data: Partial<KnowledgeBase>):
 
 export function deleteKnowledgeBase(kbId: string): Promise<void> {
   return delData<void>(`${BASE}/knowledge/${kbId}`);
-}
-
-export function getKbDocuments(kbId: string, page = 1, size = 20): Promise<PageResponse<Document>> {
-  return getData<PageResponse<Document>>(`${BASE}/knowledge/${kbId}/documents`, { page, size });
 }
 
 // ===== 文档管理 =====
@@ -98,69 +90,9 @@ export function updateDocument(docId: string, data: Partial<Document>): Promise<
   return putData<Document>(`${BASE}/documents/${docId}`, data);
 }
 
-export function deleteDocument(docId: string): Promise<void> {
-  return delData<void>(`${BASE}/documents/${docId}`);
-}
-
-/** 上传文档文件（触发 Celery 异步解析） */
-export function uploadDocument(
-  file: File,
-  kbId: string,
-  title?: string,
-  onProgress?: (percent: number) => void
-): Promise<Document> {
-  return new Promise((resolve, reject) => {
-    const formData = new FormData();
-    formData.append('file', file);
-    if (title) formData.append('title', title);
-
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', `${import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000'}${BASE}/documents/upload?kb_id=${kbId}`);
-
-    // 注入 Token
-    const token = localStorage.getItem('ekb_access_token');
-    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
-
-    if (onProgress) {
-      xhr.upload.onprogress = (e) => {
-        if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
-      };
-    }
-
-    xhr.onload = () => {
-      if (xhr.status === 401) {
-        localStorage.removeItem('ekb_access_token');
-        window.location.href = '/auth/login';
-        reject(new Error('登录已过期'));
-        return;
-      }
-      try {
-        const res = JSON.parse(xhr.responseText);
-        if (xhr.status >= 200 && xhr.status < 300) {
-          resolve(res.data || res);
-        } else {
-          reject(new Error(res.message || `上传失败 (${xhr.status})`));
-        }
-      } catch {
-        reject(new Error('解析响应失败'));
-      }
-    };
-
-    xhr.onerror = () => reject(new Error('网络请求异常'));
-    xhr.send(formData);
-  });
-}
-
 /** 获取文档解析摘要（preview/structure/warnings/pages/char_count/parse_status） */
 export function getDocumentSummary(docId: string): Promise<DocSummary> {
   return getData<DocSummary>(`${BASE}/documents/${docId}/summary`);
-}
-
-/** 上传文档内图片到 R2 */
-export function uploadDocumentImage(docId: string, file: File): Promise<{ url: string; filename: string }> {
-  const formData = new FormData();
-  formData.append('file', file);
-  return upload<{ url: string; filename: string }>(`${BASE}/documents/${docId}/upload-image`, formData);
 }
 
 // ===== 文档版本历史 =====
@@ -188,10 +120,6 @@ export interface SearchResult {
 
 export function searchKnowledge(params: { q: string; kb_ids?: string; search_type?: string; page?: number; page_size?: number }): Promise<PageResponse<SearchResult>> {
   return getData<PageResponse<SearchResult>>(`${BASE}/search`, params as Record<string, string | number>);
-}
-
-export function searchSuggest(q: string, limit = 10): Promise<string[]> {
-  return getData<string[]>(`${BASE}/search/suggest`, { q, limit });
 }
 
 // ===== 统一搜索 =====
