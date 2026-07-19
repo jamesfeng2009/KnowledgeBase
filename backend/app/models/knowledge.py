@@ -28,6 +28,10 @@ class KnowledgeBase(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
         UUID(as_uuid=True), ForeignKey("departments.id"), nullable=True, comment="部门 ID"
     )
     tags: Mapped[list | None] = mapped_column(JSONB, nullable=True, comment="标签列表")
+    # 多租户隔离 — SaaS 模式下按租户隔离知识库，私有部署为 NULL
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True, comment="租户 ID（多租户隔离）"
+    )
 
     documents: Mapped[list["Document"]] = relationship(back_populates="knowledge_base")
 
@@ -81,6 +85,10 @@ class Document(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     )
     char_count: Mapped[int] = mapped_column(
         Integer, default=0, nullable=False, comment="正文字符数"
+    )
+    # 多租户隔离 — SaaS 模式下按租户隔离文档，私有部署为 NULL
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True, comment="租户 ID（多租户隔离）"
     )
 
     knowledge_base: Mapped[KnowledgeBase] = relationship(back_populates="documents")

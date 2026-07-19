@@ -8,8 +8,9 @@
 """
 
 import uuid
+from datetime import datetime
 
-from sqlalchemy import Boolean, ForeignKey, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -37,6 +38,13 @@ class Notification(UUIDMixin, TimestampMixin, Base):
         UUID(as_uuid=True), ForeignKey("documents.id"), nullable=True, comment="关联文档 ID"
     )
     is_read: Mapped[bool] = mapped_column(Boolean, default=False, comment="是否已读")
-    read_at: Mapped[str | None] = mapped_column(
-        String(30), nullable=True, comment="已读时间 ISO 格式"
+    # P1-3: read_at 改为 DateTime 类型（原 String(30) 无法做时间范围查询/排序）
+    read_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="已读时间（UTC 时间戳）",
+    )
+    # 多租户隔离
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True, comment="租户 ID（多租户隔离）"
     )

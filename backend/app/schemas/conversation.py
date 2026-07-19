@@ -49,6 +49,7 @@ class ConversationResponse(BaseModel):
     title: str = Field(..., description="对话标题")
     agent_type: AgentType = Field(..., description="Agent 类型")
     created_at: datetime = Field(..., description="创建时间")
+    updated_at: datetime = Field(..., description="更新时间")
 
 
 class MessageCreate(BaseModel):
@@ -81,6 +82,7 @@ class MessageResponse(BaseModel):
     token_count: int = Field(default=0, ge=0, description="Token 消耗")
     model_used: str | None = Field(default=None, description="使用的模型")
     created_at: datetime = Field(..., description="创建时间")
+    updated_at: datetime = Field(..., description="更新时间")
 
 
 class ChatRequest(BaseModel):

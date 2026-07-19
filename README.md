@@ -102,9 +102,9 @@ EnterpriseKnowledge/
 │   │   └── main.py                   # FastAPI 入口（lifespan → alembic upgrade head）
 │   ├── alembic/                      # Alembic 迁移脚本
 │   │   ├── env.py                    # 异步引擎 + 自动导入模型 + compare_type
-│   │   └── versions/                 # 迁移版本（首版 init schema：27 张表）
+│   │   └── versions/                 # 迁移版本（init schema 27 张表 + parse_metadata + tenant_id/checkpoint/usage 元数据）
 │   ├── tasks/                        # Celery 异步任务
-│   ├── tests/                        # 测试（1037 项）
+│   ├── tests/                        # 测试（1100 项）
 │   ├── celery_app.py                 # Celery 入口
 │   └── requirements.txt
 ├── collab-service/                   # Yjs 协作服务（Node.js + TypeScript）
@@ -1407,7 +1407,7 @@ python -c "from app.utils.migration import stamp_head; stamp_head()"
 ```bash
 cd backend
 
-# 运行全部测试（855 项）
+# 运行全部测试（1100 项）
 python -m pytest --tb=short -q
 
 # 运行特定模块测试
@@ -1426,6 +1426,8 @@ python -m pytest tests/test_migration.py -v               # Alembic 迁移 + Pyd
 python -m pytest tests/test_quality_guard.py -v           # RAG 质量守卫（检索+生成双层评估）
 python -m pytest tests/test_rate_limiter.py -v            # API 限流（令牌桶+客户端隔离+FastAPI 集成）
 python -m pytest tests/test_eval.py -v                    # 离线评测（数据集+Recall/MRR/NDCG+回归基线+CLI）
+python -m pytest tests/test_upload_summary.py -v          # P0 上传大小校验 + P1 解析摘要响应 + DB 字段优先读取
+python -m pytest tests/test_model_fields_p0p2.py -v       # P0-P2 字段补全（tenant_id/AgentCheckpoint/stream_agent_response/UsageRecord/Subscription/Response Schema）
 ```
 
 ### 测试覆盖
@@ -1450,8 +1452,9 @@ python -m pytest tests/test_eval.py -v                    # 离线评测（数�
 | `test_minio_client.py` | 8 | MinIO upload/download/delete/exists、懒初始化、bucket 自动创建与缓存 |
 | `test_migration.py` | 46 | Pydantic V2 field_validator（DATABASE_URL/数值/CORS）、model_validator（部署模式/SECRET_KEY）、迁移文件存在性/upgrade/downgrade、alembic env.py 配置、迁移 runner 端到端 SQLite |
 | `test_upload_summary.py` | 53 | P0 文件大小校验（MAX_UPLOAD_SIZE_MB 超限 413/MagicMock 回退）、P1 解析摘要响应（preview/structure/warnings/pages/char_count/parse_status）、结构标签提取、页数推断、解析状态推断、解析任务 warnings 收集、旧格式警告、认证强制、**DB 字段优先读取（page_count/char_count/parse_status/parse_warnings）**、**任务持久化解析元数据**、**迁移文件验证（4 字段 add_column/drop_column）** |
+| `test_model_fields_p0p2.py` | 63 | P0-P2 字段补全：P0-1 tenant_id（KnowledgeBase/Document）、P0-2 MessageRepository limit 参数、P0-3 AgentCheckpoint ORM 模型、P0-4 stream_agent_response 异步生成器、P0-5 ApiKeyResponse expires_at/tenant_id、P1 DocResponse 8 字段、Notification.read_at DateTime 类型、10 模型 tenant_id、UsageRecord duration_ms/success/request_id、Subscription 6 字段补全、P2 Response Schema（7 个）+ updated_at（4 个）、迁移文件验证 |
 | 其他测试 | 215 | API 端点、服务层、模型层、记忆引擎等 |
-| **合计** | **1037** | **全部通过，零回归** |
+| **合计** | **1100** | **全部通过，零回归** |
 
 ---
 

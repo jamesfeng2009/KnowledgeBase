@@ -134,6 +134,23 @@ class DocResponse(BaseModel):
     dept_id: uuid.UUID | None = Field(default=None, description="部门 ID")
     classification: Classification = Field(..., description="密级")
     view_count: int = Field(default=0, ge=0, description="浏览次数")
+    # P1-2: AI 智能处理字段（模型已存在，Schema 补充暴露）
+    summary: str | None = Field(default=None, description="AI 自动摘要")
+    category: str | None = Field(
+        default=None, description="AI 自动分类: 政策/SOP/技术文档/会议纪要/培训资料/产品文档/合同模板"
+    )
+    file_path: str | None = Field(default=None, description="原始文件路径")
+    # P1-1: 解析元数据字段（迁移 a1b2c3d4e5f6 新增）
+    parse_status: str | None = Field(
+        default=None, description="解析状态: parsed/partial/failed/pending"
+    )
+    parse_warnings: list[str] | None = Field(
+        default=None, description="解析警告列表"
+    )
+    page_count: int = Field(default=0, ge=0, description="页数/幻灯片数/工作表数")
+    char_count: int = Field(default=0, ge=0, description="正文字符数")
+    # 多租户隔离
+    tenant_id: uuid.UUID | None = Field(default=None, description="租户 ID")
     created_at: datetime = Field(..., description="创建时间")
     updated_at: datetime = Field(..., description="更新时间")
 

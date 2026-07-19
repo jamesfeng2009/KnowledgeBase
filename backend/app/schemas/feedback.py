@@ -81,3 +81,4 @@ class FeedbackResponse(BaseModel):
     )
     response: str | None = Field(default=None, description="处理回复")
     created_at: datetime = Field(..., description="创建时间")
+    updated_at: datetime = Field(..., description="更新时间")

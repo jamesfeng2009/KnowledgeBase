@@ -27,6 +27,10 @@ class DocumentComment(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
         UUID(as_uuid=True), ForeignKey("document_comments.id"), nullable=True, comment="父评论 ID"
     )
     resolved: Mapped[bool] = mapped_column(default=False, comment="是否已解决")
+    # 多租户隔离
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True, comment="租户 ID（多租户隔离）"
+    )
 
     replies: Mapped[list["DocumentComment"]] = relationship(
         back_populates="parent"

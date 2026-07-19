@@ -285,7 +285,7 @@ class NotificationService:
             return False
 
         notification.is_read = True
-        notification.read_at = datetime.utcnow().isoformat()
+        notification.read_at = datetime.utcnow()
         await self.db.flush()
         return True
 
@@ -312,7 +312,7 @@ class NotificationService:
             )
         )
         notifications = result.scalars().all()
-        now = datetime.utcnow().isoformat()
+        now = datetime.utcnow()
         for n in notifications:
             n.is_read = True
             n.read_at = now

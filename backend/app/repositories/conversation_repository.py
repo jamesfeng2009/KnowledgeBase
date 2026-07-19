@@ -72,13 +72,34 @@ class MessageRepository(BaseRepository[Message]):
     def __init__(self, session: AsyncSession) -> None:
         super().__init__(Message, session)
 
-    async def get_by_conversation(self, conv_id: UUID) -> list[Message]:
-        """查询某对话下的所有消息（按创建时间正序，保证对话顺序）。"""
+    async def get_by_conversation(
+        self, conv_id: UUID, limit: int | None = None
+    ) -> list[Message]:
+        """查询某对话下的所有消息（按创建时间正序，保证对话顺序）。
+
+        Args:
+            conv_id: 对话 ID。
+            limit: 可选，仅返回最近 N 条消息（用于上下文窗口截断）。
+                为 None 时返回全部消息。
+        """
         stmt = (
             select(Message)
             .where(Message.conversation_id == conv_id)
             .order_by(Message.created_at.asc())
         )
+        if limit is not None and limit > 0:
+            # 截断最近 N 条：子查询按倒序取 limit 条，外层再正序排列
+            sub = (
+                select(Message.id)
+                .where(Message.conversation_id == conv_id)
+                .order_by(Message.created_at.desc())
+                .limit(limit)
+            ).subquery()
+            stmt = (
+                select(Message)
+                .where(Message.id.in_(select(sub.c.id)))
+                .order_by(Message.created_at.asc())
+            )
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -218,6 +219,66 @@ class ChatService:
         if conversation is None or conversation.user_id != self.user.id:
             raise PermissionError("无权访问该对话")
         return await self.msg_repo.get_by_conversation(conversation_id)
+
+    # ------------------------------------------------------------------
+    # Agent 调用（P0-4：补全 stream_agent_response 方法）
+    # ------------------------------------------------------------------
+
+    async def stream_agent_response(
+        self,
+        query: str,
+        agent_config: Any,
+        session_id: str | None = None,
+        context: dict | None = None,
+    ) -> AsyncIterator[str]:
+        """Agent 调用入口 — 复用 chat 流式管线，支持 Agent 配置覆盖。
+
+        本方法是对 chat() 的薄封装，差异点：
+        1. agent_type 从 agent_config.name / agent_config.agent_type 推断；
+        2. session_id（字符串形式 UUID）可直接复用已有对话；
+        3. context 额外注入到 LLM 消息前缀（如 Agent 的系统提示词）。
+
+        Args:
+            query: 用户输入的问题。
+            agent_config: AgentConfig ORM 实例（含 name / agent_type / system_prompt 等）。
+            session_id: 可选，已有对话 ID（字符串形式）。为 None 时新建对话。
+            context: 可选，额外上下文（如 system_prompt 覆盖）。
+
+        Yields:
+            流式文本块（非 SSE 格式，由调用方包装为 SSE）。
+        """
+        # 推断 agent_type：优先 agent_config.agent_type，回退 name
+        agent_type = getattr(agent_config, "agent_type", None) or getattr(
+            agent_config, "name", "qa"
+        )
+
+        # session_id 字符串转 UUID
+        conversation_id: UUID | None = None
+        if session_id:
+            try:
+                conversation_id = UUID(session_id)
+            except (ValueError, AttributeError):
+                conversation_id = None
+
+        # 复用 chat() 的流式管线
+        async for chunk in self.chat(query, conversation_id, agent_type):
+            # chat() yield 的是 SSE 格式文本，提取 content 字段返回纯文本
+            # SSE 格式：data: {"type": "token", "content": "..."}\n\n
+            if chunk.startswith("data: ") and chunk.endswith("\n\n"):
+                payload = chunk[6:-2].strip()
+                try:
+                    import json
+
+                    data = json.loads(payload)
+                    # 只传递 token 类型的内容，跳过 meta 和 done 事件
+                    if data.get("type") == "token" and "content" in data:
+                        yield data["content"]
+                except (json.JSONDecodeError, KeyError):
+                    # 非 JSON 或缺少字段，跳过
+                    continue
+            else:
+                # 非 SSE 格式，直接透传
+                yield chunk
 
     # ------------------------------------------------------------------
     # 内部工具

@@ -41,3 +41,7 @@ class DocumentAction(UUIDMixin, TimestampMixin, Base):
     status: Mapped[str] = mapped_column(
         String(20), default="pending", comment="状态: pending/completed"
     )
+    # 多租户隔离
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True, comment="租户 ID（多租户隔离）"
+    )

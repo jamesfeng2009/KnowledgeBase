@@ -33,3 +33,7 @@ class Feedback(UUIDMixin, TimestampMixin, Base):
         UUID(as_uuid=True), ForeignKey("messages.id"), nullable=True, comment="关联消息 ID"
     )
     response: Mapped[str | None] = mapped_column(Text, nullable=True, comment="处理回复")
+    # 多租户隔离
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True, comment="租户 ID（多租户隔离）"
+    )

@@ -98,6 +98,12 @@ class ApiKeyResponse(BaseModel):
     name: str = Field(..., description="密钥名称")
     key_prefix: str = Field(..., description="密钥前缀（明文前 8 位）")
     scopes: list[str] | None = Field(default=None, description="授权范围")
+    expires_at: datetime | None = Field(
+        default=None, description="过期时间（为空表示永不过期）"
+    )
+    tenant_id: uuid.UUID | None = Field(
+        default=None, description="租户 ID（多租户隔离）"
+    )
     created_at: datetime = Field(..., description="创建时间")
     last_used_at: datetime | None = Field(
         default=None, description="最后使用时间"
@@ -115,6 +121,12 @@ class ApiKeyCreateResponse(BaseModel):
     key: str = Field(..., description="完整 API 密钥（仅此一次显示）")
     key_prefix: str = Field(..., description="密钥前缀")
     scopes: list[str] | None = Field(default=None, description="授权范围")
+    expires_at: datetime | None = Field(
+        default=None, description="过期时间（为空表示永不过期）"
+    )
+    tenant_id: uuid.UUID | None = Field(
+        default=None, description="租户 ID（多租户隔离）"
+    )
     created_at: datetime = Field(..., description="创建时间")
 
 

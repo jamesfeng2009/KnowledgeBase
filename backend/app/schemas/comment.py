@@ -36,3 +36,4 @@ class CommentResponse(BaseModel):
     parent_id: uuid.UUID | None = Field(default=None, description="父评论 ID")
     resolved: bool = Field(default=False, description="是否已解决")
     created_at: datetime = Field(..., description="创建时间")
+    updated_at: datetime = Field(..., description="更新时间")

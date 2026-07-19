@@ -11,6 +11,7 @@ from app.models.apikey import ApiKey
 from app.models.audit import AuditFlow
 from app.models.base import Base
 from app.models.billing import Subscription, Tenant, UsageRecord
+from app.models.checkpoint import AgentCheckpoint
 from app.models.comment import DocumentComment
 from app.models.conversation import Conversation, Message
 from app.models.feedback import Feedback
@@ -54,4 +55,6 @@ __all__ = [
     "SearchLog",
     # 知识主动推送（3.15）
     "Notification",
+    # LangGraph Agent Loop 状态检查点
+    "AgentCheckpoint",
 ]

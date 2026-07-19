@@ -59,6 +59,10 @@ class MemoryFact(UUIDMixin, TimestampMixin, Base):
     expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, comment="过期时间（NULL=永不过期）"
     )
+    # 多租户隔离
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), nullable=True, comment="租户 ID（多租户隔离）"
+    )
 
 
 class KnowledgeEntity(UUIDMixin, TimestampMixin, Base):
@@ -93,6 +97,10 @@ class KnowledgeEntity(UUIDMixin, TimestampMixin, Base):
         DateTime(timezone=True),
         nullable=True,
         comment="失效时间（NULL=当前有效）",
+    )
+    # 多租户隔离
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), nullable=True, comment="租户 ID（多租户隔离）"
     )
 
 
@@ -130,4 +138,8 @@ class EntityEvent(UUIDMixin, TimestampMixin, Base):
     )
     valid_to: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, comment="失效时间"
+    )
+    # 多租户隔离
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), nullable=True, comment="租户 ID（多租户隔离）"
     )

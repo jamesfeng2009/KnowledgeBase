@@ -23,6 +23,10 @@ class Conversation(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     agent_type: Mapped[str] = mapped_column(
         String(50), default="qa", comment="Agent 类型: qa/workflow/action"
     )
+    # 多租户隔离
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True, comment="租户 ID（多租户隔离）"
+    )
 
     messages: Mapped[list["Message"]] = relationship(
         back_populates="conversation", order_by="Message.created_at"
@@ -44,5 +48,9 @@ class Message(UUIDMixin, TimestampMixin, Base):
     sources: Mapped[list | None] = mapped_column(JSONB, nullable=True, comment="引用来源")
     token_count: Mapped[int] = mapped_column(Integer, default=0, comment="Token 消耗")
     model_used: Mapped[str | None] = mapped_column(String(100), nullable=True, comment="使用的模型")
+    # 多租户隔离
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True, comment="租户 ID（多租户隔离）"
+    )
 
     conversation: Mapped[Conversation] = relationship(back_populates="messages")
