@@ -13,6 +13,9 @@ alembic>=1.14.0
 redis>=5.2.0
 
 # === 对象存储 ===
+# boto3 使用标准 S3 API,可对接 MinIO / RustFS / AWS S3 等任意 S3 兼容存储
+boto3>=1.35.0
+# minio SDK 保留作为 fallback(部分旧路径可能仍依赖)
 minio>=7.2.0
 
 # === 认证 ===
