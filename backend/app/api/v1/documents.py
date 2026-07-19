@@ -139,17 +139,32 @@ async def upload_document_file(
 ) -> ApiResponse[DocResponse]:
     """上传文档文件（保存到 MinIO，触发 Celery 异步处理）。
 
-    支持的文件类型：md / html / docx / pdf。
+    支持的文件类型：md / html / docx / pdf / pptx / xlsx / xls / txt / csv。
     文件内容先存入 MinIO，再创建 Document 记录，最后通过 Celery 异步解析。
 
     P0: 文件大小校验 — 超过 MAX_UPLOAD_SIZE_MB 返回 413。
+    P0: 上传后自动触发 process_document Celery 任务（修复原端点未调用的缺陷）。
+    P0: doc_type_map 补全 pptx/xlsx/xls/txt/csv（修复原映射缺失导致误归 md）。
     """
     service = KnowledgeService(db, user)
 
     # 根据文件扩展名推断文档类型
+    # P0 修复：补全所有受支持的格式，避免 pptx/xlsx 被误归为 md
     filename = file.filename or "unknown"
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "md"
-    doc_type_map = {"md": "md", "html": "html", "docx": "docx", "pdf": "pdf"}
+    doc_type_map = {
+        "md": "md",
+        "markdown": "md",
+        "html": "html",
+        "htm": "html",
+        "docx": "docx",
+        "pdf": "pdf",
+        "pptx": "pptx",
+        "xlsx": "xlsx",
+        "xls": "xls",
+        "txt": "txt",
+        "csv": "csv",
+    }
     doc_type = doc_type_map.get(ext, "md")
 
     # 读取文件内容
@@ -196,11 +211,60 @@ async def upload_document_file(
     doc_repo = DocumentRepository(db)
     await doc_repo.update(doc.id, file_path=file_path)
 
+    # P0 修复：上传成功后立即触发 Celery 异步解析任务
+    # 原端点只存了 MinIO + 创建记录，未调用 process_document.delay()，
+    # 导致上传后文档永远停留在 draft 状态，无法被搜索和使用。
+    try:
+        from tasks.document_tasks import process_document
+
+        process_document.delay(str(doc.id))
+        logger.info("文档 %s 已触发 Celery 异步解析任务", doc.id)
+    except ImportError:
+        logger.warning(
+            "Celery 任务模块未安装，文档 %s 不会自动解析，需手动触发", doc.id
+        )
+    except Exception:
+        # Celery 不可用时不应阻断上传响应，仅记录日志
+        logger.exception("触发 Celery 解析任务失败，文档 %s 需手动处理", doc.id)
+
     return ApiResponse(
         code=0,
         data=DocResponse.model_validate(doc),
         message="success",
     )
+
+
+@router.get("/documents/{doc_id}/progress", response_model=ApiResponse[dict])
+async def get_document_parse_progress(
+    doc_id: UUID,
+    user: User = Depends(get_current_active_user),
+) -> ApiResponse[dict]:
+    """查询文档解析进度（P1 增强）。
+
+    返回 Celery 任务实时写入 Redis 的进度信息：
+    - stage: queued / parsing / chunking / embedding / indexing / publishing / done / failed
+    - current: 当前进度（如当前页码）
+    - total: 总进度（如总页数、总分块数）
+    - message: 人类可读提示
+
+    前端可替代按轮询次数模拟的虚假进度，展示真实解析阶段。
+    Redis 不可用或任务尚未启动时返回 stage="unknown"。
+    """
+    try:
+        from tasks.document_tasks import get_parse_progress
+
+        progress = get_parse_progress(str(doc_id))
+        if progress is None:
+            # 无进度记录 — 可能任务尚未启动或已超时清理
+            progress = {"stage": "unknown", "message": "暂无进度信息"}
+    except ImportError:
+        logger.debug("document_tasks 模块未安装，无法查询解析进度")
+        progress = {"stage": "unknown", "message": "进度查询不可用"}
+    except Exception:
+        logger.exception("查询文档 %s 解析进度失败", doc_id)
+        progress = {"stage": "unknown", "message": "进度查询异常"}
+
+    return ApiResponse(code=0, data=progress, message="success")
 
 
 @router.get("/documents/{doc_id}", response_model=ApiResponse[DocResponse])

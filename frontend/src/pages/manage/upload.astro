@@ -2,8 +2,16 @@
 /**
  * 文档上传页面
  * 拖拽上传区 + 批量上传 + 上传进度 + 文档分类和标签
+ *
+ * P1 体验优化：
+ *   P1-4 客户端文件大小校验（100MB）
+ *   P1-3 上传失败 / 解析失败重试按钮
+ *   P1-1 真实解析进度反馈（对接 getDocumentProgress，替代模拟进度）
+ *   P1-2 扫描件 OCR 标签页（挂载 ScanProcessor React Island）
+ *   P1-5 智能处理进度面板（解析完成后自动触发摘要/标签/分类）
  */
 import DefaultLayout from '@/layouts/DefaultLayout.astro';
+import ScanProcessor from '@/components/management/ScanProcessor';
 
 const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上传' }];
 ---
@@ -14,23 +22,55 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
   </div>
 
   <div class="upload-layout">
-    <!-- 左侧：上传区 -->
+    <!-- 左侧：上传区（含标签页切换） -->
     <div class="upload-main">
-      <!-- 拖拽上传区 -->
-      <div class="upload-zone" id="upload-zone">
-        <div class="upload-zone-icon">📤</div>
-        <h3>拖拽文件到此处，或 <span style="color: var(--primary);">点击选择文件</span></h3>
-        <p class="text-muted">支持 PDF、Word、Excel、PPT、Markdown、图片、视频、音频等格式，单个文件最大 100MB</p>
-        <input type="file" id="file-input" multiple style="display: none;" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.md,.txt,.mp4,.avi,.mov,.mkv,.mp3,.wav,.m4a,.aac,.flac,.ogg,.png,.jpg,.jpeg,.gif,.webp" />
+      <!-- 上传方式标签页：普通上传 / 扫描件 OCR -->
+      <div class="upload-tabs" role="tablist">
+        <button
+          type="button"
+          class="upload-tab active"
+          data-tab="normal"
+          role="tab"
+          aria-selected="true"
+          aria-controls="tab-normal"
+        >📄 普通上传</button>
+        <button
+          type="button"
+          class="upload-tab"
+          data-tab="scan"
+          role="tab"
+          aria-selected="false"
+          aria-controls="tab-scan"
+        >🔍 扫描件 OCR</button>
       </div>
 
-      <!-- 上传列表 -->
-      <div class="card" id="upload-list-card" style="display: none;">
-        <div class="card-header">
-          <h3>上传列表</h3>
-          <button class="btn btn-ghost btn-sm" id="clear-list">清空</button>
+      <!-- 普通上传面板 -->
+      <div class="upload-tab-panel active" id="tab-normal" role="tabpanel">
+        <!-- 拖拽上传区 -->
+        <div class="upload-zone" id="upload-zone">
+          <div class="upload-zone-icon">📤</div>
+          <h3>拖拽文件到此处，或 <span style="color: var(--primary);">点击选择文件</span></h3>
+          <p class="text-muted">支持 PDF、Word、Excel、PPT、Markdown、图片、视频、音频等格式，单个文件最大 100MB</p>
+          <input type="file" id="file-input" multiple style="display: none;" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.md,.txt,.mp4,.avi,.mov,.mkv,.mp3,.wav,.m4a,.aac,.flac,.ogg,.png,.jpg,.jpeg,.gif,.webp" />
         </div>
-        <div id="upload-list"></div>
+
+        <!-- 上传列表 -->
+        <div class="card" id="upload-list-card" style="display: none;">
+          <div class="card-header">
+            <h3>上传列表</h3>
+            <button class="btn btn-ghost btn-sm" id="clear-list">清空</button>
+          </div>
+          <div id="upload-list"></div>
+        </div>
+      </div>
+
+      <!-- 扫描件 OCR 面板（挂载 React Island） -->
+      <div class="upload-tab-panel" id="tab-scan" role="tabpanel">
+        <div class="scan-hint">
+          <span aria-hidden="true">💡</span>
+          <span>上传扫描版 PDF，AI 将自动 OCR 识别文字。点击「使用此文本」后，识别内容将作为新文档入库到右侧选定的目标知识库。</span>
+        </div>
+        <ScanProcessor client:only="react" />
       </div>
     </div>
 
@@ -83,6 +123,56 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
     display: grid;
     grid-template-columns: 1fr 320px;
     gap: var(--space-5);
+  }
+  /* === 上传方式标签页 === */
+  .upload-tabs {
+    display: flex;
+    gap: var(--space-1);
+    margin-bottom: var(--space-4);
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-muted);
+    border-radius: var(--radius) var(--radius) 0 0;
+    padding: 0 var(--space-2);
+  }
+  .upload-tab {
+    padding: var(--space-3) var(--space-4);
+    font-size: var(--text-sm);
+    font-weight: 500;
+    color: var(--text-muted);
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    margin-bottom: -1px;
+  }
+  .upload-tab:hover {
+    color: var(--text);
+    background: var(--surface-hover);
+  }
+  .upload-tab.active {
+    color: var(--primary);
+    border-bottom-color: var(--primary);
+    background: var(--surface);
+  }
+  .upload-tab-panel {
+    display: none;
+  }
+  .upload-tab-panel.active {
+    display: block;
+  }
+  .scan-hint {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+    margin-bottom: var(--space-4);
+    background: var(--info-bg, var(--primary-bg));
+    border-left: 3px solid var(--info, var(--primary));
+    border-radius: var(--radius-sm);
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    line-height: var(--lh-relaxed);
   }
   .upload-zone {
     border: 2px dashed var(--border-dark);
@@ -173,6 +263,10 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
     font-size: var(--text-xs);
     color: var(--text-secondary);
   }
+  .parse-stage-hint {
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+  }
   .parse-stage-indicator {
     display: flex;
     align-items: center;
@@ -249,6 +343,45 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
     gap: var(--space-2);
     margin-top: var(--space-2);
   }
+  /* === 智能处理进度区域 === */
+  .intel-section {
+    margin-top: var(--space-2);
+    padding: var(--space-3);
+    background: var(--surface);
+    border-radius: var(--radius);
+    border: 1px solid var(--border-light);
+  }
+  .intel-section-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin-bottom: var(--space-2);
+    font-size: var(--text-xs);
+  }
+  .intel-stage-indicator {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+  }
+  .intel-stage {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+  }
+  .intel-stage.active .parse-stage-dot {
+    background: var(--info, var(--primary));
+    box-shadow: 0 0 0 3px var(--primary-bg);
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+  .intel-stage.done {
+    color: var(--success);
+  }
+  .intel-stage.done .parse-stage-dot {
+    background: var(--success);
+  }
   @media (max-width: 1024px) {
     .upload-layout {
       grid-template-columns: 1fr;
@@ -257,10 +390,19 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
 </style>
 
 <script>
-  import { getKnowledgeBases, getDocumentSummary } from '@/lib/apis/knowledge';
+  import { getKnowledgeBases, getDocumentSummary, getDocumentProgress } from '@/lib/apis/knowledge';
+  import type { DocParseProgress } from '@/lib/apis/knowledge';
+  import { processIntelligence, getIntelligenceStatus } from '@/lib/apis/intelligence';
+  import { postData } from '@/lib/api';
 
   const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
   const TOKEN_KEY = 'ekb_access_token';
+
+  /** P1-4: 单文件最大 100MB */
+  const MAX_FILE_SIZE = 100 * 1024 * 1024;
+
+  /** 智能处理状态 */
+  type IntelStatus = 'idle' | 'processing' | 'done' | 'unavailable';
 
   interface UploadItem {
     file: File;
@@ -269,11 +411,20 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
     docId?: string;
     parseStatus?: 'pending' | 'processing' | 'completed' | 'failed';
     parseStage?: number; // 0:等待 1:解析中 2:分块 3:向量化 4:完成
+    parseStageHint?: string; // P1-1: 真实进度提示（如 "第 3/10 页"）
     parseWarnings?: string[];
     pageCount?: number;
     charCount?: number;
     parseError?: string;
     polling?: boolean;
+    /** 标记是否为 OCR 文本创建的文档（无文件解析流程） */
+    isOcrDoc?: boolean;
+    /** P1-5: 智能处理状态 */
+    intelStatus?: IntelStatus;
+    intelSummary?: boolean;
+    intelTags?: boolean;
+    intelCategory?: boolean;
+    intelPolling?: boolean;
   }
 
   let uploadItems: UploadItem[] = [];
@@ -296,8 +447,22 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
     return (bytes / 1024 / 1024).toFixed(1) + ' MB';
   }
 
+  /** 格式化时间为 YYYY-MM-DD HH:mm */
+  function formatTime(d: Date): string {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+
+  /**
+   * P1-4: 添加文件时进行客户端大小校验
+   * 超过 100MB 的文件 alert 提示并跳过，不进入上传队列
+   */
   function addFiles(files: FileList | File[]) {
     Array.from(files).forEach((file) => {
+      if (file.size > MAX_FILE_SIZE) {
+        alert(`文件 ${file.name} 超过 100MB 限制`);
+        return;
+      }
       uploadItems.push({ file, progress: 0, status: 'pending' });
     });
     renderList();
@@ -392,7 +557,53 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
     }
   }
 
-  /** 轮询文档解析状态，每 3 秒一次，直到 completed/failed */
+  /**
+   * P1-1: 真实解析进度映射
+   * 将后端 DocParseProgress.stage 映射到前端 parseStage（0-4）
+   * 返回 null 表示需要降级为轮询次数模拟
+   */
+  function mapProgressToStage(progress: DocParseProgress): number | null {
+    switch (progress.stage) {
+      case 'queued':
+        return 0; // 等待中
+      case 'unknown':
+        // 后端无进度记录，降级为模拟
+        return null;
+      case 'parsing':
+        return 1; // 解析中
+      case 'chunking':
+        return 2; // 分块中
+      case 'embedding':
+      case 'indexing':
+      case 'publishing':
+        return 3; // 向量化/索引/发布中
+      case 'done':
+        return 4; // 完成
+      case 'failed':
+        return 0; // 失败
+      default:
+        return null;
+    }
+  }
+
+  /**
+   * P1-1: 构建阶段提示文案
+   * 如果 current/total > 0，显示 "第 X/Y 页" 或 "X/Y 块"
+   * 否则使用后端返回的 message
+   */
+  function buildProgressHint(progress: DocParseProgress): string {
+    if (progress.current > 0 && progress.total > 0) {
+      const unit = progress.stage === 'parsing' ? '页' : '块';
+      return `第 ${progress.current}/${progress.total} ${unit}`;
+    }
+    return progress.message || '';
+  }
+
+  /**
+   * 轮询文档解析状态，每 3 秒一次，直到 completed/failed
+   * P1-1: 同时调用 getDocumentProgress 获取真实阶段进度
+   *       如果 progress 返回 unknown，降级为轮询次数模拟
+   */
   async function pollParseStatus(item: UploadItem) {
     if (!item.docId || item.polling) return;
     item.polling = true;
@@ -401,26 +612,52 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
       try {
         const summary = await getDocumentSummary(item.docId);
         item.parseStatus = (summary.parse_status as UploadItem['parseStatus']) || item.parseStatus;
-        // 推断当前阶段（后端只给 4 个状态，按时间模拟子阶段进度）
-        if (item.parseStatus === 'pending') {
-          item.parseStage = 1;
-        } else if (item.parseStatus === 'processing') {
-          // 根据轮询次数推进展示阶段：1→2→3
-          item.parseStage = Math.min(3, 1 + Math.floor(i / 3));
-        } else if (item.parseStatus === 'completed') {
+
+        // 终态处理
+        if (item.parseStatus === 'completed') {
           item.parseStage = 4;
           item.pageCount = summary.pages;
           item.charCount = summary.char_count;
           item.parseWarnings = summary.warnings || [];
+          item.parseStageHint = '';
+          renderList();
+          item.polling = false;
+          // P1-5: 解析完成后自动触发智能处理
+          triggerIntelligence(item);
+          return;
         } else if (item.parseStatus === 'failed') {
           item.parseStage = 0;
           item.parseError = summary.warnings?.[0] || '文档解析失败';
-        }
-        renderList();
-        if (item.parseStatus === 'completed' || item.parseStatus === 'failed') {
+          item.parseStageHint = '';
+          renderList();
           item.polling = false;
           return;
         }
+
+        // 非终态：尝试获取真实进度
+        let progressSet = false;
+        try {
+          const progress = await getDocumentProgress(item.docId);
+          const mapped = mapProgressToStage(progress);
+          if (mapped !== null) {
+            item.parseStage = mapped;
+            item.parseStageHint = buildProgressHint(progress);
+            progressSet = true;
+          }
+        } catch {
+          // 进度查询失败，降级为模拟
+        }
+
+        // 降级：按轮询次数模拟阶段进度（保持兼容）
+        if (!progressSet) {
+          if (item.parseStatus === 'pending') {
+            item.parseStage = 1;
+          } else if (item.parseStatus === 'processing') {
+            item.parseStage = Math.min(3, 1 + Math.floor(i / 3));
+          }
+          item.parseStageHint = '';
+        }
+        renderList();
       } catch (err) {
         // 单次查询失败不中断轮询，继续重试
         if (i === maxAttempts - 1) {
@@ -438,6 +675,61 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
     item.parseError = '解析超时，请稍后在文档详情页查看';
     item.polling = false;
     renderList();
+  }
+
+  /**
+   * P1-5: 触发文档智能处理（自动摘要/标签/分类）
+   * 智能处理是可选增强，失败不影响主流程（静默降级）
+   */
+  async function triggerIntelligence(item: UploadItem) {
+    if (!item.docId || item.intelPolling) return;
+    item.intelStatus = 'processing';
+    item.intelPolling = true;
+    item.intelSummary = false;
+    item.intelTags = false;
+    item.intelCategory = false;
+    renderList();
+
+    try {
+      // 触发智能处理
+      await processIntelligence(item.docId);
+
+      // 轮询智能处理状态
+      const maxAttempts = 60; // 最长 3 分钟
+      for (let i = 0; i < maxAttempts; i++) {
+        try {
+          const status = await getIntelligenceStatus(item.docId);
+          item.intelSummary = status.has_summary;
+          item.intelTags = status.has_tags;
+          item.intelCategory = status.has_category;
+          if (!status.processing) {
+            item.intelStatus = 'done';
+            renderList();
+            item.intelPolling = false;
+            return;
+          }
+          renderList();
+        } catch {
+          // 单次查询失败不中断，继续重试
+          if (i === maxAttempts - 1) {
+            item.intelStatus = 'unavailable';
+            renderList();
+            item.intelPolling = false;
+            return;
+          }
+        }
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+      }
+      // 超时：静默降级
+      item.intelStatus = 'unavailable';
+      renderList();
+      item.intelPolling = false;
+    } catch {
+      // 智能处理不可用：静默降级，不影响主流程
+      item.intelStatus = 'unavailable';
+      renderList();
+      item.intelPolling = false;
+    }
   }
 
   /** 加载知识库列表填充到下拉框 */
@@ -503,7 +795,8 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
           <div class="progress-bar">
             <div class="progress-bar-fill ${item.status === 'success' ? 'success' : item.status === 'error' ? 'error' : ''}" style="width: ${item.progress}%;"></div>
           </div>
-          ${renderParseSection(item)}
+          ${renderParseSection(item, i)}
+          ${renderIntelligenceSection(item)}
         </div>
         <button class="btn btn-ghost btn-sm" data-index="${i}">✕</button>
       </div>`
@@ -525,14 +818,48 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
         if (docId) window.location.href = `/knowledge/detail?id=${docId}`;
       });
     });
+
+    // P1-3: 绑定"重试上传"按钮
+    list.querySelectorAll('button[data-retry-upload]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const idx = parseInt((btn as HTMLElement).dataset.retryUpload!);
+        const item = uploadItems[idx];
+        if (!item) return;
+        item.status = 'pending';
+        item.progress = 0;
+        item.parseError = undefined;
+        renderList();
+        uploadFile(item);
+      });
+    });
+
+    // P1-3: 绑定"重试解析"按钮
+    list.querySelectorAll('button[data-retry-parse]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const idx = parseInt((btn as HTMLElement).dataset.retryParse!);
+        const item = uploadItems[idx];
+        if (!item || !item.docId) return;
+        // 文档已创建，只需重新轮询解析状态
+        item.parseStatus = 'pending';
+        item.parseStage = 0;
+        item.parseError = undefined;
+        item.parseStageHint = '';
+        item.polling = false;
+        renderList();
+        pollParseStatus(item);
+      });
+    });
   }
 
-  /** 渲染解析进度区域：步骤指示器 + 解析结果 + 警告 + 操作按钮 */
-  function renderParseSection(item: UploadItem): string {
-    // 上传未成功或无 docId 时不显示解析区域（仅上传失败时显示错误）
+  /** 渲染解析进度区域：步骤指示器 + 解析结果 + 警告 + 重试按钮 */
+  function renderParseSection(item: UploadItem, itemIndex: number): string {
+    // P1-3: 上传失败状态显示错误 + 重试按钮
     if (item.status === 'error') {
       if (!item.parseError) return '';
-      return `<div class="parse-error">${escapeHtml(item.parseError)}</div>`;
+      return `<div class="parse-error">${escapeHtml(item.parseError)}</div>
+        <div class="parse-actions">
+          <button class="btn btn-outline btn-sm" data-retry-upload="${itemIndex}">🔄 重试</button>
+        </div>`;
     }
     if (item.status !== 'success' || !item.docId) return '';
     if (!item.parseStatus) return '';
@@ -557,6 +884,7 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
     let html = `<div class="parse-section">
       <div class="parse-section-header">
         <span>解析状态：<span class="badge ${statusBadgeMap[item.parseStatus]}">${statusLabelMap[item.parseStatus] || item.parseStatus}</span></span>
+        ${item.parseStageHint ? `<span class="parse-stage-hint">${escapeHtml(item.parseStageHint)}</span>` : ''}
       </div>
       <div class="parse-stage-indicator">`;
 
@@ -580,9 +908,12 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
     });
     html += `</div>`;
 
-    // 解析失败展示错误
+    // P1-3: 解析失败展示错误 + 重试解析按钮
     if (item.parseStatus === 'failed' && item.parseError) {
       html += `<div class="parse-error">${escapeHtml(item.parseError)}</div>`;
+      html += `<div class="parse-actions">
+        <button class="btn btn-outline btn-sm" data-retry-parse="${itemIndex}">🔄 重试解析</button>
+      </div>`;
     }
 
     // 解析完成展示结果
@@ -607,11 +938,144 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
     return html;
   }
 
+  /**
+   * P1-5: 渲染智能处理进度面板
+   * 仅在智能处理已触发（intelStatus 非 undefined）时显示
+   * 失败时静默显示"智能处理暂不可用"
+   */
+  function renderIntelligenceSection(item: UploadItem): string {
+    if (!item.intelStatus) return '';
+
+    const sections = [
+      { label: '摘要生成', done: item.intelSummary },
+      { label: '标签提取', done: item.intelTags },
+      { label: '分类判断', done: item.intelCategory },
+    ];
+
+    let html = `<div class="intel-section">
+      <div class="intel-section-header">`;
+
+    if (item.intelStatus === 'processing') {
+      html += `<span style="color: var(--text-secondary);">🤖 智能处理中...</span>`;
+    } else if (item.intelStatus === 'done') {
+      html += `<span style="color: var(--success);">✓ 智能处理完成</span>`;
+    } else if (item.intelStatus === 'unavailable') {
+      html += `<span class="text-muted">智能处理暂不可用</span>`;
+    }
+
+    html += `</div>`;
+
+    // 处理中或完成时显示阶段指示器
+    if (item.intelStatus === 'processing' || item.intelStatus === 'done') {
+      html += `<div class="intel-stage-indicator">`;
+      sections.forEach((s, idx) => {
+        const isDone = !!s.done;
+        // 当前激活阶段：处理中且前一项已完成
+        const isActive = item.intelStatus === 'processing' && !isDone &&
+          (idx === 0 || sections[idx - 1].done);
+        let cls = 'intel-stage';
+        if (isDone) cls += ' done';
+        else if (isActive) cls += ' active';
+        html += `<span class="${cls}"><span class="parse-stage-dot"></span>${isDone ? '✓ ' : ''}${s.label}</span>`;
+        if (idx < sections.length - 1) {
+          html += `<span class="parse-stage-arrow">›</span>`;
+        }
+      });
+      html += `</div>`;
+
+      // 完成时显示明细
+      if (item.intelStatus === 'done') {
+        html += `<div class="parse-result">`;
+        if (item.intelSummary) html += `<span class="parse-result-item">✓ 摘要已生成</span>`;
+        if (item.intelTags) html += `<span class="parse-result-item">✓ 标签已提取</span>`;
+        if (item.intelCategory) html += `<span class="parse-result-item">✓ 分类已完成</span>`;
+        html += `</div>`;
+      }
+    }
+
+    html += `</div>`;
+    return html;
+  }
+
+  /**
+   * P1-2: 处理 ScanProcessor 回传的 OCR 文本
+   * 将 OCR 文本作为新文档创建到目标知识库
+   */
+  async function handleOcrText(text: string) {
+    const kbId = (document.getElementById('target-kb') as HTMLSelectElement).value;
+    if (!kbId) {
+      alert('请先选择目标知识库');
+      return;
+    }
+
+    // 生成文档标题：取首行非空文本，截断 30 字符
+    const firstLine = text.split(/\r?\n/).map((l) => l.trim()).find(Boolean) || '';
+    const titleBase = firstLine.slice(0, 30) || '扫描件 OCR 文档';
+    const title = `${titleBase} ${formatTime(new Date())}`;
+
+    // 创建占位 File 用于展示（不实际上传该文件）
+    const file = new File([text], `${title}.md`, { type: 'text/markdown' });
+    const item: UploadItem = {
+      file,
+      progress: 0,
+      status: 'uploading',
+      isOcrDoc: true,
+    };
+    uploadItems.push(item);
+    renderList();
+
+    try {
+      item.progress = 50;
+      renderList();
+
+      // 调用文档创建 API（JSON body，文本直接入库）
+      const doc = await postData<{ id: string }>(
+        `/api/v1/knowledge/${kbId}/documents`,
+        {
+          kb_id: kbId,
+          title,
+          content_text: text,
+          doc_type: 'md',
+        }
+      );
+
+      item.status = 'success';
+      item.progress = 100;
+      item.docId = doc.id;
+      item.charCount = text.length;
+      // OCR 文本文档无需解析流程，跳过 parse section
+      renderList();
+
+      // P1-5: OCR 文档同样触发智能处理
+      triggerIntelligence(item);
+    } catch (err) {
+      item.status = 'error';
+      item.parseError = err instanceof Error ? err.message : 'OCR 文档创建失败';
+      renderList();
+    }
+  }
+
   function escapeHtml(s: string): string {
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
-  // 拖拽上传
+  // === 标签页切换 ===
+  document.querySelectorAll<HTMLButtonElement>('.upload-tab').forEach((tab) => {
+    tab.addEventListener('click', () => {
+      const tabName = tab.dataset.tab;
+      if (!tabName) return;
+      document.querySelectorAll<HTMLButtonElement>('.upload-tab').forEach((t) => {
+        const active = t.dataset.tab === tabName;
+        t.classList.toggle('active', active);
+        t.setAttribute('aria-selected', active ? 'true' : 'false');
+      });
+      document.querySelectorAll<HTMLDivElement>('.upload-tab-panel').forEach((panel) => {
+        panel.classList.toggle('active', panel.id === `tab-${tabName}`);
+      });
+    });
+  });
+
+  // === 拖拽上传 ===
   const zone = document.getElementById('upload-zone')!;
   const fileInput = document.getElementById('file-input') as HTMLInputElement;
 
@@ -635,6 +1099,19 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
   document.getElementById('clear-list')?.addEventListener('click', () => {
     uploadItems = [];
     renderList();
+  });
+
+  // P1-2: 监听 ScanProcessor 回传的 OCR 文本事件
+  // ScanProcessor（React Island, client:only="react"）通过 window CustomEvent
+  // 'ekb:ocr-text' 回传识别后的文本（client:only props 无法序列化函数）
+  window.addEventListener('ekb:ocr-text', (e: Event) => {
+    const detail = (e as CustomEvent<string>).detail;
+    if (detail) {
+      // 切换到普通上传标签页以展示入库进度
+      const normalTab = document.querySelector<HTMLButtonElement>('.upload-tab[data-tab="normal"]');
+      normalTab?.click();
+      handleOcrText(detail);
+    }
   });
 
   // 页面加载时拉取知识库列表

@@ -30,6 +30,89 @@ logger = get_logger(__name__)
 # VLM 并发控制 — 关键帧描述并发上限，防止打满 VLM 服务
 _VLM_SEMAPHORE_LIMIT: int = 3
 
+# P1: 解析进度反馈 — Redis key 前缀和 TTL
+_PROGRESS_KEY_PREFIX = "ekb:parse_progress:"
+_PROGRESS_TTL_SECONDS = 1800  # 30 分钟，与 Celery 软超时对齐
+
+
+def _update_parse_progress(
+    doc_id: str,
+    stage: str,
+    current: int = 0,
+    total: int = 0,
+    message: str = "",
+) -> None:
+    """将解析进度写入 Redis，供前端轮询展示真实进度。
+
+    P1 增强：替代前端按轮询次数模拟的虚假进度。
+
+    Args:
+        doc_id: 文档 ID。
+        stage: 阶段标识，取值：
+            - "queued"      已入队
+            - "parsing"     解析中（current/total 为页码）
+            - "chunking"    分块中
+            - "embedding"   向量化中
+            - "indexing"    索引构建中
+            - "publishing"  发布/审核提交中
+            - "done"        完成
+            - "failed"      失败
+        current: 当前进度（如当前页码）。
+        total: 总进度（如总页数）。
+        message: 人类可读的提示信息。
+    """
+    try:
+        import json
+
+        import redis
+
+        from app.config import get_settings
+
+        settings = get_settings()
+        client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+        payload = {
+            "stage": stage,
+            "current": current,
+            "total": total,
+            "message": message,
+        }
+        client.setex(
+            f"{_PROGRESS_KEY_PREFIX}{doc_id}",
+            _PROGRESS_TTL_SECONDS,
+            json.dumps(payload, ensure_ascii=False),
+        )
+        client.close()
+    except Exception:
+        # Redis 不可用时静默降级 — 进度反馈是增强项，不影响主流程
+        logger.debug("parse_progress.update_failed", doc_id=doc_id, stage=stage)
+
+
+def get_parse_progress(doc_id: str) -> dict[str, Any] | None:
+    """读取解析进度（供 API 端点调用）。
+
+    Args:
+        doc_id: 文档 ID。
+
+    Returns:
+        进度字典 {"stage", "current", "total", "message"}，无记录时返回 None。
+    """
+    try:
+        import json
+
+        import redis
+
+        from app.config import get_settings
+
+        settings = get_settings()
+        client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+        raw = client.get(f"{_PROGRESS_KEY_PREFIX}{doc_id}")
+        client.close()
+        if raw:
+            return json.loads(raw)
+    except Exception:
+        logger.debug("parse_progress.read_failed", doc_id=doc_id)
+    return None
+
 
 def _count_pages_from_text(text: str, doc_type: str) -> int:
     """从解析后的文本推断文档页数。
@@ -89,6 +172,9 @@ def process_document(self, doc_id: str) -> dict[str, Any]:
     """
     logger.info("document.task_started", doc_id=doc_id)
 
+    # P1: 标记任务已入队
+    _update_parse_progress(doc_id, stage="queued", message="文档已加入解析队列")
+
     try:
         # 在事件循环中执行异步操作
         result = asyncio.run(_process_document_async(doc_id))
@@ -104,6 +190,10 @@ def process_document(self, doc_id: str) -> dict[str, Any]:
             "document.task_failed",
             doc_id=doc_id,
             error=str(exc),
+        )
+        # P1: 标记解析失败
+        _update_parse_progress(
+            doc_id, stage="failed", message=f"解析失败：{str(exc)[:200]}"
         )
         # 重试
         raise self.retry(exc=exc)
@@ -187,6 +277,9 @@ async def _process_document_async(doc_id: str) -> dict[str, Any]:
             return {"doc_id": doc_id, "status": "failed", "error": "文档不存在"}
 
         # 1. 解析文档内容
+        _update_parse_progress(
+            doc_id, stage="parsing", message="正在解析文档内容"
+        )
         parse_failed = False
         try:
             parsed_text = await _parse_document(doc)
@@ -208,6 +301,9 @@ async def _process_document_async(doc_id: str) -> dict[str, Any]:
             await session.flush()
 
         # 3. 分块 — 视频/音频文档走专用分块，其他走 SemanticChunker 四级策略
+        _update_parse_progress(
+            doc_id, stage="chunking", message="正在进行语义分块"
+        )
         doc_type = doc.doc_type or "md"
         if doc_type in _VIDEO_TYPES or doc_type in _AUDIO_TYPES:
             # 视频/音频文档：ASR 转写片段 + 关键帧 VLM 描述 → 语义分块
@@ -223,6 +319,12 @@ async def _process_document_async(doc_id: str) -> dict[str, Any]:
         )
 
         # 4. 向量化（延迟导入，外部服务不可用时优雅降级）
+        _update_parse_progress(
+            doc_id,
+            stage="embedding",
+            total=len(chunks),
+            message=f"正在向量化 {len(chunks)} 个文本块",
+        )
         try:
             embeddings = await _generate_embeddings(chunks)
             logger.info(
@@ -236,6 +338,9 @@ async def _process_document_async(doc_id: str) -> dict[str, Any]:
             warnings.append(f"向量化失败（已降级为空向量）: {str(exc)[:200]}")
 
         # 5. 索引（延迟导入，构建全文索引和向量索引）
+        _update_parse_progress(
+            doc_id, stage="indexing", message="正在构建全文索引和向量索引"
+        )
         try:
             await _build_indexes(doc_id, chunk_objects, chunks, embeddings)
         except Exception as exc:
@@ -267,6 +372,11 @@ async def _process_document_async(doc_id: str) -> dict[str, Any]:
             await session.commit()
 
             # 提交审核流程 — 审核通过后触发文档发布
+            _update_parse_progress(
+                doc_id,
+                stage="publishing",
+                message="文档需审核，正在提交审核流程",
+            )
             try:
                 await _submit_for_audit(doc_id, doc.owner_id)
                 logger.info("document.audit_submitted", doc_id=doc_id)
@@ -286,6 +396,14 @@ async def _process_document_async(doc_id: str) -> dict[str, Any]:
             logger.warning("document.intelligence_trigger_failed", doc_id=doc_id, error=str(exc))
 
         final_status = "pending_review" if needs_review else "published"
+
+        # P1: 标记解析完成
+        _update_parse_progress(
+            doc_id,
+            stage="done",
+            total=len(chunks),
+            message=f"解析完成，共 {len(chunks)} 个分块，状态：{final_status}",
+        )
 
         return {
             "doc_id": doc_id,

@@ -95,6 +95,19 @@ export function getDocumentSummary(docId: string): Promise<DocSummary> {
   return getData<DocSummary>(`${BASE}/documents/${docId}/summary`);
 }
 
+/** 文档解析进度（P1 增强：真实阶段反馈，替代前端模拟进度） */
+export interface DocParseProgress {
+  stage: 'queued' | 'parsing' | 'chunking' | 'embedding' | 'indexing' | 'publishing' | 'done' | 'failed' | 'unknown';
+  current: number;
+  total: number;
+  message: string;
+}
+
+/** 查询文档解析进度（从 Redis 读取 Celery 任务实时写入的进度） */
+export function getDocumentProgress(docId: string): Promise<DocParseProgress> {
+  return getData<DocParseProgress>(`${BASE}/documents/${docId}/progress`);
+}
+
 // ===== 文档版本历史 =====
 
 export function getDocumentVersions(docId: string): Promise<DocVersion[]> {
