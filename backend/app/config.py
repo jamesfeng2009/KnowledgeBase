@@ -211,6 +211,11 @@ class Settings(BaseSettings):
     # === CORS ===
     CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:8090"]
 
+    # === 文件上传限制 ===
+    # 单文件上传大小上限（MB）— 超过返回 413 Payload Too Large
+    # 对齐竞品 50MB 默认值，防止大文件打满内存
+    MAX_UPLOAD_SIZE_MB: int = 50
+
     # === Yjs 协作服务 ===
     YJS_WS_URL: str = "ws://localhost:8001"
 
@@ -249,6 +254,7 @@ class Settings(BaseSettings):
         "RAG_RERANK_TOP_K",
         "RAG_MAX_ITERATIONS",
         "RAG_RETRIEVAL_EXPAND_TOP_K",
+        "MAX_UPLOAD_SIZE_MB",
     )
     @classmethod
     def validate_positive_int(cls, v: int) -> int:

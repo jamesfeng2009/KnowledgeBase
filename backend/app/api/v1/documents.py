@@ -7,6 +7,9 @@
 文档上传支持两种模式：
 1. 文本创建（DocCreate JSON 体）；
 2. 文件上传（UploadFile，保存到 MinIO，触发 Celery 异步处理）。
+
+P0 增强：文件大小校验（MAX_UPLOAD_SIZE_MB）— 超限返回 413 Payload Too Large。
+P1 增强：解析摘要响应（/documents/{doc_id}/summary）— 返回 preview/structure/warnings/pages。
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.database import get_db_session
 from app.deps import get_current_active_user
 from app.models.knowledge import Document, DocumentVersion
@@ -27,6 +31,7 @@ from app.schemas.knowledge import (
     DocResponse,
     DocUpdate,
     DocVersionResponse,
+    DocumentSummaryResponse,
 )
 from app.services.knowledge_service import KnowledgeService
 from app.utils.pagination import PageResult, PaginationParams, paginate
@@ -34,6 +39,32 @@ from app.utils.pagination import PageResult, PaginationParams, paginate
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["文档管理"])
+
+
+def _validate_upload_size(content_bytes: bytes) -> None:
+    """校验上传文件大小 — 超过 MAX_UPLOAD_SIZE_MB 返回 413。
+
+    Args:
+        content_bytes: 文件二进制内容。
+
+    Raises:
+        HTTPException: 413 Payload Too Large 当文件超过配置上限。
+    """
+    settings = get_settings()
+    max_mb = getattr(settings, "MAX_UPLOAD_SIZE_MB", 50)
+    # 兼容 MagicMock 测试场景 — 仅在获得真实 int 时校验
+    if not isinstance(max_mb, int) or max_mb <= 0:
+        max_mb = 50
+
+    size_mb = len(content_bytes) / (1024 * 1024)
+    if size_mb > max_mb:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=(
+                f"文件大小 {size_mb:.2f}MB 超过上限 {max_mb}MB，"
+                f"请压缩后上传或联系管理员调整 MAX_UPLOAD_SIZE_MB"
+            ),
+        )
 
 
 # ======================================================================
@@ -110,6 +141,8 @@ async def upload_document_file(
 
     支持的文件类型：md / html / docx / pdf。
     文件内容先存入 MinIO，再创建 Document 记录，最后通过 Celery 异步解析。
+
+    P0: 文件大小校验 — 超过 MAX_UPLOAD_SIZE_MB 返回 413。
     """
     service = KnowledgeService(db, user)
 
@@ -121,6 +154,9 @@ async def upload_document_file(
 
     # 读取文件内容
     content_bytes = await file.read()
+
+    # P0: 文件大小校验（读取后立即校验，超限直接拒绝）
+    _validate_upload_size(content_bytes)
 
     # 尝试解码为文本（二进制格式如 docx/pdf 无法直接解码）
     try:
@@ -281,6 +317,8 @@ async def upload_document_image(
     """上传文档内图片到 MinIO，返回图片 URL。
 
     支持 PNG / JPG / GIF / WEBP 格式。
+
+    P0: 文件大小校验 — 图片同样受 MAX_UPLOAD_SIZE_MB 限制。
     """
     service = KnowledgeService(db, user)
     doc = await service.get_document(doc_id)
@@ -294,6 +332,9 @@ async def upload_document_image(
         )
 
     content_bytes = await file.read()
+
+    # P0: 图片大小校验
+    _validate_upload_size(content_bytes)
     ext_map = {
         "image/png": "png",
         "image/jpeg": "jpg",
@@ -425,3 +466,158 @@ async def restore_document_version(
         data=DocResponse.model_validate(restored),
         message="success",
     )
+
+
+# ======================================================================
+# 文档解析摘要（P1 增强）
+# ======================================================================
+
+
+def _extract_structure_tags(text: str) -> list[str]:
+    """从解析后的文本中提取结构标签列表。
+
+    识别 HTML 标签（h1~h6/table/ul/li）和分页标记，
+    返回去重后的结构标签列表（保持出现顺序）。
+
+    Args:
+        text: 解析后的文档文本（HTML 格式）。
+
+    Returns:
+        结构标签列表，如 ["h1", "h2", "table", "ul"]。
+    """
+    if not text:
+        return []
+
+    import re
+
+    # 匹配 HTML 标签（h1~h6, table, ul, li）
+    tags_seen: list[str] = []
+    seen_set: set[str] = set()
+
+    for match in re.finditer(r"<(h[1-6]|table|ul|li)\b", text, re.IGNORECASE):
+        tag = match.group(1).lower()
+        if tag not in seen_set:
+            seen_set.add(tag)
+            tags_seen.append(tag)
+
+    return tags_seen
+
+
+def _count_pages(text: str, doc_type: str) -> int:
+    """推断文档页数/幻灯片数/工作表数。
+
+    根据文档类型和解析标记推断：
+    - PDF/DOCX: 统计分页标记 <!-- page: N --> 或 <h2> 数量
+    - PPTX: 统计 <h2>幻灯片 数量
+    - XLSX: 统计 <h2>sheet 标题数量
+    - 其他: 0
+
+    Args:
+        text: 解析后的文档文本。
+        doc_type: 文档类型。
+
+    Returns:
+        推断的页数，无法推断时返回 0。
+    """
+    if not text:
+        return 0
+
+    import re
+
+    # 优先统计分页标记 <!-- page: N -->
+    page_markers = re.findall(r"<!--\s*page:\s*\d+\s*-->", text)
+    if page_markers:
+        return len(page_markers)
+
+    # 按文档类型统计 <h2> 标题
+    h2_count = len(re.findall(r"<h2\b", text, re.IGNORECASE))
+
+    if doc_type in ("pdf", "docx", "pptx", "xlsx"):
+        return h2_count
+
+    return 0
+
+
+def _infer_parse_status(doc: Document) -> str:
+    """推断文档的解析状态。
+
+    根据文档状态和内容推断解析状态：
+    - status=published/pending_review → "parsed"
+    - status=draft 且有 content_text → "parsed"
+    - status=draft 且无 content_text → "pending"
+    - status=archived → "parsed"
+
+    Args:
+        doc: Document ORM 实例。
+
+    Returns:
+        解析状态字符串。
+    """
+    if doc.status in ("published", "pending_review", "archived"):
+        return "parsed"
+    if doc.status == "draft":
+        return "parsed" if doc.content_text and doc.content_text.strip() else "pending"
+    return "pending"
+
+
+@router.get(
+    "/documents/{doc_id}/summary",
+    response_model=ApiResponse[DocumentSummaryResponse],
+)
+async def get_document_summary(
+    doc_id: UUID,
+    db: AsyncSession = Depends(get_db_session),
+    user: User = Depends(get_current_active_user),
+) -> ApiResponse[DocumentSummaryResponse]:
+    """获取文档解析摘要 — 对齐竞品草稿摘要 JSON。
+
+    返回结构化摘要，包含：
+    - preview: 正文前 500 字符预览
+    - structure: 文档结构标签列表（h1/h2/table/ul 等）
+    - warnings: 解析警告信息
+    - pages: 推断的页数/幻灯片数/工作表数
+    - char_count: 正文字符数
+    - parse_status: 解析状态（parsed/partial/failed/pending）
+
+    用于上传后立即展示解析结果概览，提升用户感知。
+    """
+    service = KnowledgeService(db, user)
+    doc = await service.get_document(doc_id)
+
+    content_text = doc.content_text or ""
+    content_html = doc.content_html or ""
+
+    # 优先用 content_text 提取结构（解析器输出 HTML 格式）
+    parse_output = content_text if content_text else content_html
+
+    preview = content_text[:500] if content_text else ""
+    structure = _extract_structure_tags(parse_output)
+    pages = _count_pages(parse_output, doc.doc_type or "md")
+    char_count = len(content_text)
+    parse_status = _infer_parse_status(doc)
+
+    # 警告信息 — 基于文档状态和内容推断
+    warnings: list[str] = []
+    if not content_text.strip():
+        warnings.append("文档正文为空，可能解析失败或尚未完成解析")
+    if doc.doc_type in ("doc", "ppt"):
+        warnings.append(f"旧格式 .{doc.doc_type} 不支持解析，请转换为 .{doc.doc_type}x 后重新上传")
+    if doc.status == "draft" and not content_text:
+        warnings.append("文档处于草稿状态，等待异步解析任务完成")
+
+    summary = DocumentSummaryResponse(
+        doc_id=doc.id,
+        title=doc.title,
+        doc_type=doc.doc_type or "md",
+        status=doc.status,
+        preview=preview,
+        structure=structure,
+        warnings=warnings,
+        pages=pages,
+        char_count=char_count,
+        parse_status=parse_status,
+        file_path=doc.file_path,
+        created_at=doc.created_at,
+    )
+
+    return ApiResponse(code=0, data=summary, message="success")

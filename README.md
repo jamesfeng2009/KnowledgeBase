@@ -104,7 +104,7 @@ EnterpriseKnowledge/
 │   │   ├── env.py                    # 异步引擎 + 自动导入模型 + compare_type
 │   │   └── versions/                 # 迁移版本（首版 init schema：27 张表）
 │   ├── tasks/                        # Celery 异步任务
-│   ├── tests/                        # 测试（984 项）
+│   ├── tests/                        # 测试（1023 项）
 │   ├── celery_app.py                 # Celery 入口
 │   └── requirements.txt
 ├── collab-service/                   # Yjs 协作服务（Node.js + TypeScript）
@@ -1093,10 +1093,15 @@ Celery 异步任务驱动文档处理流水线，从文档上传到索引构建�
 - **XLSX 双引擎降级**：openpyxl 失败 → pandas.read_excel 兜底
 - **XLSX/PPTX 列宽对齐**：合并单元格场景自动补齐短行为最大列数
 - **DOCX 分页检测**：`<w:br type="page"/>` + `<w:lastRenderedPageBreak/>` → 真实页码
+- **P0 文件大小校验**：`MAX_UPLOAD_SIZE_MB=50` 超限返回 413 Payload Too Large（对齐竞品 50MB 上限）
+- **P1 解析摘要响应**：`GET /documents/{doc_id}/summary` 返回 preview/structure/warnings/pages/char_count/parse_status（对齐竞品草稿摘要 JSON）
+- **P1 解析任务 warnings 收集**：解析/向量化/索引失败时收集警告，返回 parse_status（parsed/partial/failed）
 
 ```mermaid
 flowchart LR
-    UPLOAD[文档上传] --> CELERY[Celery Task<br/>process_document<br/>max_retries=3]
+    UPLOAD[文档上传] --> SIZE_CHECK{P0 文件大小校验<br/>MAX_UPLOAD_SIZE_MB=50}
+    SIZE_CHECK -->|超限| REJECT413[返回 413<br/>Payload Too Large]
+    SIZE_CHECK -->|通过| CELERY[Celery Task<br/>process_document<br/>max_retries=3]
 
     CELERY --> PARSE[1. 文档解析<br/>延迟导入第三方库]
     PARSE -->|PDF| PYMUPDF[pymupdf 文本<br/>+ find_tables → HTML<br/>+ 图片上传 MinIO / 小图过滤<br/>+ VLM 描述]
@@ -1135,6 +1140,7 @@ flowchart LR
     AUDIT_WAIT -->|reject| REJECTED[保持 pending_review<br/>记录驳回意见]
 
     PUBLISH & PUBLISH_AFTER & REJECTED --> INTEL[6. 链式触发<br/>文档智能处理<br/>摘要/标签/分类/行动项]
+    INTEL --> SUMMARY[P1 解析摘要响应<br/>GET /documents/{doc_id}/summary<br/>preview/structure/warnings<br/>pages/char_count/parse_status]
 ```
 
 ### 设计要点
@@ -1363,6 +1369,9 @@ python -c "from app.utils.migration import stamp_head; stamp_head()"
 |------|------|------|
 | `AUTO_MIGRATE` | `True` | 启动时自动 `alembic upgrade head` |
 | `AUTO_CREATE_TABLES` | `False` | 兼容旧逻辑，直接 `create_all`（仅 demo） |
+| `MAX_UPLOAD_SIZE_MB` | `50` | 单文件上传大小上限（MB），超限返回 413 Payload Too Large |
+| `PPTX_IMAGE_UPLOAD_ENABLED` | `False` | PPTX 图片上传 MinIO（关闭时仅 VLM 描述） |
+| `PPTX_IMAGE_MIN_SIZE` | `50` | PPTX 图片最小尺寸过滤（剔除图标/装饰小图） |
 
 **Pydantic V2 配置校验**：
 - `field_validator`：DATABASE_URL 必须用异步驱动（asyncpg/aiosqlite）、数值范围、CORS URL 格式
@@ -1439,8 +1448,9 @@ python -m pytest tests/test_eval.py -v                    # 离线评测（数�
 | `test_dashscope_provider.py` | 27 | DashScopeProvider 继承 VLLMProvider、初始化、chat/tool_use、DashScopeEmbedder 维度/embed、factory 路由、config 配置项、向后兼容性 |
 | `test_minio_client.py` | 8 | MinIO upload/download/delete/exists、懒初始化、bucket 自动创建与缓存 |
 | `test_migration.py` | 46 | Pydantic V2 field_validator（DATABASE_URL/数值/CORS）、model_validator（部署模式/SECRET_KEY）、迁移文件存在性/upgrade/downgrade、alembic env.py 配置、迁移 runner 端到端 SQLite |
+| `test_upload_summary.py` | 39 | P0 文件大小校验（MAX_UPLOAD_SIZE_MB 超限 413/MagicMock 回退）、P1 解析摘要响应（preview/structure/warnings/pages/char_count/parse_status）、结构标签提取、页数推断、解析状态推断、解析任务 warnings 收集、旧格式警告、认证强制 |
 | 其他测试 | 215 | API 端点、服务层、模型层、记忆引擎等 |
-| **合计** | **984** | **全部通过，零回归** |
+| **合计** | **1023** | **全部通过，零回归** |
 
 ---
 

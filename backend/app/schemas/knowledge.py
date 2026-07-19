@@ -150,3 +150,37 @@ class DocVersionResponse(BaseModel):
     author_id: uuid.UUID = Field(..., description="操作者 ID")
     summary: str | None = Field(default=None, max_length=255, description="版本摘要")
     created_at: datetime = Field(..., description="创建时间")
+
+
+class DocumentSummaryResponse(BaseModel):
+    """文档解析摘要响应 — 对齐竞品草稿摘要 JSON。
+
+    P1 增强：上传/解析完成后返回结构化摘要，包含：
+    - preview: 正文前 N 字符预览
+    - structure: 文档结构标签列表（h1/h2/table/ul 等）
+    - warnings: 解析过程中的警告信息
+    - pages: 页数/幻灯片数/工作表数
+    - char_count: 正文字符数
+    - parse_status: 解析状态（parsed/partial/failed/pending）
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    doc_id: uuid.UUID = Field(..., description="文档 ID")
+    title: str = Field(..., description="文档标题")
+    doc_type: str = Field(..., description="文档类型")
+    status: str = Field(..., description="文档状态")
+    preview: str = Field(default="", description="正文预览（前 500 字符）")
+    structure: list[str] = Field(
+        default_factory=list, description="文档结构标签（h1/h2/table/ul 等）"
+    )
+    warnings: list[str] = Field(
+        default_factory=list, description="解析警告信息（小图过滤/降级/OCR 等）"
+    )
+    pages: int = Field(default=0, ge=0, description="页数/幻灯片数/工作表数")
+    char_count: int = Field(default=0, ge=0, description="正文字符数")
+    parse_status: str = Field(
+        default="pending", description="解析状态: parsed/partial/failed/pending"
+    )
+    file_path: str | None = Field(default=None, description="原文件存储路径")
+    created_at: datetime = Field(..., description="创建时间")

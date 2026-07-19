@@ -144,6 +144,9 @@ async def _process_document_async(doc_id: str) -> dict[str, Any]:
 
     doc_uuid = uuid.UUID(doc_id)
 
+    # P1: 收集解析过程中的警告信息（用于摘要响应）
+    warnings: list[str] = []
+
     async with async_session_factory() as session:
         repo = DocumentRepository(session)
         doc = await repo.get_by_id(doc_uuid)
@@ -151,11 +154,20 @@ async def _process_document_async(doc_id: str) -> dict[str, Any]:
             return {"doc_id": doc_id, "status": "failed", "error": "文档不存在"}
 
         # 1. 解析文档内容
+        parse_failed = False
         try:
             parsed_text = await _parse_document(doc)
         except Exception as exc:
             logger.warning("document.parse_failed", doc_id=doc_id, error=str(exc))
             parsed_text = doc.content_text or ""
+            parse_failed = True
+            warnings.append(f"解析异常: {str(exc)[:200]}")
+
+        # 检测旧格式降级提示
+        if doc.doc_type in ("doc", "ppt"):
+            warnings.append(
+                f"旧格式 .{doc.doc_type} 不支持解析，请转换为 .{doc.doc_type}x 后重新上传"
+            )
 
         # 2. 更新纯文本内容（检索用）
         if parsed_text and parsed_text != doc.content_text:
@@ -188,12 +200,14 @@ async def _process_document_async(doc_id: str) -> dict[str, Any]:
         except Exception as exc:
             logger.warning("document.embed_failed", doc_id=doc_id, error=str(exc))
             embeddings = []
+            warnings.append(f"向量化失败（已降级为空向量）: {str(exc)[:200]}")
 
         # 5. 索引（延迟导入，构建全文索引和向量索引）
         try:
             await _build_indexes(doc_id, chunk_objects, chunks, embeddings)
         except Exception as exc:
             logger.warning("document.index_failed", doc_id=doc_id, error=str(exc))
+            warnings.append(f"索引构建失败: {str(exc)[:200]}")
 
         # 6. 根据密级决定发布路径：
         #    confidential/secret → 待审核（审核通过后发布）
@@ -211,6 +225,7 @@ async def _process_document_async(doc_id: str) -> dict[str, Any]:
                 logger.info("document.audit_submitted", doc_id=doc_id)
             except Exception as exc:
                 logger.warning("document.audit_submit_failed", doc_id=doc_id, error=str(exc))
+                warnings.append(f"审核流程提交失败: {str(exc)[:200]}")
         else:
             doc.status = "published"
             await session.commit()
@@ -224,6 +239,15 @@ async def _process_document_async(doc_id: str) -> dict[str, Any]:
             logger.warning("document.intelligence_trigger_failed", doc_id=doc_id, error=str(exc))
 
         final_status = "pending_review" if needs_review else "published"
+
+        # P1: 推断解析状态 — 有内容且无致命错误为 parsed，有警告为 partial
+        if parse_failed and not parsed_text.strip():
+            parse_status = "failed"
+        elif warnings:
+            parse_status = "partial"
+        else:
+            parse_status = "parsed"
+
         return {
             "doc_id": doc_id,
             "status": "success",
@@ -231,6 +255,10 @@ async def _process_document_async(doc_id: str) -> dict[str, Any]:
             "embedding_count": len(embeddings),
             "doc_status": final_status,
             "chunk_strategies": list(set(c.chunk_strategy for c in chunk_objects)),
+            # P1: 摘要响应字段
+            "warnings": warnings,
+            "parse_status": parse_status,
+            "char_count": len(parsed_text),
         }
 
 
