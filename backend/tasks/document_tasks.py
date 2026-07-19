@@ -41,10 +41,14 @@ def _update_parse_progress(
     current: int = 0,
     total: int = 0,
     message: str = "",
+    sub_stage: str = "",
+    sub_current: int = 0,
+    sub_total: int = 0,
 ) -> None:
     """将解析进度写入 Redis，供前端轮询展示真实进度。
 
     P1 增强：替代前端按轮询次数模拟的虚假进度。
+    P2 增强：新增 sub_stage/sub_current/sub_total，支持 GB 视频分段 ASR 细粒度进度。
 
     Args:
         doc_id: 文档 ID。
@@ -60,6 +64,9 @@ def _update_parse_progress(
         current: 当前进度（如当前页码）。
         total: 总进度（如总页数）。
         message: 人类可读的提示信息。
+        sub_stage: 子阶段标识（P2 新增，如 "asr_segment_3"）。
+        sub_current: 子阶段当前进度（如已完成的 ASR 段数）。
+        sub_total: 子阶段总进度（如总 ASR 段数）。
     """
     try:
         import json
@@ -75,6 +82,9 @@ def _update_parse_progress(
             "current": current,
             "total": total,
             "message": message,
+            "sub_stage": sub_stage,
+            "sub_current": sub_current,
+            "sub_total": sub_total,
         }
         client.setex(
             f"{_PROGRESS_KEY_PREFIX}{doc_id}",
@@ -174,6 +184,26 @@ def process_document(self, doc_id: str) -> dict[str, Any]:
 
     # P1: 标记任务已入队
     _update_parse_progress(doc_id, stage="queued", message="文档已加入解析队列")
+
+    # P2-D: GB 级视频/音频走专用多任务管线，避免单任务 30 分钟超时
+    if _should_use_multipart_pipeline(doc_id):
+        logger.info("document.video_multipart_routed", doc_id=doc_id)
+        try:
+            from tasks.video_tasks import process_video_multipart
+
+            process_video_multipart(doc_id)
+            return {
+                "doc_id": doc_id,
+                "status": "processing",
+                "message": "GB 视频已分流到多任务管线（Chord 编排）",
+            }
+        except Exception as exc:
+            logger.exception("document.video_multipart_dispatch_failed", doc_id=doc_id)
+            # 分流失败时降级走普通管线
+            _update_parse_progress(
+                doc_id, stage="parsing",
+                message=f"GB 视频分流失败，降级普通管线: {exc}",
+            )
 
     try:
         # 在事件循环中执行异步操作
@@ -719,6 +749,55 @@ _VIDEO_TYPES: set[str] = {"video", "mp4", "avi", "mov", "mkv"}
 
 # 独立音频文件后缀集合 — 通过 ASR 转写为文本，复用视频分块管线
 _AUDIO_TYPES: set[str] = {"audio", "mp3", "wav", "m4a", "aac", "flac", "ogg", "wma"}
+
+# P2-D: 超过此大小（MB）的视频/音频走多任务管线，避免单任务超时
+_GB_VIDEO_THRESHOLD_MB = 50
+
+
+def _should_use_multipart_pipeline(doc_id: str) -> bool:
+    """判断是否应走 GB 视频多任务管线（P2-D）。
+
+    条件：
+        1. doc_type 属于视频/音频类型
+        2. file_size 超过 _GB_VIDEO_THRESHOLD_MB（50MB，即超过普通上传限制）
+
+    查询失败时返回 False（降级走普通管线，保证可用性）。
+
+    Args:
+        doc_id: 文档 ID。
+
+    Returns:
+        True 如果应走多任务管线。
+    """
+    try:
+        import asyncio
+
+        from sqlalchemy import select
+
+        async def _check() -> bool:
+            from app.database import async_session_factory
+            from app.models.knowledge import Document
+
+            async with async_session_factory() as db:
+                result = await db.execute(
+                    select(Document).where(Document.id == doc_id)
+                )
+                doc = result.scalar_one_or_none()
+                if not doc:
+                    return False
+
+                doc_type = (doc.doc_type or "").lower()
+                if doc_type not in _VIDEO_TYPES and doc_type not in _AUDIO_TYPES:
+                    return False
+
+                # file_size 以字节存储，转为 MB 比较
+                file_size_mb = (doc.file_size or 0) / (1024 * 1024)
+                return file_size_mb > _GB_VIDEO_THRESHOLD_MB
+
+        return asyncio.run(_check())
+    except Exception:
+        logger.debug("video_multipart.check_failed", doc_id=doc_id)
+        return False
 
 
 async def _parse_video(doc: Any) -> str:

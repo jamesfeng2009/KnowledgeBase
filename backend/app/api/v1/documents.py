@@ -234,6 +234,258 @@ async def upload_document_file(
     )
 
 
+# ======================================================================
+# P2-A 多段上传 — 突破 50MB 限制，支持 GB 级视频
+# ======================================================================
+
+
+@router.post("/documents/multipart/init", response_model=ApiResponse[dict])
+async def init_multipart_upload(
+    kb_id: UUID = Query(..., description="目标知识库 ID"),
+    title: str = Query(..., min_length=1, max_length=500, description="文档标题"),
+    filename: str = Query(..., description="原始文件名（用于推断 doc_type）"),
+    user: User = Depends(get_current_active_user),
+) -> ApiResponse[dict]:
+    """初始化多段上传 — 返回 upload_id（P2-A）。
+
+    前端发起 GB 级视频上传时调用此端点，获取 upload_id 后逐片上传。
+    upload_id 同时存入 Redis（TTL 24h），用于断点续传校验。
+
+    Returns:
+        {"upload_id": "xxx", "object_name": "kb_id/title"}
+    """
+    import secrets
+
+    object_name = f"{kb_id}/{title}"
+    # 生成 upload_id（MinIO 内部有自己的 upload_id，这里用应用层 ID 关联）
+    app_upload_id = secrets.token_urlsafe(16)
+
+    # 在 Redis 记录会话元数据（用于校验和断点续传）
+    try:
+        import json
+        import redis
+
+        from app.config import get_settings
+
+        settings = get_settings()
+        client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+        session = {
+            "kb_id": str(kb_id),
+            "title": title,
+            "filename": filename,
+            "object_name": object_name,
+            "user_id": str(user.id),
+            "created_at": __import__("time").time(),
+        }
+        client.setex(
+            f"ekb:multipart:{app_upload_id}",
+            86400,  # 24h TTL
+            json.dumps(session, ensure_ascii=False),
+        )
+        client.close()
+    except Exception:
+        logger.debug("multipart.session_redis_failed", upload_id=app_upload_id)
+
+    # 调用 MinIO 初始化多段上传
+    try:
+        from app.utils.minio_client import init_multipart_upload as _init
+
+        minio_upload_id = await _init(
+            bucket="ekb-documents",
+            object_name=object_name,
+        )
+        # 用 MinIO 的 upload_id 作为实际标识
+        return ApiResponse(
+            code=0,
+            data={"upload_id": minio_upload_id, "object_name": object_name},
+            message="success",
+        )
+    except ImportError:
+        logger.warning("multipart.minio_not_installed")
+        raise HTTPException(503, detail="MinIO 未安装，不支持多段上传")
+    except Exception:
+        logger.exception("multipart.init_failed")
+        raise HTTPException(500, detail="初始化多段上传失败")
+
+
+@router.put("/documents/multipart/{upload_id}/parts/{part_number}")
+async def upload_part(
+    upload_id: str,
+    part_number: int,
+    object_name: str = Query(..., description="对象存储路径"),
+    file: UploadFile = File(..., description="分片内容"),
+    user: User = Depends(get_current_active_user),
+) -> ApiResponse[dict]:
+    """上传单个分片（P2-A）。
+
+    分片编号从 1 开始（S3 协议约定）。每片建议 5-10MB。
+    返回 etag，前端需保存以便 complete 时提交。
+
+    Returns:
+        {"part_number": 1, "etag": "abc123"}
+    """
+    if part_number < 1 or part_number > 10000:
+        raise HTTPException(400, detail="part_number 必须在 1-10000 之间")
+
+    # 读取分片内容（单片 ≤ 10MB，内存安全）
+    data = await file.read()
+
+    try:
+        from app.utils.minio_client import upload_part as _upload_part
+
+        result = await _upload_part(
+            bucket="ekb-documents",
+            object_name=object_name,
+            upload_id=upload_id,
+            part_number=part_number,
+            data=data,
+        )
+        return ApiResponse(code=0, data=result, message="success")
+    except ImportError:
+        raise HTTPException(503, detail="MinIO 未安装")
+    except Exception:
+        logger.exception("multipart.upload_part_failed", part_number=part_number)
+        raise HTTPException(500, detail=f"分片 {part_number} 上传失败")
+
+
+@router.post("/documents/multipart/{upload_id}/complete", response_model=ApiResponse[DocResponse])
+async def complete_multipart_upload(
+    upload_id: str,
+    payload: dict,
+    db: AsyncSession = Depends(get_db_session),
+    user: User = Depends(get_current_active_user),
+) -> ApiResponse[DocResponse]:
+    """合并分片并创建文档记录（P2-A）。
+
+    Request body::
+        {
+            "parts": [{"part_number": 1, "etag": "..."}, ...],
+            "object_name": "kb_id/title",
+            "kb_id": "uuid",
+            "title": "文档标题",
+            "doc_type": "mp4"
+        }
+
+    Returns:
+        文档记录（DocResponse）— 创建后自动触发 Celery 解析。
+    """
+    parts = payload.get("parts", [])
+    object_name = payload.get("object_name", "")
+    kb_id_str = payload.get("kb_id", "")
+    title = payload.get("title", "")
+    doc_type = payload.get("doc_type", "md")
+
+    if not parts or not object_name or not kb_id_str or not title:
+        raise HTTPException(400, detail="缺少必要参数 parts/object_name/kb_id/title")
+
+    # 1. 调用 MinIO 合并分片
+    try:
+        from app.utils.minio_client import complete_multipart_upload as _complete
+
+        file_path = await _complete(
+            bucket="ekb-documents",
+            object_name=object_name,
+            upload_id=upload_id,
+            parts=parts,
+        )
+    except ImportError:
+        raise HTTPException(503, detail="MinIO 未安装")
+    except Exception:
+        logger.exception("multipart.complete_failed")
+        raise HTTPException(500, detail="合并分片失败")
+
+    # 2. 创建文档记录
+    try:
+        kb_id = UUID(kb_id_str)
+    except ValueError:
+        raise HTTPException(400, detail="kb_id 格式错误")
+
+    service = KnowledgeService(db, user)
+    doc = await service.upload_document(
+        kb_id=kb_id,
+        title=title,
+        content="",  # 视频文档无文本内容，由 Celery ASR 转写填充
+        doc_type=doc_type,
+    )
+
+    # 3. 更新 file_path 指向 MinIO 合并后的对象
+    from app.repositories.knowledge_repository import DocumentRepository
+
+    doc_repo = DocumentRepository(db)
+    await doc_repo.update(doc.id, file_path=file_path)
+
+    # 4. 触发 Celery 异步解析（复用 P0 逻辑）
+    try:
+        from tasks.document_tasks import process_document
+
+        process_document.delay(str(doc.id))
+        logger.info("multipart 文档 %s 已触发 Celery 解析", doc.id)
+    except ImportError:
+        logger.warning("Celery 未安装，文档 %s 需手动触发解析", doc.id)
+    except Exception:
+        logger.exception("触发 Celery 解析失败，文档 %s 需手动处理", doc.id)
+
+    # 5. 清理 Redis 会话
+    try:
+        import redis
+
+        from app.config import get_settings
+
+        settings = get_settings()
+        client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+        client.delete(f"ekb:multipart:{upload_id}")
+        client.close()
+    except Exception:
+        pass
+
+    return ApiResponse(
+        code=0,
+        data=DocResponse.model_validate(doc),
+        message="success",
+    )
+
+
+@router.delete("/documents/multipart/{upload_id}")
+async def abort_multipart_upload(
+    upload_id: str,
+    object_name: str = Query(..., description="对象存储路径"),
+    user: User = Depends(get_current_active_user),
+) -> ApiResponse[dict]:
+    """取消多段上传 — 清理已上传分片（P2-A）。
+
+    用户取消上传时调用，MinIO 删除该 upload_id 下所有分片。
+    幂等：重复调用或 upload_id 已失效时返回成功。
+    """
+    try:
+        from app.utils.minio_client import abort_multipart_upload as _abort
+
+        await _abort(
+            bucket="ekb-documents",
+            object_name=object_name,
+            upload_id=upload_id,
+        )
+    except ImportError:
+        raise HTTPException(503, detail="MinIO 未安装")
+    except Exception:
+        logger.exception("multipart.abort_failed")
+        # abort 失败不阻断用户操作，返回成功（幂等）
+
+    # 清理 Redis 会话
+    try:
+        import redis
+
+        from app.config import get_settings
+
+        settings = get_settings()
+        client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+        client.delete(f"ekb:multipart:{upload_id}")
+        client.close()
+    except Exception:
+        pass
+
+    return ApiResponse(code=0, data={"aborted": True}, message="success")
+
+
 @router.get("/documents/{doc_id}/progress", response_model=ApiResponse[dict])
 async def get_document_parse_progress(
     doc_id: UUID,

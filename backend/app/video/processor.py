@@ -3,10 +3,16 @@
 
 通过 ffmpeg 命令行工具完成：
     - extract_audio(): 提取音轨为 16kHz mono WAV（ASR 标准输入格式）；
-    - extract_keyframes(): 按场景变化检测抽取关键帧（PNG）。
+    - extract_keyframes(): 按固定时间间隔抽样关键帧（PNG）。
 
-遵循优雅降级：ffmpeg 未安装时返回空结果并记录日志，不阻断主流程。
-遵循开闭原则：新增视频处理能力只需扩展 VideoProcessor 方法。
+P2-C 优化（突破 GB 级视频 OOM 和磁盘打满）：
+    - 时长采样：不再用场景检测（全片扫描），改为按固定时间间隔抽帧
+      （ffmpeg -ss 跳转 + -frames:v 1 单帧模式，避免全片解码）；
+    - 流式删除：黑屏/静态帧抽完立即删除 PNG，不堆积中间产物；
+    - 黑屏跳过：计算帧直方图方差，方差低于阈值视为静态画面跳过。
+
+遵循优雅降级：ffmpeg/PIL/numpy 未安装时返回空结果或跳过黑屏检测，
+不阻断主流程。遵循开闭原则：新增视频处理能力只需扩展 VideoProcessor 方法。
 """
 
 from __future__ import annotations
@@ -15,7 +21,6 @@ import asyncio
 import os
 import tempfile
 from dataclasses import dataclass
-from typing import Any
 
 from app.config import get_settings
 from app.utils.logger import get_logger
@@ -31,10 +36,13 @@ class KeyFrame:
     Attributes:
         timestamp: 帧时间戳（秒）。
         image_path: 帧图片文件路径。
+        variance: 帧直方图方差（越大画面越丰富；黑屏/静态帧方差趋近 0）。
+            依赖缺失或计算失败时为 0.0，表示未做黑屏判定。
     """
 
     timestamp: float
     image_path: str
+    variance: float = 0.0
 
     @property
     def timestamp_label(self) -> str:
@@ -48,16 +56,9 @@ class VideoProcessor:
     ffmpeg 命令说明：
         - 音轨提取：-vn -acodec pcm_s16le -ar 16000 -ac 1
           （丢弃视频，PCM 16-bit，16kHz，单声道 — ASR 标准格式）
-        - 关键帧抽取：-vf "select='gt(scene,0.3)'" -vsync vfr
-          （场景变化 > 0.3 时抽取帧，variable frame rate）
+        - 关键帧抽取（P2-C 时长采样）：-ss {t} -frames:v 1
+          （直接 seek 到时间点 t 抽单帧，不扫描全片，避免 GB 级视频 OOM）
     """
-
-    # 场景变化阈值 — 0.3 适合 PPT/培训视频，值越低抽帧越密集
-    SCENE_THRESHOLD: float = 0.3
-    # 最大关键帧数 — 防止超长视频抽出过多帧
-    MAX_KEYFRAMES: int = 100
-    # 关键帧抽取间隔（秒）— 兜底：场景检测不够时按固定间隔补抽
-    FALLBACK_INTERVAL: int = 30
 
     async def extract_audio(self, video_path: str) -> str:
         """从视频提取音轨为 WAV 文件。
@@ -108,10 +109,16 @@ class VideoProcessor:
             return ""
 
     async def extract_keyframes(self, video_path: str) -> list[KeyFrame]:
-        """从视频抽取关键帧。
+        """从视频抽取关键帧（P2-C 时长采样模式）。
 
-        使用场景变化检测自动抽取画面变化的帧（适合 PPT/培训视频）。
-        如果场景检测抽出的帧数不足，按固定间隔补充。
+        不再使用场景检测（需全片扫描），改为按固定时间间隔抽样：
+            1. ffprobe 获取视频时长；
+            2. 按 VIDEO_KEYFRAME_INTERVAL 生成采样时间点；
+            3. 若点数超过 VIDEO_KEYFRAME_MAX，均匀降采样；
+            4. 对每个时间点用 `ffmpeg -ss {t} -frames:v 1` 抽单帧
+               （seek + 单帧，不扫描全片）；
+            5. 计算帧直方图方差，低于 VIDEO_KEYFRAME_VARIANCE_THRESHOLD
+               视为黑屏/静态画面，立即删除 PNG 并跳过（流式删除）。
 
         Args:
             video_path: 视频文件路径。
@@ -128,20 +135,129 @@ class VideoProcessor:
             log.info("video.keyframes.disabled")
             return []
 
+        interval = settings.VIDEO_KEYFRAME_INTERVAL
+        max_frames = settings.VIDEO_KEYFRAME_MAX
+        variance_threshold = settings.VIDEO_KEYFRAME_VARIANCE_THRESHOLD
+
+        # 1. 获取时长并生成采样时间点
+        timestamps = await self._build_sample_timestamps(
+            video_path, interval, max_frames
+        )
+        if not timestamps:
+            log.warning("video.keyframes.no_timestamps", path=video_path)
+            return []
+
         output_dir = tempfile.mkdtemp(prefix="keyframes_")
-        output_pattern = os.path.join(output_dir, "frame_%04d.png")
+        keyframes: list[KeyFrame] = []
 
-        # 场景变化检测抽帧
-        threshold = self.SCENE_THRESHOLD
+        # 2. 逐时间点 seek 抽单帧 + 方差黑屏跳过（流式删除）
+        for t in timestamps:
+            frame_path = os.path.join(output_dir, f"frame_{int(t):08d}.png")
+            extracted = await self._seek_extract_one(video_path, t, frame_path)
+            if not extracted:
+                continue  # 抽帧失败已记日志，直接下一个
+
+            variance = self.calculate_frame_variance(frame_path)
+            if variance is not None and variance < variance_threshold:
+                # 黑屏/静态画面 — 立即删除 PNG，不堆积中间产物
+                self._safe_delete(frame_path)
+                log.info(
+                    "video.keyframes.skip_black_frame",
+                    timestamp=t,
+                    variance=variance,
+                    threshold=variance_threshold,
+                )
+                continue
+
+            keyframes.append(
+                KeyFrame(
+                    timestamp=float(t),
+                    image_path=frame_path,
+                    variance=variance if variance is not None else 0.0,
+                )
+            )
+
+        log.info(
+            "video.keyframes.extracted",
+            count=len(keyframes),
+            sampled=len(timestamps),
+            interval=interval,
+            max_frames=max_frames,
+        )
+        return keyframes
+
+    async def _build_sample_timestamps(
+        self,
+        video_path: str,
+        interval: int,
+        max_frames: int,
+    ) -> list[float]:
+        """按间隔生成采样时间点，超出 max_frames 时均匀降采样。
+
+        Args:
+            video_path: 视频文件路径。
+            interval: 采样间隔（秒）。
+            max_frames: 最大帧数。
+
+        Returns:
+            升序时间点列表。时长获取失败时回退为 [0.0]（尽力抽首帧）。
+        """
+        duration = await self._get_duration(video_path)
+        if duration <= 0:
+            log.warning("video.keyframes.duration_unknown", path=video_path)
+            return [0.0]
+
+        # 按 interval 生成时间点：0, interval, 2*interval, ... < duration
+        timestamps = [float(t) for t in range(0, int(duration), interval)]
+        if not timestamps:
+            timestamps = [0.0]
+
+        # 超过上限则均匀降采样（含首尾，覆盖全片）
+        if len(timestamps) > max_frames:
+            step = (len(timestamps) - 1) / (max_frames - 1) if max_frames > 1 else 0
+            if max_frames > 1:
+                indices = [round(i * step) for i in range(max_frames)]
+                # 去重保序（极端情况下 round 可能产生重复）
+                seen: set[int] = set()
+                deduped: list[float] = []
+                for idx in indices:
+                    if idx not in seen:
+                        seen.add(idx)
+                        deduped.append(timestamps[idx])
+                timestamps = deduped
+            else:
+                timestamps = [timestamps[0]]
+
+        return timestamps
+
+    async def _seek_extract_one(
+        self,
+        video_path: str,
+        timestamp: float,
+        frame_path: str,
+    ) -> bool:
+        """用 ffmpeg seek 模式抽取单个时间点的帧。
+
+        命令 `ffmpeg -ss {t} -i {video} -frames:v 1 -y {out}`：
+            -ss 放在 -i 之前为快速 seek（基于关键点），避免全片解码；
+            -frames:v 1 只输出一帧即退出，突破 GB 级视频 OOM。
+
+        Args:
+            video_path: 视频文件路径。
+            timestamp: seek 时间点（秒）。
+            frame_path: 输出 PNG 路径。
+
+        Returns:
+            是否成功生成帧文件。
+        """
         cmd = [
-            "ffmpeg", "-i", video_path,
-            "-vf", f"select='gt(scene,{threshold})',showinfo",
-            "-vsync", "vfr",
-            "-frame_pts", "1",               # 用 PTS 作为文件名时间戳
+            "ffmpeg",
+            "-ss", f"{timestamp}",
+            "-i", video_path,
+            "-frames:v", "1",
             "-y",
-            output_pattern,
+            frame_path,
         ]
-
         try:
             process = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -151,110 +267,79 @@ class VideoProcessor:
             _, stderr = await process.communicate()
         except FileNotFoundError:
             log.warning("video.keyframes.ffmpeg_not_installed")
-            return []
+            return False
         except Exception as exc:
-            log.warning("video.keyframes.extract_failed", error=str(exc))
-            return []
-
-        # 解析输出的帧文件
-        keyframes = self._parse_frame_files(output_dir, video_path)
-
-        # 如果场景检测抽出的帧太少，按固定间隔补抽
-        if len(keyframes) < 5:
-            keyframes = await self._fallback_extract(
-                video_path, output_dir, keyframes
+            log.warning(
+                "video.keyframes.seek_failed",
+                timestamp=timestamp,
+                error=str(exc),
             )
+            return False
 
-        # 限制最大帧数
-        if len(keyframes) > self.MAX_KEYFRAMES:
-            # 均匀采样
-            step = len(keyframes) / self.MAX_KEYFRAMES
-            keyframes = [keyframes[int(i * step)] for i in range(self.MAX_KEYFRAMES)]
-
-        log.info("video.keyframes.extracted", count=len(keyframes))
-        return keyframes
-
-    def _parse_frame_files(
-        self,
-        output_dir: str,
-        video_path: str,
-    ) -> list[KeyFrame]:
-        """解析输出目录中的帧文件为 KeyFrame 列表。"""
-        keyframes: list[KeyFrame] = []
-        if not os.path.isdir(output_dir):
-            return keyframes
-
-        for filename in sorted(os.listdir(output_dir)):
-            if not filename.endswith(".png"):
-                continue
-            filepath = os.path.join(output_dir, filename)
-            # 从文件名解析时间戳 — frame_pts 模式下文件名是 PTS
-            # 回退：按文件序号估算
-            timestamp = self._estimate_timestamp_from_filename(filename)
-            keyframes.append(
-                KeyFrame(timestamp=timestamp, image_path=filepath)
+        if process.returncode != 0 or not os.path.exists(frame_path):
+            log.warning(
+                "video.keyframes.ffmpeg_error",
+                timestamp=timestamp,
+                returncode=process.returncode,
+                stderr=stderr.decode()[:300] if stderr else "",
             )
+            return False
+        return True
 
-        return keyframes
+    def calculate_frame_variance(self, image_path: str) -> float | None:
+        """计算图像直方图方差 — 用于黑屏/静态画面检测。
 
-    def _estimate_timestamp_from_filename(self, filename: str) -> float:
-        """从帧文件名估算时间戳。"""
+        方差越小画面越静态（纯色/黑屏方差趋近 0）。
+        延迟导入 PIL/numpy，未安装时返回 None（优雅降级，跳过黑屏检测）。
+
+        Args:
+            image_path: 帧图片文件路径。
+
+        Returns:
+            图像灰度方差；依赖缺失或计算失败时返回 None。
+        """
+        if not image_path or not os.path.exists(image_path):
+            return None
+
         try:
-            # frame_XXXX.png — XXXX 是序号
-            parts = filename.replace(".png", "").split("_")
-            if len(parts) >= 2:
-                idx = int(parts[-1])
-                # 按 30 秒间隔估算（兜底策略）
-                return float(idx * self.FALLBACK_INTERVAL)
-        except (ValueError, IndexError):
-            pass
-        return 0.0
+            import numpy as np
+            from PIL import Image
+        except ImportError:
+            # 零依赖 fallback：跳过黑屏检测（不做判定）
+            log.info("video.keyframes.variance_deps_missing")
+            return None
 
-    async def _fallback_extract(
-        self,
-        video_path: str,
-        output_dir: str,
-        existing: list[KeyFrame],
-    ) -> list[KeyFrame]:
-        """按固定间隔补抽关键帧（场景检测不够时）。"""
-        # 先获取视频时长
-        duration = await self._get_duration(video_path)
-        if duration <= 0:
-            return existing
+        try:
+            with Image.open(image_path) as img:
+                gray = img.convert("L")
+                arr = np.asarray(gray, dtype=np.float64)
+            if arr.size == 0:
+                return 0.0
+            return float(arr.var())
+        except Exception as exc:
+            log.warning("video.keyframes.variance_failed", error=str(exc))
+            return None
 
-        interval = self.FALLBACK_INTERVAL
-        existing_set = {kf.timestamp for kf in existing}
+    def _safe_delete(self, path: str) -> None:
+        """安全删除文件 — 忽略不存在或权限错误。"""
+        try:
+            if path and os.path.exists(path):
+                os.remove(path)
+        except OSError as exc:
+            log.warning("video.keyframes.delete_failed", path=path, error=str(exc))
 
-        for t in range(0, int(duration), interval):
-            if any(abs(t - et) < 5 for et in existing_set):
-                continue  # 已有附近的帧
+    def cleanup_keyframes(self, keyframes: list[KeyFrame]) -> None:
+        """清理关键帧 PNG 文件 — 供 VLM 描述完成后流式删除调用。
 
-            frame_path = os.path.join(
-                output_dir, f"fallback_{t:04d}.png"
-            )
-            cmd = [
-                "ffmpeg", "-i", video_path,
-                "-ss", str(t),
-                "-frames:v", "1",
-                "-y",
-                frame_path,
-            ]
-            try:
-                process = await asyncio.create_subprocess_exec(
-                    *cmd,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                await process.communicate()
-                if os.path.exists(frame_path):
-                    existing.append(
-                        KeyFrame(timestamp=float(t), image_path=frame_path)
-                    )
-            except Exception as exc:
-                log.warning("video.keyframes.fallback_failed", t=t, error=str(exc))
+        P2-C 流式删除语义：调用方（document_tasks）描述完一帧后即可调用
+        本方法删除对应 PNG，避免中间产物堆积打满磁盘。
+        本方法不删除 KeyFrame 对象本身，仅清理磁盘文件。
 
-        existing.sort(key=lambda kf: kf.timestamp)
-        return existing
+        Args:
+            keyframes: 已处理完成的关键帧列表。
+        """
+        for kf in keyframes:
+            self._safe_delete(kf.image_path)
 
     async def _get_duration(self, video_path: str) -> float:
         """获取视频时长（秒）。"""

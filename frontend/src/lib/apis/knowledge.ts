@@ -2,7 +2,7 @@
  * 知识库与文档 API 封装
  * 对接后端 knowledge.py + documents.py 路由
  */
-import { getData, postData, putData, delData, type PageResponse } from '../api';
+import { getData, postData, putData, delData, API_BASE, ApiError, type PageResponse } from '../api';
 
 const BASE = '/api/v1';
 
@@ -101,11 +101,125 @@ export interface DocParseProgress {
   current: number;
   total: number;
   message: string;
+  /** P2-E: 子阶段标识（如 "asr_segment_3" / "keyframe_extract"） */
+  sub_stage?: string;
+  /** P2-E: 子阶段当前进度（如已完成的 ASR 段数） */
+  sub_current?: number;
+  /** P2-E: 子阶段总进度（如总 ASR 段数） */
+  sub_total?: number;
 }
 
 /** 查询文档解析进度（从 Redis 读取 Celery 任务实时写入的进度） */
 export function getDocumentProgress(docId: string): Promise<DocParseProgress> {
   return getData<DocParseProgress>(`${BASE}/documents/${docId}/progress`);
+}
+
+// ===== 分片上传（GB 级视频）=====
+
+/** 分片上传初始化返回结构 */
+export interface MultipartUploadInit {
+  upload_id: string;
+  object_name: string;
+}
+
+/** 单个分片上传返回结构 */
+export interface MultipartPartResult {
+  etag: string;
+}
+
+/** 分片信息（用于 complete 请求体） */
+export interface MultipartPart {
+  part_number: number;
+  etag: string;
+}
+
+/**
+ * 初始化分片上传
+ * 后端在对象存储（MinIO/Ceph S3 协议）创建多段上传会话，返回 upload_id 和 object_name
+ */
+export function initMultipartUpload(
+  kbId: string,
+  title: string,
+  filename: string
+): Promise<MultipartUploadInit> {
+  const params = new URLSearchParams({ kb_id: kbId, title, filename });
+  return postData<MultipartUploadInit>(`${BASE}/documents/multipart/init?${params.toString()}`);
+}
+
+/**
+ * 上传单个分片（二进制 body，手动拼接 URL 与 Authorization header）
+ * 不能用 putData 封装，因为 putData 会 JSON.stringify body
+ * @param uploadId - 分片上传会话 ID
+ * @param partNumber - 分片序号（从 1 开始）
+ * @param data - 分片二进制数据
+ * @param signal - AbortSignal，用于取消上传
+ */
+export async function uploadPart(
+  uploadId: string,
+  partNumber: number,
+  data: Blob,
+  signal?: AbortSignal
+): Promise<MultipartPartResult> {
+  const token =
+    typeof window !== 'undefined' ? localStorage.getItem('ekb_access_token') : null;
+  const url = `${API_BASE}${BASE}/documents/multipart/${uploadId}/parts/${partNumber}`;
+  const response = await fetch(url, {
+    method: 'PUT',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: data,
+    signal,
+  });
+  if (!response.ok) {
+    let message = `分片上传失败 (${response.status})`;
+    try {
+      const errBody = await response.json();
+      const errData = errBody?.data ?? errBody;
+      if (errData?.message) message = errData.message;
+      else if (errBody?.message) message = errBody.message;
+    } catch {
+      // 响应非 JSON，使用默认错误信息
+    }
+    throw new ApiError(message, response.status);
+  }
+  const result = await response.json();
+  // 兼容后端统一响应格式 { code, data, message }
+  if (result && typeof result === 'object' && 'data' in result && 'code' in result) {
+    return result.data as MultipartPartResult;
+  }
+  return result as MultipartPartResult;
+}
+
+/**
+ * 完成分片上传
+ * 后端合并对象存储分片 → 创建 Document 记录（status='draft'）→ 触发解析流程
+ */
+export function completeMultipartUpload(
+  uploadId: string,
+  parts: MultipartPart[],
+  objectName: string,
+  kbId: string,
+  title: string,
+  docType: string
+): Promise<Document> {
+  return postData<Document>(`${BASE}/documents/multipart/${uploadId}/complete`, {
+    parts,
+    object_name: objectName,
+    kb_id: kbId,
+    title,
+    doc_type: docType,
+  });
+}
+
+/**
+ * 取消分片上传
+ * 清理对象存储中的临时分片，释放存储空间
+ */
+export function abortMultipartUpload(
+  uploadId: string,
+  objectName: string
+): Promise<void> {
+  const params = new URLSearchParams({ object_name: objectName });
+  return delData<void>(`${BASE}/documents/multipart/${uploadId}?${params.toString()}`);
 }
 
 // ===== 文档版本历史 =====

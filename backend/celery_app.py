@@ -38,6 +38,7 @@ celery_app = Celery(
         "tasks.scheduled_tasks",
         "tasks.notification_tasks",
         "tasks.multimodal_tasks",
+        "tasks.video_tasks",
     ],
 )
 

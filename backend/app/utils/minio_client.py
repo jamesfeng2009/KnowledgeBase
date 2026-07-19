@@ -191,6 +191,7 @@ async def file_exists(bucket: str, object_name: str) -> bool:
 
     Raises:
         ImportError: ``minio`` 包未安装。
+        Exception: 删除失败。
     """
     def _exists() -> bool:
         client = _get_client()
@@ -201,3 +202,220 @@ async def file_exists(bucket: str, object_name: str) -> bool:
             return False
 
     return await asyncio.to_thread(_exists)
+
+
+# ------------------------------------------------------------------
+# P2-A 多段上传（Multipart Upload）— 突破 50MB 限制，支持 GB 级视频
+# ------------------------------------------------------------------
+
+
+async def init_multipart_upload(
+    bucket: str,
+    object_name: str,
+    content_type: str = "application/octet-stream",
+) -> str:
+    """初始化多段上传 — 返回 upload_id（P2-A）。
+
+    MinIO 原生多段上传 API，upload_id 用于后续上传分片和合并。
+    前端发起上传时调用此接口，拿到 upload_id 后逐片上传。
+
+    Args:
+        bucket: MinIO bucket 名称。
+        object_name: 对象存储路径。
+        content_type: MIME 类型。
+
+    Returns:
+        upload_id — 多段上传会话 ID。
+
+    Raises:
+        ImportError: ``minio`` 包未安装。
+        Exception: 初始化失败。
+    """
+    def _init() -> str:
+        client = _get_client()
+        _ensure_bucket_sync(bucket)
+        upload_id = client._create_multipart_upload(bucket, object_name)
+        log.info(
+            "minio.multipart_init",
+            bucket=bucket,
+            object_name=object_name,
+            upload_id=upload_id,
+        )
+        return upload_id
+
+    return await asyncio.to_thread(_init)
+
+
+async def upload_part(
+    bucket: str,
+    object_name: str,
+    upload_id: str,
+    part_number: int,
+    data: bytes,
+) -> dict[str, Any]:
+    """上传单个分片 — 返回分片 ETag（P2-A）。
+
+    分片编号从 1 开始（S3 协议约定），最大 10000。
+    每片大小建议 5MB-100MB，最后一片可以小于 5MB。
+
+    Args:
+        bucket: MinIO bucket 名称。
+        object_name: 对象存储路径。
+        upload_id: 多段上传会话 ID。
+        part_number: 分片编号（1-10000）。
+        data: 分片内容字节。
+
+    Returns:
+        {"part_number": int, "etag": str} — 合并时需要。
+
+    Raises:
+        ImportError: ``minio`` 包未安装。
+        Exception: 上传失败。
+    """
+    def _upload() -> dict[str, Any]:
+        client = _get_client()
+        from io import BytesIO
+
+        result = client._upload_part(
+            bucket_name=bucket,
+            object_name=object_name,
+            upload_id=upload_id,
+            part_number=part_number,
+            data=BytesIO(data),
+            length=len(data),
+        )
+        etag = result.etag if hasattr(result, "etag") else result
+        log.debug(
+            "minio.part_uploaded",
+            bucket=bucket,
+            object_name=object_name,
+            part_number=part_number,
+            size=len(data),
+        )
+        return {"part_number": part_number, "etag": etag}
+
+    return await asyncio.to_thread(_upload)
+
+
+async def complete_multipart_upload(
+    bucket: str,
+    object_name: str,
+    upload_id: str,
+    parts: list[dict[str, Any]],
+) -> str:
+    """合并分片 — 完成多段上传（P2-A）。
+
+    所有分片上传完成后调用，MinIO 将分片合并为完整对象。
+    parts 列表必须按 part_number 升序排列。
+
+    Args:
+        bucket: MinIO bucket 名称。
+        object_name: 对象存储路径。
+        upload_id: 多段上传会话 ID。
+        parts: [{"part_number": 1, "etag": "..."}, ...]
+
+    Returns:
+        可访问的 URL 路径（``minio://{bucket}/{object_name}``）。
+
+    Raises:
+        ImportError: ``minio`` 包未安装。
+        Exception: 合并失败。
+    """
+    def _complete() -> str:
+        client = _get_client()
+        client._complete_multipart_upload(
+            bucket_name=bucket,
+            object_name=object_name,
+            upload_id=upload_id,
+            parts=parts,
+        )
+        log.info(
+            "minio.multipart_completed",
+            bucket=bucket,
+            object_name=object_name,
+            parts=len(parts),
+        )
+        return f"minio://{bucket}/{object_name}"
+
+    return await asyncio.to_thread(_complete)
+
+
+async def abort_multipart_upload(
+    bucket: str,
+    object_name: str,
+    upload_id: str,
+) -> None:
+    """取消多段上传 — 清理已上传的分片（P2-A）。
+
+    用户取消上传时调用，MinIO 删除该 upload_id 下所有已上传分片，
+    释放存储空间。失败时仅记录日志，不抛异常（幂等）。
+
+    Args:
+        bucket: MinIO bucket 名称。
+        object_name: 对象存储路径。
+        upload_id: 多段上传会话 ID。
+    """
+    def _abort() -> None:
+        client = _get_client()
+        try:
+            client._abort_multipart_upload(
+                bucket_name=bucket,
+                object_name=object_name,
+                upload_id=upload_id,
+            )
+            log.info(
+                "minio.multipart_aborted",
+                bucket=bucket,
+                object_name=object_name,
+                upload_id=upload_id,
+            )
+        except Exception as exc:
+            log.warning(
+                "minio.abort_failed",
+                upload_id=upload_id,
+                error=str(exc),
+            )
+
+    await asyncio.to_thread(_abort)
+
+
+async def list_parts(
+    bucket: str,
+    object_name: str,
+    upload_id: str,
+) -> list[dict[str, Any]]:
+    """列出已上传的分片 — 用于断点续传（P2-A）。
+
+    前端中断后重新上传时，先调用此接口查询已上传分片，
+    跳过已传的分片，只上传缺失的部分。
+
+    Args:
+        bucket: MinIO bucket 名称。
+        object_name: 对象存储路径。
+        upload_id: 多段上传会话 ID。
+
+    Returns:
+        [{"part_number": 1, "etag": "...", "size": 10485760}, ...]
+        失败时返回空列表（允许继续上传）。
+    """
+    def _list() -> list[dict[str, Any]]:
+        client = _get_client()
+        try:
+            result = client._list_parts(
+                bucket_name=bucket,
+                object_name=object_name,
+                upload_id=upload_id,
+            )
+            parts = []
+            for p in result or []:
+                parts.append({
+                    "part_number": p.part_number if hasattr(p, "part_number") else p.get("part_number"),
+                    "etag": p.etag if hasattr(p, "etag") else p.get("etag"),
+                    "size": p.size if hasattr(p, "size") else p.get("size"),
+                })
+            return parts
+        except Exception as exc:
+            log.warning("minio.list_parts_failed", error=str(exc))
+            return []
+
+    return await asyncio.to_thread(_list)

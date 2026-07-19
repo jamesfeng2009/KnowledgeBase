@@ -50,7 +50,7 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
         <div class="upload-zone" id="upload-zone">
           <div class="upload-zone-icon">📤</div>
           <h3>拖拽文件到此处，或 <span style="color: var(--primary);">点击选择文件</span></h3>
-          <p class="text-muted">支持 PDF、Word、Excel、PPT、Markdown、图片、视频、音频等格式，单个文件最大 100MB</p>
+          <p class="text-muted">支持 PDF、Word、Excel、PPT、Markdown、图片、视频、音频等格式；超过 100MB 自动分片上传，支持 GB 级视频</p>
           <input type="file" id="file-input" multiple style="display: none;" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.md,.txt,.mp4,.avi,.mov,.mkv,.mp3,.wav,.m4a,.aac,.flac,.ogg,.png,.jpg,.jpeg,.gif,.webp" />
         </div>
 
@@ -390,16 +390,30 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
 </style>
 
 <script>
-  import { getKnowledgeBases, getDocumentSummary, getDocumentProgress } from '@/lib/apis/knowledge';
-  import type { DocParseProgress } from '@/lib/apis/knowledge';
+  import {
+    getKnowledgeBases,
+    getDocumentSummary,
+    getDocumentProgress,
+    initMultipartUpload,
+    uploadPart,
+    completeMultipartUpload,
+    abortMultipartUpload,
+  } from '@/lib/apis/knowledge';
+  import type { DocParseProgress, MultipartPart } from '@/lib/apis/knowledge';
   import { processIntelligence, getIntelligenceStatus } from '@/lib/apis/intelligence';
   import { postData } from '@/lib/api';
 
   const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
   const TOKEN_KEY = 'ekb_access_token';
 
-  /** P1-4: 单文件最大 100MB */
-  const MAX_FILE_SIZE = 100 * 1024 * 1024;
+  /** 分片上传阈值：超过 100MB 走分片上传，否则走普通上传 */
+  const MULTIPART_THRESHOLD = 100 * 1024 * 1024;
+  /** 分片大小：10MB/片（S3 协议最小 5MB，10MB 平衡性能与内存） */
+  const PART_SIZE = 10 * 1024 * 1024;
+  /** 并发上传分片数：同时上传 3 个分片（避免打满浏览器连接） */
+  const MAX_CONCURRENT_PARTS = 3;
+  /** 单片最大重试次数 */
+  const MAX_PART_RETRIES = 3;
 
   /** 智能处理状态 */
   type IntelStatus = 'idle' | 'processing' | 'done' | 'unavailable';
@@ -425,6 +439,20 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
     intelTags?: boolean;
     intelCategory?: boolean;
     intelPolling?: boolean;
+    /** 分片上传模式（文件 > 100MB 时自动启用） */
+    multipartMode?: boolean;
+    /** 分片上传会话 ID（后端 init 返回） */
+    uploadId?: string;
+    /** 对象存储对象名（后端 init 返回，complete/abort 需要） */
+    objectName?: string;
+    /** 已上传分片序号列表（断点续传依据） */
+    uploadedParts?: number[];
+    /** 已上传分片的 etag 映射（complete 请求需要） */
+    partEtags?: Record<number, string>;
+    /** 总分片数 */
+    totalParts?: number;
+    /** AbortController 引用，支持 abort() 取消上传 */
+    abortController?: AbortController;
   }
 
   let uploadItems: UploadItem[] = [];
@@ -444,7 +472,8 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
   function formatSize(bytes: number): string {
     if (bytes < 1024) return bytes + ' B';
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-    return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+    if (bytes < 1024 * 1024 * 1024) return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+    return (bytes / 1024 / 1024 / 1024).toFixed(2) + ' GB';
   }
 
   /** 格式化时间为 YYYY-MM-DD HH:mm */
@@ -454,20 +483,36 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
   }
 
   /**
-   * P1-4: 添加文件时进行客户端大小校验
-   * 超过 100MB 的文件 alert 提示并跳过，不进入上传队列
+   * 添加文件到上传队列
+   * 文件 > 100MB 自动标记为分片上传模式（multipartMode），否则走普通上传
    */
   function addFiles(files: FileList | File[]) {
     Array.from(files).forEach((file) => {
-      if (file.size > MAX_FILE_SIZE) {
-        alert(`文件 ${file.name} 超过 100MB 限制`);
-        return;
-      }
-      uploadItems.push({ file, progress: 0, status: 'pending' });
+      const isMultipart = file.size > MULTIPART_THRESHOLD;
+      uploadItems.push({
+        file,
+        progress: 0,
+        status: 'pending',
+        multipartMode: isMultipart,
+        totalParts: isMultipart ? Math.ceil(file.size / PART_SIZE) : undefined,
+        uploadedParts: isMultipart ? [] : undefined,
+      });
     });
     renderList();
-    // 自动开始上传
-    uploadItems.filter((i) => i.status === 'pending').forEach(uploadFile);
+    // 自动开始上传：根据文件大小调度到普通上传或分片上传
+    uploadItems.filter((i) => i.status === 'pending').forEach(handleFileUpload);
+  }
+
+  /**
+   * 文件上传调度器
+   * 文件 > 100MB（multipartMode）走分片上传 startMultipartUpload，否则走原有普通上传 uploadFile
+   */
+  function handleFileUpload(item: UploadItem) {
+    if (item.multipartMode) {
+      startMultipartUpload(item);
+    } else {
+      uploadFile(item);
+    }
   }
 
   async function uploadFile(item: UploadItem) {
@@ -557,6 +602,215 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
     }
   }
 
+  // ===== 分片上传（GB 级视频）=====
+
+  /**
+   * 启动分片上传流程
+   * 流程：init 初始化 → 分片切片 → 并发上传（3） → complete 合并 → 触发解析轮询
+   * 断点续传：如果 uploadId 仍有效（非用户主动取消），跳过 init 并跳过已上传分片
+   */
+  async function startMultipartUpload(item: UploadItem) {
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (!token) {
+      window.location.href = '/auth/login';
+      return;
+    }
+    const kbId = (document.getElementById('target-kb') as HTMLSelectElement).value;
+    if (!kbId) {
+      alert('请先选择目标知识库');
+      return;
+    }
+
+    item.status = 'uploading';
+    item.abortController = new AbortController();
+    renderList();
+
+    try {
+      // 1. 初始化分片上传（断点续传：uploadId 仍有效则跳过 init）
+      let uploadId = item.uploadId;
+      let objectName = item.objectName || '';
+      if (!uploadId) {
+        const init = await initMultipartUpload(kbId, item.file.name, item.file.name);
+        uploadId = init.upload_id;
+        objectName = init.object_name;
+        item.uploadId = uploadId;
+        item.objectName = objectName;
+        item.uploadedParts = [];
+        item.partEtags = {};
+      }
+
+      const totalParts = Math.ceil(item.file.size / PART_SIZE);
+      item.totalParts = totalParts;
+      const uploadedParts: number[] = item.uploadedParts || [];
+      item.uploadedParts = uploadedParts;
+      const partEtags: Record<number, string> = { ...(item.partEtags || {}) };
+      item.partEtags = partEtags;
+
+      // 初始进度（断点续传时可能 > 0）
+      item.progress = Math.round((uploadedParts.length / totalParts) * 100);
+      renderList();
+
+      // 2. 构建待上传分片列表（跳过已上传的，实现断点续传）
+      const partsToUpload: number[] = [];
+      for (let i = 1; i <= totalParts; i++) {
+        if (!uploadedParts.includes(i)) {
+          partsToUpload.push(i);
+        }
+      }
+
+      // 3. 并发上传（同时 MAX_CONCURRENT_PARTS 个分片，避免打满浏览器连接）
+      let cursor = 0;
+      const uploadNext = async (): Promise<void> => {
+        while (cursor < partsToUpload.length) {
+          if (item.abortController?.signal.aborted) {
+            return; // 已取消，静默退出
+          }
+          const partNumber = partsToUpload[cursor++];
+          const start = (partNumber - 1) * PART_SIZE;
+          const end = Math.min(start + PART_SIZE, item.file.size);
+          const blob = item.file.slice(start, end);
+          try {
+            const etag = await uploadPartWithRetry(item, partNumber, blob, uploadId);
+            partEtags[partNumber] = etag;
+            uploadedParts.push(partNumber);
+            item.progress = Math.round((uploadedParts.length / totalParts) * 100);
+            renderList();
+          } catch (err) {
+            if (item.abortController?.signal.aborted) {
+              return; // 已取消，静默退出
+            }
+            throw err; // 真实错误，向上抛出
+          }
+        }
+      };
+
+      const workerCount = Math.min(MAX_CONCURRENT_PARTS, partsToUpload.length);
+      const workers: Promise<void>[] = [];
+      for (let w = 0; w < workerCount; w++) {
+        workers.push(uploadNext());
+      }
+      await Promise.all(workers);
+
+      // 4. 检查是否已取消
+      if (item.abortController?.signal.aborted) {
+        return; // cancelMultipartUpload 已处理 UI
+      }
+
+      // 5. 收集所有分片的 etag（按 part_number 升序）
+      const parts: MultipartPart[] = [];
+      for (let i = 1; i <= totalParts; i++) {
+        const etag = partEtags[i];
+        if (etag) {
+          parts.push({ part_number: i, etag });
+        }
+      }
+
+      // 6. 完成分片上传，合并所有分片并创建文档记录（status='draft'）
+      const ext = item.file.name.split('.').pop()?.toLowerCase() || 'bin';
+      const doc = await completeMultipartUpload(
+        uploadId,
+        parts,
+        objectName,
+        kbId,
+        item.file.name,
+        ext
+      );
+
+      item.status = 'success';
+      item.progress = 100;
+      item.docId = doc.id;
+      item.parseStatus = (doc.parse_status as UploadItem['parseStatus']) || 'pending';
+      item.parseStage = 0;
+      renderList();
+
+      // 7. 启动解析状态轮询（复用现有 getDocumentProgress 逻辑）
+      if (item.docId) {
+        pollParseStatus(item);
+      }
+    } catch (err) {
+      if (item.abortController?.signal.aborted) {
+        item.status = 'error';
+        item.parseError = '上传已取消';
+      } else {
+        item.status = 'error';
+        item.parseError = err instanceof Error ? err.message : '分片上传失败';
+      }
+      renderList();
+    }
+  }
+
+  /**
+   * 单分片上传（带重试）
+   * 单片最多重试 MAX_PART_RETRIES 次，指数退避（1s/2s/4s）
+   * 已取消（AbortError）不重试，直接抛出
+   */
+  async function uploadPartWithRetry(
+    item: UploadItem,
+    partNumber: number,
+    data: Blob,
+    uploadId: string
+  ): Promise<string> {
+    let lastError: Error | null = null;
+    for (let attempt = 0; attempt < MAX_PART_RETRIES; attempt++) {
+      // 检查是否已取消
+      if (item.abortController?.signal.aborted) {
+        throw new Error('上传已取消');
+      }
+      try {
+        const { etag } = await uploadPart(
+          uploadId,
+          partNumber,
+          data,
+          item.abortController?.signal
+        );
+        return etag;
+      } catch (err) {
+        // 已取消（AbortError）不重试，直接抛出
+        if (item.abortController?.signal.aborted) {
+          throw err;
+        }
+        lastError = err instanceof Error ? err : new Error(String(err));
+        // 最后一次重试不再等待
+        if (attempt < MAX_PART_RETRIES - 1) {
+          const delay = Math.min(1000 * Math.pow(2, attempt), 8000);
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        }
+      }
+    }
+    throw lastError || new Error(`分片 ${partNumber} 上传失败`);
+  }
+
+  /**
+   * 取消分片上传
+   * 1. abort 进行中的 fetch 请求（通过 AbortController）
+   * 2. 调用后端 abort 端点清理对象存储临时分片
+   * 3. 清除上传会话状态（重试时将重新 init）+ UI 状态更新
+   */
+  async function cancelMultipartUpload(item: UploadItem) {
+    // 1. 中止进行中的 fetch 请求
+    if (item.abortController) {
+      item.abortController.abort();
+    }
+    // 2. 调用后端取消端点，清理服务端临时分片
+    if (item.uploadId && item.objectName) {
+      try {
+        await abortMultipartUpload(item.uploadId, item.objectName);
+      } catch (err) {
+        // 后端清理失败不阻断 UI，仅 alert 提示
+        alert('取消分片上传时后端清理失败: ' + (err instanceof Error ? err.message : '未知错误'));
+      }
+    }
+    // 3. 清除上传会话状态（重试时将重新 init）
+    item.uploadId = undefined;
+    item.objectName = undefined;
+    item.uploadedParts = [];
+    item.partEtags = undefined;
+    item.abortController = undefined;
+    item.status = 'error';
+    item.parseError = '上传已取消';
+    renderList();
+  }
+
   /**
    * P1-1: 真实解析进度映射
    * 将后端 DocParseProgress.stage 映射到前端 parseStage（0-4）
@@ -592,11 +846,38 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
    * 否则使用后端返回的 message
    */
   function buildProgressHint(progress: DocParseProgress): string {
+    // P2-E: 优先展示子阶段进度（GB 视频 ASR 分段等）
+    if (progress.sub_stage && progress.sub_total && progress.sub_total > 0) {
+      const subLabel = formatSubStageLabel(progress.sub_stage);
+      return `${subLabel} ${progress.sub_current || 0}/${progress.sub_total}`;
+    }
     if (progress.current > 0 && progress.total > 0) {
       const unit = progress.stage === 'parsing' ? '页' : '块';
       return `第 ${progress.current}/${progress.total} ${unit}`;
     }
     return progress.message || '';
+  }
+
+  /** P2-E: 格式化子阶段标签为中文 */
+  function formatSubStageLabel(subStage: string): string {
+    if (subStage.startsWith('asr_segment_')) {
+      return 'ASR 转写';
+    }
+    const labelMap: Record<string, string> = {
+      'extract_audio': '提取音轨',
+      'extract_audio_done': '音轨提取',
+      'asr_multipart': 'ASR 转写',
+      'asr_done': 'ASR 转写',
+      'asr_failed': 'ASR 失败',
+      'keyframe_extract': '关键帧提取',
+      'keyframe_done': '关键帧提取',
+      'keyframe_failed': '关键帧失败',
+      'finalize_start': '合并处理',
+      'chunking': '分块中',
+      'embedding': '向量化',
+      'publishing': '发布中',
+    };
+    return labelMap[subStage] || subStage;
   }
 
   /**
@@ -790,6 +1071,10 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
           <div class="upload-item-meta">
             <span>${formatSize(item.file.size)}</span>
             <span class="badge ${statusMap[item.status].badge}">${statusMap[item.status].label}</span>
+            ${item.multipartMode ? `<span class="text-muted">分片上传</span>` : ''}
+            ${item.multipartMode && item.status === 'uploading' && item.totalParts
+              ? `<span class="text-muted">分片 ${item.uploadedParts?.length || 0}/${item.totalParts}</span>`
+              : ''}
             ${item.docId ? `<span class="text-muted">ID: ${escapeHtml(item.docId)}</span>` : ''}
           </div>
           <div class="progress-bar">
@@ -798,7 +1083,7 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
           ${renderParseSection(item, i)}
           ${renderIntelligenceSection(item)}
         </div>
-        <button class="btn btn-ghost btn-sm" data-index="${i}">✕</button>
+        <button class="btn btn-ghost btn-sm" data-index="${i}" title="${item.status === 'uploading' && item.multipartMode ? '取消上传' : '移除'}">${item.status === 'uploading' && item.multipartMode ? '取消' : '✕'}</button>
       </div>`
       )
       .join('');
@@ -806,8 +1091,15 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
     list.querySelectorAll('button[data-index]').forEach((btn) => {
       btn.addEventListener('click', () => {
         const idx = parseInt((btn as HTMLElement).dataset.index!);
-        uploadItems.splice(idx, 1);
-        renderList();
+        const item = uploadItems[idx];
+        if (!item) return;
+        // 分片上传中：点击取消按钮触发 cancelMultipartUpload（abort + 后端清理）
+        if (item.status === 'uploading' && item.multipartMode && item.uploadId) {
+          cancelMultipartUpload(item);
+        } else {
+          uploadItems.splice(idx, 1);
+          renderList();
+        }
       });
     });
 
@@ -828,8 +1120,11 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
         item.status = 'pending';
         item.progress = 0;
         item.parseError = undefined;
+        // 分片上传：uploadId 仍存在（非用户主动取消）时保留 uploadedParts/partEtags 实现断点续传
+        // uploadId 已被清除（取消场景）时 startMultipartUpload 会重新 init
+        item.abortController = undefined;
         renderList();
-        uploadFile(item);
+        handleFileUpload(item);
       });
     });
 

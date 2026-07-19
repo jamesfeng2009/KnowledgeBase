@@ -115,6 +115,13 @@ class Settings(BaseSettings):
     VIDEO_KEYFRAME_ENABLED: bool = True
     VIDEO_KEYFRAME_SCENE_THRESHOLD: float = 0.3
     VIDEO_KEYFRAME_MAX_COUNT: int = 100
+    # P2-C: 时长采样模式（替代场景检测全片扫描，突破 GB 级视频 OOM/磁盘打满）
+    # 抽帧间隔（秒）— 每 N 秒抽取 1 帧（默认 5 分钟，2h 视频 ≈ 24 帧）
+    VIDEO_KEYFRAME_INTERVAL: int = 300
+    # 最大关键帧数 — 超出后均匀采样（默认 30，与 1GB/2h 视频量级匹配）
+    VIDEO_KEYFRAME_MAX: int = 30
+    # 黑屏/静态画面跳过阈值 — 帧直方图方差低于此值跳过（默认 100）
+    VIDEO_KEYFRAME_VARIANCE_THRESHOLD: int = 100
 
     # === 文档解析增强 ===
     # PDF 表格提取 — pymupdf find_tables() → HTML <table>
@@ -255,6 +262,8 @@ class Settings(BaseSettings):
         "RAG_MAX_ITERATIONS",
         "RAG_RETRIEVAL_EXPAND_TOP_K",
         "MAX_UPLOAD_SIZE_MB",
+        "VIDEO_KEYFRAME_INTERVAL",
+        "VIDEO_KEYFRAME_MAX",
     )
     @classmethod
     def validate_positive_int(cls, v: int) -> int:
@@ -269,6 +278,7 @@ class Settings(BaseSettings):
         "PDF_IMAGE_MIN_SIZE",
         "DOCX_IMAGE_MIN_SIZE",
         "PPTX_IMAGE_MIN_SIZE",
+        "VIDEO_KEYFRAME_VARIANCE_THRESHOLD",
     )
     @classmethod
     def validate_non_negative_int(cls, v: int) -> int:
