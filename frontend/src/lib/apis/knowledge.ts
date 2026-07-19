@@ -133,6 +133,19 @@ export interface MultipartPart {
   etag: string;
 }
 
+/** 服务端已上传分片信息（listUploadedParts 返回的单个分片） */
+export interface MultipartUploadedPart {
+  part_number: number;
+  etag: string;
+  size: number;
+}
+
+/** listUploadedParts 返回结构（complete 前服务端对账用） */
+export interface MultipartUploadedPartsList {
+  parts: MultipartUploadedPart[];
+  count: number;
+}
+
 /**
  * 初始化分片上传
  * 后端在对象存储（MinIO/Ceph S3 协议）创建多段上传会话，返回 upload_id 和 object_name
@@ -220,6 +233,22 @@ export function abortMultipartUpload(
 ): Promise<void> {
   const params = new URLSearchParams({ object_name: objectName });
   return delData<void>(`${BASE}/documents/multipart/${uploadId}?${params.toString()}`);
+}
+
+/**
+ * 列出已上传的分片（P0: complete 前服务端对账用）
+ * 查询对象存储中该 upload_id 已接收的分片列表，用于前端与服务端状态对账
+ * @param uploadId - 分片上传会话 ID
+ * @param objectName - 对象存储对象名（init 时返回）
+ */
+export function listUploadedParts(
+  uploadId: string,
+  objectName: string
+): Promise<MultipartUploadedPartsList> {
+  const params = new URLSearchParams({ object_name: objectName });
+  return getData<MultipartUploadedPartsList>(
+    `${BASE}/documents/multipart/${uploadId}/parts?${params.toString()}`
+  );
 }
 
 // ===== 文档版本历史 =====

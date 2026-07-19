@@ -11,6 +11,7 @@
 - check_expiration：每日检查知识过期预警
 - cleanup_expired_facts：每日清理过期记忆事实
 - generate_quality_report：每周生成质量报告
+- cleanup_orphan_multipart_uploads：每日清理 24h 未 complete 的孤儿分片
 """
 
 from __future__ import annotations
@@ -126,6 +127,33 @@ def generate_quality_report() -> dict[str, Any]:
         return {"status": "failed", "error": str(exc)}
 
 
+@celery_app.task(name="tasks.scheduled_tasks.cleanup_orphan_multipart_uploads")
+def cleanup_orphan_multipart_uploads() -> dict[str, Any]:
+    """每日清理 24h 未 complete 的孤儿分片（P1 加固）。
+
+    双策略清理：
+    1. 扫描 Redis ``ekb:multipart:*`` 键 — created_at 超过 12h 的视为停滞上传，
+       调用 ``abort_multipart_upload`` 清理 MinIO 分片 + 删除 Redis key；
+    2. 扫描 MinIO ``list_multipart_uploads`` — initiated 超过 24h 的视为孤儿
+       （Redis TTL 已过期，元数据丢失），调用 abort 释放存储空间。
+
+    Returns:
+        清理结果字典，包含两个策略各自清理的数量。
+    """
+    logger.info("scheduled.cleanup_multipart_started")
+    try:
+        result = asyncio.run(_cleanup_orphan_multipart_uploads_async())
+        logger.info(
+            "scheduled.cleanup_multipart_completed",
+            redis_cleaned=result.get("redis_cleaned", 0),
+            minio_cleaned=result.get("minio_cleaned", 0),
+        )
+        return result
+    except Exception as exc:
+        logger.error("scheduled.cleanup_multipart_failed", error=str(exc))
+        return {"status": "failed", "error": str(exc)}
+
+
 # ------------------------------------------------------------------
 # 异步实现
 # ------------------------------------------------------------------
@@ -238,3 +266,141 @@ async def _generate_quality_report_async() -> dict[str, Any]:
         report = await service.get_quality_report(kb_id=None)
 
         return report
+
+
+async def _cleanup_orphan_multipart_uploads_async() -> dict[str, Any]:
+    """异步清理孤儿分片 — Redis + MinIO 双策略（P1 加固）。
+
+    策略 1：扫描 Redis ``ekb:multipart:*`` 键，created_at 超过 12h 的视为停滞上传，
+    调用 ``abort_multipart_upload`` 清理 MinIO 分片 + 删除 Redis key。
+
+    策略 2：扫描 MinIO ``list_multipart_uploads``，initiated 超过 24h 的视为孤儿
+    （Redis TTL 已过期，元数据丢失），调用 abort 释放存储空间。
+    跳过策略 1 已清理的 upload_id，避免重复操作。
+    """
+    import json
+    import time
+    from datetime import datetime, timezone
+
+    from app.config import get_settings
+
+    settings = get_settings()
+    now = time.time()
+    redis_threshold = 12 * 3600   # 12h — Redis 停滞阈值
+    minio_threshold = 24 * 3600   # 24h — MinIO 孤儿阈值
+
+    redis_cleaned = 0
+    minio_cleaned = 0
+    cleaned_upload_ids: set[str] = set()
+
+    # ------------------------------------------------------------------
+    # 策略 1: 扫描 Redis ekb:multipart:* 键
+    # ------------------------------------------------------------------
+    try:
+        import redis
+
+        client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+        for key in client.scan_iter(match="ekb:multipart:*", count=100):
+            try:
+                raw = client.get(key)
+                if not raw:
+                    continue
+                session = json.loads(raw)
+                created_at = session.get("created_at", 0)
+                minio_upload_id = session.get("minio_upload_id", "")
+                object_name = session.get("object_name", "")
+
+                # 未超过 12h 阈值的跳过（上传可能仍在进行）
+                if now - created_at < redis_threshold:
+                    continue
+
+                # 调用 abort 清理 MinIO 分片
+                if minio_upload_id and object_name:
+                    try:
+                        from app.utils.minio_client import abort_multipart_upload
+
+                        await abort_multipart_upload(
+                            bucket="ekb-documents",
+                            object_name=object_name,
+                            upload_id=minio_upload_id,
+                        )
+                        cleaned_upload_ids.add(minio_upload_id)
+                        redis_cleaned += 1
+                    except Exception as exc:
+                        logger.warning(
+                            "scheduled.cleanup_abort_failed",
+                            upload_id=minio_upload_id,
+                            error=str(exc),
+                        )
+
+                # 删除 Redis key
+                client.delete(key)
+            except Exception as exc:
+                logger.warning(
+                    "scheduled.cleanup_key_failed",
+                    key=key,
+                    error=str(exc),
+                )
+        client.close()
+    except ImportError:
+        logger.debug("scheduled.cleanup_redis_skipped", reason="redis_not_installed")
+    except Exception as exc:
+        logger.warning("scheduled.cleanup_redis_failed", error=str(exc))
+
+    # ------------------------------------------------------------------
+    # 策略 2: 扫描 MinIO list_multipart_uploads（兜底孤儿）
+    # ------------------------------------------------------------------
+    try:
+        from app.utils.minio_client import list_multipart_uploads, abort_multipart_upload
+
+        uploads = await list_multipart_uploads(bucket="ekb-documents")
+        for u in uploads:
+            upload_id = u.get("upload_id", "")
+            object_name = u.get("object_name", "")
+            initiated = u.get("initiated")
+
+            # 跳过策略 1 已清理的
+            if upload_id in cleaned_upload_ids:
+                continue
+
+            # 解析 initiated 时间（datetime 或 ISO 字符串）
+            if isinstance(initiated, datetime):
+                initiated_ts = initiated.replace(tzinfo=timezone.utc).timestamp()
+            elif isinstance(initiated, str):
+                try:
+                    initiated_ts = datetime.fromisoformat(
+                        initiated.replace("Z", "+00:00")
+                    ).timestamp()
+                except ValueError:
+                    continue
+            else:
+                continue
+
+            # 未超过 24h 阈值的跳过
+            if now - initiated_ts < minio_threshold:
+                continue
+
+            try:
+                await abort_multipart_upload(
+                    bucket="ekb-documents",
+                    object_name=object_name,
+                    upload_id=upload_id,
+                )
+                minio_cleaned += 1
+            except Exception as exc:
+                logger.warning(
+                    "scheduled.cleanup_minio_abort_failed",
+                    upload_id=upload_id,
+                    error=str(exc),
+                )
+    except ImportError:
+        logger.debug("scheduled.cleanup_minio_skipped", reason="minio_not_installed")
+    except Exception as exc:
+        logger.warning("scheduled.cleanup_minio_failed", error=str(exc))
+
+    return {
+        "status": "success",
+        "redis_cleaned": redis_cleaned,
+        "minio_cleaned": minio_cleaned,
+        "cleaned_at": datetime.now(timezone.utc).isoformat(),
+    }

@@ -254,15 +254,30 @@ async def init_multipart_upload(
     Returns:
         {"upload_id": "xxx", "object_name": "kb_id/title"}
     """
-    import secrets
+    import json
+    import time
 
     object_name = f"{kb_id}/{title}"
-    # 生成 upload_id（MinIO 内部有自己的 upload_id，这里用应用层 ID 关联）
-    app_upload_id = secrets.token_urlsafe(16)
 
-    # 在 Redis 记录会话元数据（用于校验和断点续传）
+    # 先调用 MinIO 初始化多段上传,拿到 minio_upload_id
     try:
-        import json
+        from app.utils.minio_client import init_multipart_upload as _init
+
+        minio_upload_id = await _init(
+            bucket="ekb-documents",
+            object_name=object_name,
+        )
+    except ImportError:
+        logger.warning("multipart.minio_not_installed")
+        raise HTTPException(503, detail="MinIO 未安装，不支持多段上传")
+    except Exception:
+        logger.exception("multipart.init_failed")
+        raise HTTPException(500, detail="初始化多段上传失败")
+
+    # 在 Redis 记录会话元数据（用于孤儿分片清理和断点续传）
+    # P1 加固：用 minio_upload_id 作为 key（与前端后续操作使用的 ID 一致），
+    # session 包含 minio_upload_id，供清理任务调用 abort_multipart_upload。
+    try:
         import redis
 
         from app.config import get_settings
@@ -275,37 +290,24 @@ async def init_multipart_upload(
             "filename": filename,
             "object_name": object_name,
             "user_id": str(user.id),
-            "created_at": __import__("time").time(),
+            "minio_upload_id": minio_upload_id,
+            "created_at": time.time(),
+            "status": "initiated",
         }
         client.setex(
-            f"ekb:multipart:{app_upload_id}",
+            f"ekb:multipart:{minio_upload_id}",
             86400,  # 24h TTL
             json.dumps(session, ensure_ascii=False),
         )
         client.close()
     except Exception:
-        logger.debug("multipart.session_redis_failed", upload_id=app_upload_id)
+        logger.debug("multipart.session_redis_failed", upload_id=minio_upload_id)
 
-    # 调用 MinIO 初始化多段上传
-    try:
-        from app.utils.minio_client import init_multipart_upload as _init
-
-        minio_upload_id = await _init(
-            bucket="ekb-documents",
-            object_name=object_name,
-        )
-        # 用 MinIO 的 upload_id 作为实际标识
-        return ApiResponse(
-            code=0,
-            data={"upload_id": minio_upload_id, "object_name": object_name},
-            message="success",
-        )
-    except ImportError:
-        logger.warning("multipart.minio_not_installed")
-        raise HTTPException(503, detail="MinIO 未安装，不支持多段上传")
-    except Exception:
-        logger.exception("multipart.init_failed")
-        raise HTTPException(500, detail="初始化多段上传失败")
+    return ApiResponse(
+        code=0,
+        data={"upload_id": minio_upload_id, "object_name": object_name},
+        message="success",
+    )
 
 
 @router.put("/documents/multipart/{upload_id}/parts/{part_number}")
@@ -378,6 +380,82 @@ async def complete_multipart_upload(
     if not parts or not object_name or not kb_id_str or not title:
         raise HTTPException(400, detail="缺少必要参数 parts/object_name/kb_id/title")
 
+    # P0: 完整性校验 — 防止分片乱序、缺片、etag 不匹配导致视频损坏
+    sorted_parts = sorted(parts, key=lambda p: p.get("part_number", 0))
+    part_numbers = [p.get("part_number") for p in sorted_parts]
+
+    # 校验 1: part_number 从 1 开始连续无缺
+    expected = list(range(1, len(parts) + 1))
+    if part_numbers != expected:
+        missing = sorted(set(expected) - set(part_numbers))
+        raise HTTPException(
+            400,
+            detail={
+                "error": "parts_not_continuous",
+                "message": f"分片编号不连续，缺失: {missing}",
+                "missing_parts": missing,
+                "received_parts": part_numbers,
+            },
+        )
+
+    # 校验 2: 每个分片必须有 etag
+    empty_etag_parts = [p["part_number"] for p in sorted_parts if not p.get("etag")]
+    if empty_etag_parts:
+        raise HTTPException(
+            400,
+            detail={
+                "error": "etag_missing",
+                "message": f"分片缺少 etag: {empty_etag_parts}",
+                "missing_etag_parts": empty_etag_parts,
+            },
+        )
+
+    # 校验 3: 调用 list_parts 对账服务端实际已上传分片
+    try:
+        from app.utils.minio_client import list_parts
+
+        server_parts = await list_parts(
+            bucket="ekb-documents",
+            object_name=object_name,
+            upload_id=upload_id,
+        )
+        server_part_numbers = {p.get("part_number") for p in server_parts}
+        client_part_numbers = set(part_numbers)
+
+        # 客户端声称上传但服务端没有的分片
+        client_only = sorted(client_part_numbers - server_part_numbers)
+        if client_only:
+            raise HTTPException(
+                400,
+                detail={
+                    "error": "parts_lost_on_server",
+                    "message": f"分片在服务端不存在，需重新上传: {client_only}",
+                    "missing_parts": client_only,
+                },
+            )
+
+        # etag 不匹配的分片（数据损坏）
+        server_etag_map = {p.get("part_number"): p.get("etag") for p in server_parts}
+        etag_mismatch = []
+        for p in sorted_parts:
+            pn = p["part_number"]
+            if server_etag_map.get(pn) and server_etag_map[pn] != p.get("etag"):
+                etag_mismatch.append(pn)
+        if etag_mismatch:
+            raise HTTPException(
+                400,
+                detail={
+                    "error": "etag_mismatch",
+                    "message": f"分片 etag 与服务端不匹配（数据损坏）: {etag_mismatch}",
+                    "mismatch_parts": etag_mismatch,
+                },
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.warning("multipart.list_parts_check_failed", exc_info=True)
+        # list_parts 失败不阻断合并（降级），仅记录日志
+
     # 1. 调用 MinIO 合并分片
     try:
         from app.utils.minio_client import complete_multipart_upload as _complete
@@ -386,7 +464,7 @@ async def complete_multipart_upload(
             bucket="ekb-documents",
             object_name=object_name,
             upload_id=upload_id,
-            parts=parts,
+            parts=sorted_parts,  # P0: 使用排序后的 parts，确保 MinIO 按正确顺序合并
         )
     except ImportError:
         raise HTTPException(503, detail="MinIO 未安装")
@@ -443,6 +521,41 @@ async def complete_multipart_upload(
         data=DocResponse.model_validate(doc),
         message="success",
     )
+
+
+@router.get("/documents/multipart/{upload_id}/parts", response_model=ApiResponse[dict])
+async def list_uploaded_parts(
+    upload_id: str,
+    object_name: str = Query(..., description="对象存储路径"),
+    user: User = Depends(get_current_active_user),
+) -> ApiResponse[dict]:
+    """查询已上传的分片列表 — 用于断点续传对账（P0/P1）。
+
+    前端在中断恢复或 complete 前调用此端点，获取服务端实际已上传分片，
+    与本地记录对比，找出缺失/冲突分片。
+
+    Returns:
+        {"parts": [{"part_number": 1, "etag": "...", "size": 10485760}, ...],
+         "count": N}
+    """
+    try:
+        from app.utils.minio_client import list_parts
+
+        parts = await list_parts(
+            bucket="ekb-documents",
+            object_name=object_name,
+            upload_id=upload_id,
+        )
+        return ApiResponse(
+            code=0,
+            data={"parts": parts, "count": len(parts)},
+            message="success",
+        )
+    except ImportError:
+        raise HTTPException(503, detail="MinIO 未安装")
+    except Exception:
+        logger.exception("multipart.list_parts_failed")
+        raise HTTPException(500, detail="查询已上传分片失败")
 
 
 @router.delete("/documents/multipart/{upload_id}")

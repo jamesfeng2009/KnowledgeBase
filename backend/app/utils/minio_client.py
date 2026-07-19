@@ -419,3 +419,38 @@ async def list_parts(
             return []
 
     return await asyncio.to_thread(_list)
+
+
+async def list_multipart_uploads(bucket: str) -> list[dict[str, Any]]:
+    """列出所有进行中的多段上传 — 用于孤儿分片清理（P1 加固）。
+
+    定时清理任务调用此接口扫描 MinIO 中所有未 complete/abort 的多段上传，
+    对超过阈值的调用 ``abort_multipart_upload`` 释放存储空间。
+
+    Args:
+        bucket: MinIO bucket 名称。
+
+    Returns:
+        [{"upload_id": "xxx", "object_name": "kb1/title", "initiated": "2026-01-01T00:00:00Z"}, ...]
+        失败时返回空列表（不阻断清理流程）。
+    """
+    def _list_uploads() -> list[dict[str, Any]]:
+        client = _get_client()
+        try:
+            result = client._list_multipart_uploads(bucket_name=bucket)
+            uploads = []
+            for u in result or []:
+                upload_id = u.upload_id if hasattr(u, "upload_id") else u.get("upload_id")
+                obj_name = u.object_name if hasattr(u, "object_name") else u.get("object_name")
+                initiated = u.initiated if hasattr(u, "initiated") else u.get("initiated")
+                uploads.append({
+                    "upload_id": upload_id,
+                    "object_name": obj_name,
+                    "initiated": initiated,
+                })
+            return uploads
+        except Exception as exc:
+            log.warning("minio.list_uploads_failed", error=str(exc))
+            return []
+
+    return await asyncio.to_thread(_list_uploads)

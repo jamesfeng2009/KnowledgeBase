@@ -111,6 +111,11 @@ celery_app.conf.beat_schedule = {
         "task": "tasks.scheduled_tasks.generate_quality_report",
         "schedule": "0 8 * * 1",  # 每周一早上 8 点
     },
+    # 每日凌晨 5 点 — 清理 24h 未 complete 的孤儿分片（P1 加固）
+    "cleanup-orphan-multipart-daily": {
+        "task": "tasks.scheduled_tasks.cleanup_orphan_multipart_uploads",
+        "schedule": "0 5 * * *",  # 每天凌晨 5 点
+    },
     # 每日 9:00 — 个性化知识日报
     "daily-personal-digest": {
         "task": "tasks.notification_tasks.daily_personal_digest",

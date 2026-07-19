@@ -398,10 +398,11 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
     uploadPart,
     completeMultipartUpload,
     abortMultipartUpload,
+    listUploadedParts,
   } from '@/lib/apis/knowledge';
-  import type { DocParseProgress, MultipartPart } from '@/lib/apis/knowledge';
+  import type { DocParseProgress, MultipartPart, Document as KbDocument } from '@/lib/apis/knowledge';
   import { processIntelligence, getIntelligenceStatus } from '@/lib/apis/intelligence';
-  import { postData } from '@/lib/api';
+  import { postData, ApiError } from '@/lib/api';
 
   const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
   const TOKEN_KEY = 'ekb_access_token';
@@ -414,6 +415,135 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
   const MAX_CONCURRENT_PARTS = 3;
   /** 单片最大重试次数 */
   const MAX_PART_RETRIES = 3;
+  /** P0: complete 前服务端对账最大尝试次数 */
+  const MAX_RECONCILE_ATTEMPTS = 3;
+  /** P0: complete 失败后最大重试次数（解析 missing_parts 自动补传） */
+  const MAX_COMPLETE_RETRIES = 3;
+  /** P1: 跨会话断点续传 localStorage key 前缀 */
+  const MULTIPART_STORAGE_PREFIX = 'ekb:multipart:';
+  /** P1: 持久化状态最大保留时长（7 天过期清理） */
+  const MULTIPART_STATE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
+
+  /** P1: 分片上传持久化状态（跨会话断点续传） */
+  interface MultipartPersistState {
+    uploadId: string;
+    objectName: string;
+    uploadedParts: number[];
+    partEtags: Record<number, string>;
+    /** 持久化时间戳，用于过期清理 */
+    timestamp: number;
+  }
+
+  /**
+   * P1: 计算文件指纹（name + size + lastModified 简单 hash）
+   * 不引入 crypto 库，仅用于本地 localStorage key 唯一性
+   * 使用 djb2 变体字符串 hash
+   */
+  function computeFileFingerprint(file: File): string {
+    const raw = `${file.name}|${file.size}|${file.lastModified}`;
+    let hash = 5381;
+    for (let i = 0; i < raw.length; i++) {
+      hash = ((hash << 5) + hash) + raw.charCodeAt(i);
+      hash = hash & 0xffffffff; // 限制为 32 位
+    }
+    return (hash >>> 0).toString(16);
+  }
+
+  /**
+   * P1: 持久化分片上传状态到 localStorage
+   * localStorage 不可用（隐私模式/配额满）时优雅降级，不阻断上传
+   */
+  function persistMultipartState(
+    file: File,
+    state: {
+      uploadId: string;
+      objectName: string;
+      uploadedParts: number[];
+      partEtags: Record<number, string>;
+    }
+  ): void {
+    try {
+      const key = MULTIPART_STORAGE_PREFIX + computeFileFingerprint(file);
+      const payload: MultipartPersistState = {
+        uploadId: state.uploadId,
+        objectName: state.objectName,
+        uploadedParts: state.uploadedParts,
+        partEtags: state.partEtags,
+        timestamp: Date.now(),
+      };
+      localStorage.setItem(key, JSON.stringify(payload));
+    } catch {
+      // localStorage 不可用（隐私模式/配额满）：优雅降级，不阻断上传
+    }
+  }
+
+  /**
+   * P1: 读取 localStorage 中的分片上传状态
+   * 超过 7 天的记录自动清理，返回 null
+   */
+  function loadMultipartState(file: File): MultipartPersistState | null {
+    try {
+      const key = MULTIPART_STORAGE_PREFIX + computeFileFingerprint(file);
+      const raw = localStorage.getItem(key);
+      if (!raw) return null;
+      const state = JSON.parse(raw) as MultipartPersistState;
+      // 过期清理
+      if (Date.now() - state.timestamp > MULTIPART_STATE_MAX_AGE) {
+        localStorage.removeItem(key);
+        return null;
+      }
+      return state;
+    } catch {
+      return null;
+    }
+  }
+
+  /** P1: 清除 localStorage 中的分片上传状态 */
+  function clearMultipartState(file: File): void {
+    try {
+      const key = MULTIPART_STORAGE_PREFIX + computeFileFingerprint(file);
+      localStorage.removeItem(key);
+    } catch {
+      // localStorage 不可用：忽略
+    }
+  }
+
+  /**
+   * P1: 扫描 localStorage 中未完成的分片上传记录
+   * 页面加载时调用，提示用户重新选择对应文件以续传
+   */
+  function scanUnfinishedUploads(): void {
+    try {
+      let count = 0;
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith(MULTIPART_STORAGE_PREFIX)) {
+          // 校验是否过期
+          try {
+            const raw = localStorage.getItem(key);
+            if (raw) {
+              const state = JSON.parse(raw) as MultipartPersistState;
+              if (Date.now() - state.timestamp > MULTIPART_STATE_MAX_AGE) {
+                localStorage.removeItem(key);
+              } else {
+                count++;
+              }
+            }
+          } catch {
+            // 单条记录损坏：清理
+            if (key) localStorage.removeItem(key);
+          }
+        }
+      }
+      if (count > 0) {
+        alert(
+          `检测到 ${count} 个未完成的分片上传记录。\n重新选择对应文件后将自动从断点续传。`
+        );
+      }
+    } catch {
+      // localStorage 不可用：忽略
+    }
+  }
 
   /** 智能处理状态 */
   type IntelStatus = 'idle' | 'processing' | 'done' | 'unavailable';
@@ -485,18 +615,33 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
   /**
    * 添加文件到上传队列
    * 文件 > 100MB 自动标记为分片上传模式（multipartMode），否则走普通上传
+   * P1: 跨会话断点续传 - 检查 localStorage 是否有未完成的分片上传记录，
+   *      若存在则预填充 uploadId/uploadedParts/partEtags，UI 立即显示已有进度
    */
   function addFiles(files: FileList | File[]) {
     Array.from(files).forEach((file) => {
       const isMultipart = file.size > MULTIPART_THRESHOLD;
-      uploadItems.push({
+      const item: UploadItem = {
         file,
         progress: 0,
         status: 'pending',
         multipartMode: isMultipart,
         totalParts: isMultipart ? Math.ceil(file.size / PART_SIZE) : undefined,
         uploadedParts: isMultipart ? [] : undefined,
-      });
+      };
+      // P1: 跨会话断点续传 - 预填充已持久化的分片上传状态
+      if (isMultipart) {
+        const saved = loadMultipartState(file);
+        if (saved && saved.uploadId) {
+          item.uploadId = saved.uploadId;
+          item.objectName = saved.objectName;
+          item.uploadedParts = saved.uploadedParts || [];
+          item.partEtags = saved.partEtags || {};
+          const total = item.totalParts || 1;
+          item.progress = Math.round((item.uploadedParts.length / total) * 100);
+        }
+      }
+      uploadItems.push(item);
     });
     renderList();
     // 自动开始上传：根据文件大小调度到普通上传或分片上传
@@ -606,8 +751,10 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
 
   /**
    * 启动分片上传流程
-   * 流程：init 初始化 → 分片切片 → 并发上传（3） → complete 合并 → 触发解析轮询
+   * 流程：init 初始化 → 分片切片 → 并发上传（3） → 自检+服务端对账 → complete 合并 → 触发解析轮询
    * 断点续传：如果 uploadId 仍有效（非用户主动取消），跳过 init 并跳过已上传分片
+   * P1: 跨会话断点续传 - 通过 localStorage 持久化 uploadId/uploadedParts/partEtags
+   * P0: complete 前自检 + 服务端对账 - verifyAndCompleteMultipart 确保分片完整性
    */
   async function startMultipartUpload(item: UploadItem) {
     const token = localStorage.getItem(TOKEN_KEY);
@@ -627,6 +774,16 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
 
     try {
       // 1. 初始化分片上传（断点续传：uploadId 仍有效则跳过 init）
+      // P1: 跨会话断点续传 - 优先从 localStorage 恢复（item.uploadId 未设置时）
+      if (!item.uploadId) {
+        const saved = loadMultipartState(item.file);
+        if (saved && saved.uploadId) {
+          item.uploadId = saved.uploadId;
+          item.objectName = saved.objectName;
+          item.uploadedParts = saved.uploadedParts || [];
+          item.partEtags = saved.partEtags || {};
+        }
+      }
       let uploadId = item.uploadId;
       let objectName = item.objectName || '';
       if (!uploadId) {
@@ -674,6 +831,13 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
             partEtags[partNumber] = etag;
             uploadedParts.push(partNumber);
             item.progress = Math.round((uploadedParts.length / totalParts) * 100);
+            // P1: 持久化分片上传进度（跨会话断点续传，localStorage 失败时优雅降级）
+            persistMultipartState(item.file, {
+              uploadId,
+              objectName,
+              uploadedParts,
+              partEtags,
+            });
             renderList();
           } catch (err) {
             if (item.abortController?.signal.aborted) {
@@ -696,21 +860,16 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
         return; // cancelMultipartUpload 已处理 UI
       }
 
-      // 5. 收集所有分片的 etag（按 part_number 升序）
-      const parts: MultipartPart[] = [];
-      for (let i = 1; i <= totalParts; i++) {
-        const etag = partEtags[i];
-        if (etag) {
-          parts.push({ part_number: i, etag });
-        }
-      }
-
-      // 6. 完成分片上传，合并所有分片并创建文档记录（status='draft'）
+      // 5-6. P0: complete 前自检 + 服务端对账（替代直接调用 completeMultipartUpload）
+      // verifyAndCompleteMultipart 内部会：前端自检 → 补传缺失分片 → 服务端对账 → complete
+      // 对账失败 3 次抛出错误（不自动 abort，让用户决定是否重试）
       const ext = item.file.name.split('.').pop()?.toLowerCase() || 'bin';
-      const doc = await completeMultipartUpload(
+      const doc = await verifyAndCompleteMultipart(
+        item,
         uploadId,
-        parts,
         objectName,
+        partEtags,
+        totalParts,
         kbId,
         item.file.name,
         ext
@@ -721,6 +880,8 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
       item.docId = doc.id;
       item.parseStatus = (doc.parse_status as UploadItem['parseStatus']) || 'pending';
       item.parseStage = 0;
+      // P1: 上传完成，清除 localStorage 中的分片上传状态
+      clearMultipartState(item.file);
       renderList();
 
       // 7. 启动解析状态轮询（复用现有 getDocumentProgress 逻辑）
@@ -781,10 +942,176 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
   }
 
   /**
+   * P0: complete 前自检 + 服务端对账
+   * 步骤 1: 前端自检 partEtags 是否覆盖所有 totalParts，找出缺失分片
+   * 步骤 2: 缺失分片调用 uploadPartWithRetry 补传
+   * 步骤 3: 调用 listUploadedParts 获取服务端实际分片
+   * 步骤 4: 对比前端 partEtags 与服务端 list:
+   *         - 客户端有服务端无 → 重传
+   *         - 服务端有客户端无 → 用服务端 etag 补齐
+   *         - etag 不匹配 → 重传
+   * 步骤 5: 三次对账失败 → 抛出错误（调用方处理，不自动 abort，让用户决定）
+   * 步骤 6: 对账成功 → 调用 completeMultipartUpload
+   *         complete 失败时解析后端 missing_parts，自动补传后重试 complete（最多 3 次）
+   */
+  async function verifyAndCompleteMultipart(
+    item: UploadItem,
+    uploadId: string,
+    objectName: string,
+    partEtags: Record<number, string>,
+    totalParts: number,
+    kbId: string,
+    title: string,
+    docType: string
+  ): Promise<KbDocument> {
+    // 辅助：从 item.file 切出指定分片
+    const slicePart = (partNumber: number): Blob => {
+      const start = (partNumber - 1) * PART_SIZE;
+      const end = Math.min(start + PART_SIZE, item.file.size);
+      return item.file.slice(start, end);
+    };
+
+    // 辅助：上传单个缺失/不匹配分片（带重试）
+    const uploadMissingPart = async (partNumber: number): Promise<void> => {
+      if (item.abortController?.signal.aborted) {
+        throw new Error('上传已取消');
+      }
+      const etag = await uploadPartWithRetry(item, partNumber, slicePart(partNumber), uploadId);
+      partEtags[partNumber] = etag;
+    };
+
+    // 辅助：构建 complete 请求体（按 part_number 升序）
+    const buildPartsList = (): MultipartPart[] => {
+      const parts: MultipartPart[] = [];
+      for (let i = 1; i <= totalParts; i++) {
+        const etag = partEtags[i];
+        if (etag) {
+          parts.push({ part_number: i, etag });
+        }
+      }
+      return parts;
+    };
+
+    // 步骤 1: 前端自检 - 找出 partEtags 缺失的分片
+    const selfMissing: number[] = [];
+    for (let i = 1; i <= totalParts; i++) {
+      if (!partEtags[i]) {
+        selfMissing.push(i);
+      }
+    }
+
+    // 步骤 2: 补传前端缺失的分片
+    if (selfMissing.length > 0) {
+      for (const partNumber of selfMissing) {
+        await uploadMissingPart(partNumber);
+      }
+    }
+
+    // 步骤 3-5: 服务端对账（最多 MAX_RECONCILE_ATTEMPTS 次）
+    let lastReconcileError: Error | null = null;
+    for (let attempt = 0; attempt < MAX_RECONCILE_ATTEMPTS; attempt++) {
+      if (item.abortController?.signal.aborted) {
+        throw new Error('上传已取消');
+      }
+
+      // 步骤 3: 拉取服务端分片列表
+      const serverList = await listUploadedParts(uploadId, objectName);
+      const serverPartsMap = new Map<number, string>();
+      for (const p of serverList.parts) {
+        serverPartsMap.set(p.part_number, p.etag);
+      }
+
+      // 步骤 4: 对比客户端与服务端
+      const partsToReupload: number[] = [];
+      for (let i = 1; i <= totalParts; i++) {
+        const clientEtag = partEtags[i];
+        const serverEtag = serverPartsMap.get(i);
+        if (clientEtag && !serverEtag) {
+          // 客户端有服务端无 → 重传
+          partsToReupload.push(i);
+        } else if (!clientEtag && serverEtag) {
+          // 服务端有客户端无 → 用服务端 etag 补齐
+          partEtags[i] = serverEtag;
+        } else if (!clientEtag && !serverEtag) {
+          // 双方都没有 → 重传
+          partsToReupload.push(i);
+        } else if (clientEtag && serverEtag && clientEtag !== serverEtag) {
+          // etag 不匹配 → 重传
+          partsToReupload.push(i);
+        }
+      }
+
+      // 步骤 4 续: 重传不匹配/缺失的分片
+      if (partsToReupload.length > 0) {
+        for (const partNumber of partsToReupload) {
+          await uploadMissingPart(partNumber);
+        }
+        // 重传后进入下一轮对账
+        lastReconcileError = new Error(
+          `分片对账不一致，已重传 ${partsToReupload.length} 个分片，重试对账（第 ${attempt + 1}/${MAX_RECONCILE_ATTEMPTS} 次）`
+        );
+        continue;
+      }
+
+      // 对账成功，执行 complete（步骤 6 + complete 失败重试）
+      const parts = buildPartsList();
+      for (let completeAttempt = 0; completeAttempt < MAX_COMPLETE_RETRIES; completeAttempt++) {
+        if (item.abortController?.signal.aborted) {
+          throw new Error('上传已取消');
+        }
+        try {
+          const doc = await completeMultipartUpload(
+            uploadId,
+            parts,
+            objectName,
+            kbId,
+            title,
+            docType
+          );
+          return doc;
+        } catch (err) {
+          // 解析后端返回的 missing_parts，自动补传后重试 complete
+          const missingParts = extractMissingParts(err);
+          if (missingParts.length > 0 && completeAttempt < MAX_COMPLETE_RETRIES - 1) {
+            for (const partNumber of missingParts) {
+              await uploadMissingPart(partNumber);
+            }
+            // 更新 parts 数组后重试 complete
+            parts.length = 0;
+            parts.push(...buildPartsList());
+            continue;
+          }
+          // 无法恢复的 complete 错误，向上抛出
+          throw err;
+        }
+      }
+      // 理论上不会到达这里（complete 重试循环要么 return 要么 throw）
+      throw new Error('complete 重试次数耗尽');
+    }
+
+    // 步骤 5: 对账失败 3 次，抛出错误（不自动 abort，让用户决定）
+    throw lastReconcileError || new Error('分片对账失败，已重试 3 次');
+  }
+
+  /**
+   * P0: 从 ApiError 中提取后端返回的 missing_parts 字段
+   * 后端 complete 失败时可能返回 { missing_parts: [1, 3, 5] } 提示缺失分片
+   */
+  function extractMissingParts(err: unknown): number[] {
+    if (err instanceof ApiError && err.data) {
+      const data = err.data as { missing_parts?: unknown };
+      if (Array.isArray(data.missing_parts)) {
+        return data.missing_parts.filter((n): n is number => typeof n === 'number');
+      }
+    }
+    return [];
+  }
+
+  /**
    * 取消分片上传
    * 1. abort 进行中的 fetch 请求（通过 AbortController）
    * 2. 调用后端 abort 端点清理对象存储临时分片
-   * 3. 清除上传会话状态（重试时将重新 init）+ UI 状态更新
+   * 3. 清除上传会话状态（重试时将重新 init）+ localStorage 持久化状态 + UI 状态更新
    */
   async function cancelMultipartUpload(item: UploadItem) {
     // 1. 中止进行中的 fetch 请求
@@ -808,6 +1135,8 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
     item.abortController = undefined;
     item.status = 'error';
     item.parseError = '上传已取消';
+    // P1: 清除 localStorage 中的分片上传状态（用户主动取消，不再续传）
+    clearMultipartState(item.file);
     renderList();
   }
 
@@ -1411,4 +1740,6 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
 
   // 页面加载时拉取知识库列表
   loadKnowledgeBases();
+  // P1: 扫描 localStorage 中未完成的分片上传记录，提示用户可续传
+  scanUnfinishedUploads();
 </script>
