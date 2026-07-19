@@ -47,6 +47,8 @@
 | **配置校验** | Pydantic V2 (field_validator + model_validator) | DATABASE_URL 异步驱动校验、数值范围校验、CORS URL 校验、部署模式与 API Key 交叉校验 |
 | **限流** | 自研令牌桶中间件 | 按客户端（API Key/IP）限流，突发 + 持续控制 |
 | **协同服务** | Node.js + Yjs + WebSocket | CRDT 实时协同编辑 |
+| **前端框架** | Astro 5 + React 19 + TypeScript 5.6 | SSR + React Island 混合渲染，34 页面 |
+| **前端组件库** | 分层 Astro 组件（common/knowledge/admin/settings）+ React Island（management/chat） | CSS 变量驱动设计系统，20 个 API 封装模块 |
 | **反向代理** | Caddy | 自动 HTTPS + HTTP/3 |
 
 ---
@@ -115,11 +117,89 @@ EnterpriseKnowledge/
 │   │   ├── awareness.ts              # 协作者状态管理
 │   │   └── comments.ts               # 评论通知
 │   └── package.json
-├── frontend/                         # 前端（Astro + React）
+├── frontend/                         # 前端（Astro 5 + React 19 + TypeScript 5.6）
 │   ├── src/
-│   │   ├── components/               # React 组件
-│   │   ├── pages/                    # 页面
-│   │   └── lib/                      # 工具库
+│   │   ├── components/               # 组件库（分层架构，CSS 变量驱动）
+│   │   │   ├── common/               # 通用组件（12 个）
+│   │   │   │   ├── StatCard.astro    # 统计卡片（标题/数值/图标/趋势）
+│   │   │   │   ├── PageHeader.astro  # 页面头部（标题/面包屑/操作区）
+│   │   │   │   ├── EmptyState.astro  # 空状态（图标/标题/描述/操作按钮）
+│   │   │   │   ├── Avatar.astro      # 头像（首字母/图片/尺寸变体）
+│   │   │   │   ├── Badge.astro       # 徽章（颜色变体/圆点指示器）
+│   │   │   │   ├── Button.astro      # 按钮（变体/尺寸/加载状态）
+│   │   │   │   ├── Modal.astro       # 模态框（遮罩/关闭/尺寸变体）
+│   │   │   │   ├── Tabs.astro        # 标签页（ARIA tablist 语义）
+│   │   │   │   ├── Tag.astro         # 标签（可关闭/颜色变体）
+│   │   │   │   ├── Toast.astro       # 轻提示（类型/自动关闭）
+│   │   │   │   ├── NotificationActions.astro  # 通知操作按钮组
+│   │   │   │   ├── NotificationTabs.astro     # 通知标签页（全部/未读）
+│   │   │   │   └── index.ts          # 统一导出
+│   │   │   ├── knowledge/            # 知识库组件（2 个）
+│   │   │   │   ├── KbCard.astro      # 知识库卡片（文档数/可见性/操作菜单）
+│   │   │   │   ├── DocItem.astro     # 文档列表项（图标/状态/解析进度）
+│   │   │   │   └── index.ts
+│   │   │   ├── admin/                # 管理后台组件（3 个）
+│   │   │   │   ├── HealthRing.astro  # 健康度环形图（SVG 圆弧 + 渐变）
+│   │   │   │   ├── AuditStep.astro   # 审核步骤（状态连线/时间轴）
+│   │   │   │   ├── UserTableRow.astro # 用户表格行（角色徽章/状态切换）
+│   │   │   │   └── index.ts
+│   │   │   ├── settings/             # 设置组件（4 个）
+│   │   │   │   ├── ApiKeyTable.astro # API 密钥表格（创建/撤销/复制）
+│   │   │   │   ├── LlmConfigForm.astro # LLM 配置表单（Provider/模型/参数）
+│   │   │   │   ├── SystemForm.astro  # 系统设置表单（站点名/上传限制/功能开关）
+│   │   │   │   ├── TenantCard.astro  # 租户卡片（套餐/模块门控/用量）
+│   │   │   │   └── index.ts
+│   │   │   ├── management/           # React Island 组件（文档智能处理）
+│   │   │   │   ├── ScanProcessor.tsx # 扫描件 OCR（上传 PDF → VLM 识别 → 入库）
+│   │   │   │   ├── IntelligencePanel.tsx      # 智能处理面板（摘要/标签/分类）
+│   │   │   │   ├── CollabEditor.tsx           # Yjs 协同编辑器
+│   │   │   │   ├── ActionItemList.tsx         # 行动项列表
+│   │   │   │   ├── AutoTagEditor.tsx          # 自动标签编辑器
+│   │   │   │   ├── SummaryCard.tsx            # 摘要卡片
+│   │   │   │   └── ...                        # ConnectionStatus / EditorToolbar 等
+│   │   │   ├── chat/                 # 对话组件（React）
+│   │   │   │   ├── ChatMessage.tsx   # 对话消息（用户/助手/引用标注）
+│   │   │   │   ├── ChatInput.tsx     # 输入框（多行/快捷指令/附件）
+│   │   │   │   └── CitationPanel.tsx # 引用面板（来源文档/高亮片段）
+│   │   │   └── index.ts
+│   │   ├── pages/                    # 页面（34 个，按域分目录）
+│   │   │   ├── admin/                # 管理后台（7 页：仪表盘/审核/反馈/健康/报表/标签/用户）
+│   │   │   ├── auth/                 # 认证（2 页：登录/注册）
+│   │   │   ├── chat/                 # 对话（3 页：对话/历史/Agent）
+│   │   │   ├── knowledge/            # 知识库（6 页：列表/详情/搜索/问答/专家/图谱/时间线）
+│   │   │   ├── manage/               # 管理（5 页：编辑器/缺口/知识库/会议纪要/上传）
+│   │   │   ├── scenes/               # 场景（2 页：IT 工单/新人入职）
+│   │   │   ├── settings/             # 设置（6 页：API/LLM/MCP/系统/租户/Webhooks）
+│   │   │   ├── index.astro           # 首页
+│   │   │   └── notifications.astro   # 通知中心
+│   │   ├── lib/
+│   │   │   ├── apis/                 # API 封装层（20 个模块，统一错误处理 + Token 注入）
+│   │   │   │   ├── knowledge.ts      # 知识库 + 文档 CRUD + 解析进度 + 搜索
+│   │   │   │   ├── webhooks.ts       # Webhook 订阅管理 + OpenAPI Key 存储
+│   │   │   │   ├── mcp.ts            # MCP 工具调用（复用 webhooks 的 Key 存储）
+│   │   │   │   ├── intelligence.ts   # 文档智能处理（摘要/标签/分类）
+│   │   │   │   ├── audit.ts          # 审核工作流
+│   │   │   │   ├── users.ts          # 用户权限管理
+│   │   │   │   ├── feedback.ts       # 反馈管理
+│   │   │   │   ├── apikeys.ts        # API 密钥管理
+│   │   │   │   ├── settings.ts       # 系统设置
+│   │   │   │   ├── qa.ts             # 问答社区
+│   │   │   │   ├── tickets.ts        # 工单系统
+│   │   │   │   ├── agents.ts         # Agent 管理
+│   │   │   │   ├── analytics.ts      # 知识健康度仪表盘
+│   │   │   │   ├── comments.ts       # 文档评论
+│   │   │   │   ├── connectors.ts     # 跨系统连接器
+│   │   │   │   ├── experts.ts        # 专家发现
+│   │   │   │   ├── graph.ts          # 知识图谱
+│   │   │   │   ├── multimodal.ts     # 多模态处理
+│   │   │   │   ├── notifications.ts  # 通知中心
+│   │   │   │   └── tenants.ts        # 租户管理
+│   │   │   ├── api.ts                # 基础 HTTP 客户端（getData/postData/putData/delData + 拦截器）
+│   │   │   └── auth.ts               # 认证工具（Token 存储/刷新/路由守卫）
+│   │   ├── layouts/
+│   │   │   └── DefaultLayout.astro   # 主布局（侧边导航 + 面包屑 + Webhook/MCP 导航项）
+│   │   └── styles/
+│   │       └── global.css            # 全局样式（CSS 变量设计系统：颜色/间距/圆角/阴影）
 │   └── package.json
 ├── docker-compose.yml                # 容器编排
 └── README.md
@@ -1084,6 +1164,8 @@ graph TB
 Celery 异步任务驱动文档处理流水线，从文档上传到索引构建全自动，支持 PDF/DOCX/PPTX/XLSX/HTML/Markdown/图片/视频/音频 多格式。Docling 统一解析器优先处理（版面分析 + 表格 + 公式 + OCR → HTML），降级到原有专用解析器。
 
 **P0-P2 解析增强**（对齐业界最佳实践）：
+- **P0 上传端点 Celery 触发修复**：文件上传成功后自动调用 `process_document.delay(str(doc_id))` 触发异步解析，异常时降级记录日志（不影响文件入库）。修复前上传的文档永久停留在 `draft` 状态
+- **P0 doc_type_map 格式扩展**：从 4 格式（md/html/docx/pdf）扩展到 11 格式（新增 markdown/htm/pptx/xlsx/xls/txt/csv），修复 PPTX/XLSX 被误分类为 `md` 的问题
 - **DOCX 标题层级映射**：检测 `<w:pStyle>` 样式 → `<h1>`~`<h6>`，修复 chunker 结构化分块
 - **DOCX 列表结构保留**：检测 `<w:numPr>` → `<ul><li>`，保留列表语义
 - **PPTX GROUP 递归提取**：组合形状内的表格/图表/图片递归提取（修复数据丢失）
@@ -1097,14 +1179,21 @@ Celery 异步任务驱动文档处理流水线，从文档上传到索引构建�
 - **P1 解析摘要响应**：`GET /documents/{doc_id}/summary` 返回 preview/structure/warnings/pages/char_count/parse_status（对齐竞品草稿摘要 JSON）
 - **P1 解析任务 warnings 收集**：解析/向量化/索引失败时收集警告，返回 parse_status（parsed/partial/failed）
 - **P1 解析元数据持久化**：Document 表新增 `parse_status`/`parse_warnings`/`page_count`/`char_count` 4 字段，解析任务产物持久化，摘要端点优先读 DB（回退动态计算兼容历史数据）
+- **P1 实时解析进度反馈**：Celery 任务通过 `_update_parse_progress()` 在 8 个阶段（queued/parsing/chunking/embedding/indexing/publishing/done/failed）写入 Redis（TTL 30 分钟），前端通过 `GET /documents/{doc_id}/progress` 轮询真实进度（替代模拟进度），`stage=unknown` 时优雅降级为估算
 
 ```mermaid
 flowchart LR
     UPLOAD[文档上传] --> SIZE_CHECK{P0 文件大小校验<br/>MAX_UPLOAD_SIZE_MB=50}
     SIZE_CHECK -->|超限| REJECT413[返回 413<br/>Payload Too Large]
-    SIZE_CHECK -->|通过| CELERY[Celery Task<br/>process_document<br/>max_retries=3]
+    SIZE_CHECK -->|通过| SAVE_MINIO[保存至 MinIO<br/>创建 Document 记录]
+    SAVE_MINIO --> TRIGGER{P0 Celery 触发<br/>process_document.delay}
+    TRIGGER -->|触发成功| CELERY[Celery Task<br/>process_document<br/>max_retries=3]
+    TRIGGER -->|触发失败| LOG_WARN[记录警告日志<br/>文档停留 draft 状态<br/>不影响文件入库]
+    LOG_WARN --> DRAFT_END[待手动重试]
+    CELERY --> PROG_QUEUE[进度: queued<br/>写入 Redis]
 
     CELERY --> PARSE[1. 文档解析<br/>延迟导入第三方库]
+    PARSE --> PROG_PARSE[进度: parsing<br/>写入 Redis]
     PARSE -->|PDF| PYMUPDF[pymupdf 文本<br/>+ find_tables → HTML<br/>+ 图片上传 MinIO / 小图过滤<br/>+ VLM 描述]
     PARSE -->|PPTX| PPTX[python-pptx 文本<br/>+ 表格 → HTML<br/>+ 内嵌图片 VLM]
     PARSE -->|PDF / DOCX / PPTX<br/>XLSX / HTML / 图片 / 音频| DOCLING["Docling 统一解析<br/>Granite-Docling-258M<br/>版面分析 + 表格 + 公式 + OCR<br/>→ HTML（&lt;h1&gt;~&lt;h6&gt;/&lt;table&gt;/&lt;ul&gt;）"]
@@ -1121,13 +1210,16 @@ flowchart LR
     PYMUPDF & PPTX & DOCX & XLSX & REGEX & DIRECT --> CHUNK
     VIDEO & AUDIO --> VCHUNK[2v. 视频/音频语义分块<br/>chunk_video_transcript<br/>时间窗口合并 + 关键帧对齐]
 
-    CHUNK --> QA_CHECK{content_type<br/>路由}
+    CHUNK --> PROG_CHUNK[进度: chunking<br/>写入 Redis]
+    PROG_CHUNK --> QA_CHECK{content_type<br/>路由}
     QA_CHECK -->|faq| QA_SPLIT["Q&amp;A 对分块"]
     QA_CHECK -->|其他| STRUCT[结构化/语义/兜底]
 
     QA_SPLIT & STRUCT & VCHUNK --> EMBED[3. 向量化<br/>EmbeddingProvider]
+    EMBED --> PROG_EMBED[进度: embedding<br/>写入 Redis]
 
-    EMBED --> INDEX[4. 索引构建]
+    PROG_EMBED --> INDEX[4. 索引构建]
+    INDEX --> PROG_INDEX[进度: indexing<br/>写入 Redis]
     INDEX --> OS_INDEX[OpenSearch 全文索引<br/>含 Chunk 元数据<br/>title_path/content_type/strategy]
     INDEX --> VEC_INDEX[向量索引<br/>VectorStoreBase 适配器<br/>os_knn 默认 / milvus 可选]
 
@@ -1140,12 +1232,30 @@ flowchart LR
     AUDIT_WAIT -->|approve| PUBLISH_AFTER[审核通过<br/>pending_review → published]
     AUDIT_WAIT -->|reject| REJECTED[保持 pending_review<br/>记录驳回意见]
 
-    PUBLISH & PUBLISH_AFTER & REJECTED --> INTEL[6. 链式触发<br/>文档智能处理<br/>摘要/标签/分类/行动项]
-    INTEL --> SUMMARY[P1 解析摘要响应<br/>GET /documents/{doc_id}/summary<br/>preview/structure/warnings<br/>pages/char_count/parse_status]
+    PUBLISH & PUBLISH_AFTER & REJECTED --> PROG_PUBLISH[进度: publishing<br/>写入 Redis]
+    PROG_PUBLISH --> INTEL[6. 链式触发<br/>文档智能处理<br/>摘要/标签/分类/行动项]
+    INTEL --> PROG_DONE[进度: done<br/>写入 Redis]
+    PROG_DONE --> SUMMARY[P1 解析摘要响应<br/>GET /documents/{doc_id}/summary<br/>preview/structure/warnings<br/>pages/char_count/parse_status]
+
+    %% P1 实时进度反馈通道
+    PROG_QUEUE & PROG_PARSE & PROG_CHUNK & PROG_EMBED & PROG_INDEX & PROG_PUBLISH & PROG_DONE -.->|Redis TTL 30min| REDIS_PROGRESS[(Redis<br/>ekb:parse_progress:{doc_id})]
+    REDIS_PROGRESS -.->|前端轮询| PROGRESS_API[GET /documents/{doc_id}/progress<br/>stage/current/total/message]
+    PROGRESS_API -.->|stage=unknown 降级| FRONTEND[前端 upload.astro<br/>真实进度 → 阶段指示器<br/>unknown → 估算进度]
+
+    %% 失败路径
+    CELERY -.->|异常| PROG_FAILED[进度: failed<br/>写入 Redis + 记录错误]
 ```
 
 ### 设计要点
 
+- **P0 Celery 触发保障**：文件上传成功后自动调用 `process_document.delay(str(doc_id))`，`try/except` 包裹 ImportError（Celery 未安装）和通用异常，触发失败时记录日志但不影响文件入库。修复前文档永久停留在 `draft` 状态
+- **P0 格式映射完整**：`doc_type_map` 覆盖 11 种格式（md/markdown/html/htm/docx/pdf/pptx/xlsx/xls/txt/csv），确保 PPTX/XLSX 不被误分类为 `md`
+- **P1 实时进度反馈**：Celery 任务在每个阶段调用 `_update_parse_progress(doc_id, stage, current, total, message)` 写入 Redis（key=`ekb:parse_progress:{doc_id}`，TTL 1800 秒）。8 个阶段：`queued` → `parsing` → `chunking` → `embedding` → `indexing` → `publishing` → `done` / `failed`。Redis 不可用时静默降级（进度查询返回 `stage=unknown`）
+- **P1 进度查询端点**：`GET /documents/{doc_id}/progress` 从 Redis 读取实时进度，返回 `{stage, current, total, message}`。无进度记录时返回 `stage=unknown`，前端降级为估算进度
+- **P1 前端进度展示**：upload.astro 通过 `getDocumentProgress()` 轮询真实进度，`mapProgressToStage()` 将后端 8 阶段映射为前端 5 阶段指示器（等待/解析中/分块/向量化/完成），`stage=unknown` 时回退到 `Math.floor(i/3)` 估算
+- **P1 前端重试机制**：上传失败和解析失败均提供重试按钮，上传重试重新走文件上传流程，解析重试调用后端重新触发 Celery 任务
+- **P1 扫描件 OCR**：upload.astro 新增「扫描件 OCR」标签页，挂载 `ScanProcessor` React Island，通过 `window.dispatchEvent(new CustomEvent('ekb:ocr-text'))` 将 OCR 识别文本回传给主页面，作为新文档入库
+- **P1 智能处理面板**：文档解析完成后自动触发 `processIntelligence(docId)`，轮询 `getIntelligenceStatus()` 展示摘要/标签/分类三项智能处理进度
 - **延迟导入**：docling / pymupdf / python-docx / python-pptx / opensearchpy / pymilvus / ffmpeg / ASR / VLM 延迟导入，未安装时优雅降级
 - **向量存储适配器**：通过 `VectorStoreBase` 抽象层，按 `VECTOR_STORE` 配置切换 OpenSearch k-NN（默认）或 Milvus，业务代码零改动
 - **文档解析三级降级**：Docling 统一解析器（primary）→ 原有专用解析器（fallback）→ VLM 整页 OCR（兜底）。Docling 可用时统一输出 HTML（`<h1>`/`<h2>` 标题 + `<table>` 表格 + 版面分析 + 公式 + OCR），与原有解析器输出格式一致，chunker 的 `_split_html()` 直接按 `<h>` 标签分块，无需格式检测
