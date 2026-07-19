@@ -592,18 +592,42 @@ async def get_document_summary(
 
     preview = content_text[:500] if content_text else ""
     structure = _extract_structure_tags(parse_output)
-    pages = _count_pages(parse_output, doc.doc_type or "md")
-    char_count = len(content_text)
-    parse_status = _infer_parse_status(doc)
 
-    # 警告信息 — 基于文档状态和内容推断
-    warnings: list[str] = []
-    if not content_text.strip():
-        warnings.append("文档正文为空，可能解析失败或尚未完成解析")
-    if doc.doc_type in ("doc", "ppt"):
-        warnings.append(f"旧格式 .{doc.doc_type} 不支持解析，请转换为 .{doc.doc_type}x 后重新上传")
-    if doc.status == "draft" and not content_text:
-        warnings.append("文档处于草稿状态，等待异步解析任务完成")
+    # P1: 优先读 DB 持久化字段（解析时已计算），回退到动态计算（向后兼容历史数据）
+    # page_count: DB 字段优先，NULL 或 0 时回退到动态计算
+    db_page_count = getattr(doc, "page_count", None)
+    if db_page_count and isinstance(db_page_count, int) and db_page_count > 0:
+        pages = db_page_count
+    else:
+        pages = _count_pages(parse_output, doc.doc_type or "md")
+
+    # char_count: DB 字段优先，NULL 或 0 时回退到动态计算
+    db_char_count = getattr(doc, "char_count", None)
+    if db_char_count and isinstance(db_char_count, int) and db_char_count > 0:
+        char_count = db_char_count
+    else:
+        char_count = len(content_text)
+
+    # parse_status: DB 字段优先，NULL 时回退到推断
+    db_parse_status = getattr(doc, "parse_status", None)
+    if db_parse_status and isinstance(db_parse_status, str):
+        parse_status = db_parse_status
+    else:
+        parse_status = _infer_parse_status(doc)
+
+    # parse_warnings: DB 字段优先，NULL 时回退到动态推断
+    db_parse_warnings = getattr(doc, "parse_warnings", None)
+    if db_parse_warnings and isinstance(db_parse_warnings, list):
+        warnings = list(db_parse_warnings)
+    else:
+        # 警告信息 — 基于文档状态和内容推断（历史数据兼容）
+        warnings = []
+        if not content_text.strip():
+            warnings.append("文档正文为空，可能解析失败或尚未完成解析")
+        if doc.doc_type in ("doc", "ppt"):
+            warnings.append(f"旧格式 .{doc.doc_type} 不支持解析，请转换为 .{doc.doc_type}x 后重新上传")
+        if doc.status == "draft" and not content_text:
+            warnings.append("文档处于草稿状态，等待异步解析任务完成")
 
     summary = DocumentSummaryResponse(
         doc_id=doc.id,

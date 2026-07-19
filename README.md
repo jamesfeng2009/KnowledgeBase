@@ -104,7 +104,7 @@ EnterpriseKnowledge/
 │   │   ├── env.py                    # 异步引擎 + 自动导入模型 + compare_type
 │   │   └── versions/                 # 迁移版本（首版 init schema：27 张表）
 │   ├── tasks/                        # Celery 异步任务
-│   ├── tests/                        # 测试（1023 项）
+│   ├── tests/                        # 测试（1037 项）
 │   ├── celery_app.py                 # Celery 入口
 │   └── requirements.txt
 ├── collab-service/                   # Yjs 协作服务（Node.js + TypeScript）
@@ -1096,6 +1096,7 @@ Celery 异步任务驱动文档处理流水线，从文档上传到索引构建�
 - **P0 文件大小校验**：`MAX_UPLOAD_SIZE_MB=50` 超限返回 413 Payload Too Large（对齐竞品 50MB 上限）
 - **P1 解析摘要响应**：`GET /documents/{doc_id}/summary` 返回 preview/structure/warnings/pages/char_count/parse_status（对齐竞品草稿摘要 JSON）
 - **P1 解析任务 warnings 收集**：解析/向量化/索引失败时收集警告，返回 parse_status（parsed/partial/failed）
+- **P1 解析元数据持久化**：Document 表新增 `parse_status`/`parse_warnings`/`page_count`/`char_count` 4 字段，解析任务产物持久化，摘要端点优先读 DB（回退动态计算兼容历史数据）
 
 ```mermaid
 flowchart LR
@@ -1448,9 +1449,9 @@ python -m pytest tests/test_eval.py -v                    # 离线评测（数�
 | `test_dashscope_provider.py` | 27 | DashScopeProvider 继承 VLLMProvider、初始化、chat/tool_use、DashScopeEmbedder 维度/embed、factory 路由、config 配置项、向后兼容性 |
 | `test_minio_client.py` | 8 | MinIO upload/download/delete/exists、懒初始化、bucket 自动创建与缓存 |
 | `test_migration.py` | 46 | Pydantic V2 field_validator（DATABASE_URL/数值/CORS）、model_validator（部署模式/SECRET_KEY）、迁移文件存在性/upgrade/downgrade、alembic env.py 配置、迁移 runner 端到端 SQLite |
-| `test_upload_summary.py` | 39 | P0 文件大小校验（MAX_UPLOAD_SIZE_MB 超限 413/MagicMock 回退）、P1 解析摘要响应（preview/structure/warnings/pages/char_count/parse_status）、结构标签提取、页数推断、解析状态推断、解析任务 warnings 收集、旧格式警告、认证强制 |
+| `test_upload_summary.py` | 53 | P0 文件大小校验（MAX_UPLOAD_SIZE_MB 超限 413/MagicMock 回退）、P1 解析摘要响应（preview/structure/warnings/pages/char_count/parse_status）、结构标签提取、页数推断、解析状态推断、解析任务 warnings 收集、旧格式警告、认证强制、**DB 字段优先读取（page_count/char_count/parse_status/parse_warnings）**、**任务持久化解析元数据**、**迁移文件验证（4 字段 add_column/drop_column）** |
 | 其他测试 | 215 | API 端点、服务层、模型层、记忆引擎等 |
-| **合计** | **1023** | **全部通过，零回归** |
+| **合计** | **1037** | **全部通过，零回归** |
 
 ---
 

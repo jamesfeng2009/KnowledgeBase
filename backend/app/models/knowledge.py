@@ -66,6 +66,22 @@ class Document(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     category: Mapped[str | None] = mapped_column(
         String(50), nullable=True, comment="AI 自动分类: 政策/SOP/技术文档/会议纪要/培训资料/产品文档/合同模板"
     )
+    # === 解析元数据（P1 增强：解析任务产物持久化）===
+    # parse_status 区别于 status：status 表示业务状态（draft/published），
+    # parse_status 表示解析质量状态（parsed/partial/failed/pending），
+    # 文档已 published 但解析部分失败时，status=published 但 parse_status=partial
+    parse_status: Mapped[str | None] = mapped_column(
+        String(20), nullable=True, comment="解析状态: parsed/partial/failed/pending"
+    )
+    parse_warnings: Mapped[list | None] = mapped_column(
+        JSONB, nullable=True, comment="解析警告列表（解析/向量化/索引失败信息）"
+    )
+    page_count: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False, comment="页数/幻灯片数/工作表数"
+    )
+    char_count: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False, comment="正文字符数"
+    )
 
     knowledge_base: Mapped[KnowledgeBase] = relationship(back_populates="documents")
     versions: Mapped[list["DocumentVersion"]] = relationship(back_populates="document")

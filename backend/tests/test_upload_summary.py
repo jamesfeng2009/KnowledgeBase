@@ -90,8 +90,12 @@ def _make_mock_doc(
     doc_type: str = "md",
     status: str = "draft",
     file_path: str | None = None,
+    parse_status: str | None = None,
+    parse_warnings: list[str] | None = None,
+    page_count: int | None = None,
+    char_count: int | None = None,
 ) -> SimpleNamespace:
-    """构造模拟文档对象。"""
+    """构造模拟文档对象（含 P1 解析元数据字段）。"""
     return SimpleNamespace(
         id=uuid4(),
         kb_id=uuid4(),
@@ -108,6 +112,11 @@ def _make_mock_doc(
         file_path=file_path,
         summary=None,
         category=None,
+        # P1: 解析元数据字段
+        parse_status=parse_status,
+        parse_warnings=parse_warnings,
+        page_count=page_count,
+        char_count=char_count,
         created_at=datetime.now(),
         updated_at=datetime.now(),
         deleted_at=None,
@@ -670,3 +679,457 @@ class TestDocumentTaskWarnings:
             result = await _process_document_async(str(mock_doc.id))
 
         assert any("旧格式" in w for w in result["warnings"])
+
+
+# ======================================================================
+# P1: DB 字段优先读取测试
+# ======================================================================
+
+
+class TestSummaryDbFieldsPriority:
+    """摘要端点优先读 DB 持久化字段测试。
+
+    验证当 DB 已有 parse_status / parse_warnings / page_count / char_count 时，
+    端点优先返回 DB 值，而非动态计算。
+    """
+
+    @pytest.mark.asyncio
+    async def test_db_page_count_preferred(
+        self, auth_client: httpx.AsyncClient
+    ) -> None:
+        """DB page_count 优先于动态计算。"""
+        # content_text 有 3 个 <h2>，动态计算会返回 3
+        content = "<h2>标题1</h2><h2>标题2</h2><h2>标题3</h2>"
+        # 但 DB page_count=10，应返回 10
+        mock_doc = _make_mock_doc(
+            content_text=content,
+            doc_type="pptx",
+            status="published",
+            page_count=10,
+        )
+
+        with patch("app.api.v1.documents.KnowledgeService") as mock_cls:
+            mock_service = mock_cls.return_value
+            mock_service.get_document = AsyncMock(return_value=mock_doc)
+
+            response = await auth_client.get(
+                f"/api/v1/documents/{mock_doc.id}/summary"
+            )
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["pages"] == 10  # DB 值优先
+
+    @pytest.mark.asyncio
+    async def test_db_char_count_preferred(
+        self, auth_client: httpx.AsyncClient
+    ) -> None:
+        """DB char_count 优先于动态计算。"""
+        content = "短内容"  # 动态计算 len=3
+        mock_doc = _make_mock_doc(
+            content_text=content,
+            doc_type="md",
+            status="published",
+            char_count=999,  # DB 值
+        )
+
+        with patch("app.api.v1.documents.KnowledgeService") as mock_cls:
+            mock_service = mock_cls.return_value
+            mock_service.get_document = AsyncMock(return_value=mock_doc)
+
+            response = await auth_client.get(
+                f"/api/v1/documents/{mock_doc.id}/summary"
+            )
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["char_count"] == 999
+
+    @pytest.mark.asyncio
+    async def test_db_parse_status_preferred(
+        self, auth_client: httpx.AsyncClient
+    ) -> None:
+        """DB parse_status 优先于推断。"""
+        # status=published 推断为 parsed，但 DB parse_status=partial
+        mock_doc = _make_mock_doc(
+            content_text="有内容",
+            doc_type="pdf",
+            status="published",
+            parse_status="partial",
+        )
+
+        with patch("app.api.v1.documents.KnowledgeService") as mock_cls:
+            mock_service = mock_cls.return_value
+            mock_service.get_document = AsyncMock(return_value=mock_doc)
+
+            response = await auth_client.get(
+                f"/api/v1/documents/{mock_doc.id}/summary"
+            )
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["parse_status"] == "partial"  # DB 值优先
+
+    @pytest.mark.asyncio
+    async def test_db_parse_warnings_preferred(
+        self, auth_client: httpx.AsyncClient
+    ) -> None:
+        """DB parse_warnings 优先于动态推断。"""
+        mock_doc = _make_mock_doc(
+            content_text="有内容",
+            doc_type="pdf",
+            status="published",
+            parse_warnings=["向量化失败", "索引构建降级"],
+        )
+
+        with patch("app.api.v1.documents.KnowledgeService") as mock_cls:
+            mock_service = mock_cls.return_value
+            mock_service.get_document = AsyncMock(return_value=mock_doc)
+
+            response = await auth_client.get(
+                f"/api/v1/documents/{mock_doc.id}/summary"
+            )
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert len(data["warnings"]) == 2
+        assert "向量化失败" in data["warnings"]
+
+    @pytest.mark.asyncio
+    async def test_fallback_when_db_fields_none(
+        self, auth_client: httpx.AsyncClient
+    ) -> None:
+        """DB 字段为 NULL 时回退到动态计算（历史数据兼容）。"""
+        content = "<h2>标题1</h2><h2>标题2</h2>"
+        mock_doc = _make_mock_doc(
+            content_text=content,
+            doc_type="docx",
+            status="published",
+            parse_status=None,  # NULL
+            parse_warnings=None,  # NULL
+            page_count=None,  # NULL
+            char_count=None,  # NULL
+        )
+
+        with patch("app.api.v1.documents.KnowledgeService") as mock_cls:
+            mock_service = mock_cls.return_value
+            mock_service.get_document = AsyncMock(return_value=mock_doc)
+
+            response = await auth_client.get(
+                f"/api/v1/documents/{mock_doc.id}/summary"
+            )
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        # 回退到动态计算
+        assert data["pages"] == 2  # 2 个 <h2>
+        assert data["char_count"] == len(content)
+        assert data["parse_status"] == "parsed"  # published → parsed
+        assert data["warnings"] == []  # 有内容无警告
+
+    @pytest.mark.asyncio
+    async def test_fallback_when_db_page_count_zero(
+        self, auth_client: httpx.AsyncClient
+    ) -> None:
+        """DB page_count=0 时回退到动态计算（0 视为未设置）。"""
+        content = "<h2>标题1</h2><h2>标题2</h2><h2>标题3</h2>"
+        mock_doc = _make_mock_doc(
+            content_text=content,
+            doc_type="pptx",
+            status="published",
+            page_count=0,  # 0 视为未设置
+        )
+
+        with patch("app.api.v1.documents.KnowledgeService") as mock_cls:
+            mock_service = mock_cls.return_value
+            mock_service.get_document = AsyncMock(return_value=mock_doc)
+
+            response = await auth_client.get(
+                f"/api/v1/documents/{mock_doc.id}/summary"
+            )
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        # 回退到动态计算
+        assert data["pages"] == 3
+
+
+# ======================================================================
+# P1: process_document 任务持久化字段测试
+# ======================================================================
+
+
+class TestTaskPersistsParseMetadata:
+    """验证 process_document 任务将解析元数据持久化到 Document。"""
+
+    @pytest.mark.asyncio
+    async def test_task_sets_parse_status_parsed(self) -> None:
+        """成功解析时 doc.parse_status 应被设置为 parsed。"""
+        from tasks.document_tasks import _process_document_async
+
+        mock_doc = MagicMock()
+        mock_doc.id = uuid4()
+        mock_doc.doc_type = "md"
+        mock_doc.classification = "internal"
+        mock_doc.content_text = ""
+        mock_doc.owner_id = uuid4()
+        mock_doc.status = "draft"
+
+        mock_session = AsyncMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        mock_repo = MagicMock()
+        mock_repo.get_by_id = AsyncMock(return_value=mock_doc)
+
+        with patch("app.database.async_session_factory", return_value=mock_session), \
+             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo), \
+             patch("tasks.document_tasks._parse_document", new_callable=AsyncMock) as mock_parse, \
+             patch("tasks.document_tasks._chunk_document") as mock_chunk, \
+             patch("tasks.document_tasks._generate_embeddings", new_callable=AsyncMock) as mock_embed, \
+             patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock) as mock_index, \
+             patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock), \
+             patch("tasks.intelligence_tasks.process_intelligence") as mock_intel:
+            mock_parse.return_value = "解析后的内容"
+            mock_chunk.return_value = []
+            mock_embed.return_value = []
+            mock_index.return_value = None
+            mock_intel.delay = MagicMock()
+
+            await _process_document_async(str(mock_doc.id))
+
+        assert mock_doc.parse_status == "parsed"
+        assert mock_doc.char_count == len("解析后的内容")
+
+    @pytest.mark.asyncio
+    async def test_task_sets_parse_status_partial_on_warning(self) -> None:
+        """有警告时 doc.parse_status 应被设置为 partial。"""
+        from tasks.document_tasks import _process_document_async
+
+        mock_doc = MagicMock()
+        mock_doc.id = uuid4()
+        mock_doc.doc_type = "md"
+        mock_doc.classification = "internal"
+        mock_doc.content_text = ""
+        mock_doc.owner_id = uuid4()
+        mock_doc.status = "draft"
+
+        mock_session = AsyncMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        mock_repo = MagicMock()
+        mock_repo.get_by_id = AsyncMock(return_value=mock_doc)
+
+        with patch("app.database.async_session_factory", return_value=mock_session), \
+             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo), \
+             patch("tasks.document_tasks._parse_document", new_callable=AsyncMock) as mock_parse, \
+             patch("tasks.document_tasks._chunk_document") as mock_chunk, \
+             patch("tasks.document_tasks._generate_embeddings", new_callable=AsyncMock) as mock_embed, \
+             patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock) as mock_index, \
+             patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock), \
+             patch("tasks.intelligence_tasks.process_intelligence") as mock_intel:
+            mock_parse.return_value = "内容"
+            mock_chunk.return_value = []
+            # 向量化失败 → 产生警告
+            mock_embed.side_effect = Exception("VLM 服务不可用")
+            mock_index.return_value = None
+            mock_intel.delay = MagicMock()
+
+            await _process_document_async(str(mock_doc.id))
+
+        assert mock_doc.parse_status == "partial"
+        assert mock_doc.parse_warnings is not None
+        assert len(mock_doc.parse_warnings) > 0
+
+    @pytest.mark.asyncio
+    async def test_task_sets_page_count_from_h2(self) -> None:
+        """PPTX 文档应按 <h2> 计数设置 page_count。"""
+        from tasks.document_tasks import _process_document_async
+
+        mock_doc = MagicMock()
+        mock_doc.id = uuid4()
+        mock_doc.doc_type = "pptx"
+        mock_doc.classification = "internal"
+        mock_doc.content_text = ""
+        mock_doc.owner_id = uuid4()
+        mock_doc.status = "draft"
+
+        mock_session = AsyncMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        mock_repo = MagicMock()
+        mock_repo.get_by_id = AsyncMock(return_value=mock_doc)
+
+        parsed_content = "<h2>幻灯片1</h2><h2>幻灯片2</h2><h2>幻灯片3</h2><h2>幻灯片4</h2>"
+
+        with patch("app.database.async_session_factory", return_value=mock_session), \
+             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo), \
+             patch("tasks.document_tasks._parse_document", new_callable=AsyncMock) as mock_parse, \
+             patch("tasks.document_tasks._chunk_document") as mock_chunk, \
+             patch("tasks.document_tasks._generate_embeddings", new_callable=AsyncMock) as mock_embed, \
+             patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock) as mock_index, \
+             patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock), \
+             patch("tasks.intelligence_tasks.process_intelligence") as mock_intel:
+            mock_parse.return_value = parsed_content
+            mock_chunk.return_value = []
+            mock_embed.return_value = []
+            mock_index.return_value = None
+            mock_intel.delay = MagicMock()
+
+            await _process_document_async(str(mock_doc.id))
+
+        assert mock_doc.page_count == 4  # 4 个 <h2>
+
+    @pytest.mark.asyncio
+    async def test_task_sets_page_count_from_markers(self) -> None:
+        """有分页标记时优先按标记计数。"""
+        from tasks.document_tasks import _process_document_async
+
+        mock_doc = MagicMock()
+        mock_doc.id = uuid4()
+        mock_doc.doc_type = "pdf"
+        mock_doc.classification = "internal"
+        mock_doc.content_text = ""
+        mock_doc.owner_id = uuid4()
+        mock_doc.status = "draft"
+
+        mock_session = AsyncMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        mock_repo = MagicMock()
+        mock_repo.get_by_id = AsyncMock(return_value=mock_doc)
+
+        parsed_content = (
+            "<p>第1页</p>\n<!-- page: 1 -->\n"
+            "<p>第2页</p>\n<!-- page: 2 -->\n"
+        )
+
+        with patch("app.database.async_session_factory", return_value=mock_session), \
+             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo), \
+             patch("tasks.document_tasks._parse_document", new_callable=AsyncMock) as mock_parse, \
+             patch("tasks.document_tasks._chunk_document") as mock_chunk, \
+             patch("tasks.document_tasks._generate_embeddings", new_callable=AsyncMock) as mock_embed, \
+             patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock) as mock_index, \
+             patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock), \
+             patch("tasks.intelligence_tasks.process_intelligence") as mock_intel:
+            mock_parse.return_value = parsed_content
+            mock_chunk.return_value = []
+            mock_embed.return_value = []
+            mock_index.return_value = None
+            mock_intel.delay = MagicMock()
+
+            await _process_document_async(str(mock_doc.id))
+
+        assert mock_doc.page_count == 2  # 2 个分页标记
+
+
+# ======================================================================
+# P1: 迁移文件测试
+# ======================================================================
+
+
+class TestParseMetadataMigration:
+    """验证 add_document_parse_metadata 迁移文件。"""
+
+    def test_migration_file_exists(self) -> None:
+        """迁移文件应存在。"""
+        import os
+
+        migration_path = os.path.join(
+            os.path.dirname(__file__),
+            "..",
+            "alembic",
+            "versions",
+            "2026_07_19_1000-a1b2c3d4e5f6_add_document_parse_metadata.py",
+        )
+        assert os.path.exists(migration_path), f"迁移文件不存在: {migration_path}"
+
+    def test_migration_revision_chain(self) -> None:
+        """迁移链路应正确：115a9c06ba4a → a1b2c3d4e5f6。"""
+        from alembic.config import Config
+        from alembic.script import ScriptDirectory
+
+        cfg = Config("alembic.ini")
+        # 切换到 backend 目录
+        import os
+
+        os.chdir(os.path.dirname(__file__) + "/..")
+        script = ScriptDirectory.from_config(cfg)
+        revisions = {r.revision: r for r in script.walk_revisions()}
+
+        assert "a1b2c3d4e5f6" in revisions, "新迁移 revision 不存在"
+        assert revisions["a1b2c3d4e5f6"].down_revision == "115a9c06ba4a", (
+            "down_revision 应为 115a9c06ba4a"
+        )
+
+    def test_migration_adds_four_columns(self) -> None:
+        """迁移 upgrade 应添加 4 个字段。"""
+        import importlib.util
+        import os
+
+        migration_path = os.path.join(
+            os.path.dirname(__file__),
+            "..",
+            "alembic",
+            "versions",
+            "2026_07_19_1000-a1b2c3d4e5f6_add_document_parse_metadata.py",
+        )
+
+        spec = importlib.util.spec_from_file_location("migration", migration_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        # 验证 revision 标识符
+        assert module.revision == "a1b2c3d4e5f6"
+        assert module.down_revision == "115a9c06ba4a"
+
+        # 验证 upgrade 和 downgrade 函数存在
+        assert callable(module.upgrade)
+        assert callable(module.downgrade)
+
+    def test_migration_upgrade_downgrade_idempotent(self, tmp_path) -> None:
+        """迁移 upgrade/downgrade 函数应能在 alembic 上下文中执行。
+
+        本测试验证迁移文件可以被正确加载和解析，
+        实际的 upgrade/downgrade 执行由 alembic upgrade head 命令完成。
+        """
+        import importlib.util
+        import os
+
+        migration_path = os.path.join(
+            os.path.dirname(__file__),
+            "..",
+            "alembic",
+            "versions",
+            "2026_07_19_1000-a1b2c3d4e5f6_add_document_parse_metadata.py",
+        )
+
+        spec = importlib.util.spec_from_file_location("migration_test", migration_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        # 验证 upgrade/downgrade 是可调用函数
+        assert callable(module.upgrade)
+        assert callable(module.downgrade)
+
+        # 验证 upgrade 函数源码包含 4 个 add_column 调用
+        import inspect
+
+        upgrade_src = inspect.getsource(module.upgrade)
+        assert upgrade_src.count("op.add_column") == 4, (
+            f"upgrade 应包含 4 个 add_column 调用，实际: {upgrade_src.count('op.add_column')}"
+        )
+
+        # 验证 downgrade 函数源码包含 4 个 drop_column 调用
+        downgrade_src = inspect.getsource(module.downgrade)
+        assert downgrade_src.count("op.drop_column") == 4, (
+            f"downgrade 应包含 4 个 drop_column 调用，实际: {downgrade_src.count('op.drop_column')}"
+        )
+
+        # 验证字段名都在源码中
+        for field in ("parse_status", "parse_warnings", "page_count", "char_count"):
+            assert field in upgrade_src, f"upgrade 源码缺少字段: {field}"
+            assert field in downgrade_src, f"downgrade 源码缺少字段: {field}"

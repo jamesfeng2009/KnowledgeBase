@@ -30,6 +30,39 @@ logger = get_logger(__name__)
 # VLM 并发控制 — 关键帧描述并发上限，防止打满 VLM 服务
 _VLM_SEMAPHORE_LIMIT: int = 3
 
+
+def _count_pages_from_text(text: str, doc_type: str) -> int:
+    """从解析后的文本推断文档页数。
+
+    优先统计分页标记 <!-- page: N -->，无标记时按文档类型回退到 <h2> 计数：
+    - PDF/DOCX: <h2> 数量（章节标题）
+    - PPTX: <h2> 数量（幻灯片标题）
+    - XLSX: <h2> 数量（sheet 标题）
+    - 其他: 0
+
+    Args:
+        text: 解析后的文档文本（HTML 格式）。
+        doc_type: 文档类型。
+
+    Returns:
+        推断的页数，无法推断时返回 0。
+    """
+    if not text:
+        return 0
+
+    import re
+
+    # 优先统计分页标记 <!-- page: N -->
+    page_markers = re.findall(r"<!--\s*page:\s*\d+\s*-->", text)
+    if page_markers:
+        return len(page_markers)
+
+    # 按文档类型统计 <h2> 标题
+    if doc_type in ("pdf", "docx", "pptx", "xlsx"):
+        return len(re.findall(r"<h2\b", text, re.IGNORECASE))
+
+    return 0
+
 # 保留旧常量供向后兼容引用，实际分块已委托给 SemanticChunker
 # Deprecated: 使用 SemanticChunker 替代简单滑动窗口
 CHUNK_SIZE: int = 500
@@ -215,6 +248,20 @@ async def _process_document_async(doc_id: str) -> dict[str, Any]:
         classification = doc.classification or "internal"
         needs_review = classification in _REQUIRES_REVIEW
 
+        # P1: 持久化解析元数据（parse_status / parse_warnings / page_count / char_count）
+        # 推断解析状态 — 有内容且无致命错误为 parsed，有警告为 partial
+        if parse_failed and not parsed_text.strip():
+            parse_status = "failed"
+        elif warnings:
+            parse_status = "partial"
+        else:
+            parse_status = "parsed"
+
+        doc.parse_status = parse_status
+        doc.parse_warnings = warnings if warnings else None
+        doc.char_count = len(parsed_text)
+        doc.page_count = _count_pages_from_text(parsed_text, doc_type)
+
         if needs_review:
             doc.status = "pending_review"
             await session.commit()
@@ -239,14 +286,6 @@ async def _process_document_async(doc_id: str) -> dict[str, Any]:
             logger.warning("document.intelligence_trigger_failed", doc_id=doc_id, error=str(exc))
 
         final_status = "pending_review" if needs_review else "published"
-
-        # P1: 推断解析状态 — 有内容且无致命错误为 parsed，有警告为 partial
-        if parse_failed and not parsed_text.strip():
-            parse_status = "failed"
-        elif warnings:
-            parse_status = "partial"
-        else:
-            parse_status = "parsed"
 
         return {
             "doc_id": doc_id,
