@@ -1,0 +1,85 @@
+---
+/**
+ * NotificationTabs - 通知中心筛选标签页
+ *
+ * 提供四种类型筛选：全部 / 知识日报 / 文档更新 / 缺口预警
+ * 对应 type: all / digest / update / gap
+ *
+ * 用法：
+ *   <NotificationTabs active="all" />
+ *
+ * 交互逻辑由父页面内联 script 绑定（点击切换 .active），
+ * 组件本身只负责静态结构。
+ */
+type NotificationFilter = 'all' | 'digest' | 'update' | 'gap';
+
+interface Props {
+  /** 当前激活的筛选标签 */
+  active?: NotificationFilter;
+}
+
+const { active = 'all' } = Astro.props;
+
+const tabs: { key: NotificationFilter; label: string }[] = [
+  { key: 'all', label: '全部' },
+  { key: 'digest', label: '知识日报' },
+  { key: 'update', label: '文档更新' },
+  { key: 'gap', label: '缺口预警' },
+];
+---
+
+<div class="notification-tabs" id="notification-tabs" role="tablist" aria-label="通知类型筛选">
+  {
+    tabs.map((tab) => (
+      <button
+        type="button"
+        class:list={['notification-tab', { active: tab.key === active }]}
+        data-tab={tab.key}
+        role="tab"
+        aria-selected={tab.key === active ? 'true' : 'false'}
+      >
+        {tab.label}
+      </button>
+    ))
+  }
+</div>
+
+<style>
+  .notification-tabs {
+    display: flex;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+  }
+
+  .notification-tab {
+    display: inline-flex;
+    align-items: center;
+    padding: var(--space-2) var(--space-4);
+    font-size: var(--text-base);
+    color: var(--text-secondary);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-full);
+    transition: all var(--transition-fast);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .notification-tab:hover {
+    color: var(--primary);
+    border-color: var(--primary-light);
+    background: var(--primary-bg);
+  }
+
+  .notification-tab.active {
+    color: var(--text-white);
+    background: var(--primary);
+    border-color: var(--primary);
+  }
+
+  .notification-tab.active:hover {
+    color: var(--text-white);
+    background: var(--primary-dark);
+    border-color: var(--primary-dark);
+  }
+</style>

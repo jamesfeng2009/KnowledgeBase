@@ -41,11 +41,9 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
         <div class="form-group">
           <label class="form-label">目标知识库 *</label>
           <select class="form-input" id="target-kb">
-            <option value="">请选择知识库</option>
-            <option value="kb-1">公司制度</option>
-            <option value="kb-2">产品文档</option>
-            <option value="kb-3">技术文档</option>
+            <option value="">加载中...</option>
           </select>
+          <div id="kb-load-error" class="form-error" style="display: none;"></div>
         </div>
         <div class="form-group">
           <label class="form-label">文档分类</label>
@@ -63,16 +61,16 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
         <div class="form-group">
           <label class="form-label">解析选项</label>
           <label style="display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm); margin-bottom: var(--space-2);">
-            <input type="checkbox" checked /> VLM 视觉理解（图片/文档内嵌图片描述）
+            <input type="checkbox" id="opt-vlm" checked /> VLM 视觉理解（图片/文档内嵌图片描述）
           </label>
           <label style="display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm); margin-bottom: var(--space-2);">
-            <input type="checkbox" checked /> 音频转写（音频/视频 ASR 语音转文本）
+            <input type="checkbox" id="opt-asr" checked /> 音频转写（音频/视频 ASR 语音转文本）
           </label>
           <label style="display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm); margin-bottom: var(--space-2);">
-            <input type="checkbox" checked /> 自动向量化入库
+            <input type="checkbox" id="opt-vectorize" checked /> 自动向量化入库
           </label>
           <label style="display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm);">
-            <input type="checkbox" /> 提取知识图谱实体
+            <input type="checkbox" id="opt-graph" /> 提取知识图谱实体
           </label>
         </div>
       </div>
@@ -159,6 +157,98 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
   .progress-bar-fill.error {
     background: var(--danger);
   }
+  /* === 解析进度区域 === */
+  .parse-section {
+    margin-top: var(--space-3);
+    padding: var(--space-3);
+    background: var(--surface-muted);
+    border-radius: var(--radius);
+    border: 1px solid var(--border-light);
+  }
+  .parse-section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: var(--space-2);
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+  }
+  .parse-stage-indicator {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    margin-top: var(--space-2);
+  }
+  .parse-stage {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+  }
+  .parse-stage-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: var(--radius-full);
+    background: var(--border-dark);
+    transition: all var(--transition);
+  }
+  .parse-stage.active .parse-stage-dot {
+    background: var(--primary);
+    box-shadow: 0 0 0 3px var(--primary-bg);
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+  .parse-stage.done .parse-stage-dot {
+    background: var(--success);
+  }
+  .parse-stage-arrow {
+    color: var(--border-dark);
+    font-size: 10px;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+  .parse-result {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    margin-top: var(--space-2);
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+  }
+  .parse-result-item {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: 2px var(--space-2);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+  }
+  .parse-warnings {
+    margin-top: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    background: var(--warning-bg);
+    border-left: 3px solid var(--warning);
+    border-radius: var(--radius-sm);
+    font-size: var(--text-xs);
+    color: var(--warning);
+  }
+  .parse-error {
+    margin-top: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    background: var(--danger-bg);
+    border-left: 3px solid var(--danger);
+    border-radius: var(--radius-sm);
+    font-size: var(--text-xs);
+    color: var(--danger);
+  }
+  .parse-actions {
+    display: flex;
+    gap: var(--space-2);
+    margin-top: var(--space-2);
+  }
   @media (max-width: 1024px) {
     .upload-layout {
       grid-template-columns: 1fr;
@@ -167,6 +257,8 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
 </style>
 
 <script>
+  import { getKnowledgeBases, getDocumentSummary } from '@/lib/apis/knowledge';
+
   const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
   const TOKEN_KEY = 'ekb_access_token';
 
@@ -174,6 +266,14 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
     file: File;
     progress: number;
     status: 'pending' | 'uploading' | 'success' | 'error';
+    docId?: string;
+    parseStatus?: 'pending' | 'processing' | 'completed' | 'failed';
+    parseStage?: number; // 0:等待 1:解析中 2:分块 3:向量化 4:完成
+    parseWarnings?: string[];
+    pageCount?: number;
+    charCount?: number;
+    parseError?: string;
+    polling?: boolean;
   }
 
   let uploadItems: UploadItem[] = [];
@@ -217,12 +317,23 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
       return;
     }
 
+    // 读取解析选项
+    const vlm = (document.getElementById('opt-vlm') as HTMLInputElement).checked;
+    const asr = (document.getElementById('opt-asr') as HTMLInputElement).checked;
+    const vectorize = (document.getElementById('opt-vectorize') as HTMLInputElement).checked;
+    const graph = (document.getElementById('opt-graph') as HTMLInputElement).checked;
+
     item.status = 'uploading';
     renderList();
 
     const formData = new FormData();
     formData.append('file', item.file);
     formData.append('kb_id', kbId);
+    // 解析选项发送到后端
+    formData.append('enable_vlm', String(vlm));
+    formData.append('enable_asr', String(asr));
+    formData.append('enable_vectorize', String(vectorize));
+    formData.append('enable_graph', String(graph));
 
     try {
       const xhr = new XMLHttpRequest();
@@ -240,21 +351,123 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
         if (xhr.status >= 200 && xhr.status < 300) {
           item.status = 'success';
           item.progress = 100;
+          // 解析返回的 document_id
+          try {
+            const res = JSON.parse(xhr.responseText);
+            const data = res.data || res;
+            item.docId = data.id || data.document_id || data.doc_id;
+            item.parseStatus = (data.parse_status as UploadItem['parseStatus']) || 'pending';
+            item.parseStage = 0;
+          } catch {
+            // 响应解析失败，忽略
+          }
+          renderList();
+          // 启动解析状态轮询
+          if (item.docId) {
+            pollParseStatus(item);
+          }
         } else {
           item.status = 'error';
+          try {
+            const res = JSON.parse(xhr.responseText);
+            item.parseError = res.message || `上传失败 (${xhr.status})`;
+          } catch {
+            item.parseError = `上传失败 (${xhr.status})`;
+          }
+          renderList();
         }
-        renderList();
       };
 
       xhr.onerror = () => {
         item.status = 'error';
+        item.parseError = '网络请求异常';
         renderList();
       };
 
       xhr.send(formData);
-    } catch {
+    } catch (err) {
       item.status = 'error';
+      item.parseError = err instanceof Error ? err.message : '上传异常';
       renderList();
+    }
+  }
+
+  /** 轮询文档解析状态，每 3 秒一次，直到 completed/failed */
+  async function pollParseStatus(item: UploadItem) {
+    if (!item.docId || item.polling) return;
+    item.polling = true;
+    const maxAttempts = 100; // 最长 5 分钟
+    for (let i = 0; i < maxAttempts; i++) {
+      try {
+        const summary = await getDocumentSummary(item.docId);
+        item.parseStatus = (summary.parse_status as UploadItem['parseStatus']) || item.parseStatus;
+        // 推断当前阶段（后端只给 4 个状态，按时间模拟子阶段进度）
+        if (item.parseStatus === 'pending') {
+          item.parseStage = 1;
+        } else if (item.parseStatus === 'processing') {
+          // 根据轮询次数推进展示阶段：1→2→3
+          item.parseStage = Math.min(3, 1 + Math.floor(i / 3));
+        } else if (item.parseStatus === 'completed') {
+          item.parseStage = 4;
+          item.pageCount = summary.pages;
+          item.charCount = summary.char_count;
+          item.parseWarnings = summary.warnings || [];
+        } else if (item.parseStatus === 'failed') {
+          item.parseStage = 0;
+          item.parseError = summary.warnings?.[0] || '文档解析失败';
+        }
+        renderList();
+        if (item.parseStatus === 'completed' || item.parseStatus === 'failed') {
+          item.polling = false;
+          return;
+        }
+      } catch (err) {
+        // 单次查询失败不中断轮询，继续重试
+        if (i === maxAttempts - 1) {
+          item.parseStatus = 'failed';
+          item.parseError = err instanceof Error ? err.message : '查询解析状态失败';
+          renderList();
+          item.polling = false;
+          return;
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+    }
+    // 超时
+    item.parseStatus = 'failed';
+    item.parseError = '解析超时，请稍后在文档详情页查看';
+    item.polling = false;
+    renderList();
+  }
+
+  /** 加载知识库列表填充到下拉框 */
+  async function loadKnowledgeBases() {
+    const select = document.getElementById('target-kb') as HTMLSelectElement | null;
+    const errorEl = document.getElementById('kb-load-error');
+    if (!select) return;
+    try {
+      const res = await getKnowledgeBases(1, 100);
+      const list: Array<{ id: string; name: string; document_count?: number }> = res?.items || [];
+      select.innerHTML = '<option value="">请选择知识库</option>';
+      if (list.length === 0) {
+        select.innerHTML = '<option value="">暂无知识库，请先创建</option>';
+        return;
+      }
+      list.forEach((kb) => {
+        const opt = document.createElement('option');
+        opt.value = kb.id;
+        opt.textContent = kb.document_count !== undefined
+          ? `${kb.name} (${kb.document_count} 篇)`
+          : kb.name;
+        select.appendChild(opt);
+      });
+      if (errorEl) errorEl.style.display = 'none';
+    } catch (err) {
+      select.innerHTML = '<option value="">请选择知识库</option>';
+      if (errorEl) {
+        errorEl.textContent = '知识库列表加载失败：' + (err instanceof Error ? err.message : '未知错误');
+        errorEl.style.display = 'block';
+      }
     }
   }
 
@@ -285,10 +498,12 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
           <div class="upload-item-meta">
             <span>${formatSize(item.file.size)}</span>
             <span class="badge ${statusMap[item.status].badge}">${statusMap[item.status].label}</span>
+            ${item.docId ? `<span class="text-muted">ID: ${escapeHtml(item.docId)}</span>` : ''}
           </div>
           <div class="progress-bar">
             <div class="progress-bar-fill ${item.status === 'success' ? 'success' : item.status === 'error' ? 'error' : ''}" style="width: ${item.progress}%;"></div>
           </div>
+          ${renderParseSection(item)}
         </div>
         <button class="btn btn-ghost btn-sm" data-index="${i}">✕</button>
       </div>`
@@ -302,6 +517,94 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
         renderList();
       });
     });
+
+    // 绑定"查看文档"按钮
+    list.querySelectorAll('button[data-view-doc]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const docId = (btn as HTMLElement).dataset.viewDoc;
+        if (docId) window.location.href = `/knowledge/detail?id=${docId}`;
+      });
+    });
+  }
+
+  /** 渲染解析进度区域：步骤指示器 + 解析结果 + 警告 + 操作按钮 */
+  function renderParseSection(item: UploadItem): string {
+    // 上传未成功或无 docId 时不显示解析区域（仅上传失败时显示错误）
+    if (item.status === 'error') {
+      if (!item.parseError) return '';
+      return `<div class="parse-error">${escapeHtml(item.parseError)}</div>`;
+    }
+    if (item.status !== 'success' || !item.docId) return '';
+    if (!item.parseStatus) return '';
+
+    // 4 个阶段：解析中 → 分块 → 向量化 → 完成
+    const stages = ['解析中', '分块', '向量化', '完成'];
+    const currentStage = item.parseStage || 0;
+
+    const statusLabelMap: Record<string, string> = {
+      pending: '等待解析',
+      processing: '解析处理中',
+      completed: '解析完成',
+      failed: '解析失败',
+    };
+    const statusBadgeMap: Record<string, string> = {
+      pending: 'badge-warning',
+      processing: 'badge-primary',
+      completed: 'badge-success',
+      failed: 'badge-danger',
+    };
+
+    let html = `<div class="parse-section">
+      <div class="parse-section-header">
+        <span>解析状态：<span class="badge ${statusBadgeMap[item.parseStatus]}">${statusLabelMap[item.parseStatus] || item.parseStatus}</span></span>
+      </div>
+      <div class="parse-stage-indicator">`;
+
+    stages.forEach((stage, idx) => {
+      const stageNum = idx + 1;
+      let stageClass = 'parse-stage';
+      if (item.parseStatus === 'failed') {
+        // 失败时，已完成的阶段标记为 done
+        if (stageNum < currentStage) stageClass += ' done';
+      } else if (stageNum < currentStage) {
+        stageClass += ' done';
+      } else if (stageNum === currentStage && (item.parseStatus === 'pending' || item.parseStatus === 'processing')) {
+        stageClass += ' active';
+      } else if (item.parseStatus === 'completed') {
+        stageClass += ' done';
+      }
+      html += `<span class="${stageClass}"><span class="parse-stage-dot"></span>${stage}</span>`;
+      if (idx < stages.length - 1) {
+        html += `<span class="parse-stage-arrow">›</span>`;
+      }
+    });
+    html += `</div>`;
+
+    // 解析失败展示错误
+    if (item.parseStatus === 'failed' && item.parseError) {
+      html += `<div class="parse-error">${escapeHtml(item.parseError)}</div>`;
+    }
+
+    // 解析完成展示结果
+    if (item.parseStatus === 'completed') {
+      html += `<div class="parse-result">`;
+      if (item.pageCount !== undefined) {
+        html += `<span class="parse-result-item">📄 ${item.pageCount} 页</span>`;
+      }
+      if (item.charCount !== undefined) {
+        html += `<span class="parse-result-item">🔤 ${item.charCount.toLocaleString()} 字符</span>`;
+      }
+      html += `</div>`;
+      if (item.parseWarnings && item.parseWarnings.length > 0) {
+        html += `<div class="parse-warnings">⚠️ ${escapeHtml(item.parseWarnings.join('；'))}</div>`;
+      }
+      html += `<div class="parse-actions">
+        <button class="btn btn-primary btn-sm" data-view-doc="${escapeHtml(item.docId!)}">查看文档</button>
+      </div>`;
+    }
+
+    html += `</div>`;
+    return html;
   }
 
   function escapeHtml(s: string): string {
@@ -333,4 +636,7 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
     uploadItems = [];
     renderList();
   });
+
+  // 页面加载时拉取知识库列表
+  loadKnowledgeBases();
 </script>

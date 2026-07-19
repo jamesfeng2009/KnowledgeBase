@@ -1,0 +1,514 @@
+---
+/**
+ * 通知中心页面
+ *
+ * 功能：
+ * - 通知列表（按时间降序，未读加粗 + 蓝点）
+ * - 类型筛选（全部 / 知识日报 / 文档更新 / 缺口预警）
+ * - 全部标记已读 / 手动触发知识日报 / 手动触发缺口预警
+ * - SSE 实时推送（新通知 prepend + 未读计数更新）
+ * - 点击通知标记已读并跳转来源文档
+ */
+import DefaultLayout from '@/layouts/DefaultLayout.astro';
+import NotificationTabs from '@/components/common/NotificationTabs.astro';
+import NotificationActions from '@/components/common/NotificationActions.astro';
+
+const breadcrumb = [{ label: '通知中心' }];
+---
+
+<DefaultLayout title="通知中心" breadcrumb={breadcrumb}>
+  <!-- 页面标题 -->
+  <div class="page-header notif-page-header">
+    <div class="notif-title-group">
+      <h1 class="page-title">通知中心</h1>
+      <span class="notif-unread-pill" id="unread-pill" style="display: none;">
+        <span class="notif-unread-pill-dot"></span>
+        <span id="unread-pill-count">0</span> 条未读
+      </span>
+    </div>
+  </div>
+
+  <!-- 顶部操作栏：左筛选 + 右操作 -->
+  <div class="notif-toolbar">
+    <NotificationTabs active="all" />
+    <NotificationActions />
+  </div>
+
+  <!-- 通知列表 -->
+  <div class="notif-list" id="notification-list" role="list" aria-live="polite">
+    <div class="notif-state" id="notification-state">加载中...</div>
+  </div>
+</DefaultLayout>
+
+<style>
+  /* === 页面静态布局（scoped） === */
+  .notif-page-header {
+    margin-bottom: var(--space-5);
+  }
+
+  .notif-title-group {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+  }
+
+  .notif-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+    flex-wrap: wrap;
+    margin-bottom: var(--space-5);
+    padding: var(--space-4);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-xs);
+  }
+
+  .notif-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
+  .notif-state {
+    text-align: center;
+    padding: var(--space-12) var(--space-4);
+    color: var(--text-muted);
+    font-size: var(--text-base);
+    background: var(--surface);
+    border: 1px dashed var(--border);
+    border-radius: var(--radius-lg);
+  }
+
+  .notif-unread-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-3);
+    background: var(--primary-bg);
+    color: var(--primary);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    border-radius: var(--radius-full);
+    line-height: 1.6;
+  }
+
+  .notif-unread-pill-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--primary);
+  }
+
+  @media (max-width: 768px) {
+    .notif-toolbar {
+      flex-direction: column;
+      align-items: stretch;
+    }
+  }
+</style>
+
+<style is:global>
+  /* === 通知卡片样式（全局，因列表项由 JS 动态渲染） === */
+  .notif-item {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-3);
+    padding: var(--space-4) var(--space-5);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--notif-border, var(--border));
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+    cursor: pointer;
+    transition: box-shadow var(--transition-fast), transform var(--transition-fast);
+  }
+
+  .notif-item:hover {
+    box-shadow: var(--shadow-md);
+    transform: translateY(-1px);
+  }
+
+  /* 未读通知左侧蓝色圆点（占位保留，已读时隐藏避免布局抖动） */
+  .notif-item-dot {
+    flex-shrink: 0;
+    margin-top: 6px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--info);
+    box-shadow: 0 0 0 3px var(--info-bg);
+  }
+
+  .notif-item:not(.is-unread) .notif-item-dot {
+    visibility: hidden;
+  }
+
+  .notif-item-body {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .notif-item-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    margin-bottom: var(--space-2);
+    flex-wrap: wrap;
+  }
+
+  .notif-item-title {
+    font-size: var(--text-md);
+    font-weight: 500;
+    color: var(--text);
+    margin-bottom: var(--space-1);
+    line-height: var(--lh-tight);
+  }
+
+  /* 未读通知标题加粗 */
+  .notif-item.is-unread .notif-item-title {
+    font-weight: 700;
+  }
+
+  .notif-item-content {
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    line-height: var(--lh-relaxed);
+    margin-bottom: var(--space-2);
+    word-break: break-word;
+  }
+
+  .notif-item-time {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .notif-item-source {
+    display: inline-flex;
+    align-items: center;
+    font-size: var(--text-sm);
+    color: var(--primary);
+    font-weight: 500;
+  }
+
+  .notif-item-source:hover {
+    color: var(--primary-dark);
+  }
+
+  /* 类型标签 */
+  .notif-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: 2px var(--space-2);
+    font-size: var(--text-xs);
+    font-weight: 500;
+    border-radius: var(--radius-full);
+    line-height: 1.6;
+  }
+
+  .notif-badge--digest {
+    background: var(--success-bg);
+    color: var(--success);
+  }
+
+  .notif-badge--update {
+    background: var(--info-bg);
+    color: var(--info);
+  }
+
+  .notif-badge--gap {
+    background: var(--danger-bg);
+    color: var(--danger);
+  }
+
+  /* === 响应式 === */
+  @media (max-width: 768px) {
+    .notif-item {
+      padding: var(--space-3) var(--space-4);
+    }
+
+    .notif-item-header {
+      gap: var(--space-2);
+    }
+  }
+</style>
+
+<script>
+  import {
+    getNotifications,
+    getUnreadCount,
+    markAsRead,
+    markAllAsRead,
+    triggerDigest,
+    triggerGapAlert,
+    createNotificationStream,
+  } from '@/lib/apis/notifications';
+  import type { Notification } from '@/lib/apis/notifications';
+
+  type NotificationFilter = 'all' | 'digest' | 'update' | 'gap';
+
+  // 通知类型展示配置：标签文案 / 图标 / 徽章类名 / 左侧边条颜色
+  const typeConfig: Record<
+    Notification['type'],
+    { label: string; icon: string; badgeClass: string; borderVar: string }
+  > = {
+    digest: {
+      label: '知识日报',
+      icon: '📰',
+      badgeClass: 'notif-badge--digest',
+      borderVar: 'var(--success)',
+    },
+    update: {
+      label: '文档更新',
+      icon: '📄',
+      badgeClass: 'notif-badge--update',
+      borderVar: 'var(--info)',
+    },
+    gap: {
+      label: '缺口预警',
+      icon: '⚠️',
+      badgeClass: 'notif-badge--gap',
+      borderVar: 'var(--danger)',
+    },
+  };
+
+  // 运行时状态
+  let allNotifications: Notification[] = [];
+  let currentFilter: NotificationFilter = 'all';
+  let stream: { close: () => void } | null = null;
+
+  // DOM 引用
+  const listEl = document.getElementById('notification-list') as HTMLElement;
+  const unreadPill = document.getElementById('unread-pill') as HTMLElement;
+  const unreadPillCount = document.getElementById('unread-pill-count') as HTMLElement;
+
+  /** HTML 转义，防止通知内容 XSS */
+  function escapeHtml(s: string): string {
+    return String(s ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  /** 时间格式化：今天 HH:mm / 昨天 HH:mm / 更早 YYYY-MM-DD */
+  function formatTime(dateStr: string): string {
+    const date = new Date(dateStr);
+    if (isNaN(date.getTime())) return '';
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const yesterdayStart = todayStart - 24 * 60 * 60 * 1000;
+    const dateStart = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+    const hh = String(date.getHours()).padStart(2, '0');
+    const mm = String(date.getMinutes()).padStart(2, '0');
+    if (dateStart === todayStart) {
+      return `${hh}:${mm}`;
+    }
+    if (dateStart === yesterdayStart) {
+      return `昨天 ${hh}:${mm}`;
+    }
+    const yyyy = date.getFullYear();
+    const M = String(date.getMonth() + 1).padStart(2, '0');
+    const D = String(date.getDate()).padStart(2, '0');
+    return `${yyyy}-${M}-${D}`;
+  }
+
+  /** 渲染单条通知为 HTML 字符串 */
+  function renderItem(n: Notification): string {
+    const cfg = typeConfig[n.type] || typeConfig.update;
+    const unreadClass = n.read ? '' : 'is-unread';
+    const sourceAttr = n.source_id
+      ? `data-source-id="${escapeHtml(n.source_id)}"`
+      : '';
+    const sourceLink = n.source_id
+      ? `<a class="notif-item-source" href="/knowledge/detail?id=${encodeURIComponent(n.source_id)}" data-source-id="${escapeHtml(n.source_id)}">查看来源 →</a>`
+      : '';
+    return `
+      <article class="notif-item ${unreadClass}" role="listitem"
+        data-id="${escapeHtml(n.id)}"
+        data-read="${n.read ? 'true' : 'false'}"
+        ${sourceAttr}
+        style="--notif-border: ${cfg.borderVar};">
+        <span class="notif-item-dot" aria-hidden="true"></span>
+        <div class="notif-item-body">
+          <div class="notif-item-header">
+            <span class="notif-badge ${cfg.badgeClass}">${cfg.icon} ${cfg.label}</span>
+            <span class="notif-item-time">${escapeHtml(formatTime(n.created_at))}</span>
+          </div>
+          <h3 class="notif-item-title">${escapeHtml(n.title)}</h3>
+          <p class="notif-item-content">${escapeHtml(n.content)}</p>
+          ${sourceLink}
+        </div>
+      </article>
+    `;
+  }
+
+  /** 渲染整个列表（按当前筛选 + 时间降序） */
+  function renderList(): void {
+    const filtered =
+      currentFilter === 'all'
+        ? allNotifications.slice()
+        : allNotifications.filter((n) => n.type === currentFilter);
+    filtered.sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    );
+
+    if (filtered.length === 0) {
+      listEl.innerHTML = '<div class="notif-state">暂无通知</div>';
+      return;
+    }
+    listEl.innerHTML = filtered.map(renderItem).join('');
+    bindItemClicks();
+  }
+
+  /** 绑定通知卡片点击事件：标记已读 + 跳转来源 */
+  function bindItemClicks(): void {
+    listEl.querySelectorAll<HTMLElement>('.notif-item').forEach((item) => {
+      item.addEventListener('click', async (e) => {
+        // 点击来源链接时阻止默认跳转，统一由 JS 处理（先标记已读再跳转）
+        const link = (e.target as HTMLElement).closest('.notif-item-source');
+        if (link) e.preventDefault();
+        await handleItemClick(item);
+      });
+    });
+  }
+
+  /** 处理通知点击：标记已读 + 跳转来源文档 */
+  async function handleItemClick(item: HTMLElement): Promise<void> {
+    const id = item.dataset.id;
+    const wasRead = item.dataset.read === 'true';
+    const sourceId = item.dataset.sourceId;
+    if (!id) return;
+
+    if (!wasRead) {
+      try {
+        await markAsRead(id);
+        item.dataset.read = 'true';
+        item.classList.remove('is-unread');
+        updateUnreadCount();
+      } catch {
+        alert('标记已读失败，请重试');
+        return;
+      }
+    }
+
+    if (sourceId) {
+      window.location.href = `/knowledge/detail?id=${encodeURIComponent(sourceId)}`;
+    }
+  }
+
+  /** 更新未读计数胶囊 */
+  async function updateUnreadCount(): Promise<void> {
+    try {
+      const count = await getUnreadCount();
+      if (count > 0) {
+        unreadPill.style.display = '';
+        unreadPillCount.textContent = String(count);
+      } else {
+        unreadPill.style.display = 'none';
+      }
+    } catch {
+      // 获取未读计数失败时静默处理
+    }
+  }
+
+  /** 加载通知列表 */
+  async function loadNotifications(): Promise<void> {
+    listEl.innerHTML = '<div class="notif-state">加载中...</div>';
+    try {
+      allNotifications = await getNotifications({ limit: 100 });
+      renderList();
+      await updateUnreadCount();
+    } catch {
+      listEl.innerHTML = '<div class="notif-state">加载失败，请刷新重试</div>';
+    }
+  }
+
+  // === 筛选标签切换 ===
+  document.getElementById('notification-tabs')?.addEventListener('click', (e) => {
+    const tab = (e.target as HTMLElement).closest('.notification-tab') as HTMLElement | null;
+    if (!tab) return;
+    const key = tab.dataset.tab as NotificationFilter;
+    if (!key || key === currentFilter) return;
+    currentFilter = key;
+    document.querySelectorAll('.notification-tab').forEach((t) => {
+      t.classList.remove('active');
+      t.setAttribute('aria-selected', 'false');
+    });
+    tab.classList.add('active');
+    tab.setAttribute('aria-selected', 'true');
+    renderList();
+  });
+
+  // === 全部标记已读 ===
+  document.getElementById('mark-all-read-btn')?.addEventListener('click', async () => {
+    try {
+      await markAllAsRead();
+      allNotifications = allNotifications.map((n) => ({ ...n, read: true }));
+      renderList();
+      await updateUnreadCount();
+      alert('已全部标记为已读');
+    } catch {
+      alert('操作失败，请重试');
+    }
+  });
+
+  // === 手动触发知识日报 ===
+  document.getElementById('trigger-digest-btn')?.addEventListener('click', async () => {
+    const btn = document.getElementById('trigger-digest-btn') as HTMLButtonElement | null;
+    if (btn) btn.disabled = true;
+    try {
+      await triggerDigest();
+      alert('知识日报已触发，请稍后查看通知列表');
+      await loadNotifications();
+    } catch {
+      alert('触发知识日报失败，请重试');
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  });
+
+  // === 手动触发缺口预警 ===
+  document.getElementById('trigger-gap-btn')?.addEventListener('click', async () => {
+    const btn = document.getElementById('trigger-gap-btn') as HTMLButtonElement | null;
+    if (btn) btn.disabled = true;
+    try {
+      const result = await triggerGapAlert();
+      const notified = result?.notified ?? 0;
+      alert(`缺口预警已触发，共通知 ${notified} 人`);
+      await loadNotifications();
+    } catch {
+      alert('触发缺口预警失败，请重试');
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  });
+
+  // === SSE 实时推送连接 ===
+  function connectStream(): void {
+    stream = createNotificationStream((notification) => {
+      // 去重：已存在的通知不再重复加入
+      if (allNotifications.some((n) => n.id === notification.id)) return;
+      allNotifications.unshift(notification);
+      renderList();
+      updateUnreadCount();
+    });
+  }
+
+  // === 初始化 ===
+  loadNotifications();
+  connectStream();
+
+  // 页面卸载时关闭 SSE 连接
+  window.addEventListener('beforeunload', () => {
+    stream?.close();
+  });
+</script>

@@ -5,17 +5,27 @@
  * 文档 ID 通过 URL 查询参数传入：/knowledge/detail?id=xxx
  */
 import DefaultLayout from '@/layouts/DefaultLayout.astro';
+import IntelligencePanelMount from '@/components/management/IntelligencePanelMount';
 
 const breadcrumb = [
   { label: '知识', href: '/knowledge' },
   { label: '文档详情' },
 ];
+
+// 从 URL 查询参数获取文档 ID（供 React Island 作为 props 传入）
+const docId = Astro.url.searchParams.get('id') || 'new';
 ---
 
 <DefaultLayout title="文档详情" breadcrumb={breadcrumb}>
   <div class="doc-layout">
     <!-- 文档主内容 -->
     <article class="doc-main">
+      <!-- AI 智能处理面板（React Island，客户端读取文档数据后渲染） -->
+      <div class="intelligence-panel-wrap">
+        <IntelligencePanelMount client:only="react" docId={docId} />
+      </div>
+      <!-- 解析状态提示条（仅在 parse_status 非 completed 时展示） -->
+      <div id="parse-status-banner" class="parse-status-banner" style="display: none;"></div>
       <div id="doc-content">
         <div class="loading-state">加载中...</div>
       </div>
@@ -53,6 +63,10 @@ const breadcrumb = [
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
     padding: var(--space-6);
+  }
+  /* AI 智能处理面板容器（React Island 挂载点） */
+  .intelligence-panel-wrap {
+    margin-bottom: var(--space-5);
   }
   .doc-header {
     margin-bottom: var(--space-6);
@@ -192,15 +206,255 @@ const breadcrumb = [
     padding: var(--space-6);
     color: var(--text-muted);
   }
+  /* === 文档标题行（标题 + AI 处理按钮） === */
+  .doc-title-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-4);
+    margin-bottom: var(--space-3);
+  }
+  .doc-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin-top: var(--space-3);
+  }
+  /* === 解析状态提示条 === */
+  .parse-status-banner {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    border-radius: var(--radius);
+    font-size: var(--text-sm);
+    margin-bottom: var(--space-4);
+    border: 1px solid var(--border);
+    background: var(--surface-muted);
+  }
+  .parse-status-banner.parse-banner-info {
+    background: var(--info-bg);
+    color: var(--info);
+    border-color: var(--info);
+  }
+  .parse-status-banner.parse-banner-warning {
+    background: var(--warning-bg);
+    color: var(--warning);
+    border-color: var(--warning);
+  }
+  .parse-status-banner.parse-banner-danger {
+    background: var(--danger-bg);
+    color: var(--danger);
+    border-color: var(--danger);
+  }
+  .parse-banner-icon {
+    font-size: var(--text-lg);
+  }
+  /* === AI 摘要卡片 === */
+  .summary-card {
+    margin-bottom: var(--space-6);
+    padding: var(--space-5);
+    background: linear-gradient(135deg, var(--primary-bg) 0%, var(--surface) 100%);
+    border: 1px solid var(--primary-light);
+    border-radius: var(--radius-lg);
+    border-left: 4px solid var(--primary);
+  }
+  .summary-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: var(--space-3);
+  }
+  .summary-card-title {
+    font-size: var(--text-md);
+    font-weight: 600;
+    color: var(--primary-dark);
+  }
+  .summary-card-body {
+    font-size: var(--text-base);
+    line-height: var(--lh-relaxed);
+    color: var(--text);
+    white-space: pre-wrap;
+  }
+  /* === 解析元信息 === */
+  .parse-meta {
+    margin-top: var(--space-3);
+  }
+  .parse-meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+  }
+  .parse-meta-item {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: 2px var(--space-2);
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+    background: var(--surface-muted);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+  }
+  .parse-meta-warnings {
+    margin-top: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    background: var(--warning-bg);
+    border-left: 3px solid var(--warning);
+    border-radius: var(--radius-sm);
+    font-size: var(--text-xs);
+    color: var(--warning);
+  }
+  /* === 智能处理进度 === */
+  .intelligence-progress {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-4);
+    margin-bottom: var(--space-5);
+    background: var(--primary-bg);
+    border: 1px solid var(--primary-light);
+    border-radius: var(--radius);
+    color: var(--primary-dark);
+    font-size: var(--text-sm);
+  }
   @media (max-width: 1024px) {
     .doc-layout {
       grid-template-columns: 1fr;
+    }
+    .doc-title-row {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+  }
+  /* === 评论区扩展样式（P2-3 文档评论对接） === */
+  .comment-count-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 22px;
+    height: 22px;
+    padding: 0 var(--space-2);
+    margin-left: var(--space-2);
+    font-size: var(--text-xs);
+    font-weight: 600;
+    color: var(--primary);
+    background: var(--primary-bg);
+    border-radius: var(--radius-full);
+    vertical-align: middle;
+  }
+  .comment-item-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  .comment-item-head .comment-item-time {
+    margin-top: 0;
+  }
+  .comment-resolved-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px var(--space-2);
+    font-size: var(--text-xs);
+    font-weight: 500;
+    color: var(--success);
+    background: var(--success-bg);
+    border-radius: var(--radius-full);
+  }
+  .comment-item-actions {
+    display: flex;
+    gap: var(--space-3);
+    margin-top: var(--space-2);
+  }
+  .comment-action {
+    background: none;
+    border: none;
+    padding: 0;
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: color var(--transition-fast);
+  }
+  .comment-action:hover {
+    color: var(--primary);
+  }
+  .comment-avatar {
+    flex-shrink: 0;
+    object-fit: cover;
+  }
+  .comment-replies {
+    margin-top: var(--space-3);
+    padding-left: var(--space-4);
+    border-left: 2px solid var(--border-light);
+  }
+  .comment-reply {
+    padding: var(--space-2) 0;
+    border-bottom: none;
+  }
+  .comment-reply .comment-item-content {
+    margin-top: 2px;
+  }
+  .comment-reply-form {
+    margin-top: var(--space-2);
+  }
+  .comment-reply-actions {
+    display: flex;
+    gap: var(--space-2);
+    margin-top: var(--space-2);
+  }
+  .comment-reply-textarea {
+    min-height: 50px;
+  }
+  .comment-empty {
+    text-align: center;
+    padding: var(--space-6);
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+  }
+  .comment-error {
+    text-align: center;
+    padding: var(--space-4);
+    color: var(--danger);
+    font-size: var(--text-sm);
+  }
+  .comment-error .comment-action {
+    color: var(--primary);
+    margin-left: var(--space-2);
+  }
+  /* 骨架屏 */
+  .comment-skeleton {
+    pointer-events: none;
+  }
+  .skeleton-block {
+    background: var(--surface-muted);
+    border-radius: var(--radius-full);
+    animation: skeleton-shimmer 1.4s ease-in-out infinite;
+  }
+  .skeleton-line {
+    height: 12px;
+    margin-bottom: 6px;
+    background: var(--surface-muted);
+    border-radius: var(--radius-xs);
+    animation: skeleton-shimmer 1.4s ease-in-out infinite;
+  }
+  @keyframes skeleton-shimmer {
+    0% {
+      opacity: 0.6;
+    }
+    50% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 0.6;
     }
   }
 </style>
 
 <script>
-  const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
+  import { getDocument, getDocumentSummary } from '@/lib/apis/knowledge';
+  import { getComments, createComment, resolveComment } from '@/lib/apis/comments';
+
   const TOKEN_KEY = 'ekb_access_token';
 
   // 从 URL 查询参数获取文档 ID
@@ -214,22 +468,47 @@ const breadcrumb = [
       return;
     }
     try {
-      const res = await fetch(`${API_BASE}/api/v1/knowledge/documents/${docId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
       let doc: any;
-      if (res.ok) {
-        const result = await res.json();
-        doc = result.data || result;
-      } else if (res.status === 401) {
-        window.location.href = '/auth/login';
-        return;
-      } else {
+      try {
+        doc = await getDocument(docId);
+      } catch {
+        // 接口失败时回退到 mock 数据，保证页面可预览
+        // 401 由 api 层自动跳转登录页，这里静默回退
         doc = mockDoc();
       }
       renderDoc(doc);
+      // 拉取解析摘要补充元信息（页数、字符数、警告）
+      loadParseSummary();
+      // 绑定评论区事件并加载评论列表
+      bindCommentEvents();
+      loadComments();
     } catch {
       renderDoc(mockDoc());
+      bindCommentEvents();
+      loadComments();
+    }
+  }
+
+  /** 拉取文档解析摘要，更新解析状态条与元信息 */
+  async function loadParseSummary() {
+    try {
+      const summary = await getDocumentSummary(docId);
+      const banner = document.getElementById('parse-status-banner');
+      if (banner) {
+        if (summary.parse_status && summary.parse_status !== 'completed') {
+          banner.style.display = 'flex';
+          banner.innerHTML = renderParseBanner(summary.parse_status, summary.warnings);
+        } else if (summary.parse_status === 'completed') {
+          banner.style.display = 'none';
+        }
+      }
+      // 更新解析元信息
+      const metaEl = document.getElementById('parse-meta');
+      if (metaEl) {
+        metaEl.innerHTML = renderParseMeta(summary.pages, summary.char_count, summary.warnings);
+      }
+    } catch {
+      // 静默处理：解析摘要获取失败不影响主流程
     }
   }
 
@@ -243,6 +522,11 @@ const breadcrumb = [
       updated_at: '2026-07-01',
       version: 'V3.2',
       tags: ['财务', '报销', '制度'],
+      category: '制度规范',
+      summary: '',
+      parse_status: 'completed',
+      page_count: 12,
+      char_count: 8420,
       views: 1280,
       content: `
         <h2>一、总则</h2>
@@ -266,25 +550,60 @@ const breadcrumb = [
     };
   }
 
+  /** 渲染解析状态提示条内容 */
+  function renderParseBanner(parseStatus: string, warnings?: string[]): string {
+    const map: Record<string, { icon: string; text: string; cls: string }> = {
+      pending: { icon: '⏳', text: '文档正在排队等待解析...', cls: 'parse-banner-warning' },
+      processing: { icon: '⚙️', text: '文档解析处理中，请稍候...', cls: 'parse-banner-info' },
+      failed: { icon: '❌', text: '文档解析失败' + (warnings?.length ? '：' + warnings.join('；') : ''), cls: 'parse-banner-danger' },
+    };
+    const item = map[parseStatus] || map.pending;
+    return `<span class="parse-banner-icon">${item.icon}</span><span>${escapeHtml(item.text)}</span>`;
+  }
+
+  /** 渲染解析元信息（页数、字符数、警告） */
+  function renderParseMeta(pages?: number, charCount?: number, warnings?: string[]): string {
+    if (pages === undefined && charCount === undefined && (!warnings || warnings.length === 0)) {
+      return '';
+    }
+    let html = '<div class="parse-meta-row">';
+    if (pages !== undefined && pages > 0) {
+      html += `<span class="parse-meta-item">📄 ${pages} 页</span>`;
+    }
+    if (charCount !== undefined && charCount > 0) {
+      html += `<span class="parse-meta-item">🔤 ${charCount.toLocaleString()} 字符</span>`;
+    }
+    html += '</div>';
+    if (warnings && warnings.length > 0) {
+      html += `<div class="parse-meta-warnings">⚠️ ${escapeHtml(warnings.join('；'))}</div>`;
+    }
+    return html;
+  }
+
   function renderDoc(doc: any) {
     document.getElementById('doc-content')!.innerHTML = `
       <div class="doc-header">
-        <h1 class="doc-title">${escapeHtml(doc.title)}</h1>
+        <div class="doc-title-row">
+          <h1 class="doc-title">${escapeHtml(doc.title)}</h1>
+        </div>
         <div class="doc-meta">
           <span class="badge badge-primary">${escapeHtml(doc.kb_name || '')}</span>
+          ${doc.category ? `<span class="badge badge-success">📁 ${escapeHtml(doc.category)}</span>` : ''}
           <span>版本 ${escapeHtml(doc.version || 'V1.0')}</span>
           <span>作者：${escapeHtml(doc.author || '未知')}</span>
           <span>创建于 ${escapeHtml(doc.created_at || '')}</span>
           <span>更新于 ${escapeHtml(doc.updated_at || '')}</span>
           <span>浏览 ${doc.views || 0} 次</span>
-          ${doc.tags?.map((t: string) => `<span class="tag">${escapeHtml(t)}</span>`).join('') || ''}
+          ${doc.parse_status ? `<span class="badge badge-${parseStatusBadge(doc.parse_status)}">${parseStatusLabel(doc.parse_status)}</span>` : ''}
         </div>
+        <div id="parse-meta" class="parse-meta"></div>
       </div>
+
       <div class="doc-content">${doc.content || '<p>暂无内容</p>'}</div>
 
       <div class="comment-section">
         <div class="comment-header">
-          <h3 style="font-size: var(--text-lg);">评论讨论 (${comments.length})</h3>
+          <h3 style="font-size: var(--text-lg);">评论讨论 <span id="comment-count" class="comment-count-badge">0</span></h3>
         </div>
         <div class="comment-input-box">
           <div class="avatar">我</div>
@@ -292,40 +611,323 @@ const breadcrumb = [
         </div>
         <button class="btn btn-primary btn-sm" id="submit-comment">发表评论</button>
         <div id="comment-list" style="margin-top: var(--space-4);">
-          ${comments.map((c) => renderComment(c)).join('')}
+          <div class="loading-state">评论加载中...</div>
         </div>
       </div>`;
+  }
+
+  /** 解析状态徽章颜色 */
+  function parseStatusBadge(status: string): string {
+    const map: Record<string, string> = {
+      pending: 'warning',
+      processing: 'primary',
+      completed: 'success',
+      failed: 'danger',
+    };
+    return map[status] || 'warning';
+  }
+
+  /** 解析状态文案 */
+  function parseStatusLabel(status: string): string {
+    const map: Record<string, string> = {
+      pending: '解析等待中',
+      processing: '解析处理中',
+      completed: '解析完成',
+      failed: '解析失败',
+    };
+    return map[status] || status;
+  }
+
+  // ===== 评论区逻辑（对接后端 comments API） =====
+  let commentTree: any[] = [];
+  const commentsById = new Map<string, any>();
+
+  /** 加载评论列表：骨架屏 -> 渲染 -> 错误重试 */
+  async function loadComments() {
+    const listEl = document.getElementById('comment-list');
+    if (!listEl) return;
+    listEl.innerHTML = renderCommentSkeleton();
+    try {
+      const raw: any = await getComments(docId);
+      const flat = normalizeComments(raw);
+      commentTree = buildCommentTree(flat);
+      commentsById.clear();
+      flat.forEach((c: any) => commentsById.set(c.id, c));
+      renderCommentList();
+      updateCommentCount();
+    } catch (e: any) {
+      const msg = e?.message || '未知错误';
+      listEl.innerHTML = `<div class="comment-error">评论加载失败：${escapeHtml(msg)} <button class="comment-action" id="retry-load-comments">重试</button></div>`;
+      document.getElementById('retry-load-comments')?.addEventListener('click', () => loadComments());
+    }
+  }
+
+  /** 兼容数组或 { items } 返回，并把嵌套 replies 拍平为一维列表 */
+  function normalizeComments(raw: any): any[] {
+    let list: any[] = [];
+    if (Array.isArray(raw)) list = raw;
+    else if (raw && Array.isArray(raw.items)) list = raw.items;
+    const flat: any[] = [];
+    const walk = (arr: any[]) => {
+      for (const c of arr) {
+        flat.push(c);
+        if (c.replies && c.replies.length) walk(c.replies);
+      }
+    };
+    walk(list);
+    return flat;
+  }
+
+  /** 根据 parent_id 构建楼中楼树：父评论倒序，子评论正序 */
+  function buildCommentTree(flat: any[]): any[] {
+    const map = new Map<string, any>();
+    flat.forEach((c: any) => map.set(c.id, { ...c, replies: [] }));
+    const roots: any[] = [];
+    flat.forEach((c: any) => {
+      const node = map.get(c.id);
+      if (c.parent_id && map.has(c.parent_id)) {
+        map.get(c.parent_id).replies.push(node);
+      } else {
+        roots.push(node);
+      }
+    });
+    roots.sort((a, b) => timeOf(b.created_at) - timeOf(a.created_at));
+    roots.forEach((r) =>
+      r.replies.sort((a: any, b: any) => timeOf(a.created_at) - timeOf(b.created_at))
+    );
+    return roots;
+  }
+
+  function timeOf(iso: string): number {
+    const t = new Date(iso).getTime();
+    return isNaN(t) ? 0 : t;
+  }
+
+  /** 渲染评论列表（含空状态） */
+  function renderCommentList() {
+    const listEl = document.getElementById('comment-list');
+    if (!listEl) return;
+    if (commentTree.length === 0) {
+      listEl.innerHTML = `<div class="comment-empty">暂无评论，快来发表第一条吧</div>`;
+      return;
+    }
+    listEl.innerHTML = commentTree.map((c) => renderCommentItem(c, false)).join('');
+  }
+
+  /** 更新评论总数 */
+  function updateCommentCount() {
+    const countEl = document.getElementById('comment-count');
+    if (countEl) countEl.textContent = String(commentsById.size);
+  }
+
+  /** 渲染单条评论（含楼中楼回复） */
+  function renderCommentItem(c: any, isReply: boolean): string {
+    const name = c.user_name || '匿名用户';
+    const initial = name.charAt(0).toUpperCase();
+    const avatarHtml = c.user_avatar
+      ? `<img class="avatar avatar-sm comment-avatar" src="${escapeAttr(c.user_avatar)}" alt="${escapeAttr(name)}" />`
+      : `<div class="avatar avatar-sm comment-avatar">${escapeHtml(initial)}</div>`;
+    const resolvedBadge = c.resolved
+      ? `<span class="comment-resolved-badge" title="已解决">✓ 已解决</span>`
+      : '';
+    const resolveBtn = c.resolved
+      ? `<button class="comment-action" data-action="unresolve" data-id="${escapeAttr(c.id)}">取消解决</button>`
+      : `<button class="comment-action" data-action="resolve" data-id="${escapeAttr(c.id)}">标记已解决</button>`;
+    const replyBtn = `<button class="comment-action" data-action="reply" data-id="${escapeAttr(c.id)}">回复</button>`;
+    const repliesHtml =
+      c.replies && c.replies.length
+        ? `<div class="comment-replies">${c.replies.map((r: any) => renderCommentItem(r, true)).join('')}</div>`
+        : '';
+    return `
+      <div class="comment-item ${isReply ? 'comment-reply' : ''}" data-comment-id="${escapeAttr(c.id)}">
+        ${avatarHtml}
+        <div class="comment-item-body">
+          <div class="comment-item-head">
+            <span class="comment-item-author">${escapeHtml(name)}</span>
+            ${resolvedBadge}
+            <span class="comment-item-time">${escapeHtml(relativeTime(c.created_at))}</span>
+          </div>
+          <div class="comment-item-content">${escapeHtml(c.content || '')}</div>
+          <div class="comment-item-actions">
+            ${replyBtn}
+            ${resolveBtn}
+          </div>
+          <div class="comment-reply-form" data-reply-for="${escapeAttr(c.id)}" style="display:none;">
+            <textarea class="form-textarea comment-reply-textarea" placeholder="回复 @${escapeAttr(name)}..." style="min-height: 50px;"></textarea>
+            <div class="comment-reply-actions">
+              <button class="btn btn-primary btn-sm" data-action="submit-reply" data-id="${escapeAttr(c.id)}">回复</button>
+              <button class="btn btn-ghost btn-sm" data-action="cancel-reply" data-id="${escapeAttr(c.id)}">取消</button>
+            </div>
+          </div>
+          ${repliesHtml}
+        </div>
+      </div>`;
+  }
+
+  /** 加载骨架屏 */
+  function renderCommentSkeleton(): string {
+    return Array.from({ length: 3 })
+      .map(
+        () => `
+      <div class="comment-item comment-skeleton">
+        <div class="avatar avatar-sm skeleton-block"></div>
+        <div class="comment-item-body">
+          <div class="skeleton-line" style="width: 30%;"></div>
+          <div class="skeleton-line" style="width: 90%; margin-top: 8px;"></div>
+          <div class="skeleton-line" style="width: 60%;"></div>
+        </div>
+      </div>`
+      )
+      .join('');
+  }
+
+  /** 相对时间：刚刚 / X分钟前 / X小时前 / X天前 / YYYY-MM-DD */
+  function relativeTime(iso: string): string {
+    if (!iso) return '';
+    const d = new Date(iso);
+    const t = d.getTime();
+    if (isNaN(t)) return '';
+    const diff = Date.now() - t;
+    const sec = Math.floor(diff / 1000);
+    if (sec < 60) return '刚刚';
+    const min = Math.floor(sec / 60);
+    if (min < 60) return `${min}分钟前`;
+    const hr = Math.floor(min / 60);
+    if (hr < 24) return `${hr}小时前`;
+    const day = Math.floor(hr / 24);
+    if (day < 30) return `${day}天前`;
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${dd}`;
+  }
+
+  /** 绑定评论区事件（事件委托，重新渲染后仍生效） */
+  function bindCommentEvents() {
+    const listEl = document.getElementById('comment-list');
+    listEl?.addEventListener('click', (ev: Event) => {
+      const target = (ev.target as HTMLElement).closest('[data-action]') as HTMLElement | null;
+      if (!target) return;
+      const action = target.dataset.action;
+      const id = target.dataset.id || '';
+      if (action === 'reply') showReplyForm(id);
+      else if (action === 'cancel-reply') hideReplyForm(id);
+      else if (action === 'submit-reply') submitReply(id);
+      else if (action === 'resolve' || action === 'unresolve') toggleResolve(id);
+    });
 
     document.getElementById('submit-comment')?.addEventListener('click', submitComment);
+
+    document.getElementById('comment-input')?.addEventListener('keydown', (ev: KeyboardEvent) => {
+      if ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter') submitComment();
+    });
   }
 
-  let comments = [
-    { id: 'c1', author: '王五', content: '这个报销流程很清晰，解决了我的疑问。', time: '2 小时前' },
-    { id: 'c2', author: '赵六', content: '请问住宿费超出标准怎么办？', time: '昨天' },
-  ];
-
-  function renderComment(c: any): string {
-    return `
-      <div class="comment-item">
-        <div class="avatar avatar-sm">${escapeHtml(c.author.charAt(0))}</div>
-        <div class="comment-item-body">
-          <div class="comment-item-author">${escapeHtml(c.author)}</div>
-          <div class="comment-item-content">${escapeHtml(c.content)}</div>
-          <div class="comment-item-time">${escapeHtml(c.time)}</div>
-        </div>
-      </div>`;
+  function showReplyForm(commentId: string) {
+    document.querySelectorAll('.comment-reply-form').forEach((el) => {
+      (el as HTMLElement).style.display = 'none';
+    });
+    const form = document.querySelector(`.comment-reply-form[data-reply-for="${cssEsc(commentId)}"]`) as HTMLElement | null;
+    if (form) {
+      form.style.display = 'block';
+      const ta = form.querySelector('.comment-reply-textarea') as HTMLTextAreaElement | null;
+      ta?.focus();
+    }
   }
 
-  function submitComment() {
-    const input = document.getElementById('comment-input') as HTMLTextAreaElement;
+  function hideReplyForm(commentId: string) {
+    const form = document.querySelector(`.comment-reply-form[data-reply-for="${cssEsc(commentId)}"]`) as HTMLElement | null;
+    if (form) {
+      form.style.display = 'none';
+      const ta = form.querySelector('.comment-reply-textarea') as HTMLTextAreaElement | null;
+      if (ta) ta.value = '';
+    }
+  }
+
+  /** 发表顶层评论 */
+  async function submitComment() {
+    const input = document.getElementById('comment-input') as HTMLTextAreaElement | null;
+    if (!input) return;
     const content = input.value.trim();
     if (!content) {
       alert('请输入评论内容');
       return;
     }
-    comments.unshift({ id: 'c' + Date.now(), author: '我', content, time: '刚刚' });
-    document.getElementById('comment-list')!.innerHTML = comments.map(renderComment).join('');
-    input.value = '';
+    const btn = document.getElementById('submit-comment') as HTMLButtonElement | null;
+    setBtnLoading(btn, '发表中...');
+    try {
+      await createComment(docId, content);
+      input.value = '';
+      await loadComments();
+    } catch (e: any) {
+      alert('发表评论失败：' + (e?.message || '未知错误'));
+    } finally {
+      setBtnLoading(btn, '发表评论', false);
+    }
+  }
+
+  /** 发表回复（楼中楼） */
+  async function submitReply(parentId: string) {
+    const form = document.querySelector(`.comment-reply-form[data-reply-for="${cssEsc(parentId)}"]`);
+    if (!form) return;
+    const ta = form.querySelector('.comment-reply-textarea') as HTMLTextAreaElement | null;
+    if (!ta) return;
+    const content = ta.value.trim();
+    if (!content) {
+      alert('请输入回复内容');
+      return;
+    }
+    const btn = form.querySelector('[data-action="submit-reply"]') as HTMLButtonElement | null;
+    setBtnLoading(btn, '回复中...');
+    try {
+      await createComment(docId, content, parentId);
+      await loadComments();
+    } catch (e: any) {
+      alert('回复失败：' + (e?.message || '未知错误'));
+      setBtnLoading(btn, '回复', false);
+    }
+  }
+
+  /** 标记已解决/取消解决（乐观更新 + 失败回滚） */
+  async function toggleResolve(commentId: string) {
+    const c = commentsById.get(commentId);
+    if (!c) return;
+    const prev = !!c.resolved;
+    c.resolved = !prev;
+    renderCommentList();
+    try {
+      await resolveComment(commentId);
+    } catch (e: any) {
+      c.resolved = prev;
+      renderCommentList();
+      alert('操作失败：' + (e?.message || '未知错误'));
+    }
+  }
+
+  function setBtnLoading(btn: HTMLButtonElement | null, text: string, loading = true) {
+    if (!btn) return;
+    if (loading) {
+      btn.dataset.originalText = btn.textContent || '';
+      btn.disabled = true;
+      btn.textContent = text;
+    } else {
+      btn.disabled = false;
+      btn.textContent = btn.dataset.originalText || text;
+    }
+  }
+
+  /** 转义为 HTML 属性可用值 */
+  function escapeAttr(s: string): string {
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  /** 转义为 CSS 属性选择器可用值（处理引号与反斜杠） */
+  function cssEsc(s: string): string {
+    return String(s).replace(/["\\]/g, '\\$&');
   }
 
   function renderRelated() {

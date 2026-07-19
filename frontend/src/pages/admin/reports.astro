@@ -1,121 +1,340 @@
 ---
 /**
  * 报表页面
- * 使用量报表 + 知识库报表 + 成本报表 + 时间范围筛选
+ * 6 个报表分类（运营总览 / 搜索分析 / 文档质量 / 用户活跃 / 知识覆盖 / 内容新鲜度）
+ * 每个报表支持「在线查看」「导出 CSV」「导出 Excel」
+ * 顶部时间范围切换（7d / 30d / 90d）影响所有导出请求
+ * 底部展示最近 5 条导出记录（localStorage 持久化）
  */
 import DefaultLayout from '@/layouts/DefaultLayout.astro';
 
 const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '报表' }];
+
+// 报表配置：构建期生成静态卡片骨架，客户端脚本负责预览数据与导出交互
+const reports = [
+  {
+    type: 'dashboard',
+    name: '运营总览',
+    desc: '文档总数、用户数、搜索次数等核心运营指标汇总。',
+    icon: '📊',
+    viewUrl: '/admin',
+  },
+  {
+    type: 'search',
+    name: '搜索分析',
+    desc: '搜索热词、零点击查询、搜索命中分布等搜索行为分析。',
+    icon: '🔍',
+    viewUrl: '/admin#hotwords-body',
+  },
+  {
+    type: 'documents',
+    name: '文档质量',
+    desc: '覆盖率、新鲜度、过期文档数等文档健康度指标。',
+    icon: '📄',
+    viewUrl: '/admin/health',
+  },
+  {
+    type: 'users',
+    name: '用户活跃',
+    desc: '贡献者排行、贡献分、活跃度等用户参与指标。',
+    icon: '👥',
+    viewUrl: '/admin/users',
+  },
+  {
+    type: 'coverage',
+    name: '知识覆盖',
+    desc: '主题覆盖率与未覆盖主题清单，识别知识缺口。',
+    icon: '🎯',
+    viewUrl: '/admin#coverage-body',
+  },
+  {
+    type: 'freshness',
+    name: '内容新鲜度',
+    desc: '新鲜、陈旧、过期文档分布，掌握内容时效性。',
+    icon: '🕒',
+    viewUrl: '/admin#freshness-body',
+  },
+];
 ---
 
 <DefaultLayout title="运营报表" breadcrumb={breadcrumb}>
-  <div class="page-header">
-    <h1 class="page-title">运营报表</h1>
-    <div style="display: flex; gap: var(--space-3); align-items: center;">
-      <select class="form-input" id="report-range" style="width: 160px;">
-        <option value="7">近 7 天</option>
-        <option value="30" selected>近 30 天</option>
-        <option value="90">近 90 天</option>
-        <option value="365">近 1 年</option>
-      </select>
-      <button class="btn btn-outline btn-sm" id="export-btn">📊 导出报表</button>
-    </div>
-  </div>
-
-  <!-- 使用量报表 -->
-  <div class="card" style="margin-bottom: var(--space-5);">
-    <div class="card-header"><h3>使用量报表</h3></div>
-    <div class="grid grid-cols-4" style="margin-bottom: var(--space-4);">
-      <div class="text-center">
-        <div class="text-muted" style="font-size: var(--text-sm);">总搜索次数</div>
-        <div style="font-size: var(--text-2xl); font-weight: 600; color: var(--primary);" id="usage-search">--</div>
+  <div class="rpt-page">
+    <!-- 页头 + 时间范围切换 -->
+    <div class="rpt-header">
+      <div>
+        <h1 class="page-title">运营报表</h1>
+        <p class="text-muted rpt-subtitle">选择报表分类在线查看或导出 CSV / Excel 文件，时间范围影响所有导出请求。</p>
       </div>
-      <div class="text-center">
-        <div class="text-muted" style="font-size: var(--text-sm);">总对话次数</div>
-        <div style="font-size: var(--text-2xl); font-weight: 600; color: var(--success);" id="usage-chat">--</div>
-      </div>
-      <div class="text-center">
-        <div class="text-muted" style="font-size: var(--text-sm);">文档查看</div>
-        <div style="font-size: var(--text-2xl); font-weight: 600; color: var(--warning);" id="usage-view">--</div>
-      </div>
-      <div class="text-center">
-        <div class="text-muted" style="font-size: var(--text-sm);">文档下载</div>
-        <div style="font-size: var(--text-2xl); font-weight: 600; color: var(--info);" id="usage-download">--</div>
-      </div>
-    </div>
-    <canvas id="usage-chart" style="width: 100%; height: 220px;"></canvas>
-  </div>
-
-  <div class="grid grid-cols-2" style="margin-bottom: var(--space-5);">
-    <!-- 知识库报表 -->
-    <div class="card">
-      <div class="card-header"><h3>知识库报表</h3></div>
-      <div style="overflow-x: auto;">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>知识库</th>
-              <th>文档数</th>
-              <th>浏览</th>
-              <th>搜索命中</th>
-            </tr>
-          </thead>
-          <tbody id="kb-report-body"></tbody>
-        </table>
+      <div class="range-switcher" id="range-switcher" role="tablist" aria-label="时间范围">
+        <button class="range-btn" type="button" data-range="7d" role="tab">近 7 天</button>
+        <button class="range-btn active" type="button" data-range="30d" role="tab">近 30 天</button>
+        <button class="range-btn" type="button" data-range="90d" role="tab">近 90 天</button>
       </div>
     </div>
 
-    <!-- 成本报表 -->
-    <div class="card">
-      <div class="card-header"><h3>成本报表</h3></div>
-      <div id="cost-breakdown">
-        <div class="cost-item">
-          <div class="cost-item-header">
-            <span>LLM Token 消耗</span>
-            <span style="font-weight: 600; color: var(--primary);">¥1,280.00</span>
+    <!-- 报表卡片网格 -->
+    <div class="rpt-grid">
+      {reports.map((r) => (
+        <div class="card rpt-card" data-report={r.type}>
+          <div class="rpt-card-head">
+            <div class="rpt-icon">{r.icon}</div>
+            <div class="rpt-card-title">
+              <h3 class="rpt-name">{r.name}</h3>
+              <span class="text-muted rpt-type">{r.type}</span>
+            </div>
           </div>
-          <div class="cost-bar"><div class="cost-bar-fill" style="width: 65%; background: var(--primary);"></div></div>
-          <div class="text-muted" style="font-size: var(--text-xs);">1.2M Tokens · 占总成本 65%</div>
-        </div>
-        <div class="cost-item">
-          <div class="cost-item-header">
-            <span>向量存储</span>
-            <span style="font-weight: 600; color: var(--success);">¥420.00</span>
+          <p class="rpt-desc">{r.desc}</p>
+
+          <div class="rpt-preview" id={`preview-${r.type}`}>
+            <div class="skeleton-line" style="height: 12px;"></div>
+            <div class="skeleton-line" style="height: 12px;"></div>
+            <div class="skeleton-line" style="height: 12px;"></div>
           </div>
-          <div class="cost-bar"><div class="cost-bar-fill" style="width: 21%; background: var(--success);"></div></div>
-          <div class="text-muted" style="font-size: var(--text-xs);">12.5 GB · 占总成本 21%</div>
-        </div>
-        <div class="cost-item">
-          <div class="cost-item-header">
-            <span>对象存储</span>
-            <span style="font-weight: 600; color: var(--warning);">¥180.00</span>
+
+          <div class="rpt-actions">
+            <a class="btn btn-ghost btn-sm" href={r.viewUrl}>👁 在线查看</a>
+            <button
+              class="btn btn-outline btn-sm"
+              type="button"
+              data-export={r.type}
+              data-format="csv"
+            >📄 导出 CSV</button>
+            <button
+              class="btn btn-outline btn-sm"
+              type="button"
+              data-export={r.type}
+              data-format="xlsx"
+            >📊 导出 Excel</button>
           </div>
-          <div class="cost-bar"><div class="cost-bar-fill" style="width: 9%; background: var(--warning);"></div></div>
-          <div class="text-muted" style="font-size: var(--text-xs);">8.2 GB · 占总成本 9%</div>
         </div>
-        <div class="cost-item">
-          <div class="cost-item-header">
-            <span>其他</span>
-            <span style="font-weight: 600; color: var(--info);">¥90.00</span>
-          </div>
-          <div class="cost-bar"><div class="cost-bar-fill" style="width: 5%; background: var(--info);"></div></div>
-          <div class="text-muted" style="font-size: var(--text-xs);">占总成本 5%</div>
-        </div>
-        <div style="display: flex; justify-content: space-between; padding-top: var(--space-4); margin-top: var(--space-3); border-top: 1px solid var(--border);">
-          <span style="font-weight: 600;">总成本</span>
-          <span style="font-size: var(--text-xl); font-weight: 600; color: var(--danger);">¥1,970.00</span>
-        </div>
+      ))}
+    </div>
+
+    <!-- 最近导出记录 -->
+    <div class="card" style="margin-top: var(--space-6);">
+      <div class="card-header rpt-history-header">
+        <h3>最近导出记录</h3>
+        <button class="btn btn-ghost btn-sm" id="clear-history" type="button">清空记录</button>
       </div>
+      <div id="history-body"></div>
     </div>
   </div>
 </DefaultLayout>
 
 <style>
-  .data-table {
+  .rpt-page .rpt-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    margin-bottom: var(--space-6);
+    flex-wrap: wrap;
+    gap: var(--space-4);
+  }
+  .rpt-page .rpt-subtitle {
+    font-size: var(--text-sm);
+    margin-top: var(--space-2);
+    max-width: 640px;
+  }
+  .rpt-page .range-switcher {
+    display: inline-flex;
+    background: var(--surface-muted);
+    border-radius: var(--radius);
+    padding: 2px;
+    gap: 2px;
+  }
+  .rpt-page .range-btn {
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    padding: 6px 14px;
+    font-size: var(--text-sm);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .rpt-page .range-btn:hover {
+    color: var(--text);
+  }
+  .rpt-page .range-btn.active {
+    background: var(--surface);
+    color: var(--primary);
+    font-weight: 600;
+    box-shadow: var(--shadow-xs);
+  }
+
+  /* 报表卡片网格 */
+  .rpt-page .rpt-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--space-5);
+  }
+  .rpt-page .rpt-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+  .rpt-page .rpt-card-head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+  }
+  .rpt-page .rpt-icon {
+    width: 44px;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-md);
+    font-size: 22px;
+    flex-shrink: 0;
+    background: var(--primary-bg);
+    color: var(--primary);
+  }
+  .rpt-page .rpt-card[data-report="search"] .rpt-icon {
+    background: var(--info-bg);
+    color: var(--info);
+  }
+  .rpt-page .rpt-card[data-report="documents"] .rpt-icon {
+    background: var(--success-bg);
+    color: var(--success);
+  }
+  .rpt-page .rpt-card[data-report="users"] .rpt-icon {
+    background: var(--warning-bg);
+    color: var(--warning);
+  }
+  .rpt-page .rpt-card[data-report="coverage"] .rpt-icon {
+    background: var(--primary-bg);
+    color: var(--primary-light);
+  }
+  .rpt-page .rpt-card[data-report="freshness"] .rpt-icon {
+    background: var(--danger-bg);
+    color: var(--danger);
+  }
+  .rpt-page .rpt-card-title {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+  .rpt-page .rpt-name {
+    font-size: var(--text-lg);
+    font-weight: 600;
+    color: var(--text);
+    margin: 0;
+  }
+  .rpt-page .rpt-type {
+    font-size: var(--text-xs);
+    text-transform: lowercase;
+  }
+  .rpt-page .rpt-desc {
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    line-height: 1.5;
+    margin: 0;
+    min-height: 42px;
+  }
+
+  /* 预览指标 */
+  .rpt-page .rpt-preview {
+    background: var(--surface-muted);
+    border-radius: var(--radius);
+    padding: var(--space-3);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    min-height: 96px;
+  }
+  .rpt-page .rpt-preview-error {
+    color: var(--danger);
+    font-size: var(--text-xs);
+    padding: var(--space-1) 0;
+  }
+  .rpt-page .preview-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: var(--text-sm);
+  }
+  .rpt-page .preview-label {
+    color: var(--text-muted);
+  }
+  .rpt-page .preview-value {
+    font-weight: 600;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+  }
+  .rpt-page .preview-value.primary {
+    color: var(--primary);
+  }
+
+  /* 骨架屏 */
+  .rpt-page .skeleton-line {
+    background: linear-gradient(
+      90deg,
+      var(--surface-hover) 25%,
+      var(--border-light) 37%,
+      var(--surface-hover) 63%
+    );
+    background-size: 400% 100%;
+    border-radius: var(--radius-sm);
+    animation: rpt-shimmer 1.4s ease infinite;
+    width: 100%;
+  }
+  @keyframes rpt-shimmer {
+    0% { background-position: 100% 50%; }
+    100% { background-position: 0 50%; }
+  }
+
+  /* 操作按钮区 */
+  .rpt-page .rpt-actions {
+    display: flex;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+    padding-top: var(--space-2);
+    border-top: 1px solid var(--border-light);
+  }
+  .rpt-page .rpt-actions .btn {
+    flex: 1;
+    min-width: 90px;
+  }
+  .rpt-page .btn[data-export].is-loading {
+    pointer-events: none;
+    opacity: 0.7;
+    position: relative;
+  }
+  .rpt-page .btn[data-export].is-loading::after {
+    content: '';
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    margin-left: var(--space-1);
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    animation: rpt-spin 0.6s linear infinite;
+    vertical-align: middle;
+  }
+  @keyframes rpt-spin {
+    to { transform: rotate(360deg); }
+  }
+
+  /* 历史记录 */
+  .rpt-page .rpt-history-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .rpt-page .rpt-empty {
+    padding: var(--space-6);
+    text-align: center;
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+  }
+  .rpt-page .rpt-table {
     width: 100%;
     border-collapse: collapse;
   }
-  .data-table th {
+  .rpt-page .rpt-table th {
     text-align: left;
     padding: var(--space-3) var(--space-4);
     font-size: var(--text-sm);
@@ -123,186 +342,478 @@ const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '报表'
     color: var(--text-muted);
     border-bottom: 1px solid var(--border);
     background: var(--surface-muted);
+    white-space: nowrap;
   }
-  .data-table td {
+  .rpt-page .rpt-table td {
     padding: var(--space-3) var(--space-4);
     font-size: var(--text-sm);
     color: var(--text);
     border-bottom: 1px solid var(--border-light);
+    vertical-align: middle;
   }
-  .cost-item {
-    padding: var(--space-3) 0;
-    border-bottom: 1px solid var(--border-light);
-  }
-  .cost-item:last-of-type {
+  .rpt-page .rpt-table tbody tr:last-child td {
     border-bottom: none;
   }
-  .cost-item-header {
-    display: flex;
-    justify-content: space-between;
-    font-size: var(--text-sm);
-    margin-bottom: var(--space-2);
+  .rpt-page .rpt-fmt {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    font-size: var(--text-xs);
+    font-weight: 600;
   }
-  .cost-bar {
-    height: 6px;
-    background: var(--surface-muted);
-    border-radius: var(--radius-full);
+  .rpt-page .rpt-fmt-csv {
+    background: var(--success-bg);
+    color: var(--success);
+  }
+  .rpt-page .rpt-fmt-xlsx {
+    background: var(--info-bg);
+    color: var(--info);
+  }
+  .rpt-page .rpt-filename {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+    max-width: 280px;
     overflow: hidden;
-    margin-bottom: var(--space-1);
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
-  .cost-bar-fill {
-    height: 100%;
-    border-radius: var(--radius-full);
+
+  /* 响应式 */
+  @media (max-width: 1024px) {
+    .rpt-page .rpt-grid {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
+  @media (max-width: 640px) {
+    .rpt-page .rpt-grid {
+      grid-template-columns: 1fr;
+    }
+    .rpt-page .rpt-actions .btn {
+      flex: 1 1 100%;
+    }
   }
 </style>
 
 <script>
-  const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
-  const TOKEN_KEY = 'ekb_access_token';
+  import {
+    getCoverage,
+    getDashboard,
+    getFreshness,
+    getContributors,
+    getSearchHotwords,
+  } from '@/lib/apis/analytics';
+  import { API_BASE } from '@/lib/api';
 
-  function mockData(range: string) {
-    const factor = parseInt(range) / 30;
-    return {
-      usage: {
-        search: Math.round(12480 * factor),
-        chat: Math.round(8652 * factor),
-        view: Math.round(23400 * factor),
-        download: Math.round(3120 * factor),
-      },
-      kbReport: [
-        { name: '技术文档', docs: 245, views: 8600, hits: 4200 },
-        { name: '公司制度', docs: 128, views: 5200, hits: 3100 },
-        { name: '产品文档', docs: 86, views: 3400, hits: 1800 },
-        { name: '历史归档', docs: 56, views: 280, hits: 120 },
-      ],
-    };
+  const TOKEN_KEY = 'ekb_access_token';
+  const HISTORY_KEY = 'ekb_export_history';
+
+  type ExportFormat = 'csv' | 'xlsx';
+  type TimeRange = '7d' | '30d' | '90d';
+
+  interface PreviewItem {
+    label: string;
+    value: string;
+    primary?: boolean;
   }
 
-  async function loadReport() {
-    const token = localStorage.getItem(TOKEN_KEY);
-    if (!token) {
-      window.location.href = '/auth/login';
+  interface ExportRecord {
+    report_type: string;
+    format: ExportFormat;
+    time_range: TimeRange;
+    exported_at: string;
+    size: number;
+    filename: string;
+  }
+
+  const REPORT_NAMES: Record<string, string> = {
+    dashboard: '运营总览',
+    search: '搜索分析',
+    documents: '文档质量',
+    users: '用户活跃',
+    coverage: '知识覆盖',
+    freshness: '内容新鲜度',
+  };
+
+  let currentRange: TimeRange = '30d';
+
+  // ===== 工具函数 =====
+
+  function escapeHtml(s: unknown): string {
+    return String(s ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function formatNum(n: number): string {
+    return typeof n === 'number' && !isNaN(n) ? n.toLocaleString('zh-CN') : '--';
+  }
+
+  function formatSize(bytes: number): string {
+    if (!bytes || bytes <= 0) return '--';
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  }
+
+  function formatDateTime(iso: string): string {
+    try {
+      const d = new Date(iso);
+      const pad = (x: number) => String(x).padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    } catch {
+      return iso;
+    }
+  }
+
+  function toDateStr(d: Date): string {
+    const pad = (x: number) => String(x).padStart(2, '0');
+    return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
+  }
+
+  function toDays(range: TimeRange): number {
+    return parseInt(range, 10);
+  }
+
+  /** 兼容后端 0-1 小数或 0-100 百分比 */
+  function toPercent(v: number): number {
+    if (typeof v !== 'number' || isNaN(v)) return 0;
+    return v <= 1 ? v * 100 : v;
+  }
+
+  // ===== 预览指标加载 =====
+
+  function renderPreview(
+    reportType: string,
+    items: PreviewItem[]
+  ): void {
+    const container = document.getElementById(`preview-${reportType}`);
+    if (!container) return;
+    if (!items || items.length === 0) {
+      container.innerHTML = '<div class="rpt-preview-error">暂无数据</div>';
       return;
     }
-    const range = (document.getElementById('report-range') as HTMLSelectElement).value;
-    let data: any;
-    try {
-      const res = await fetch(`${API_BASE}/api/v1/admin/reports?range=${range}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.ok) {
-        const result = await res.json();
-        data = result.data || result;
-      } else if (res.status === 401) {
-        window.location.href = '/auth/login';
-        return;
-      } else {
-        data = mockData(range);
-      }
-    } catch {
-      data = mockData(range);
-    }
-    renderUsage(data.usage);
-    renderKbReport(data.kbReport);
-    drawUsageChart(parseInt(range));
-  }
-
-  function renderUsage(usage: any) {
-    const setText = (id: string, v: number) => {
-      const el = document.getElementById(id);
-      if (el) el.textContent = v.toLocaleString();
-    };
-    setText('usage-search', usage.search);
-    setText('usage-chat', usage.chat);
-    setText('usage-view', usage.view);
-    setText('usage-download', usage.download);
-  }
-
-  function renderKbReport(list: any[]) {
-    document.getElementById('kb-report-body')!.innerHTML = list
+    container.innerHTML = items
       .map(
-        (k) => `
-      <tr>
-        <td style="font-weight: 500;">${escapeHtml(k.name)}</td>
-        <td>${k.docs}</td>
-        <td>${k.views.toLocaleString()}</td>
-        <td>${k.hits.toLocaleString()}</td>
-      </tr>`
+        (it) => `
+        <div class="preview-row">
+          <span class="preview-label">${escapeHtml(it.label)}</span>
+          <span class="preview-value${it.primary ? ' primary' : ''}">${escapeHtml(it.value)}</span>
+        </div>`
       )
       .join('');
   }
 
-  function drawUsageChart(days: number) {
-    const canvas = document.getElementById('usage-chart') as HTMLCanvasElement;
-    const ctx = canvas.getContext('2d')!;
-    canvas.width = canvas.offsetWidth * 2;
-    canvas.height = 220 * 2;
-    ctx.scale(2, 2);
-    const w = canvas.offsetWidth;
-    const h = 220;
-    const pad = 40;
+  function renderPreviewError(reportType: string, msg: string): void {
+    const container = document.getElementById(`preview-${reportType}`);
+    if (!container) return;
+    container.innerHTML = `<div class="rpt-preview-error">加载失败：${escapeHtml(msg)}</div>`;
+  }
 
-    const points = Math.min(days, 30);
-    const search = Array.from({ length: points }, () => Math.floor(200 + Math.random() * 300));
-    const chat = Array.from({ length: points }, () => Math.floor(100 + Math.random() * 200));
-    const max = Math.max(...search, ...chat) * 1.2;
+  async function loadDashboardPreview(range: TimeRange): Promise<void> {
+    try {
+      const d = await getDashboard(toDays(range));
+      renderPreview('dashboard', [
+        { label: '文档总数', value: formatNum(d.total_documents), primary: true },
+        { label: '用户数', value: formatNum(d.total_users) },
+        { label: '搜索次数', value: formatNum(d.total_searches) },
+      ]);
+    } catch (err) {
+      renderPreviewError('dashboard', err instanceof Error ? err.message : '加载失败');
+    }
+  }
 
-    // 网格
-    ctx.strokeStyle = '#F0F1F5';
-    ctx.lineWidth = 1;
-    for (let i = 0; i <= 4; i++) {
-      const y = pad + ((h - pad * 2) / 4) * i;
-      ctx.beginPath();
-      ctx.moveTo(pad, y);
-      ctx.lineTo(w - pad, y);
-      ctx.stroke();
+  async function loadSearchPreview(range: TimeRange): Promise<void> {
+    try {
+      const days = toDays(range);
+      const [hotwords, dash] = await Promise.all([
+        getSearchHotwords(days, 50),
+        getDashboard(days),
+      ]);
+      renderPreview('search', [
+        { label: '热词数', value: formatNum(hotwords.length), primary: true },
+        { label: '零点击率', value: `${Math.round(toPercent(dash.zero_click_rate))}%` },
+        { label: '总搜索', value: formatNum(dash.total_searches) },
+      ]);
+    } catch (err) {
+      renderPreviewError('search', err instanceof Error ? err.message : '加载失败');
+    }
+  }
+
+  async function loadDocumentsPreview(): Promise<void> {
+    try {
+      const [cov, fresh] = await Promise.all([getCoverage(), getFreshness()]);
+      renderPreview('documents', [
+        { label: '覆盖率', value: `${Math.round(toPercent(cov.rate))}%`, primary: true },
+        { label: '新鲜度', value: `${Math.round(toPercent(fresh.fresh_rate))}%` },
+        { label: '过期文档数', value: formatNum(fresh.expired) },
+      ]);
+    } catch (err) {
+      renderPreviewError('documents', err instanceof Error ? err.message : '加载失败');
+    }
+  }
+
+  async function loadUsersPreview(range: TimeRange): Promise<void> {
+    try {
+      const list = await getContributors(toDays(range), 50);
+      const top1 = list[0]?.contribution_score ?? 0;
+      const avg =
+        list.length > 0
+          ? Math.round(
+              list.reduce((s, u) => s + (u.contribution_score || 0), 0) / list.length
+            )
+          : 0;
+      renderPreview('users', [
+        { label: '贡献者数', value: formatNum(list.length), primary: true },
+        { label: 'Top1 贡献分', value: formatNum(top1) },
+        { label: '平均贡献分', value: formatNum(avg) },
+      ]);
+    } catch (err) {
+      renderPreviewError('users', err instanceof Error ? err.message : '加载失败');
+    }
+  }
+
+  async function loadCoveragePreview(): Promise<void> {
+    try {
+      const cov = await getCoverage();
+      renderPreview('coverage', [
+        { label: '覆盖率', value: `${Math.round(toPercent(cov.rate))}%`, primary: true },
+        { label: '已覆盖主题', value: formatNum(cov.covered) },
+        { label: '未覆盖主题数', value: formatNum(cov.uncovered_topics?.length ?? 0) },
+      ]);
+    } catch (err) {
+      renderPreviewError('coverage', err instanceof Error ? err.message : '加载失败');
+    }
+  }
+
+  async function loadFreshnessPreview(): Promise<void> {
+    try {
+      const fresh = await getFreshness();
+      renderPreview('freshness', [
+        { label: '新鲜率', value: `${Math.round(toPercent(fresh.fresh_rate))}%`, primary: true },
+        { label: '陈旧数', value: formatNum(fresh.stale) },
+        { label: '过期数', value: formatNum(fresh.expired) },
+      ]);
+    } catch (err) {
+      renderPreviewError('freshness', err instanceof Error ? err.message : '加载失败');
+    }
+  }
+
+  async function loadAllPreviews(range: TimeRange): Promise<void> {
+    // 并发加载所有预览，互不阻塞
+    await Promise.allSettled([
+      loadDashboardPreview(range),
+      loadSearchPreview(range),
+      loadDocumentsPreview(),
+      loadUsersPreview(range),
+      loadCoveragePreview(),
+      loadFreshnessPreview(),
+    ]);
+  }
+
+  // ===== 导出逻辑 =====
+
+  function getToken(): string | null {
+    return localStorage.getItem(TOKEN_KEY);
+  }
+
+  async function exportReport(
+    reportType: string,
+    format: ExportFormat,
+    range: TimeRange,
+    btn: HTMLButtonElement
+  ): Promise<void> {
+    const token = getToken();
+    if (!token) {
+      window.location.href = '/auth/login';
+      return;
     }
 
-    // 搜索线
-    ctx.strokeStyle = '#6C5CE7';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    search.forEach((v, i) => {
-      const x = pad + ((w - pad * 2) / (points - 1)) * i;
-      const y = h - pad - ((h - pad * 2) * v) / max;
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    });
-    ctx.stroke();
+    const originalHtml = btn.innerHTML;
+    btn.classList.add('is-loading');
+    btn.innerHTML = '导出中';
+    btn.setAttribute('disabled', 'true');
 
-    // 对话线
-    ctx.strokeStyle = '#00B884';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    chat.forEach((v, i) => {
-      const x = pad + ((w - pad * 2) / (points - 1)) * i;
-      const y = h - pad - ((h - pad * 2) * v) / max;
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    });
-    ctx.stroke();
+    try {
+      const url =
+        `${API_BASE}/api/v1/analytics/reports/${encodeURIComponent(reportType)}` +
+        `?format=${encodeURIComponent(format)}&time_range=${encodeURIComponent(range)}`;
+      const res = await fetch(url, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` },
+      });
 
-    // 图例
-    ctx.font = '12px sans-serif';
-    ctx.fillStyle = '#6C5CE7';
-    ctx.fillRect(pad, 8, 12, 12);
-    ctx.fillStyle = '#1A1B2E';
-    ctx.textAlign = 'left';
-    ctx.fillText('搜索', pad + 18, 18);
-    ctx.fillStyle = '#00B884';
-    ctx.fillRect(pad + 70, 8, 12, 12);
-    ctx.fillStyle = '#1A1B2E';
-    ctx.fillText('对话', pad + 88, 18);
+      if (!res.ok) {
+        if (res.status === 401) {
+          localStorage.removeItem(TOKEN_KEY);
+          window.location.href = '/auth/login';
+          return;
+        }
+        let msg = `导出失败 (${res.status})`;
+        try {
+          const j = (await res.json()) as { message?: string; detail?: string };
+          if (j.message) msg = j.message;
+          else if (j.detail) msg = j.detail;
+        } catch {
+          /* 响应可能不是 JSON，忽略 */
+        }
+        throw new Error(msg);
+      }
+
+      const blob = await res.blob();
+      const dateStr = toDateStr(new Date());
+      const filename = `${reportType}_${range}_${dateStr}.${format}`;
+      triggerDownload(blob, filename);
+
+      addHistory({
+        report_type: reportType,
+        format,
+        time_range: range,
+        exported_at: new Date().toISOString(),
+        size: blob.size,
+        filename,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '导出失败，请稍后重试';
+      alert(`${REPORT_NAMES[reportType] || reportType} 导出失败：${msg}`);
+    } finally {
+      btn.classList.remove('is-loading');
+      btn.removeAttribute('disabled');
+      btn.innerHTML = originalHtml;
+    }
   }
 
-  function escapeHtml(s: string): string {
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  function triggerDownload(blob: Blob, filename: string): void {
+    const objUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = objUrl;
+    a.download = filename;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    // 释放对象 URL（稍延迟以确保下载已触发）
+    setTimeout(() => URL.revokeObjectURL(objUrl), 1500);
   }
 
-  document.getElementById('report-range')?.addEventListener('change', loadReport);
-  document.getElementById('export-btn')?.addEventListener('click', () => {
-    alert('报表导出中，完成后将发送至您的邮箱');
-  });
+  // ===== 导出历史 =====
 
-  loadReport();
+  function loadHistory(): ExportRecord[] {
+    try {
+      const raw = localStorage.getItem(HISTORY_KEY);
+      if (!raw) return [];
+      const arr = JSON.parse(raw);
+      return Array.isArray(arr) ? (arr as ExportRecord[]) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function saveHistory(list: ExportRecord[]): void {
+    try {
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(list.slice(0, 5)));
+    } catch {
+      // localStorage 写入失败（隐私模式等），静默处理
+    }
+  }
+
+  function addHistory(rec: ExportRecord): void {
+    const list = loadHistory();
+    list.unshift(rec);
+    saveHistory(list);
+    renderHistory();
+  }
+
+  function renderHistory(): void {
+    const container = document.getElementById('history-body');
+    if (!container) return;
+    const list = loadHistory();
+    if (list.length === 0) {
+      container.innerHTML = '<div class="rpt-empty">暂无导出记录，点击报表卡片上的「导出 CSV」或「导出 Excel」按钮开始下载。</div>';
+      return;
+    }
+    container.innerHTML = `
+      <div style="overflow-x: auto;">
+        <table class="rpt-table">
+          <thead>
+            <tr>
+              <th>报表</th>
+              <th>格式</th>
+              <th>时间范围</th>
+              <th>导出时间</th>
+              <th>文件大小</th>
+              <th>文件名</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${list
+              .map(
+                (r) => `
+              <tr>
+                <td>${escapeHtml(REPORT_NAMES[r.report_type] || r.report_type)}</td>
+                <td><span class="rpt-fmt rpt-fmt-${escapeHtml(r.format)}">${escapeHtml(r.format.toUpperCase())}</span></td>
+                <td>${escapeHtml(r.time_range)}</td>
+                <td>${escapeHtml(formatDateTime(r.exported_at))}</td>
+                <td>${escapeHtml(formatSize(r.size))}</td>
+                <td class="rpt-filename" title="${escapeHtml(r.filename)}">${escapeHtml(r.filename)}</td>
+              </tr>`
+              )
+              .join('')}
+          </tbody>
+        </table>
+      </div>`;
+  }
+
+  // ===== 事件绑定 + 初始化 =====
+
+  function bindRangeSwitcher(): void {
+    const switcher = document.getElementById('range-switcher');
+    if (!switcher) return;
+    switcher.addEventListener('click', (e) => {
+      const btn = (e.target as HTMLElement).closest('.range-btn') as HTMLButtonElement | null;
+      if (!btn) return;
+      const range = btn.dataset.range as TimeRange | undefined;
+      if (!range || range === currentRange) return;
+      currentRange = range;
+      document.querySelectorAll<HTMLButtonElement>('.rpt-page .range-btn').forEach((b) => {
+        b.classList.toggle('active', b.dataset.range === range);
+      });
+      loadAllPreviews(range);
+    });
+  }
+
+  function bindExportButtons(): void {
+    document.querySelectorAll<HTMLButtonElement>('.rpt-page [data-export]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const reportType = btn.dataset.export as string;
+        const format = btn.dataset.format as ExportFormat;
+        if (!reportType || !format) return;
+        void exportReport(reportType, format, currentRange, btn);
+      });
+    });
+  }
+
+  function bindClearHistory(): void {
+    const btn = document.getElementById('clear-history');
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+      const list = loadHistory();
+      if (list.length === 0) {
+        alert('当前没有可清空的导出记录');
+        return;
+      }
+      if (!confirm(`确定要清空全部 ${list.length} 条导出记录吗？`)) return;
+      saveHistory([]);
+      renderHistory();
+    });
+  }
+
+  // 初始化
+  bindRangeSwitcher();
+  bindExportButtons();
+  bindClearHistory();
+  renderHistory();
+  void loadAllPreviews(currentRange);
 </script>

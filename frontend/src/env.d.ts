@@ -10,3 +10,9 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
+
+/* CSS Module 类型声明（供 React 组件 import 样式表使用） */
+declare module '*.module.css' {
+  const classes: { readonly [key: string]: string };
+  export default classes;
+}

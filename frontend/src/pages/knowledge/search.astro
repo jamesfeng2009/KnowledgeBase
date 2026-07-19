@@ -24,11 +24,25 @@ const breadcrumb = [{ label: '知识', href: '/knowledge' }, { label: '知识搜
           />
           <button class="btn btn-primary" id="search-btn">搜索</button>
         </div>
-        <!-- 搜索类型切换 -->
-        <div class="search-type-switcher">
+        <!-- 搜索模式切换 Tab -->
+        <div class="tabs tabs-pill search-mode-tabs">
+          <button class="tab tab-pill active" data-mode="knowledge">知识库搜索</button>
+          <button class="tab tab-pill" data-mode="unified">统一搜索</button>
+        </div>
+        <!-- 知识库搜索：检索类型切换（仅知识库模式显示） -->
+        <div class="search-type-switcher" id="search-type-switcher">
           <button class="search-type-btn active" data-type="hybrid">混合检索</button>
           <button class="search-type-btn" data-type="vector">向量检索</button>
           <button class="search-type-btn" data-type="keyword">全文检索</button>
+        </div>
+        <!-- 统一搜索：来源筛选器（仅统一模式显示） -->
+        <div class="source-filter" id="source-filter" style="display:none;">
+          <span class="source-filter-label">来源：</span>
+          <button class="tag tag-active source-tag" data-source="knowledge">📚 知识库</button>
+          <button class="tag tag-active source-tag" data-source="oa">📋 OA</button>
+          <button class="tag tag-active source-tag" data-source="erp">📊 ERP</button>
+          <button class="tag tag-active source-tag" data-source="crm">🤝 CRM</button>
+          <button class="tag tag-active source-tag" data-source="mail">✉️ 邮件</button>
         </div>
       </div>
 
@@ -227,11 +241,161 @@ const breadcrumb = [{ label: '知识', href: '/knowledge' }, { label: '知识搜
   }
 </style>
 
+<!-- 统一搜索相关样式（is:global 以便对动态插入结果生效） -->
+<style is:global>
+  /* === 搜索模式 Tab（pill 样式） === */
+  .tabs.tabs-pill {
+    display: flex;
+    gap: var(--space-1);
+    margin-top: var(--space-3);
+    padding: var(--space-1);
+    background: var(--surface-muted);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    width: fit-content;
+  }
+  .tabs.tabs-pill .tab {
+    padding: var(--space-2) var(--space-5);
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: var(--text-sm);
+    font-weight: 500;
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+  .tabs.tabs-pill .tab:hover {
+    color: var(--primary);
+  }
+  .tabs.tabs-pill .tab.active {
+    background: var(--surface);
+    color: var(--primary);
+    box-shadow: var(--shadow-sm);
+  }
+
+  /* === 来源筛选器 === */
+  .source-filter {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin-top: var(--space-3);
+  }
+  .source-filter-label {
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    margin-right: var(--space-1);
+  }
+  .source-tag {
+    cursor: pointer;
+    user-select: none;
+  }
+  .source-tag.tag-active {
+    background: var(--primary-bg);
+    color: var(--primary);
+    border-color: var(--primary-light);
+  }
+
+  /* === 统一搜索来源分组 Tab === */
+  .source-tabs {
+    display: flex;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+    margin-bottom: var(--space-4);
+    padding-bottom: var(--space-4);
+    border-bottom: 1px solid var(--border);
+  }
+  .source-tab {
+    padding: var(--space-1) var(--space-3);
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text-secondary);
+    font-size: var(--text-sm);
+    border-radius: var(--radius-full);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+  .source-tab:hover {
+    border-color: var(--primary-light);
+    color: var(--primary);
+  }
+  .source-tab.active {
+    background: var(--primary);
+    color: var(--text-white);
+    border-color: var(--primary);
+  }
+
+  /* === 统一搜索结果项 === */
+  .unified-result-item {
+    display: flex;
+    gap: var(--space-4);
+    padding: var(--space-4);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    margin-bottom: var(--space-3);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+  .unified-result-item:hover {
+    border-color: var(--primary);
+    box-shadow: var(--shadow-md);
+  }
+  .unified-result-source {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 56px;
+    padding-top: var(--space-1);
+  }
+  .unified-result-source .source-icon {
+    font-size: 24px;
+    line-height: 1;
+  }
+  .unified-result-body {
+    flex: 1;
+    min-width: 0;
+  }
+  .unified-result-body .result-item-title {
+    font-size: var(--text-md);
+    font-weight: 600;
+    color: var(--primary);
+    margin-bottom: var(--space-2);
+  }
+  .unified-result-body .result-item-snippet {
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    line-height: var(--lh-relaxed);
+    margin-bottom: var(--space-3);
+  }
+  .unified-result-body .result-item-meta {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+  }
+  @media (max-width: 640px) {
+    .unified-result-source {
+      min-width: 44px;
+    }
+  }
+</style>
+
 <script>
+  import { unifiedSearch, type ExternalSearchResult } from '@/lib/apis/knowledge';
+
   const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
   const TOKEN_KEY = 'ekb_access_token';
 
   let searchType = 'hybrid';
+  let searchMode: 'knowledge' | 'unified' = 'knowledge';
+  const selectedSources = new Set<string>(['knowledge', 'oa', 'erp', 'crm', 'mail']);
+  let lastUnifiedResults: Record<string, ExternalSearchResult[]> = {};
+  let activeSourceTab = 'all';
+  let lastUnifiedQuery = '';
 
   // 从 URL 读取参数
   const params = new URLSearchParams(window.location.search);
@@ -247,6 +411,12 @@ const breadcrumb = [{ label: '知识', href: '/knowledge' }, { label: '知识搜
     const token = localStorage.getItem(TOKEN_KEY);
     if (!token) {
       window.location.href = '/auth/login';
+      return;
+    }
+
+    // 统一搜索模式：走跨系统统一搜索
+    if (searchMode === 'unified') {
+      await doUnifiedSearch(query);
       return;
     }
 
@@ -352,6 +522,120 @@ const breadcrumb = [{ label: '知识', href: '/knowledge' }, { label: '知识搜
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
+  // ===== 统一搜索（跨系统） =====
+  const SOURCE_META: Record<string, { label: string; icon: string }> = {
+    knowledge: { label: '知识库', icon: '📚' },
+    oa: { label: 'OA', icon: '📋' },
+    erp: { label: 'ERP', icon: '📊' },
+    crm: { label: 'CRM', icon: '🤝' },
+    mail: { label: '邮件', icon: '✉️' },
+  };
+  const SOURCE_ORDER = ['knowledge', 'oa', 'erp', 'crm', 'mail'];
+
+  async function doUnifiedSearch(query: string) {
+    const container = document.getElementById('search-results')!;
+    container.innerHTML =
+      '<div class="search-hint"><div class="spinner" style="margin: 0 auto;"></div><p class="text-muted" style="margin-top: var(--space-3);">正在搜索...</p></div>';
+
+    try {
+      const sources = Array.from(selectedSources).join(',');
+      const result = await unifiedSearch({ q: query, sources, top_k: 20 });
+      lastUnifiedResults = result || {};
+      lastUnifiedQuery = query;
+      activeSourceTab = 'all';
+      renderUnifiedResults(lastUnifiedResults, query);
+    } catch (err) {
+      alert('统一搜索失败：' + (err instanceof Error ? err.message : '未知错误'));
+      lastUnifiedResults = {};
+      lastUnifiedQuery = query;
+      renderUnifiedResults({}, query);
+    }
+  }
+
+  function renderUnifiedResults(grouped: Record<string, ExternalSearchResult[]>, query: string) {
+    const container = document.getElementById('search-results')!;
+    const availableSources = SOURCE_ORDER.filter((s) => (grouped[s]?.length || 0) > 0);
+    const totalCount = availableSources.reduce((sum, s) => sum + (grouped[s]?.length || 0), 0);
+
+    if (totalCount === 0) {
+      container.innerHTML = `
+        <div class="search-hint">
+          <div style="font-size: 48px;">😕</div>
+          <h3>未找到相关结果</h3>
+          <p class="text-muted">试试更换关键词或调整来源筛选</p>
+        </div>`;
+      return;
+    }
+
+    // 来源分组 Tab
+    const tabsHtml = [
+      `<button class="source-tab${activeSourceTab === 'all' ? ' active' : ''}" data-source-tab="all">全部 (${totalCount})</button>`,
+      ...availableSources.map((s) => {
+        const meta = SOURCE_META[s];
+        const count = grouped[s]?.length || 0;
+        return `<button class="source-tab${activeSourceTab === s ? ' active' : ''}" data-source-tab="${s}">${meta.icon} ${meta.label} (${count})</button>`;
+      }),
+    ].join('');
+
+    // 根据当前选中的来源 Tab 过滤结果
+    let resultsToShow: ExternalSearchResult[];
+    if (activeSourceTab === 'all') {
+      resultsToShow = availableSources.flatMap((s) => grouped[s] || []);
+    } else {
+      resultsToShow = grouped[activeSourceTab] || [];
+    }
+
+    container.innerHTML = `
+      <div class="text-muted" style="margin-bottom: var(--space-3);">找到约 ${totalCount} 条结果，来自 ${availableSources.length} 个来源</div>
+      <div class="source-tabs">${tabsHtml}</div>
+      <div class="unified-results">
+        ${resultsToShow.map((r) => renderUnifiedItem(r, query)).join('')}
+      </div>`;
+
+    // 绑定来源分组 Tab 点击
+    container.querySelectorAll('.source-tab').forEach((el) => {
+      el.addEventListener('click', () => {
+        activeSourceTab = (el as HTMLElement).dataset.sourceTab || 'all';
+        renderUnifiedResults(lastUnifiedResults, lastUnifiedQuery);
+      });
+    });
+
+    // 绑定结果项点击：知识库跳详情，外部系统新标签打开
+    container.querySelectorAll('.unified-result-item').forEach((el) => {
+      el.addEventListener('click', () => {
+        const id = (el as HTMLElement).dataset.id || '';
+        const source = (el as HTMLElement).dataset.source || '';
+        const url = (el as HTMLElement).dataset.url || '';
+        if (source === 'knowledge') {
+          window.location.href = `/knowledge/detail?id=${encodeURIComponent(id)}`;
+        } else if (url) {
+          window.open(url, '_blank', 'noopener,noreferrer');
+        }
+      });
+    });
+  }
+
+  function renderUnifiedItem(r: ExternalSearchResult, query: string): string {
+    const meta = SOURCE_META[r.source] || { label: r.source, icon: r.source_icon || '📄' };
+    const snippet = r.highlight || r.content || '';
+    const isExternal = r.source !== 'knowledge';
+    return `
+      <div class="unified-result-item" data-id="${escapeHtml(r.id)}" data-source="${escapeHtml(r.source)}" data-url="${escapeHtml(r.source_url || '')}">
+        <div class="unified-result-source">
+          <span class="source-icon">${meta.icon}</span>
+          <span class="badge badge-primary">${escapeHtml(meta.label)}</span>
+        </div>
+        <div class="unified-result-body">
+          <div class="result-item-title">${highlightText(r.title, query)}</div>
+          <p class="result-item-snippet">${highlightText(snippet, query)}</p>
+          <div class="result-item-meta">
+            <span>相关度 ${Math.round((r.score || 0) * 100)}%</span>
+            ${isExternal ? '<span class="text-muted">↗ 在新标签页打开</span>' : ''}
+          </div>
+        </div>
+      </div>`;
+  }
+
   document.getElementById('search-btn')?.addEventListener('click', doSearch);
   document.getElementById('search-input')?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') doSearch();
@@ -381,6 +665,53 @@ const breadcrumb = [{ label: '知识', href: '/knowledge' }, { label: '知识搜
       const tag = (el as HTMLElement).dataset.tag!;
       (document.getElementById('search-input') as HTMLInputElement).value = tag;
       doSearch();
+    });
+  });
+
+  // 搜索模式切换：知识库搜索 / 统一搜索
+  document.querySelectorAll('.search-mode-tabs .tab').forEach((el) => {
+    el.addEventListener('click', () => {
+      document.querySelectorAll('.search-mode-tabs .tab').forEach((e) => e.classList.remove('active'));
+      el.classList.add('active');
+      searchMode = ((el as HTMLElement).dataset.mode as 'knowledge' | 'unified') || 'knowledge';
+
+      const typeSwitcher = document.getElementById('search-type-switcher');
+      const sourceFilter = document.getElementById('source-filter');
+      if (searchMode === 'unified') {
+        if (typeSwitcher) typeSwitcher.style.display = 'none';
+        if (sourceFilter) sourceFilter.style.display = 'flex';
+      } else {
+        if (typeSwitcher) typeSwitcher.style.display = 'flex';
+        if (sourceFilter) sourceFilter.style.display = 'none';
+      }
+
+      // 切换模式后，若已有查询词则自动触发对应模式的搜索
+      if ((document.getElementById('search-input') as HTMLInputElement).value.trim()) {
+        doSearch();
+      }
+    });
+  });
+
+  // 来源筛选标签切换（多选）
+  document.querySelectorAll('.source-tag').forEach((el) => {
+    el.addEventListener('click', () => {
+      const source = (el as HTMLElement).dataset.source || '';
+      if (selectedSources.has(source)) {
+        // 至少保留一个来源
+        if (selectedSources.size > 1) {
+          selectedSources.delete(source);
+          el.classList.remove('tag-active');
+        } else {
+          alert('至少需要选择一个来源');
+        }
+      } else {
+        selectedSources.add(source);
+        el.classList.add('tag-active');
+      }
+      // 统一搜索模式下，调整来源后自动重新搜索
+      if (searchMode === 'unified' && (document.getElementById('search-input') as HTMLInputElement).value.trim()) {
+        doSearch();
+      }
     });
   });
 

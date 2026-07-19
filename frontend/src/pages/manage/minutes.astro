@@ -2,8 +2,12 @@
 /**
  * 会议纪要页面
  * 会议纪要列表 + 创建纪要 + AI 自动整理纪要
+ * 创建纪要弹窗支持两种方式：
+ *   1. 手动填写表单
+ *   2. 白板拍照入库（WhiteboardUploader React Island，VLM 自动生成纪要并回填表单）
  */
 import DefaultLayout from '@/layouts/DefaultLayout.astro';
+import WhiteboardUploader from '@/components/management/WhiteboardUploader';
 
 const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '会议纪要' }];
 ---
@@ -24,40 +28,70 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '会议纪
 
   <!-- 创建纪要弹窗 -->
   <div class="modal-overlay" id="create-modal" style="display: none;">
-    <div class="modal" style="max-width: 640px;">
+    <div class="modal" style="max-width: 680px;">
       <div class="modal-header">
         <h3>创建会议纪要</h3>
         <button class="btn btn-ghost btn-sm" id="close-modal">✕</button>
       </div>
+      <!-- 创建方式标签页：手动填写 / 白板拍照入库 -->
+      <div class="modal-tabs" role="tablist">
+        <button
+          type="button"
+          class="modal-tab active"
+          data-tab="manual"
+          role="tab"
+          aria-selected="true"
+          aria-controls="tab-manual"
+        >✍️ 手动填写</button>
+        <button
+          type="button"
+          class="modal-tab"
+          data-tab="whiteboard"
+          role="tab"
+          aria-selected="false"
+          aria-controls="tab-whiteboard"
+        >📸 白板拍照入库</button>
+      </div>
       <form id="minutes-form">
         <div class="modal-body">
-          <div class="form-group">
-            <label class="form-label">会议主题 *</label>
-            <input type="text" class="form-input" name="title" required placeholder="如：Q3 产品评审会" />
-          </div>
-          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4);">
+          <!-- 手动填写面板 -->
+          <div class="tab-panel active" id="tab-manual" role="tabpanel">
             <div class="form-group">
-              <label class="form-label">会议日期</label>
-              <input type="date" class="form-input" name="date" />
+              <label class="form-label">会议主题 *</label>
+              <input type="text" class="form-input" name="title" required placeholder="如：Q3 产品评审会" />
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4);">
+              <div class="form-group">
+                <label class="form-label">会议日期</label>
+                <input type="date" class="form-input" name="date" />
+              </div>
+              <div class="form-group">
+                <label class="form-label">会议地点</label>
+                <input type="text" class="form-input" name="location" placeholder="会议室或线上" />
+              </div>
             </div>
             <div class="form-group">
-              <label class="form-label">会议地点</label>
-              <input type="text" class="form-input" name="location" placeholder="会议室或线上" />
+              <label class="form-label">参会人员</label>
+              <input type="text" class="form-input" name="attendees" placeholder="逗号分隔" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">会议内容</label>
+              <textarea class="form-textarea" name="content" placeholder="记录会议讨论内容..." style="min-height: 150px;"></textarea>
+            </div>
+            <div class="form-group">
+              <label class="form-label">上传会议录音（AI 自动转写）</label>
+              <div class="upload-zone-mini" id="audio-zone">
+                <span class="text-muted">拖拽录音文件或点击上传（支持 mp3, wav, m4a）</span>
+              </div>
             </div>
           </div>
-          <div class="form-group">
-            <label class="form-label">参会人员</label>
-            <input type="text" class="form-input" name="attendees" placeholder="逗号分隔" />
-          </div>
-          <div class="form-group">
-            <label class="form-label">会议内容</label>
-            <textarea class="form-textarea" name="content" placeholder="记录会议讨论内容..." style="min-height: 150px;"></textarea>
-          </div>
-          <div class="form-group">
-            <label class="form-label">上传会议录音（AI 自动转写）</label>
-            <div class="upload-zone-mini" id="audio-zone">
-              <span class="text-muted">拖拽录音文件或点击上传（支持 mp3, wav, m4a）</span>
+          <!-- 白板拍照入库面板 -->
+          <div class="tab-panel" id="tab-whiteboard" role="tabpanel">
+            <div class="whiteboard-hint">
+              <span aria-hidden="true">💡</span>
+              <span>上传白板照片，AI 将自动识别内容并生成会议纪要。点击"使用此纪要"后，内容将自动填充到左侧表单字段。</span>
             </div>
+            <WhiteboardUploader client:only="react" />
           </div>
         </div>
         <div class="modal-footer">
@@ -170,6 +204,55 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '会议纪
   .upload-zone-mini:hover {
     border-color: var(--primary);
     background: var(--primary-bg);
+  }
+  /* === 创建方式标签页 === */
+  .modal-tabs {
+    display: flex;
+    gap: var(--space-1);
+    padding: var(--space-4) var(--space-5) 0;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-muted);
+  }
+  .modal-tab {
+    padding: var(--space-3) var(--space-4);
+    font-size: var(--text-sm);
+    font-weight: 500;
+    color: var(--text-muted);
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    margin-bottom: -1px;
+  }
+  .modal-tab:hover {
+    color: var(--text);
+    background: var(--surface-hover);
+  }
+  .modal-tab.active {
+    color: var(--primary);
+    border-bottom-color: var(--primary);
+    background: var(--surface);
+  }
+  .tab-panel {
+    display: none;
+  }
+  .tab-panel.active {
+    display: block;
+  }
+  /* 白板拍照面板的提示文案 */
+  .whiteboard-hint {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+    margin-bottom: var(--space-4);
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    background: var(--primary-bg);
+    border: 1px solid var(--primary-light);
+    border-radius: var(--radius);
+    line-height: var(--lh-relaxed);
   }
 </style>
 
@@ -328,6 +411,8 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '会议纪
         alert('纪要创建成功');
         modal.style.display = 'none';
         form.reset();
+        // 重置为手动填写标签页，下次打开默认显示
+        switchTab('manual');
         loadMinutes();
       } else {
         alert('创建失败');
@@ -335,6 +420,124 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '会议纪
     } catch {
       alert('网络异常');
     }
+  });
+
+  // === 创建方式标签页切换 ===
+  function switchTab(tabName: string): void {
+    const tabs = document.querySelectorAll<HTMLButtonElement>('.modal-tab');
+    const panels = document.querySelectorAll<HTMLDivElement>('.tab-panel');
+    tabs.forEach((tab) => {
+      const isActive = tab.dataset.tab === tabName;
+      tab.classList.toggle('active', isActive);
+      tab.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    });
+    panels.forEach((panel) => {
+      panel.classList.toggle('active', panel.id === `tab-${tabName}`);
+    });
+  }
+
+  document.querySelectorAll<HTMLButtonElement>('.modal-tab').forEach((tab) => {
+    tab.addEventListener('click', () => {
+      const tabName = tab.dataset.tab;
+      if (tabName) switchTab(tabName);
+    });
+  });
+
+  // 打开弹窗时默认显示"手动填写"标签页
+  document.getElementById('create-btn')?.addEventListener('click', () => {
+    switchTab('manual');
+  });
+
+  // === 白板拍照入库 → 自动填充表单 ===
+  // WhiteboardUploader（React Island, client:only="react"）通过 window CustomEvent
+  // 'ekb:whiteboard-minutes' 回传生成的会议纪要（client:only props 无法序列化函数）
+  interface WhiteboardMinutesPayload {
+    summary: string;
+    key_points: string[];
+    action_items: {
+      content: string;
+      assignee: string | null;
+      deadline: string | null;
+    }[];
+    raw_text: string;
+  }
+
+  /** 格式化日期为 YYYY-MM-DD（用于 date input） */
+  function formatDateForInput(d: Date): string {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+
+  /** 根据白板纪要生成会议主题（取摘要首行，截断 30 字符） */
+  function buildMinutesTitle(minutes: WhiteboardMinutesPayload): string {
+    const summary = (minutes.summary || '').trim();
+    if (summary) {
+      const firstLine = summary.split(/\r?\n/)[0].trim();
+      if (firstLine.length <= 30) return firstLine;
+      return firstLine.slice(0, 30) + '...';
+    }
+    return `白板会议纪要 ${formatDateForInput(new Date())}`;
+  }
+
+  /** 根据白板纪要生成会议内容（摘要 + 关键要点 + 行动项） */
+  function buildMinutesContent(minutes: WhiteboardMinutesPayload): string {
+    const parts: string[] = [];
+
+    if (minutes.summary && minutes.summary.trim()) {
+      parts.push('【会议摘要】');
+      parts.push(minutes.summary.trim());
+      parts.push('');
+    }
+
+    if (minutes.key_points && minutes.key_points.length > 0) {
+      parts.push('【关键要点】');
+      minutes.key_points.forEach((point, idx) => {
+        parts.push(`${idx + 1}. ${point}`);
+      });
+      parts.push('');
+    }
+
+    if (minutes.action_items && minutes.action_items.length > 0) {
+      parts.push('【行动项】');
+      minutes.action_items.forEach((item) => {
+        const assignee = item.assignee || '未指定';
+        const deadline = item.deadline || '未指定';
+        parts.push(`- ${item.content} | 负责人：${assignee} | 截止：${deadline}`);
+      });
+      parts.push('');
+    }
+
+    // 上述字段全为空时，使用 raw_text 兜底
+    if (parts.length === 0 && minutes.raw_text) {
+      return minutes.raw_text;
+    }
+
+    return parts.join('\n').trim();
+  }
+
+  /** 处理 WhiteboardUploader 回传的会议纪要：自动填充表单 + 切换到手动填写标签页 */
+  function handleWhiteboardMinutes(minutes: WhiteboardMinutesPayload): void {
+    const form = document.getElementById('minutes-form') as HTMLFormElement | null;
+    if (!form) return;
+
+    const titleInput = form.elements.namedItem('title') as HTMLInputElement | null;
+    const dateInput = form.elements.namedItem('date') as HTMLInputElement | null;
+    const contentTextarea = form.elements.namedItem('content') as HTMLTextAreaElement | null;
+
+    if (titleInput) titleInput.value = buildMinutesTitle(minutes);
+    if (dateInput) dateInput.value = formatDateForInput(new Date());
+    if (contentTextarea) contentTextarea.value = buildMinutesContent(minutes);
+
+    // 切换回手动填写标签页，让用户确认 / 修改自动填充的内容
+    switchTab('manual');
+
+    alert('已根据白板照片生成会议纪要并填充到表单，请确认后点击「创建」');
+  }
+
+  // 监听 WhiteboardUploader 派发的全局事件
+  window.addEventListener('ekb:whiteboard-minutes', (e: Event) => {
+    const detail = (e as CustomEvent<WhiteboardMinutesPayload>).detail;
+    if (detail) handleWhiteboardMinutes(detail);
   });
 
   loadMinutes();

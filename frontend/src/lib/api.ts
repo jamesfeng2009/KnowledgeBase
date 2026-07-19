@@ -173,4 +173,83 @@ export function upload<T = unknown>(
   });
 }
 
-export default { get, post, put, del, upload, ApiError };
+// ===== 后端统一响应格式 { code, data, message } 自动提取 data =====
+
+/** 后端统一响应结构 */
+interface ApiResponse<T = unknown> {
+  code: number;
+  data: T;
+  message: string;
+}
+
+/** 分页响应结构 */
+interface PageResponse<T = unknown> {
+  items: T[];
+  total: number;
+  page: number;
+  size: number;
+  pages: number;
+}
+
+/** 请求并自动提取 .data 字段（后端统一响应格式） */
+async function requestData<T = unknown>(
+  path: string,
+  options: RequestOptions = {}
+): Promise<T> {
+  const raw = await request<ApiResponse<T>>(path, options);
+  // 兼容两种返回格式：{code, data, message} 或直接返回数据
+  if (raw && typeof raw === 'object' && 'data' in raw && 'code' in raw) {
+    return raw.data;
+  }
+  return raw as T;
+}
+
+/** GET 请求并提取 data 字段 */
+export function getData<T = unknown>(
+  path: string,
+  params?: Record<string, string | number | boolean>,
+  options?: Omit<RequestOptions, 'method' | 'body'>
+): Promise<T> {
+  return requestData<T>(params ? `${path}?` + new URLSearchParams(
+    Object.entries(params).map(([k, v]) => [k, String(v)])
+  ).toString() : path, { ...options, method: 'GET' });
+}
+
+/** POST 请求并提取 data 字段 */
+export function postData<T = unknown>(
+  path: string,
+  body?: unknown,
+  options?: Omit<RequestOptions, 'method' | 'body'>
+): Promise<T> {
+  return requestData<T>(path, { ...options, method: 'POST', body });
+}
+
+/** PUT 请求并提取 data 字段 */
+export function putData<T = unknown>(
+  path: string,
+  body?: unknown,
+  options?: Omit<RequestOptions, 'method' | 'body'>
+): Promise<T> {
+  return requestData<T>(path, { ...options, method: 'PUT', body });
+}
+
+/** DELETE 请求并提取 data 字段 */
+export function delData<T = unknown>(
+  path: string,
+  options?: Omit<RequestOptions, 'method' | 'body'>
+): Promise<T> {
+  return requestData<T>(path, { ...options, method: 'DELETE' });
+}
+
+/** PATCH 请求并提取 data 字段 */
+export function patchData<T = unknown>(
+  path: string,
+  body?: unknown,
+  options?: Omit<RequestOptions, 'method' | 'body'>
+): Promise<T> {
+  return requestData<T>(path, { ...options, method: 'PATCH', body });
+}
+
+export type { ApiResponse, PageResponse };
+
+export default { get, post, put, del, upload, getData, postData, putData, delData, patchData, ApiError };

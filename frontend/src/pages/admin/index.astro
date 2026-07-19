@@ -1,353 +1,970 @@
 ---
 /**
- * 运营看板
- * 统计卡片 + 趋势图表 + 最近活动 + 待办事项
+ * 运营看板（分析仪表盘）
+ * 对接后端 analytics API，替换 mock 数据
+ * 包含：核心指标 / 搜索热词云 / 零点击搜索词 / 热门文档 / 知识覆盖率 / 知识新鲜度 / 贡献者排名
  */
 import DefaultLayout from '@/layouts/DefaultLayout.astro';
 
-const breadcrumb = [{ label: '系统', href: '/admin' }, { label: '运营看板' }];
+const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '运营看板' }];
 ---
 
 <DefaultLayout title="运营看板" breadcrumb={breadcrumb}>
-  <!-- 统计卡片 -->
-  <div class="grid grid-cols-4" style="margin-bottom: var(--space-6);">
-    <div class="card stat-card">
-      <div class="stat-card-header">
-        <span class="text-muted" style="font-size: var(--text-sm);">用户总数</span>
-        <span class="badge badge-success">+12%</span>
+  <div class="opd-page">
+    <!-- 页头 + 时间范围切换 -->
+    <div class="opd-header">
+      <h1 class="page-title">运营看板</h1>
+      <div class="range-switcher" id="range-switcher" role="tablist" aria-label="时间范围">
+        <button class="range-btn" type="button" data-days="7" role="tab">近 7 天</button>
+        <button class="range-btn active" type="button" data-days="30" role="tab">近 30 天</button>
+        <button class="range-btn" type="button" data-days="90" role="tab">近 90 天</button>
       </div>
-      <div class="stat-card-value" id="stat-users">--</div>
-      <div class="text-muted" style="font-size: var(--text-xs);">本月新增 28 人</div>
-    </div>
-    <div class="card stat-card">
-      <div class="stat-card-header">
-        <span class="text-muted" style="font-size: var(--text-sm);">文档总数</span>
-        <span class="badge badge-success">+8%</span>
-      </div>
-      <div class="stat-card-value" id="stat-docs">--</div>
-      <div class="text-muted" style="font-size: var(--text-xs);">本周新增 45 篇</div>
-    </div>
-    <div class="card stat-card">
-      <div class="stat-card-header">
-        <span class="text-muted" style="font-size: var(--text-sm);">对话次数</span>
-        <span class="badge badge-success">+23%</span>
-      </div>
-      <div class="stat-card-value" id="stat-chats">--</div>
-      <div class="text-muted" style="font-size: var(--text-xs);">今日 1,204 次</div>
-    </div>
-    <div class="card stat-card">
-      <div class="stat-card-header">
-        <span class="text-muted" style="font-size: var(--text-sm);">AI 调用数</span>
-        <span class="badge badge-warning">+5%</span>
-      </div>
-      <div class="stat-card-value" id="stat-calls">--</div>
-      <div class="text-muted" style="font-size: var(--text-xs);">Token 消耗 1.2M</div>
-    </div>
-  </div>
-
-  <!-- 趋势图表 -->
-  <div class="grid grid-cols-2" style="margin-bottom: var(--space-6);">
-    <div class="card">
-      <div class="card-header">
-        <h3>使用趋势（近 7 天）</h3>
-      </div>
-      <canvas id="trend-chart" style="width: 100%; height: 220px;"></canvas>
-    </div>
-    <div class="card">
-      <div class="card-header">
-        <h3>知识库分布</h3>
-      </div>
-      <canvas id="dist-chart" style="width: 100%; height: 220px;"></canvas>
-    </div>
-  </div>
-
-  <!-- 最近活动 + 待办 -->
-  <div class="grid grid-cols-2">
-    <!-- 最近活动 -->
-    <div class="card">
-      <div class="card-header">
-        <h3>最近活动</h3>
-      </div>
-      <div id="activity-list"></div>
     </div>
 
-    <!-- 待办事项 -->
-    <div class="card">
-      <div class="card-header">
-        <h3>待办事项</h3>
+    <!-- 1. 核心指标卡片 -->
+    <div class="grid grid-cols-4 opd-stats" style="margin-bottom: var(--space-4);">
+      <div class="card stat-card">
+        <div class="stat-card-header">
+          <span class="text-muted stat-label">文档总数</span>
+        </div>
+        <div class="stat-card-value" id="stat-docs"></div>
+        <div class="text-muted stat-sub" id="stat-docs-sub"></div>
       </div>
-      <div id="todo-list"></div>
+      <div class="card stat-card">
+        <div class="stat-card-header">
+          <span class="text-muted stat-label">用户总数</span>
+        </div>
+        <div class="stat-card-value" id="stat-users"></div>
+        <div class="text-muted stat-sub" id="stat-users-sub"></div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-card-header">
+          <span class="text-muted stat-label">搜索次数</span>
+        </div>
+        <div class="stat-card-value" id="stat-searches"></div>
+        <div class="text-muted stat-sub" id="stat-searches-sub"></div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-card-header">
+          <span class="text-muted stat-label">零点击率</span>
+        </div>
+        <div class="stat-card-value" id="stat-zeroclick"></div>
+        <div class="text-muted stat-sub" id="stat-zeroclick-sub"></div>
+      </div>
+    </div>
+    <div class="stats-error" id="stats-error" style="display:none;">
+      <span class="block-error-msg" id="stats-error-msg"></span>
+      <button class="btn btn-outline btn-sm" id="stats-retry" type="button">重试</button>
+    </div>
+
+    <!-- 2 & 3. 搜索热词云 + 零点击搜索词 -->
+    <div class="grid grid-cols-2" style="margin-bottom: var(--space-6); margin-top: var(--space-4);">
+      <div class="card">
+        <div class="card-header"><h3>搜索热词</h3></div>
+        <div class="opd-block-body" id="hotwords-body"></div>
+      </div>
+      <div class="card">
+        <div class="card-header"><h3>零点击搜索词 · 知识缺口</h3></div>
+        <div class="opd-block-body" id="zeroclick-body"></div>
+      </div>
+    </div>
+
+    <!-- 4. 热门文档排行 -->
+    <div class="card" style="margin-bottom: var(--space-6);">
+      <div class="card-header"><h3>热门文档排行</h3></div>
+      <div class="opd-block-body" id="popular-body"></div>
+    </div>
+
+    <!-- 5 & 6. 知识覆盖率 + 知识新鲜度 -->
+    <div class="grid grid-cols-2" style="margin-bottom: var(--space-6);">
+      <div class="card">
+        <div class="card-header"><h3>知识覆盖率</h3></div>
+        <div class="opd-block-body" id="coverage-body"></div>
+      </div>
+      <div class="card">
+        <div class="card-header"><h3>知识新鲜度</h3></div>
+        <div class="opd-block-body" id="freshness-body"></div>
+      </div>
+    </div>
+
+    <!-- 7. 贡献者排名 -->
+    <div class="card">
+      <div class="card-header"><h3>贡献者排名</h3></div>
+      <div class="opd-block-body" id="contributors-body"></div>
     </div>
   </div>
 </DefaultLayout>
 
-<style>
-  .stat-card {
+<style is:global>
+  /* 页头 + 时间范围切换 */
+  .opd-page .opd-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: var(--space-6);
+    flex-wrap: wrap;
+    gap: var(--space-3);
+  }
+  .opd-page .range-switcher {
+    display: inline-flex;
+    background: var(--surface-muted);
+    border-radius: var(--radius);
+    padding: 2px;
+    gap: 2px;
+  }
+  .opd-page .range-btn {
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    padding: 6px 14px;
+    font-size: var(--text-sm);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .opd-page .range-btn:hover {
+    color: var(--text);
+  }
+  .opd-page .range-btn.active {
+    background: var(--surface);
+    color: var(--primary);
+    font-weight: 600;
+    box-shadow: var(--shadow-xs);
+  }
+
+  /* 核心指标卡 */
+  .opd-page .stat-card {
     display: flex;
     flex-direction: column;
     gap: var(--space-2);
   }
-  .stat-card-header {
+  .opd-page .stat-card-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
   }
-  .stat-card-value {
+  .opd-page .stat-label {
+    font-size: var(--text-sm);
+  }
+  .opd-page .stat-card-value {
     font-size: var(--text-4xl);
     font-weight: 600;
     color: var(--primary);
+    min-height: 36px;
+    display: flex;
+    align-items: center;
   }
-  .activity-item {
+  .opd-page .stat-sub {
+    font-size: var(--text-xs);
+    min-height: 14px;
+  }
+  .opd-page .stat-error-text {
+    color: var(--text-muted);
+  }
+  .opd-page .stats-error {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    background: var(--danger-bg);
+    border-radius: var(--radius);
+    margin-bottom: var(--space-4);
+    font-size: var(--text-sm);
+    color: var(--danger);
+  }
+
+  /* 区块通用状态 */
+  .opd-page .opd-block-body {
+    min-height: 120px;
+  }
+  .opd-page .block-error {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: var(--space-4);
+    background: var(--danger-bg);
+    border-radius: var(--radius);
+    color: var(--danger);
+    font-size: var(--text-sm);
+  }
+  .opd-page .block-error-msg {
+    flex: 1;
+    word-break: break-word;
+  }
+  .opd-page .block-empty {
+    padding: var(--space-6);
+    text-align: center;
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+  }
+  .opd-page .block-empty.inline {
+    padding: var(--space-2) 0;
+    text-align: left;
+  }
+  .opd-page .opd-link {
+    color: var(--primary);
+    text-decoration: none;
+  }
+  .opd-page .opd-link:hover {
+    text-decoration: underline;
+  }
+
+  /* 骨架屏 */
+  .opd-page .skeleton-line {
+    background: linear-gradient(
+      90deg,
+      var(--surface-muted) 25%,
+      var(--surface-hover) 37%,
+      var(--surface-muted) 63%
+    );
+    background-size: 400% 100%;
+    border-radius: var(--radius-sm);
+    animation: opd-shimmer 1.4s ease infinite;
+    margin-bottom: var(--space-2);
+    width: 100%;
+  }
+  .opd-page .skeleton-value {
+    height: 32px;
+    width: 60%;
+  }
+  @keyframes opd-shimmer {
+    0% {
+      background-position: 100% 50%;
+    }
+    100% {
+      background-position: 0 50%;
+    }
+  }
+
+  /* 搜索热词云 */
+  .opd-page .wordcloud {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-3) var(--space-4);
+    padding: var(--space-3) 0;
+    min-height: 120px;
+  }
+  .opd-page .wordcloud-item {
+    color: var(--primary);
+    text-decoration: none;
+    line-height: 1.4;
+    transition: color 0.15s ease, transform 0.15s ease;
+    padding: 2px 4px;
+  }
+  .opd-page .wordcloud-item:hover {
+    color: var(--primary-dark);
+    transform: scale(1.08);
+  }
+
+  /* 数据表格 */
+  .opd-page .analytics-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .opd-page .analytics-table th {
+    text-align: left;
+    padding: var(--space-3) var(--space-4);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-muted);
+    white-space: nowrap;
+  }
+  .opd-page .analytics-table td {
+    padding: var(--space-3) var(--space-4);
+    font-size: var(--text-sm);
+    color: var(--text);
+    border-bottom: 1px solid var(--border-light);
+  }
+  .opd-page .analytics-table tbody tr:last-child td {
+    border-bottom: none;
+  }
+  .opd-page .analytics-table .col-rank {
+    width: 60px;
+  }
+  .opd-page .analytics-table .col-num {
+    width: 90px;
+  }
+  .opd-page .analytics-table td.col-num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* 排名徽章 */
+  .opd-page .rank-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: var(--radius-full);
+    font-size: var(--text-xs);
+    font-weight: 600;
+    background: var(--surface-muted);
+    color: var(--text-muted);
+  }
+  .opd-page .rank-badge.rank-top.rank-1 {
+    background: #ffd700;
+    color: #6b4f00;
+  }
+  .opd-page .rank-badge.rank-top.rank-2 {
+    background: #c0c0c0;
+    color: #4a4a4a;
+  }
+  .opd-page .rank-badge.rank-top.rank-3 {
+    background: #cd7f32;
+    color: #ffffff;
+  }
+
+  /* 知识覆盖率环形图 */
+  .opd-page .coverage-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-4);
+  }
+  .opd-page .coverage-ring-wrap {
+    position: relative;
+    display: inline-block;
+  }
+  .opd-page .ring-center {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    text-align: center;
+  }
+  .opd-page .ring-value {
+    font-size: var(--text-3xl);
+    font-weight: 600;
+    color: var(--primary);
+  }
+  .opd-page .ring-sub {
+    font-size: var(--text-xs);
+    margin-top: 2px;
+  }
+  .opd-page .coverage-topics {
+    width: 100%;
+  }
+  .opd-page .coverage-topics-title {
+    font-size: var(--text-sm);
+    margin-bottom: var(--space-2);
+  }
+  .opd-page .topic-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+  .opd-page .topic-tag {
+    display: inline-block;
+    padding: 4px 10px;
+    background: var(--warning-bg);
+    color: var(--warning);
+    border-radius: var(--radius-full);
+    font-size: var(--text-xs);
+  }
+
+  /* 知识新鲜度横向条形图 */
+  .opd-page .freshness-summary {
+    display: flex;
+    gap: var(--space-6);
+    padding-bottom: var(--space-4);
+    margin-bottom: var(--space-4);
+    border-bottom: 1px solid var(--border-light);
+  }
+  .opd-page .freshness-summary-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .opd-page .freshness-summary-item strong {
+    font-size: var(--text-xl);
+    color: var(--text);
+  }
+  .opd-page .freshness-rate {
+    color: var(--success);
+  }
+  .opd-page .bar-chart {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+  .opd-page .bar-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+  }
+  .opd-page .bar-label {
+    width: 140px;
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    flex-shrink: 0;
+  }
+  .opd-page .bar-track {
+    flex: 1;
+    height: 12px;
+    background: var(--surface-muted);
+    border-radius: var(--radius-full);
+    overflow: hidden;
+  }
+  .opd-page .bar-fill {
+    height: 100%;
+    border-radius: var(--radius-full);
+    transition: width 0.4s ease;
+  }
+  .opd-page .bar-value {
+    width: 56px;
+    text-align: right;
+    font-size: var(--text-sm);
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+  }
+
+  /* 贡献者排名 */
+  .opd-page .contributor-list {
+    display: flex;
+    flex-direction: column;
+  }
+  .opd-page .contributor-item {
     display: flex;
     align-items: center;
     gap: var(--space-3);
     padding: var(--space-3) 0;
     border-bottom: 1px solid var(--border-light);
   }
-  .activity-item:last-child {
+  .opd-page .contributor-item:last-child {
     border-bottom: none;
   }
-  .activity-icon {
-    width: 32px;
-    height: 32px;
-    border-radius: var(--radius);
+  .opd-page .contributor-avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: var(--radius-full);
+    object-fit: cover;
+    flex-shrink: 0;
     background: var(--primary-bg);
+  }
+  .opd-page .contributor-avatar-text {
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 16px;
-    flex-shrink: 0;
+    color: var(--primary);
+    font-weight: 600;
+    font-size: var(--text-sm);
   }
-  .activity-body {
+  .opd-page .contributor-body {
     flex: 1;
     min-width: 0;
   }
-  .activity-text {
-    font-size: var(--text-sm);
-    color: var(--text);
-  }
-  .activity-time {
-    font-size: var(--text-xs);
-    color: var(--text-muted);
-    margin-top: var(--space-1);
-  }
-  .todo-item {
+  .opd-page .contributor-name {
     display: flex;
     align-items: center;
-    gap: var(--space-3);
-    padding: var(--space-3) 0;
-    border-bottom: 1px solid var(--border-light);
+    gap: var(--space-2);
+    font-size: var(--text-sm);
+    font-weight: 500;
   }
-  .todo-item:last-child {
-    border-bottom: none;
+  .opd-page .contributor-meta {
+    font-size: var(--text-xs);
+    margin-top: 2px;
   }
-  .todo-checkbox {
-    width: 18px;
-    height: 18px;
+  .opd-page .contributor-badge {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: var(--radius-full);
+    font-size: var(--text-xs);
+    font-weight: 500;
+  }
+  .opd-page .badge-gold {
+    background: #fff6da;
+    color: #b8860b;
+  }
+  .opd-page .badge-silver {
+    background: #eceef1;
+    color: #6b7280;
+  }
+  .opd-page .badge-bronze {
+    background: #fbe4d3;
+    color: #b45a1e;
+  }
+  .opd-page .badge-active {
+    background: var(--success-bg);
+    color: var(--success);
+  }
+  .opd-page .badge-new {
+    background: var(--info-bg);
+    color: var(--info);
+  }
+  .opd-page .contributor-score {
+    text-align: right;
     flex-shrink: 0;
   }
-  .todo-text {
-    flex: 1;
-    font-size: var(--text-sm);
-    color: var(--text);
+  .opd-page .score-num {
+    font-size: var(--text-lg);
+    font-weight: 600;
+    color: var(--primary);
+  }
+  .opd-page .score-label {
+    font-size: var(--text-xs);
+  }
+
+  /* 响应式 */
+  @media (max-width: 768px) {
+    .opd-page .grid.grid-cols-4 {
+      grid-template-columns: repeat(2, 1fr);
+    }
+    .opd-page .grid.grid-cols-2 {
+      grid-template-columns: 1fr;
+    }
+    .opd-page .bar-label {
+      width: 104px;
+    }
   }
 </style>
 
 <script>
-  const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
-  const TOKEN_KEY = 'ekb_access_token';
+  import {
+    getCoverage,
+    getDashboard,
+    getFreshness,
+    getContributors,
+    getPopularDocs,
+    getSearchHotwords,
+    getZeroClickQueries,
+    type ContributorData,
+    type CoverageData,
+    type FreshnessData,
+    type KeywordCount,
+    type PopularDoc,
+  } from '@/lib/apis/analytics';
 
-  async function loadStats() {
-    const token = localStorage.getItem(TOKEN_KEY);
-    if (!token) {
-      window.location.href = '/auth/login';
-      return;
+  let currentDays = 30;
+  let cycleAlerted = false;
+
+  function resetCycleAlert(): void {
+    cycleAlerted = false;
+  }
+
+  function notifyError(msg: string): void {
+    // 每个加载周期仅 alert 一次，避免后端整体不可用时弹窗刷屏
+    if (!cycleAlerted) {
+      cycleAlerted = true;
+      alert(msg);
     }
-    const setText = (id: string, v: string | number) => {
-      const el = document.getElementById(id);
-      if (el) el.textContent = String(v);
-    };
-    try {
-      const res = await fetch(`${API_BASE}/api/v1/stats/overview`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.ok) {
-        const result = await res.json();
-        const data = result.data || result;
-        setText('stat-users', data.active_users || 256);
-        setText('stat-docs', data.total_documents || 1248);
-        setText('stat-chats', data.total_conversations || 8652);
-        setText('stat-calls', data.ai_calls || 15420);
-      } else if (res.status === 401) {
-        window.location.href = '/auth/login';
-        return;
-      } else {
-        setMockStats(setText);
-      }
-    } catch {
-      setMockStats(setText);
-    }
-  }
-
-  function setMockStats(setText: (id: string, v: string | number) => void) {
-    setText('stat-users', 256);
-    setText('stat-docs', 1248);
-    setText('stat-chats', 8652);
-    setText('stat-calls', 15420);
-  }
-
-  // 趋势图
-  function drawTrendChart() {
-    const canvas = document.getElementById('trend-chart') as HTMLCanvasElement;
-    const ctx = canvas.getContext('2d')!;
-    canvas.width = canvas.offsetWidth * 2;
-    canvas.height = 220 * 2;
-    ctx.scale(2, 2);
-    const w = canvas.offsetWidth;
-    const h = 220;
-
-    const data = [120, 180, 150, 220, 280, 250, 320];
-    const days = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
-    const max = Math.max(...data) * 1.2;
-    const pad = 30;
-
-    // 网格线
-    ctx.strokeStyle = '#F0F1F5';
-    ctx.lineWidth = 1;
-    for (let i = 0; i <= 4; i++) {
-      const y = pad + ((h - pad * 2) / 4) * i;
-      ctx.beginPath();
-      ctx.moveTo(pad, y);
-      ctx.lineTo(w - pad, y);
-      ctx.stroke();
-    }
-
-    // 折线
-    ctx.strokeStyle = '#6C5CE7';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    data.forEach((v, i) => {
-      const x = pad + ((w - pad * 2) / (data.length - 1)) * i;
-      const y = h - pad - ((h - pad * 2) * v) / max;
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    });
-    ctx.stroke();
-
-    // 填充
-    ctx.lineTo(w - pad, h - pad);
-    ctx.lineTo(pad, h - pad);
-    ctx.closePath();
-    ctx.fillStyle = 'rgba(108, 92, 231, 0.1)';
-    ctx.fill();
-
-    // 数据点 + 标签
-    ctx.fillStyle = '#6C5CE7';
-    data.forEach((v, i) => {
-      const x = pad + ((w - pad * 2) / (data.length - 1)) * i;
-      const y = h - pad - ((h - pad * 2) * v) / max;
-      ctx.beginPath();
-      ctx.arc(x, y, 3, 0, 2 * Math.PI);
-      ctx.fill();
-    });
-
-    // X 轴标签
-    ctx.fillStyle = '#8B8D9F';
-    ctx.font = '11px sans-serif';
-    ctx.textAlign = 'center';
-    days.forEach((d, i) => {
-      const x = pad + ((w - pad * 2) / (data.length - 1)) * i;
-      ctx.fillText(d, x, h - 10);
-    });
-  }
-
-  // 分布图（柱状）
-  function drawDistChart() {
-    const canvas = document.getElementById('dist-chart') as HTMLCanvasElement;
-    const ctx = canvas.getContext('2d')!;
-    canvas.width = canvas.offsetWidth * 2;
-    canvas.height = 220 * 2;
-    ctx.scale(2, 2);
-    const w = canvas.offsetWidth;
-    const h = 220;
-
-    const data = [
-      { label: '公司制度', value: 128, color: '#6C5CE7' },
-      { label: '产品文档', value: 86, color: '#00B884' },
-      { label: '技术文档', value: 245, color: '#FF9500' },
-      { label: '其他', value: 56, color: '#2196F3' },
-    ];
-    const max = Math.max(...data.map((d) => d.value)) * 1.2;
-    const pad = 30;
-    const barW = (w - pad * 2) / data.length - 20;
-
-    data.forEach((d, i) => {
-      const x = pad + ((w - pad * 2) / data.length) * i + 10;
-      const barH = ((h - pad * 2) * d.value) / max;
-      const y = h - pad - barH;
-
-      ctx.fillStyle = d.color;
-      ctx.beginPath();
-      ctx.roundRect(x, y, barW, barH, [4, 4, 0, 0]);
-      ctx.fill();
-
-      ctx.fillStyle = '#1A1B2E';
-      ctx.font = '11px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText(d.label, x + barW / 2, h - 10);
-      ctx.fillText(String(d.value), x + barW / 2, y - 5);
-    });
-  }
-
-  function renderActivities() {
-    const activities = [
-      { icon: '📤', text: '张三上传了文档「API 设计规范」', time: '5 分钟前' },
-      { icon: '💬', text: '李四发起了 AI 对话「报销流程咨询」', time: '20 分钟前' },
-      { icon: '✏️', text: '王五编辑了文档「员工手册」', time: '1 小时前' },
-      { icon: '👤', text: '新用户赵六完成注册', time: '2 小时前' },
-      { icon: '🔍', text: '「年假政策」被搜索 8 次', time: '3 小时前' },
-    ];
-    document.getElementById('activity-list')!.innerHTML = activities
-      .map(
-        (a) => `
-      <div class="activity-item">
-        <div class="activity-icon">${a.icon}</div>
-        <div class="activity-body">
-          <div class="activity-text">${escapeHtml(a.text)}</div>
-          <div class="activity-time">${escapeHtml(a.time)}</div>
-        </div>
-      </div>`
-      )
-      .join('');
-  }
-
-  function renderTodos() {
-    const todos = [
-      { text: '审核 3 篇待发布文档', priority: 'high' },
-      { text: '处理 2 条用户反馈', priority: 'medium' },
-      { text: '更新过期知识库文档', priority: 'medium' },
-      { text: '配置新 LLM 模型', priority: 'low' },
-    ];
-    const colorMap: Record<string, string> = { high: 'var(--danger)', medium: 'var(--warning)', low: 'var(--info)' };
-    document.getElementById('todo-list')!.innerHTML = todos
-      .map(
-        (t) => `
-      <div class="todo-item">
-        <input type="checkbox" class="todo-checkbox" />
-        <span class="todo-text">${escapeHtml(t.text)}</span>
-        <span style="width: 8px; height: 8px; border-radius: 50%; background: ${colorMap[t.priority]};"></span>
-      </div>`
-      )
-      .join('');
   }
 
   function escapeHtml(s: string): string {
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return String(s ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
   }
 
-  loadStats();
-  drawTrendChart();
-  drawDistChart();
-  renderActivities();
-  renderTodos();
+  function formatNum(n: number): string {
+    return typeof n === 'number' && !isNaN(n) ? n.toLocaleString('zh-CN') : '--';
+  }
+
+  /** 兼容后端返回 0-1 小数或 0-100 百分比两种形态 */
+  function toPercent(v: number): number {
+    if (typeof v !== 'number' || isNaN(v)) return 0;
+    return v <= 1 ? v * 100 : v;
+  }
+
+  function el(id: string): HTMLElement {
+    const e = document.getElementById(id);
+    if (!e) throw new Error(`元素不存在: ${id}`);
+    return e;
+  }
+
+  // ===== 通用渲染状态 =====
+
+  function showSkeleton(container: HTMLElement, rows = 3, height = 14): void {
+    container.classList.add('is-loading');
+    let html = '';
+    for (let i = 0; i < rows; i++) {
+      html += `<div class="skeleton-line" style="height:${height}px"></div>`;
+    }
+    container.innerHTML = html;
+  }
+
+  function showError(container: HTMLElement, msg: string, retryFn: () => void): void {
+    container.classList.remove('is-loading');
+    container.innerHTML = `
+      <div class="block-error">
+        <span class="block-error-msg">${escapeHtml(msg)}</span>
+        <button class="btn btn-outline btn-sm retry-btn" type="button">重试</button>
+      </div>`;
+    container.querySelector('.retry-btn')?.addEventListener('click', () => {
+      resetCycleAlert();
+      retryFn();
+    });
+  }
+
+  function showEmpty(container: HTMLElement, msg: string): void {
+    container.classList.remove('is-loading');
+    container.innerHTML = `<div class="block-empty">${escapeHtml(msg)}</div>`;
+  }
+
+  // ===== 1. 核心指标卡片 =====
+
+  function showStatsSkeleton(): void {
+    const ids = ['stat-docs', 'stat-users', 'stat-searches', 'stat-zeroclick'];
+    ids.forEach((id) => {
+      const v = document.getElementById(id);
+      if (v) v.innerHTML = '<div class="skeleton-line skeleton-value"></div>';
+      const s = document.getElementById(`${id}-sub`);
+      if (s) s.innerHTML = '<div class="skeleton-line" style="height:10px;width:50%"></div>';
+    });
+  }
+
+  function setStat(id: string, value: string, sub: string): void {
+    const v = document.getElementById(id);
+    if (v) v.innerHTML = `<span class="stat-value-text">${escapeHtml(value)}</span>`;
+    const s = document.getElementById(`${id}-sub`);
+    if (s) s.textContent = sub;
+  }
+
+  async function loadStats(days: number): Promise<void> {
+    showStatsSkeleton();
+    const errBox = el('stats-error');
+    errBox.style.display = 'none';
+    try {
+      const d = await getDashboard(days);
+      setStat('stat-docs', formatNum(d.total_documents), '知识库文档累计');
+      setStat('stat-users', formatNum(d.total_users), '注册用户');
+      setStat('stat-searches', formatNum(d.total_searches), `近 ${days} 天搜索`);
+      setStat('stat-zeroclick', `${Math.round(toPercent(d.zero_click_rate))}%`, '未命中结果占比');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '加载失败';
+      ['stat-docs', 'stat-users', 'stat-searches', 'stat-zeroclick'].forEach((id) => {
+        const v = document.getElementById(id);
+        if (v) v.innerHTML = '<span class="stat-error-text">--</span>';
+        const s = document.getElementById(`${id}-sub`);
+        if (s) s.textContent = '加载失败';
+      });
+      el('stats-error-msg').textContent = msg;
+      errBox.style.display = '';
+      notifyError(`核心指标加载失败：${msg}`);
+    }
+  }
+
+  // ===== 2. 搜索热词云 =====
+
+  async function loadHotwords(days: number): Promise<void> {
+    const container = el('hotwords-body');
+    showSkeleton(container, 6, 16);
+    try {
+      const data = await getSearchHotwords(days, 50);
+      renderWordcloud(container, data);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '加载失败';
+      showError(container, msg, () => loadHotwords(days));
+      notifyError(`搜索热词加载失败：${msg}`);
+    }
+  }
+
+  function renderWordcloud(container: HTMLElement, items: KeywordCount[]): void {
+    container.classList.remove('is-loading');
+    if (!items || items.length === 0) {
+      showEmpty(container, '暂无搜索热词数据');
+      return;
+    }
+    const counts = items.map((i) => i.count);
+    const min = Math.min(...counts);
+    const max = Math.max(...counts);
+    const minSize = 14;
+    const maxSize = 32;
+    container.innerHTML = items
+      .map((it) => {
+        const ratio = max === min ? 0.5 : (it.count - min) / (max - min);
+        const size = Math.round(minSize + ratio * (maxSize - minSize));
+        const url = `/knowledge/search?q=${encodeURIComponent(it.keyword)}`;
+        return `<a class="wordcloud-item" href="${url}" style="font-size:${size}px" title="${escapeHtml(it.keyword)}：${it.count} 次搜索">${escapeHtml(it.keyword)}</a>`;
+      })
+      .join('');
+  }
+
+  // ===== 3. 零点击搜索词 =====
+
+  async function loadZeroClick(days: number): Promise<void> {
+    const container = el('zeroclick-body');
+    showSkeleton(container, 6, 16);
+    try {
+      const data = await getZeroClickQueries(days, 20);
+      renderZeroClick(container, data);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '加载失败';
+      showError(container, msg, () => loadZeroClick(days));
+      notifyError(`零点击搜索词加载失败：${msg}`);
+    }
+  }
+
+  function renderZeroClick(container: HTMLElement, items: KeywordCount[]): void {
+    container.classList.remove('is-loading');
+    if (!items || items.length === 0) {
+      showEmpty(container, '暂无零点击搜索词');
+      return;
+    }
+    container.innerHTML = `
+      <table class="analytics-table">
+        <thead>
+          <tr><th>关键词</th><th class="col-num">搜索次数</th><th>操作</th></tr>
+        </thead>
+        <tbody>
+          ${items
+            .map(
+              (it) => `
+            <tr>
+              <td><a class="opd-link" href="/knowledge/search?q=${encodeURIComponent(it.keyword)}">${escapeHtml(it.keyword)}</a></td>
+              <td class="col-num">${formatNum(it.count)}</td>
+              <td><a class="opd-link" href="/manage/upload?tag=${encodeURIComponent(it.keyword)}">补充内容</a></td>
+            </tr>`
+            )
+            .join('')}
+        </tbody>
+      </table>`;
+  }
+
+  // ===== 4. 热门文档排行 =====
+
+  async function loadPopularDocs(days: number): Promise<void> {
+    const container = el('popular-body');
+    showSkeleton(container, 6, 18);
+    try {
+      const data = await getPopularDocs(days, 10);
+      renderPopularDocs(container, data);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '加载失败';
+      showError(container, msg, () => loadPopularDocs(days));
+      notifyError(`热门文档加载失败：${msg}`);
+    }
+  }
+
+  function renderPopularDocs(container: HTMLElement, items: PopularDoc[]): void {
+    container.classList.remove('is-loading');
+    if (!items || items.length === 0) {
+      showEmpty(container, '暂无热门文档数据');
+      return;
+    }
+    container.innerHTML = `
+      <table class="analytics-table">
+        <thead>
+          <tr><th class="col-rank">排名</th><th>标题</th><th>知识库</th><th class="col-num">浏览数</th></tr>
+        </thead>
+        <tbody>
+          ${items
+            .map((it, i) => {
+              const rankCls = i < 3 ? `rank-top rank-${i + 1}` : 'rank-normal';
+              const href = `/knowledge/detail?id=${encodeURIComponent(it.doc_id)}`;
+              return `
+            <tr>
+              <td><span class="rank-badge ${rankCls}">${i + 1}</span></td>
+              <td><a class="opd-link" href="${href}">${escapeHtml(it.title)}</a></td>
+              <td class="text-muted">${escapeHtml(it.kb_name || '-')}</td>
+              <td class="col-num">${formatNum(it.view_count)}</td>
+            </tr>`;
+            })
+            .join('')}
+        </tbody>
+      </table>`;
+  }
+
+  // ===== 5. 知识覆盖率（SVG 环形图） =====
+
+  async function loadCoverage(): Promise<void> {
+    const container = el('coverage-body');
+    showSkeleton(container, 4, 16);
+    try {
+      const data = await getCoverage();
+      renderCoverage(container, data);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '加载失败';
+      showError(container, msg, () => loadCoverage());
+      notifyError(`知识覆盖率加载失败：${msg}`);
+    }
+  }
+
+  function renderCoverage(container: HTMLElement, data: CoverageData): void {
+    container.classList.remove('is-loading');
+    const pct = Math.round(toPercent(data.rate) * 10) / 10;
+    const r = 68;
+    const circumference = 2 * Math.PI * r;
+    const offset = circumference * (1 - pct / 100);
+    const topics = (data.uncovered_topics || []).slice(0, 30);
+    container.innerHTML = `
+      <div class="coverage-wrap">
+        <div class="coverage-ring-wrap">
+          <svg class="coverage-ring" width="160" height="160" viewBox="0 0 160 160" aria-label="知识覆盖率">
+            <circle cx="80" cy="80" r="${r}" fill="none" stroke="var(--surface-muted)" stroke-width="12" />
+            <circle cx="80" cy="80" r="${r}" fill="none" stroke="var(--primary)" stroke-width="12" stroke-linecap="round"
+              stroke-dasharray="${circumference.toFixed(2)}" stroke-dashoffset="${offset.toFixed(2)}" transform="rotate(-90 80 80)" />
+          </svg>
+          <div class="ring-center">
+            <div class="ring-value">${pct}%</div>
+            <div class="text-muted ring-sub">${data.covered ?? 0} / ${data.total ?? 0}</div>
+          </div>
+        </div>
+        <div class="coverage-topics">
+          <div class="text-muted coverage-topics-title">未覆盖主题（${topics.length}）</div>
+          ${
+            topics.length
+              ? `<div class="topic-list">${topics
+                  .map((t) => `<span class="topic-tag">${escapeHtml(t)}</span>`)
+                  .join('')}</div>`
+              : `<div class="block-empty inline">暂无未覆盖主题</div>`
+          }
+        </div>
+      </div>`;
+  }
+
+  // ===== 6. 知识新鲜度（横向条形图） =====
+
+  async function loadFreshness(): Promise<void> {
+    const container = el('freshness-body');
+    showSkeleton(container, 4, 18);
+    try {
+      const data = await getFreshness();
+      renderFreshness(container, data);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '加载失败';
+      showError(container, msg, () => loadFreshness());
+      notifyError(`知识新鲜度加载失败：${msg}`);
+    }
+  }
+
+  function renderFreshness(container: HTMLElement, data: FreshnessData): void {
+    container.classList.remove('is-loading');
+    const total = data.total || data.fresh + data.stale + data.expired || 1;
+    const buckets = [
+      { label: '新鲜（近期更新）', value: data.fresh, color: 'var(--success)' },
+      { label: '陈旧（需更新）', value: data.stale, color: 'var(--warning)' },
+      { label: '过期（建议重写）', value: data.expired, color: 'var(--danger)' },
+    ];
+    const freshPct = Math.round(toPercent(data.fresh_rate));
+    container.innerHTML = `
+      <div class="freshness-summary">
+        <div class="freshness-summary-item">
+          <span class="text-muted">新鲜度</span>
+          <strong class="freshness-rate">${freshPct}%</strong>
+        </div>
+        <div class="freshness-summary-item">
+          <span class="text-muted">文档总数</span>
+          <strong>${formatNum(data.total)}</strong>
+        </div>
+      </div>
+      <div class="bar-chart">
+        ${buckets
+          .map((b) => {
+            const p = total > 0 ? (b.value / total) * 100 : 0;
+            return `
+            <div class="bar-row">
+              <div class="bar-label">${b.label}</div>
+              <div class="bar-track">
+                <div class="bar-fill" style="width:${p.toFixed(1)}%; background:${b.color}"></div>
+              </div>
+              <div class="bar-value">${formatNum(b.value)}</div>
+            </div>`;
+          })
+          .join('')}
+      </div>`;
+  }
+
+  // ===== 7. 贡献者排名 =====
+
+  async function loadContributors(days: number): Promise<void> {
+    const container = el('contributors-body');
+    showSkeleton(container, 5, 20);
+    try {
+      const data = await getContributors(days, 10);
+      renderContributors(container, data);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '加载失败';
+      showError(container, msg, () => loadContributors(days));
+      notifyError(`贡献者排名加载失败：${msg}`);
+    }
+  }
+
+  function getContributorBadge(u: ContributorData): { label: string; cls: string } {
+    if (u.contribution_score >= 100) return { label: '金牌', cls: 'badge-gold' };
+    if (u.contribution_score >= 50) return { label: '银牌', cls: 'badge-silver' };
+    if (u.contribution_score >= 20) return { label: '铜牌', cls: 'badge-bronze' };
+    if (u.document_count >= 5) return { label: '活跃', cls: 'badge-active' };
+    return { label: '新人', cls: 'badge-new' };
+  }
+
+  function renderContributors(container: HTMLElement, items: ContributorData[]): void {
+    container.classList.remove('is-loading');
+    if (!items || items.length === 0) {
+      showEmpty(container, '暂无贡献者数据');
+      return;
+    }
+    container.innerHTML = `
+      <div class="contributor-list">
+        ${items
+          .map((u, i) => {
+            const badge = getContributorBadge(u);
+            const initial = (u.name || '?').charAt(0).toUpperCase();
+            const avatar = u.avatar
+              ? `<img class="contributor-avatar" src="${escapeHtml(u.avatar)}" alt="" />`
+              : `<div class="contributor-avatar contributor-avatar-text">${escapeHtml(initial)}</div>`;
+            const rankCls = i < 3 ? `rank-top rank-${i + 1}` : 'rank-normal';
+            return `
+            <div class="contributor-item">
+              <span class="rank-badge ${rankCls}">${i + 1}</span>
+              ${avatar}
+              <div class="contributor-body">
+                <div class="contributor-name">
+                  <span>${escapeHtml(u.name || '匿名')}</span>
+                  <span class="contributor-badge ${badge.cls}">${badge.label}</span>
+                </div>
+                <div class="text-muted contributor-meta">${escapeHtml(u.department || '-')} · 文档 ${formatNum(u.document_count)} · 回答 ${formatNum(u.answer_count)}</div>
+              </div>
+              <div class="contributor-score">
+                <div class="score-num">${formatNum(u.contribution_score)}</div>
+                <div class="text-muted score-label">贡献分</div>
+              </div>
+            </div>`;
+          })
+          .join('')}
+      </div>`;
+  }
+
+  // ===== 8. 统一加载 =====
+
+  async function loadAll(days: number): Promise<void> {
+    currentDays = days;
+    resetCycleAlert();
+    document.querySelectorAll<HTMLButtonElement>('.opd-page .range-btn').forEach((btn) => {
+      btn.classList.toggle('active', Number(btn.dataset.days) === days);
+    });
+    await Promise.allSettled([
+      loadStats(days),
+      loadHotwords(days),
+      loadZeroClick(days),
+      loadPopularDocs(days),
+      loadCoverage(),
+      loadFreshness(),
+      loadContributors(days),
+    ]);
+  }
+
+  // ===== 事件绑定 + 初始化 =====
+
+  el('range-switcher').addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('.range-btn') as HTMLButtonElement | null;
+    if (!btn) return;
+    const days = Number(btn.dataset.days);
+    if (!days || days === currentDays) return;
+    loadAll(days);
+  });
+
+  el('stats-retry').addEventListener('click', () => {
+    resetCycleAlert();
+    loadStats(currentDays);
+  });
+
+  loadAll(currentDays);
 </script>

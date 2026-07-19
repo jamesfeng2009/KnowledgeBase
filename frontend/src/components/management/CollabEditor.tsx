@@ -35,6 +35,20 @@ interface CollabEditorProps {
 /** 自动保存防抖时间（毫秒） */
 const AUTOSAVE_DEBOUNCE = 5000;
 
+/** 保存状态，用于向页面工具栏广播 */
+type SaveStatus = 'editing' | 'saving' | 'saved' | 'error';
+
+/**
+ * 向外广播保存状态（自定义事件通信）
+ * editor.astro 顶部工具栏监听 `ekb:save-status` 事件更新保存状态指示器
+ */
+function dispatchSaveStatus(status: SaveStatus): void {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(
+    new CustomEvent('ekb:save-status', { detail: { status } })
+  );
+}
+
 export function CollabEditor({ docId, user, wsToken, wsUrl }: CollabEditorProps) {
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -90,13 +104,18 @@ export function CollabEditor({ docId, user, wsToken, wsUrl }: CollabEditorProps)
   useEffect(() => {
     if (!editor) return;
     const handleUpdate = () => {
+      dispatchSaveStatus('editing');
       if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current);
       }
       saveTimerRef.current = setTimeout(() => {
-        saveDocument(editor, ydoc, docId, () => wsToken).catch((error) => {
-          alert(error instanceof Error ? error.message : '文档保存失败');
-        });
+        dispatchSaveStatus('saving');
+        saveDocument(editor, ydoc, docId, () => wsToken)
+          .then(() => dispatchSaveStatus('saved'))
+          .catch((error) => {
+            dispatchSaveStatus('error');
+            alert(error instanceof Error ? error.message : '文档保存失败');
+          });
       }, AUTOSAVE_DEBOUNCE);
     };
     editor.on('update', handleUpdate);

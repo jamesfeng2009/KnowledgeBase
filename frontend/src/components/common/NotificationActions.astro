@@ -1,0 +1,40 @@
+---
+/**
+ * NotificationActions - 通知中心顶部操作按钮组
+ *
+ * 包含三个操作按钮：
+ *   1. 全部标记已读  —— 调用 markAllAsRead
+ *   2. 触发知识日报  —— 调用 triggerDigest
+ *   3. 触发缺口预警  —— 调用 triggerGapAlert
+ *
+ * 用法：
+ *   <NotificationActions />
+ *
+ * 点击逻辑由父页面内联 script 绑定，组件本身只负责静态结构。
+ */
+---
+
+<div class="notification-actions" id="notification-actions">
+  <button type="button" class="btn btn-outline btn-sm" id="mark-all-read-btn" title="将所有未读通知标记为已读">
+    ✓ 全部标记已读
+  </button>
+  <button type="button" class="btn btn-outline btn-sm" id="trigger-digest-btn" title="手动生成本日知识日报">
+    📰 触发知识日报
+  </button>
+  <button type="button" class="btn btn-outline btn-sm" id="trigger-gap-btn" title="手动扫描并推送知识缺口预警">
+    ⚠️ 触发缺口预警
+  </button>
+</div>
+
+<style>
+  .notification-actions {
+    display: flex;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .notification-actions .btn {
+    white-space: nowrap;
+  }
+</style>

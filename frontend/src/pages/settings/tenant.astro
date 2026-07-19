@@ -1,7 +1,8 @@
 ---
 /**
  * 租户设置页面
- * 租户信息 + 套餐计划 + 用量统计 + 成员管理
+ * 租户信息 + 用量统计 + 模块门控管理
+ * 对接后端 tenants API（src/lib/apis/tenants.ts）
  */
 import DefaultLayout from '@/layouts/DefaultLayout.astro';
 
@@ -9,7 +10,7 @@ const breadcrumb = [{ label: '设置', href: '/settings/tenant' }, { label: '租
 ---
 
 <DefaultLayout title="租户设置" breadcrumb={breadcrumb}>
-  <!-- 设置导航 -->
+  <!-- 设置子导航 -->
   <div class="settings-nav" style="margin-bottom: var(--space-5);">
     <a href="/settings/tenant" class="settings-nav-item active">租户设置</a>
     <a href="/settings/api" class="settings-nav-item">API 密钥</a>
@@ -17,149 +18,131 @@ const breadcrumb = [{ label: '设置', href: '/settings/tenant' }, { label: '租
     <a href="/settings/system" class="settings-nav-item">系统设置</a>
   </div>
 
-  <!-- 租户信息 -->
-  <div class="card" style="margin-bottom: var(--space-5);">
-    <div class="card-header"><h3>租户信息</h3></div>
-    <form id="tenant-form">
-      <div class="grid grid-cols-2">
-        <div class="form-group">
-          <label class="form-label">租户名称</label>
-          <input type="text" class="form-input" name="name" value="某科技有限公司" />
-        </div>
-        <div class="form-group">
-          <label class="form-label">租户 ID</label>
-          <input type="text" class="form-input" value="tenant-001" disabled />
-        </div>
-        <div class="form-group">
-          <label class="form-label">联系人</label>
-          <input type="text" class="form-input" name="contact" value="张三" />
-        </div>
-        <div class="form-group">
-          <label class="form-label">联系电话</label>
-          <input type="text" class="form-input" name="phone" value="138-0000-0000" />
-        </div>
-        <div class="form-group">
-          <label class="form-label">联系邮箱</label>
-          <input type="email" class="form-input" name="email" value="admin@company.com" />
-        </div>
-        <div class="form-group">
-          <label class="form-label">创建时间</label>
-          <input type="text" class="form-input" value="2025-06-01" disabled />
-        </div>
-      </div>
-      <button type="submit" class="btn btn-primary">保存信息</button>
-    </form>
+  <!-- 页面标题 -->
+  <div class="page-header" style="margin-bottom: var(--space-5);">
+    <h1 class="page-title">租户设置</h1>
+    <span class="text-muted" style="font-size: var(--text-sm);">管理租户信息、查看用量、配置功能模块</span>
   </div>
 
-  <!-- 套餐计划 -->
-  <div class="card" style="margin-bottom: var(--space-5);">
-    <div class="card-header">
-      <h3>套餐计划</h3>
-      <span class="badge badge-success">企业版</span>
-    </div>
-    <div class="grid grid-cols-3">
-      <div class="plan-card">
-        <div class="plan-name">基础版</div>
-        <div class="plan-price">¥0/月</div>
-        <ul class="plan-features">
-          <li>100 篇文档</li>
-          <li>5 个用户</li>
-          <li>基础搜索</li>
-        </ul>
-        <button class="btn btn-outline btn-block">切换</button>
-      </div>
-      <div class="plan-card active">
-        <span class="plan-current">当前套餐</span>
-        <div class="plan-name">企业版</div>
-        <div class="plan-price">¥2,999/月</div>
-        <ul class="plan-features">
-          <li>无限文档</li>
-          <li>无限用户</li>
-          <li>AI 对话 + 工作流</li>
-          <li>知识图谱</li>
-          <li>优先支持</li>
-        </ul>
-        <button class="btn btn-primary btn-block" disabled>当前套餐</button>
-      </div>
-      <div class="plan-card">
-        <div class="plan-name">专业版</div>
-        <div class="plan-price">¥999/月</div>
-        <ul class="plan-features">
-          <li>5000 篇文档</li>
-          <li>50 个用户</li>
-          <li>AI 对话</li>
-        </ul>
-        <button class="btn btn-outline btn-block">切换</button>
-      </div>
-    </div>
+  <!-- 加载状态 -->
+  <div id="loading-state" class="state-container">
+    <div class="state-spinner"></div>
+    <div class="state-text">加载中...</div>
   </div>
 
-  <!-- 用量统计 -->
-  <div class="card" style="margin-bottom: var(--space-5);">
-    <div class="card-header"><h3>用量统计（本月）</h3></div>
-    <div class="grid grid-cols-4">
-      <div class="usage-item">
-        <div class="text-muted" style="font-size: var(--text-sm);">文档存储</div>
-        <div style="font-size: var(--text-xl); font-weight: 600;">8.2 / 100 GB</div>
-        <div class="usage-bar"><div class="usage-bar-fill" style="width: 8%;"></div></div>
-      </div>
-      <div class="usage-item">
-        <div class="text-muted" style="font-size: var(--text-sm);">AI 调用</div>
-        <div style="font-size: var(--text-xl); font-weight: 600;">15.4K / 50K</div>
-        <div class="usage-bar"><div class="usage-bar-fill" style="width: 31%;"></div></div>
-      </div>
-      <div class="usage-item">
-        <div class="text-muted" style="font-size: var(--text-sm);">活跃用户</div>
-        <div style="font-size: var(--text-xl); font-weight: 600;">256 / 无限</div>
-        <div class="usage-bar"><div class="usage-bar-fill" style="width: 100%; background: var(--success);"></div></div>
-      </div>
-      <div class="usage-item">
-        <div class="text-muted" style="font-size: var(--text-sm);">Token 消耗</div>
-        <div style="font-size: var(--text-xl); font-weight: 600;">1.2M / 5M</div>
-        <div class="usage-bar"><div class="usage-bar-fill" style="width: 24%; background: var(--warning);"></div></div>
-      </div>
-    </div>
+  <!-- 错误状态 -->
+  <div id="error-state" class="state-container" style="display: none;">
+    <div class="state-icon">!</div>
+    <div class="state-text" id="error-message">加载失败，请稍后重试</div>
+    <button class="btn btn-primary" id="retry-btn">重试</button>
   </div>
 
-  <!-- 成员管理 -->
-  <div class="card">
-    <div class="card-header">
-      <h3>成员管理</h3>
-      <button class="btn btn-primary btn-sm" id="invite-member">＋ 邀请成员</button>
+  <!-- 主内容 -->
+  <div id="main-content" style="display: none;">
+    <!-- 标签页导航 -->
+    <div class="tabs-nav" style="margin-bottom: var(--space-5);">
+      <button class="tab-btn active" data-tab="tenant" type="button">租户信息</button>
+      <button class="tab-btn" data-tab="usage" type="button">用量统计</button>
+      <button class="tab-btn" data-tab="modules" type="button">模块管理</button>
     </div>
-    <div style="overflow-x: auto;">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>成员</th>
-            <th>邮箱</th>
-            <th>角色</th>
-            <th>加入时间</th>
-            <th>操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td><div style="display: flex; align-items: center; gap: var(--space-2); font-weight: 500;"><div class="avatar avatar-sm">张</div>张三</div></td>
-            <td class="text-muted">zhangsan@company.com</td>
-            <td><span class="badge badge-primary">超级管理员</span></td>
-            <td class="text-muted">2025-06-01</td>
-            <td><button class="btn btn-ghost btn-sm">管理</button></td>
-          </tr>
-          <tr>
-            <td><div style="display: flex; align-items: center; gap: var(--space-2); font-weight: 500;"><div class="avatar avatar-sm" style="background: var(--success);">李</div>李四</div></td>
-            <td class="text-muted">lisi@company.com</td>
-            <td><span class="badge badge-success">管理员</span></td>
-            <td class="text-muted">2025-06-15</td>
-            <td><button class="btn btn-ghost btn-sm">管理</button></td>
-          </tr>
-        </tbody>
-      </table>
+
+    <!-- 租户信息标签页 -->
+    <div class="tab-panel active" id="tab-tenant">
+      <div class="card">
+        <div class="card-header card-header-flex">
+          <h3>租户信息</h3>
+          <span id="plan-badge" class="badge">--</span>
+        </div>
+        <form id="tenant-form">
+          <div class="grid grid-cols-2">
+            <div class="form-group">
+              <label class="form-label" for="tenant-name">租户名称</label>
+              <input type="text" class="form-input" name="name" id="tenant-name" placeholder="请输入租户名称" />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="tenant-domain">域名</label>
+              <input type="text" class="form-input" name="domain" id="tenant-domain" placeholder="example.com" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">租户 ID</label>
+              <input type="text" class="form-input" id="tenant-id-display" disabled />
+            </div>
+            <div class="form-group">
+              <label class="form-label">到期时间</label>
+              <input type="text" class="form-input" id="tenant-expired-display" disabled />
+            </div>
+            <div class="form-group">
+              <label class="form-label">最大用户数</label>
+              <input type="text" class="form-input" id="tenant-max-users-display" disabled />
+            </div>
+            <div class="form-group">
+              <label class="form-label">创建时间</label>
+              <input type="text" class="form-input" id="tenant-created-display" disabled />
+            </div>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary" id="save-tenant-btn">保存</button>
+            <button type="button" class="btn btn-outline" id="upgrade-btn">升级套餐</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- 用量统计标签页 -->
+    <div class="tab-panel" id="tab-usage">
+      <div class="grid grid-cols-4">
+        <div class="card stat-card-item">
+          <div class="stat-label">用户数</div>
+          <div class="stat-value" id="usage-users">--</div>
+          <div class="progress-bar">
+            <div class="progress-fill" id="progress-users" style="width: 0%;"></div>
+          </div>
+          <div class="stat-meta" id="meta-users">--</div>
+        </div>
+        <div class="card stat-card-item">
+          <div class="stat-label">存储用量</div>
+          <div class="stat-value" id="usage-storage">--</div>
+          <div class="progress-bar">
+            <div class="progress-fill" id="progress-storage" style="width: 0%;"></div>
+          </div>
+          <div class="stat-meta" id="meta-storage">--</div>
+        </div>
+        <div class="card stat-card-item">
+          <div class="stat-label">文档总数</div>
+          <div class="stat-value" id="usage-docs">--</div>
+          <div class="stat-meta">所有知识库文档</div>
+        </div>
+        <div class="card stat-card-item">
+          <div class="stat-label">知识库数</div>
+          <div class="stat-value" id="usage-kbs">--</div>
+          <div class="stat-meta">已创建知识库</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 模块管理标签页 -->
+    <div class="tab-panel" id="tab-modules">
+      <div class="card">
+        <div class="card-header"><h3>模块管理</h3></div>
+        <p class="text-muted module-tip">
+          开启或关闭功能模块。基础模块默认启用且不可关闭；切换开关会即时生效，底部「保存配置」可批量提交当前状态。
+        </p>
+        <div id="module-list">
+          <div class="state-container" id="module-loading">
+            <div class="state-spinner"></div>
+            <div class="state-text">加载模块中...</div>
+          </div>
+        </div>
+        <div class="form-actions" style="margin-top: var(--space-5);">
+          <button type="button" class="btn btn-primary" id="save-modules-btn">保存配置</button>
+        </div>
+      </div>
     </div>
   </div>
 </DefaultLayout>
 
 <style>
+  /* === 设置子导航 === */
   .settings-nav {
     display: flex;
     gap: var(--space-1);
@@ -181,99 +164,603 @@ const breadcrumb = [{ label: '设置', href: '/settings/tenant' }, { label: '租
     border-bottom-color: var(--primary);
     font-weight: 500;
   }
-  .plan-card {
-    border: 2px solid var(--border);
-    border-radius: var(--radius-lg);
-    padding: var(--space-5);
-    text-align: center;
-    position: relative;
-    transition: all var(--transition);
+
+  /* === 标签页导航 === */
+  .tabs-nav {
+    display: flex;
+    gap: var(--space-1);
+    border-bottom: 1px solid var(--border);
   }
-  .plan-card.active {
-    border-color: var(--primary);
-    background: var(--primary-bg);
-  }
-  .plan-current {
-    position: absolute;
-    top: -10px;
-    left: 50%;
-    transform: translateX(-50%);
-    background: var(--primary);
-    color: var(--text-white);
-    padding: 2px var(--space-3);
-    border-radius: var(--radius-full);
-    font-size: var(--text-xs);
-    white-space: nowrap;
-  }
-  .plan-name {
-    font-size: var(--text-lg);
-    font-weight: 600;
-    margin-bottom: var(--space-2);
-  }
-  .plan-price {
-    font-size: var(--text-3xl);
-    font-weight: 600;
-    color: var(--primary);
-    margin-bottom: var(--space-4);
-  }
-  .plan-features {
-    text-align: left;
-    margin-bottom: var(--space-5);
-  }
-  .plan-features li {
-    list-style: none;
-    padding: var(--space-1) 0;
+  .tab-btn {
+    padding: var(--space-3) var(--space-5);
     font-size: var(--text-sm);
-    color: var(--text-secondary);
+    color: var(--text-muted);
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    transition: all var(--transition-fast);
   }
-  .plan-features li::before {
-    content: '✓';
-    color: var(--success);
-    margin-right: var(--space-2);
+  .tab-btn:hover {
+    color: var(--primary);
   }
-  .usage-item {
-    padding: var(--space-3) 0;
+  .tab-btn.active {
+    color: var(--primary);
+    border-bottom-color: var(--primary);
+    font-weight: 500;
   }
-  .usage-bar {
+  .tab-panel {
+    display: none;
+  }
+  .tab-panel.active {
+    display: block;
+  }
+
+  /* === 加载/错误状态 === */
+  .state-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-3);
+    padding: var(--space-10) var(--space-5);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    min-height: 200px;
+  }
+  .state-spinner {
+    width: 32px;
+    height: 32px;
+    border: 3px solid var(--border);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+  .state-text {
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+  }
+  .state-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: var(--warning-bg);
+    color: var(--warning);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: var(--text-2xl);
+    font-weight: 700;
+  }
+
+  /* === 卡片头部 flex === */
+  .card-header-flex {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  /* === 套餐 Badge === */
+  .badge-plan-free {
+    background: var(--surface-muted);
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+  }
+  .badge-plan-pro {
+    background: var(--info-bg);
+    color: var(--info);
+  }
+  .badge-plan-enterprise {
+    background: var(--primary-bg);
+    color: var(--primary);
+  }
+
+  /* === 表单操作区 === */
+  .form-actions {
+    display: flex;
+    gap: var(--space-3);
+    margin-top: var(--space-4);
+  }
+
+  /* === 用量统计卡片 === */
+  .stat-card-item {
+    padding: var(--space-5);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+  .stat-label {
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+  }
+  .stat-value {
+    font-size: var(--text-xl);
+    font-weight: 600;
+    color: var(--text);
+    word-break: break-word;
+  }
+  .progress-bar {
     height: 6px;
     background: var(--surface-muted);
     border-radius: var(--radius-full);
     overflow: hidden;
-    margin-top: var(--space-2);
+    margin-top: var(--space-1);
   }
-  .usage-bar-fill {
+  .progress-fill {
     height: 100%;
     background: var(--primary);
     border-radius: var(--radius-full);
+    transition: width var(--transition-slow), background var(--transition-fast);
   }
-  .data-table {
-    width: 100%;
-    border-collapse: collapse;
+  .progress-fill.warning {
+    background: var(--warning);
   }
-  .data-table th {
-    text-align: left;
-    padding: var(--space-3) var(--space-4);
-    font-size: var(--text-sm);
-    font-weight: 600;
+  .progress-fill.danger {
+    background: var(--danger);
+  }
+  .stat-meta {
+    font-size: var(--text-xs);
     color: var(--text-muted);
-    border-bottom: 1px solid var(--border);
-    background: var(--surface-muted);
   }
-  .data-table td {
-    padding: var(--space-3) var(--space-4);
+
+  /* === 模块管理 === */
+  .module-tip {
     font-size: var(--text-sm);
+    margin-bottom: var(--space-4);
+    line-height: var(--lh-relaxed);
+  }
+  .module-group {
+    margin-bottom: var(--space-5);
+  }
+  .module-group:last-child {
+    margin-bottom: 0;
+  }
+  .module-group-title {
+    font-size: var(--text-base);
+    font-weight: 600;
     color: var(--text);
-    border-bottom: 1px solid var(--border-light);
+    margin-bottom: var(--space-3);
+    padding-bottom: var(--space-2);
+    border-bottom: 1px solid var(--border);
+  }
+  .module-group-cards {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--space-3);
+  }
+  .module-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: var(--space-4);
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-4);
+    box-shadow: var(--shadow-xs);
+    transition: box-shadow var(--transition), border-color var(--transition-fast);
+  }
+  .module-card:hover {
+    box-shadow: var(--shadow-md);
+    border-color: var(--border-dark);
+  }
+  .module-card-info {
+    flex: 1;
+    min-width: 0;
+  }
+  .module-card-title {
+    font-size: var(--text-base);
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: var(--space-1);
+  }
+  .module-card-desc {
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    line-height: var(--lh-relaxed);
+    margin-bottom: var(--space-2);
+  }
+  .module-card-tag {
+    background: var(--surface-muted);
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+    font-size: var(--text-xs);
+  }
+
+  /* === 开关组件 === */
+  .switch {
+    position: relative;
+    display: inline-block;
+    width: 40px;
+    height: 22px;
+    flex-shrink: 0;
+  }
+  .switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+  .switch-slider {
+    position: absolute;
+    cursor: pointer;
+    inset: 0;
+    background: var(--border-dark);
+    border-radius: var(--radius-full);
+    transition: var(--transition);
+  }
+  .switch-slider::before {
+    content: '';
+    position: absolute;
+    height: 16px;
+    width: 16px;
+    left: 3px;
+    bottom: 3px;
+    background: var(--surface);
+    border-radius: 50%;
+    transition: var(--transition);
+  }
+  .switch input:checked + .switch-slider {
+    background: var(--primary);
+  }
+  .switch input:checked + .switch-slider::before {
+    transform: translateX(18px);
+  }
+  .switch input:disabled + .switch-slider {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .switch input:disabled:checked + .switch-slider {
+    background: var(--text-muted);
+  }
+
+  /* === 响应式 === */
+  @media (max-width: 768px) {
+    .module-group-cards {
+      grid-template-columns: 1fr;
+    }
+    .form-actions {
+      flex-direction: column;
+    }
+    .form-actions .btn {
+      width: 100%;
+    }
   }
 </style>
 
 <script>
-  document.getElementById('tenant-form')?.addEventListener('submit', (e) => {
-    e.preventDefault();
-    alert('租户信息已保存');
-  });
-  document.getElementById('invite-member')?.addEventListener('click', () => {
-    const email = prompt('请输入被邀请人的邮箱：');
-    if (email) alert(`邀请链接已发送至 ${email}`);
-  });
+  import {
+    getCurrentTenant,
+    updateTenant,
+    getTenantUsage,
+    getTenantModules,
+    toggleTenantModule,
+    updateTenantModules,
+  } from '@/lib/apis/tenants';
+  import type { Tenant, TenantUsage, ModuleInfo } from '@/lib/apis/tenants';
+
+  // ===== 状态缓存 =====
+  let modulesCache: ModuleInfo[] = [];
+
+  // ===== 常量映射 =====
+  const PLAN_LABELS: Record<string, string> = {
+    free: '免费版',
+    pro: '专业版',
+    enterprise: '企业版',
+  };
+  const PLAN_ORDER: string[] = ['free', 'pro', 'enterprise'];
+  const CATEGORY_LABELS: Record<string, string> = {
+    basic: '基础模块',
+    intelligence: '智能处理',
+    integration: '集成与发现',
+  };
+
+  // ===== 工具函数 =====
+  function escapeHtml(s: string): string {
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  /** 字节 → GB（除以 1073741824，保留 2 位小数） */
+  function formatBytes(bytes: number): string {
+    const gb = bytes / 1073741824;
+    return gb.toFixed(2) + ' GB';
+  }
+
+  function formatDate(dateStr: string | null): string {
+    if (!dateStr) return '永久有效';
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return dateStr;
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
+
+  function percent(used: number, total: number): number {
+    if (!total || total <= 0) return 0;
+    return Math.min(100, (used / total) * 100);
+  }
+
+  function getErrMsg(err: unknown, fallback: string): string {
+    if (err instanceof Error && err.message) return err.message;
+    return fallback;
+  }
+
+  // ===== UI 状态切换 =====
+  function showLoading() {
+    document.getElementById('loading-state')!.style.display = '';
+    document.getElementById('error-state')!.style.display = 'none';
+    document.getElementById('main-content')!.style.display = 'none';
+  }
+
+  function showError(msg: string) {
+    document.getElementById('loading-state')!.style.display = 'none';
+    document.getElementById('error-state')!.style.display = '';
+    document.getElementById('error-message')!.textContent = msg;
+    document.getElementById('main-content')!.style.display = 'none';
+  }
+
+  function showContent() {
+    document.getElementById('loading-state')!.style.display = 'none';
+    document.getElementById('error-state')!.style.display = 'none';
+    document.getElementById('main-content')!.style.display = '';
+  }
+
+  // ===== 渲染：租户信息 =====
+  function renderTenant(tenant: Tenant) {
+    (document.getElementById('tenant-name') as HTMLInputElement).value = tenant.name || '';
+    (document.getElementById('tenant-domain') as HTMLInputElement).value = tenant.domain || '';
+    (document.getElementById('tenant-id-display') as HTMLInputElement).value = tenant.id || '';
+    (document.getElementById('tenant-expired-display') as HTMLInputElement).value = formatDate(tenant.expired_at);
+    (document.getElementById('tenant-max-users-display') as HTMLInputElement).value =
+      tenant.max_users > 0 ? String(tenant.max_users) : '不限';
+    (document.getElementById('tenant-created-display') as HTMLInputElement).value = formatDate(tenant.created_at);
+
+    // 套餐 badge
+    const planBadge = document.getElementById('plan-badge')!;
+    const planKey = tenant.plan || 'free';
+    planBadge.textContent = PLAN_LABELS[planKey] || planKey;
+    planBadge.className = 'badge badge-plan-' + planKey;
+
+    // 升级按钮
+    const upgradeBtn = document.getElementById('upgrade-btn') as HTMLButtonElement;
+    const currentIdx = PLAN_ORDER.indexOf(planKey);
+    if (currentIdx >= 0 && currentIdx < PLAN_ORDER.length - 1) {
+      const nextPlan = PLAN_ORDER[currentIdx + 1];
+      const nextLabel = PLAN_LABELS[nextPlan];
+      upgradeBtn.textContent = `升级到 ${nextLabel}`;
+      upgradeBtn.disabled = false;
+      upgradeBtn.dataset.targetPlan = nextPlan;
+      upgradeBtn.style.display = '';
+    } else {
+      upgradeBtn.textContent = '已是最高套餐';
+      upgradeBtn.disabled = true;
+      delete upgradeBtn.dataset.targetPlan;
+    }
+  }
+
+  // ===== 渲染：用量统计 =====
+  function renderUsage(tenant: Tenant, usage: TenantUsage) {
+    // 用户数：user_count / max_users
+    const userPct = percent(usage.user_count, tenant.max_users);
+    const userHasLimit = tenant.max_users > 0;
+    document.getElementById('usage-users')!.textContent = userHasLimit
+      ? `${usage.user_count} / ${tenant.max_users}`
+      : `${usage.user_count} / 不限`;
+    const userProgress = document.getElementById('progress-users')!;
+    userProgress.style.width = (userHasLimit ? userPct : 0) + '%';
+    userProgress.classList.toggle('warning', userHasLimit && userPct >= 80);
+    userProgress.classList.toggle('danger', userHasLimit && userPct >= 100);
+    document.getElementById('meta-users')!.textContent = userHasLimit
+      ? `${userPct.toFixed(1)}% 已使用`
+      : '无限制';
+
+    // 存储用量：storage_used / storage_limit（格式化为 GB）
+    const storagePct = percent(usage.storage_used, usage.storage_limit);
+    const storageHasLimit = usage.storage_limit > 0;
+    document.getElementById('usage-storage')!.textContent = storageHasLimit
+      ? `${formatBytes(usage.storage_used)} / ${formatBytes(usage.storage_limit)}`
+      : `${formatBytes(usage.storage_used)} / 不限`;
+    const storageProgress = document.getElementById('progress-storage')!;
+    storageProgress.style.width = (storageHasLimit ? storagePct : 0) + '%';
+    storageProgress.classList.toggle('warning', storageHasLimit && storagePct >= 80);
+    storageProgress.classList.toggle('danger', storageHasLimit && storagePct >= 100);
+    document.getElementById('meta-storage')!.textContent = storageHasLimit
+      ? `${storagePct.toFixed(1)}% 已使用`
+      : '无限制';
+
+    // 文档总数
+    document.getElementById('usage-docs')!.textContent = String(usage.document_count || 0);
+
+    // 知识库数
+    document.getElementById('usage-kbs')!.textContent = String(usage.kb_count || 0);
+  }
+
+  // ===== 渲染：模块管理 =====
+  function renderModules(modules: ModuleInfo[]) {
+    modulesCache = modules.slice();
+    const container = document.getElementById('module-list')!;
+
+    // 按分类分组
+    const grouped: Record<string, ModuleInfo[]> = {};
+    for (const m of modules) {
+      const cat = m.category || 'basic';
+      if (!grouped[cat]) grouped[cat] = [];
+      grouped[cat].push(m);
+    }
+
+    // 按 basic / intelligence / integration 顺序输出，其它分类追加在末尾
+    const orderedCats = ['basic', 'intelligence', 'integration'];
+    const cats = [
+      ...orderedCats.filter((c) => (grouped[c]?.length ?? 0) > 0),
+      ...Object.keys(grouped).filter((c) => !orderedCats.includes(c)),
+    ];
+
+    if (modules.length === 0) {
+      container.innerHTML = '<div class="state-text" style="padding: var(--space-5); text-align: center;">暂无可用模块</div>';
+      return;
+    }
+
+    const html = cats
+      .map((cat) => {
+        const mods = grouped[cat] || [];
+        const label = CATEGORY_LABELS[cat] || cat;
+        const cards = mods
+          .map((m) => {
+            const tag = m.is_basic
+              ? '<span class="badge module-card-tag">基础模块，不可关闭</span>'
+              : '';
+            return `
+              <div class="module-card" data-module-id="${escapeHtml(m.id)}">
+                <div class="module-card-info">
+                  <div class="module-card-title">${escapeHtml(m.name)}</div>
+                  <div class="module-card-desc">${escapeHtml(m.description)}</div>
+                  ${tag}
+                </div>
+                <label class="switch">
+                  <input type="checkbox" data-module-id="${escapeHtml(m.id)}" ${m.enabled ? 'checked' : ''} ${m.is_basic ? 'disabled' : ''} />
+                  <span class="switch-slider"></span>
+                </label>
+              </div>`;
+          })
+          .join('');
+        return `
+          <div class="module-group">
+            <div class="module-group-title">${escapeHtml(label)}</div>
+            <div class="module-group-cards">${cards}</div>
+          </div>`;
+      })
+      .join('');
+
+    container.innerHTML = html;
+
+    // 绑定开关事件
+    container.querySelectorAll<HTMLInputElement>('input[type="checkbox"][data-module-id]').forEach((el) => {
+      el.addEventListener('change', async () => {
+        const moduleId = el.dataset.moduleId!;
+        const enabled = el.checked;
+        const mod = modulesCache.find((m) => m.id === moduleId);
+        if (!mod) return;
+        // 基础模块不应触发（已 disabled），保险起见再判断一次
+        if (mod.is_basic) {
+          el.checked = true;
+          return;
+        }
+        const oldEnabled = mod.enabled;
+        // 乐观更新本地缓存
+        mod.enabled = enabled;
+        try {
+          await toggleTenantModule(moduleId, enabled);
+        } catch (err) {
+          // 回滚开关状态
+          mod.enabled = oldEnabled;
+          el.checked = oldEnabled;
+          alert('模块切换失败：' + getErrMsg(err, '请重试'));
+        }
+      });
+    });
+  }
+
+  // ===== 数据加载 =====
+  async function loadAll() {
+    showLoading();
+    try {
+      const [tenant, usage, modules] = await Promise.all([
+        getCurrentTenant(),
+        getTenantUsage(),
+        getTenantModules(),
+      ]);
+      renderTenant(tenant);
+      renderUsage(tenant, usage);
+      renderModules(modules);
+      showContent();
+    } catch (err) {
+      showError('加载失败：' + getErrMsg(err, '请稍后重试'));
+    }
+  }
+
+  // ===== 事件绑定 =====
+  function bindEvents() {
+    // 标签页切换
+    document.querySelectorAll<HTMLButtonElement>('.tab-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const tab = btn.dataset.tab;
+        if (!tab) return;
+        document.querySelectorAll('.tab-btn').forEach((b) => b.classList.toggle('active', b === btn));
+        document.querySelectorAll('.tab-panel').forEach((p) => p.classList.remove('active'));
+        const panel = document.getElementById('tab-' + tab);
+        panel?.classList.add('active');
+      });
+    });
+
+    // 租户信息表单提交
+    document.getElementById('tenant-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const name = (document.getElementById('tenant-name') as HTMLInputElement).value.trim();
+      const domain = (document.getElementById('tenant-domain') as HTMLInputElement).value.trim();
+      if (!name) {
+        alert('请输入租户名称');
+        return;
+      }
+      const saveBtn = document.getElementById('save-tenant-btn') as HTMLButtonElement;
+      const originalText = saveBtn.textContent;
+      saveBtn.disabled = true;
+      saveBtn.textContent = '保存中...';
+      try {
+        const updated = await updateTenant({ name, domain: domain || null });
+        renderTenant(updated);
+        alert('租户信息已保存');
+      } catch (err) {
+        alert('保存失败：' + getErrMsg(err, '请重试'));
+      } finally {
+        saveBtn.disabled = false;
+        saveBtn.textContent = originalText;
+      }
+    });
+
+    // 升级套餐按钮
+    document.getElementById('upgrade-btn')?.addEventListener('click', (e) => {
+      const btn = e.currentTarget as HTMLButtonElement;
+      const target = btn.dataset.targetPlan;
+      if (!target) return;
+      const label = PLAN_LABELS[target] || target;
+      alert(`请联系销售人员升级到「${label}」套餐`);
+    });
+
+    // 模块批量保存
+    document.getElementById('save-modules-btn')?.addEventListener('click', async () => {
+      const enabledIds = modulesCache.filter((m) => m.enabled).map((m) => m.id);
+      const btn = document.getElementById('save-modules-btn') as HTMLButtonElement;
+      const originalText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = '保存中...';
+      try {
+        await updateTenantModules(enabledIds);
+        alert('模块配置已保存');
+        // 重新拉取模块列表以同步状态
+        const fresh = await getTenantModules();
+        renderModules(fresh);
+      } catch (err) {
+        alert('保存失败：' + getErrMsg(err, '请重试'));
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
+    });
+
+    // 重试按钮
+    document.getElementById('retry-btn')?.addEventListener('click', loadAll);
+  }
+
+  // ===== 初始化 =====
+  bindEvents();
+  loadAll();
 </script>

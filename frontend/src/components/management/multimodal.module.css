@@ -1,0 +1,441 @@
+/* ============================================
+   多模态处理 React 组件专用样式
+   依赖 global.css 中的 CSS 变量
+   作为 CSS Module 使用，类名经构建期哈希作用域隔离
+   覆盖：白板拍照上传 / 扫描件 OCR 两个组件
+   ============================================ */
+
+/* === 组件根容器 === */
+.wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+/* === 上传区（idle 状态） === */
+.uploadZone {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-10) var(--space-6);
+  border: 2px dashed var(--border-dark);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  text-align: center;
+  cursor: pointer;
+  transition: border-color var(--transition), background var(--transition),
+    transform var(--transition-fast);
+}
+
+.uploadZone:hover {
+  border-color: var(--primary);
+  background: var(--primary-bg);
+}
+
+.uploadZone.dragover {
+  border-color: var(--primary);
+  background: var(--primary-bg-hover);
+  transform: scale(1.01);
+}
+
+.uploadZoneIcon {
+  font-size: 48px;
+  line-height: 1;
+}
+
+.uploadZoneTitle {
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.uploadZoneTitleHint {
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.uploadZoneDesc {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  line-height: var(--lh-normal);
+}
+
+.uploadZoneBtn {
+  margin-top: var(--space-2);
+}
+
+/* 隐藏的文件输入 */
+.fileInput {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* === 状态卡片（uploading / parsing / processing / error） === */
+.statusCard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-8) var(--space-6);
+  background: var(--primary-bg);
+  border: 1px solid var(--primary-light);
+  border-radius: var(--radius-lg);
+  text-align: center;
+}
+
+.statusCardError {
+  background: var(--danger-bg);
+  border-color: var(--danger);
+}
+
+.statusIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-full);
+  font-size: 28px;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.statusIconError {
+  color: var(--danger);
+}
+
+.statusText {
+  font-size: var(--text-md);
+  font-weight: 500;
+  color: var(--primary-dark);
+}
+
+.statusTextError {
+  color: var(--danger);
+}
+
+.statusHint {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+/* === 旋转图标（parsing / processing 状态） === */
+.spinner {
+  display: inline-block;
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--primary-bg);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* AI 解析时的呼吸光晕 */
+.pulseIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-full);
+  font-size: 26px;
+  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
+  color: var(--text-white);
+  animation: aiPulse 1.6s ease-in-out infinite;
+}
+
+@keyframes aiPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(108, 92, 231, 0.45);
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 0 0 0 10px rgba(108, 92, 231, 0);
+    transform: scale(1.05);
+  }
+}
+
+/* === 进度条（uploading 状态，不确定进度动画） === */
+.progressWrap {
+  width: 100%;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.progressBar {
+  position: relative;
+  width: 100%;
+  height: 6px;
+  background: var(--surface);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+
+.progressFill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 40%;
+  background: linear-gradient(90deg, var(--primary) 0%, var(--primary-light) 100%);
+  border-radius: var(--radius-full);
+  animation: progressMove 1.4s ease-in-out infinite;
+}
+
+@keyframes progressMove {
+  0% {
+    left: -40%;
+  }
+  100% {
+    left: 100%;
+  }
+}
+
+.progressPercent {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+/* === 结果区域（done 状态） === */
+.resultCard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.resultHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border-light);
+}
+
+.resultTitle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.resultBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px var(--space-3);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-white);
+  border-radius: var(--radius-full);
+  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
+}
+
+/* === 摘要区块 === */
+.summaryBlock {
+  padding: var(--space-4);
+  background: linear-gradient(135deg, var(--primary-bg) 0%, var(--surface) 100%);
+  border: 1px solid var(--primary-light);
+  border-left: 4px solid var(--primary);
+  border-radius: var(--radius);
+}
+
+.blockLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--primary-dark);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: var(--space-2);
+}
+
+.summaryText {
+  font-size: var(--text-base);
+  line-height: var(--lh-relaxed);
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* === 关键要点列表 === */
+.keyPointsList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-left: var(--space-2);
+  list-style: none;
+}
+
+.keyPointItem {
+  position: relative;
+  padding-left: var(--space-5);
+  font-size: var(--text-sm);
+  line-height: var(--lh-normal);
+  color: var(--text);
+  word-break: break-word;
+}
+
+.keyPointItem::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 8px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--primary);
+}
+
+/* === 行动项列表 === */
+.actionList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.actionItem {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  transition: border-color var(--transition-fast);
+}
+
+.actionItem:hover {
+  border-color: var(--primary-light);
+}
+
+.actionContent {
+  font-size: var(--text-sm);
+  color: var(--text);
+  line-height: var(--lh-normal);
+  word-break: break-word;
+}
+
+.actionMeta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.actionMetaItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.actionMetaItemStrong {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.actionEmpty {
+  padding: var(--space-3);
+  text-align: center;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  background: var(--surface-muted);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+}
+
+/* === OCR 元信息（页数 + 置信度） === */
+.ocrMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.ocrMetaItem {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px var(--space-2);
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+}
+
+.ocrMetaValue {
+  font-weight: 600;
+  color: var(--primary);
+}
+
+/* === OCR 文本编辑区 === */
+.ocrTextarea {
+  width: 100%;
+  min-height: 200px;
+  padding: var(--space-3) var(--space-4);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: var(--lh-relaxed);
+  color: var(--text);
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  resize: vertical;
+}
+
+.ocrTextarea:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-bg);
+  outline: none;
+  background: var(--surface);
+}
+
+/* === 操作按钮区 === */
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  justify-content: flex-end;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-light);
+}
+
+/* === 错误信息文本 === */
+.errorText {
+  font-size: var(--text-sm);
+  color: var(--danger);
+  line-height: var(--lh-normal);
+  max-width: 360px;
+  word-break: break-word;
+}
