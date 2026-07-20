@@ -348,34 +348,85 @@ async def _process_document_async(doc_id: str) -> dict[str, Any]:
             strategies=[c.chunk_strategy for c in chunk_objects],
         )
 
-        # 4. 向量化（延迟导入，外部服务不可用时优雅降级）
+        # 4-5. 向量化 + 索引  ‖  知识图谱构建（并行执行）
+        #
+        # 方向一：分块完成后并行执行两条支线，避免串行等待：
+        #   支线 A：向量化 → 索引构建（全文索引 + 向量索引）
+        #   支线 B：知识图谱构建（三元组抽取 → Neo4j 写入）
+        #
+        # 方向二：支线 B 直接复用 chunk_objects，避免重复分块计算。
+        # GraphService.extract_triples_from_chunks 从同一批 chunks 抽取三元组。
+        #
+        # 知识图谱构建受模块开关控制：仅当租户启用 knowledge_graph 模块时执行。
         _update_parse_progress(
             doc_id,
             stage="embedding",
             total=len(chunks),
-            message=f"正在向量化 {len(chunks)} 个文本块",
+            message=f"正在并行处理：向量化 {len(chunks)} 个文本块 + 知识图谱构建",
         )
+
+        async def _pipeline_index() -> tuple[list[list[float]], list[str]]:
+            """支线 A：向量化 + 索引构建。"""
+            try:
+                emb = await _generate_embeddings(chunks)
+                logger.info(
+                    "document.embedded",
+                    doc_id=doc_id,
+                    embedding_count=len(emb),
+                )
+            except Exception as exc:
+                logger.warning("document.embed_failed", doc_id=doc_id, error=str(exc))
+                emb = []
+                warnings.append(f"向量化失败（已降级为空向量）: {str(exc)[:200]}")
+
+            _update_parse_progress(
+                doc_id, stage="indexing", message="正在构建全文索引和向量索引"
+            )
+            try:
+                await _build_indexes(doc_id, chunk_objects, chunks, emb)
+            except Exception as exc:
+                logger.warning("document.index_failed", doc_id=doc_id, error=str(exc))
+                warnings.append(f"索引构建失败: {str(exc)[:200]}")
+            return emb, warnings
+
+        async def _pipeline_graph() -> None:
+            """支线 B：知识图谱构建（计算复用 chunk_objects）。"""
+            try:
+                await _build_knowledge_graph(doc_id, chunk_objects, doc)
+            except Exception as exc:
+                logger.warning(
+                    "document.graph_build_failed",
+                    doc_id=doc_id,
+                    error=str(exc),
+                )
+                warnings.append(f"知识图谱构建失败: {str(exc)[:200]}")
+
+        # 检查租户是否启用 knowledge_graph 模块
+        graph_enabled = False
         try:
-            embeddings = await _generate_embeddings(chunks)
-            logger.info(
-                "document.embedded",
-                doc_id=doc_id,
-                embedding_count=len(embeddings),
+            from app.services.tenant_service import TenantService
+
+            tenant_svc = TenantService(session)
+            graph_enabled = await tenant_svc.is_module_enabled(
+                "knowledge_graph", doc.tenant_id
             )
         except Exception as exc:
-            logger.warning("document.embed_failed", doc_id=doc_id, error=str(exc))
-            embeddings = []
-            warnings.append(f"向量化失败（已降级为空向量）: {str(exc)[:200]}")
+            logger.debug(
+                "document.graph_module_check_failed",
+                doc_id=doc_id,
+                error=str(exc),
+            )
 
-        # 5. 索引（延迟导入，构建全文索引和向量索引）
-        _update_parse_progress(
-            doc_id, stage="indexing", message="正在构建全文索引和向量索引"
-        )
-        try:
-            await _build_indexes(doc_id, chunk_objects, chunks, embeddings)
-        except Exception as exc:
-            logger.warning("document.index_failed", doc_id=doc_id, error=str(exc))
-            warnings.append(f"索引构建失败: {str(exc)[:200]}")
+        if graph_enabled:
+            # 并行执行两条支线（方向一：asyncio.gather 替代串行）
+            embeddings, _ = await asyncio.gather(
+                _pipeline_index(),
+                _pipeline_graph(),
+            )
+            embeddings = embeddings[0]
+        else:
+            # 知识图谱未启用，仅执行索引支线
+            embeddings, _ = await _pipeline_index()
 
         # 6. 根据密级决定发布路径：
         #    confidential/secret → 待审核（审核通过后发布）
@@ -1275,6 +1326,81 @@ async def _build_indexes(
         await _build_vector_index(doc_id, chunk_objects, embeddings)
     except Exception as exc:
         logger.warning("vector.index_failed", doc_id=doc_id, error=str(exc))
+
+
+async def _build_knowledge_graph(
+    doc_id: str,
+    chunk_objects: list[Chunk],
+    doc: Any,
+) -> int:
+    """构建知识图谱 — 从 chunk_objects 提取三元组并写入 Neo4j。
+
+    方向二：计算复用 — 直接使用文档处理流水线已分块的 chunk_objects，
+    避免重复分块计算。GraphService.extract_triples_from_chunks 从同一批
+    chunks 抽取三元组，与 _build_indexes 共享分块结果。
+
+    降级策略：
+        - Neo4j 不可用：GraphService 内部降级到 PostgreSQL 全文检索
+        - LLM 不可用：仅使用规则提取（正则匹配，零成本）
+        - 模块未启用：调用方应先检查 graph_enabled，此处不重复检查
+
+    Args:
+        doc_id: 文档 ID。
+        chunk_objects: Chunk 对象列表（计算复用）。
+        doc: Document ORM 实例（用于获取 tenant_id 等元数据）。
+
+    Returns:
+        提取的三元组数量。
+    """
+    try:
+        from app.services.graph_service import get_graph_service
+    except ImportError:
+        logger.info("document.graph_service_unavailable", doc_id=doc_id)
+        return 0
+
+    try:
+        service = get_graph_service()
+    except Exception as exc:
+        logger.info(
+            "document.graph_service_init_failed",
+            doc_id=doc_id,
+            error=str(exc),
+        )
+        return 0
+
+    # 获取 LLM Provider（可选，不可用时仅用规则提取）
+    llm_provider = None
+    try:
+        from app.llm.factory import get_llm_provider
+
+        llm_provider = get_llm_provider()
+    except Exception:
+        pass  # LLM 不可用时仅用规则提取
+
+    # 方向二：从 chunk_objects 提取三元组（计算复用）
+    triples = await service.extract_triples_from_chunks(
+        chunks=chunk_objects,
+        doc_id=doc_id,
+        llm_provider=llm_provider,
+    )
+
+    # 失效推荐缓存（文档图谱已更新）
+    try:
+        await service.invalidate_recommend_cache(doc_id)
+    except Exception as exc:
+        logger.debug(
+            "document.graph_cache_invalidate_failed",
+            doc_id=doc_id,
+            error=str(exc),
+        )
+
+    logger.info(
+        "document.graph_built",
+        doc_id=doc_id,
+        triples_count=len(triples),
+        chunk_count=len(chunk_objects),
+    )
+    return len(triples)
 
 
 async def _build_opensearch_index(doc_id: str, chunk_objects: list[Chunk]) -> None:

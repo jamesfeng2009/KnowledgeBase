@@ -4,6 +4,7 @@
 """
 
 import pytest
+from unittest.mock import AsyncMock
 
 from app.services.graph_service import GraphService
 
@@ -187,3 +188,152 @@ class TestRecommendCacheKey:
         doc_id = "abc-123"
         pattern = f"graph:recommend:{doc_id}:*"
         assert pattern == "graph:recommend:abc-123:*"
+
+
+# ======================================================================
+# extract_triples_from_chunks — 计算复用优化（方向二）
+# ======================================================================
+
+
+class TestExtractTriplesFromChunks:
+    """extract_triples_from_chunks 测试 — 从 Chunk 对象列表提取三元组。
+
+    验证方向二：计算复用 — 文档处理流水线已分块的 chunk_objects 直接传入，
+    避免重复分块计算。
+    """
+
+    def setup_method(self):
+        self.service = GraphService()
+
+    def _make_chunk(self, content: str, title_path: str = "") -> object:
+        """构造模拟 Chunk 对象。"""
+        from types import SimpleNamespace
+
+        return SimpleNamespace(content=content, title_path=title_path)
+
+    @pytest.mark.asyncio
+    async def test_extract_from_chunks_basic(self) -> None:
+        """从多个 chunk 提取三元组，规则提取应生效。"""
+        chunks = [
+            self._make_chunk("微服务属于架构模式"),
+            self._make_chunk("系统包含用户管理模块"),
+        ]
+        # mock batch_import_graph 避免依赖 Neo4j
+        self.service.batch_import_graph = AsyncMock(return_value={"nodes": 4, "relationships": 6})
+
+        triples = await self.service.extract_triples_from_chunks(
+            chunks=chunks,
+            doc_id="test-doc-1",
+            use_rules=True,
+            use_llm=False,
+        )
+
+        assert len(triples) >= 2
+        assert ("微服务", "属于", "架构模式") in triples
+        assert ("系统", "包含", "用户管理模块") in triples
+
+    @pytest.mark.asyncio
+    async def test_extract_from_chunks_deduplication(self) -> None:
+        """多个 chunk 中的重复三元组应全局去重。"""
+        chunks = [
+            self._make_chunk("微服务属于架构模式"),
+            self._make_chunk("微服务属于架构模式"),  # 完全重复
+        ]
+        self.service.batch_import_graph = AsyncMock(return_value={"nodes": 2, "relationships": 3})
+
+        triples = await self.service.extract_triples_from_chunks(
+            chunks=chunks,
+            doc_id="test-doc-2",
+            use_rules=True,
+            use_llm=False,
+        )
+
+        # 去重后应只有 1 条
+        assert len(triples) == 1
+        assert triples[0] == ("微服务", "属于", "架构模式")
+
+    @pytest.mark.asyncio
+    async def test_extract_from_chunks_empty_content_skipped(self) -> None:
+        """空 content 的 chunk 应被跳过。"""
+        chunks = [
+            self._make_chunk(""),
+            self._make_chunk("   "),
+            self._make_chunk("微服务属于架构模式"),
+        ]
+        self.service.batch_import_graph = AsyncMock(return_value={"nodes": 2, "relationships": 3})
+
+        triples = await self.service.extract_triples_from_chunks(
+            chunks=chunks,
+            doc_id="test-doc-3",
+            use_rules=True,
+            use_llm=False,
+        )
+
+        assert len(triples) == 1
+
+    @pytest.mark.asyncio
+    async def test_extract_from_chunks_no_triples_returns_empty(self) -> None:
+        """无法提取三元组时返回空列表，不调用 batch_import_graph。"""
+        chunks = [self._make_chunk("今天天气很好")]
+        self.service.batch_import_graph = AsyncMock()
+
+        triples = await self.service.extract_triples_from_chunks(
+            chunks=chunks,
+            doc_id="test-doc-4",
+            use_rules=True,
+            use_llm=False,
+        )
+
+        assert triples == []
+        self.service.batch_import_graph.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_extract_from_chunks_llm_fallback_threshold(self) -> None:
+        """规则提取达到阈值时跳过 LLM，节省成本。"""
+        # 第一个 chunk 就产生 3 条三元组，达到 llm_fallback_threshold
+        chunks = [
+            self._make_chunk("微服务属于架构模式。系统包含用户管理。Redis基于内存存储。"),
+        ]
+        self.service.batch_import_graph = AsyncMock(return_value={"nodes": 6, "relationships": 9})
+        self.service._extract_triples_by_llm = AsyncMock(return_value=[])
+
+        triples = await self.service.extract_triples_from_chunks(
+            chunks=chunks,
+            doc_id="test-doc-5",
+            llm_provider=object(),  # 非 None，验证 LLM 不被调用
+            use_rules=True,
+            use_llm=True,
+            llm_fallback_threshold=3,
+        )
+
+        # 规则提取 >= 3，LLM 不应被调用
+        assert len(triples) >= 3
+        self.service._extract_triples_by_llm.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_extract_from_chunks_correct_doc_id_in_relationships(self) -> None:
+        """写入图谱时，Document → Concept 的 MENTIONS 关系应使用传入的 doc_id。"""
+        chunks = [self._make_chunk("微服务属于架构模式")]
+        captured_nodes: list = []
+        captured_rels: list = []
+
+        async def capture_import(nodes, relationships, batch_size=500):
+            captured_nodes.extend(nodes)
+            captured_rels.extend(relationships)
+            return {"nodes": len(nodes), "relationships": len(relationships)}
+
+        self.service.batch_import_graph = capture_import
+
+        await self.service.extract_triples_from_chunks(
+            chunks=chunks,
+            doc_id="my-doc-id",
+            use_rules=True,
+            use_llm=False,
+        )
+
+        # 验证 MENTIONS 关系使用正确的 doc_id
+        mentions_rels = [r for r in captured_rels if r["type"] == "MENTIONS"]
+        assert len(mentions_rels) == 2
+        for rel in mentions_rels:
+            assert rel["from_id"] == "my-doc-id"
+            assert rel["from_label"] == "Document"

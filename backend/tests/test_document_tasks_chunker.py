@@ -499,3 +499,259 @@ class TestChunkStrategyEndToEnd:
         result = _chunk_document(text, "md")
         ids = [c.id for c in result]
         assert len(ids) == len(set(ids))  # 无重复
+
+
+# ======================================================================
+# 并行编排 + 知识图谱构建（方向一 + 方向二）
+# ======================================================================
+
+
+class TestParallelPipelineAndGraphBuild:
+    """并行编排 + 知识图谱构建测试。
+
+    验证：
+    - 方向一：分块完成后并行执行"向量化+索引"和"知识图谱构建"两条支线
+    - 方向二：知识图谱构建复用 chunk_objects，避免重复分块
+    - 降级：knowledge_graph 模块未启用时不执行图谱构建
+    """
+
+    def _make_mock_doc(self, classification: str = "internal"):
+        """构造 mock Document 对象。"""
+        mock_doc = MagicMock()
+        mock_doc.id = _uuid.UUID(_TEST_UUID)
+        mock_doc.content_text = "# 标题\n\n这是文档内容。" * 20
+        mock_doc.content_html = None
+        mock_doc.doc_type = "md"
+        mock_doc.status = "draft"
+        mock_doc.file_path = None
+        mock_doc.classification = classification
+        mock_doc.owner_id = _uuid.UUID(_TEST_UUID)
+        mock_doc.tenant_id = _uuid.UUID(_TEST_UUID)
+        return mock_doc
+
+    def _make_mock_session(self, mock_doc):
+        """构造 mock 数据库会话。"""
+        mock_repo = AsyncMock()
+        mock_repo.get_by_id = AsyncMock(return_value=mock_doc)
+
+        mock_session = AsyncMock()
+        mock_session.flush = AsyncMock()
+        mock_session.commit = AsyncMock()
+
+        mock_session_cm = AsyncMock()
+        mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_cm.__aexit__ = AsyncMock(return_value=None)
+        return mock_session_cm, mock_repo
+
+    @pytest.mark.asyncio
+    async def test_graph_disabled_skips_graph_build(self) -> None:
+        """knowledge_graph 模块未启用时，不调用 _build_knowledge_graph。"""
+        from tasks.document_tasks import _process_document_async
+
+        mock_doc = self._make_mock_doc()
+        mock_session_cm, mock_repo = self._make_mock_session(mock_doc)
+
+        with patch("app.database.async_session_factory", return_value=mock_session_cm), \
+             patch(
+                 "app.repositories.knowledge_repository.DocumentRepository",
+                 return_value=mock_repo,
+             ), \
+             patch("tasks.document_tasks._generate_embeddings", new_callable=AsyncMock, return_value=[]), \
+             patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock) as mock_index, \
+             patch("tasks.document_tasks._build_knowledge_graph", new_callable=AsyncMock) as mock_graph, \
+             patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock), \
+             patch("tasks.intelligence_tasks.process_intelligence.delay"):
+
+            result = await _process_document_async(_TEST_UUID)
+
+        assert result["status"] == "success"
+        mock_index.assert_called_once()
+        # knowledge_graph 模块未启用（TenantService 检查失败），不应调用图谱构建
+        mock_graph.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_graph_enabled_triggers_graph_build(self) -> None:
+        """knowledge_graph 模块启用时，调用 _build_knowledge_graph。"""
+        from tasks.document_tasks import _process_document_async
+
+        mock_doc = self._make_mock_doc()
+        mock_session_cm, mock_repo = self._make_mock_session(mock_doc)
+
+        # mock TenantService.is_module_enabled 返回 True
+        mock_tenant_svc = AsyncMock()
+        mock_tenant_svc.is_module_enabled = AsyncMock(return_value=True)
+
+        with patch("app.database.async_session_factory", return_value=mock_session_cm), \
+             patch(
+                 "app.repositories.knowledge_repository.DocumentRepository",
+                 return_value=mock_repo,
+             ), \
+             patch("tasks.document_tasks._generate_embeddings", new_callable=AsyncMock, return_value=[]), \
+             patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock) as mock_index, \
+             patch("tasks.document_tasks._build_knowledge_graph", new_callable=AsyncMock) as mock_graph, \
+             patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock), \
+             patch("tasks.intelligence_tasks.process_intelligence.delay"), \
+             patch(
+                 "app.services.tenant_service.TenantService",
+                 return_value=mock_tenant_svc,
+             ):
+
+            result = await _process_document_async(_TEST_UUID)
+
+        assert result["status"] == "success"
+        mock_index.assert_called_once()
+        # knowledge_graph 模块启用，应调用图谱构建
+        mock_graph.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_graph_build_failure_does_not_break_pipeline(self) -> None:
+        """知识图谱构建失败不影响主流程（向量化+索引）。"""
+        from tasks.document_tasks import _process_document_async
+
+        mock_doc = self._make_mock_doc()
+        mock_session_cm, mock_repo = self._make_mock_session(mock_doc)
+
+        mock_tenant_svc = AsyncMock()
+        mock_tenant_svc.is_module_enabled = AsyncMock(return_value=True)
+
+        with patch("app.database.async_session_factory", return_value=mock_session_cm), \
+             patch(
+                 "app.repositories.knowledge_repository.DocumentRepository",
+                 return_value=mock_repo,
+             ), \
+             patch("tasks.document_tasks._generate_embeddings", new_callable=AsyncMock, return_value=[]), \
+             patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock) as mock_index, \
+             patch(
+                 "tasks.document_tasks._build_knowledge_graph",
+                 new_callable=AsyncMock,
+                 side_effect=Exception("Neo4j 连接失败"),
+             ) as mock_graph, \
+             patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock), \
+             patch("tasks.intelligence_tasks.process_intelligence.delay"), \
+             patch(
+                 "app.services.tenant_service.TenantService",
+                 return_value=mock_tenant_svc,
+             ):
+
+            result = await _process_document_async(_TEST_UUID)
+
+        # 主流程仍应成功
+        assert result["status"] == "success"
+        mock_index.assert_called_once()
+        mock_graph.assert_called_once()
+        # 警告中应包含图谱构建失败信息
+        assert any("知识图谱构建失败" in w for w in result.get("warnings", []))
+
+    @pytest.mark.asyncio
+    async def test_graph_build_receives_chunk_objects(self) -> None:
+        """_build_knowledge_graph 接收的 chunk_objects 应与 _build_indexes 相同（计算复用）。"""
+        from tasks.document_tasks import _process_document_async
+
+        mock_doc = self._make_mock_doc()
+        mock_session_cm, mock_repo = self._make_mock_session(mock_doc)
+
+        mock_tenant_svc = AsyncMock()
+        mock_tenant_svc.is_module_enabled = AsyncMock(return_value=True)
+
+        # 捕获两个函数接收的 chunk_objects
+        index_chunks: list = []
+        graph_chunks: list = []
+
+        async def capture_index(doc_id, chunk_objects, chunks, embeddings):
+            index_chunks.extend(chunk_objects)
+
+        async def capture_graph(doc_id, chunk_objects, doc):
+            graph_chunks.extend(chunk_objects)
+
+        with patch("app.database.async_session_factory", return_value=mock_session_cm), \
+             patch(
+                 "app.repositories.knowledge_repository.DocumentRepository",
+                 return_value=mock_repo,
+             ), \
+             patch("tasks.document_tasks._generate_embeddings", new_callable=AsyncMock, return_value=[]), \
+             patch("tasks.document_tasks._build_indexes", side_effect=capture_index), \
+             patch("tasks.document_tasks._build_knowledge_graph", side_effect=capture_graph), \
+             patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock), \
+             patch("tasks.intelligence_tasks.process_intelligence.delay"), \
+             patch(
+                 "app.services.tenant_service.TenantService",
+                 return_value=mock_tenant_svc,
+             ):
+
+            result = await _process_document_async(_TEST_UUID)
+
+        assert result["status"] == "success"
+        # 两个支线接收的 chunk_objects 数量应相同（计算复用）
+        assert len(index_chunks) > 0
+        assert len(index_chunks) == len(graph_chunks)
+
+
+# ======================================================================
+# _build_knowledge_graph 辅助函数测试
+# ======================================================================
+
+
+class TestBuildKnowledgeGraphFunction:
+    """_build_knowledge_graph 辅助函数测试。"""
+
+    @pytest.mark.asyncio
+    async def test_build_knowledge_graph_returns_triples_count(self) -> None:
+        """_build_knowledge_graph 返回三元组数量。"""
+        from tasks.document_tasks import _build_knowledge_graph
+
+        mock_chunks = [MagicMock(content="微服务属于架构模式", title_path="")]
+        mock_doc = MagicMock()
+
+        mock_service = AsyncMock()
+        mock_service.extract_triples_from_chunks = AsyncMock(
+            return_value=[("微服务", "属于", "架构模式")]
+        )
+        mock_service.invalidate_recommend_cache = AsyncMock()
+
+        with patch(
+            "app.services.graph_service.get_graph_service", return_value=mock_service
+        ), \
+             patch("app.llm.factory.get_llm_provider", side_effect=Exception("no LLM")):
+
+            count = await _build_knowledge_graph(_TEST_UUID, mock_chunks, mock_doc)
+
+        assert count == 1
+        mock_service.extract_triples_from_chunks.assert_called_once()
+        mock_service.invalidate_recommend_cache.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_build_knowledge_graph_no_triples_returns_zero(self) -> None:
+        """无三元组时返回 0。"""
+        from tasks.document_tasks import _build_knowledge_graph
+
+        mock_chunks = [MagicMock(content="今天天气很好", title_path="")]
+        mock_doc = MagicMock()
+
+        mock_service = AsyncMock()
+        mock_service.extract_triples_from_chunks = AsyncMock(return_value=[])
+        mock_service.invalidate_recommend_cache = AsyncMock()
+
+        with patch(
+            "app.services.graph_service.get_graph_service", return_value=mock_service
+        ), \
+             patch("app.llm.factory.get_llm_provider", side_effect=Exception("no LLM")):
+
+            count = await _build_knowledge_graph(_TEST_UUID, mock_chunks, mock_doc)
+
+        assert count == 0
+
+    @pytest.mark.asyncio
+    async def test_build_knowledge_graph_service_unavailable(self) -> None:
+        """GraphService 不可用时返回 0，不抛异常。"""
+        from tasks.document_tasks import _build_knowledge_graph
+
+        mock_chunks = [MagicMock(content="内容", title_path="")]
+        mock_doc = MagicMock()
+
+        with patch(
+            "app.services.graph_service.get_graph_service",
+            side_effect=RuntimeError("Neo4j 未配置"),
+        ):
+            count = await _build_knowledge_graph(_TEST_UUID, mock_chunks, mock_doc)
+
+        assert count == 0

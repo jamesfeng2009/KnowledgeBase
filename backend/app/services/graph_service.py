@@ -795,6 +795,119 @@ class GraphService:
         logger.info("graph.triples_extracted", doc_id=doc_id, count=len(all_triples))
         return all_triples
 
+    async def extract_triples_from_chunks(
+        self,
+        chunks: list[Any],
+        doc_id: str,
+        llm_provider=None,
+        use_rules: bool = True,
+        use_llm: bool = True,
+        llm_fallback_threshold: int = 3,
+    ) -> list[tuple[str, str, str]]:
+        """从已分块的 Chunk 对象列表中提取三元组（计算复用优化）。
+
+        与 extract_triples_from_text 的区别：
+            - extract_triples_from_text：接收原始文本，用于 API 手动触发场景
+            - extract_triples_from_chunks：接收已分块的 Chunk 对象，用于文档处理流水线
+
+        优势：
+            - 避免重复分块计算（文档处理流水线已分块，无需再次切分）
+            - 每个 chunk 独立提取，粒度更细，三元组边界更准确
+            - chunk 的 title_path 可作为实体消歧的上下文锚点
+
+        Args:
+            chunks: Chunk 对象列表（需有 content 和 title_path 属性）。
+            doc_id: 文档 ID（用于关联 Document 节点）。
+            llm_provider: LLM Provider 实例（LLM 兜底用）。
+            use_rules: 是否启用规则提取（默认 True）。
+            use_llm: 是否启用 LLM 提取（默认 True）。
+            llm_fallback_threshold: 规则提取达到此数量时跳过 LLM（默认 3）。
+
+        Returns:
+            提取的三元组列表 [(subject, predicate, object), ...]
+        """
+        all_triples: list[tuple[str, str, str]] = []
+        seen: set[tuple[str, str, str]] = set()  # 全局去重
+
+        for chunk in chunks:
+            text = getattr(chunk, "content", "") or ""
+            if not text.strip():
+                continue
+
+            # 规则提取（快速、免费）
+            if use_rules:
+                rule_triples = self._extract_triples_by_rules(text)
+                for t in rule_triples:
+                    if t not in seen:
+                        seen.add(t)
+                        all_triples.append(t)
+
+            # LLM 兜底（仅当全局规则结果不足时，避免每 chunk 都调 LLM）
+            if (
+                use_llm
+                and len(all_triples) < llm_fallback_threshold
+                and llm_provider
+            ):
+                llm_triples = await self._extract_triples_by_llm(text, llm_provider)
+                for t in llm_triples:
+                    if t not in seen:
+                        seen.add(t)
+                        all_triples.append(t)
+
+        if not all_triples:
+            logger.info("graph.triples.empty_from_chunks", doc_id=doc_id)
+            return []
+
+        # 批量写入图谱（复用 extract_triples_from_text 的写入逻辑）
+        nodes: list[dict[str, Any]] = []
+        relationships: list[dict[str, Any]] = []
+
+        for subject, predicate, obj in all_triples:
+            nodes.append({
+                "label": "Concept",
+                "id": subject,
+                "name": subject,
+                "entity_type": "concept",
+            })
+            nodes.append({
+                "label": "Concept",
+                "id": obj,
+                "name": obj,
+                "entity_type": "concept",
+            })
+            rel_type = predicate.upper().replace(" ", "_")
+            relationships.append({
+                "from_label": "Concept",
+                "from_id": subject,
+                "to_label": "Concept",
+                "to_id": obj,
+                "type": rel_type,
+            })
+            relationships.append({
+                "from_label": "Document",
+                "from_id": doc_id,
+                "to_label": "Concept",
+                "to_id": subject,
+                "type": "MENTIONS",
+            })
+            relationships.append({
+                "from_label": "Document",
+                "from_id": doc_id,
+                "to_label": "Concept",
+                "to_id": obj,
+                "type": "MENTIONS",
+            })
+
+        await self.batch_import_graph(nodes, relationships)
+
+        logger.info(
+            "graph.triples_extracted_from_chunks",
+            doc_id=doc_id,
+            count=len(all_triples),
+            chunk_count=len(chunks),
+        )
+        return all_triples
+
     def _extract_triples_by_rules(self, text: str) -> list[tuple[str, str, str]]:
         """规则提取 — 正则匹配中文常见关系模式。
 
