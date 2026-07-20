@@ -418,7 +418,7 @@ flowchart TD
 
 ## 四级语义分块策略
 
-`SemanticChunker` 采用**内容格式智能检测** + 内容类型路由 + 四级优先级降级策略，保证总能产出有效分块。每个 `Chunk` 携带 `title_path`（标题路径锚点）、`content_type`（内容类型标签）、`chunk_strategy`（实际使用策略）等元数据。
+`SemanticChunker` 采用**内容格式智能检测** + 内容类型路由 + 四级优先级降级策略，保证总能产出有效分块。每个 `Chunk` 携带 `title_path`（标题路径锚点，作为 `[标题路径]` 前缀拼入 content 增强 embedding 上下文感知）、`content_type`（内容类型标签）、`chunk_strategy`（实际使用策略）等元数据。
 
 ```mermaid
 flowchart TD
@@ -440,8 +440,11 @@ flowchart TD
     QA_CHUNK --> OUTPUT
 
     STRUCT["结构化分块<br/>按 Markdown # 标题 / HTML &lt;h&gt; 标签分割"]
-    STRUCT --> TITLE_PATH["提取标题路径锚点<br/>如 Redis &gt; 集群 &gt; 哈希槽"]
-    TITLE_PATH --> OUTPUT
+    STRUCT --> TITLE_PATH["提取标题路径锚点<br/>title_path 拼入 content 前缀<br/>如 [Redis > 集群 > 哈希槽]"]
+    TITLE_PATH --> LONG_CHECK{超长 chunk?<br/>_STRUCTURAL_MAX_CHARS}
+    LONG_CHECK -->|是| SUB_SPLIT["按 token 上限拆分<br/>保持 title_path 前缀"]
+    LONG_CHECK -->|否| OUTPUT
+    SUB_SPLIT --> OUTPUT
 
     SEMANTIC_CHECK{TextTiling<br/>语义分块}
     SEMANTIC_CHECK --> TEXTTILING["滑动窗口计算<br/>相邻段落 Jaccard 相似度"]
@@ -449,11 +452,24 @@ flowchart TD
     VALLEY --> PARENT_CHILD["父子索引<br/>小块 256 tok 检索<br/>父块 1024 tok 上下文"]
     PARENT_CHILD --> OUTPUT
 
-    ROUTE -->|以上均无效| FALLBACK["固定长度兜底<br/>512 tokens 固定分割<br/>尽量在段落/句子边界断开"]
+    ROUTE -->|以上均无效| FALLBACK["固定长度兜底<br/>512 tokens 固定分割<br/>可选 Overlap 重叠<br/>_CHUNK_OVERLAP_ENABLED"]
     FALLBACK --> OUTPUT
 
-    OUTPUT["输出 Chunk 列表<br/>含 title_path / content_type / chunk_strategy"]
+    OUTPUT["输出 Chunk 列表<br/>含 title_path 前缀 / content_type / chunk_strategy"]
 ```
+
+### 上下文保留机制
+
+分块策略采用**分层上下文保留**，不同层级使用不同机制，避免一刀切的 Overlap：
+
+| 层级 | 策略 | 上下文保留机制 | 说明 |
+|------|------|----------------|------|
+| P1 | 结构化分块 | `title_path` 拼入 content 前缀 | `[标题路径]` 前缀让 embedding 感知层级，如 `[系统架构 > 服务层]` |
+| P2 | TextTiling 语义分块 | 话题边界天然完整 | 在相似度谷底分割，块内话题一致 |
+| P3 | 父子索引 | `parent_id` 回取父块 | 小块命中后回取父块扩充上下文，优于 Overlap |
+| 兜底 | 固定长度 | 可选 Overlap（`_CHUNK_OVERLAP_ENABLED`） | 仅硬切场景需要，默认关闭 |
+
+> **设计决策**：Overlap 是"硬切"的补救措施。高级策略（结构化分块、TextTiling）在语义边界切分，天然保留上下文，不需要 Overlap。父子索引是比 Overlap 更优雅的机制——Overlap 是"预防性冗余"，父子索引是"按需回取"，后者精度更高、冗余更少。
 
 ### 内容格式智能检测
 
@@ -472,11 +488,11 @@ flowchart TD
 | 优先级 | 策略 | 触发条件 | 特点 |
 |--------|------|----------|------|
 | P0 | Q&A 对分块 | `content_type="faq"` | 问答对不被拆散 |
-| P1 | 结构化分块 | `_is_markdown()` 检测到 Markdown 标记或 HTML `<h>` 标签 | 标题路径锚点增强语义，不依赖 doc_type |
+| P1 | 结构化分块 | `_is_markdown()` 检测到 Markdown 标记或 HTML `<h>` 标签 | title_path 拼入 content 前缀增强 embedding；超长章节按 `_STRUCTURAL_MAX_CHARS` 拆分 |
 | P2 | TextTiling 语义分块 | plain / auto 兜底 | 话题边界自动识别 |
-| P3 | 父子索引 | 语义分块后自动构建 | 小块检索 + 父块上下文 |
+| P3 | 父子索引 | 语义分块后自动构建 | 小块检索 + 父块上下文（优于 Overlap） |
 | 视频/音频 | 视频语义分块 | doc_type 为视频/音频类型 | 时间窗口（120s）合并 ASR 片段 + 关键帧 VLM 描述对齐，`title_path` 存时间戳 |
-| 兜底 | 固定长度 | 以上均无效 | 512 tokens 段落边界断开 |
+| 兜底 | 固定长度 | 以上均无效 | 512 tokens 段落边界断开；可选 Overlap（`_CHUNK_OVERLAP_ENABLED`，默认关闭） |
 
 ### 视频语义分块（`chunk_video_transcript`）
 
@@ -1215,7 +1231,9 @@ flowchart LR
     QA_CHECK -->|faq| QA_SPLIT["Q&amp;A 对分块"]
     QA_CHECK -->|其他| STRUCT[结构化/语义/兜底]
 
-    QA_SPLIT & STRUCT & VCHUNK --> EMBED[3. 向量化<br/>EmbeddingProvider]
+    QA_SPLIT & STRUCT & VCHUNK --> PARALLEL{并行编排<br/>asyncio.gather}
+
+    PARALLEL -->|支线 A| EMBED[3. 向量化<br/>EmbeddingProvider]
     EMBED --> PROG_EMBED[进度: embedding<br/>写入 Redis]
 
     PROG_EMBED --> INDEX[4. 索引构建]
@@ -1223,7 +1241,11 @@ flowchart LR
     INDEX --> OS_INDEX[OpenSearch 全文索引<br/>含 Chunk 元数据<br/>title_path/content_type/strategy]
     INDEX --> VEC_INDEX[向量索引<br/>VectorStoreBase 适配器<br/>os_knn 默认 / milvus 可选]
 
-    OS_INDEX & VEC_INDEX --> CLASSIFY{密级路由}
+    PARALLEL -->|支线 B<br/>knowledge_graph 模块| GRAPH[3b. 知识图谱构建<br/>计算复用 chunk_objects]
+    GRAPH --> TRIPLES[GraphService.extract_triples_from_chunks<br/>规则提取 + LLM 兜底]
+    TRIPLES --> NEO4j[Neo4j 批量写入<br/>Document → Concept MENTIONS]
+
+    OS_INDEX & VEC_INDEX & NEO4j --> CLASSIFY{密级路由}
     CLASSIFY -->|confidential/secret| REVIEW[5a. 待审核<br/>pending_review]
     CLASSIFY -->|public/internal| PUBLISH[5b. 直接发布<br/>published]
 
@@ -1260,7 +1282,11 @@ flowchart LR
 - **向量存储适配器**：通过 `VectorStoreBase` 抽象层，按 `VECTOR_STORE` 配置切换 OpenSearch k-NN（默认）或 Milvus，业务代码零改动
 - **文档解析三级降级**：Docling 统一解析器（primary）→ 原有专用解析器（fallback）→ VLM 整页 OCR（兜底）。Docling 可用时统一输出 HTML（`<h1>`/`<h2>` 标题 + `<table>` 表格 + 版面分析 + 公式 + OCR），与原有解析器输出格式一致，chunker 的 `_split_html()` 直接按 `<h>` 标签分块，无需格式检测
 - **关键帧 VLM 并发**：视频关键帧描述使用 `Semaphore(3)` + `asyncio.gather` 并发调用 VLM，替代串行逐帧处理，多关键帧场景延迟降低约 60%
-- **Chunk 元数据**：每个 Chunk 携带 `title_path`、`content_type`、`chunk_strategy`、`parent_id`
+- **Chunk 元数据**：每个 Chunk 携带 `title_path`（作为 `[标题路径]` 前缀拼入 content 增强 embedding 上下文感知）、`content_type`、`chunk_strategy`、`parent_id`
+- **并行编排**：分块完成后，支线 A（向量化+索引）和支线 B（知识图谱构建）通过 `asyncio.gather` 并行执行，避免串行等待。支线 B 受 `knowledge_graph` 模块开关控制
+- **知识图谱构建**：`_build_knowledge_graph()` 调用 `GraphService.extract_triples_from_chunks()` 从同一批 `chunk_objects` 提取三元组（计算复用，避免重复分块），写入 Neo4j。GraphService 不可用时降级，不影响主流程
+- **计算复用**：支线 A 和支线 B 共享同一批 `chunk_objects`——向量化读取 chunk content 生成 embedding，知识图谱从同一批 chunks 抽取三元组，无需二次分块
+- **Overlap 分层设计**：Overlap 仅用于固定长度兜底策略（`_CHUNK_OVERLAP_ENABLED`，默认关闭）。高级策略（结构化分块、TextTiling）在语义边界切分天然保留上下文，父子索引（`parent_id` 回取）优于 Overlap
 - **视频 RAG 流程**：视频文档走专用管线 — ffmpeg 提取 16kHz mono 音轨 → ASR 转写为带时间戳片段 → ffmpeg 场景切换检测抽取关键帧 → VLM 逐帧描述 → `chunk_video_transcript` 按时间窗口（120s）合并转写片段并对齐关键帧描述，`title_path` 存时间戳标签（如 `00:00-02:15`）
 - **Find Skills 渐进式技能加载**：Agent Loop 每轮按用户查询匹配相关技能，只加载匹配工具的完整 schema（按需加载），避免工具数量增长后全量加载浪费 token。`SkillRegistry` 维护轻量索引（name/category/tags/description，每个技能约 20-30 token），`SkillFinder` 用中英文分词 + 多维度评分（name +10 / category +5 / tag +8 / desc +3）匹配，阈值过滤 + `max_skills` 限制。无匹配时 fallback 到全量加载（零回归保证）。配置项：`SKILL_FINDER_ENABLED` / `SKILL_MATCH_THRESHOLD` / `SKILL_MAX_LOADED`
 - **重试机制**：`max_retries=3`，`default_retry_delay=60`
@@ -1517,17 +1543,18 @@ python -c "from app.utils.migration import stamp_head; stamp_head()"
 ```bash
 cd backend
 
-# 运行全部测试（1100 项）
+# 运行全部测试（1135 项）
 python -m pytest --tb=short -q
 
 # 运行特定模块测试
-python -m pytest tests/test_chunk_optimization.py -v    # RAG 分块优化
+python -m pytest tests/test_chunk_optimization.py -v    # RAG 分块优化（含 title_path 前缀 + Overlap）
 python -m pytest tests/test_token_optimization.py -v      # P0 Token 优化
 python -m pytest tests/test_p1_token_optimization.py -v   # P1 Token 优化
 python -m pytest tests/test_p2_token_optimization.py -v   # P2 Token 优化
-python -m pytest tests/test_document_tasks_chunker.py -v  # 文档分块接入
+python -m pytest tests/test_document_tasks_chunker.py -v  # 文档分块接入（含并行编排 + 知识图谱构建）
 python -m pytest tests/test_vector_store.py -v            # 向量存储适配器
 python -m pytest tests/test_audit_workflow.py -v          # 审核流程串联
+python -m pytest tests/test_graph_service.py -v           # 知识图谱（三元组抽取 + chunk 计算复用）
 python -m pytest tests/test_tool_guard.py -v              # MCP 工具调用守卫
 python -m pytest tests/test_skill_finder.py -v            # Find Skills 渐进式技能加载
 python -m pytest tests/test_video_rag.py -v               # 视频 RAG（ASR + 关键帧 VLM 并发）
