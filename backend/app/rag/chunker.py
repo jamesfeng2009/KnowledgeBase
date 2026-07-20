@@ -8,11 +8,12 @@
        - plain: 语义分块（TextTiling）；
        - 未指定时走四级兜底链。
     1. 结构化分块：按 Markdown 标题（# / ## / ###）或 HTML 标签（<h1>/<h2>）分割，
-       每个 chunk 携带完整标题路径作为上下文锚点（P3）；
+       每个 chunk 携带完整标题路径作为上下文锚点（P3），
+       title_path 作为 [标题路径] 前缀拼入 content 增强 embedding 上下文感知；
     2. 语义分块：基于 TextTiling 相似度算法，滑动窗口计算相邻段落相似度，
        在相似度谷底分割（话题边界）；
     3. 父子索引：小块检索、大块上下文（小块 256 tokens，父块 1024 tokens）；
-    4. 固定长度兜底：512 tokens 固定分割。
+    4. 固定长度兜底：512 tokens 固定分割，可选 Overlap 重叠弥补硬切边界丢失。
 
 遵循单一职责：本模块只负责文本切分，不涉及向量化和存储。
 遵循开闭原则：新增分块策略只需新增私有方法并在 chunk 中按优先级追加调用，
@@ -46,6 +47,10 @@ _CHARS_PER_TOKEN: float = 3.5
 _QA_MAX_TOKENS: int = 1200
 # 结构化分块 — chunk 软上限（字符数）
 _STRUCTURAL_MAX_CHARS: int = 2800  # ~800 tokens
+# 固定长度兜底 — Overlap 重叠字符数（~50 tokens），弥补硬切的边界信息丢失
+_OVERLAP_CHARS: int = 175
+# 固定长度兜底 — 是否启用 Overlap（默认关闭，仅硬切兜底场景需要）
+_CHUNK_OVERLAP_ENABLED: bool = False
 # 支持的内容类型标签
 _VALID_CONTENT_TYPES: frozenset[str] = frozenset(
     {"faq", "tutorial", "specification", "report", "plain", "auto"}
@@ -597,10 +602,17 @@ class SemanticChunker:
             start = match.start()
             end = matches[idx + 1].start() if idx + 1 < len(matches) else len(content)
             text = content[start:end].strip()
+            if not text:
+                continue
+
+            # 补章节标题：title_path 作为前缀拼入 content，增强 embedding 上下文感知
+            prefixed_text = f"[{title_path}]\n{text}" if title_path else text
 
             # P3: 超长 chunk 在 H4/段落级别进一步拆分，保持标题路径前缀
-            if text and len(text) > _STRUCTURAL_MAX_CHARS:
-                sub_texts = SemanticChunker._split_by_tokens(text, int(_STRUCTURAL_MAX_CHARS / _CHARS_PER_TOKEN))
+            if len(prefixed_text) > _STRUCTURAL_MAX_CHARS:
+                sub_texts = SemanticChunker._split_by_tokens(
+                    prefixed_text, int(_STRUCTURAL_MAX_CHARS / _CHARS_PER_TOKEN)
+                )
                 for sub in sub_texts:
                     if sub.strip():
                         chunks.append(
@@ -615,15 +627,15 @@ class SemanticChunker:
                                 chunk_strategy="structural",
                             )
                         )
-            elif text:
+            else:
                 chunks.append(
                     Chunk(
                         id=str(uuid.uuid4()),
                         doc_id=doc_id,
-                        content=text,
+                        content=prefixed_text,
                         start_pos=start,
                         end_pos=end,
-                        token_count=estimate_tokens(text),
+                        token_count=estimate_tokens(prefixed_text),
                         title_path=title_path,
                         chunk_strategy="structural",
                     )
@@ -632,7 +644,14 @@ class SemanticChunker:
 
     @staticmethod
     def _split_html(content: str, doc_id: str) -> list[Chunk]:
-        """按 HTML 标题标签（<h1>/<h2>/<h3>）分割，提取标题路径（P3）。"""
+        """按 HTML 标题标签（<h1>/<h2>/<h3>）分割，提取标题路径（P3）。
+
+        改进：
+        - 补章节标题：title_path 作为 [标题路径] 前缀拼入 content，
+          让 embedding 阶段即可感知上下文层级，检索精度提升；
+        - 超长拆分：超过 _STRUCTURAL_MAX_CHARS 的章节按 token 上限拆分，
+          与 _split_markdown 保持一致，保持 title_path 前缀。
+        """
         # 同时匹配标签和标题文本
         pattern = re.compile(r"<(h[1-3])[^>]*>(.*?)</\1>", re.IGNORECASE | re.DOTALL)
         matches = list(pattern.finditer(content))
@@ -661,15 +680,40 @@ class SemanticChunker:
             start = match.start()
             end = matches[idx + 1].start() if idx + 1 < len(matches) else len(content)
             text = content[start:end].strip()
-            if text:
+            if not text:
+                continue
+
+            # 补章节标题：title_path 作为前缀拼入 content，增强 embedding 上下文感知
+            prefixed_text = f"[{title_path}]\n{text}" if title_path else text
+
+            # 超长拆分：与 _split_markdown 保持一致
+            if len(prefixed_text) > _STRUCTURAL_MAX_CHARS:
+                sub_texts = SemanticChunker._split_by_tokens(
+                    prefixed_text, int(_STRUCTURAL_MAX_CHARS / _CHARS_PER_TOKEN)
+                )
+                for sub in sub_texts:
+                    if sub.strip():
+                        chunks.append(
+                            Chunk(
+                                id=str(uuid.uuid4()),
+                                doc_id=doc_id,
+                                content=sub.strip(),
+                                start_pos=start,
+                                end_pos=end,
+                                token_count=estimate_tokens(sub),
+                                title_path=title_path,
+                                chunk_strategy="structural",
+                            )
+                        )
+            else:
                 chunks.append(
                     Chunk(
                         id=str(uuid.uuid4()),
                         doc_id=doc_id,
-                        content=text,
+                        content=prefixed_text,
                         start_pos=start,
                         end_pos=end,
-                        token_count=estimate_tokens(text),
+                        token_count=estimate_tokens(prefixed_text),
                         title_path=title_path,
                         chunk_strategy="structural",
                     )
@@ -863,8 +907,28 @@ class SemanticChunker:
     # ------------------------------------------------------------------
 
     def _fixed_split(self, content: str, doc_id: str) -> list[Chunk]:
-        """按固定 token 数切分（兜底策略）。"""
+        """按固定 token 数切分（兜底策略）。
+
+        改进：可选 Overlap — 相邻块共享前一块末尾内容（~50 tokens），
+        弥补硬切的边界信息丢失。通过 _CHUNK_OVERLAP_ENABLED 开关控制（默认关闭）。
+        仅兜底策略使用 Overlap，因为高级策略（结构化分块、TextTiling）在语义边界
+        切分，天然保留上下文；父子索引更提供 parent_id 回取机制，优于 Overlap。
+        """
         texts = self._split_by_tokens(content, self.fallback_tokens)
+
+        # 可选 Overlap：相邻块共享前一块末尾内容，防止边界信息丢失
+        if _CHUNK_OVERLAP_ENABLED and len(texts) > 1:
+            overlapped: list[str] = []
+            for i, text in enumerate(texts):
+                if i == 0:
+                    overlapped.append(text)
+                else:
+                    # 取前一块末尾 _OVERLAP_CHARS 字符作为当前块开头
+                    prev = texts[i - 1]
+                    prev_tail = prev[-_OVERLAP_CHARS:] if len(prev) > _OVERLAP_CHARS else prev
+                    overlapped.append(prev_tail + text)
+            texts = overlapped
+
         chunks: list[Chunk] = []
         offset = 0
         for text in texts:

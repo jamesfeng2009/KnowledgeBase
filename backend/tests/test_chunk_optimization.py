@@ -656,3 +656,182 @@ POST /api/orders
         assert len(chunks) >= 2
         structural_chunks = [c for c in chunks if c.chunk_strategy == "structural"]
         assert len(structural_chunks) >= 2
+
+
+# ======================================================================
+# 补章节标题 — title_path 拼入 content 前缀
+# ======================================================================
+
+
+class TestTitlePathPrefix:
+    """补章节标题 — title_path 作为 [标题路径] 前缀拼入 content。
+
+    验证结构化分块产出的 chunk content 以 [title_path] 开头，
+    让 embedding 阶段即可感知上下文层级。
+    """
+
+    def test_markdown_content_has_title_path_prefix(self) -> None:
+        """Markdown 结构化分块的 content 应以 [title_path] 前缀开头。"""
+        chunker = SemanticChunker()
+        chunks = chunker.chunk(_MD_CONTENT, doc_type="md", content_type="tutorial")
+
+        assert len(chunks) >= 2
+        for c in chunks:
+            if c.title_path:
+                # content 应以 [title_path] 开头
+                assert c.content.startswith(f"[{c.title_path}]")
+
+    def test_html_content_has_title_path_prefix(self) -> None:
+        """HTML 结构化分块的 content 应以 [title_path] 前缀开头。"""
+        chunker = SemanticChunker()
+        chunks = chunker.chunk(_HTML_CONTENT, doc_type="html", content_type="tutorial")
+
+        assert len(chunks) >= 2
+        for c in chunks:
+            if c.title_path:
+                assert c.content.startswith(f"[{c.title_path}]")
+
+    def test_markdown_nested_title_path_in_content(self) -> None:
+        """嵌套标题的 content 前缀应包含完整层级路径。"""
+        chunker = SemanticChunker()
+        chunks = chunker.chunk(_MD_CONTENT, doc_type="md", content_type="tutorial")
+
+        # 找到 H3 "哈希槽分配" 的 chunk
+        hash_slot = [c for c in chunks if "哈希槽分配" in c.title_path]
+        assert len(hash_slot) > 0
+        # content 应以 [Redis 深度解析 > 集群架构 > 哈希槽分配] 开头
+        assert hash_slot[0].content.startswith("[Redis 深度解析 > 集群架构 > 哈希槽分配]")
+
+    def test_html_nested_title_path_in_content(self) -> None:
+        """HTML 嵌套标题的 content 前缀应包含完整层级路径。"""
+        chunker = SemanticChunker()
+        chunks = chunker.chunk(_HTML_CONTENT, doc_type="html", content_type="tutorial")
+
+        # 找到 H3 "用户服务" 的 chunk
+        user_service = [c for c in chunks if "用户服务" in c.title_path]
+        assert len(user_service) > 0
+        # content 应以 [系统架构文档 > 服务层 > 用户服务] 开头
+        assert user_service[0].content.startswith("[系统架构文档 > 服务层 > 用户服务]")
+
+    def test_title_path_prefix_not_duplicated_in_metadata(self) -> None:
+        """title_path 元数据字段应与前缀中的路径一致，但前缀只在 content 中。"""
+        chunker = SemanticChunker()
+        chunks = chunker.chunk(_MD_CONTENT, doc_type="md", content_type="tutorial")
+
+        for c in chunks:
+            if c.title_path:
+                # content 包含前缀
+                assert f"[{c.title_path}]" in c.content
+                # title_path 元数据本身就是路径，不含方括号
+                assert not c.title_path.startswith("[")
+
+
+# ======================================================================
+# _split_html 超长拆分
+# ======================================================================
+
+
+class TestHtmlLongChunkSplit:
+    """_split_html 超长拆分 — 与 _split_markdown 保持一致。"""
+
+    def test_html_long_section_split_into_subchunks(self) -> None:
+        """超长 HTML 章节应被拆分为多个子块，每个都保持 title_path 前缀。"""
+        chunker = SemanticChunker()
+        # 构造一个超长 HTML 章节（> _STRUCTURAL_MAX_CHARS=2800）
+        long_body = "<p>" + "这是一段很长的内容。" * 300 + "</p>"
+        html_content = f"""\
+<h1>系统架构</h1>
+{long_body}
+<h2>服务层</h2>
+<p>服务层内容</p>
+"""
+        chunks = chunker._split_html(html_content, "doc-long")
+
+        # 第一个章节应被拆分为多个子块
+        h1_chunks = [c for c in chunks if "系统架构" in c.title_path and "服务层" not in c.title_path]
+        assert len(h1_chunks) > 1, "超长 H1 章节应被拆分为多个子块"
+
+        # 每个子块都应有 title_path 元数据
+        for c in h1_chunks:
+            assert c.title_path == "系统架构"
+            assert c.chunk_strategy == "structural"
+
+        # 第一个子块应以 [系统架构] 前缀开头（_split_by_tokens 后续子块从原文中间切）
+        assert h1_chunks[0].content.startswith("[系统架构]")
+
+    def test_html_normal_section_not_split(self) -> None:
+        """正常长度的 HTML 章节不应被拆分。"""
+        chunker = SemanticChunker()
+        html_content = """\
+<h1>系统架构</h1>
+<p>架构概述</p>
+<h2>服务层</h2>
+<p>服务层内容</p>
+"""
+        chunks = chunker._split_html(html_content, "doc-normal")
+
+        h1_chunks = [c for c in chunks if c.title_path == "系统架构"]
+        assert len(h1_chunks) == 1, "正常长度章节不应被拆分"
+
+
+# ======================================================================
+# _fixed_split 可选 Overlap
+# ======================================================================
+
+
+class TestFixedSplitOverlap:
+    """_fixed_split 可选 Overlap — 默认关闭，开启后相邻块有重叠。"""
+
+    def test_overlap_disabled_by_default(self) -> None:
+        """默认 _CHUNK_OVERLAP_ENABLED=False，相邻块不应有重叠。"""
+        import app.rag.chunker as chunker_mod
+
+        assert chunker_mod._CHUNK_OVERLAP_ENABLED is False
+
+        chunker = SemanticChunker()
+        # 构造足够长的文本触发固定长度分块（> 512 tokens ≈ 1792 字符）
+        long_text = "这是一段用于测试固定分块的文本。" * 300
+        chunks = chunker._fixed_split(long_text, "doc-test")
+
+        assert len(chunks) >= 2
+        # 相邻块不应有重叠（前一块末尾不等于后一块开头）
+        for i in range(1, len(chunks)):
+            prev_tail = chunks[i - 1].content[-50:]
+            curr_head = chunks[i].content[:50]
+            assert prev_tail != curr_head
+
+    def test_overlap_enabled_creates_overlap(self) -> None:
+        """开启 _CHUNK_OVERLAP_ENABLED 后，相邻块应有重叠内容。"""
+        import app.rag.chunker as chunker_mod
+
+        original = chunker_mod._CHUNK_OVERLAP_ENABLED
+        try:
+            chunker_mod._CHUNK_OVERLAP_ENABLED = True
+
+            chunker = SemanticChunker()
+            # 构造足够长的文本触发多块分块（> 512 tokens ≈ 1792 字符）
+            long_text = "这是第一段内容用于测试。" * 100 + "这是第二段内容用于测试。" * 100
+            chunks = chunker._fixed_split(long_text, "doc-overlap")
+
+            assert len(chunks) >= 2
+            # 第一个块之后的块应包含前一块末尾的内容（Overlap）
+            for i in range(1, len(chunks)):
+                prev_tail = chunks[i - 1].content[-chunker_mod._OVERLAP_CHARS:]
+                # 当前块开头应包含前一块末尾的部分内容
+                assert chunks[i].content[:10] in prev_tail or prev_tail[:10] in chunks[i].content
+        finally:
+            chunker_mod._CHUNK_OVERLAP_ENABLED = original
+
+    def test_overlap_single_chunk_not_affected(self) -> None:
+        """单块文本不受 Overlap 影响。"""
+        import app.rag.chunker as chunker_mod
+
+        original = chunker_mod._CHUNK_OVERLAP_ENABLED
+        try:
+            chunker_mod._CHUNK_OVERLAP_ENABLED = True
+            chunker = SemanticChunker()
+            short_text = "短文本。"
+            chunks = chunker._fixed_split(short_text, "doc-short")
+            assert len(chunks) == 1
+        finally:
+            chunker_mod._CHUNK_OVERLAP_ENABLED = original
