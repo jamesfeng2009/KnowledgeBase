@@ -162,3 +162,52 @@ logger.info(
     broker=settings.REDIS_URL,
     queues=["documents", "indexing", "scheduled"],
 )
+
+
+# ------------------------------------------------------------------
+# Beat 单实例锁 — 分布式预备（P1）
+# ------------------------------------------------------------------
+# 多实例部署时 Beat 必须单实例运行，否则定时任务会重复执行。
+# 通过 Redis SETNX 实现单实例锁：Beat 启动时获取锁，获取不到则退出。
+# 锁有 TTL（默认 60s），Beat 进程崩溃后锁自动过期，备用实例可接管。
+
+
+def acquire_beat_lock(redis_url: str, lock_key: str = "celery:beat:lock", ttl: int = 60) -> bool:
+    """尝试获取 Beat 单实例锁。
+
+    多实例部署时，只有获取到锁的 Beat 实例才会运行，
+    其他实例启动后立即退出，避免定时任务重复执行。
+
+    Args:
+        redis_url: Redis 连接 URL。
+        lock_key: 锁的 Redis key。
+        ttl: 锁过期时间（秒），Beat 崩溃后锁自动释放。
+
+    Returns:
+        True = 获取成功，可运行 Beat；False = 已有其他实例运行。
+    """
+    try:
+        import redis
+
+        client = redis.from_url(redis_url, decode_responses=True)
+        # SET key value NX EX ttl — 原子化获取锁
+        acquired = client.set(lock_key, "beat_active", nx=True, ex=ttl)
+        if acquired:
+            logger.info("celery.beat_lock_acquired", lock_key=lock_key, ttl=ttl)
+            return True
+        logger.warning("celery.beat_lock_held", lock_key=lock_key)
+        return False
+    except Exception as exc:
+        # Redis 不可用时放行（单机模式不需要锁）
+        logger.warning("celery.beat_lock_failed", error=str(exc)[:200])
+        return True
+
+
+# Beat 启动前检查单实例锁（仅当通过 celery beat 命令启动时触发）
+# 通过环境变量控制，避免影响 worker 进程
+if os.environ.get("CELERY_BEAT_SINGLE_INSTANCE") == "1":
+    if not acquire_beat_lock(settings.REDIS_URL):
+        logger.error("celery.beat_another_instance_running")
+        # Beat 锁已被持有，当前实例退出
+        # 不使用 sys.exit，让 Celery 的信号机制正常处理
+        raise SystemExit("Beat 单实例锁已被持有，当前实例退出")

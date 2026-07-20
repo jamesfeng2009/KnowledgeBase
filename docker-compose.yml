@@ -111,12 +111,15 @@ services:
       redis: { condition: service_healthy }
       core-engine: { condition: service_healthy }
 
-  # === Celery Beat 定时任务 ===
+  # === Celery Beat 定时任务（单实例 — 分布式预备 P1） ===
+  # Beat 必须单实例运行，否则定时任务会重复执行。
+  # 通过 CELERY_BEAT_SINGLE_INSTANCE=1 触发 Redis SETNX 单实例锁。
+  # 多实例部署时，scale=1 保持不变；备用实例启动时获取不到锁会自动退出。
   celery-beat:
     build: ./backend
     command: celery -A celery_app beat --loglevel=info
-    env_file: ./backend/.env
     environment:
+      - CELERY_BEAT_SINGLE_INSTANCE=1
       - DATABASE_URL=postgresql+asyncpg://ekb:ekb@postgres:5432/ekb
       - REDIS_URL=redis://redis:6379/0
     depends_on:

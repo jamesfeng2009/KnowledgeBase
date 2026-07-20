@@ -1296,6 +1296,7 @@ flowchart LR
   3. **超时保护**：`task_time_limit=1800`（硬超时 30 分钟，强制杀进程）+ `task_soft_time_limit=1500`（软超时 25 分钟，可捕获 `SoftTimeLimitExceeded` 做清理）
   4. **可见性超时**：`broker_transport_options={"visibility_timeout": 21600}`（6 小时，覆盖长任务如视频处理，防止任务因 broker 超时被重复消费）
   5. **死信队列**：重试耗尽的任务通过 `_send_to_dead_letter()` 发送到 `dead_letter` 队列（无消费者，仅存储），保留 `original_task` / `task_id` / `args` / `error` / `failed_at` 供人工排查。`document_tasks` 和 `index_tasks` 的所有 task 均已接入
+- **Beat 单实例锁（P1 分布式预备）**：多实例部署时 Beat 必须单实例运行，否则定时任务会重复执行。通过 `acquire_beat_lock()` 实现 Redis SETNX 单实例锁——Beat 启动时获取锁（`celery:beat:lock`，TTL 60s），获取不到则 `SystemExit` 退出。锁有 TTL，Beat 崩溃后锁自动过期，备用实例可接管。通过 `CELERY_BEAT_SINGLE_INSTANCE=1` 环境变量触发。Redis 不可用时放行（单机模式不需要锁）。docker-compose 中 `celery-beat` 已配置为独立服务 + `CELERY_BEAT_SINGLE_INSTANCE=1`
 - **链式触发**：文档处理完成后自动触发智能处理（摘要/标签/分类/行动项/FAQ）
 - **审核流程串联**：按文档密级自动路由 — `confidential`/`secret` 进入 `pending_review` 状态并提交 AuditFlow 审核；`public`/`internal` 直接发布。审核通过后 `AuditService.approve` 自动触发 `_publish_document` 将状态更新为 `published`
 
@@ -1372,6 +1373,16 @@ flowchart LR
 - **路径豁免**：`/health`、`/docs`、`/openapi.json`、`/redoc` 不受限流影响，确保健康检查和文档访问正常
 - **优雅降级**：`RATE_LIMIT_ENABLED=False` 时完全跳过限流；限流器初始化失败不影响请求处理
 - **429 响应**：超限返回 `429 Too Many Requests` + `Retry-After: 60` 头，客户端可据此退避重试
+- **分布式预备（P0）**：`RedisRateLimiter` 通过 Lua 脚本原子化取令牌，多 API 实例共享 Redis 中的令牌桶状态，限流精度为单实例配额（而非 N × 单实例）。Redis 不可用时自动降级为内存令牌桶（`RateLimiter`），保证限流功能始终可用。`setup_middleware` 优先初始化 `RedisRateLimiter`，无 `REDIS_URL` 时回退到内存模式
+
+### 双模式限流架构
+
+| 模式 | 类 | 计数存储 | 多实例精度 | 触发条件 |
+|------|-----|---------|-----------|----------|
+| Redis-backed | `RedisRateLimiter` | Redis（Lua 原子化） | 单实例配额（精确） | 配置了 `REDIS_URL` |
+| 内存降级 | `RateLimiter` | 进程内存 dict | N × 单实例（不精确） | Redis 不可用或无 `REDIS_URL` |
+
+> **设计决策**：即使当前单机部署也使用 Redis-backed 模式——这是正确性问题而非性能问题。多 API 实例时内存限流会形同虚设（用户实际可发 N × 配额的请求），Redis-backed 确保限流始终精确。
 
 ---
 
@@ -1549,7 +1560,7 @@ python -c "from app.utils.migration import stamp_head; stamp_head()"
 ```bash
 cd backend
 
-# 运行全部测试（1135 项）
+# 运行全部测试（1146 项）
 python -m pytest --tb=short -q
 
 # 运行特定模块测试
@@ -1567,7 +1578,8 @@ python -m pytest tests/test_video_rag.py -v               # 视频 RAG（ASR + �
 python -m pytest tests/test_document_parser.py -v         # 文档解析（Docling 统一解析 + PDF/DOCX/XLSX 表格+图片上传+小图过滤+VLM+扫描页OCR + 标题层级+列表结构+分页检测+XLSX降级+列宽对齐 + 独立音频 ASR + 旧格式兜底）
 python -m pytest tests/test_migration.py -v               # Alembic 迁移 + Pydantic V2 配置校验（field_validator + model_validator + 迁移文件 + 端到端 SQLite）
 python -m pytest tests/test_quality_guard.py -v           # RAG 质量守卫（检索+生成双层评估）
-python -m pytest tests/test_rate_limiter.py -v            # API 限流（令牌桶+客户端隔离+FastAPI 集成）
+python -m pytest tests/test_rate_limiter.py -v            # API 限流（Redis-backed 令牌桶 + 内存降级 + Lua 原子化 + 客户端隔离 + FastAPI 集成）
+python -m pytest tests/test_beat_lock.py -v               # Celery Beat 单实例锁（Redis SETNX + 分布式预备）
 python -m pytest tests/test_eval.py -v                    # 离线评测（数据集+Recall/MRR/NDCG+回归基线+CLI）
 python -m pytest tests/test_upload_summary.py -v          # P0 上传大小校验 + P1 解析摘要响应 + DB 字段优先读取
 python -m pytest tests/test_model_fields_p0p2.py -v       # P0-P2 字段补全（tenant_id/AgentCheckpoint/stream_agent_response/UsageRecord/Subscription/Response Schema）

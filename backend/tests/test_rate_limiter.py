@@ -1,14 +1,15 @@
-"""API 限流中间件测试 — TokenBucket + RateLimiter + FastAPI 集成。
+"""API 限流中间件测试 — TokenBucket + RateLimiter + RedisRateLimiter + FastAPI 集成。
 
 覆盖范围：
     - TokenBucket：令牌消费、补充、耗尽
     - RateLimiter：多客户端隔离、burst 突发
+    - RedisRateLimiter：Redis 原子化限流、降级模式、Lua 脚本
     - FastAPI 集成：429 响应、健康检查豁免、限流关闭
 """
 from __future__ import annotations
 
 import sys
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -279,3 +280,150 @@ class TestRateLimitIntegration:
         # 客户端 B 仍有配额
         resp_b = client.get("/api/test", headers={"x-api-key": "key_B"})
         assert resp_b.status_code == 200
+
+
+# ======================================================================
+# RedisRateLimiter 测试 — 分布式共享计数（P0 预备工作）
+# ======================================================================
+
+
+class TestRedisRateLimiter:
+    """Redis-backed 限流器测试 — 多实例共享计数 + 降级模式。"""
+
+    def test_redis_available_uses_lua_script(self) -> None:
+        """Redis 可用时通过 Lua 脚本原子化取令牌。"""
+        from app.middleware import RedisRateLimiter
+
+        limiter = RedisRateLimiter(
+            per_minute=60, burst=2, redis_url="redis://localhost:6379/0"
+        )
+
+        # mock Redis 连接
+        mock_redis = AsyncMock()
+        mock_redis.script_load = AsyncMock(return_value="lua_sha_123")
+        mock_redis.evalsha = AsyncMock(return_value=1)  # 允许
+
+        async def mock_ensure():
+            limiter._redis = mock_redis
+            limiter._lua_sha = "lua_sha_123"
+            limiter._degraded = False
+            return mock_redis
+
+        limiter._ensure_redis = mock_ensure
+
+        import asyncio
+
+        result = asyncio.run(limiter.allow("client_A"))
+        assert result is True
+        # evalsha 应被调用
+        mock_redis.evalsha.assert_called_once()
+
+    def test_redis_unavailable_degrades_to_memory(self) -> None:
+        """Redis 不可用时降级为内存令牌桶，限流功能不丢。"""
+        from app.middleware import RedisRateLimiter
+
+        limiter = RedisRateLimiter(
+            per_minute=60, burst=2, redis_url="redis://invalid:6379/0"
+        )
+
+        # mock _ensure_redis 返回 None（Redis 不可用）
+        async def mock_ensure():
+            limiter._degraded = True
+            return None
+
+        limiter._ensure_redis = mock_ensure
+
+        import asyncio
+
+        # 降级模式下使用内存令牌桶，burst=2
+        assert asyncio.run(limiter.allow("client_A")) is True
+        assert asyncio.run(limiter.allow("client_A")) is True
+        assert asyncio.run(limiter.allow("client_A")) is False  # 桶空
+
+    def test_redis_runtime_error_falls_back_to_memory(self) -> None:
+        """Redis 运行时故障时临时降级为内存模式。"""
+        from app.middleware import RedisRateLimiter
+
+        limiter = RedisRateLimiter(
+            per_minute=60, burst=1, redis_url="redis://localhost:6379/0"
+        )
+
+        # mock Redis 初始化成功但 evalsha 抛异常
+        mock_redis = AsyncMock()
+        mock_redis.script_load = AsyncMock(return_value="lua_sha_123")
+        mock_redis.evalsha = AsyncMock(side_effect=Exception("Redis 连接断开"))
+
+        async def mock_ensure():
+            limiter._redis = mock_redis
+            limiter._lua_sha = "lua_sha_123"
+            limiter._degraded = False
+            return mock_redis
+
+        limiter._ensure_redis = mock_ensure
+
+        import asyncio
+
+        # 第一次调用 Redis 故障 → 降级到内存，内存 burst=1 允许
+        result1 = asyncio.run(limiter.allow("client_A"))
+        assert result1 is True
+        # 第二次调用已降级，内存桶空了
+        result2 = asyncio.run(limiter.allow("client_A"))
+        assert result2 is False
+
+    def test_redis_degraded_flag_persists_after_error(self) -> None:
+        """Redis 故障后 degraded 标志持续，后续调用直接走内存。"""
+        from app.middleware import RedisRateLimiter
+
+        limiter = RedisRateLimiter(
+            per_minute=60, burst=5, redis_url="redis://localhost:6379/0"
+        )
+
+        mock_redis = AsyncMock()
+        mock_redis.script_load = AsyncMock(return_value="sha")
+        mock_redis.evalsha = AsyncMock(side_effect=Exception("连接断开"))
+
+        async def mock_ensure():
+            limiter._redis = mock_redis
+            limiter._lua_sha = "sha"
+            return mock_redis
+
+        limiter._ensure_redis = mock_ensure
+
+        import asyncio
+
+        asyncio.run(limiter.allow("client_A"))
+        # 故障后应标记降级
+        assert limiter._degraded is True
+
+    def test_clear_resets_fallback_buckets(self) -> None:
+        """clear 清空内存降级桶。"""
+        from app.middleware import RedisRateLimiter
+
+        limiter = RedisRateLimiter(
+            per_minute=60, burst=1, redis_url="redis://localhost:6379/0"
+        )
+
+        async def mock_ensure():
+            limiter._degraded = True
+            return None
+
+        limiter._ensure_redis = mock_ensure
+
+        import asyncio
+
+        asyncio.run(limiter.allow("client_A"))  # 消费令牌
+        assert not asyncio.run(limiter.allow("client_A"))  # 桶空
+        limiter.clear()  # 清空
+        assert asyncio.run(limiter.allow("client_A"))  # 重新可用
+
+    def test_lua_script_content_is_valid(self) -> None:
+        """Lua 脚本包含必要的令牌桶逻辑。"""
+        from app.middleware import _RATE_LIMIT_LUA
+
+        # 验证 Lua 脚本包含关键操作
+        assert "HMGET" in _RATE_LIMIT_LUA
+        assert "HMSET" in _RATE_LIMIT_LUA
+        assert "EXPIRE" in _RATE_LIMIT_LUA
+        assert "math.min" in _RATE_LIMIT_LUA
+        assert "capacity" in _RATE_LIMIT_LUA
+        assert "refill_rate" in _RATE_LIMIT_LUA

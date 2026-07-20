@@ -3,6 +3,9 @@
 
 遵循单一职责：本模块仅负责中间件的注册与配置，
 不包含业务逻辑（CORS 策略来自 Settings，日志格式由 structlog 处理）。
+
+分布式预备（P0）：限流器支持 Redis-backed 模式，多 API 实例共享计数。
+Redis 不可用时自动降级为内存令牌桶，保证限流功能始终可用。
 """
 
 from __future__ import annotations
@@ -50,6 +53,9 @@ class RateLimiter:
 
     客户端标识优先使用 X-API-Key 请求头，回退到客户端 IP。
     桶实例按客户端隔离，惰性创建。
+
+    分布式场景下多 API 实例各自计数，限流精度为 N × 单实例配额。
+    生产多实例环境应使用 RedisRateLimiter 替代。
     """
 
     def __init__(self, per_minute: int, burst: int) -> None:
@@ -76,11 +82,135 @@ class RateLimiter:
         self._buckets.clear()
 
 
+# ------------------------------------------------------------------
+# Redis-backed 限流器 — 分布式多实例共享计数（P0 预备工作）
+# ------------------------------------------------------------------
+
+# Lua 脚本：原子化令牌桶取令牌
+# KEYS[1] = rate_limit:{client_id}
+# ARGV[1] = capacity（桶容量）
+# ARGV[2] = refill_per_second（每秒补充速率）
+# ARGV[3] = tokens_to_consume（消费令牌数，通常 1）
+# ARGV[4] = now（当前时间戳，秒）
+# ARGV[5] = ttl（key 过期时间，秒，避免无限累积）
+# 返回 1 = 允许，0 = 拒绝
+_RATE_LIMIT_LUA = """
+local key = KEYS[1]
+local capacity = tonumber(ARGV[1])
+local refill_rate = tonumber(ARGV[2])
+local consume = tonumber(ARGV[3])
+local now = tonumber(ARGV[4])
+local ttl = tonumber(ARGV[5])
+
+local data = redis.call('HMGET', key, 'tokens', 'last_refill')
+local tokens = tonumber(data[1])
+local last_refill = tonumber(data[2])
+
+if tokens == nil then
+    tokens = capacity
+    last_refill = now
+end
+
+local elapsed = now - last_refill
+if elapsed < 0 then elapsed = 0 end
+tokens = math.min(capacity, tokens + elapsed * refill_rate)
+
+local allowed = 0
+if tokens >= consume then
+    tokens = tokens - consume
+    allowed = 1
+end
+
+redis.call('HMSET', key, 'tokens', tokens, 'last_refill', now)
+redis.call('EXPIRE', key, ttl)
+return allowed
+"""
+
+
+class RedisRateLimiter:
+    """Redis-backed 限流器 — 多 API 实例共享计数。
+
+    分布式场景下所有 API 实例共享 Redis 中的令牌桶状态，
+    限流精度为单实例配额（而非 N × 单实例）。
+
+    降级策略：Redis 不可用时自动降级为内存 RateLimiter，
+    保证限流功能始终可用（单机降级模式下限流精度降低但功能不丢）。
+    """
+
+    def __init__(
+        self,
+        per_minute: int,
+        burst: int,
+        redis_url: str,
+        key_prefix: str = "rate_limit:",
+        key_ttl: int = 120,
+    ) -> None:
+        self._per_minute = per_minute
+        self._burst = burst
+        self._refill_per_second = per_minute / 60.0
+        self._key_prefix = key_prefix
+        self._key_ttl = key_ttl
+        self._redis_url = redis_url
+        self._redis = None
+        self._lua_sha = None
+        # 降级用内存限流器（Redis 不可用时 fallback）
+        self._fallback = RateLimiter(per_minute=per_minute, burst=burst)
+        self._degraded = False
+
+    async def _ensure_redis(self):
+        """惰性初始化 Redis 连接，失败则标记降级模式。"""
+        if self._redis is not None:
+            return self._redis
+        try:
+            import redis.asyncio as aioredis
+
+            self._redis = aioredis.from_url(self._redis_url, decode_responses=True)
+            # 预加载 Lua 脚本（EVALSHA 比 EVAL 快，省去每次脚本传输）
+            self._lua_sha = await self._redis.script_load(_RATE_LIMIT_LUA)
+            self._degraded = False
+            return self._redis
+        except Exception as exc:
+            log.warning("ratelimit.redis_init_failed", error=str(exc)[:200])
+            self._degraded = True
+            return None
+
+    async def allow(self, client_id: str) -> bool:
+        """检查客户端是否被允许通过（异步，Redis 原子化）。"""
+        redis_conn = await self._ensure_redis()
+        if redis_conn is None or self._degraded:
+            # 降级模式：用内存限流器
+            return self._fallback.allow(client_id)
+
+        try:
+            key = f"{self._key_prefix}{client_id}"
+            now = time.time()
+            result = await redis_conn.evalsha(
+                self._lua_sha,
+                1,
+                key,
+                str(self._burst),
+                str(self._refill_per_second),
+                "1",
+                str(now),
+                str(self._key_ttl),
+            )
+            return bool(int(result))
+        except Exception as exc:
+            # Redis 运行时故障 → 临时降级为内存模式
+            log.warning("ratelimit.redis_error_fallback", error=str(exc)[:200])
+            self._degraded = True
+            return self._fallback.allow(client_id)
+
+    def clear(self) -> None:
+        """清空内存降级桶（测试用，不影响 Redis 中的状态）。"""
+        self._fallback.clear()
+
+
 # 全局限流器实例 — 在 setup_middleware 中初始化
-_rate_limiter: RateLimiter | None = None
+_rate_limiter: RateLimiter | RedisRateLimiter | None = None
 
 
-def get_rate_limiter() -> RateLimiter | None:
+def get_rate_limiter() -> RateLimiter | RedisRateLimiter | None:
     """获取全局限流器实例（测试可访问）。"""
     return _rate_limiter
 
@@ -128,15 +258,30 @@ def setup_middleware(app: FastAPI) -> None:
 
     # --- 初始化限流器 ---
     if settings.RATE_LIMIT_ENABLED:
-        _rate_limiter = RateLimiter(
-            per_minute=settings.RATE_LIMIT_PER_MINUTE,
-            burst=settings.RATE_LIMIT_BURST,
-        )
-        log.info(
-            "ratelimit.enabled",
-            per_minute=settings.RATE_LIMIT_PER_MINUTE,
-            burst=settings.RATE_LIMIT_BURST,
-        )
+        # P0 分布式预备：优先使用 Redis-backed 限流器，多实例共享计数
+        # Redis 不可用时自动降级为内存令牌桶
+        redis_url = getattr(settings, "REDIS_URL", None)
+        if redis_url:
+            _rate_limiter = RedisRateLimiter(
+                per_minute=settings.RATE_LIMIT_PER_MINUTE,
+                burst=settings.RATE_LIMIT_BURST,
+                redis_url=redis_url,
+            )
+            log.info(
+                "ratelimit.enabled_redis",
+                per_minute=settings.RATE_LIMIT_PER_MINUTE,
+                burst=settings.RATE_LIMIT_BURST,
+            )
+        else:
+            _rate_limiter = RateLimiter(
+                per_minute=settings.RATE_LIMIT_PER_MINUTE,
+                burst=settings.RATE_LIMIT_BURST,
+            )
+            log.info(
+                "ratelimit.enabled_memory",
+                per_minute=settings.RATE_LIMIT_PER_MINUTE,
+                burst=settings.RATE_LIMIT_BURST,
+            )
 
     # --- 请求日志 + 限流中间件 ---
     @app.middleware("http")
@@ -147,7 +292,12 @@ def setup_middleware(app: FastAPI) -> None:
             path = request.url.path
             if not path.startswith(_EXEMPT_PATHS):
                 client_id = _get_client_id(request)
-                if not _rate_limiter.allow(client_id):
+                # RedisRateLimiter.allow 是异步的，RateLimiter.allow 是同步的
+                if isinstance(_rate_limiter, RedisRateLimiter):
+                    allowed = await _rate_limiter.allow(client_id)
+                else:
+                    allowed = _rate_limiter.allow(client_id)
+                if not allowed:
                     log.warning(
                         "ratelimit.exceeded",
                         client_id=client_id,
