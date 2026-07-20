@@ -18,6 +18,7 @@ from typing import Any
 
 from celery_app import celery_app
 from app.utils.logger import get_logger
+from tasks.document_tasks import _send_to_dead_letter
 
 logger = get_logger(__name__)
 
@@ -46,6 +47,15 @@ def build_search_index(self, doc_id: str) -> dict[str, Any]:
         return result
     except Exception as exc:
         logger.error("index.search_task_failed", doc_id=doc_id, error=str(exc))
+        if self.request.retries >= self.max_retries:
+            _send_to_dead_letter(
+                task_name="tasks.index_tasks.build_search_index",
+                task_id=self.request.id,
+                args=(doc_id,),
+                kwargs={},
+                exc=exc,
+            )
+            return {"status": "failed", "doc_id": doc_id, "error": str(exc)[:500], "dead_lettered": True}
         raise self.retry(exc=exc)
 
 
@@ -73,6 +83,15 @@ def build_vector_index(self, doc_id: str) -> dict[str, Any]:
         return result
     except Exception as exc:
         logger.error("index.vector_task_failed", doc_id=doc_id, error=str(exc))
+        if self.request.retries >= self.max_retries:
+            _send_to_dead_letter(
+                task_name="tasks.index_tasks.build_vector_index",
+                task_id=self.request.id,
+                args=(doc_id,),
+                kwargs={},
+                exc=exc,
+            )
+            return {"status": "failed", "doc_id": doc_id, "error": str(exc)[:500], "dead_lettered": True}
         raise self.retry(exc=exc)
 
 
@@ -99,6 +118,15 @@ def rebuild_kb_index(self, kb_id: str) -> dict[str, Any]:
         return result
     except Exception as exc:
         logger.error("index.rebuild_kb_failed", kb_id=kb_id, error=str(exc))
+        if self.request.retries >= self.max_retries:
+            _send_to_dead_letter(
+                task_name="tasks.index_tasks.rebuild_kb_index",
+                task_id=self.request.id,
+                args=(kb_id,),
+                kwargs={},
+                exc=exc,
+            )
+            return {"status": "failed", "kb_id": kb_id, "error": str(exc)[:500], "dead_lettered": True}
         raise self.retry(exc=exc)
 
 

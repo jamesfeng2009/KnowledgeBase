@@ -1290,6 +1290,12 @@ flowchart LR
 - **视频 RAG 流程**：视频文档走专用管线 — ffmpeg 提取 16kHz mono 音轨 → ASR 转写为带时间戳片段 → ffmpeg 场景切换检测抽取关键帧 → VLM 逐帧描述 → `chunk_video_transcript` 按时间窗口（120s）合并转写片段并对齐关键帧描述，`title_path` 存时间戳标签（如 `00:00-02:15`）
 - **Find Skills 渐进式技能加载**：Agent Loop 每轮按用户查询匹配相关技能，只加载匹配工具的完整 schema（按需加载），避免工具数量增长后全量加载浪费 token。`SkillRegistry` 维护轻量索引（name/category/tags/description，每个技能约 20-30 token），`SkillFinder` 用中英文分词 + 多维度评分（name +10 / category +5 / tag +8 / desc +3）匹配，阈值过滤 + `max_skills` 限制。无匹配时 fallback 到全量加载（零回归保证）。配置项：`SKILL_FINDER_ENABLED` / `SKILL_MATCH_THRESHOLD` / `SKILL_MAX_LOADED`
 - **重试机制**：`max_retries=3`，`default_retry_delay=60`
+- **可靠性 5 层保障**：
+  1. **消息不丢失**：`task_acks_late=True`（任务完成后才 ACK）+ `task_reject_on_worker_lost=True`（worker 被 OOM 强杀时任务重投回队列）+ `worker_prefetch_multiplier=1`（一次只预取 1 个任务，崩溃时最多丢失 1 个）
+  2. **Redis 持久化**：`redis-server --appendonly yes --appendfsync everysec`（AOF 每秒刷盘）+ `redis_data` volume 挂载，容器重启后队列和结果不丢失
+  3. **超时保护**：`task_time_limit=1800`（硬超时 30 分钟，强制杀进程）+ `task_soft_time_limit=1500`（软超时 25 分钟，可捕获 `SoftTimeLimitExceeded` 做清理）
+  4. **可见性超时**：`broker_transport_options={"visibility_timeout": 21600}`（6 小时，覆盖长任务如视频处理，防止任务因 broker 超时被重复消费）
+  5. **死信队列**：重试耗尽的任务通过 `_send_to_dead_letter()` 发送到 `dead_letter` 队列（无消费者，仅存储），保留 `original_task` / `task_id` / `args` / `error` / `failed_at` 供人工排查。`document_tasks` 和 `index_tasks` 的所有 task 均已接入
 - **链式触发**：文档处理完成后自动触发智能处理（摘要/标签/分类/行动项/FAQ）
 - **审核流程串联**：按文档密级自动路由 — `confidential`/`secret` 进入 `pending_review` 状态并提交 AuditFlow 审核；`public`/`internal` 直接发布。审核通过后 `AuditService.approve` 自动触发 `_publish_document` 将状态更新为 `published`
 

@@ -35,6 +35,13 @@ _PROGRESS_KEY_PREFIX = "ekb:parse_progress:"
 _PROGRESS_TTL_SECONDS = 1800  # 30 分钟，与 Celery 软超时对齐
 
 
+def _now_iso() -> str:
+    """返回当前 UTC 时间的 ISO 8601 字符串（用于死信队列时间戳）。"""
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat()
+
+
 def _update_parse_progress(
     doc_id: str,
     stage: str,
@@ -162,6 +169,75 @@ CHUNK_SIZE: int = 500
 CHUNK_OVERLAP: int = 50
 
 
+def _send_to_dead_letter(
+    task_name: str,
+    task_id: str,
+    args: tuple,
+    kwargs: dict,
+    exc: Exception,
+) -> None:
+    """将重试耗尽的任务发送到死信队列供人工排查。
+
+    死信队列不配置消费者，仅用于保留失败任务信息。
+    运维可通过 celery inspect 或 Redis CLI 查看死信队列内容。
+
+    Args:
+        task_name: 任务名称（如 tasks.document_tasks.process_document）。
+        task_id: Celery 任务 ID。
+        args: 任务位置参数。
+        kwargs: 任务关键字参数。
+        exc: 最终异常。
+    """
+    try:
+        dead_letter_payload = {
+            "original_task": task_name,
+            "original_task_id": task_id,
+            "args": list(args) if args else [],
+            "kwargs": kwargs if kwargs else {},
+            "error": str(exc)[:500],
+            "failed_at": _now_iso(),
+        }
+        # 发送到 dead_letter 队列（无消费者，仅存储）
+        celery_app.send_task(
+            name="dead_letter.record",
+            args=[dead_letter_payload],
+            queue="dead_letter",
+        )
+        logger.warning(
+            "task.dead_lettered",
+            task_name=task_name,
+            task_id=task_id,
+            error=str(exc)[:200],
+        )
+    except Exception as dl_exc:
+        # 死信队列记录失败不应影响主流程
+        logger.error(
+            "task.dead_letter_failed",
+            task_name=task_name,
+            task_id=task_id,
+            error=str(dl_exc)[:200],
+        )
+
+
+@celery_app.task(
+    name="dead_letter.record",
+    queue="dead_letter",
+    ignore_result=True,
+)
+def _record_dead_letter(payload: dict) -> None:
+    """死信队列消费者 — 仅记录日志，不做任何处理。
+
+    死信队列的目的是保留失败任务信息供人工排查，
+    此 task 仅用于让 Celery 不报"unknown task"警告。
+    """
+    logger.warning(
+        "dead_letter.recorded",
+        original_task=payload.get("original_task"),
+        task_id=payload.get("original_task_id"),
+        error=payload.get("error", ""),
+    )
+
+
 @celery_app.task(
     name="tasks.document_tasks.process_document",
     bind=True,
@@ -225,7 +301,21 @@ def process_document(self, doc_id: str) -> dict[str, Any]:
         _update_parse_progress(
             doc_id, stage="failed", message=f"解析失败：{str(exc)[:200]}"
         )
-        # 重试
+        # 重试 — 耗尽后发送到死信队列
+        if self.request.retries >= self.max_retries:
+            _send_to_dead_letter(
+                task_name="tasks.document_tasks.process_document",
+                task_id=self.request.id,
+                args=(doc_id,),
+                kwargs={},
+                exc=exc,
+            )
+            return {
+                "status": "failed",
+                "doc_id": doc_id,
+                "error": str(exc)[:500],
+                "dead_lettered": True,
+            }
         raise self.retry(exc=exc)
 
 

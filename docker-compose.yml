@@ -20,7 +20,10 @@ services:
 
   redis:
     image: redis:7-alpine
+    # 可靠性：AOF 持久化 + volume 挂载，容器重启后队列和结果不丢失
+    command: redis-server --appendonly yes --appendfsync everysec
     ports: ["6379:6379"]
+    volumes: ["redis_data:/data"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -140,6 +143,8 @@ services:
       - ETCD_AUTO_COMPACTION_MODE=revision
       - ETCD_AUTO_COMPACTION_RETENTION=1000
       - ETCD_QUOTA_BACKEND_BYTES=4294967296
+      - ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
+      - ETCD_ADVERTISE_CLIENT_URLS=http://milvus-etcd:2379
     volumes: ["etcd_data:/etcd/data"]
 
   milvus-minio:
@@ -228,6 +233,7 @@ services:
 
 volumes:
   pg_data:
+  redis_data:
   minio_data:
   os_data:
   etcd_data:

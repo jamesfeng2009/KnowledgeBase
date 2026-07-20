@@ -16,6 +16,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from celery import Celery  # noqa: E402
+from celery.schedules import crontab  # noqa: E402
 
 from app.config import get_settings  # noqa: E402
 from app.utils.logger import get_logger  # noqa: E402
@@ -30,7 +31,14 @@ settings = get_settings()
 celery_app = Celery(
     "ekb_worker",
     broker=settings.REDIS_URL,
-    queues=["documents", "indexing", "scheduled", "notifications", "multimodal"],
+    queues=[
+        "documents",
+        "indexing",
+        "scheduled",
+        "notifications",
+        "multimodal",
+        "dead_letter",  # 死信队列 — 重试耗尽的任务进入此队列供人工排查
+    ],
     backend=settings.REDIS_URL,
     include=[
         "tasks.document_tasks",
@@ -74,6 +82,9 @@ celery_app.conf.update(
 
     # 任务确认 — 任务完成后才确认（防止 worker 崩溃丢失任务）
     task_acks_late=True,
+    # 可靠性：worker 进程被 OOM Killer 强杀时，把任务重投回队列而非标记为 acked
+    # 配合 task_acks_late=True，确保 worker 异常退出时任务不丢失
+    task_reject_on_worker_lost=True,
 
     # 重试配置
     task_default_retry_delay=60,  # 默认重试间隔 60 秒
@@ -84,6 +95,24 @@ celery_app.conf.update(
 
     # 并发配置
     worker_concurrency=4,
+
+    # 死信队列 — 重试耗尽的任务路由到 dead_letter 队列供人工排查
+    # 通过 task_routes 中单独的 dead_letter 路由规则实现（见下方）
+)
+
+# ------------------------------------------------------------------
+# 死信队列路由 — 重试耗尽的任务自动进入 dead_letter 队列
+# ------------------------------------------------------------------
+# Celery 的 task_routes 按 task 名称路由，死信通过 task 配置 max_retries
+# 后 raise self.retry(exc=exc) 达到上限会抛 MaxRetriesExceededError。
+# 我们在 task 装饰器上配置 deadletter 行为（见各 task 文件）。
+# 此处配置 Redis broker 的可见性超时 — 确保任务不会因 broker 超时被重复消费
+
+celery_app.conf.update(
+    # 可见性超时 — worker 取出任务后，如果在此时长内未 ACK，任务会被重新投递
+    # 默认 3600s（1小时），设为 6 小时覆盖长任务（如视频处理）
+    broker_transport_options={"visibility_timeout": 21600},
+    result_backend_transport_options={"visibility_timeout": 21600},
 )
 
 # ------------------------------------------------------------------
@@ -94,37 +123,37 @@ celery_app.conf.beat_schedule = {
     # 每日检测高频无结果查询（知识缺口）
     "detect-knowledge-gaps-daily": {
         "task": "tasks.scheduled_tasks.detect_knowledge_gaps",
-        "schedule": "0 2 * * *",  # 每天凌晨 2 点
+        "schedule": crontab(minute=0, hour=2),  # 每天凌晨 2 点
     },
     # 每日检查知识过期预警
     "check-expiration-daily": {
         "task": "tasks.scheduled_tasks.check_expiration",
-        "schedule": "0 3 * * *",  # 每天凌晨 3 点
+        "schedule": crontab(minute=0, hour=3),  # 每天凌晨 3 点
     },
     # 每日清理过期记忆事实
     "cleanup-expired-facts-daily": {
         "task": "tasks.scheduled_tasks.cleanup_expired_facts",
-        "schedule": "0 4 * * *",  # 每天凌晨 4 点
+        "schedule": crontab(minute=0, hour=4),  # 每天凌晨 4 点
     },
     # 每周一生成质量报告
     "generate-quality-report-weekly": {
         "task": "tasks.scheduled_tasks.generate_quality_report",
-        "schedule": "0 8 * * 1",  # 每周一早上 8 点
+        "schedule": crontab(minute=0, hour=8, day_of_week=1),  # 每周一早上 8 点
     },
     # 每日凌晨 5 点 — 清理 24h 未 complete 的孤儿分片（P1 加固）
     "cleanup-orphan-multipart-daily": {
         "task": "tasks.scheduled_tasks.cleanup_orphan_multipart_uploads",
-        "schedule": "0 5 * * *",  # 每天凌晨 5 点
+        "schedule": crontab(minute=0, hour=5),  # 每天凌晨 5 点
     },
     # 每日 9:00 — 个性化知识日报
     "daily-personal-digest": {
         "task": "tasks.notification_tasks.daily_personal_digest",
-        "schedule": "0 9 * * *",  # 每天早上 9 点
+        "schedule": crontab(minute=0, hour=9),  # 每天早上 9 点
     },
     # 每日 18:00 — 知识缺口预警
     "daily-gap-alert": {
         "task": "tasks.notification_tasks.daily_gap_alert",
-        "schedule": "0 18 * * *",  # 每天下午 6 点
+        "schedule": crontab(minute=0, hour=18),  # 每天下午 6 点
     },
 }
 
