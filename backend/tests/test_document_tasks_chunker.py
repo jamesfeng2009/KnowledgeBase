@@ -755,3 +755,290 @@ class TestBuildKnowledgeGraphFunction:
             count = await _build_knowledge_graph(_TEST_UUID, mock_chunks, mock_doc)
 
         assert count == 0
+
+
+# ======================================================================
+# chord 拆分测试 — Task 拓扑 + chunk 持久化 + 降级
+# ======================================================================
+
+
+class TestChordPipelineSplit:
+    """chord 拆分测试 — 4 个独立 task + chunk Redis 持久化 + 降级。
+
+    验证：
+    - _build_index_async / _build_graph_async 独立执行
+    - _finalize_document_async 合并 warnings
+    - _parse_and_chunk_async 正确返回 chunk_objects + graph_enabled
+    - chunk_objects 通过 Redis 跨进程共享
+
+    测试策略：Celery 在测试环境被 mock，直接测试底层异步函数。
+    """
+
+    @pytest.mark.asyncio
+    async def test_build_index_async_calls_build_indexes(self) -> None:
+        """_build_index_async 调用 _generate_embeddings + _build_indexes。"""
+        from tasks.document_tasks import _build_index_async
+
+        mock_chunks = [MagicMock(content="测试内容", id="c1")]
+        chunks_text = ["测试内容"]
+
+        with patch("tasks.document_tasks._update_parse_progress"), \
+             patch("tasks.document_tasks._generate_embeddings", new_callable=AsyncMock, return_value=[[0.1]]) as mock_emb, \
+             patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock) as mock_idx:
+
+            result = await _build_index_async(_TEST_UUID, mock_chunks, chunks_text)
+
+        assert result["status"] == "done"
+        mock_emb.assert_called_once()
+        mock_idx.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_build_index_async_embedding_failure_degraded(self) -> None:
+        """向量化失败时降级为空向量，仍记录 warning。"""
+        from tasks.document_tasks import _build_index_async
+
+        mock_chunks = [MagicMock(content="内容", id="c1")]
+
+        with patch("tasks.document_tasks._update_parse_progress"), \
+             patch("tasks.document_tasks._generate_embeddings", new_callable=AsyncMock, side_effect=Exception("API 不可用")), \
+             patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock):
+
+            result = await _build_index_async(_TEST_UUID, mock_chunks, ["内容"])
+
+        assert result["status"] == "done"
+        assert any("向量化失败" in w for w in result["index_warnings"])
+
+    @pytest.mark.asyncio
+    async def test_build_graph_async_calls_build_knowledge_graph(self) -> None:
+        """_build_graph_async 调用 _build_knowledge_graph。"""
+        from tasks.document_tasks import _build_graph_async
+
+        mock_chunks = [MagicMock(content="微服务属于架构模式", id="c1")]
+        mock_doc = MagicMock()
+        mock_repo = AsyncMock()
+        mock_repo.get_by_id = AsyncMock(return_value=mock_doc)
+        mock_session = AsyncMock()
+        mock_session_cm = AsyncMock()
+        mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_cm.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("app.database.async_session_factory", return_value=mock_session_cm), \
+             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo), \
+             patch("tasks.document_tasks._build_knowledge_graph", new_callable=AsyncMock) as mock_graph:
+
+            result = await _build_graph_async(_TEST_UUID, mock_chunks)
+
+        assert result["status"] == "done"
+        mock_graph.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_build_graph_async_failure_records_warning(self) -> None:
+        """图谱构建失败时记录 warning，不抛异常。"""
+        from tasks.document_tasks import _build_graph_async
+
+        mock_chunks = [MagicMock(content="内容", id="c1")]
+        mock_doc = MagicMock()
+        mock_repo = AsyncMock()
+        mock_repo.get_by_id = AsyncMock(return_value=mock_doc)
+        mock_session_cm = AsyncMock()
+        mock_session_cm.__aenter__ = AsyncMock(return_value=AsyncMock())
+        mock_session_cm.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("app.database.async_session_factory", return_value=mock_session_cm), \
+             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo), \
+             patch("tasks.document_tasks._build_knowledge_graph", new_callable=AsyncMock, side_effect=Exception("Neo4j 断开")):
+
+            result = await _build_graph_async(_TEST_UUID, mock_chunks)
+
+        assert result["status"] == "done"
+        assert any("知识图谱构建失败" in w for w in result["graph_warnings"])
+
+    @pytest.mark.asyncio
+    async def test_finalize_document_async_publishes_internal(self) -> None:
+        """_finalize_document_async 对 internal 密级直接发布。"""
+        from tasks.document_tasks import _finalize_document_async
+
+        results = [
+            {"doc_id": _TEST_UUID, "status": "done", "index_warnings": []},
+            {"doc_id": _TEST_UUID, "status": "done", "graph_warnings": []},
+        ]
+
+        mock_doc = MagicMock()
+        mock_doc.id = _uuid.UUID(_TEST_UUID)
+        mock_doc.content_text = "内容"
+        mock_doc.classification = "internal"
+        mock_doc.parse_warnings = None
+        mock_doc.owner_id = _uuid.UUID(_TEST_UUID)
+
+        mock_repo = AsyncMock()
+        mock_repo.get_by_id = AsyncMock(return_value=mock_doc)
+        mock_session = AsyncMock()
+        mock_session_cm = AsyncMock()
+        mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_cm.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("app.database.async_session_factory", return_value=mock_session_cm), \
+             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo), \
+             patch("tasks.document_tasks._update_parse_progress"), \
+             patch("tasks.intelligence_tasks.process_intelligence.delay"):
+
+            result = await _finalize_document_async(_TEST_UUID, results)
+
+        assert result["status"] == "success"
+        assert result["final_status"] == "published"
+
+    @pytest.mark.asyncio
+    async def test_finalize_document_async_submits_confidential_for_audit(self) -> None:
+        """_finalize_document_async 对 confidential 密级提交审核。"""
+        from tasks.document_tasks import _finalize_document_async
+
+        results = []
+
+        mock_doc = MagicMock()
+        mock_doc.id = _uuid.UUID(_TEST_UUID)
+        mock_doc.content_text = "机密内容"
+        mock_doc.classification = "confidential"
+        mock_doc.parse_warnings = None
+        mock_doc.owner_id = _uuid.UUID(_TEST_UUID)
+
+        mock_repo = AsyncMock()
+        mock_repo.get_by_id = AsyncMock(return_value=mock_doc)
+        mock_session_cm = AsyncMock()
+        mock_session_cm.__aenter__ = AsyncMock(return_value=AsyncMock())
+        mock_session_cm.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("app.database.async_session_factory", return_value=mock_session_cm), \
+             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo), \
+             patch("tasks.document_tasks._update_parse_progress"), \
+             patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock) as mock_audit, \
+             patch("tasks.intelligence_tasks.process_intelligence.delay"):
+
+            result = await _finalize_document_async(_TEST_UUID, results)
+
+        assert result["final_status"] == "pending_review"
+        mock_audit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_finalize_document_async_merges_subtask_warnings(self) -> None:
+        """_finalize_document_async 合并子 task 的 warnings。"""
+        from tasks.document_tasks import _finalize_document_async
+
+        results = [
+            {"doc_id": _TEST_UUID, "index_warnings": ["索引降级"]},
+            {"doc_id": _TEST_UUID, "graph_warnings": ["图谱失败"]},
+        ]
+
+        mock_doc = MagicMock()
+        mock_doc.content_text = "内容"
+        mock_doc.classification = "internal"
+        mock_doc.parse_warnings = ["解析警告"]
+        mock_doc.owner_id = _uuid.UUID(_TEST_UUID)
+
+        mock_repo = AsyncMock()
+        mock_repo.get_by_id = AsyncMock(return_value=mock_doc)
+        mock_session_cm = AsyncMock()
+        mock_session_cm.__aenter__ = AsyncMock(return_value=AsyncMock())
+        mock_session_cm.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("app.database.async_session_factory", return_value=mock_session_cm), \
+             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo), \
+             patch("tasks.document_tasks._update_parse_progress"), \
+             patch("tasks.intelligence_tasks.process_intelligence.delay"):
+
+            result = await _finalize_document_async(_TEST_UUID, results)
+
+        assert "解析警告" in result["warnings"]
+        assert "索引降级" in result["warnings"]
+        assert "图谱失败" in result["warnings"]
+
+
+class TestChunkRedisPersistence:
+    """chunk_objects Redis 持久化测试。"""
+
+    def test_save_and_load_chunks_roundtrip(self) -> None:
+        """chunk_objects 序列化到 Redis 再反序列化，数据完整。"""
+        import json
+        import types
+
+        # 确保 redis 模块存在
+        if "redis" not in sys.modules:
+            mock_redis_mod = types.ModuleType("redis")
+            mock_redis_mod.from_url = MagicMock()
+            sys.modules["redis"] = mock_redis_mod
+
+        from tasks.document_tasks import _save_chunks_to_redis, _load_chunks_from_redis
+        from app.rag.chunker import Chunk
+
+        chunks = [
+            Chunk(
+                id="c1", doc_id=_TEST_UUID, content="测试内容1",
+                parent_id=None, title_path="标题1",
+                content_type="plain", chunk_strategy="semantic",
+            ),
+            Chunk(
+                id="c2", doc_id=_TEST_UUID, content="测试内容2",
+                parent_id="c1", title_path="标题1 > 子标题",
+                content_type="plain", chunk_strategy="structural",
+            ),
+        ]
+
+        saved_payload = []
+
+        mock_client = MagicMock()
+        def mock_setex(key, ttl, value):
+            saved_payload.append(value)
+        def mock_get(key):
+            return saved_payload[0] if saved_payload else None
+        mock_client.setex = mock_setex
+        mock_client.get = mock_get
+
+        with patch("redis.from_url", return_value=mock_client):
+            result = _save_chunks_to_redis(_TEST_UUID, chunks)
+            assert result is True
+            loaded = _load_chunks_from_redis(_TEST_UUID)
+
+        assert loaded is not None
+        assert len(loaded) == 2
+        assert loaded[0].id == "c1"
+        assert loaded[0].content == "测试内容1"
+        assert loaded[0].title_path == "标题1"
+        assert loaded[1].parent_id == "c1"
+        assert loaded[1].chunk_strategy == "structural"
+
+    def test_save_chunks_redis_unavailable_returns_false(self) -> None:
+        """Redis 不可用时 _save_chunks_to_redis 返回 False。"""
+        import types
+
+        if "redis" not in sys.modules:
+            mock_redis_mod = types.ModuleType("redis")
+            mock_redis_mod.from_url = MagicMock()
+            sys.modules["redis"] = mock_redis_mod
+
+        from tasks.document_tasks import _save_chunks_to_redis
+        from app.rag.chunker import Chunk
+
+        chunks = [Chunk(id="c1", doc_id=_TEST_UUID, content="内容")]
+
+        with patch("redis.from_url", side_effect=Exception("Connection refused")):
+            result = _save_chunks_to_redis(_TEST_UUID, chunks)
+
+        assert result is False
+
+    def test_load_chunks_not_found_returns_none(self) -> None:
+        """Redis 中无数据时 _load_chunks_from_redis 返回 None。"""
+        import types
+
+        if "redis" not in sys.modules:
+            mock_redis_mod = types.ModuleType("redis")
+            mock_redis_mod.from_url = MagicMock()
+            sys.modules["redis"] = mock_redis_mod
+
+        from tasks.document_tasks import _load_chunks_from_redis
+
+        mock_client = MagicMock()
+        mock_client.get = MagicMock(return_value=None)
+
+        with patch("redis.from_url", return_value=mock_client):
+            result = _load_chunks_from_redis(_TEST_UUID)
+
+        assert result is None

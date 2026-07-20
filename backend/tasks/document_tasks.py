@@ -131,6 +131,107 @@ def get_parse_progress(doc_id: str) -> dict[str, Any] | None:
     return None
 
 
+# ------------------------------------------------------------------
+# Chunk 持久化 — 子 task 跨进程共享 chunk_objects（chord 拆分基础）
+# ------------------------------------------------------------------
+
+_CHUNKS_KEY_PREFIX = "ekb:chunks:"
+_CHUNKS_TTL_SECONDS = 3600  # 1 小时，chunk 是临时中间态
+
+
+def _save_chunks_to_redis(doc_id: str, chunk_objects: list[Chunk]) -> bool:
+    """将 chunk_objects 序列化存入 Redis，供子 task 跨进程读取。
+
+    chord 拆分后，build_index_task 和 build_graph_task 是独立 Celery task，
+    无法通过进程内参数传递 chunk_objects。通过 Redis 共享：
+    - 入口 task 调用 _save_chunks_to_redis 存入
+    - 子 task 调用 _load_chunks_from_redis 读取
+    - TTL 1 小时，自动清理临时数据
+
+    Args:
+        doc_id: 文档 ID。
+        chunk_objects: Chunk 对象列表。
+
+    Returns:
+        True = 成功，False = Redis 不可用（调用方应降级）。
+    """
+    try:
+        import json
+
+        import redis
+
+        from app.config import get_settings
+
+        settings = get_settings()
+        client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+        # 序列化 Chunk dataclass
+        payload = json.dumps(
+            [
+                {
+                    "id": c.id,
+                    "doc_id": c.doc_id,
+                    "content": c.content,
+                    "parent_id": c.parent_id,
+                    "title_path": c.title_path,
+                    "content_type": c.content_type,
+                    "chunk_strategy": c.chunk_strategy,
+                }
+                for c in chunk_objects
+            ],
+            ensure_ascii=False,
+        )
+        client.setex(
+            f"{_CHUNKS_KEY_PREFIX}{doc_id}",
+            _CHUNKS_TTL_SECONDS,
+            payload,
+        )
+        client.close()
+        return True
+    except Exception:
+        logger.debug("chunks.save_failed", doc_id=doc_id)
+        return False
+
+
+def _load_chunks_from_redis(doc_id: str) -> list[Chunk] | None:
+    """从 Redis 反序列化读取 chunk_objects。
+
+    Args:
+        doc_id: 文档 ID。
+
+    Returns:
+        Chunk 对象列表，Redis 不可用或无数据时返回 None。
+    """
+    try:
+        import json
+
+        import redis
+
+        from app.config import get_settings
+
+        settings = get_settings()
+        client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+        raw = client.get(f"{_CHUNKS_KEY_PREFIX}{doc_id}")
+        client.close()
+        if not raw:
+            return None
+        data = json.loads(raw)
+        return [
+            Chunk(
+                id=d["id"],
+                doc_id=d["doc_id"],
+                content=d["content"],
+                parent_id=d.get("parent_id"),
+                title_path=d.get("title_path", ""),
+                content_type=d.get("content_type", ""),
+                chunk_strategy=d.get("chunk_strategy", ""),
+            )
+            for d in data
+        ]
+    except Exception:
+        logger.debug("chunks.load_failed", doc_id=doc_id)
+        return None
+
+
 def _count_pages_from_text(text: str, doc_type: str) -> int:
     """从解析后的文本推断文档页数。
 
@@ -239,6 +340,147 @@ def _record_dead_letter(payload: dict) -> None:
 
 
 @celery_app.task(
+    name="tasks.document_tasks.build_index_task",
+    queue="indexing",
+    bind=True,
+    max_retries=3,
+    default_retry_delay=60,
+)
+def build_index_task(self, doc_id: str) -> dict[str, Any]:
+    """支线 A — 向量化 + OpenSearch 索引（独立 worker，可单独扩容）。
+
+    从 Redis 读取 chunk_objects（入口 task 持久化），执行向量和索引构建。
+    与 build_graph_task 并行执行，互不影响。
+
+    Args:
+        doc_id: 文档 ID（UUID 字符串）。
+
+    Returns:
+        索引构建结果。
+    """
+    logger.info("document.index_task_started", doc_id=doc_id)
+
+    chunk_objects = _load_chunks_from_redis(doc_id)
+    if chunk_objects is None:
+        logger.warning("document.index_chunks_not_found", doc_id=doc_id)
+        return {"doc_id": doc_id, "status": "skipped", "reason": "chunks_not_found"}
+
+    chunks = [c.content for c in chunk_objects]
+
+    _update_parse_progress(
+        doc_id, stage="embedding", total=len(chunks),
+        message=f"正在向量化 {len(chunks)} 个文本块",
+    )
+
+    try:
+        result = asyncio.run(_build_index_async(doc_id, chunk_objects, chunks))
+        return result
+    except Exception as exc:
+        logger.error("document.index_task_failed", doc_id=doc_id, error=str(exc))
+        if self.request.retries >= self.max_retries:
+            _send_to_dead_letter(
+                task_name="tasks.document_tasks.build_index_task",
+                task_id=self.request.id,
+                args=(doc_id,),
+                kwargs={},
+                exc=exc,
+            )
+            return {"doc_id": doc_id, "status": "failed", "error": str(exc)[:500], "dead_lettered": True}
+        raise self.retry(exc=exc)
+
+
+@celery_app.task(
+    name="tasks.document_tasks.build_graph_task",
+    queue="documents",
+    bind=True,
+    max_retries=3,
+    default_retry_delay=60,
+)
+def build_graph_task(self, doc_id: str) -> dict[str, Any]:
+    """支线 B — 知识图谱构建（独立 worker，复用 chunk_objects）。
+
+    从 Redis 读取 chunk_objects，调用 GraphService.extract_triples_from_chunks
+    抽取三元组写入 Neo4j。与 build_index_task 并行执行。
+
+    知识图谱模块未启用时，入口 task 不投递此 task（零开销）。
+
+    Args:
+        doc_id: 文档 ID（UUID 字符串）。
+
+    Returns:
+        图谱构建结果。
+    """
+    logger.info("document.graph_task_started", doc_id=doc_id)
+
+    chunk_objects = _load_chunks_from_redis(doc_id)
+    if chunk_objects is None:
+        logger.warning("document.graph_chunks_not_found", doc_id=doc_id)
+        return {"doc_id": doc_id, "status": "skipped", "reason": "chunks_not_found"}
+
+    _update_parse_progress(
+        doc_id, stage="embedding",
+        message="正在构建知识图谱（三元组抽取）",
+        sub_stage="graph_building",
+    )
+
+    try:
+        result = asyncio.run(_build_graph_async(doc_id, chunk_objects))
+        return result
+    except Exception as exc:
+        logger.error("document.graph_task_failed", doc_id=doc_id, error=str(exc))
+        if self.request.retries >= self.max_retries:
+            _send_to_dead_letter(
+                task_name="tasks.document_tasks.build_graph_task",
+                task_id=self.request.id,
+                args=(doc_id,),
+                kwargs={},
+                exc=exc,
+            )
+            return {"doc_id": doc_id, "status": "failed", "error": str(exc)[:500], "dead_lettered": True}
+        raise self.retry(exc=exc)
+
+
+@celery_app.task(
+    name="tasks.document_tasks.finalize_document_task",
+    bind=True,
+)
+def finalize_document_task(self, results: list, doc_id: str = None) -> dict[str, Any]:
+    """chord 回调 — 密级路由 + 审核/发布 + 触发智能处理。
+
+    build_index_task 和 build_graph_task 全部完成后触发。
+    根据密级决定发布路径，更新 parse_status，触发智能处理。
+
+    Args:
+        results: chord group 中各 task 的返回值列表。
+        doc_id: 文档 ID（通过 .s() 传入）。
+
+    Returns:
+        最终处理结果。
+    """
+    # chord 回调的 doc_id 可能在 results 中或作为参数
+    if doc_id is None and isinstance(results, list) and results:
+        last = results[-1]
+        if isinstance(last, dict):
+            doc_id = last.get("doc_id")
+
+    if doc_id is None:
+        logger.error("document.finalize_no_doc_id", results=results)
+        return {"status": "failed", "error": "无法确定 doc_id"}
+
+    logger.info("document.finalize_started", doc_id=doc_id, results=results)
+
+    try:
+        result = asyncio.run(_finalize_document_async(doc_id, results))
+        return result
+    except Exception as exc:
+        logger.error("document.finalize_failed", doc_id=doc_id, error=str(exc))
+        _update_parse_progress(
+            doc_id, stage="failed", message=f"发布失败：{str(exc)[:200]}"
+        )
+        return {"doc_id": doc_id, "status": "failed", "error": str(exc)[:500]}
+
+
+@celery_app.task(
     name="tasks.document_tasks.process_document",
     bind=True,
     max_retries=3,
@@ -282,15 +524,63 @@ def process_document(self, doc_id: str) -> dict[str, Any]:
             )
 
     try:
-        # 在事件循环中执行异步操作
-        result = asyncio.run(_process_document_async(doc_id))
-        logger.info(
-            "document.task_completed",
-            doc_id=doc_id,
-            status=result.get("status"),
-            chunk_count=result.get("chunk_count", 0),
-        )
-        return result
+        # ① 串行阶段：解析 + 分块（事件循环中执行）
+        parse_result = asyncio.run(_parse_and_chunk_async(doc_id))
+
+        if parse_result.get("status") == "failed":
+            return parse_result
+
+        chunk_objects = parse_result["chunk_objects"]
+        graph_enabled = parse_result.get("graph_enabled", False)
+
+        # ② chunk_objects 持久化到 Redis，供子 task 跨进程读取
+        chunks_saved = _save_chunks_to_redis(doc_id, chunk_objects)
+        if not chunks_saved:
+            # Redis 不可用 → 降级为串行模式（_process_document_async）
+            logger.warning("document.chunks_save_failed_fallback", doc_id=doc_id)
+            result = asyncio.run(_process_document_async(doc_id))
+            return result
+
+        # ③ chord 编排：并行 build_index_task + build_graph_task → finalize
+        try:
+            from celery import chord, group
+
+            if graph_enabled:
+                # 索引 + 图谱并行
+                chord(
+                    group(
+                        build_index_task.s(doc_id),
+                        build_graph_task.s(doc_id),
+                    )
+                )(
+                    finalize_document_task.s(doc_id)
+                )
+            else:
+                # 仅索引（知识图谱未启用）
+                chord(
+                    group(
+                        build_index_task.s(doc_id),
+                    )
+                )(
+                    finalize_document_task.s(doc_id)
+                )
+            logger.info("document.chord_dispatched", doc_id=doc_id, graph_enabled=graph_enabled)
+            return {
+                "doc_id": doc_id,
+                "status": "processing",
+                "chunk_count": len(chunk_objects),
+                "message": "已分发到 chord 并行管线（索引+图谱）",
+            }
+        except ImportError:
+            # Celery 未安装 → 降级串行
+            logger.warning("document.celery_not_installed_fallback", doc_id=doc_id)
+            result = asyncio.run(_process_document_async(doc_id))
+            return result
+        except Exception as exc:
+            # chord 分发失败 → 降级串行
+            logger.exception("document.chord_failed_fallback", doc_id=doc_id)
+            result = asyncio.run(_process_document_async(doc_id))
+            return result
     except Exception as exc:
         logger.error(
             "document.task_failed",
@@ -317,6 +607,220 @@ def process_document(self, doc_id: str) -> dict[str, Any]:
                 "dead_lettered": True,
             }
         raise self.retry(exc=exc)
+
+
+# ------------------------------------------------------------------
+# chord 拆分的异步辅助函数
+# ------------------------------------------------------------------
+
+
+async def _parse_and_chunk_async(doc_id: str) -> dict[str, Any]:
+    """chord 入口阶段 — 解析 + 分块 + 检查模块开关。
+
+    从 _process_document_async 提取前半段（加载+解析+分块），
+    不包含索引/图谱/发布逻辑。
+
+    Returns:
+        {"chunk_objects": [...], "graph_enabled": bool, "parse_warnings": [...]}
+        失败时 {"status": "failed", "error": "..."}
+    """
+    from app.database import async_session_factory
+    from app.repositories.knowledge_repository import DocumentRepository
+
+    doc_uuid = uuid.UUID(doc_id)
+    warnings: list[str] = []
+
+    async with async_session_factory() as session:
+        repo = DocumentRepository(session)
+        doc = await repo.get_by_id(doc_uuid)
+        if doc is None:
+            return {"doc_id": doc_id, "status": "failed", "error": "文档不存在"}
+
+        # 1. 解析文档内容
+        _update_parse_progress(doc_id, stage="parsing", message="正在解析文档内容")
+        parse_failed = False
+        try:
+            parsed_text = await _parse_document(doc)
+        except Exception as exc:
+            logger.warning("document.parse_failed", doc_id=doc_id, error=str(exc))
+            parsed_text = doc.content_text or ""
+            parse_failed = True
+            warnings.append(f"解析异常: {str(exc)[:200]}")
+
+        if doc.doc_type in ("doc", "ppt"):
+            warnings.append(
+                f"旧格式 .{doc.doc_type} 不支持解析，请转换为 .{doc.doc_type}x 后重新上传"
+            )
+
+        # 2. 更新纯文本内容
+        if parsed_text and parsed_text != doc.content_text:
+            doc.content_text = parsed_text
+            await session.flush()
+
+        # 3. 分块
+        _update_parse_progress(doc_id, stage="chunking", message="正在进行语义分块")
+        doc_type = doc.doc_type or "md"
+        if doc_type in _VIDEO_TYPES or doc_type in _AUDIO_TYPES:
+            chunk_objects = await _chunk_video_document(doc, parsed_text)
+        else:
+            chunk_objects = _chunk_document(parsed_text, doc_type)
+        logger.info(
+            "document.chunked",
+            doc_id=doc_id,
+            chunk_count=len(chunk_objects),
+            strategies=[c.chunk_strategy for c in chunk_objects],
+        )
+
+        # 4. 检查 knowledge_graph 模块开关
+        graph_enabled = False
+        try:
+            from app.services.tenant_service import TenantService
+
+            tenant_svc = TenantService(session)
+            graph_enabled = await tenant_svc.is_module_enabled(
+                "knowledge_graph", doc.tenant_id
+            )
+        except Exception as exc:
+            logger.debug(
+                "document.graph_module_check_failed",
+                doc_id=doc_id, error=str(exc),
+            )
+
+        # 5. 持久化 parse 元数据
+        doc.parse_status = "partial" if warnings else "parsed"
+        doc.parse_warnings = warnings if warnings else None
+        doc.char_count = len(parsed_text)
+        doc.page_count = _count_pages_from_text(parsed_text, doc_type)
+        await session.commit()
+
+        return {
+            "chunk_objects": chunk_objects,
+            "graph_enabled": graph_enabled,
+            "parse_warnings": warnings,
+        }
+
+
+async def _build_index_async(
+    doc_id: str, chunk_objects: list[Chunk], chunks: list[str]
+) -> dict[str, Any]:
+    """chord 支线 A — 向量化 + 索引构建。"""
+    warnings: list[str] = []
+    try:
+        emb = await _generate_embeddings(chunks)
+        logger.info("document.embedded", doc_id=doc_id, embedding_count=len(emb))
+    except Exception as exc:
+        logger.warning("document.embed_failed", doc_id=doc_id, error=str(exc))
+        emb = []
+        warnings.append(f"向量化失败（已降级为空向量）: {str(exc)[:200]}")
+
+    _update_parse_progress(doc_id, stage="indexing", message="正在构建全文索引和向量索引")
+    try:
+        await _build_indexes(doc_id, chunk_objects, chunks, emb)
+    except Exception as exc:
+        logger.warning("document.index_failed", doc_id=doc_id, error=str(exc))
+        warnings.append(f"索引构建失败: {str(exc)[:200]}")
+
+    return {"doc_id": doc_id, "status": "done", "index_warnings": warnings}
+
+
+async def _build_graph_async(doc_id: str, chunk_objects: list[Chunk]) -> dict[str, Any]:
+    """chord 支线 B — 知识图谱构建。"""
+    from app.database import async_session_factory
+    from app.repositories.knowledge_repository import DocumentRepository
+
+    warnings: list[str] = []
+    async with async_session_factory() as session:
+        repo = DocumentRepository(session)
+        doc = await repo.get_by_id(uuid.UUID(doc_id))
+        try:
+            await _build_knowledge_graph(doc_id, chunk_objects, doc)
+        except Exception as exc:
+            logger.warning("document.graph_build_failed", doc_id=doc_id, error=str(exc))
+            warnings.append(f"知识图谱构建失败: {str(exc)[:200]}")
+
+    return {"doc_id": doc_id, "status": "done", "graph_warnings": warnings}
+
+
+async def _finalize_document_async(
+    doc_id: str, results: list
+) -> dict[str, Any]:
+    """chord 回调阶段 — 密级路由 + 审核/发布 + 触发智能处理。"""
+    from app.database import async_session_factory
+    from app.repositories.knowledge_repository import DocumentRepository
+
+    # 合并子 task 的 warnings
+    all_warnings: list[str] = []
+    for r in results:
+        if isinstance(r, dict):
+            all_warnings.extend(r.get("index_warnings", []))
+            all_warnings.extend(r.get("graph_warnings", []))
+
+    doc_uuid = uuid.UUID(doc_id)
+    async with async_session_factory() as session:
+        repo = DocumentRepository(session)
+        doc = await repo.get_by_id(doc_uuid)
+        if doc is None:
+            return {"doc_id": doc_id, "status": "failed", "error": "文档不存在"}
+
+        # 合并解析阶段 warnings
+        if doc.parse_warnings:
+            all_warnings = list(doc.parse_warnings) + all_warnings
+
+        # 更新 parse_status
+        doc.parse_status = "failed" if not doc.content_text else (
+            "partial" if all_warnings else "parsed"
+        )
+        doc.parse_warnings = all_warnings if all_warnings else None
+
+        # 密级路由
+        classification = doc.classification or "internal"
+        needs_review = classification in _REQUIRES_REVIEW
+
+        if needs_review:
+            doc.status = "pending_review"
+            await session.commit()
+            _update_parse_progress(
+                doc_id, stage="publishing", message="文档需审核，正在提交审核流程"
+            )
+            try:
+                await _submit_for_audit(doc_id, doc.owner_id)
+                logger.info("document.audit_submitted", doc_id=doc_id)
+            except Exception as exc:
+                logger.warning("document.audit_submit_failed", doc_id=doc_id, error=str(exc))
+        else:
+            doc.status = "published"
+            await session.commit()
+
+        # 触发智能处理
+        try:
+            from tasks.intelligence_tasks import process_intelligence
+            process_intelligence.delay(doc_id)
+            logger.info("document.intelligence_triggered", doc_id=doc_id)
+        except Exception as exc:
+            logger.warning("document.intelligence_trigger_failed", doc_id=doc_id, error=str(exc))
+
+        # 清理 Redis 中的临时 chunks
+        try:
+            import redis
+            from app.config import get_settings
+            settings = get_settings()
+            client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+            client.delete(f"{_CHUNKS_KEY_PREFIX}{doc_id}")
+            client.close()
+        except Exception:
+            pass
+
+        final_status = "pending_review" if needs_review else "published"
+        _update_parse_progress(
+            doc_id, stage="done", message=f"文档处理完成：{final_status}"
+        )
+
+        return {
+            "doc_id": doc_id,
+            "status": "success",
+            "final_status": final_status,
+            "warnings": all_warnings,
+        }
 
 
 @celery_app.task(name="tasks.document_tasks.batch_process_documents")

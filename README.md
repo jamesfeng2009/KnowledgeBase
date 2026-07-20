@@ -1231,9 +1231,9 @@ flowchart LR
     QA_CHECK -->|faq| QA_SPLIT["Q&amp;A 对分块"]
     QA_CHECK -->|其他| STRUCT[结构化/语义/兜底]
 
-    QA_SPLIT & STRUCT & VCHUNK --> PARALLEL{并行编排<br/>asyncio.gather}
+    QA_SPLIT & STRUCT & VCHUNK --> PARALLEL{chord 编排<br/>group() 并行}
 
-    PARALLEL -->|支线 A| EMBED[3. 向量化<br/>EmbeddingProvider]
+    PARALLEL -->|支线 A<br/>indexing 队列| EMBED[3. 向量化<br/>EmbeddingProvider]
     EMBED --> PROG_EMBED[进度: embedding<br/>写入 Redis]
 
     PROG_EMBED --> INDEX[4. 索引构建]
@@ -1241,7 +1241,7 @@ flowchart LR
     INDEX --> OS_INDEX[OpenSearch 全文索引<br/>含 Chunk 元数据<br/>title_path/content_type/strategy]
     INDEX --> VEC_INDEX[向量索引<br/>VectorStoreBase 适配器<br/>os_knn 默认 / milvus 可选]
 
-    PARALLEL -->|支线 B<br/>knowledge_graph 模块| GRAPH[3b. 知识图谱构建<br/>计算复用 chunk_objects]
+    PARALLEL -->|支线 B<br/>documents 队列<br/>knowledge_graph 模块| GRAPH[3b. 知识图谱构建<br/>计算复用 chunk_objects]
     GRAPH --> TRIPLES[GraphService.extract_triples_from_chunks<br/>规则提取 + LLM 兜底]
     TRIPLES --> NEO4j[Neo4j 批量写入<br/>Document → Concept MENTIONS]
 
@@ -1283,9 +1283,11 @@ flowchart LR
 - **文档解析三级降级**：Docling 统一解析器（primary）→ 原有专用解析器（fallback）→ VLM 整页 OCR（兜底）。Docling 可用时统一输出 HTML（`<h1>`/`<h2>` 标题 + `<table>` 表格 + 版面分析 + 公式 + OCR），与原有解析器输出格式一致，chunker 的 `_split_html()` 直接按 `<h>` 标签分块，无需格式检测
 - **关键帧 VLM 并发**：视频关键帧描述使用 `Semaphore(3)` + `asyncio.gather` 并发调用 VLM，替代串行逐帧处理，多关键帧场景延迟降低约 60%
 - **Chunk 元数据**：每个 Chunk 携带 `title_path`（作为 `[标题路径]` 前缀拼入 content 增强 embedding 上下文感知）、`content_type`、`chunk_strategy`、`parent_id`
-- **并行编排**：分块完成后，支线 A（向量化+索引）和支线 B（知识图谱构建）通过 `asyncio.gather` 并行执行，避免串行等待。支线 B 受 `knowledge_graph` 模块开关控制
-- **知识图谱构建**：`_build_knowledge_graph()` 调用 `GraphService.extract_triples_from_chunks()` 从同一批 `chunk_objects` 提取三元组（计算复用，避免重复分块），写入 Neo4j。GraphService 不可用时降级，不影响主流程
-- **计算复用**：支线 A 和支线 B 共享同一批 `chunk_objects`——向量化读取 chunk content 生成 embedding，知识图谱从同一批 chunks 抽取三元组，无需二次分块
+- **chord 拆分编排**：`process_document` 入口解析分块后，通过 `chord(group(build_index_task, build_graph_task))` 并行执行支线 A（向量化+索引，indexing 队列）和支线 B（知识图谱，documents 队列），回调 `finalize_document_task` 完成密级路由+发布。与 `video_tasks.py` 已有的 chord 模式一致。支线 B 受 `knowledge_graph` 模块开关控制
+- **计算复用**：入口 task 将 `chunk_objects` 序列化存入 Redis（TTL 1h），支线 A 和支线 B 从 Redis 反序列化读取，避免重复分块计算。向量化读取 chunk content 生成 embedding，知识图谱从同一批 chunks 抽取三元组
+- **独立扩容**：支线 A 走 `indexing` 队列，支线 B 走 `documents` 队列，索引密集时只扩 indexing worker，图谱密集时只扩 documents worker。对标竞品的三链并行架构，我们额外有融合检索优势
+- **降级机制**：Redis 不可用时（chunk_objects 持久化失败）自动降级为 `_process_document_async` 串行模式；Celery 未安装时同样降级。保证单机部署和测试环境正常工作
+- **故障隔离**：索引 task 和图谱 task 独立重试（`max_retries=3`），一个失败不影响另一个。重试耗尽进入死信队列
 - **Overlap 分层设计**：Overlap 仅用于固定长度兜底策略（`_CHUNK_OVERLAP_ENABLED`，默认关闭）。高级策略（结构化分块、TextTiling）在语义边界切分天然保留上下文，父子索引（`parent_id` 回取）优于 Overlap
 - **视频 RAG 流程**：视频文档走专用管线 — ffmpeg 提取 16kHz mono 音轨 → ASR 转写为带时间戳片段 → ffmpeg 场景切换检测抽取关键帧 → VLM 逐帧描述 → `chunk_video_transcript` 按时间窗口（120s）合并转写片段并对齐关键帧描述，`title_path` 存时间戳标签（如 `00:00-02:15`）
 - **Find Skills 渐进式技能加载**：Agent Loop 每轮按用户查询匹配相关技能，只加载匹配工具的完整 schema（按需加载），避免工具数量增长后全量加载浪费 token。`SkillRegistry` 维护轻量索引（name/category/tags/description，每个技能约 20-30 token），`SkillFinder` 用中英文分词 + 多维度评分（name +10 / category +5 / tag +8 / desc +3）匹配，阈值过滤 + `max_skills` 限制。无匹配时 fallback 到全量加载（零回归保证）。配置项：`SKILL_FINDER_ENABLED` / `SKILL_MATCH_THRESHOLD` / `SKILL_MAX_LOADED`
