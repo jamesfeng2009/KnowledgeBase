@@ -15,6 +15,8 @@
 - [模块化门控系统](#模块化门控系统)
 - [通知推送机制](#通知推送机制)
 - [Yjs 协同编辑服务](#yjs-协同编辑服务)
+- [SSE 流式事件](#sse-流式事件)
+- [工具审批恢复机制](#工具审批恢复机制)
 - [文档处理流水线](#文档处理流水线)
 - [LLM Provider 抽象层](#llm-provider-抽象层)
 - [API 限流](#api-限流)
@@ -59,13 +61,17 @@
 EnterpriseKnowledge/
 ├── backend/                          # 后端（FastAPI + Celery）
 │   ├── app/
-│   │   ├── api/v1/                   # 内部 API（22 个路由模块，JWT 认证）
+│   │   ├── api/v1/                   # 内部 API（24 个路由模块，JWT 认证）
+│   │   │   ├── approvals.py          # P1 工具审批 REST（GET pending / POST approve / POST reject）
+│   │   │   ├── models.py             # P2 模型选择 REST（GET models / PUT session model）
+│   │   │   └── ...                   # chat / knowledge / documents / search 等
 │   │   ├── api/openapi/v1/           # 开放接口（6 类能力，API Key 认证）
 │   │   ├── agents/                   # 多 Agent 协作（CrewAI）
 │   │   ├── connectors/               # 企业连接器（OA/ERP/CRM/Mail）
 │   │   ├── core/                     # 模块注册表 + 权限
 │   │   ├── llm/                      # LLM Provider 抽象层（Anthropic / DashScope / vLLM）
 │   │   │   ├── dashscope_provider.py # 通义千问 Provider（saas_dashscope 模式，OpenAI 兼容）
+│   │   │   ├── model_config.py       # P2 models.json 配置加载器（lru_cache + deploy_mode 过滤）
 │   │   │   └── ...                   # anthropic / vllm / embedder / factory 等
 │   │   ├── mcp/                      # MCP 工具协议
 │   │   ├── memory/                   # 四级记忆引擎
@@ -75,11 +81,16 @@ EnterpriseKnowledge/
 │   │   │   ├── engine.py             # Agent Loop（含 Find Skills 按需加载）
 │   │   │   ├── skill_registry.py     # Skill 注册表（轻量索引 + 按需加载）
 │   │   │   ├── skill_finder.py       # Find Skills 匹配引擎（中英文分词 + 多维评分）
-│   │   │   ├── tool_guard.py         # MCP 工具调用守卫（HITL 三态守卫）
+│   │   │   ├── tool_guard.py         # MCP 工具调用守卫（HITL 三态守卫 + P1 会话级控制）
 │   │   │   └── ...                   # chunker / retriever / reranker / generator 等
 │   │   ├── repositories/             # 数据访问层
 │   │   ├── schemas/                  # Pydantic 数据模型
-│   │   ├── services/                 # 业务逻辑层（21 个服务）
+│   │   │   ├── approval.py           # P1 工具审批 Schema（ToolApprovalResponse / ApprovalActionRequest）
+│   │   │   └── ...                   # conversation / knowledge / user 等
+│   │   ├── services/                 # 业务逻辑层（23 个服务）
+│   │   │   ├── approval_service.py   # P1 审批服务（CRUD + 会话级缓存 + 重启恢复）
+│   │   │   ├── model_selection_service.py # P2 模型选择服务（两级优先级：session > default）
+│   │   │   └── ...                   # permission / search / notification 等
 │   │   ├── utils/                    # 工具（crypto/logger/sse/minio_client）
 │   │   ├── asr/                      # ASR 语音转写（Whisper/FunASR）
 │   │   ├── vlm/                      # 视觉语言模型
@@ -104,9 +115,11 @@ EnterpriseKnowledge/
 │   │   └── main.py                   # FastAPI 入口（lifespan → alembic upgrade head）
 │   ├── alembic/                      # Alembic 迁移脚本
 │   │   ├── env.py                    # 异步引擎 + 自动导入模型 + compare_type
-│   │   └── versions/                 # 迁移版本（init schema 27 张表 + parse_metadata + tenant_id/checkpoint/usage 元数据）
+│   │   └── versions/                 # 迁移版本（init schema 27 张表 + P1 tool_approvals + P2 user_model_preferences）
+│   ├── config/
+│   │   └── models.json               # P2 模型配置文件（7 个模型 × 4 种部署模式，Git 管理）
 │   ├── tasks/                        # Celery 异步任务
-│   ├── tests/                        # 测试（1100 项）
+│   ├── tests/                        # 测试（1200 项）
 │   ├── celery_app.py                 # Celery 入口
 │   └── requirements.txt
 ├── collab-service/                   # Yjs 协作服务（Node.js + TypeScript）
@@ -359,16 +372,23 @@ flowchart TD
 
 借鉴 DECO 数仓 Agent 的 beforeTool Hook 设计，在 Agent 调用 MCP 工具前增加代码级强制确认机制。**prompt 是软约束，不是安全边界** — 任何不可逆操作都必须有框架层兜底。
 
+P1 升级：从内存级确认升级为**持久化审批恢复机制** — 审批记录入库（`tool_approvals` 表），支持服务重启恢复、AgentState JSONB 快照、会话级确认缓存。
+
 ```mermaid
 flowchart TD
-    LLM_DECIDE[LLM 决定调用工具] --> GUARD{DangerousToolGuard<br/>beforeTool 拦截}
+    LLM_DECIDE[LLM 决定调用工具] --> GUARD{DangerousToolGuard<br/>beforeTool 拦截<br/>P1: session_id 隔离}
     GUARD -->|只读工具<br/>knowledge_search 等| ALLOW[直接放行<br/>执行 MCP 调用]
-    GUARD -->|危险工具<br/>document_create 等| CONFIRM{用户已确认?}
-    CONFIRM -->|是| ALLOW_CONFIRMED[放行执行]
-    CONFIRM -->|否| BLOCK[阻断执行<br/>返回结构化错误给 LLM<br/>不调用真实工具]
-    BLOCK --> NOTIFY[前端弹框确认<br/>用户选择后调用 guard.confirm]
-    NOTIFY -->|用户同意| CONFIRM
-    NOTIFY -->|用户拒绝| REJECTED[工具不执行<br/>Agent Loop 继续]
+    GUARD -->|危险工具<br/>document_create 等| SESSION{会话级已确认?}
+    SESSION -->|是| ALLOW_CONFIRMED[放行执行]
+    SESSION -->|否| BLOCK[阻断执行<br/>返回结构化错误给 LLM]
+    BLOCK --> CREATE[P1: 创建 ToolApproval 记录<br/>含 AgentState JSONB 快照<br/>TTL 1 小时]
+    CREATE --> SSE[yield approval_required SSE 事件]
+    SSE --> FRONTEND[前端渲染审批卡片<br/>显示参数/原因/不可逆标记]
+    FRONTEND -->|用户批准| REST_APPROVE[POST /api/v1/approvals/&#123;id&#125;/approve]
+    FRONTEND -->|用户拒绝| REST_REJECT[POST /api/v1/approvals/&#123;id&#125;/reject]
+    REST_APPROVE --> CACHE[会话级确认缓存<br/>同会话内不再拦截]
+    REST_REJECT --> REJECTED[工具不执行<br/>Agent Loop 继续]
+    CACHE --> ALLOW_CONFIRMED
 ```
 
 | 工具类别 | 示例 | 守卫行为 | 不可逆 |
@@ -377,7 +397,23 @@ flowchart TD
 | 写操作工具 | `document_create`、`create_it_ticket` | 需用户确认 | `create_it_ticket` 标记为不可逆 |
 | 未知工具 | 未注册的新工具 | 默认放行 + 记录警告 | — |
 
-守卫通过构造注入 `AgenticRAGEngine(tool_guard=...)`，支持自定义危险工具清单和确认管理（confirm / revoke / reset）。
+**P1 持久化审批恢复机制**：
+
+| 组件 | 文件 | 职责 |
+|------|------|------|
+| ORM 模型 | `app/models/approval.py` | `tool_approvals` 表（JSONB 状态快照 + 1 小时 TTL + status 索引） |
+| Schema | `app/schemas/approval.py` | Pydantic 请求/响应序列化 |
+| 服务层 | `app/services/approval_service.py` | CRUD + 会话级缓存（`dict[session_id → set]`）+ 重启恢复 |
+| REST 端点 | `app/api/v1/approvals.py` | `GET pending` / `POST approve` / `POST reject` / `GET /{id}` |
+| 引擎集成 | `app/rag/engine.py` `_execute_tool_use` | 危险工具拦截时创建审批记录 + yield `approval_required` SSE 事件 |
+| 启动恢复 | `app/main.py` lifespan | 调用 `restore_pending_approvals()`（标记过期 + 加载活跃审批） |
+| 前端弹窗 | `frontend/src/pages/chat/index.astro` | `approval_required` 事件 → 审批卡片（参数/原因/批准/拒绝按钮） |
+
+**会话级确认缓存**：用户批准某工具后，同一会话内再次调用该工具自动放行（`confirm_session_tool(session_id, tool_name)`），避免重复弹窗。不同会话间隔离，`clear_session(session_id)` 在会话结束时清理。
+
+**服务重启恢复**：FastAPI 启动时扫描 `tool_approvals` 表，将过期未处理的审批标记为 `expired`，活跃审批重新加载到内存缓存，确保服务重启不丢失待审批请求。
+
+守卫通过构造注入 `AgenticRAGEngine(tool_guard=...)`，支持自定义危险工具清单和确认管理（`confirm_session_tool` / `is_session_confirmed` / `clear_session` / 兼容旧版 `confirm` / `revoke` / `reset`）。
 
 ### 权限过滤核心安全约束
 
@@ -1175,6 +1211,100 @@ graph TB
 
 ---
 
+## SSE 流式事件
+
+Agentic RAG 引擎从「仅生成阶段流式」升级为**全流程 SSE 事件流** — 用户在 think / retrieve / tool_call 阶段就能看到 Agent 实时进度，而非等待 30 秒后才看到第一个 token。
+
+```mermaid
+sequenceDiagram
+    participant U as 用户
+    participant F as 前端
+    participant API as FastAPI /chat/stream
+    participant E as AgenticRAGEngine
+
+    U->>F: 输入问题
+    F->>API: POST /chat/stream
+    API->>E: engine.answer()
+
+    loop Agent Loop（think → retrieve/tool_call → think）
+        E-->>F: event: meta（conversation_id + model_id）
+        E-->>F: event: thinking（迭代轮次）
+        E-->>F: event: retrieve_start（检索查询）
+        E-->>F: event: retrieve_end（文档数）
+        E-->>F: event: tool_call_start（工具名 + 参数）
+        alt 危险工具被拦截
+            E-->>F: event: approval_required（审批 ID + 原因）
+            F->>U: 渲染审批卡片
+            U->>F: 点击批准/拒绝
+            F->>API: POST /approvals/{id}/approve
+        else 安全工具或已确认
+            E-->>F: event: tool_call_end（结果 + 耗时 + 状态）
+        end
+    end
+
+    E-->>F: data: token（生成阶段，逐 token）
+    E-->>F: event: sources（引用来源）
+    E-->>F: event: quality（质量评分）
+    E-->>F: event: done（结束信号）
+```
+
+| SSE 事件 | 触发时机 | 数据 | 阶段 |
+|----------|----------|------|------|
+| `meta` | 会话开始 | `conversation_id`、`agent_type`、`model_id` | 初始化 |
+| `thinking` | 每轮 think 开始 | `content`、`iteration` | Agent Loop |
+| `retrieve_start` | 检索开始 | `query`、`iteration` | Agent Loop |
+| `retrieve_end` | 检索完成 | `doc_count`、`iteration` | Agent Loop |
+| `tool_call_start` | 工具调用开始 | `tool_name`、`tool_use_id`、`arguments` | Agent Loop |
+| `approval_required` | 危险工具被拦截 | `approval_id`、`tool_name`、`reason`、`irreversible` | Agent Loop（P1） |
+| `tool_call_end` | 工具调用完成 | `tool_use_id`、`result`、`duration_ms`、`status` | Agent Loop |
+| `data: token` | 生成阶段 | 逐 token 文本 | 生成 |
+| `sources` | 生成完成 | 引用来源列表 | 生成后 |
+| `quality` | 反思完成 | `citation_accuracy`、`completeness`、`total_score` | 反思 |
+| `done` | 全流程结束 | `token_count`、`iterations` | 结束 |
+
+**实现要点**：
+- `app/utils/sse.py`：`SSEEventType` 枚举 + `sse_response()` 封装 + `_to_sse_stream()` 去重 done 事件
+- `app/rag/engine.py`：`answer()` 返回 `AsyncIterator[SSEEvent | str]`，`_run_decision_loop_streaming()` yield 全流程事件
+- `frontend/src/lib/sse.ts`：`streamChat()` 支持 `onToolCallStart` / `onToolCallEnd` / `onApprovalRequired` 等回调
+- `frontend/src/pages/chat/index.astro`：`handleSSEEvent()` 渲染 ToolCallCard 组件 + 审批卡片
+
+---
+
+## 工具审批恢复机制
+
+P1 核心功能 — 当 `DangerousToolGuard` 拦截危险工具时，将审批请求**持久化到数据库**（而非仅内存级确认），支持服务重启恢复、AgentState 快照恢复、会话级确认缓存。
+
+**数据流**：
+
+```
+引擎拦截危险工具
+    ↓
+创建 ToolApproval 记录（含 AgentState JSONB 快照，TTL 1 小时）
+    ↓
+yield approval_required SSE 事件 → 前端渲染审批卡片
+    ↓
+用户批准 → POST /api/v1/approvals/{id}/approve
+    ↓
+ApprovalService.approve() → 会话级确认缓存（同会话内不再拦截）
+    ↓
+Agent Loop 从快照恢复继续执行
+```
+
+**服务重启恢复**：FastAPI 启动时调用 `ApprovalService.restore_pending_approvals()`，将过期未处理的审批标记为 `expired`，活跃审批重新加载到内存缓存。
+
+**REST 端点**：
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/approvals/pending` | 查询待审批列表（可选 `session_id` 过滤） |
+| POST | `/api/v1/approvals/{id}/approve` | 批准工具执行 |
+| POST | `/api/v1/approvals/{id}/reject` | 拒绝工具执行 |
+| GET | `/api/v1/approvals/{id}` | 查询审批详情 |
+
+详见 [MCP 工具调用守卫](#mcp-工具调用守卫dangeroustoolguard) 章节。
+
+---
+
 ## 文档处理流水线
 
 Celery 异步任务驱动文档处理流水线，从文档上传到索引构建全自动，支持 PDF/DOCX/PPTX/XLSX/HTML/Markdown/图片/视频/音频 多格式。Docling 统一解析器优先处理（版面分析 + 表格 + 公式 + OCR → HTML），降级到原有专用解析器。
@@ -1346,6 +1476,64 @@ graph TB
     VLLM_OVERSEAS --> EMBED_TEI
     VLLM_DOMESTIC --> EMBED_TEI
 ```
+
+### P2 用户级模型选择
+
+P2 新增**会话级模型切换**能力 — 用户可在聊天界面选择当前部署模式下的可用模型，选择结果持久化到数据库，后续对话使用所选模型。
+
+**两级优先级**（简化设计，不引入 user default 层）：
+
+```
+session 级（user_model_preferences 表）  >  system 默认（models.json is_default）
+```
+
+| 组件 | 文件 | 职责 |
+|------|------|------|
+| 模型配置 | `config/models.json` | 7 个模型定义 × 4 种部署模式，Git 管理，运维通过 PR 修改 |
+| 配置加载 | `app/llm/model_config.py` | `lru_cache` 缓存 + `deploy_mode` 过滤 + 默认模型查找 |
+| 偏好持久化 | `app/models/user_model_preference.py` | `user_model_preferences` 表（`user_id` + `session_id` 唯一约束） |
+| 选择服务 | `app/services/model_selection_service.py` | 两级优先级解析 + upsert + 模型有效性校验 |
+| Provider 工厂 | `app/llm/factory.py` `get_llm_provider_by_model()` | 按 `model_id` 创建 Provider（按 model_id 缓存） |
+| RAG 引擎工厂 | `app/rag/factory.py` `get_rag_engine_by_model()` | 复用共享 MCP/Retriever/Reranker，仅替换 LLM/Generator |
+| ChatService | `app/services/chat_service.py` | `resolve_model()` 解析 → 选择引擎 → meta 事件携带 `model_id` |
+| REST 端点 | `app/api/v1/models.py` | `GET models` / `GET session/{id}` / `PUT session/{id}` |
+| 前端选择器 | `frontend/src/pages/chat/index.astro` | 页头下拉框 + `loadModels()` + `setSessionModel()` |
+
+**models.json 示例**：
+
+```json
+{
+  "models": [
+    {
+      "id": "claude-sonnet-4.6",
+      "display_name": "Claude Sonnet 4.6",
+      "provider_type": "anthropic",
+      "deploy_mode": "saas",
+      "model_id": "claude-sonnet-4-6-20250514",
+      "tier": "premium",
+      "is_default": true,
+      "supports_tool_use": true
+    },
+    {
+      "id": "qwen-turbo",
+      "display_name": "通义千问 Turbo",
+      "provider_type": "dashscope",
+      "deploy_mode": "saas_dashscope",
+      "model_id": "qwen-turbo",
+      "tier": "standard",
+      "is_default": true
+    }
+  ]
+}
+```
+
+**REST 端点**：
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/models` | 获取当前部署模式可用模型列表（可选 `session_id` 参数返回当前选中模型） |
+| GET | `/api/v1/models/session/{session_id}` | 获取会话当前使用的模型（两级优先级解析） |
+| PUT | `/api/v1/models/session/{session_id}` | 设置会话级模型选择（`model_id` 请求体） |
 
 ### LangFuse 全链路追踪
 
