@@ -258,9 +258,14 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
           ? `<div class="markdown-body">${content ? renderMarkdownStream(content) : ''}</div>`
           : escapeHtml(content);
         const contentClass = isAI ? 'chat-message-content chat-message-content-ai' : 'chat-message-content';
+        // P0-6: AI 消息增加状态区（thinking/retrieve 进度）和工具调用区（ToolCallCard）
+        const statusArea = isAI ? '<div class="chat-message-status"></div>' : '';
+        const toolsArea = isAI ? '<div class="chat-message-tools"></div>' : '';
         msgEl.innerHTML = `
           <div class="chat-message-avatar">${role === 'user' ? '我' : 'AI'}</div>
           <div class="chat-message-body">
+            ${statusArea}
+            ${toolsArea}
             <div class="${contentClass}">${contentHtml}${streaming ? '<span class="chat-cursor"></span>' : ''}</div>
           </div>`;
         // 对历史 AI 消息绑定代码复制按钮和引用点击事件
@@ -311,6 +316,8 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
         // 渲染 AI 占位消息
         const aiEl = renderMessage('assistant', '', true);
         const contentEl = aiEl.querySelector('.chat-message-content')!;
+        const statusEl = aiEl.querySelector('.chat-message-status') as HTMLElement;
+        const toolsEl = aiEl.querySelector('.chat-message-tools') as HTMLElement;
         // 流式累积文本状态（通过对象引用传递给 handleSSEEvent）
         const streamState = { fullText: '' };
 
@@ -360,7 +367,7 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
               const trimmed = line.trim();
               if (trimmed === '') {
                 if (evtData) {
-                  handleSSEEvent(evtType, evtData, contentEl, sources, streamState);
+                  handleSSEEvent(evtType, evtData, contentEl, sources, streamState, statusEl, toolsEl);
                   evtType = '';
                   evtData = '';
                 }
@@ -377,7 +384,7 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
 
           // 处理最后的数据
           if (buffer.trim().startsWith('data:')) {
-            handleSSEEvent('', buffer.trim().slice(5).trim(), contentEl, sources, streamState);
+            handleSSEEvent('', buffer.trim().slice(5).trim(), contentEl, sources, streamState, statusEl, toolsEl);
           }
 
           // 最终一次渲染（去掉光标）
@@ -422,7 +429,9 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
         data: string,
         contentEl: Element,
         sources: any[],
-        state: { fullText: string }
+        state: { fullText: string },
+        statusEl?: HTMLElement,
+        toolsEl?: HTMLElement,
       ) {
         let parsed: any = data;
         try {
@@ -433,16 +442,118 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
 
         const evtType = type || parsed?.type || 'message';
 
-        if (evtType === 'token' || evtType === 'chunk') {
+        if (evtType === 'token' || evtType === 'chunk' || evtType === 'message') {
+          // P0-6: 首个 token 到达时清除状态区
+          if (statusEl && !state.fullText) {
+            statusEl.innerHTML = '';
+          }
           const text = parsed?.text || String(parsed);
           state.fullText += text;
           // 流式增量渲染：每次新 token 到达后重新渲染整个累积文本
           contentEl.innerHTML = `<div class="markdown-body">${renderMarkdownStream(state.fullText)}</div><span class="chat-cursor"></span>`;
           messagesEl.scrollTop = messagesEl.scrollHeight;
+        } else if (evtType === 'meta') {
+          // P0-6: 绑定会话 ID
+          if (parsed?.conversation_id && !currentConvId) {
+            currentConvId = parsed.conversation_id;
+          }
+        } else if (evtType === 'thinking') {
+          // P0-6: Agent 思考进度
+          if (statusEl) {
+            const content = parsed?.content || '正在分析问题...';
+            const iter = parsed?.iteration ? `（第 ${parsed.iteration} 轮）` : '';
+            statusEl.innerHTML = `<div class="chat-status-item chat-status-thinking"><span class="chat-status-dot"></span>${escapeHtml(content)}${escapeHtml(iter)}</div>`;
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+          }
+        } else if (evtType === 'retrieve_start') {
+          // P0-6: 检索开始
+          if (statusEl) {
+            statusEl.innerHTML = '<div class="chat-status-item chat-status-retrieve"><span class="chat-status-dot"></span>正在检索知识库...</div>';
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+          }
+        } else if (evtType === 'retrieve_end') {
+          // P0-6: 检索完成
+          if (statusEl) {
+            const count = parsed?.doc_count ?? 0;
+            statusEl.innerHTML = `<div class="chat-status-item chat-status-retrieve-done"><span class="chat-status-dot"></span>检索到 ${count} 篇相关文档</div>`;
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+            // 2 秒后淡出
+            setTimeout(() => { if (statusEl) statusEl.innerHTML = ''; }, 2000);
+          }
+        } else if (evtType === 'tool_call_start') {
+          // P0-7: 工具调用开始 — 渲染 ToolCallCard
+          if (toolsEl) {
+            const toolName = parsed?.tool_name || 'unknown';
+            const toolUseId = parsed?.tool_use_id || '';
+            const args = parsed?.arguments || {};
+            const argsStr = Object.keys(args).length > 0
+              ? JSON.stringify(args, null, 2)
+              : '(无参数)';
+            const card = document.createElement('div');
+            card.className = 'tool-call-card';
+            card.dataset.toolUseId = toolUseId;
+            card.innerHTML = `
+              <div class="tool-call-header">
+                <span class="tool-call-icon">🔧</span>
+                <span class="tool-call-name">${escapeHtml(toolName)}</span>
+                <span class="tool-call-status tool-call-status-running">执行中...</span>
+              </div>
+              <div class="tool-call-body">
+                <div class="tool-call-section">
+                  <div class="tool-call-label">参数</div>
+                  <pre class="tool-call-args">${escapeHtml(argsStr)}</pre>
+                </div>
+                <div class="tool-call-section tool-call-result-section" style="display:none">
+                  <div class="tool-call-label">结果</div>
+                  <pre class="tool-call-result"></pre>
+                </div>
+              </div>`;
+            toolsEl.appendChild(card);
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+          }
+        } else if (evtType === 'tool_call_end') {
+          // P0-7: 工具调用完成 — 更新 ToolCallCard
+          if (toolsEl) {
+            const toolUseId = parsed?.tool_use_id || '';
+            const card = toolsEl.querySelector(`[data-tool-use-id="${toolUseId}"]`);
+            if (card) {
+              const statusEl2 = card.querySelector('.tool-call-status');
+              const resultSection = card.querySelector('.tool-call-result-section') as HTMLElement;
+              const resultEl = card.querySelector('.tool-call-result');
+              const duration = parsed?.duration_ms ? `${parsed.duration_ms}ms` : '';
+              const status = parsed?.status || 'success';
+              if (statusEl2) {
+                statusEl2.textContent = status === 'success' ? `完成 ${duration}` : `失败 ${duration}`;
+                statusEl2.className = `tool-call-status ${status === 'success' ? 'tool-call-status-success' : 'tool-call-status-error'}`;
+              }
+              if (resultSection && resultEl && parsed?.result) {
+                resultSection.style.display = '';
+                resultEl.textContent = String(parsed.result).slice(0, 500);
+              }
+            }
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+          }
         } else if (evtType === 'sources') {
           const list = Array.isArray(parsed) ? parsed : parsed?.sources || [];
           sources.push(...list);
           renderReferences(list);
+        } else if (evtType === 'quality') {
+          // P0-6: 质量评分 — 在内容区末尾追加质量徽章
+          if (statusEl) {
+            const lowConf = parsed?.low_confidence;
+            const score = parsed?.total_score;
+            if (lowConf) {
+              statusEl.innerHTML = `<div class="chat-status-item chat-status-quality-low"><span class="chat-status-dot"></span>${escapeHtml(parsed?.message || '置信度较低，建议核实')}</div>`;
+            } else if (score !== undefined) {
+              statusEl.innerHTML = `<div class="chat-status-item chat-status-quality-ok"><span class="chat-status-dot"></span>质量评分：${(score * 100).toFixed(0)}%</div>`;
+              setTimeout(() => { if (statusEl) statusEl.innerHTML = ''; }, 3000);
+            }
+          }
+        } else if (evtType === 'done') {
+          // P0-6: 流结束 — 清除状态区（done 事件由 _to_sse_stream 兜底发送）
+          if (statusEl && !state.fullText) {
+            statusEl.innerHTML = '';
+          }
         } else if (evtType === 'error') {
           state.fullText += `\n\n> **[错误]** ${parsed?.message || '未知错误'}\n`;
           contentEl.innerHTML = `<div class="markdown-body">${renderMarkdownStream(state.fullText)}</div><span class="chat-cursor"></span>`;
@@ -1115,6 +1226,153 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
         margin-bottom: var(--space-3);
         word-break: break-all;
       }
+      /* === P0-6: 状态指示器（thinking / retrieve / quality） === */
+      .chat-message-status {
+        min-height: 0;
+        margin-bottom: var(--space-2);
+      }
+      .chat-message-status:empty {
+        display: none;
+      }
+      .chat-status-item {
+        display: flex;
+        align-items: center;
+        gap: var(--space-2);
+        padding: var(--space-2) var(--space-3);
+        font-size: var(--text-sm);
+        color: var(--text-muted);
+        border-radius: var(--radius-sm);
+        background: var(--surface-muted);
+        animation: status-fade-in 0.2s ease;
+      }
+      @keyframes status-fade-in {
+        from { opacity: 0; transform: translateY(-4px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      .chat-status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: var(--radius-full);
+        flex-shrink: 0;
+      }
+      .chat-status-thinking .chat-status-dot {
+        background: var(--info);
+        animation: pulse 1.2s infinite ease-in-out;
+      }
+      .chat-status-retrieve .chat-status-dot {
+        background: var(--warning);
+        animation: pulse 1.2s infinite ease-in-out;
+      }
+      .chat-status-retrieve-done .chat-status-dot {
+        background: var(--success);
+      }
+      .chat-status-quality-low {
+        background: var(--warning-bg);
+        color: var(--warning);
+      }
+      .chat-status-quality-low .chat-status-dot {
+        background: var(--warning);
+      }
+      .chat-status-quality-ok {
+        background: var(--success-bg);
+        color: var(--success);
+      }
+      .chat-status-quality-ok .chat-status-dot {
+        background: var(--success);
+      }
+      @keyframes pulse {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50% { opacity: 0.5; transform: scale(0.8); }
+      }
+
+      /* === P0-7: ToolCallCard 组件 === */
+      .chat-message-tools {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-2);
+        margin-bottom: var(--space-2);
+      }
+      .chat-message-tools:empty {
+        display: none;
+      }
+      .tool-call-card {
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--surface-muted);
+        overflow: hidden;
+        font-size: var(--text-sm);
+        animation: status-fade-in 0.2s ease;
+      }
+      .tool-call-header {
+        display: flex;
+        align-items: center;
+        gap: var(--space-2);
+        padding: var(--space-2) var(--space-3);
+        background: var(--surface);
+        border-bottom: 1px solid var(--border);
+      }
+      .tool-call-icon {
+        font-size: 14px;
+      }
+      .tool-call-name {
+        font-weight: 600;
+        color: var(--text);
+        font-family: var(--font-mono);
+        font-size: var(--text-xs);
+      }
+      .tool-call-status {
+        margin-left: auto;
+        padding: 2px 8px;
+        border-radius: var(--radius-full);
+        font-size: var(--text-xs);
+        font-weight: 500;
+      }
+      .tool-call-status-running {
+        background: var(--info-bg);
+        color: var(--info);
+      }
+      .tool-call-status-success {
+        background: var(--success-bg);
+        color: var(--success);
+      }
+      .tool-call-status-error {
+        background: var(--danger-bg);
+        color: var(--danger);
+      }
+      .tool-call-body {
+        padding: var(--space-2) var(--space-3);
+      }
+      .tool-call-section {
+        margin-bottom: var(--space-2);
+      }
+      .tool-call-section:last-child {
+        margin-bottom: 0;
+      }
+      .tool-call-label {
+        font-size: var(--text-xs);
+        color: var(--text-muted);
+        margin-bottom: var(--space-1);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+      .tool-call-args,
+      .tool-call-result {
+        margin: 0;
+        padding: var(--space-2);
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        font-family: var(--font-mono);
+        font-size: var(--text-xs);
+        line-height: var(--lh-normal);
+        color: var(--text-secondary);
+        overflow-x: auto;
+        max-height: 200px;
+        overflow-y: auto;
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+
       @media (max-width: 1024px) {
         .chat-right { display: none; }
       }

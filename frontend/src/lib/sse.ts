@@ -172,6 +172,8 @@ function parseSSEData(event: string, data: string): SSEEvent | null {
  * 简化的流式聊天函数
  * 提供回调式 API，便于在组件中使用
  *
+ * P0-6: 扩展回调支持 thinking / retrieve / tool_call / quality 事件。
+ *
  * @param url - SSE 接口地址
  * @param body - 请求体
  * @param callbacks - 事件回调
@@ -182,6 +184,12 @@ export async function streamChat(
   callbacks: {
     onChunk?: (text: string) => void;
     onSources?: (sources: unknown[]) => void;
+    onThinking?: (data: { content?: string; iteration?: number }) => void;
+    onRetrieveStart?: (data: { query?: string; iteration?: number }) => void;
+    onRetrieveEnd?: (data: { doc_count?: number; iteration?: number }) => void;
+    onToolCallStart?: (data: { tool_name: string; tool_use_id: string; arguments?: unknown }) => void;
+    onToolCallEnd?: (data: { tool_use_id: string; tool_name?: string; result?: string; duration_ms?: number; status?: string }) => void;
+    onQuality?: (data: { low_confidence?: boolean; total_score?: number; message?: string }) => void;
     onDone?: () => void;
     onError?: (error: Error) => void;
   }
@@ -191,10 +199,29 @@ export async function streamChat(
       switch (event.type) {
         case 'token':
         case 'chunk':
+        case 'message':
           callbacks.onChunk?.((event.data as { text?: string }).text || String(event.data));
           break;
         case 'sources':
           callbacks.onSources?.(event.data as unknown[]);
+          break;
+        case 'thinking':
+          callbacks.onThinking?.(event.data as { content?: string; iteration?: number });
+          break;
+        case 'retrieve_start':
+          callbacks.onRetrieveStart?.(event.data as { query?: string; iteration?: number });
+          break;
+        case 'retrieve_end':
+          callbacks.onRetrieveEnd?.(event.data as { doc_count?: number; iteration?: number });
+          break;
+        case 'tool_call_start':
+          callbacks.onToolCallStart?.(event.data as { tool_name: string; tool_use_id: string; arguments?: unknown });
+          break;
+        case 'tool_call_end':
+          callbacks.onToolCallEnd?.(event.data as { tool_use_id: string; tool_name?: string; result?: string; duration_ms?: number; status?: string });
+          break;
+        case 'quality':
+          callbacks.onQuality?.(event.data as { low_confidence?: boolean; total_score?: number; message?: string });
           break;
         case 'done':
         case 'complete':
