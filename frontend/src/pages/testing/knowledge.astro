@@ -1,0 +1,734 @@
+---
+/**
+ * 知识回流层页面（知识复利）
+ * 统计卡片 + Tab 切换（知识资产 / 知识冲突 / 回流任务）
+ * 数据来源：GET /api/v1/compounding/stats、/assets、/conflicts、/tasks
+ */
+import DefaultLayout from '@/layouts/DefaultLayout.astro';
+import StatCard from '@/components/common/StatCard.astro';
+import Tabs from '@/components/common/Tabs.astro';
+import Modal from '@/components/common/Modal.astro';
+
+const breadcrumb = [{ label: '测试平台', href: '/testing' }, { label: '知识回流层' }];
+---
+
+<DefaultLayout title="知识回流层" breadcrumb={breadcrumb}>
+  <!-- 页头 -->
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">知识回流层</h1>
+      <p class="page-subtitle">测试经验自动沉淀，实现知识复利</p>
+    </div>
+  </div>
+
+  <!-- 统计卡片 -->
+  <div class="grid grid-cols-4" style="margin-bottom: var(--space-5);">
+    <StatCard label="知识资产总数" value="--" color="primary" id="stat-assets" />
+    <StatCard label="回流任务总数" value="--" color="info" id="stat-tasks" />
+    <StatCard label="冲突总数" value="--" color="warning" id="stat-conflicts" />
+    <StatCard label="复用注入次数" value="--" color="success" id="stat-injections" />
+  </div>
+
+  <!-- Tab 切换 -->
+  <Tabs
+    tabs={[
+      { label: '知识资产', value: 'assets' },
+      { label: '知识冲突', value: 'conflicts' },
+      { label: '回流任务', value: 'tasks' },
+    ]}
+    active="assets"
+  />
+
+  <!-- Tab 1: 知识资产 -->
+  <div id="tab-assets" class="tab-panel" style="margin-top: var(--space-4);">
+    <div class="card">
+      <div class="card-header">
+        <div class="filter-bar">
+          <select class="form-select filter-select" id="asset-type-filter">
+            <option value="">全部类型</option>
+            <option value="defect_experience">缺陷经验</option>
+            <option value="regression_sop">回归 SOP</option>
+            <option value="graph_association">图谱关联</option>
+            <option value="verification_baseline">验证基线</option>
+          </select>
+          <select class="form-select filter-select" id="asset-status-filter">
+            <option value="">全部状态</option>
+            <option value="active">活跃</option>
+            <option value="draft">草稿</option>
+            <option value="deprecated">已弃用</option>
+          </select>
+        </div>
+      </div>
+      <div id="asset-list">
+        <div class="loading-state">加载中...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tab 2: 知识冲突 -->
+  <div id="tab-conflicts" class="tab-panel" style="display: none; margin-top: var(--space-4);">
+    <div class="card">
+      <div class="card-header">
+        <h3>知识冲突列表</h3>
+      </div>
+      <div id="conflict-list">
+        <div class="loading-state">加载中...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tab 3: 回流任务 -->
+  <div id="tab-tasks" class="tab-panel" style="display: none; margin-top: var(--space-4);">
+    <div class="card">
+      <div class="card-header">
+        <h3>回流任务列表</h3>
+      </div>
+      <div id="task-list">
+        <div class="loading-state">加载中...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 解决冲突弹窗 -->
+  <Modal id="resolve-modal" title="解决冲突" size="sm">
+    <div class="form-group">
+      <label class="form-label">解决方案</label>
+      <select class="form-select" id="resolve-resolution">
+        <option value="new_wins">新资产优先（new_wins）</option>
+        <option value="existing_wins">已有资产优先（existing_wins）</option>
+        <option value="merged">合并（merged）</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">备注</label>
+      <textarea
+        class="form-textarea"
+        id="resolve-note"
+        placeholder="请输入解决备注..."
+        rows="3"
+      ></textarea>
+    </div>
+    <div class="modal-footer" slot="footer">
+      <button class="btn btn-ghost" data-modal-close>取消</button>
+      <button class="btn btn-primary" id="resolve-confirm">确认解决</button>
+    </div>
+  </Modal>
+</DefaultLayout>
+
+<style is:global>
+  .page-subtitle {
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    margin-top: var(--space-1);
+  }
+
+  .tab-panel {
+    display: block;
+  }
+
+  .filter-bar {
+    display: flex;
+    gap: var(--space-3);
+    align-items: center;
+  }
+  .filter-select {
+    width: 160px;
+  }
+
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .data-table th {
+    text-align: left;
+    padding: var(--space-3) var(--space-4);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-muted);
+  }
+  .data-table td {
+    padding: var(--space-3) var(--space-4);
+    font-size: var(--text-sm);
+    color: var(--text);
+    border-bottom: 1px solid var(--border-light);
+  }
+  .data-table tbody tr:hover {
+    background: var(--surface-hover);
+  }
+  .loading-state {
+    text-align: center;
+    padding: var(--space-8);
+    color: var(--text-muted);
+  }
+  .empty-state {
+    text-align: center;
+    padding: var(--space-8);
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+  }
+  .error-state {
+    text-align: center;
+    padding: var(--space-6);
+    color: var(--danger);
+    font-size: var(--text-sm);
+  }
+
+  /* 自定义 badge 颜色 */
+  .badge-info {
+    background: var(--info-bg);
+    color: var(--info);
+  }
+  .badge-muted {
+    background: var(--surface-hover);
+    color: var(--text-muted);
+  }
+
+  .cell-truncate {
+    max-width: 240px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+</style>
+
+<script>
+  import {
+    getCompoundingStats,
+    getAssets,
+    getConflicts,
+    getTasks,
+    detectConflicts,
+    resolveConflict,
+    type KnowledgeAsset,
+    type KnowledgeConflict,
+    type CompoundingTask,
+  } from '@/lib/apis/compounding';
+  import { ApiError } from '@/lib/api';
+
+  /** 当前操作的冲突 ID */
+  let currentConflictId: string | null = null;
+
+  /** 已加载过的 Tab 集合（用于懒加载） */
+  const loadedTabs = new Set<string>();
+
+  /** HTML 转义 */
+  function escapeHtml(s: unknown): string {
+    return String(s ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  /** 判断是否为 401/未登录错误 */
+  function isAuthError(err: unknown): boolean {
+    return err instanceof ApiError && err.status === 401;
+  }
+
+  /** 从接口返回值中提取数组 */
+  function toItems(raw: unknown): Record<string, unknown>[] {
+    if (Array.isArray(raw)) return raw as Record<string, unknown>[];
+    if (raw && typeof raw === 'object') {
+      const obj = raw as { items?: unknown[] };
+      if (Array.isArray(obj.items)) return obj.items as Record<string, unknown>[];
+    }
+    return [];
+  }
+
+  /** 规范化知识资产对象 */
+  function normalizeAsset(raw: Record<string, unknown>): KnowledgeAsset {
+    return {
+      id: String(raw.id || raw.asset_id || ''),
+      asset_type: String(raw.asset_type || raw.type || 'unknown'),
+      source_type: String(raw.source_type || raw.source || '-'),
+      source_id: raw.source_id ? String(raw.source_id) : undefined,
+      project_id: raw.project_id ? String(raw.project_id) : undefined,
+      title: String(raw.title || raw.name || '未命名资产'),
+      content: String(raw.content || ''),
+      summary: typeof raw.summary === 'string' ? raw.summary : undefined,
+      tags: Array.isArray(raw.tags) ? (raw.tags as string[]) : undefined,
+      doc_id: raw.doc_id ? String(raw.doc_id) : undefined,
+      graph_nodes: raw.graph_nodes as unknown[],
+      graph_relationships: raw.graph_relationships as unknown[],
+      graphiti_entity_id: raw.graphiti_entity_id ? String(raw.graphiti_entity_id) : undefined,
+      confidence_score: typeof raw.confidence_score === 'number'
+        ? raw.confidence_score
+        : typeof raw.confidence_score === 'string'
+          ? Number(raw.confidence_score) || undefined
+          : undefined,
+      status: String(raw.status || 'active'),
+      conflict_with: Array.isArray(raw.conflict_with) ? (raw.conflict_with as string[]) : undefined,
+      compounding_task_id: raw.compounding_task_id ? String(raw.compounding_task_id) : undefined,
+      created_at: raw.created_at ? String(raw.created_at) : undefined,
+      updated_at: raw.updated_at ? String(raw.updated_at) : undefined,
+    };
+  }
+
+  /** 规范化知识冲突对象 */
+  function normalizeConflict(raw: Record<string, unknown>): KnowledgeConflict {
+    return {
+      id: String(raw.id || raw.conflict_id || ''),
+      new_asset_id: String(raw.new_asset_id || raw.new_asset || '-'),
+      existing_asset_id: String(raw.existing_asset_id || raw.existing_asset || '-'),
+      conflict_type: String(raw.conflict_type || raw.type || 'unknown'),
+      description: typeof raw.description === 'string' ? raw.description : undefined,
+      resolution: String(raw.resolution || 'unresolved'),
+      resolved_by: raw.resolved_by ? String(raw.resolved_by) : undefined,
+      resolved_at: raw.resolved_at ? String(raw.resolved_at) : undefined,
+      resolution_note: typeof raw.resolution_note === 'string' ? raw.resolution_note : undefined,
+      created_at: raw.created_at ? String(raw.created_at) : undefined,
+    };
+  }
+
+  /** 规范化回流任务对象 */
+  function normalizeTask(raw: Record<string, unknown>): CompoundingTask {
+    return {
+      id: String(raw.id || raw.task_id || ''),
+      execution_id: raw.execution_id ? String(raw.execution_id) : undefined,
+      project_id: raw.project_id ? String(raw.project_id) : undefined,
+      task_type: String(raw.task_type || raw.type || 'unknown'),
+      status: String(raw.status || 'pending'),
+      trigger_source: String(raw.trigger_source || raw.trigger || '-'),
+      extracted_asset_ids: Array.isArray(raw.extracted_asset_ids)
+        ? (raw.extracted_asset_ids as string[])
+        : undefined,
+      conflicts_detected: typeof raw.conflicts_detected === 'number'
+        ? raw.conflicts_detected
+        : Number(raw.conflicts_detected) || 0,
+      assets_injected: typeof raw.assets_injected === 'number'
+        ? raw.assets_injected
+        : Number(raw.assets_injected) || 0,
+      error_message: typeof raw.error_message === 'string' ? raw.error_message : undefined,
+      started_at: raw.started_at ? String(raw.started_at) : undefined,
+      completed_at: raw.completed_at ? String(raw.completed_at) : undefined,
+      created_at: raw.created_at ? String(raw.created_at) : undefined,
+    };
+  }
+
+  /** 资产类型 → badge 映射 */
+  const assetTypeMap: Record<string, { label: string; badge: string }> = {
+    defect_experience: { label: '缺陷经验', badge: 'badge-danger' },
+    regression_sop: { label: '回归 SOP', badge: 'badge-info' },
+    graph_association: { label: '图谱关联', badge: 'badge-primary' },
+    verification_baseline: { label: '验证基线', badge: 'badge-success' },
+  };
+
+  /** 资产状态 → badge 映射 */
+  const assetStatusMap: Record<string, { label: string; badge: string }> = {
+    active: { label: '活跃', badge: 'badge-success' },
+    draft: { label: '草稿', badge: 'badge-muted' },
+    deprecated: { label: '已弃用', badge: 'badge-danger' },
+  };
+
+  /** 冲突类型 → badge 映射 */
+  const conflictTypeMap: Record<string, { label: string; badge: string }> = {
+    content_conflict: { label: '内容冲突', badge: 'badge-danger' },
+    semantic_conflict: { label: '语义冲突', badge: 'badge-warning' },
+    source_conflict: { label: '来源冲突', badge: 'badge-primary' },
+    duplicate: { label: '重复', badge: 'badge-muted' },
+  };
+
+  /** 冲突解决方案 → badge 映射 */
+  const resolutionMap: Record<string, { label: string; badge: string }> = {
+    unresolved: { label: '未解决', badge: 'badge-muted' },
+    new_wins: { label: '新资产优先', badge: 'badge-info' },
+    existing_wins: { label: '已有优先', badge: 'badge-warning' },
+    merged: { label: '已合并', badge: 'badge-success' },
+  };
+
+  /** 任务类型 → badge 映射 */
+  const taskTypeMap: Record<string, { label: string; badge: string }> = {
+    extraction: { label: '知识提取', badge: 'badge-info' },
+    conflict_detection: { label: '冲突检测', badge: 'badge-warning' },
+    reuse_injection: { label: '复用注入', badge: 'badge-success' },
+  };
+
+  /** 任务状态 → badge 映射 */
+  const taskStatusMap: Record<string, { label: string; badge: string }> = {
+    completed: { label: '已完成', badge: 'badge-success' },
+    failed: { label: '失败', badge: 'badge-danger' },
+    running: { label: '执行中', badge: 'badge-info' },
+    pending: { label: '待执行', badge: 'badge-muted' },
+  };
+
+  /** 格式化置信度 */
+  function formatConfidence(score?: number): string {
+    if (score == null || isNaN(score)) return '-';
+    if (score <= 1) return `${(score * 100).toFixed(0)}%`;
+    return `${score.toFixed(0)}%`;
+  }
+
+  /** 格式化耗时 */
+  function formatDuration(startedAt?: string, completedAt?: string): string {
+    if (!startedAt || !completedAt) return '-';
+    const start = new Date(startedAt).getTime();
+    const end = new Date(completedAt).getTime();
+    if (isNaN(start) || isNaN(end) || end < start) return '-';
+    const seconds = (end - start) / 1000;
+    if (seconds < 60) return `${seconds.toFixed(1)}s`;
+    const m = Math.floor(seconds / 60);
+    const s = Math.round(seconds % 60);
+    return `${m}m ${s}s`;
+  }
+
+  /** 加载统计数据 */
+  async function loadStats(): Promise<void> {
+    try {
+      const stats = await getCompoundingStats();
+      const setText = (id: string, v: number) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = String(v);
+      };
+      setText('stat-assets', stats.total_assets);
+      setText('stat-tasks', stats.total_tasks);
+      setText('stat-conflicts', stats.total_conflicts);
+      setText('stat-injections', stats.reuse_injection_count);
+    } catch (err) {
+      if (isAuthError(err)) return;
+      // 统计加载失败时保持 "--" 显示
+    }
+  }
+
+  // ===== Tab 切换 =====
+
+  function switchTab(value: string): void {
+    // 切换面板显示
+    document.querySelectorAll<HTMLElement>('.tab-panel').forEach((panel) => {
+      panel.style.display = 'none';
+    });
+    const target = document.getElementById(`tab-${value}`);
+    if (target) (target as HTMLElement).style.display = 'block';
+
+    // 懒加载：首次切换到某个 Tab 时加载数据
+    if (!loadedTabs.has(value)) {
+      loadedTabs.add(value);
+      if (value === 'assets') loadAssets();
+      else if (value === 'conflicts') loadConflicts();
+      else if (value === 'tasks') loadTasks();
+    }
+  }
+
+  // ===== Tab 1: 知识资产 =====
+
+  async function loadAssets(): Promise<void> {
+    const container = document.getElementById('asset-list')!;
+    container.innerHTML = '<div class="loading-state">加载中...</div>';
+
+    const typeFilter = (document.getElementById('asset-type-filter') as HTMLSelectElement).value;
+    const statusFilter = (document.getElementById('asset-status-filter') as HTMLSelectElement).value;
+
+    const params: Record<string, string | number> = { page: 1, size: 50 };
+    if (typeFilter) params.asset_type = typeFilter;
+    if (statusFilter) params.status = statusFilter;
+
+    let list: KnowledgeAsset[] = [];
+    try {
+      const page = await getAssets(params);
+      list = toItems(page).map(normalizeAsset);
+    } catch (err) {
+      if (isAuthError(err)) return;
+      const msg = err instanceof Error ? err.message : '网络异常';
+      container.innerHTML = `
+        <div class="error-state">
+          <div>加载知识资产失败：${escapeHtml(msg)}</div>
+          <button class="btn btn-outline btn-sm" id="retry-assets" style="margin-top: var(--space-3);">重试</button>
+        </div>`;
+      document.getElementById('retry-assets')?.addEventListener('click', loadAssets);
+      return;
+    }
+
+    renderAssets(list);
+  }
+
+  function renderAssets(list: KnowledgeAsset[]): void {
+    const container = document.getElementById('asset-list')!;
+
+    if (list.length === 0) {
+      container.innerHTML = '<div class="empty-state">暂无数据</div>';
+      return;
+    }
+
+    container.innerHTML = `
+      <div style="overflow-x: auto;">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>标题</th>
+              <th>类型</th>
+              <th>来源</th>
+              <th>置信度</th>
+              <th>状态</th>
+              <th>创建时间</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${list
+              .map((asset) => {
+                const typeInfo = assetTypeMap[asset.asset_type] || { label: asset.asset_type, badge: 'badge-muted' };
+                const statusInfo = assetStatusMap[asset.status] || { label: asset.status, badge: 'badge-muted' };
+                return `
+              <tr>
+                <td class="cell-truncate">${escapeHtml(asset.title)}</td>
+                <td><span class="badge ${typeInfo.badge}">${escapeHtml(typeInfo.label)}</span></td>
+                <td class="text-muted">${escapeHtml(asset.source_type)}</td>
+                <td>${formatConfidence(asset.confidence_score)}</td>
+                <td><span class="badge ${statusInfo.badge}">${escapeHtml(statusInfo.label)}</span></td>
+                <td class="text-muted">${escapeHtml(asset.created_at || '-')}</td>
+                <td>
+                  <button class="btn btn-outline btn-sm" data-action="detect" data-id="${escapeHtml(asset.id)}">检测冲突</button>
+                </td>
+              </tr>`;
+              })
+              .join('')}
+          </tbody>
+        </table>
+      </div>`;
+
+    // 绑定检测冲突按钮
+    container.querySelectorAll('button[data-action="detect"]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id = (btn as HTMLElement).dataset.id!;
+        doDetectConflicts(id, btn as HTMLButtonElement);
+      });
+    });
+  }
+
+  /** 检测冲突 */
+  async function doDetectConflicts(assetId: string, btn: HTMLButtonElement): Promise<void> {
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '检测中...';
+
+    try {
+      const result = await detectConflicts(assetId);
+      const count = result.count;
+
+      if (count > 0) {
+        alert(`检测到 ${count} 个冲突`);
+        // 刷新统计数据
+        await loadStats();
+        // 如果冲突 Tab 已加载过，刷新冲突列表
+        if (loadedTabs.has('conflicts')) {
+          await loadConflicts();
+        }
+      } else {
+        alert('未检测到冲突');
+      }
+    } catch (err) {
+      if (isAuthError(err)) return;
+      const msg = err instanceof Error ? err.message : '网络异常';
+      alert(`冲突检测失败：${msg}`);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = originalText;
+    }
+  }
+
+  // ===== Tab 2: 知识冲突 =====
+
+  async function loadConflicts(): Promise<void> {
+    const container = document.getElementById('conflict-list')!;
+    container.innerHTML = '<div class="loading-state">加载中...</div>';
+
+    let list: KnowledgeConflict[] = [];
+    try {
+      const page = await getConflicts({ page: 1, size: 50 });
+      list = toItems(page).map(normalizeConflict);
+    } catch (err) {
+      if (isAuthError(err)) return;
+      const msg = err instanceof Error ? err.message : '网络异常';
+      container.innerHTML = `
+        <div class="error-state">
+          <div>加载知识冲突失败：${escapeHtml(msg)}</div>
+          <button class="btn btn-outline btn-sm" id="retry-conflicts" style="margin-top: var(--space-3);">重试</button>
+        </div>`;
+      document.getElementById('retry-conflicts')?.addEventListener('click', loadConflicts);
+      return;
+    }
+
+    renderConflicts(list);
+  }
+
+  function renderConflicts(list: KnowledgeConflict[]): void {
+    const container = document.getElementById('conflict-list')!;
+
+    if (list.length === 0) {
+      container.innerHTML = '<div class="empty-state">暂无数据</div>';
+      return;
+    }
+
+    container.innerHTML = `
+      <div style="overflow-x: auto;">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>新资产</th>
+              <th>已有资产</th>
+              <th>冲突类型</th>
+              <th>描述</th>
+              <th>解决方案</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${list
+              .map((conflict) => {
+                const typeInfo = conflictTypeMap[conflict.conflict_type] || { label: conflict.conflict_type, badge: 'badge-muted' };
+                const resInfo = resolutionMap[conflict.resolution] || { label: conflict.resolution, badge: 'badge-muted' };
+                const isUnresolved = conflict.resolution === 'unresolved';
+                return `
+              <tr>
+                <td class="font-mono">${escapeHtml(conflict.new_asset_id)}</td>
+                <td class="font-mono">${escapeHtml(conflict.existing_asset_id)}</td>
+                <td><span class="badge ${typeInfo.badge}">${escapeHtml(typeInfo.label)}</span></td>
+                <td class="cell-truncate text-muted">${escapeHtml(conflict.description || '-')}</td>
+                <td><span class="badge ${resInfo.badge}">${escapeHtml(resInfo.label)}</span></td>
+                <td>
+                  ${isUnresolved
+                    ? `<button class="btn btn-primary btn-sm" data-action="resolve" data-id="${escapeHtml(conflict.id)}" data-modal-open="resolve-modal">解决</button>`
+                    : '<span class="text-muted">已解决</span>'}
+                </td>
+              </tr>`;
+              })
+              .join('')}
+          </tbody>
+        </table>
+      </div>`;
+
+    // 绑定解决冲突按钮：存储当前冲突 ID + 清空表单
+    container.querySelectorAll('button[data-action="resolve"]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id = (btn as HTMLElement).dataset.id!;
+        currentConflictId = id;
+
+        const resEl = document.getElementById('resolve-resolution') as HTMLSelectElement;
+        const noteEl = document.getElementById('resolve-note') as HTMLTextAreaElement;
+        if (resEl) resEl.value = 'new_wins';
+        if (noteEl) noteEl.value = '';
+      });
+    });
+  }
+
+  /** 确认解决冲突 */
+  async function doResolveConflict(): Promise<void> {
+    if (!currentConflictId) return;
+
+    const resEl = document.getElementById('resolve-resolution') as HTMLSelectElement;
+    const noteEl = document.getElementById('resolve-note') as HTMLTextAreaElement;
+    const resolution = resEl?.value || 'new_wins';
+    const note = noteEl?.value.trim() || undefined;
+
+    const btn = document.getElementById('resolve-confirm') as HTMLButtonElement;
+    btn.disabled = true;
+    btn.textContent = '处理中...';
+
+    try {
+      await resolveConflict(currentConflictId, { resolution, note });
+
+      // 关闭弹窗
+      document.getElementById('resolve-modal')?.classList.remove('is-open');
+      // 刷新冲突列表和统计
+      await loadConflicts();
+      await loadStats();
+    } catch (err) {
+      if (isAuthError(err)) return;
+      const msg = err instanceof Error ? err.message : '网络异常';
+      alert(`解决冲突失败：${msg}`);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '确认解决';
+    }
+  }
+
+  // ===== Tab 3: 回流任务 =====
+
+  async function loadTasks(): Promise<void> {
+    const container = document.getElementById('task-list')!;
+    container.innerHTML = '<div class="loading-state">加载中...</div>';
+
+    let list: CompoundingTask[] = [];
+    try {
+      const page = await getTasks({ page: 1, size: 50 });
+      list = toItems(page).map(normalizeTask);
+    } catch (err) {
+      if (isAuthError(err)) return;
+      const msg = err instanceof Error ? err.message : '网络异常';
+      container.innerHTML = `
+        <div class="error-state">
+          <div>加载回流任务失败：${escapeHtml(msg)}</div>
+          <button class="btn btn-outline btn-sm" id="retry-tasks" style="margin-top: var(--space-3);">重试</button>
+        </div>`;
+      document.getElementById('retry-tasks')?.addEventListener('click', loadTasks);
+      return;
+    }
+
+    renderTasks(list);
+  }
+
+  function renderTasks(list: CompoundingTask[]): void {
+    const container = document.getElementById('task-list')!;
+
+    if (list.length === 0) {
+      container.innerHTML = '<div class="empty-state">暂无数据</div>';
+      return;
+    }
+
+    container.innerHTML = `
+      <div style="overflow-x: auto;">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>任务类型</th>
+              <th>状态</th>
+              <th>触发来源</th>
+              <th>资产数</th>
+              <th>冲突数</th>
+              <th>耗时</th>
+              <th>创建时间</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${list
+              .map((task) => {
+                const typeInfo = taskTypeMap[task.task_type] || { label: task.task_type, badge: 'badge-muted' };
+                const statusInfo = taskStatusMap[task.status] || { label: task.status, badge: 'badge-muted' };
+                return `
+              <tr>
+                <td><span class="badge ${typeInfo.badge}">${escapeHtml(typeInfo.label)}</span></td>
+                <td><span class="badge ${statusInfo.badge}">${escapeHtml(statusInfo.label)}</span></td>
+                <td class="text-muted">${escapeHtml(task.trigger_source)}</td>
+                <td>${task.assets_injected}</td>
+                <td>${task.conflicts_detected}</td>
+                <td class="text-muted">${formatDuration(task.started_at, task.completed_at)}</td>
+                <td class="text-muted">${escapeHtml(task.created_at || '-')}</td>
+              </tr>`;
+              })
+              .join('')}
+          </tbody>
+        </table>
+      </div>`;
+  }
+
+  // ===== 事件绑定 =====
+
+  // Tab 切换
+  document.querySelector('[data-tabs]')?.addEventListener('tab-change', (e) => {
+    const value = (e as CustomEvent).detail.value;
+    switchTab(value);
+  });
+
+  // 资产筛选器
+  document.getElementById('asset-type-filter')?.addEventListener('change', loadAssets);
+  document.getElementById('asset-status-filter')?.addEventListener('change', loadAssets);
+
+  // 解决冲突确认按钮
+  document.getElementById('resolve-confirm')?.addEventListener('click', doResolveConflict);
+
+  // ===== 初始化 =====
+  loadStats();
+  loadedTabs.add('assets');
+  loadAssets();
+</script>

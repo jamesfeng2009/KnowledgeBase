@@ -64,6 +64,16 @@ const navConfig = [
     ],
   },
   {
+    label: '测试平台',
+    items: [
+      { label: '测试项目', route: '/testing', icon: 'test' },
+      { label: '测试用例', route: '/testing/cases', icon: 'cases' },
+      { label: '用例评审', route: '/testing/reviews', icon: 'review' },
+      { label: '测试计划', route: '/testing/plans', icon: 'plan' },
+      { label: '知识回流', route: '/testing/knowledge', icon: 'compounding' },
+    ],
+  },
+  {
     label: '治理后台',
     items: [
       { label: '运营看板', route: '/admin', icon: 'chart' },
@@ -146,6 +156,11 @@ const currentPath = Astro.url.pathname;
                       {item.icon === 'edit' && '✏️'}
                       {item.icon === 'minutes' && '📝'}
                       {item.icon === 'gaps' && '🔍'}
+                      {item.icon === 'test' && '🧪'}
+                      {item.icon === 'cases' && '📋'}
+                      {item.icon === 'review' && '🔎'}
+                      {item.icon === 'plan' && '🎯'}
+                      {item.icon === 'compounding' && '🔄'}
                       {item.icon === 'chart' && '📊'}
                       {item.icon === 'health' && '💚'}
                       {item.icon === 'audit' && '✅'}

@@ -1,0 +1,328 @@
+---
+/**
+ * 用例评审页面
+ * 待评审列表 + 通过/驳回操作弹窗
+ * 数据来源：GET /api/v1/testing/reviews/pending、PUT /api/v1/testing/reviews/{id}/approve|reject
+ */
+import DefaultLayout from '@/layouts/DefaultLayout.astro';
+import Modal from '@/components/common/Modal.astro';
+
+const breadcrumb = [{ label: '测试平台', href: '/testing' }, { label: '用例评审' }];
+---
+
+<DefaultLayout title="用例评审" breadcrumb={breadcrumb}>
+  <div class="page-header">
+    <h1 class="page-title">用例评审</h1>
+  </div>
+
+  <!-- 待评审列表 -->
+  <div class="card">
+    <div class="card-header">
+      <h3>待评审列表</h3>
+    </div>
+    <div id="review-list">
+      <div class="loading-state">加载中...</div>
+    </div>
+  </div>
+
+  <!-- 通过评审弹窗 -->
+  <Modal id="approve-modal" title="通过评审" size="sm">
+    <div class="form-group">
+      <label class="form-label">评审意见（选填）</label>
+      <textarea
+        class="form-textarea"
+        id="approve-comment"
+        placeholder="请输入评审意见..."
+        rows="4"
+      ></textarea>
+    </div>
+    <div class="modal-footer" slot="footer">
+      <button class="btn btn-ghost" data-modal-close>取消</button>
+      <button class="btn btn-primary" id="approve-confirm">确认通过</button>
+    </div>
+  </Modal>
+
+  <!-- 驳回评审弹窗 -->
+  <Modal id="reject-modal" title="驳回评审" size="sm">
+    <div class="form-group">
+      <label class="form-label">驳回原因（必填）</label>
+      <textarea
+        class="form-textarea"
+        id="reject-comment"
+        placeholder="请输入驳回原因..."
+        rows="4"
+      ></textarea>
+      <div class="form-error" id="reject-error" style="display: none;">请输入驳回原因</div>
+    </div>
+    <div class="modal-footer" slot="footer">
+      <button class="btn btn-ghost" data-modal-close>取消</button>
+      <button class="btn btn-danger" id="reject-confirm">确认驳回</button>
+    </div>
+  </Modal>
+</DefaultLayout>
+
+<style is:global>
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .data-table th {
+    text-align: left;
+    padding: var(--space-3) var(--space-4);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-muted);
+  }
+  .data-table td {
+    padding: var(--space-3) var(--space-4);
+    font-size: var(--text-sm);
+    color: var(--text);
+    border-bottom: 1px solid var(--border-light);
+  }
+  .data-table tbody tr:hover {
+    background: var(--surface-hover);
+  }
+  .loading-state {
+    text-align: center;
+    padding: var(--space-8);
+    color: var(--text-muted);
+  }
+  .empty-state {
+    text-align: center;
+    padding: var(--space-8);
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+  }
+  .error-state {
+    text-align: center;
+    padding: var(--space-6);
+    color: var(--danger);
+    font-size: var(--text-sm);
+  }
+  .review-comment {
+    max-width: 320px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-secondary);
+  }
+</style>
+
+<script>
+  import { getPendingReviews, approveReview, rejectReview, type TestReview } from '@/lib/apis/testing';
+  import { ApiError } from '@/lib/api';
+
+  /** 当前操作的评审 ID */
+  let currentReviewId: string | null = null;
+
+  /** HTML 转义 */
+  function escapeHtml(s: unknown): string {
+    return String(s ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  /** 判断是否为 401/未登录错误（已在底层处理跳转，业务层需静默退出） */
+  function isAuthError(err: unknown): boolean {
+    return err instanceof ApiError && err.status === 401;
+  }
+
+  /** 从接口返回值中提取数组（兼容数组 / { items: [] } / 分页对象） */
+  function toItems(raw: unknown): Record<string, unknown>[] {
+    if (Array.isArray(raw)) return raw as Record<string, unknown>[];
+    if (raw && typeof raw === 'object') {
+      const obj = raw as { items?: unknown[] };
+      if (Array.isArray(obj.items)) return obj.items as Record<string, unknown>[];
+    }
+    return [];
+  }
+
+  /** 规范化评审对象（兼容后端不同字段命名） */
+  function normalizeReview(raw: Record<string, unknown>): TestReview {
+    return {
+      id: String(raw.id || raw.review_id || ''),
+      case_id: String(raw.case_id || raw.caseId || '-'),
+      submitter_id: String(raw.submitter_id || raw.submitter || '-'),
+      reviewer_id: raw.reviewer_id ? String(raw.reviewer_id) : undefined,
+      status: String(raw.status || 'pending'),
+      comment: typeof raw.comment === 'string' ? raw.comment : undefined,
+      suggestions: Array.isArray(raw.suggestions) ? (raw.suggestions as TestReview['suggestions']) : undefined,
+      review_summary: typeof raw.review_summary === 'string' ? raw.review_summary : undefined,
+      resolved_at: raw.resolved_at ? String(raw.resolved_at) : undefined,
+      created_at: raw.created_at ? String(raw.created_at) : undefined,
+    };
+  }
+
+  /** 评审状态 → badge 映射 */
+  const statusMap: Record<string, { label: string; badge: string }> = {
+    pending: { label: '待评审', badge: 'badge-warning' },
+    approved: { label: '已通过', badge: 'badge-success' },
+    rejected: { label: '已驳回', badge: 'badge-danger' },
+  };
+
+  /** 加载待评审列表 */
+  async function loadReviews(): Promise<void> {
+    const container = document.getElementById('review-list')!;
+    container.innerHTML = '<div class="loading-state">加载中...</div>';
+
+    let list: TestReview[] = [];
+    try {
+      const page = await getPendingReviews(1, 50);
+      list = toItems(page).map(normalizeReview);
+    } catch (err) {
+      if (isAuthError(err)) return;
+      const msg = err instanceof Error ? err.message : '网络异常';
+      container.innerHTML = `
+        <div class="error-state">
+          <div>加载待评审列表失败：${escapeHtml(msg)}</div>
+          <button class="btn btn-outline btn-sm" id="retry-reviews" style="margin-top: var(--space-3);">重试</button>
+        </div>`;
+      document.getElementById('retry-reviews')?.addEventListener('click', loadReviews);
+      return;
+    }
+
+    renderReviews(list);
+  }
+
+  /** 渲染评审列表表格 */
+  function renderReviews(list: TestReview[]): void {
+    const container = document.getElementById('review-list')!;
+
+    if (list.length === 0) {
+      container.innerHTML = '<div class="empty-state">暂无数据</div>';
+      return;
+    }
+
+    container.innerHTML = `
+      <div style="overflow-x: auto;">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>用例 ID</th>
+              <th>状态</th>
+              <th>评审意见</th>
+              <th>提交时间</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${list
+              .map((review) => {
+                const statusInfo = statusMap[review.status] || { label: review.status, badge: 'badge-warning' };
+                const isPending = review.status === 'pending';
+                return `
+              <tr>
+                <td class="font-mono">${escapeHtml(review.case_id)}</td>
+                <td><span class="badge ${statusInfo.badge}">${escapeHtml(statusInfo.label)}</span></td>
+                <td class="review-comment">${escapeHtml(review.comment || '-')}</td>
+                <td class="text-muted">${escapeHtml(review.created_at || '-')}</td>
+                <td>
+                  <div style="display: flex; gap: var(--space-2);">
+                    ${isPending ? `
+                      <button class="btn btn-primary btn-sm" data-action="approve" data-id="${escapeHtml(review.id)}" data-modal-open="approve-modal">通过</button>
+                      <button class="btn btn-danger btn-sm" data-action="reject" data-id="${escapeHtml(review.id)}" data-modal-open="reject-modal">驳回</button>
+                    ` : '<span class="text-muted">已处理</span>'}
+                  </div>
+                </td>
+              </tr>`;
+              })
+              .join('')}
+          </tbody>
+        </table>
+      </div>`;
+
+    // 绑定操作按钮：存储当前评审 ID + 清空表单
+    container.querySelectorAll('button[data-action]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const action = (btn as HTMLElement).dataset.action!;
+        const id = (btn as HTMLElement).dataset.id!;
+        currentReviewId = id;
+
+        if (action === 'approve') {
+          const commentEl = document.getElementById('approve-comment') as HTMLTextAreaElement | null;
+          if (commentEl) commentEl.value = '';
+        } else if (action === 'reject') {
+          const commentEl = document.getElementById('reject-comment') as HTMLTextAreaElement | null;
+          if (commentEl) commentEl.value = '';
+          const errorEl = document.getElementById('reject-error');
+          if (errorEl) errorEl.style.display = 'none';
+        }
+      });
+    });
+  }
+
+  /** 确认通过评审 */
+  async function doApprove(): Promise<void> {
+    if (!currentReviewId) return;
+
+    const btn = document.getElementById('approve-confirm') as HTMLButtonElement;
+    btn.disabled = true;
+    btn.textContent = '处理中...';
+
+    try {
+      const commentEl = document.getElementById('approve-comment') as HTMLTextAreaElement;
+      const comment = commentEl?.value.trim() || '';
+      const data = comment ? { comment } : undefined;
+      await approveReview(currentReviewId, data);
+
+      // 关闭弹窗
+      document.getElementById('approve-modal')?.classList.remove('is-open');
+      // 刷新列表
+      await loadReviews();
+    } catch (err) {
+      if (isAuthError(err)) return;
+      const msg = err instanceof Error ? err.message : '网络异常';
+      alert(`通过评审失败：${msg}`);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '确认通过';
+    }
+  }
+
+  /** 确认驳回评审 */
+  async function doReject(): Promise<void> {
+    if (!currentReviewId) return;
+
+    const commentEl = document.getElementById('reject-comment') as HTMLTextAreaElement;
+    const comment = commentEl?.value.trim() || '';
+    const errorEl = document.getElementById('reject-error');
+
+    // 校验：驳回原因必填
+    if (!comment) {
+      if (errorEl) errorEl.style.display = 'block';
+      return;
+    }
+    if (errorEl) errorEl.style.display = 'none';
+
+    const btn = document.getElementById('reject-confirm') as HTMLButtonElement;
+    btn.disabled = true;
+    btn.textContent = '处理中...';
+
+    try {
+      await rejectReview(currentReviewId, { comment });
+
+      // 关闭弹窗
+      document.getElementById('reject-modal')?.classList.remove('is-open');
+      // 刷新列表
+      await loadReviews();
+    } catch (err) {
+      if (isAuthError(err)) return;
+      const msg = err instanceof Error ? err.message : '网络异常';
+      alert(`驳回评审失败：${msg}`);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '确认驳回';
+    }
+  }
+
+  // 绑定确认按钮
+  document.getElementById('approve-confirm')?.addEventListener('click', doApprove);
+  document.getElementById('reject-confirm')?.addEventListener('click', doReject);
+
+  // 初始化
+  loadReviews();
+</script>

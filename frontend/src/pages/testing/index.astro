@@ -1,0 +1,488 @@
+---
+/**
+ * 测试项目列表页面
+ * 项目列表表格 + 统计卡片 + 新建项目弹窗
+ * 数据来源：GET /api/v1/testing/projects、POST /api/v1/testing/projects、DELETE /api/v1/testing/projects/{id}、GET /api/v1/testing/stats
+ */
+import DefaultLayout from '@/layouts/DefaultLayout.astro';
+
+const breadcrumb = [{ label: '测试平台', href: '/testing' }, { label: '项目列表' }];
+---
+
+<DefaultLayout title="测试平台" breadcrumb={breadcrumb}>
+  <div class="testing-projects">
+    <!-- 页头 -->
+    <div class="page-header">
+      <h1 class="page-title">测试平台</h1>
+      <button class="btn btn-primary btn-sm" id="create-project-btn" type="button">＋ 新建项目</button>
+    </div>
+
+    <!-- 统计卡片 -->
+    <div class="grid grid-cols-4" style="margin-bottom: var(--space-5);">
+      <div class="card stat-card">
+        <div class="stat-card-header">
+          <span class="text-muted stat-label">项目总数</span>
+        </div>
+        <div class="stat-card-value" id="stat-projects">--</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-card-header">
+          <span class="text-muted stat-label">用例总数</span>
+        </div>
+        <div class="stat-card-value" id="stat-cases">--</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-card-header">
+          <span class="text-muted stat-label">计划总数</span>
+        </div>
+        <div class="stat-card-value" id="stat-plans">--</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-card-header">
+          <span class="text-muted stat-label">执行总数</span>
+        </div>
+        <div class="stat-card-value" id="stat-executions">--</div>
+      </div>
+    </div>
+    <div class="stats-error" id="stats-error" style="display:none;">
+      <span id="stats-error-msg"></span>
+      <button class="btn btn-outline btn-sm" id="stats-retry" type="button">重试</button>
+    </div>
+
+    <!-- 项目列表 -->
+    <div class="card">
+      <div class="card-header"><h3>项目列表</h3></div>
+      <div style="overflow-x: auto;">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>项目名称</th>
+              <th>描述</th>
+              <th>状态</th>
+              <th>创建时间</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="project-table-body">
+            <tr><td colspan="5" class="loading-state">加载中...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 新建项目弹窗 -->
+    <div class="modal-overlay" id="create-project-modal">
+      <div class="modal" role="dialog" aria-modal="true">
+        <div class="modal-header">
+          <h3>新建项目</h3>
+          <button class="modal-close" type="button" id="close-project-modal" aria-label="关闭">×</button>
+        </div>
+        <form id="project-form">
+          <div class="modal-body">
+            <div class="form-group">
+              <label class="form-label" for="project-name">项目名称 *</label>
+              <input type="text" class="form-input" id="project-name" name="name" required placeholder="请输入项目名称" />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="project-desc">项目描述</label>
+              <textarea class="form-textarea" id="project-desc" name="description" placeholder="请输入项目描述（可选）"></textarea>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-ghost" id="cancel-project-btn">取消</button>
+            <button type="submit" class="btn btn-primary" id="submit-project-btn">创建</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</DefaultLayout>
+
+<style is:global>
+  /* 统计卡片 */
+  .testing-projects .stat-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+  .testing-projects .stat-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .testing-projects .stat-label {
+    font-size: var(--text-sm);
+  }
+  .testing-projects .stat-card-value {
+    font-size: var(--text-4xl);
+    font-weight: 600;
+    color: var(--primary);
+    min-height: 36px;
+    display: flex;
+    align-items: center;
+  }
+  .testing-projects .stats-error {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    background: var(--danger-bg);
+    border-radius: var(--radius);
+    margin-bottom: var(--space-5);
+    font-size: var(--text-sm);
+    color: var(--danger);
+  }
+
+  /* 数据表格 */
+  .testing-projects .data-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .testing-projects .data-table th {
+    text-align: left;
+    padding: var(--space-3) var(--space-4);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-muted);
+    white-space: nowrap;
+  }
+  .testing-projects .data-table td {
+    padding: var(--space-3) var(--space-4);
+    font-size: var(--text-sm);
+    color: var(--text);
+    border-bottom: 1px solid var(--border-light);
+  }
+  .testing-projects .data-table tbody tr:hover {
+    background: var(--surface-hover);
+  }
+  .testing-projects .data-table tbody tr:last-child td {
+    border-bottom: none;
+  }
+  .testing-projects .project-name {
+    font-weight: 600;
+    color: var(--text);
+  }
+  .testing-projects .project-desc {
+    color: var(--text-secondary);
+    max-width: 320px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .testing-projects .row-actions {
+    display: flex;
+    gap: var(--space-2);
+  }
+
+  /* 状态标签补充（global.css 仅含 primary/success/warning/danger） */
+  .testing-projects .badge-muted {
+    background: var(--surface-hover);
+    color: var(--text-muted);
+  }
+  .testing-projects .badge-info {
+    background: var(--info-bg);
+    color: var(--info);
+  }
+
+  /* 加载/空/错误状态 */
+  .testing-projects .loading-state {
+    text-align: center;
+    padding: var(--space-8);
+    color: var(--text-muted);
+  }
+  .testing-projects .empty-state {
+    text-align: center;
+    padding: var(--space-8);
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+  }
+  .testing-projects .error-state {
+    text-align: center;
+    padding: var(--space-6);
+    color: var(--danger);
+    font-size: var(--text-sm);
+  }
+
+  /* 弹窗 */
+  .testing-projects .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity var(--transition), visibility var(--transition);
+    padding: var(--space-4);
+  }
+  .testing-projects .modal-overlay.is-open {
+    opacity: 1;
+    visibility: visible;
+  }
+  .testing-projects .modal {
+    background: var(--surface);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-xl);
+    width: 600px;
+    max-width: 90vw;
+    max-height: 90vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    transform: scale(0.95);
+    transition: transform var(--transition);
+  }
+  .testing-projects .modal-overlay.is-open .modal {
+    transform: scale(1);
+  }
+  .testing-projects .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-5) var(--space-6);
+    border-bottom: 1px solid var(--border);
+  }
+  .testing-projects .modal-header h3 {
+    font-size: var(--text-lg);
+    font-weight: 600;
+  }
+  .testing-projects .modal-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    font-size: var(--text-xl);
+    color: var(--text-muted);
+    border-radius: var(--radius);
+    transition: all var(--transition-fast);
+    flex-shrink: 0;
+  }
+  .testing-projects .modal-close:hover {
+    background: var(--surface-hover);
+    color: var(--text);
+  }
+  .testing-projects .modal-body {
+    padding: var(--space-6);
+    overflow-y: auto;
+    flex: 1;
+  }
+  .testing-projects .modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-3);
+    padding: var(--space-4) var(--space-6);
+    border-top: 1px solid var(--border);
+  }
+
+  /* 响应式 */
+  @media (max-width: 768px) {
+    .testing-projects .grid.grid-cols-4 {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
+</style>
+
+<script>
+  import { getProjects, createProject, deleteProject, getStats } from '@/lib/apis/testing';
+  import { ApiError } from '@/lib/api';
+  import type { TestProject, TestingStats } from '@/lib/apis/testing';
+
+  let projects: TestProject[] = [];
+
+  /** 判断是否为 401/未登录错误（已在底层处理跳转，业务层需静默退出） */
+  function isAuthError(err: unknown): boolean {
+    return err instanceof ApiError && err.status === 401;
+  }
+
+  function escapeHtml(s: unknown): string {
+    return String(s ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  /** 格式化时间，兼容 ISO 字符串与时间戳 */
+  function formatTime(s: unknown): string {
+    if (!s) return '-';
+    const str = String(s);
+    const d = new Date(str);
+    if (isNaN(d.getTime())) return str;
+    return d.toLocaleString('zh-CN', { hour12: false });
+  }
+
+  /** 项目状态映射 */
+  const projectStatusMap: Record<string, { label: string; cls: string }> = {
+    active: { label: '进行中', cls: 'badge-success' },
+    archived: { label: '已归档', cls: 'badge-muted' },
+    draft: { label: '草稿', cls: 'badge-muted' },
+  };
+
+  function getStatusInfo(status: string): { label: string; cls: string } {
+    return projectStatusMap[status] || { label: status || '-', cls: 'badge-muted' };
+  }
+
+  // ===== 统计卡片 =====
+
+  async function loadStats(): Promise<void> {
+    const ids = ['stat-projects', 'stat-cases', 'stat-plans', 'stat-executions'];
+    ids.forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = '--';
+    });
+    const errBox = document.getElementById('stats-error')!;
+    errBox.style.display = 'none';
+    try {
+      const stats: TestingStats = await getStats();
+      setStat('stat-projects', stats.total_projects);
+      setStat('stat-cases', stats.total_cases);
+      setStat('stat-plans', stats.total_plans);
+      setStat('stat-executions', stats.total_executions);
+    } catch (err) {
+      if (isAuthError(err)) return;
+      const msg = err instanceof Error ? err.message : '网络异常';
+      ids.forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = '--';
+      });
+      const msgEl = document.getElementById('stats-error-msg');
+      if (msgEl) msgEl.textContent = `统计加载失败：${msg}`;
+      errBox.style.display = '';
+    }
+  }
+
+  function setStat(id: string, value: number): void {
+    const el = document.getElementById(id);
+    if (el) el.textContent = typeof value === 'number' && !isNaN(value) ? value.toLocaleString('zh-CN') : '--';
+  }
+
+  // ===== 项目列表 =====
+
+  async function loadProjects(): Promise<void> {
+    const tbody = document.getElementById('project-table-body')!;
+    tbody.innerHTML = '<tr><td colspan="5" class="loading-state">加载中...</td></tr>';
+    try {
+      const result = await getProjects(1, 20);
+      projects = result.items || [];
+    } catch (err) {
+      if (isAuthError(err)) return;
+      const msg = err instanceof Error ? err.message : '网络异常';
+      tbody.innerHTML = `<tr><td colspan="5" class="error-state">加载项目列表失败：${escapeHtml(msg)}<br/><button class="btn btn-outline btn-sm" id="retry-projects" style="margin-top: var(--space-3);" type="button">重试</button></td></tr>`;
+      document.getElementById('retry-projects')?.addEventListener('click', loadProjects);
+      return;
+    }
+    renderProjects();
+  }
+
+  function renderProjects(): void {
+    const tbody = document.getElementById('project-table-body')!;
+    if (projects.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" class="empty-state">暂无项目，点击右上角新建</td></tr>';
+      return;
+    }
+    tbody.innerHTML = projects
+      .map(
+        (p) => {
+          const statusInfo = getStatusInfo(p.status);
+          return `
+        <tr>
+          <td class="project-name">${escapeHtml(p.name)}</td>
+          <td class="project-desc" title="${escapeHtml(p.description || '')}">${escapeHtml(p.description || '-')}</td>
+          <td><span class="badge ${statusInfo.cls}">${escapeHtml(statusInfo.label)}</span></td>
+          <td class="text-muted">${escapeHtml(formatTime(p.created_at))}</td>
+          <td>
+            <div class="row-actions">
+              <a class="btn btn-ghost btn-sm" href="/testing/cases?project_id=${encodeURIComponent(p.id)}">用例</a>
+              <button class="btn btn-ghost btn-sm" data-action="delete" data-id="${escapeHtml(p.id)}" data-name="${escapeHtml(p.name)}" type="button">删除</button>
+            </div>
+          </td>
+        </tr>`;
+        }
+      )
+      .join('');
+
+    tbody.querySelectorAll('button[data-action="delete"]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const id = (btn as HTMLElement).dataset.id!;
+        const name = (btn as HTMLElement).dataset.name || '该项目';
+        if (!confirm(`确定删除项目「${name}」吗？此操作不可撤销。`)) return;
+        try {
+          await deleteProject(id);
+          projects = projects.filter((p) => p.id !== id);
+          renderProjects();
+          await loadStats();
+        } catch (err) {
+          if (isAuthError(err)) return;
+          const msg = err instanceof Error ? err.message : '网络异常';
+          alert(`删除失败：${msg}`);
+        }
+      });
+    });
+  }
+
+  // ===== 新建项目弹窗 =====
+
+  const modal = document.getElementById('create-project-modal')!;
+
+  function openModal(): void {
+    modal.classList.add('is-open');
+  }
+
+  function closeModal(): void {
+    modal.classList.remove('is-open');
+    const form = document.getElementById('project-form') as HTMLFormElement | null;
+    if (form) form.reset();
+  }
+
+  document.getElementById('create-project-btn')?.addEventListener('click', openModal);
+  document.getElementById('close-project-modal')?.addEventListener('click', closeModal);
+  document.getElementById('cancel-project-btn')?.addEventListener('click', closeModal);
+
+  // 点击遮罩关闭
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) closeModal();
+  });
+
+  // ESC 关闭
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && modal.classList.contains('is-open')) closeModal();
+  });
+
+  document.getElementById('project-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.target as HTMLFormElement;
+    const formData = new FormData(form);
+    const name = String(formData.get('name') || '').trim();
+    const description = String(formData.get('description') || '').trim();
+    if (!name) return;
+    const submitBtn = document.getElementById('submit-project-btn') as HTMLButtonElement;
+    const originalText = submitBtn.textContent;
+    submitBtn.disabled = true;
+    submitBtn.textContent = '创建中...';
+    try {
+      const newProject = await createProject({ name, description: description || undefined, status: 'active' });
+      projects.unshift(newProject);
+      renderProjects();
+      closeModal();
+      await loadStats();
+    } catch (err) {
+      if (isAuthError(err)) return;
+      const msg = err instanceof Error ? err.message : '网络异常';
+      alert(`创建项目失败：${msg}`);
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = originalText;
+    }
+  });
+
+  document.getElementById('stats-retry')?.addEventListener('click', loadStats);
+
+  // 初始化
+  loadStats();
+  loadProjects();
+</script>

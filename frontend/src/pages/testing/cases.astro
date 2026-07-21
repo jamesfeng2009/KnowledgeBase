@@ -1,0 +1,764 @@
+---
+/**
+ * 测试用例管理页面
+ * 用例列表表格 + 项目/状态筛选 + 彩色 badge + 新建用例弹窗 + 批量状态更新
+ * 数据来源：GET /api/v1/testing/cases、POST /api/v1/testing/cases、DELETE /api/v1/testing/cases/{id}、POST /api/v1/testing/cases/batch-status
+ */
+import DefaultLayout from '@/layouts/DefaultLayout.astro';
+
+const breadcrumb = [{ label: '测试平台', href: '/testing' }, { label: '测试用例' }];
+---
+
+<DefaultLayout title="测试用例" breadcrumb={breadcrumb}>
+  <div class="testing-cases">
+    <!-- 页头 + 筛选器 -->
+    <div class="cases-header">
+      <h1 class="page-title">测试用例</h1>
+      <div class="cases-toolbar">
+        <select class="form-input filter-select" id="project-filter">
+          <option value="">全部项目</option>
+        </select>
+        <select class="form-input filter-select" id="status-filter">
+          <option value="">全部状态</option>
+          <option value="draft">草稿</option>
+          <option value="pending_review">待评审</option>
+          <option value="approved">已通过</option>
+          <option value="active">已生效</option>
+          <option value="deprecated">已弃用</option>
+        </select>
+        <button class="btn btn-primary btn-sm" id="create-case-btn" type="button">＋ 新建用例</button>
+      </div>
+    </div>
+
+    <!-- 批量操作栏 -->
+    <div class="batch-bar" id="batch-bar" style="display:none;">
+      <span class="batch-info">已选择 <strong id="batch-count">0</strong> 条</span>
+      <select class="form-input batch-status-select" id="batch-status-select">
+        <option value="">选择目标状态...</option>
+        <option value="draft">草稿</option>
+        <option value="pending_review">待评审</option>
+        <option value="approved">已通过</option>
+        <option value="active">已生效</option>
+        <option value="deprecated">已弃用</option>
+      </select>
+      <button class="btn btn-primary btn-sm" id="batch-update-btn" type="button">批量更新状态</button>
+      <button class="btn btn-ghost btn-sm" id="batch-clear-btn" type="button">取消选择</button>
+    </div>
+
+    <!-- 用例列表 -->
+    <div class="card">
+      <div style="overflow-x: auto;">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th class="col-check"><input type="checkbox" id="select-all" aria-label="全选" /></th>
+              <th>用例编号</th>
+              <th>标题</th>
+              <th>类型</th>
+              <th>优先级</th>
+              <th>状态</th>
+              <th>标签</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="case-table-body">
+            <tr><td colspan="8" class="loading-state">加载中...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 新建用例弹窗 -->
+    <div class="modal-overlay" id="create-case-modal">
+      <div class="modal" role="dialog" aria-modal="true">
+        <div class="modal-header">
+          <h3>新建用例</h3>
+          <button class="modal-close" type="button" id="close-case-modal" aria-label="关闭">×</button>
+        </div>
+        <form id="case-form">
+          <div class="modal-body">
+            <div class="form-group">
+              <label class="form-label" for="case-project">所属项目 *</label>
+              <select class="form-input" id="case-project" name="project_id" required>
+                <option value="">请选择项目</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="case-title">用例标题 *</label>
+              <input type="text" class="form-input" id="case-title" name="title" required placeholder="请输入用例标题" />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="case-desc">用例描述</label>
+              <textarea class="form-textarea" id="case-desc" name="description" placeholder="请输入用例描述（可选）"></textarea>
+            </div>
+            <div class="grid grid-cols-2" style="gap: var(--space-4);">
+              <div class="form-group">
+                <label class="form-label" for="case-type">测试类型 *</label>
+                <select class="form-input" id="case-type" name="test_type" required>
+                  <option value="functional">功能测试</option>
+                  <option value="integration">集成测试</option>
+                  <option value="performance">性能测试</option>
+                  <option value="security">安全测试</option>
+                  <option value="compatibility">兼容性测试</option>
+                  <option value="unit">单元测试</option>
+                  <option value="e2e">端到端测试</option>
+                  <option value="regression">回归测试</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="case-priority">优先级 *</label>
+                <select class="form-input" id="case-priority" name="priority" required>
+                  <option value="low">低</option>
+                  <option value="normal" selected>普通</option>
+                  <option value="high">高</option>
+                  <option value="critical">紧急</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="case-tags">标签</label>
+              <input type="text" class="form-input" id="case-tags" name="tags" placeholder="多个标签用逗号分隔（可选）" />
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-ghost" id="cancel-case-btn">取消</button>
+            <button type="submit" class="btn btn-primary" id="submit-case-btn">创建</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</DefaultLayout>
+
+<style is:global>
+  /* 页头 + 工具栏 */
+  .testing-cases .cases-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: var(--space-5);
+    flex-wrap: wrap;
+    gap: var(--space-3);
+  }
+  .testing-cases .cases-toolbar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+  }
+  .testing-cases .filter-select {
+    width: 160px;
+    padding: var(--space-2) var(--space-3);
+    font-size: var(--text-sm);
+  }
+
+  /* 批量操作栏 */
+  .testing-cases .batch-bar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    background: var(--primary-bg);
+    border-radius: var(--radius);
+    margin-bottom: var(--space-4);
+    flex-wrap: wrap;
+  }
+  .testing-cases .batch-info {
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+  }
+  .testing-cases .batch-info strong {
+    color: var(--primary);
+  }
+  .testing-cases .batch-status-select {
+    width: 160px;
+    padding: var(--space-2) var(--space-3);
+    font-size: var(--text-sm);
+  }
+
+  /* 数据表格 */
+  .testing-cases .data-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .testing-cases .data-table th {
+    text-align: left;
+    padding: var(--space-3) var(--space-4);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-muted);
+    white-space: nowrap;
+  }
+  .testing-cases .data-table td {
+    padding: var(--space-3) var(--space-4);
+    font-size: var(--text-sm);
+    color: var(--text);
+    border-bottom: 1px solid var(--border-light);
+  }
+  .testing-cases .data-table tbody tr:hover {
+    background: var(--surface-hover);
+  }
+  .testing-cases .data-table tbody tr:last-child td {
+    border-bottom: none;
+  }
+  .testing-cases .col-check {
+    width: 40px;
+    text-align: center;
+  }
+  .testing-cases .col-check input[type="checkbox"] {
+    cursor: pointer;
+  }
+  .testing-cases .case-no {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+    white-space: nowrap;
+  }
+  .testing-cases .case-title {
+    font-weight: 500;
+    color: var(--text);
+    max-width: 280px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .testing-cases .row-actions {
+    display: flex;
+    gap: var(--space-2);
+  }
+  .testing-cases .tag-cell {
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .testing-cases .mini-tag {
+    display: inline-block;
+    padding: 1px var(--space-2);
+    margin: 1px 2px 1px 0;
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+    background: var(--surface-muted);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xs);
+  }
+
+  /* 状态/优先级 badge 补充（global.css 仅含 primary/success/warning/danger） */
+  .testing-cases .badge-muted {
+    background: var(--surface-hover);
+    color: var(--text-muted);
+  }
+  .testing-cases .badge-info {
+    background: var(--info-bg);
+    color: var(--info);
+  }
+
+  /* 加载/空/错误状态 */
+  .testing-cases .loading-state {
+    text-align: center;
+    padding: var(--space-8);
+    color: var(--text-muted);
+  }
+  .testing-cases .empty-state {
+    text-align: center;
+    padding: var(--space-8);
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+  }
+  .testing-cases .error-state {
+    text-align: center;
+    padding: var(--space-6);
+    color: var(--danger);
+    font-size: var(--text-sm);
+  }
+
+  /* 弹窗 */
+  .testing-cases .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity var(--transition), visibility var(--transition);
+    padding: var(--space-4);
+  }
+  .testing-cases .modal-overlay.is-open {
+    opacity: 1;
+    visibility: visible;
+  }
+  .testing-cases .modal {
+    background: var(--surface);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-xl);
+    width: 600px;
+    max-width: 90vw;
+    max-height: 90vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    transform: scale(0.95);
+    transition: transform var(--transition);
+  }
+  .testing-cases .modal-overlay.is-open .modal {
+    transform: scale(1);
+  }
+  .testing-cases .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-5) var(--space-6);
+    border-bottom: 1px solid var(--border);
+  }
+  .testing-cases .modal-header h3 {
+    font-size: var(--text-lg);
+    font-weight: 600;
+  }
+  .testing-cases .modal-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    font-size: var(--text-xl);
+    color: var(--text-muted);
+    border-radius: var(--radius);
+    transition: all var(--transition-fast);
+    flex-shrink: 0;
+  }
+  .testing-cases .modal-close:hover {
+    background: var(--surface-hover);
+    color: var(--text);
+  }
+  .testing-cases .modal-body {
+    padding: var(--space-6);
+    overflow-y: auto;
+    flex: 1;
+  }
+  .testing-cases .modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-3);
+    padding: var(--space-4) var(--space-6);
+    border-top: 1px solid var(--border);
+  }
+
+  /* 响应式 */
+  @media (max-width: 768px) {
+    .testing-cases .cases-header {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+    .testing-cases .cases-toolbar {
+      width: 100%;
+    }
+    .testing-cases .filter-select {
+      flex: 1;
+      min-width: 120px;
+    }
+  }
+</style>
+
+<script>
+  import {
+    getCases,
+    createCase,
+    deleteCase,
+    batchUpdateStatus,
+    getProjects,
+  } from '@/lib/apis/testing';
+  import { ApiError } from '@/lib/api';
+  import type { TestCase, TestProject } from '@/lib/apis/testing';
+
+  let cases: TestCase[] = [];
+  let projects: TestProject[] = [];
+  let currentProjectFilter = '';
+  let currentStatusFilter = '';
+  let selectedIds: Set<string> = new Set();
+
+  /** 判断是否为 401/未登录错误（已在底层处理跳转，业务层需静默退出） */
+  function isAuthError(err: unknown): boolean {
+    return err instanceof ApiError && err.status === 401;
+  }
+
+  function escapeHtml(s: unknown): string {
+    return String(s ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  /** 用例状态映射：draft=灰, pending_review=黄, approved=绿, active=蓝, deprecated=红 */
+  const caseStatusMap: Record<string, { label: string; cls: string }> = {
+    draft: { label: '草稿', cls: 'badge-muted' },
+    pending_review: { label: '待评审', cls: 'badge-warning' },
+    approved: { label: '已通过', cls: 'badge-success' },
+    active: { label: '已生效', cls: 'badge-info' },
+    deprecated: { label: '已弃用', cls: 'badge-danger' },
+  };
+
+  /** 优先级映射：low=灰, normal=蓝, high=橙, critical=红 */
+  const priorityMap: Record<string, { label: string; cls: string }> = {
+    low: { label: '低', cls: 'badge-muted' },
+    normal: { label: '普通', cls: 'badge-info' },
+    high: { label: '高', cls: 'badge-warning' },
+    critical: { label: '紧急', cls: 'badge-danger' },
+  };
+
+  /** 测试类型映射 */
+  const testTypeMap: Record<string, string> = {
+    functional: '功能测试',
+    integration: '集成测试',
+    performance: '性能测试',
+    security: '安全测试',
+    compatibility: '兼容性测试',
+    unit: '单元测试',
+    e2e: '端到端测试',
+    regression: '回归测试',
+  };
+
+  function getStatusInfo(status: string): { label: string; cls: string } {
+    return caseStatusMap[status] || { label: status || '-', cls: 'badge-muted' };
+  }
+
+  function getPriorityInfo(priority: string): { label: string; cls: string } {
+    return priorityMap[priority] || { label: priority || '-', cls: 'badge-muted' };
+  }
+
+  function getTestTypeLabel(type: string): string {
+    return testTypeMap[type] || type || '-';
+  }
+
+  // ===== 项目下拉加载 =====
+
+  async function loadProjectOptions(): Promise<void> {
+    const projectFilter = document.getElementById('project-filter') as HTMLSelectElement;
+    const caseProject = document.getElementById('case-project') as HTMLSelectElement;
+    try {
+      const result = await getProjects(1, 100);
+      projects = result.items || [];
+      const optionsHtml =
+        '<option value="">全部项目</option>' +
+        projects.map((p) => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`).join('');
+      if (projectFilter) projectFilter.innerHTML = optionsHtml;
+      if (caseProject) {
+        caseProject.innerHTML =
+          '<option value="">请选择项目</option>' +
+          projects.map((p) => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`).join('');
+      }
+      // 从 URL 读取 project_id 并设置筛选
+      const urlParams = new URLSearchParams(window.location.search);
+      const projectIdFromUrl = urlParams.get('project_id');
+      if (projectIdFromUrl && projectFilter) {
+        currentProjectFilter = projectIdFromUrl;
+        projectFilter.value = projectIdFromUrl;
+      }
+      if (projectIdFromUrl && caseProject) {
+        caseProject.value = projectIdFromUrl;
+      }
+    } catch (err) {
+      if (isAuthError(err)) return;
+      // 项目下拉加载失败，保留空选项，不阻断用例列表加载
+      const msg = err instanceof Error ? err.message : '网络异常';
+      if (projectFilter) {
+        projectFilter.innerHTML = `<option value="">全部项目（加载失败）</option>`;
+      }
+      if (caseProject) {
+        caseProject.innerHTML = `<option value="">项目加载失败：${escapeHtml(msg)}</option>`;
+      }
+    }
+  }
+
+  // ===== 用例列表 =====
+
+  async function loadCases(): Promise<void> {
+    const tbody = document.getElementById('case-table-body')!;
+    tbody.innerHTML = '<tr><td colspan="8" class="loading-state">加载中...</td></tr>';
+    selectedIds.clear();
+    updateBatchBar();
+    try {
+      const result = await getCases(
+        currentProjectFilter || undefined,
+        currentStatusFilter || undefined,
+        1,
+        50
+      );
+      cases = result.items || [];
+    } catch (err) {
+      if (isAuthError(err)) return;
+      const msg = err instanceof Error ? err.message : '网络异常';
+      tbody.innerHTML = `<tr><td colspan="8" class="error-state">加载用例列表失败：${escapeHtml(msg)}<br/><button class="btn btn-outline btn-sm" id="retry-cases" style="margin-top: var(--space-3);" type="button">重试</button></td></tr>`;
+      document.getElementById('retry-cases')?.addEventListener('click', loadCases);
+      return;
+    }
+    renderCases();
+  }
+
+  function renderCases(): void {
+    const tbody = document.getElementById('case-table-body')!;
+    const selectAll = document.getElementById('select-all') as HTMLInputElement;
+    if (selectAll) selectAll.checked = false;
+
+    if (cases.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="8" class="empty-state">暂无用例，点击右上角新建</td></tr>';
+      return;
+    }
+    tbody.innerHTML = cases
+      .map(
+        (c) => {
+          const statusInfo = getStatusInfo(c.status);
+          const priorityInfo = getPriorityInfo(c.priority);
+          const tagsHtml =
+            c.tags && c.tags.length > 0
+              ? c.tags.map((t) => `<span class="mini-tag">${escapeHtml(t)}</span>`).join('')
+              : '<span class="text-muted">-</span>';
+          const checked = selectedIds.has(c.id) ? 'checked' : '';
+          return `
+        <tr>
+          <td class="col-check"><input type="checkbox" class="case-checkbox" data-id="${escapeHtml(c.id)}" ${checked} aria-label="选择此用例" /></td>
+          <td class="case-no">${escapeHtml(c.case_no || c.id.slice(0, 8))}</td>
+          <td class="case-title" title="${escapeHtml(c.title)}">${escapeHtml(c.title)}</td>
+          <td>${escapeHtml(getTestTypeLabel(c.test_type))}</td>
+          <td><span class="badge ${priorityInfo.cls}">${escapeHtml(priorityInfo.label)}</span></td>
+          <td><span class="badge ${statusInfo.cls}">${escapeHtml(statusInfo.label)}</span></td>
+          <td class="tag-cell">${tagsHtml}</td>
+          <td>
+            <div class="row-actions">
+              <button class="btn btn-ghost btn-sm" data-action="delete" data-id="${escapeHtml(c.id)}" data-title="${escapeHtml(c.title)}" type="button">删除</button>
+            </div>
+          </td>
+        </tr>`;
+        }
+      )
+      .join('');
+
+    // 绑定复选框
+    tbody.querySelectorAll('.case-checkbox').forEach((cb) => {
+      cb.addEventListener('change', () => {
+        const id = (cb as HTMLInputElement).dataset.id!;
+        if ((cb as HTMLInputElement).checked) {
+          selectedIds.add(id);
+        } else {
+          selectedIds.delete(id);
+        }
+        updateBatchBar();
+        updateSelectAllState();
+      });
+    });
+
+    // 绑定删除按钮
+    tbody.querySelectorAll('button[data-action="delete"]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const id = (btn as HTMLElement).dataset.id!;
+        const title = (btn as HTMLElement).dataset.title || '该用例';
+        if (!confirm(`确定删除用例「${title}」吗？此操作不可撤销。`)) return;
+        try {
+          await deleteCase(id);
+          cases = cases.filter((c) => c.id !== id);
+          selectedIds.delete(id);
+          renderCases();
+          updateBatchBar();
+        } catch (err) {
+          if (isAuthError(err)) return;
+          const msg = err instanceof Error ? err.message : '网络异常';
+          alert(`删除失败：${msg}`);
+        }
+      });
+    });
+  }
+
+  // ===== 批量操作 =====
+
+  function updateBatchBar(): void {
+    const batchBar = document.getElementById('batch-bar')!;
+    const countEl = document.getElementById('batch-count')!;
+    const count = selectedIds.size;
+    if (count > 0) {
+      batchBar.style.display = '';
+      countEl.textContent = String(count);
+    } else {
+      batchBar.style.display = 'none';
+      const batchStatusSelect = document.getElementById('batch-status-select') as HTMLSelectElement;
+      if (batchStatusSelect) batchStatusSelect.value = '';
+    }
+  }
+
+  function updateSelectAllState(): void {
+    const selectAll = document.getElementById('select-all') as HTMLInputElement;
+    if (!selectAll) return;
+    const checkboxes = document.querySelectorAll('.case-checkbox');
+    if (checkboxes.length === 0) {
+      selectAll.checked = false;
+      return;
+    }
+    selectAll.checked = Array.from(checkboxes).every((cb) => (cb as HTMLInputElement).checked);
+  }
+
+  document.getElementById('select-all')?.addEventListener('change', (e) => {
+    const checked = (e.target as HTMLInputElement).checked;
+    document.querySelectorAll('.case-checkbox').forEach((cb) => {
+      (cb as HTMLInputElement).checked = checked;
+      const id = (cb as HTMLInputElement).dataset.id!;
+      if (checked) {
+        selectedIds.add(id);
+      } else {
+        selectedIds.delete(id);
+      }
+    });
+    updateBatchBar();
+  });
+
+  document.getElementById('batch-clear-btn')?.addEventListener('click', () => {
+    selectedIds.clear();
+    document.querySelectorAll('.case-checkbox').forEach((cb) => {
+      (cb as HTMLInputElement).checked = false;
+    });
+    const selectAll = document.getElementById('select-all') as HTMLInputElement;
+    if (selectAll) selectAll.checked = false;
+    updateBatchBar();
+  });
+
+  document.getElementById('batch-update-btn')?.addEventListener('click', async () => {
+    const batchStatusSelect = document.getElementById('batch-status-select') as HTMLSelectElement;
+    const targetStatus = batchStatusSelect.value;
+    if (!targetStatus) {
+      alert('请选择目标状态');
+      return;
+    }
+    if (selectedIds.size === 0) {
+      alert('请先选择用例');
+      return;
+    }
+    if (!confirm(`确定将选中的 ${selectedIds.size} 条用例状态更新为「${getStatusInfo(targetStatus).label}」吗？`)) return;
+    const btn = document.getElementById('batch-update-btn') as HTMLButtonElement;
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '更新中...';
+    try {
+      const result = await batchUpdateStatus({
+        case_ids: Array.from(selectedIds),
+        status: targetStatus,
+      });
+      // 更新本地数据
+      cases.forEach((c) => {
+        if (selectedIds.has(c.id)) {
+          c.status = targetStatus;
+        }
+      });
+      renderCases();
+      selectedIds.clear();
+      updateBatchBar();
+      alert(`成功更新 ${result.updated} 条用例状态`);
+    } catch (err) {
+      if (isAuthError(err)) return;
+      const msg = err instanceof Error ? err.message : '网络异常';
+      alert(`批量更新失败：${msg}`);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = originalText;
+    }
+  });
+
+  // ===== 筛选器 =====
+
+  document.getElementById('project-filter')?.addEventListener('change', (e) => {
+    currentProjectFilter = (e.target as HTMLSelectElement).value;
+    loadCases();
+  });
+
+  document.getElementById('status-filter')?.addEventListener('change', (e) => {
+    currentStatusFilter = (e.target as HTMLSelectElement).value;
+    loadCases();
+  });
+
+  // ===== 新建用例弹窗 =====
+
+  const modal = document.getElementById('create-case-modal')!;
+
+  function openModal(): void {
+    // 如果当前已有项目筛选，预选该项目
+    const caseProject = document.getElementById('case-project') as HTMLSelectElement;
+    if (caseProject && currentProjectFilter) {
+      caseProject.value = currentProjectFilter;
+    }
+    modal.classList.add('is-open');
+  }
+
+  function closeModal(): void {
+    modal.classList.remove('is-open');
+    const form = document.getElementById('case-form') as HTMLFormElement | null;
+    if (form) form.reset();
+  }
+
+  document.getElementById('create-case-btn')?.addEventListener('click', openModal);
+  document.getElementById('close-case-modal')?.addEventListener('click', closeModal);
+  document.getElementById('cancel-case-btn')?.addEventListener('click', closeModal);
+
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) closeModal();
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && modal.classList.contains('is-open')) closeModal();
+  });
+
+  document.getElementById('case-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.target as HTMLFormElement;
+    const formData = new FormData(form);
+    const projectId = String(formData.get('project_id') || '').trim();
+    const title = String(formData.get('title') || '').trim();
+    const description = String(formData.get('description') || '').trim();
+    const testType = String(formData.get('test_type') || 'functional').trim();
+    const priority = String(formData.get('priority') || 'normal').trim();
+    const tagsStr = String(formData.get('tags') || '').trim();
+    if (!projectId) {
+      alert('请选择所属项目');
+      return;
+    }
+    if (!title) return;
+    const tags = tagsStr
+      ? tagsStr.split(',').map((t) => t.trim()).filter(Boolean)
+      : undefined;
+    const submitBtn = document.getElementById('submit-case-btn') as HTMLButtonElement;
+    const originalText = submitBtn.textContent;
+    submitBtn.disabled = true;
+    submitBtn.textContent = '创建中...';
+    try {
+      const newCase = await createCase({
+        project_id: projectId,
+        title,
+        description: description || undefined,
+        test_type: testType,
+        priority,
+        status: 'draft',
+        tags,
+      });
+      cases.unshift(newCase);
+      renderCases();
+      closeModal();
+    } catch (err) {
+      if (isAuthError(err)) return;
+      const msg = err instanceof Error ? err.message : '网络异常';
+      alert(`创建用例失败：${msg}`);
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = originalText;
+    }
+  });
+
+  // ===== 初始化 =====
+
+  async function init(): Promise<void> {
+    await loadProjectOptions();
+    await loadCases();
+  }
+
+  init();
+</script>
