@@ -18,6 +18,11 @@ from app.models.conversation import Conversation, Message
 from app.models.feedback import Feedback
 from app.models.gap import KnowledgeGap
 from app.models.knowledge import Document, DocumentVersion, KnowledgeBase
+from app.models.knowledge_compounding import (
+    CompoundingTask,
+    KnowledgeAsset,
+    KnowledgeConflict,
+)
 from app.models.memory import EntityEvent, KnowledgeEntity, MemoryFact
 from app.models.notification import Notification
 from app.models.qa import QaAnswer, QaQuestion
@@ -78,4 +83,8 @@ __all__ = [
     "TestReview",
     "TestPlan",
     "TestExecution",
+    # 知识回流层
+    "KnowledgeAsset",
+    "CompoundingTask",
+    "KnowledgeConflict",
 ]

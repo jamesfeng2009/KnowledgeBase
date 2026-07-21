@@ -22,6 +22,7 @@ from app.api.v1.feedback import router as feedback_router
 from app.api.v1.graph import router as graph_router
 from app.api.v1.intelligence import router as intelligence_router
 from app.api.v1.knowledge import router as knowledge_router
+from app.api.v1.knowledge_compounding import router as compounding_router
 from app.api.v1.models import router as models_router
 from app.api.v1.multimodal import router as multimodal_router
 from app.api.v1.notifications import router as notifications_router
@@ -62,3 +63,4 @@ api_router.include_router(stats_router)
 api_router.include_router(approvals_router)
 api_router.include_router(models_router)
 api_router.include_router(testing_router)
+api_router.include_router(compounding_router)

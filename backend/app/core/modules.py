@@ -102,7 +102,7 @@ MODULE_REGISTRY: list[ModuleDef] = [
     ModuleDef(
         id="testing_platform",
         name="智能测试平台",
-        description="PRD/UI 稿自动需求拆分、AI 用例生成、用例评审、统一管理、AI 自动编排",
+        description="PRD/UI 稿自动需求拆分、AI 用例生成、用例评审、统一管理、AI 自动编排、知识回流层（4 类知识资产沉淀 + 冲突检测 + 复用注入）",
         category="intelligence",
     ),
 ]

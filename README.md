@@ -46,7 +46,7 @@
 | **ASR** | OpenAI Whisper API / Faster-Whisper (私有) | 语音转写，视频 RAG |
 | **视频处理** | ffmpeg | 音轨提取 + 关键帧抽取 |
 | **文档解析** | Docling (IBM Granite-Docling-258M) + pymupdf + python-pptx + python-docx + openpyxl + pandas | Docling 统一解析 PDF/DOCX/PPTX/XLSX/HTML/图片/音频 → HTML（`<h1>`~`<h6>` 标题 + `<table>` 表格 + `<ul><li>` 列表），降级到原有解析器；图片上传 MinIO + 小图过滤 + VLM 描述；XLSX 双引擎降级（openpyxl → pandas）+ 列宽对齐 |
-| **数据库迁移** | Alembic + asyncpg + aiosqlite | 异步迁移引擎，启动时自动 `alembic upgrade head`，33 张表（含智能测试平台 6 张表） |
+| **数据库迁移** | Alembic + asyncpg + aiosqlite | 异步迁移引擎，启动时自动 `alembic upgrade head`，36 张表（含智能测试平台 6 张表 + 知识回流层 3 张表） |
 | **配置校验** | Pydantic V2 (field_validator + model_validator) | DATABASE_URL 异步驱动校验、数值范围校验、CORS URL 校验、部署模式与 API Key 交叉校验 |
 | **限流** | 自研令牌桶中间件 | 按客户端（API Key/IP）限流，突发 + 持续控制 |
 | **协同服务** | Node.js + Yjs + WebSocket | CRDT 实时协同编辑 |
@@ -116,7 +116,7 @@ EnterpriseKnowledge/
 │   │   └── main.py                   # FastAPI 入口（lifespan → alembic upgrade head）
 │   ├── alembic/                      # Alembic 迁移脚本
 │   │   ├── env.py                    # 异步引擎 + 自动导入模型 + compare_type
-│   │   └── versions/                 # 迁移版本（init schema 27 张表 + P1 tool_approvals + P2 user_model_preferences + 智能测试平台 6 张表）
+│   │   └── versions/                 # 迁移版本（init schema 27 张表 + P1 tool_approvals + P2 user_model_preferences + 智能测试平台 6 张表 + 知识回流层 3 张表）
 │   ├── config/
 │   │   └── models.json               # P2 模型配置文件（7 个模型 × 4 种部署模式，Git 管理）
 │   ├── tasks/                        # Celery 异步任务
@@ -1619,6 +1619,81 @@ flowchart LR
 - `generate_test_cases_task` — 异步用例生成
 - `orchestrate_test_plan_task` — 异步 AI 编排
 
+### 知识回流层（知识复利）
+
+测试执行后自动沉淀 4 类知识资产，检测新旧知识冲突，并在下一轮用例生成时注入历史经验，实现"知识复利"积累。
+
+**5 步闭环流程**：
+1. **执行结果收集** — TestExecution 状态变更触发，组装执行上下文（用例+需求+日志+证据）
+2. **AI 知识提取** — LLM 分析缺陷模式、根因分析、回归 SOP 草案、图谱三元组
+3. **知识资产沉淀** — 4 类资产分别落地：
+   - `defect_experience` 缺陷经验文档 → KnowledgeAsset + Document
+   - `regression_sop` 回归 SOP → KnowledgeAsset + Document
+   - `graph_association` 知识图谱关联 → KnowledgeAsset + Neo4j（复用 GraphService）
+   - `verification_baseline` 验证基线时序 → KnowledgeAsset + Graphiti（复用 GraphitiManager）
+4. **冲突检测** — LLM 检测新旧知识矛盾/替代/重叠，记录 KnowledgeConflict
+5. **复用注入** — RAG 检索历史知识资产，注入下一轮用例生成 LLM 上下文
+
+```mermaid
+flowchart LR
+    EXEC[TestExecution<br/>执行完成] --> COLLECT[Step1: 执行结果收集]
+    COLLECT --> EXTRACT[Step2: AI 知识提取<br/>KnowledgeCompoundingService]
+    EXTRACT --> PRECIP[Step3: 知识资产沉淀]
+    PRECIP -->|defect_experience| DOC1[Document<br/>缺陷经验]
+    PRECIP -->|regression_sop| DOC2[Document<br/>回归 SOP]
+    PRECIP -->|graph_association| NEO4J[Neo4j<br/>图谱关联]
+    PRECIP -->|verification_baseline| GRAPHITI[Graphiti<br/>验证基线]
+    PRECIP --> DETECT[Step4: 冲突检测]
+    DETECT --> CONFLICT[KnowledgeConflict<br/>矛盾/替代/重叠]
+    CONFLICT --> INJECT[Step5: 复用注入]
+    INJECT -->|注入历史知识| GEN[下一轮 AI 用例生成]
+```
+
+**数据模型**（3 张新表 + 3 个测试模型新增字段）：
+
+| 表 | 说明 |
+|----|------|
+| `knowledge_assets` | 知识资产（4 类：缺陷经验/回归SOP/图谱关联/验证基线） |
+| `compounding_tasks` | 回流任务（跟踪异步知识提取过程） |
+| `knowledge_conflicts` | 知识冲突（检测到的新旧知识冲突记录） |
+
+测试模型新增字段：
+- `test_requirements.change_thread_id` — 变更线程 ID（追踪需求演化）
+- `test_cases.verification_channels` — 验证渠道列表（多渠道验证记录）
+- `test_executions.evidence_ref` — 证据引用（不可变证据快照）
+- `test_executions.compounding_status` — 回流状态（none/pending/processed，幂等保护）
+
+**服务层**：
+
+| 服务 | 职责 |
+|------|------|
+| `KnowledgeCompoundingService` | 5 步知识回流闭环（收集→提取→沉淀→冲突检测→复用注入） |
+
+**API 端点**（12 个，prefix=`/api/v1/compounding`）：
+
+| 分组 | 端点 | 说明 |
+|------|------|------|
+| 提取 | `POST /extract` | 从执行结果提取知识资产 |
+| 资产 | `GET /assets` | 知识资产列表（按项目/类型/状态筛选） |
+| 资产 | `GET /assets/{id}` | 知识资产详情 |
+| 冲突 | `POST /conflicts/detect` | 检测知识冲突 |
+| 冲突 | `GET /conflicts` | 冲突列表 |
+| 冲突 | `PUT /conflicts/{id}/resolve` | 解决冲突 |
+| 复用 | `POST /reuse/inject` | 复用注入（历史知识 → 用例生成上下文） |
+| 任务 | `GET /tasks` | 回流任务列表 |
+| 统计 | `GET /stats` | 回流统计聚合 |
+
+**Celery 异步任务**：
+- `extract_knowledge_task` — 异步知识提取（Step 1~4）
+- `detect_conflicts_task` — 异步冲突检测
+- `inject_for_reuse_task` — 异步复用注入
+
+**优雅降级**：LLM 不可用时跳过 AI 提取（资产数为 0）；Neo4j 不可用时跳过图谱写入；Graphiti 不可用时跳过时序追踪。
+
+**幂等保护**：通过 `compounding_status` 字段防止重复提取（none → pending → processed）。
+
+**数据库迁移**：`f6a7b8c9d0e1` — 3 张新表 + 4 个新增字段 + 17 个索引。
+
 ---
 
 ## API 限流
@@ -1797,6 +1872,7 @@ python -c "from app.utils.migration import stamp_head; stamp_head()"
 | `c3d4e5f6a7b8` | 2026-07-21 | add tool_approvals table — P1 工具审批持久化 |
 | `d4e5f6a7b8c9` | 2026-07-21 | add user_model_preferences table — P2 用户模型选择 |
 | `e5f6a7b8c9d0` | 2026-07-21 | add testing platform tables — 智能测试平台 6 张表（test_projects/test_requirements/test_cases/test_reviews/test_plans/test_executions） |
+| `f6a7b8c9d0e1` | 2026-07-21 | add knowledge compounding layer — 知识回流层 3 张表（knowledge_assets/compounding_tasks/knowledge_conflicts）+ 测试模型 4 个新增字段 |
 
 **配置项**（`app/config.py`）：
 
@@ -1889,8 +1965,10 @@ python -m pytest tests/test_model_fields_p0p2.py -v       # P0-P2 字段补全�
 | `test_migration.py` | 46 | Pydantic V2 field_validator（DATABASE_URL/数值/CORS）、model_validator（部署模式/SECRET_KEY）、迁移文件存在性/upgrade/downgrade、alembic env.py 配置、迁移 runner 端到端 SQLite |
 | `test_upload_summary.py` | 53 | P0 文件大小校验（MAX_UPLOAD_SIZE_MB 超限 413/MagicMock 回退）、P1 解析摘要响应（preview/structure/warnings/pages/char_count/parse_status）、结构标签提取、页数推断、解析状态推断、解析任务 warnings 收集、旧格式警告、认证强制、**DB 字段优先读取（page_count/char_count/parse_status/parse_warnings）**、**任务持久化解析元数据**、**迁移文件验证（4 字段 add_column/drop_column）** |
 | `test_model_fields_p0p2.py` | 63 | P0-P2 字段补全：P0-1 tenant_id（KnowledgeBase/Document）、P0-2 MessageRepository limit 参数、P0-3 AgentCheckpoint ORM 模型、P0-4 stream_agent_response 异步生成器、P0-5 ApiKeyResponse expires_at/tenant_id、P1 DocResponse 8 字段、Notification.read_at DateTime 类型、10 模型 tenant_id、UsageRecord duration_ms/success/request_id、Subscription 6 字段补全、P2 Response Schema（7 个）+ updated_at（4 个）、迁移文件验证 |
+| `test_testing_platform.py` | 64 | 智能测试平台：6 张表 ORM 模型、10 个枚举、5 个服务（需求提取/用例生成/评审/管理/编排）、28 个 API 端点、3 个 Celery 任务、JSON 解析 |
+| `test_knowledge_compounding.py` | 47 | 知识回流层：3 张表 ORM 模型、Pydantic Schema、KnowledgeCompoundingService（5 步闭环：收集/提取/沉淀/冲突检测/复用注入）、JSON 解析、Celery 任务、API 路由注册 |
 | 其他测试 | 215 | API 端点、服务层、模型层、记忆引擎等 |
-| **合计** | **1100** | **全部通过，零回归** |
+| **合计** | **1211** | **全部通过，零回归** |
 
 ---
 

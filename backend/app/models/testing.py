@@ -125,6 +125,10 @@ class TestRequirement(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     status: Mapped[str] = mapped_column(
         String(20), default="pending", comment="状态: pending/analyzed/generating_cases/cases_ready"
     )
+    # 知识回流：变更线程 ID（追踪需求的版本演化，用于关联历史知识资产）
+    change_thread_id: Mapped[str | None] = mapped_column(
+        String(100), nullable=True, comment="变更线程 ID（知识回流：追踪需求演化）"
+    )
     # 多租户隔离
     tenant_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), nullable=True, comment="租户 ID（多租户隔离）"
@@ -201,6 +205,10 @@ class TestCase(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     # 用例编号（项目内唯一）
     case_no: Mapped[str | None] = mapped_column(
         String(50), nullable=True, comment="用例编号（如 TC-0001）"
+    )
+    # 知识回流：验证渠道（记录该用例通过哪些渠道验证过，如 ["api", "ui", "log"]）
+    verification_channels: Mapped[list | None] = mapped_column(
+        JSONB, nullable=True, comment="验证渠道列表（知识回流：多渠道验证记录）"
     )
     # 多租户隔离
     tenant_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -367,6 +375,14 @@ class TestExecution(UUIDMixin, TimestampMixin, Base):
     )
     completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, comment="完成时间"
+    )
+    # 知识回流：证据引用（截图、日志、构建产物等不可变证据的引用）
+    evidence_ref: Mapped[dict | None] = mapped_column(
+        JSONB, nullable=True, comment="证据引用（知识回流：不可变证据快照）"
+    )
+    # 知识回流：回流状态（none/pending/processed，防止重复提取）
+    compounding_status: Mapped[str] = mapped_column(
+        String(20), default="none", comment="知识回流状态: none/pending/processed"
     )
 
     # 关系
