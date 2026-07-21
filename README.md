@@ -46,7 +46,7 @@
 | **ASR** | OpenAI Whisper API / Faster-Whisper (私有) | 语音转写，视频 RAG |
 | **视频处理** | ffmpeg | 音轨提取 + 关键帧抽取 |
 | **文档解析** | Docling (IBM Granite-Docling-258M) + pymupdf + python-pptx + python-docx + openpyxl + pandas | Docling 统一解析 PDF/DOCX/PPTX/XLSX/HTML/图片/音频 → HTML（`<h1>`~`<h6>` 标题 + `<table>` 表格 + `<ul><li>` 列表），降级到原有解析器；图片上传 MinIO + 小图过滤 + VLM 描述；XLSX 双引擎降级（openpyxl → pandas）+ 列宽对齐 |
-| **数据库迁移** | Alembic + asyncpg + aiosqlite | 异步迁移引擎，启动时自动 `alembic upgrade head`，27 张表首版迁移 |
+| **数据库迁移** | Alembic + asyncpg + aiosqlite | 异步迁移引擎，启动时自动 `alembic upgrade head`，33 张表（含智能测试平台 6 张表） |
 | **配置校验** | Pydantic V2 (field_validator + model_validator) | DATABASE_URL 异步驱动校验、数值范围校验、CORS URL 校验、部署模式与 API Key 交叉校验 |
 | **限流** | 自研令牌桶中间件 | 按客户端（API Key/IP）限流，突发 + 持续控制 |
 | **协同服务** | Node.js + Yjs + WebSocket | CRDT 实时协同编辑 |
@@ -116,7 +116,7 @@ EnterpriseKnowledge/
 │   │   └── main.py                   # FastAPI 入口（lifespan → alembic upgrade head）
 │   ├── alembic/                      # Alembic 迁移脚本
 │   │   ├── env.py                    # 异步引擎 + 自动导入模型 + compare_type
-│   │   └── versions/                 # 迁移版本（init schema 27 张表 + P1 tool_approvals + P2 user_model_preferences）
+│   │   └── versions/                 # 迁移版本（init schema 27 张表 + P1 tool_approvals + P2 user_model_preferences + 智能测试平台 6 张表）
 │   ├── config/
 │   │   └── models.json               # P2 模型配置文件（7 个模型 × 4 种部署模式，Git 管理）
 │   ├── tasks/                        # Celery 异步任务
@@ -1612,6 +1612,8 @@ flowchart LR
 
 **多租户门控**：注册为 `testing_platform` 模块，Pro 套餐及以上可用。
 
+**数据库迁移**：`e5f6a7b8c9d0` — 6 张表 + 24 个索引，启动时自动执行 `alembic upgrade head` 创建。
+
 **Celery 异步任务**：
 - `extract_requirements_task` — 异步需求提取
 - `generate_test_cases_task` — 异步用例生成
@@ -1784,6 +1786,17 @@ alembic downgrade -1
 # 已有 create_all 建的库切换到 migration — 标记当前为 head，跳过首次迁移
 python -c "from app.utils.migration import stamp_head; stamp_head()"
 ```
+
+**迁移版本历史**：
+
+| 版本 | 日期 | 说明 |
+|------|------|------|
+| `115a9c06ba4a` | 2026-07-18 | init schema — 27 张基础表（用户/知识库/文档/对话/问答/评论/审核/反馈/租户/记忆/Agent 等） |
+| `a1b2c3d4e5f6` | 2026-07-19 | add document parse metadata — Document 表新增 parse_status/parse_warnings/page_count/char_count |
+| `b2c3d4e5f6a7` | 2026-07-19 | add tenant_id checkpoint and usage metadata — 多租户隔离字段 + AgentCheckpoint + UsageRecord |
+| `c3d4e5f6a7b8` | 2026-07-21 | add tool_approvals table — P1 工具审批持久化 |
+| `d4e5f6a7b8c9` | 2026-07-21 | add user_model_preferences table — P2 用户模型选择 |
+| `e5f6a7b8c9d0` | 2026-07-21 | add testing platform tables — 智能测试平台 6 张表（test_projects/test_requirements/test_cases/test_reviews/test_plans/test_executions） |
 
 **配置项**（`app/config.py`）：
 
