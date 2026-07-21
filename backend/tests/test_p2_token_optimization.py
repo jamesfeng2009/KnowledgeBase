@@ -458,7 +458,8 @@ class TestEngineBudgetIntegration:
         llm.chat = mock_chat
 
         # Mock _tool_call_streaming — 每轮返回不同的长结果（避免被 P1-Opt3 去重）
-        async def mock_tool_call(state):
+        # P1-4: 接受 db / user_uuid 参数（签名需与实际方法一致）
+        async def mock_tool_call(state, db=None, user_uuid=None):
             i = state["iteration"]
             state["tool_results"].append({
                 "tool": f"search_erp_{i}",
@@ -492,7 +493,7 @@ class TestEngineBudgetIntegration:
 
         llm.chat = mock_chat
 
-        async def mock_tool_call(state):
+        async def mock_tool_call(state, db=None, user_uuid=None):
             state["tool_results"].append({
                 "tool": "search_erp",
                 "result": "大量数据 " * 200,
@@ -528,7 +529,7 @@ class TestEngineBudgetIntegration:
 
         llm.chat = mock_chat
 
-        async def mock_tool_call(state):
+        async def mock_tool_call(state, db=None, user_uuid=None):
             i = state["iteration"]
             state["tool_results"].append({
                 "tool": f"search_erp_{i}",

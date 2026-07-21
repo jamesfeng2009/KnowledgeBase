@@ -189,6 +189,7 @@ export async function streamChat(
     onRetrieveEnd?: (data: { doc_count?: number; iteration?: number }) => void;
     onToolCallStart?: (data: { tool_name: string; tool_use_id: string; arguments?: unknown }) => void;
     onToolCallEnd?: (data: { tool_use_id: string; tool_name?: string; result?: string; duration_ms?: number; status?: string }) => void;
+    onApprovalRequired?: (data: { approval_id: string; tool_name: string; tool_use_id: string; arguments?: unknown; reason?: string; irreversible?: boolean; session_id?: string }) => void;
     onQuality?: (data: { low_confidence?: boolean; total_score?: number; message?: string }) => void;
     onDone?: () => void;
     onError?: (error: Error) => void;
@@ -219,6 +220,9 @@ export async function streamChat(
           break;
         case 'tool_call_end':
           callbacks.onToolCallEnd?.(event.data as { tool_use_id: string; tool_name?: string; result?: string; duration_ms?: number; status?: string });
+          break;
+        case 'approval_required':
+          callbacks.onApprovalRequired?.(event.data as { approval_id: string; tool_name: string; tool_use_id: string; arguments?: unknown; reason?: string; irreversible?: boolean; session_id?: string });
           break;
         case 'quality':
           callbacks.onQuality?.(event.data as { low_confidence?: boolean; total_score?: number; message?: string });

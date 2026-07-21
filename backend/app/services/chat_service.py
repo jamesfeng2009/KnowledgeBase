@@ -27,7 +27,7 @@ from app.llm.factory import get_llm_provider
 from app.memory import MemoryContext, MemoryManager
 from app.models.conversation import Conversation, Message as MessageModel
 from app.models.user import User
-from app.rag.factory import get_rag_engine
+from app.rag.factory import get_rag_engine, get_rag_engine_by_model
 from app.repositories.conversation_repository import (
     ConversationRepository,
     MessageRepository,
@@ -158,16 +158,37 @@ class ChatService:
         )
 
         # 5. 向客户端推送对话元数据（便于前端绑定会话）
+        # P2-5: 解析会话级模型选择（两级优先级：session > system default）
+        from app.llm.model_config import get_default_model
+        from app.services.model_selection_service import ModelSelectionService
+
+        model_service = ModelSelectionService(self.db)
+        resolved_model_id = await model_service.resolve_model(
+            self.user.id, str(conversation_id)
+        )
+        default_model = get_default_model()
+        default_model_id = default_model["id"] if default_model else ""
+
         yield SSEEvent(
             data={
                 "conversation_id": str(conversation_id),
                 "agent_type": agent_type,
+                "model_id": resolved_model_id,
             },
             event=SSEEventType.META,
         )
 
         # 6. 调用 Agentic RAG 引擎，透传所有 SSE 事件和 token
-        engine = get_rag_engine()
+        # P1-4: 传入 db / user_uuid 以支持危险工具审批记录持久化
+        # P2-5: 如果会话选择了非默认模型，使用该模型的引擎
+        if resolved_model_id and resolved_model_id != default_model_id:
+            try:
+                engine = get_rag_engine_by_model(resolved_model_id)
+            except ValueError:
+                # 模型配置无效 — 回退到默认引擎
+                engine = get_rag_engine()
+        else:
+            engine = get_rag_engine()
         full_response_parts: list[str] = []
         async for chunk in engine.answer(
             query=query,
@@ -175,6 +196,8 @@ class ChatService:
             session_id=str(conversation_id),
             memory_context=memory_context,
             tenant_id=tenant_id,
+            db=self.db,
+            user_uuid=self.user.id,
         ):
             if isinstance(chunk, str):
                 full_response_parts.append(chunk)
@@ -187,6 +210,7 @@ class ChatService:
             "assistant",
             assistant_content,
             token_count=len(assistant_content),
+            model_used=resolved_model_id or None,
         )
 
         # 8. 保存记忆（Checkpoint 快照 + 提取用户偏好）

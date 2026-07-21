@@ -10,6 +10,7 @@ from fastapi import APIRouter
 from app.api.v1.agents import router as agents_router
 from app.api.v1.analytics import router as analytics_router
 from app.api.v1.apikeys import router as apikeys_router
+from app.api.v1.approvals import router as approvals_router
 from app.api.v1.audit import router as audit_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.chat import router as chat_router
@@ -21,12 +22,14 @@ from app.api.v1.feedback import router as feedback_router
 from app.api.v1.graph import router as graph_router
 from app.api.v1.intelligence import router as intelligence_router
 from app.api.v1.knowledge import router as knowledge_router
+from app.api.v1.models import router as models_router
 from app.api.v1.multimodal import router as multimodal_router
 from app.api.v1.notifications import router as notifications_router
 from app.api.v1.qa import router as qa_router
 from app.api.v1.reports import router as reports_router
 from app.api.v1.search import router as search_router
 from app.api.v1.settings import router as settings_router
+from app.api.v1.stats import router as stats_router
 from app.api.v1.tenants import router as tenants_router
 from app.api.v1.users import router as users_router
 
@@ -54,3 +57,6 @@ api_router.include_router(tenants_router)
 api_router.include_router(apikeys_router)
 api_router.include_router(settings_router)
 api_router.include_router(reports_router)
+api_router.include_router(stats_router)
+api_router.include_router(approvals_router)
+api_router.include_router(models_router)

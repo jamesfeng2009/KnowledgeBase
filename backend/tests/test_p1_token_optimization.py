@@ -258,7 +258,8 @@ class TestEngineDedupIntegration:
         llm.chat = mock_chat
 
         # Mock _tool_call_streaming 返回相同结果（异步生成器）
-        async def mock_tool_call_streaming(state):
+        # P1-4: 接受 db / user_uuid 参数（签名需与实际方法一致）
+        async def mock_tool_call_streaming(state, db=None, user_uuid=None):
             state["tool_results"].append({
                 "tool": "search_erp",
                 "result": "订单 BG2024001 金额 5000 元 状态已审批",

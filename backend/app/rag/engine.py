@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import time
+import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any, TypedDict
 
@@ -84,6 +85,25 @@ _THINK_SYSTEM_STABLE: str = (
 # 权限过滤器类型 — 接收候选文档列表，返回过滤后的列表。
 # 由调用方注入（通常封装 PermissionService.filter_documents 对 dict 的适配）。
 PermissionFilter = Callable[[list[dict[str, Any]]], Awaitable[list[dict[str, Any]]]]
+
+
+def _safe_serialize(obj: Any) -> Any:
+    """安全序列化 — 将可能含不可 JSON 序列化对象的嵌套结构转为纯 dict/list/str。
+
+    P1-4: AgentState 快照持久化到 JSONB 时调用，确保 messages / retrieved_docs /
+    tool_results 中可能的非标准类型（如 datetime / UUID / 自定义对象）被正确转换。
+    """
+    try:
+        # 先尝试直接 json.dumps 验证可序列化性
+        json.dumps(obj, ensure_ascii=False, default=str)
+        return obj
+    except (TypeError, ValueError):
+        # 不可直接序列化 — 递归转换
+        if isinstance(obj, dict):
+            return {str(k): _safe_serialize(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple)):
+            return [_safe_serialize(item) for item in obj]
+        return str(obj)
 
 
 class AgentState(TypedDict, total=False):
@@ -234,11 +254,17 @@ class AgenticRAGEngine:
         kb_ids: list[str] | None = None,
         memory_context: str = "",
         tenant_id: str | None = None,
+        db: Any = None,
+        user_uuid: uuid.UUID | None = None,
     ) -> AsyncIterator[SSEEvent | str]:
         """Agentic RAG 主入口 — 返回 SSE 事件流供前端实时消费。
 
         P0-2 重构：从仅生成阶段 yield token 升级为全流程 yield SSE 事件，
         让用户在 think / retrieve / tool_call 阶段就能看到实时进度。
+
+        P1-4 更新：新增 ``db`` / ``user_uuid`` 参数，当 DangerousToolGuard
+        拦截危险工具时，通过 ApprovalService 创建审批记录并 yield
+        ``approval_required`` SSE 事件，支持前端弹窗审批 + 服务重启恢复。
 
         事件流时序::
 
@@ -308,7 +334,10 @@ class AgenticRAGEngine:
         self._trace_ctx.start()
 
         # 3. 执行 think / retrieve / tool_call 循环 — 流式 yield SSE 事件
-        async for event in self._run_decision_loop_streaming(state):
+        # P1-4: 传入 db / user_uuid 以支持审批记录持久化
+        async for event in self._run_decision_loop_streaming(
+            state, db=db, user_uuid=user_uuid
+        ):
             yield event
 
         # 4. 流式生成答案（plain str token，_to_sse_stream 自动包装为 data:）
@@ -671,17 +700,24 @@ class AgenticRAGEngine:
             pass
 
     async def _run_decision_loop_streaming(
-        self, state: AgentState
+        self,
+        state: AgentState,
+        db: Any = None,
+        user_uuid: uuid.UUID | None = None,
     ) -> AsyncIterator[SSEEvent]:
         """执行 think → retrieve/tool_call 循环 — 流式 yield SSE 事件。
 
         P0-2 核心：在 think / retrieve / tool_call 阶段向客户端推送实时进度事件，
         让用户在等待生成时看到 Agent 正在做什么。
 
+        P1-4 更新：接收 ``db`` / ``user_uuid`` 参数并透传给 ``_tool_call_streaming``，
+        以支持危险工具审批记录持久化。
+
         事件流：
             - thinking：每轮 think 开始时
             - retrieve_start / retrieve_end：检索前后
             - tool_call_start / tool_call_end：每个工具调用前后（P0-3）
+            - approval_required：危险工具需要用户确认时（P1-4）
 
         逻辑与原 ``_run_decision_loop`` 完全等价，仅增加了 SSE 事件 yield。
         """
@@ -751,7 +787,10 @@ class AgenticRAGEngine:
                 continue
             if decision == "tool_call":
                 # P0-3: yield tool_call_start/end 事件
-                async for event in self._tool_call_streaming(state):
+                # P1-4: 传入 db / user_uuid 以支持审批记录持久化
+                async for event in self._tool_call_streaming(
+                    state, db=db, user_uuid=user_uuid
+                ):
                     yield event
                 # P0-Opt2 + P1-Opt3: 只追加最新工具结果摘要（经去重），不重传历史结果
                 if state["tool_results"]:
@@ -975,23 +1014,31 @@ class AgenticRAGEngine:
               只加载匹配工具的完整 schema（按需加载，节省 token）；
             - SKILL_FINDER_ENABLED=False 或匹配失败时，fallback 到全量加载。
         """
+        # P1-4: LangGraph 路径不传 db/user_uuid（审批仅支持默认路径）
         async for _ in self._tool_call_streaming(state):
             pass
 
     async def _tool_call_streaming(
-        self, state: AgentState
+        self,
+        state: AgentState,
+        db: Any = None,
+        user_uuid: uuid.UUID | None = None,
     ) -> AsyncIterator[SSEEvent]:
         """通过 MCP Client 调用工具 — 流式 yield tool_call_start/end 事件。
 
         P0-3 核心：在每个工具调用前后推送 SSE 事件，让用户看到工具执行进度。
 
+        P1-4 更新：接收 ``db`` / ``user_uuid`` 参数并透传给 ``_execute_tool_use``，
+        当危险工具被拦截时 yield ``approval_required`` SSE 事件。
+
         事件流：
             - tool_call_start：工具开始执行（含 tool_name / arguments）
+            - approval_required：危险工具需要用户确认（P1-4，可选）
             - tool_call_end：工具执行完成（含 result / duration_ms / status）
 
         工具调用守卫（DangerousToolGuard）在 ``_execute_tool_use`` 内部处理：
             - 只读工具 → 直接放行；
-            - 危险工具 → 需要用户确认（P1 将扩展为持久化审批）；
+            - 危险工具 → 需要用户确认（P1 持久化审批 + approval_required 事件）；
             - 未确认的危险工具被阻断，返回结构化错误给 LLM。
         """
         # Find Skills 渐进式技能加载 — 按需加载工具 schema
@@ -1029,8 +1076,15 @@ class AgenticRAGEngine:
                     )
 
                     # 执行工具并计时
+                    # P1-4: _execute_tool_use 改为 async generator，
+                    # 可能 yield approval_required 事件（危险工具被拦截时）
                     start_time = time.monotonic()
-                    await self._execute_tool_use(state, chunk)
+                    approval_required = False
+                    async for approval_event in self._execute_tool_use(
+                        state, chunk, db=db, user_uuid=user_uuid
+                    ):
+                        yield approval_event
+                        approval_required = True
                     duration_ms = int((time.monotonic() - start_time) * 1000)
 
                     # 获取工具执行结果摘要和状态
@@ -1039,7 +1093,10 @@ class AgenticRAGEngine:
                     )
                     result_summary = ""
                     status = "success"
-                    if latest_result and isinstance(latest_result, dict):
+                    if approval_required:
+                        # P1-4: 危险工具被拦截，等待用户审批
+                        status = "approval_required"
+                    elif latest_result and isinstance(latest_result, dict):
                         result_str = str(latest_result.get("result", ""))
                         result_summary = result_str[:500]
                         if '"error"' in result_str or '"blocked_by_guard"' in result_str:
@@ -1099,30 +1156,109 @@ class AgenticRAGEngine:
             log.warning("engine.tool_call.list_error", error=str(exc))
             return []
 
-    async def _execute_tool_use(self, state: AgentState, tool_use: ToolUse) -> None:
+    async def _execute_tool_use(
+        self,
+        state: AgentState,
+        tool_use: ToolUse,
+        db: Any = None,
+        user_uuid: uuid.UUID | None = None,
+    ) -> AsyncIterator[SSEEvent]:
         """执行单个 ToolUse — 通过 MCPClient 调用并将结果存入 state。
+
+        P1-4 重构：从 ``async def`` 改为 ``AsyncIterator[SSEEvent]``，
+        当危险工具被拦截时 yield ``approval_required`` 事件。
 
         工具调用守卫（DangerousToolGuard）在执行前拦截危险操作：
             - 只读工具（knowledge_search / document_get 等）→ 直接放行；
             - 危险工具（document_create / create_it_ticket 等）→ 需要用户确认；
+              P1-4: 创建 ToolApproval 记录（含 JSONB 状态快照）+ yield
+              ``approval_required`` SSE 事件，前端弹窗审批后通过 REST 恢复。
             - 未确认的危险工具被阻断，返回结构化错误给 LLM，不执行真实操作。
 
         这借鉴 DECO 数仓 Agent 的 beforeTool Hook 设计：
         "prompt 是软约束，不是安全边界。任何不可逆操作都必须有代码级强制确认。"
+
+        Args:
+            state: Agent Loop 状态。
+            tool_use: LLM 返回的 ToolUse 字典。
+            db: 异步数据库会话（P1-4 审批记录持久化，为 None 时跳过审批创建）。
+            user_uuid: 当前用户 UUID（P1-4 审批记录归属）。
+
+        Yields:
+            SSEEvent: ``approval_required`` 事件（仅危险工具被拦截时）。
         """
         tool_name = tool_use.get("name", "")
         tool_input = tool_use.get("input", {})
         tool_use_id = tool_use.get("id", "")
 
-        # 工具调用守卫 — beforeTool 拦截
-        guard_result = self._tool_guard.check(tool_name, tool_input)
+        # 工具调用守卫 — beforeTool 拦截（P1: 传入 session_id 实现会话级控制）
+        guard_result = self._tool_guard.check(
+            tool_name, tool_input, session_id=state.get("session_id")
+        )
         if guard_result.needs_confirmation:
             log.warning(
                 "engine.tool_call.blocked_by_guard",
                 tool=tool_name,
                 reason=guard_result.reason,
                 irreversible=guard_result.irreversible,
+                session_id=state.get("session_id"),
             )
+
+            # P1-4: 创建审批记录（持久化 AgentState 快照）+ yield approval_required 事件
+            if db is not None and user_uuid is not None:
+                try:
+                    # 延迟导入避免循环依赖
+                    from app.services.approval_service import ApprovalService
+
+                    approval_service = ApprovalService(db)
+                    snapshot = self._serialize_state_for_snapshot(state)
+                    tenant_id_str = state.get("tenant_id")
+                    tenant_uuid = None
+                    if tenant_id_str:
+                        try:
+                            tenant_uuid = uuid.UUID(tenant_id_str)
+                        except (ValueError, TypeError):
+                            pass
+
+                    approval = await approval_service.create_approval(
+                        user_id=user_uuid,
+                        session_id=state["session_id"],
+                        tool_name=tool_name,
+                        tool_use_id=tool_use_id,
+                        tool_arguments=tool_input if isinstance(tool_input, dict) else {},
+                        reason=guard_result.reason,
+                        irreversible=guard_result.irreversible,
+                        agent_state_snapshot=snapshot,
+                        tenant_id=tenant_uuid,
+                    )
+                    log.info(
+                        "engine.approval.created",
+                        approval_id=str(approval.id),
+                        tool=tool_name,
+                        session_id=state["session_id"],
+                    )
+
+                    # yield approval_required SSE 事件 — 前端接收后弹窗
+                    yield SSEEvent(
+                        data={
+                            "approval_id": str(approval.id),
+                            "tool_name": tool_name,
+                            "tool_use_id": tool_use_id,
+                            "arguments": tool_input,
+                            "reason": guard_result.reason,
+                            "irreversible": guard_result.irreversible,
+                            "session_id": state["session_id"],
+                        },
+                        event=SSEEventType.APPROVAL_REQUIRED,
+                    )
+                except Exception as exc:
+                    log.error(
+                        "engine.approval.create_failed",
+                        tool=tool_name,
+                        error=str(exc),
+                    )
+                    # 审批创建失败时仍阻断工具，但不发 approval_required 事件
+
             # 返回结构化错误给 LLM，告知需要用户确认
             blocked_msg = json.dumps(
                 {
@@ -1175,6 +1311,38 @@ class AgenticRAGEngine:
                     "content": error_result,
                 }
             )
+
+    def _serialize_state_for_snapshot(self, state: AgentState) -> dict[str, Any]:
+        """将 AgentState 序列化为 JSONB 兼容的快照字典 — 审批恢复时使用。
+
+        P1-4: 审批创建时存储 AgentState 快照，用户批准后可从快照恢复
+        Agent Loop 继续执行（而非从头开始）。
+
+        快照内容：query / messages / retrieved_docs / tool_results /
+        iteration / max_iterations / kb_ids / memory_context / tenant_id。
+        """
+        try:
+            return {
+                "query": state.get("query", ""),
+                "user_id": state.get("user_id", ""),
+                "session_id": state.get("session_id", ""),
+                "messages": _safe_serialize(state.get("messages", [])),
+                "retrieved_docs": _safe_serialize(state.get("retrieved_docs", [])),
+                "tool_results": _safe_serialize(state.get("tool_results", [])),
+                "answer": state.get("answer", ""),
+                "iteration": state.get("iteration", 0),
+                "max_iterations": state.get("max_iterations", 5),
+                "kb_ids": state.get("kb_ids"),
+                "memory_context": state.get("memory_context", ""),
+                "tenant_id": state.get("tenant_id"),
+            }
+        except Exception as exc:
+            log.warning("engine.snapshot.serialize_failed", error=str(exc))
+            return {
+                "query": state.get("query", ""),
+                "session_id": state.get("session_id", ""),
+                "iteration": state.get("iteration", 0),
+            }
 
     # ------------------------------------------------------------------
     # reflect：自我反思

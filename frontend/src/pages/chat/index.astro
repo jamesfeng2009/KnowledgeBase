@@ -56,7 +56,12 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
             <button class="agent-tab" data-agent="workflow">工作流 Agent</button>
             <button class="agent-tab" data-agent="action">动作 Agent</button>
           </div>
-          <button class="btn btn-ghost btn-sm" id="toggle-right">引用 ▸</button>
+          <div class="chat-header-right">
+            <select id="model-selector" class="model-selector" title="选择 AI 模型">
+              <option value="">加载模型中...</option>
+            </select>
+            <button class="btn btn-ghost btn-sm" id="toggle-right">引用 ▸</button>
+          </div>
         </header>
 
         <div class="chat-messages" id="chat-messages">
@@ -109,6 +114,9 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
       let currentConvId: string | null = null;
       let currentAgent: 'qa' | 'workflow' | 'action' = 'qa';
       let isStreaming = false;
+      // P2-6: 模型选择器状态
+      let availableModels: Array<{ id: string; display_name: string; is_default: boolean; tier: string }> = [];
+      let currentModelId: string | null = null;
 
       const $ = (id: string) => document.getElementById(id);
       const convListEl = $('conversation-list')!;
@@ -116,6 +124,74 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
       const inputEl = $('chat-input') as HTMLTextAreaElement;
       const sendBtn = $('send-btn') as HTMLButtonElement;
       const refListEl = $('references-list')!;
+      const modelSelectorEl = $('model-selector') as HTMLSelectElement;
+
+      // P2-6: 加载可用模型列表
+      async function loadModels() {
+        const token = localStorage.getItem(TOKEN_KEY);
+        try {
+          const sessionId = currentConvId || '';
+          const url = sessionId
+            ? `${API_BASE}/api/v1/models?session_id=${encodeURIComponent(sessionId)}`
+            : `${API_BASE}/api/v1/models`;
+          const res = await fetch(url, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (!res.ok) return;
+          const data = await res.json();
+          availableModels = data.models || [];
+          currentModelId = data.current_model_id || null;
+          renderModelSelector();
+        } catch (e) {
+          // 静默失败 — 模型选择器不影响核心功能
+        }
+      }
+
+      // P2-6: 渲染模型选择器下拉框
+      function renderModelSelector() {
+        if (!modelSelectorEl) return;
+        if (availableModels.length === 0) {
+          modelSelectorEl.innerHTML = '<option value="">默认模型</option>';
+          return;
+        }
+        const selected = currentModelId || availableModels.find(m => m.is_default)?.id || '';
+        modelSelectorEl.innerHTML = availableModels.map(m => {
+          const badge = m.tier === 'premium' ? ' ⭐' : '';
+          const defaultMark = m.is_default ? ' (默认)' : '';
+          return `<option value="${m.id}" ${m.id === selected ? 'selected' : ''}>${escapeHtml(m.display_name)}${badge}${defaultMark}</option>`;
+        }).join('');
+      }
+
+      // P2-6: 切换会话模型
+      async function setSessionModel(modelId: string) {
+        if (!currentConvId || !modelId) return;
+        const token = localStorage.getItem(TOKEN_KEY);
+        try {
+          const res = await fetch(`${API_BASE}/api/v1/models/session/${encodeURIComponent(currentConvId)}`, {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({ model_id: modelId }),
+          });
+          if (res.ok) {
+            currentModelId = modelId;
+          }
+        } catch (e) {
+          // 静默失败
+        }
+      }
+
+      // P2-6: 绑定模型选择器事件
+      if (modelSelectorEl) {
+        modelSelectorEl.addEventListener('change', () => {
+          const selectedId = modelSelectorEl.value;
+          if (selectedId) {
+            setSessionModel(selectedId);
+          }
+        });
+      }
 
       // 加载会话列表
       async function loadConversations() {
@@ -457,6 +533,13 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
           if (parsed?.conversation_id && !currentConvId) {
             currentConvId = parsed.conversation_id;
           }
+          // P2-6: 更新当前模型 ID 并同步选择器
+          if (parsed?.model_id) {
+            currentModelId = parsed.model_id;
+            if (modelSelectorEl && modelSelectorEl.value !== parsed.model_id) {
+              modelSelectorEl.value = parsed.model_id;
+            }
+          }
         } else if (evtType === 'thinking') {
           // P0-6: Agent 思考进度
           if (statusEl) {
@@ -522,13 +605,78 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
               const resultEl = card.querySelector('.tool-call-result');
               const duration = parsed?.duration_ms ? `${parsed.duration_ms}ms` : '';
               const status = parsed?.status || 'success';
-              if (statusEl2) {
-                statusEl2.textContent = status === 'success' ? `完成 ${duration}` : `失败 ${duration}`;
-                statusEl2.className = `tool-call-status ${status === 'success' ? 'tool-call-status-success' : 'tool-call-status-error'}`;
+              // P1-6: approval_required 状态不覆盖审批 UI（由 approval_required 事件渲染）
+              if (status === 'approval_required') {
+                if (statusEl2) {
+                  statusEl2.textContent = '等待审批';
+                  statusEl2.className = 'tool-call-status tool-call-status-pending';
+                }
+              } else {
+                if (statusEl2) {
+                  statusEl2.textContent = status === 'success' ? `完成 ${duration}` : `失败 ${duration}`;
+                  statusEl2.className = `tool-call-status ${status === 'success' ? 'tool-call-status-success' : 'tool-call-status-error'}`;
+                }
+                if (resultSection && resultEl && parsed?.result) {
+                  resultSection.style.display = '';
+                  resultEl.textContent = String(parsed.result).slice(0, 500);
+                }
               }
-              if (resultSection && resultEl && parsed?.result) {
-                resultSection.style.display = '';
-                resultEl.textContent = String(parsed.result).slice(0, 500);
+            }
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+          }
+        } else if (evtType === 'approval_required') {
+          // P1-6: 危险工具需要用户审批 — 在 ToolCallCard 中渲染审批 UI
+          if (toolsEl) {
+            const toolUseId = parsed?.tool_use_id || '';
+            const approvalId = parsed?.approval_id || '';
+            const toolName = parsed?.tool_name || 'unknown';
+            const reason = parsed?.reason || '此操作需要确认';
+            const irreversible = parsed?.irreversible || false;
+            const args = parsed?.arguments || {};
+            const argsStr = Object.keys(args).length > 0
+              ? JSON.stringify(args, null, 2)
+              : '(无参数)';
+            const card = toolsEl.querySelector(`[data-tool-use-id="${toolUseId}"]`) as HTMLElement | null;
+            if (card) {
+              // 将 ToolCallCard 转为审批卡片
+              card.classList.add('tool-call-approval');
+              card.dataset.approvalId = approvalId;
+              const irreversibleBadge = irreversible
+                ? '<span class="approval-irreversible-badge">不可逆操作</span>'
+                : '';
+              card.innerHTML = `
+                <div class="tool-call-header">
+                  <span class="tool-call-icon">⚠️</span>
+                  <span class="tool-call-name">${escapeHtml(toolName)}</span>
+                  <span class="tool-call-status tool-call-status-pending">等待审批</span>
+                </div>
+                <div class="tool-call-body">
+                  <div class="tool-call-section">
+                    <div class="tool-call-label">参数</div>
+                    <pre class="tool-call-args">${escapeHtml(argsStr)}</pre>
+                  </div>
+                  <div class="approval-reason">
+                    <div class="approval-reason-label">审批原因</div>
+                    <div class="approval-reason-text">${escapeHtml(reason)}</div>
+                    ${irreversibleBadge}
+                  </div>
+                  <div class="approval-actions">
+                    <button class="btn btn-sm btn-primary approval-btn-approve" data-approval-id="${approvalId}">
+                      批准执行
+                    </button>
+                    <button class="btn btn-sm btn-ghost approval-btn-reject" data-approval-id="${approvalId}">
+                      拒绝
+                    </button>
+                  </div>
+                </div>`;
+              // 绑定审批按钮事件
+              const approveBtn = card.querySelector('.approval-btn-approve') as HTMLElement;
+              const rejectBtn = card.querySelector('.approval-btn-reject') as HTMLElement;
+              if (approveBtn) {
+                approveBtn.addEventListener('click', () => handleApproval(approvalId, true, card));
+              }
+              if (rejectBtn) {
+                rejectBtn.addEventListener('click', () => handleApproval(approvalId, false, card));
               }
             }
             messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -558,6 +706,60 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
           state.fullText += `\n\n> **[错误]** ${parsed?.message || '未知错误'}\n`;
           contentEl.innerHTML = `<div class="markdown-body">${renderMarkdownStream(state.fullText)}</div><span class="chat-cursor"></span>`;
           messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
+      }
+
+      // P1-6: 处理审批操作 — 调用 REST API 批准/拒绝危险工具
+      async function handleApproval(approvalId: string, approved: boolean, card: Element) {
+        const token = localStorage.getItem(TOKEN_KEY);
+        const action = approved ? 'approve' : 'reject';
+        const actionText = approved ? '批准' : '拒绝';
+        const actionsEl = card.querySelector('.approval-actions') as HTMLElement;
+        if (actionsEl) {
+          actionsEl.innerHTML = `<span class="approval-pending">正在${actionText}...</span>`;
+        }
+        try {
+          const res = await fetch(`${API_BASE}/api/v1/approvals/${approvalId}/${action}`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            body: JSON.stringify({}),
+          });
+          if (!res.ok) {
+            const errData = await res.json().catch(() => null);
+            throw new Error(errData?.message || `审批请求失败 (${res.status})`);
+          }
+          // 审批成功 — 更新卡片状态
+          const statusEl2 = card.querySelector('.tool-call-status');
+          if (statusEl2) {
+            statusEl2.textContent = approved ? '已批准' : '已拒绝';
+            statusEl2.className = `tool-call-status ${approved ? 'tool-call-status-success' : 'tool-call-status-error'}`;
+          }
+          if (actionsEl) {
+            if (approved) {
+              actionsEl.innerHTML = '<span class="approval-done approval-done-approved">已批准 — 请重新提问以继续执行</span>';
+            } else {
+              actionsEl.innerHTML = '<span class="approval-done approval-done-rejected">已拒绝</span>';
+            }
+          }
+        } catch (err: any) {
+          // 审批失败 — 恢复按钮
+          if (actionsEl) {
+            actionsEl.innerHTML = `
+              <span class="approval-error">${escapeHtml(err.message || '审批失败')}</span>
+              <button class="btn btn-sm btn-primary approval-btn-approve" data-approval-id="${approvalId}">重试批准</button>
+              <button class="btn btn-sm btn-ghost approval-btn-reject" data-approval-id="${approvalId}">拒绝</button>`;
+            const approveBtn = actionsEl.querySelector('.approval-btn-approve') as HTMLElement;
+            const rejectBtn = actionsEl.querySelector('.approval-btn-reject') as HTMLElement;
+            if (approveBtn) {
+              approveBtn.addEventListener('click', () => handleApproval(approvalId, true, card));
+            }
+            if (rejectBtn) {
+              rejectBtn.addEventListener('click', () => handleApproval(approvalId, false, card));
+            }
+          }
         }
       }
 
@@ -692,6 +894,7 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
 
       bindSuggestions();
       loadConversations();
+      loadModels(); // P2-6: 加载可用模型列表
     </script>
 
     <style>
@@ -758,6 +961,30 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
         display: flex;
         align-items: center;
         justify-content: space-between;
+      }
+      .chat-header-right {
+        display: flex;
+        align-items: center;
+        gap: var(--space-2);
+      }
+      /* P2-6: 模型选择器样式 */
+      .model-selector {
+        padding: 4px 8px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm, 6px);
+        background: var(--surface);
+        color: var(--text);
+        font-size: var(--text-sm, 13px);
+        cursor: pointer;
+        outline: none;
+        max-width: 200px;
+      }
+      .model-selector:hover {
+        border-color: var(--primary, #3b82f6);
+      }
+      .model-selector:focus {
+        border-color: var(--primary, #3b82f6);
+        box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
       }
       .chat-agent-switcher {
         display: flex;
@@ -1338,6 +1565,66 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
       .tool-call-status-error {
         background: var(--danger-bg);
         color: var(--danger);
+      }
+      /* P1-6: 审批相关样式 */
+      .tool-call-status-pending {
+        background: var(--warning-bg, #fef3c7);
+        color: var(--warning, #d97706);
+      }
+      .tool-call-approval {
+        border-color: var(--warning, #d97706);
+        border-width: 2px;
+      }
+      .approval-reason {
+        margin: var(--space-2) 0;
+        padding: var(--space-2) var(--space-3);
+        background: var(--warning-bg, #fef3c7);
+        border-radius: var(--radius-md, 6px);
+        border-left: 3px solid var(--warning, #d97706);
+      }
+      .approval-reason-label {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--warning, #d97706);
+        margin-bottom: 4px;
+      }
+      .approval-reason-text {
+        font-size: 13px;
+        color: var(--text-secondary, #666);
+      }
+      .approval-irreversible-badge {
+        display: inline-block;
+        margin-top: 6px;
+        padding: 2px 8px;
+        font-size: 11px;
+        font-weight: 600;
+        background: var(--danger, #dc2626);
+        color: white;
+        border-radius: 10px;
+      }
+      .approval-actions {
+        display: flex;
+        gap: var(--space-2);
+        align-items: center;
+        margin-top: var(--space-2);
+      }
+      .approval-pending {
+        font-size: 13px;
+        color: var(--text-secondary, #666);
+      }
+      .approval-done {
+        font-size: 13px;
+        font-weight: 500;
+      }
+      .approval-done-approved {
+        color: var(--success, #16a34a);
+      }
+      .approval-done-rejected {
+        color: var(--danger, #dc2626);
+      }
+      .approval-error {
+        font-size: 12px;
+        color: var(--danger, #dc2626);
       }
       .tool-call-body {
         padding: var(--space-2) var(--space-3);

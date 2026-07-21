@@ -104,16 +104,19 @@ class DangerousToolGuard:
         - 危险工具（写操作）→ 需要用户确认；
         - 未知工具 → 默认放行（保持兼容），记录警告。
 
+    P1 更新：从全局内存 set 改为会话级控制（session_id → set[tool_name]），
+    对话结束后自动清理。支持与 ApprovalService 联动：
+    当用户通过 REST 端点批准后，调用 ``confirm_session_tool`` 标记会话级确认。
+
     使用方式::
 
         guard = DangerousToolGuard()
-        result = guard.check("document_create", {"title": "test"})
+        result = guard.check("document_create", session_id="sess-1")
         if result.needs_confirmation:
-            # 前端弹框确认，用户同意后调用 guard.confirm("document_create")
+            # 创建 DB 审批记录，yield approval_required SSE 事件
             ...
-        if guard.is_confirmed("document_create"):
-            # 放行执行
-            ...
+        # 用户通过 REST 批准后：
+        guard.confirm_session_tool("sess-1", "document_create")
     """
 
     def __init__(
@@ -131,19 +134,21 @@ class DangerousToolGuard:
             dangerous_tools if dangerous_tools is not None else _DEFAULT_DANGEROUS_TOOLS
         )
         self._safe: set[str] = safe_tools if safe_tools is not None else _SAFE_TOOLS
-        # 已确认的工具集合（同一会话内有效）
-        self._confirmed: set[str] = set()
+        # P1: 会话级确认缓存 — session_id → set[tool_name]
+        self._session_confirmed: dict[str, set[str]] = {}
 
     def check(
         self,
         tool_name: str,
         tool_input: dict[str, Any] | None = None,
+        session_id: str | None = None,
     ) -> GuardResult:
         """检查工具调用是否需要拦截。
 
         Args:
             tool_name: 工具名称。
             tool_input: 工具入参（预留用于参数级检查，当前未使用）。
+            session_id: 会话 ID（P1 会话级控制）。
 
         Returns:
             GuardResult — ALLOW / CONFIRM / BLOCK。
@@ -156,13 +161,18 @@ class DangerousToolGuard:
                 reason="只读工具",
             )
 
-        # 已确认的工具放行
-        if tool_name in self._confirmed:
-            return GuardResult(
-                action=GuardAction.ALLOW,
-                tool_name=tool_name,
-                reason="用户已确认",
-            )
+        # P1: 会话级确认检查 — 同一会话内已确认的工具放行
+        # 向后兼容：__global__ 确认（confirm()）对所有会话生效
+        sessions_to_check: set[str] = {"__global__"}
+        if session_id:
+            sessions_to_check.add(session_id)
+        for sid in sessions_to_check:
+            if tool_name in self._session_confirmed.get(sid, set()):
+                return GuardResult(
+                    action=GuardAction.ALLOW,
+                    tool_name=tool_name,
+                    reason="用户已确认（会话级）",
+                )
 
         # 危险工具 — 需要确认
         if tool_name in self._dangerous:
@@ -174,6 +184,7 @@ class DangerousToolGuard:
                 tool=tool_name,
                 reason=reason,
                 irreversible=irreversible,
+                session_id=session_id,
             )
             return GuardResult(
                 action=GuardAction.CONFIRM,
@@ -194,40 +205,51 @@ class DangerousToolGuard:
             reason="未知工具，默认放行",
         )
 
-    def confirm(self, tool_name: str) -> None:
-        """标记工具为已确认（用户同意执行）。
+    def confirm_session_tool(self, session_id: str, tool_name: str) -> None:
+        """P1: 标记工具在指定会话内为已确认（用户通过 REST 批准后调用）。
 
         Args:
+            session_id: 会话 ID。
             tool_name: 工具名称。
         """
-        self._confirmed.add(tool_name)
+        if session_id not in self._session_confirmed:
+            self._session_confirmed[session_id] = set()
+        self._session_confirmed[session_id].add(tool_name)
         log.info(
-            "tool_guard.confirmed",
+            "tool_guard.session_confirmed",
             tool=tool_name,
+            session_id=session_id,
         )
 
+    def is_session_confirmed(self, session_id: str, tool_name: str) -> bool:
+        """P1: 检查工具在指定会话中是否已确认。"""
+        return tool_name in self._session_confirmed.get(session_id, set())
+
+    def clear_session(self, session_id: str) -> None:
+        """P1: 清理会话确认缓存 — 对话结束时调用。"""
+        self._session_confirmed.pop(session_id, None)
+        log.info("tool_guard.session_cleared", session_id=session_id)
+
+    # --- 向后兼容方法（全局确认，已废弃但仍可用） ---
+
+    def confirm(self, tool_name: str) -> None:
+        """[已废弃] 标记工具为全局已确认。P1 改用 confirm_session_tool。"""
+        log.warning("tool_guard.legacy_confirm_used", tool=tool_name)
+        # 全局确认使用空 session_id
+        self.confirm_session_tool("__global__", tool_name)
+
     def is_confirmed(self, tool_name: str) -> bool:
-        """检查工具是否已确认。
-
-        Args:
-            tool_name: 工具名称。
-
-        Returns:
-            True 表示已确认。
-        """
-        return tool_name in self._confirmed
+        """[已废弃] 检查工具是否全局已确认。P1 改用 is_session_confirmed。"""
+        return self.is_session_confirmed("__global__", tool_name)
 
     def revoke(self, tool_name: str) -> None:
-        """撤销工具确认（用户取消或会话结束）。
-
-        Args:
-            tool_name: 工具名称。
-        """
-        self._confirmed.discard(tool_name)
+        """[已废弃] 撤销全局确认。"""
+        if "__global__" in self._session_confirmed:
+            self._session_confirmed["__global__"].discard(tool_name)
 
     def reset(self) -> None:
-        """重置所有确认状态 — 新会话时调用。"""
-        self._confirmed.clear()
+        """[已废弃] 重置所有确认状态。P1 改用 clear_session。"""
+        self._session_confirmed.clear()
 
     def get_dangerous_tools(self) -> dict[str, dict[str, Any]]:
         """返回危险工具配置（用于前端展示确认清单）。"""

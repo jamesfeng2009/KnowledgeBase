@@ -67,6 +67,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         except Exception as exc:
             log.warning("app.table_creation_failed", error=str(exc))
 
+    # P1-5: 服务重启恢复 — 扫描 pending 审批，标记过期，加载活跃审批
+    try:
+        from app.database import async_session_factory
+        from app.services.approval_service import ApprovalService
+
+        async with async_session_factory() as session:
+            approval_service = ApprovalService(session)
+            restored_count = await approval_service.restore_pending_approvals()
+            await session.commit()
+            if restored_count > 0:
+                log.info(
+                    "app.approval_restored",
+                    active_count=restored_count,
+                )
+    except Exception as exc:
+        log.warning("app.approval_restore_failed", error=str(exc))
+
     yield
     log.info("app.stopped", app_name=settings.APP_NAME)
 

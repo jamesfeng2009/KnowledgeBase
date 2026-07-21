@@ -6,6 +6,7 @@
 - 默认配置：安全工具放行、危险工具拦截、未知工具放行
 - 自定义配置：自定义危险/安全清单
 - engine 集成：_execute_tool_use 守卫拦截 + 确认后放行
+- P1-4: _execute_tool_use 改为 async generator，yield approval_required 事件
 """
 from __future__ import annotations
 
@@ -34,6 +35,27 @@ from app.rag.tool_guard import (
     _DEFAULT_DANGEROUS_TOOLS,
     _SAFE_TOOLS,
 )
+from app.utils.sse import SSEEvent, SSEEventType
+
+
+async def _drain_tool_use(
+    engine: Any,
+    state: dict[str, Any],
+    tool_use: dict[str, Any],
+    db: Any = None,
+    user_uuid: Any = None,
+) -> list[SSEEvent]:
+    """排空 _execute_tool_use async generator，返回 yield 的 SSE 事件列表。
+
+    P1-4: _execute_tool_use 从 async def 改为 AsyncIterator[SSEEvent]，
+    需要用 async for 消费。支持传入 db / user_uuid 以测试审批流程。
+    """
+    events: list[SSEEvent] = []
+    async for event in engine._execute_tool_use(
+        state, tool_use, db=db, user_uuid=user_uuid
+    ):
+        events.append(event)
+    return events
 
 
 # ======================================================================
@@ -265,11 +287,13 @@ class TestEngineToolGuardIntegration:
         state: dict[str, Any] = {"tool_results": []}
         tool_use = {"name": "knowledge_search", "input": {"query": "test"}, "id": "tu-1"}
 
-        await engine._execute_tool_use(state, tool_use)
+        events = await _drain_tool_use(engine, state, tool_use)
 
         mock_mcp.call_tool.assert_called_once_with("knowledge_search", {"query": "test"})
         assert len(state["tool_results"]) == 1
         assert state["tool_results"][0]["tool"] == "knowledge_search"
+        # 安全工具不产生 approval 事件
+        assert len(events) == 0
 
     @pytest.mark.asyncio
     async def test_dangerous_tool_blocked_without_confirmation(self) -> None:
@@ -281,7 +305,7 @@ class TestEngineToolGuardIntegration:
         state: dict[str, Any] = {"tool_results": []}
         tool_use = {"name": "document_create", "input": {"title": "test"}, "id": "tu-2"}
 
-        await engine._execute_tool_use(state, tool_use)
+        events = await _drain_tool_use(engine, state, tool_use)
 
         # MCP 不应被调用
         mock_mcp.call_tool.assert_not_called()
@@ -303,7 +327,7 @@ class TestEngineToolGuardIntegration:
         state: dict[str, Any] = {"tool_results": []}
         tool_use = {"name": "document_create", "input": {"title": "test"}, "id": "tu-3"}
 
-        await engine._execute_tool_use(state, tool_use)
+        await _drain_tool_use(engine, state, tool_use)
 
         mock_mcp.call_tool.assert_called_once()
         assert len(state["tool_results"]) == 1
@@ -319,7 +343,7 @@ class TestEngineToolGuardIntegration:
         state: dict[str, Any] = {"tool_results": []}
         tool_use = {"name": "custom_tool", "input": {}, "id": "tu-4"}
 
-        await engine._execute_tool_use(state, tool_use)
+        await _drain_tool_use(engine, state, tool_use)
 
         mock_mcp.call_tool.assert_called_once_with("custom_tool", {})
 
@@ -332,7 +356,7 @@ class TestEngineToolGuardIntegration:
         state: dict[str, Any] = {"tool_results": []}
         tool_use = {"name": "create_it_ticket", "input": {"title": "工单"}, "id": "tu-5"}
 
-        await engine._execute_tool_use(state, tool_use)
+        await _drain_tool_use(engine, state, tool_use)
 
         result = json.loads(state["tool_results"][0]["result"])
         assert result["irreversible"] is True
@@ -349,15 +373,15 @@ class TestEngineToolGuardIntegration:
 
         # 安全工具放行
         state1: dict[str, Any] = {"tool_results": []}
-        await engine._execute_tool_use(
-            state1, {"name": "my_safe_tool", "input": {}, "id": "tu-6"}
+        await _drain_tool_use(
+            engine, state1, {"name": "my_safe_tool", "input": {}, "id": "tu-6"}
         )
         assert len(state1["tool_results"]) == 1
 
         # 危险工具拦截
         state2: dict[str, Any] = {"tool_results": []}
-        await engine._execute_tool_use(
-            state2, {"name": "my_dangerous_tool", "input": {}, "id": "tu-7"}
+        await _drain_tool_use(
+            engine, state2, {"name": "my_dangerous_tool", "input": {}, "id": "tu-7"}
         )
         assert len(state2["tool_results"]) == 1
         result = json.loads(state2["tool_results"][0]["result"])
@@ -391,8 +415,86 @@ class TestEngineToolGuardIntegration:
         engine.mcp.call_tool = AsyncMock()
 
         state: dict[str, Any] = {"tool_results": []}
-        await engine._execute_tool_use(
-            state, {"name": "create_it_ticket", "input": {}, "id": "tu-8"}
+        await _drain_tool_use(
+            engine, state, {"name": "create_it_ticket", "input": {}, "id": "tu-8"}
         )
 
         engine.mcp.call_tool.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_approval_required_event_without_db(self) -> None:
+        """P1-4: db 为 None 时不创建审批记录，不 yield approval_required 事件。"""
+        engine = self._make_engine()
+        engine.mcp.call_tool = AsyncMock()
+
+        state: dict[str, Any] = {
+            "tool_results": [],
+            "session_id": "test-session",
+        }
+        tool_use = {"name": "document_create", "input": {"title": "test"}, "id": "tu-9"}
+
+        events = await _drain_tool_use(engine, state, tool_use)
+
+        # 不传 db 时不应 yield approval_required 事件
+        assert len(events) == 0
+        # 但仍应有阻断信息
+        assert len(state["tool_results"]) == 1
+        engine.mcp.call_tool.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_approval_required_event_with_db(self) -> None:
+        """P1-4: 提供 db + user_uuid 时 yield approval_required SSE 事件。"""
+        import uuid as uuid_module
+
+        engine = self._make_engine()
+        engine.mcp.call_tool = AsyncMock()
+
+        # Mock ApprovalService.create_approval
+        mock_approval = MagicMock()
+        mock_approval.id = uuid_module.uuid4()
+
+        mock_db = MagicMock()
+
+        with patch(
+            "app.services.approval_service.ApprovalService"
+        ) as MockApprovalService:
+            mock_service = MockApprovalService.return_value
+            mock_service.create_approval = AsyncMock(return_value=mock_approval)
+
+            state: dict[str, Any] = {
+                "tool_results": [],
+                "session_id": "test-session-2",
+                "query": "测试问题",
+                "user_id": "user-123",
+                "iteration": 1,
+                "max_iterations": 5,
+                "messages": [],
+                "retrieved_docs": [],
+            }
+            tool_use = {
+                "name": "document_create",
+                "input": {"title": "test"},
+                "id": "tu-10",
+            }
+
+            events = await _drain_tool_use(
+                engine, state, tool_use, db=mock_db, user_uuid=uuid_module.uuid4()
+            )
+
+            # 应 yield 1 个 approval_required 事件
+            assert len(events) == 1
+            assert events[0].event == SSEEventType.APPROVAL_REQUIRED
+            event_data = events[0].data
+            assert event_data["tool_name"] == "document_create"
+            assert event_data["tool_use_id"] == "tu-10"
+            assert "approval_id" in event_data
+            assert "reason" in event_data
+
+            # ApprovalService.create_approval 应被调用
+            mock_service.create_approval.assert_called_once()
+            call_kwargs = mock_service.create_approval.call_args
+            assert call_kwargs.kwargs["tool_name"] == "document_create"
+            assert call_kwargs.kwargs["tool_use_id"] == "tu-10"
+
+            # MCP 不应被调用
+            engine.mcp.call_tool.assert_not_called()

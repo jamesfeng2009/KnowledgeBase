@@ -8,6 +8,7 @@ from app.models.action import DocumentAction
 from app.models.agent import AgentConfig
 from app.models.analytics import SearchLog
 from app.models.apikey import ApiKey
+from app.models.approval import ToolApproval
 from app.models.audit import AuditFlow
 from app.models.base import Base
 from app.models.billing import Subscription, Tenant, UsageRecord
@@ -21,6 +22,7 @@ from app.models.memory import EntityEvent, KnowledgeEntity, MemoryFact
 from app.models.notification import Notification
 from app.models.qa import QaAnswer, QaQuestion
 from app.models.user import Department, KbMember, User
+from app.models.user_model_preference import UserModelPreference
 
 __all__ = [
     "Base",
@@ -57,4 +59,8 @@ __all__ = [
     "Notification",
     # LangGraph Agent Loop 状态检查点
     "AgentCheckpoint",
+    # P1: 工具审批持久化
+    "ToolApproval",
+    # P2: 用户模型偏好
+    "UserModelPreference",
 ]
