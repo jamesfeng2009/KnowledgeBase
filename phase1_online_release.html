@@ -1,0 +1,425 @@
+<section class="phase-section" id="phase1">
+  <div class="phase-header">
+    <span class="phase-tag">Phase 1</span>
+    <h2>Phase 1：线上发布与进阶Agent课程（第11-20周）</h2>
+    <div class="phase-meta">
+      <span>周期：10周</span>
+      <span>课程模块：课程平台搭建 + M0-M4课程正式发布 + M5 LangGraph多Agent系统 + M6 生产级部署与可观测性</span>
+      <span>课程节数：12节（M5×5 + M6×5 + 整合验收×2）</span>
+      <span>产品目标：完成产品线上部署，实现多Agent工作流引擎与生产级可观测性</span>
+      <span>每周节奏：周一/周三/周五课程录制或发布运营，周二/周四产品开发，周六内容输出</span>
+    </div>
+  </div>
+
+  <!-- ==================== 第11周 ==================== -->
+  <div class="week-card">
+    <div class="week-header">
+      <span class="week-num">第11周</span>
+      <span class="week-title">课程平台搭建与产品线上部署</span>
+      <span class="week-goal">本周目标：完成课程平台的技术选型与搭建，同时完成企业知识库产品的线上部署上线</span>
+    </div>
+    <ul class="day-list">
+      <li>
+        <span class="day-label">周一</span>
+        <span class="task-desc">【课程录制/平台搭建 课程平台技术选型与架构设计】完成课程平台的技术选型与架构设计。具体任务：(1) 课程平台需求分析——核心功能：课程列表与详情页、视频播放（支持进度记忆/倍速/字幕）、课程购买与支付、用户注册登录与权限管理、学习进度追踪、课程评价与讨论、优惠券与促销；(2) 技术选型决策——方案A：基于Next.js全栈自建（灵活但开发量大）、方案B：基于开源LMS系统（Moodle/Strapi改编）、方案C：使用SaaS平台（小鹅通/知识星球），对比三种方案的开发成本/可控性/扩展性/成本，最终决策；(3) 架构设计——如果自建：前端Next.js + 后端FastAPI + 视频存储（阿里云OSS/Cloudflare R2）+ CDN加速 + 支付（微信支付/支付宝）+ 数据库PostgreSQL + 缓存Redis；(4) 数据库设计——courses表（课程信息）、lessons表（课时信息）、enrollments表（选课记录）、progress表（学习进度）、orders表（订单）、payments表（支付记录）；(5) 视频处理方案——视频转码（HLS分片）、防盗链（签名URL）、水印、DRM保护策略；(6) 编写课程平台PRD与技术架构文档。</span>
+        <span class="deliverable">交付物：课程平台PRD.md、技术架构图.png、数据库设计文档.md、技术选型决策文档.md、课程平台项目骨架初始化</span>
+      </li>
+      <li>
+        <span class="day-label">周二</span>
+        <span class="task-desc">【产品开发 产品线上部署准备】完成企业知识库产品的线上部署准备。具体任务：(1) 服务器环境准备——采购云服务器（阿里云AWS），配置安全组规则（仅开放80/443端口），配置域名与SSL证书（Let's Encrypt），配置DNS解析；(2) 生产环境配置——编写docker-compose.prod.yml（生产环境编排），配置环境变量（数据库密码/API密钥等敏感信息通过环境变量注入），配置Nginx反向代理（HTTPS termination/负载均衡/静态文件服务/gzip压缩），配置Milvus生产模式（独立etcd/MinIO/Pulsar）；(3) 数据库生产配置——PostgreSQL主从复制配置、Redis持久化配置、Milvus数据备份策略、Elasticsearch集群配置；(4) CI/CD流水线搭建——GitHub Actions配置（代码推送→自动测试→构建Docker镜像→推送镜像仓库→SSH部署到服务器），配置自动回滚机制；(5) 监控告警部署——部署Prometheus + Grafana监控基础设施（CPU/内存/磁盘/网络）、配置应用监控（接口响应时间/错误率/吞吐量）、配置告警规则（CPU>80%/内存>90%/接口错误率>5%时告警）；(6) 日志收集——部署ELK Stack（Elasticsearch/Logstash/Kibana）或Loki收集应用日志，配置日志轮转与保留策略。验证标准：CI/CD流水线可自动部署，监控仪表盘可查看服务器与应用状态。</span>
+        <span class="deliverable">交付物：docker-compose.prod.yml、Nginx配置文件、CI/CD流水线配置（.github/workflows/）、监控告警配置（Prometheus+Grafana）、日志收集配置、线上部署文档.md</span>
+      </li>
+      <li>
+        <span class="day-label">周三</span>
+        <span class="task-desc">【课程录制/平台搭建 课程平台前端开发】完成课程平台前端开发。具体任务：(1) 首页开发——Hero区域（课程主打卖点）、课程分类导航、精选课程卡片列表、学员评价展示、FAQ区域；(2) 课程列表页——支持按模块（M0-M10）/难度/价格筛选、支持搜索、分页加载、课程卡片（封面/标题/简介/价格/评分/学习人数）；(3) 课程详情页——课程大纲（章节/课时列表）、课程介绍视频、讲师介绍、学员评价、购买按钮、试看课时；(4) 视频播放器——集成Video.js或Plyr播放器，支持HLS流播放、倍速播放（0.5x/1x/1.25x/1.5x/2x）、进度记忆（记录上次观看位置）、字幕支持、清晰度切换；(5) 学习中心——我的课程列表、学习进度展示（进度条/完成标记）、继续学习入口、学习统计（学习时长/完成课时数）；(6) 用户系统——注册/登录页面（支持邮箱/手机/微信OAuth）、个人中心（个人信息/订单记录/学习记录/收藏）；(7) 支付页面——订单确认、支付方式选择（微信/支付宝）、支付状态轮询。使用Next.js App Router + Tailwind CSS + shadcn/ui开发，响应式设计适配移动端。</span>
+        <span class="deliverable">交付物：课程平台前端完整代码（首页/列表/详情/播放器/学习中心/用户系统/支付）、响应式设计验证通过、前端可联调</span>
+      </li>
+      <li>
+        <span class="day-label">周四</span>
+        <span class="task-desc">【产品开发 产品线上部署上线】完成产品线上部署上线。具体任务：(1) 镜像构建与推送——构建前后端生产Docker镜像，推送到镜像仓库（阿里云ACR/DockerHub），打版本标签v1.0.0；(2) 服务器部署——通过CI/CD流水线自动拉取镜像并部署，执行docker-compose.prod.yml启动全部服务，验证所有服务健康检查通过；(3) 数据迁移——执行数据库迁移（Alembic migrate），初始化基础数据（管理员账号/默认配置/演示知识库），导入演示文档数据；(4) Nginx配置——配置域名解析（api.yourdomain.com指向后端、app.yourdomain.com指向前端），配置HTTPS证书，配置API代理转发，配置WebSocket/SSE代理（用于流式输出），配置静态文件缓存策略；(5) 功能验证——线上环境全功能验证：用户注册登录→创建知识库→上传文档→RAG问答→Agent工具调用→多轮对话→监控仪表盘，每个功能在线上环境验证通过；(6) 性能验证——线上环境性能测试：首页加载<3s、API响应<1s、RAG问答<5s、并发20用户无错误；(7) 安全验证——HTTPS生效、API鉴权生效、SQL注入防护验证、XSS防护验证、CORS配置正确。验证标准：产品线上可访问，全功能验证通过，性能与安全达标。</span>
+        <span class="deliverable">交付物：线上可访问的产品（app.yourdomain.com + api.yourdomain.com）、线上部署验证报告.md、性能测试报告.md、安全检查清单.md</span>
+      </li>
+      <li>
+        <span class="day-label">周五</span>
+        <span class="task-desc">【课程录制/平台搭建 课程平台后端与支付集成】完成课程平台后端开发与支付集成。具体任务：(1) 后端API开发——课程管理API（CRUD课程/课时）、用户认证API（JWT注册登录/微信OAuth）、选课API（ enroll/unlist ）、学习进度API（记录/查询进度）、订单API（创建/查询/取消订单）；(2) 视频管理——视频上传接口（支持分片上传大文件）、视频转码触发（集成FFmpeg或云转码服务）、HLS分片生成、签名URL生成（防盗链）；(3) 支付集成——微信支付集成（Native支付/JSAPI支付）、支付宝集成（当面付/电脑网站支付）、支付回调处理（验证签名→更新订单状态→开通课程权限）、退款处理；(4) 优惠券系统——优惠券创建/发放/核销、满减/折扣/免费领取类型、使用规则（有效期/适用课程/最低消费）；(5) 数据统计——课程销量统计、学习进度统计、收入统计、用户增长统计；(6) 后台管理——管理员后台（课程管理/用户管理/订单管理/数据看板）。使用FastAPI + SQLAlchemy + Celery（异步转码任务）开发。</span>
+        <span class="deliverable">交付物：课程平台后端完整代码（API+支付+视频+优惠券+统计+后台）、支付沙箱测试通过、API文档.md</span>
+      </li>
+      <li>
+        <span class="day-label">周六</span>
+        <span class="task-desc">【内容输出 第11周内容储备】整理本周内容。具体任务：(1) 编写课程平台搭建文档——记录平台选型决策、架构设计、开发过程的关键问题与解决方案；(2) 编写产品线上部署手册——详细的部署步骤、配置说明、常见问题排查，使运维人员能独立完成部署；(3) 博客文章2篇——第1篇《从本地到线上：AI产品生产部署实战指南》、第2篇《课程平台技术选型：自建vs SaaS的决策分析》；(4) 录制产品线上版演示视频——展示线上产品的完整功能与使用流程；(5) 整理本周FAQ——新增线上部署相关问题；(6) 准备下周课程发布物料——课程介绍文案、课程大纲页面、宣传海报设计。</span>
+        <span class="deliverable">交付物：课程平台搭建文档.md、产品线上部署手册.md、博客文章2篇、产品线上版演示视频、FAQ更新版.md、课程发布物料准备清单</span>
+      </li>
+    </ul>
+  </div>
+
+  <!-- ==================== 第12周 ==================== -->
+  <div class="week-card">
+    <div class="week-header">
+      <span class="week-num">第12周</span>
+      <span class="week-title">M0-M4课程正式发布与用户系统上线</span>
+      <span class="week-goal">本周目标：将Phase 0录制的24节课程正式发布到课程平台，同步上线用户注册与反馈系统</span>
+    </div>
+    <ul class="day-list">
+      <li>
+        <span class="day-label">周一</span>
+        <span class="task-desc">【课程发布 M0大模型基础课程发布】正式发布M0模块3节课程。具体任务：(1) 视频处理——将M0-1/M0-2/M0-3课程视频上传到课程平台后端，触发HLS转码，生成多清晰度版本（1080p/720p/480p），验证视频播放正常（进度记忆/倍速/字幕）；(2) 课程信息录入——在课程平台后台创建M0模块课程，录入课程标题/简介/封面图/讲师信息/课程大纲（3课时）/价格/试看设置（每节课前5分钟免费试看）；(3) 课程配套资料上传——上传每节课的PPT（PDF格式）、课程笔记（Markdown格式）、代码示例（ZIP打包），配置资料下载权限（购买后可下载）；(4) 课程详情页优化——编写课程介绍文案（突出M0模块的学习价值与适用人群）、添加课程亮点（Transformer原理图解/Prompt模板库/Token计数工具）、设置课程标签（大模型基础/入门/理论）；(5) 试看体验验证——以未购买用户身份体验试看流程，确保试看5分钟后提示购买、购买后可观看完整视频；(6) 发布上线——将M0模块3节课正式发布上线，验证课程列表页与详情页展示正常。验证标准：M0模块3节课在线上可正常播放与购买。</span>
+        <span class="deliverable">交付物：M0模块3节课程线上发布（视频播放正常/资料可下载/购买流程通畅/试看功能正常）</span>
+      </li>
+      <li>
+        <span class="day-label">周二</span>
+        <span class="task-desc">【产品开发 产品线上监控配置与优化】完成产品线上的监控配置与性能优化。具体任务：(1) 应用监控部署——集成Prometheus client SDK到后端，暴露/metrics端点（HTTP请求计数/延迟分布/错误率/活跃连接数），在Grafana创建应用监控仪表盘（API响应时间P50/P95/P99、QPS、错误率、慢请求列表）；(2) 业务监控——监控核心业务指标：文档处理成功率、RAG问答成功率、Agent工具调用成功率、向量检索延迟、Embedding计算延迟，配置业务异常告警；(3) 日志分析——在Kibana中创建日志仪表盘（错误日志趋势/接口调用TOP10/慢请求分析），配置错误日志自动告警；(4) 性能优化——根据线上监控数据优化：数据库慢查询优化（添加索引/优化SQL）、API缓存优化（Redis缓存热点数据）、前端资源优化（CDN加速/图片压缩/代码分割）、Milvus检索优化（HNSW参数微调）；(5) 容灾备份——配置数据库自动备份（每日全量+每小时增量）、Milvus数据备份、Elasticsearch快照，验证备份恢复流程；(6) 自动扩容预案——制定流量增长时的扩容方案（垂直扩容/水平扩容），配置云服务器弹性伸缩规则。验证标准：监控仪表盘可实时查看应用与业务指标，告警规则有效，备份恢复流程验证通过。</span>
+        <span class="deliverable">交付物：Grafana应用监控仪表盘、业务监控配置、Kibana日志仪表盘、性能优化记录.md、容灾备份方案.md、自动扩容预案.md</span>
+      </li>
+      <li>
+        <span class="day-label">周三</span>
+        <span class="task-desc">【课程发布 M1-M2课程发布】正式发布M1和M2模块课程。具体任务：(1) M1环境搭建3节课发布——M1-1 Python/Node环境、M1-2 Docker、M1-3 项目骨架，视频上传转码、课程信息录入、配套资料（安装脚本/Dockerfile示例/项目模板仓库）上传；(2) M2 LangChain框架5节课发布——M2-1 LLM包装器、M2-2 Prompt模板、M2-3 链式调用、M2-4 输出解析、M2-5 记忆模块，视频上传转码、课程信息录入、配套资料（代码示例/Prompt模板库/API速查表）上传；(3) 课程套餐设计——设计"基础套餐"（M0+M1+M2共11节，优惠价）、"全栈套餐"（M0-M4共24节，更优惠），配置套餐价格与购买入口；(4) 课程关联推荐——在每节课详情页添加"相关课程推荐"（如M0-1推荐M0-2/M0-3，M2-1推荐M2-2/M2-3），提升课程连带销售；(5) 课程评价系统验证——验证学员购买后可评价课程（星级+文字评价）、评价展示在课程详情页；(6) 发布上线验证——验证M1/M2全部课程在线上正常播放与购买。验证标准：M1+M2共8节课线上发布完成。</span>
+        <span class="deliverable">交付物：M1模块3节 + M2模块5节课程线上发布、课程套餐配置、关联推荐配置、评价系统验证通过</span>
+      </li>
+      <li>
+        <span class="day-label">周四</span>
+        <span class="task-desc">【产品开发 用户注册与反馈系统】开发产品用户系统与反馈机制。具体任务：(1) 用户认证系统——实现用户注册（邮箱+密码/手机验证码）、登录（JWT Token）、密码重置、邮箱验证，集成微信OAuth登录（扫码登录）；(2) 用户权限管理——设计角色体系（免费用户/付费用户/管理员），免费用户可体验基础问答（限制每日次数），付费用户无限制，管理员可访问后台；(3) 用户配额管理——实现API调用配额系统（免费用户每日10次RAG问答/付费用户无限制），配额用尽时返回429状态码并引导升级；(4) 反馈系统——实现/api/v1/feedback接口，用户可提交反馈（Bug报告/功能建议/使用问题），支持截图上传，反馈状态追踪（提交→处理中→已解决）；(5) 用户行为追踪——记录用户行为日志（注册/登录/创建知识库/上传文档/提问/工具调用），用于产品分析与用户画像；(6) 前端用户中心——开发用户中心前端页面（个人信息编辑/密码修改/我的知识库/使用统计/反馈提交/订阅管理）。验证标准：用户系统完整可用，配额限制生效，反馈系统可用。</span>
+        <span class="deliverable">交付物：用户认证系统代码、权限与配额管理模块、反馈系统、用户行为追踪模块、用户中心前端页面</span>
+      </li>
+      <li>
+        <span class="day-label">周五</span>
+        <span class="task-desc">【课程发布 M3-M4课程发布】正式发布M3和M4模块课程。具体任务：(1) M3工具调用与MCP 5节课发布——M3-1 Function Calling、M3-2 Tool设计、M3-3 MCP协议、M3-4 工具编排、M3-5 错误处理，视频上传转码、课程信息录入、配套资料（Function Calling示例/Tool设计checklist/MCP Server代码）上传；(2) M4向量检索知识库 8节课发布——M4-1 Embedding、M4-2 Milvus、M4-3 文档分块、M4-4 检索策略、M4-5 RAG基础、M4-6 重排序、M4-7 混合检索、M4-8 RAG优化，视频上传转码、课程信息录入、配套资料（Embedding对比实验/Milvus操作代码/RAG系统源码）上传；(3) Phase 0整合课程发布——发布Phase 0总览课、产品实战解析课、Phase 0总结课3节整合课程；(4) 课程体系页面——创建课程体系总览页面，展示M0-M4五大模块的学习路径图、模块关系图、推荐学习顺序，帮助学员理解课程结构；(5) 全部课程发布验证——验证M0-M4全部24节+3节整合=27节课程在线上正常播放与购买。验证标准：M3+M4共13节课 + 3节整合课程线上发布完成，Phase 0全部课程上线。</span>
+        <span class="deliverable">交付物：M3模块5节 + M4模块8节 + 3节整合课程线上发布、课程体系总览页面、Phase 0全部27节课程上线验证通过</span>
+      </li>
+      <li>
+        <span class="day-label">周六</span>
+        <span class="task-desc">【内容输出 第12周内容储备】整理本周内容。具体任务：(1) 课程发布运营报告——统计本周课程发布数据（27节课程上线/课程播放量/购买转化率/用户反馈），形成发布运营报告；(2) 博客文章2篇——第1篇《Agent全栈教程正式上线：从大模型基础到企业知识库实战》、第2篇《M0-M4课程体系全解析：Agent开发的学习路径指南》；(3) 课程介绍文案优化——根据用户反馈优化各模块课程介绍文案，提升购买转化率；(4) 录制课程导学视频——制作5分钟课程导学视频，介绍课程体系、学习路径、适合人群，放在课程首页；(5) FAQ更新——新增课程购买与学习相关问题；(6) 用户反馈初步分析——收集首批用户的反馈与建议，整理成清单用于后续优化。</span>
+        <span class="deliverable">交付物：课程发布运营报告.md、博客文章2篇、课程导学视频、FAQ更新版.md、用户反馈初步分析.md</span>
+      </li>
+    </ul>
+  </div>
+
+  <!-- ==================== 第13周 ==================== -->
+  <div class="week-card">
+    <div class="week-header">
+      <span class="week-num">第13周</span>
+      <span class="week-title">内容营销启动与用户获取</span>
+      <span class="week-goal">本周目标：启动内容营销策略，通过技术社区、社交媒体、SEO等多渠道获取首批用户</span>
+    </div>
+    <ul class="day-list">
+      <li>
+        <span class="day-label">周一</span>
+        <span class="task-desc">【运营/营销 营销内容策划与制作】完成营销内容的策划与首批素材制作。具体任务：(1) 营销策略制定——确定目标用户画像（AI开发者/后端工程师/全栈工程师/技术创业者/企业技术决策者）、核心卖点（从零到一构建Agent应用/企业知识库产品实战/LangChain+MCP+RAG全栈技术）、营销渠道（技术社区/微信公众号/知乎/B站/小红书/Twitter/X/YouTube）；(2) 内容日历制定——制定4周内容发布计划（每周3-5篇内容），涵盖技术干货/课程预告/产品演示/学员案例/行业观点；(3) 首批技术干货文章——撰写3篇高质量技术文章：《2026年Agent开发技术栈全景图》、《LangChain vs LangGraph：何时用哪个？》、《企业知识库RAG系统设计：从Embedding到混合检索》，每篇3000+字，含完整代码与架构图；(4) 短视频内容——制作5个技术短视频（1-3分钟）：Agent入门60秒、Function Calling演示、RAG原理动画、MCP协议讲解、产品功能速览，发布到B站/抖音/视频号；(5) 营销物料设计——设计课程宣传海报（5张：总览/M0基础/M2 LangChain/M3工具调用/M4 RAG）、产品Logo与品牌视觉规范、落地页设计。验证标准：营销内容日历制定完成，3篇技术文章+5个短视频+5张海报制作完成。</span>
+        <span class="deliverable">交付物：营销策略文档.md、4周内容日历.xlsx、技术文章3篇（3000+字/篇）、技术短视频5个、营销海报5张、品牌视觉规范.md</span>
+      </li>
+      <li>
+        <span class="day-label">周二</span>
+        <span class="task-desc">【产品开发 产品SEO优化与落地页开发】完成产品官网的SEO优化与营销落地页开发。具体任务：(1) SEO优化——进行关键词研究（Agent开发/LangChain教程/RAG系统/大模型应用/企业知识库/MCP协议等核心关键词），优化页面Meta标签（title/description/keywords）、优化页面H1-H3结构、生成sitemap.xml与robots.txt、配置Open Graph与Twitter Card社交分享标签、优化页面加载速度（Core Web Vitals达标）；(2) 营销落地页开发——开发产品官网首页（Hero区域突出核心价值/功能展示区/技术架构展示/课程体系展示/学员评价/CTA按钮引导注册）、开发课程体系介绍页（学习路径图/模块详情/适合人群/价格方案）、开发免费体验页（引导用户注册并免费体验基础RAG问答）；(3) 转化优化——设计注册引导流程（免费体验→注册→引导创建知识库→引导提问→引导购买课程），优化注册转化率（减少注册步骤/支持微信一键登录/提供注册 incentives）；(4) 数据埋点——集成Google Analytics / 百度统计，埋点关键转化事件（访问/注册/创建知识库/提问/查看课程/购买课程），配置转化漏斗分析；(5) A/B测试框架——搭建简单的A/B测试框架，支持测试不同Hero文案/按钮颜色/价格方案对转化率的影响。验证标准：官网SEO优化完成，落地页可引导用户注册转化，数据埋点可追踪转化漏斗。</span>
+        <span class="deliverable">交付物：SEO优化配置（Meta/sitemap/robots/OG标签）、产品官网首页与课程介绍页与免费体验页、数据埋点集成、A/B测试框架、转化漏斗配置</span>
+      </li>
+      <li>
+        <span class="day-label">周三</span>
+        <span class="task-desc">【运营/营销 社交媒体与技术社区推广】启动多渠道内容推广。具体任务：(1) 微信公众号运营——发布首篇推文《Agent全栈教程上线：10周从零构建企业级AI应用》，配置自动回复（关注后推送课程介绍与免费体验链接）、配置菜单栏（课程介绍/免费体验/技术文章）、建立微信群（学员交流群/技术讨论群）；(2) 知乎推广——在知乎发布3篇技术回答（在"如何学习Agent开发""LangChain怎么学""RAG系统怎么搭建"等问题下回答并引流到课程）、发布1篇知乎专栏文章；(3) B站推广——上传5个技术短视频+1个课程导学视频，优化视频标题与标签（SEO）、在视频简介中添加课程链接；(4) GitHub开源引流——将课程配套代码开源到GitHub（课程示例代码/项目模板/工具库），在README中添加课程链接，通过Star引流；(5) 技术社区推广——在V2EX/掘金/SegmentFault/CSDN发布技术文章，在Reddit（r/MachineLearning/r/LangChain）发布英文内容引流海外用户；(6) KOL合作——联系3-5位AI领域KOL/技术博主，提供免费课程体验，邀请他们评测推荐。验证标准：内容在5+渠道发布，微信公众号首篇推文阅读量>1000，B站视频总播放量>5000。</span>
+        <span class="deliverable">交付物：微信公众号推文与配置、知乎回答3篇+专栏1篇、B站视频6个、GitHub开源仓库、技术社区文章5篇、KOL合作清单</span>
+      </li>
+      <li>
+        <span class="day-label">周四</span>
+        <span class="task-desc">【产品开发 产品数据分析仪表盘与用户运营工具】开发产品数据分析仪表盘与用户运营工具。具体任务：(1) 数据分析仪表盘——开发管理员数据看板，展示核心指标：用户增长（注册数/DAU/MAU/留存率）、课程数据（课程销量/收入/完课率/评分分布）、产品使用（知识库创建数/文档上传数/问答次数/Agent调用次数）、转化漏斗（访问→注册→体验→购买各环节转化率），使用ECharts/AntV可视化；(2) 用户运营工具——开发用户管理后台（用户列表/搜索/筛选/详情查看/封禁/配额调整）、消息推送系统（站内通知/邮件通知/微信模板消息推送，支持群发与定向推送）、优惠券发放工具（批量发放/定向发放/使用统计）；(3) 用户分群分析——基于用户行为自动分群（活跃用户/沉默用户/付费用户/试用用户），为不同群体制定运营策略；(4) 自动化运营——实现新用户欢迎邮件自动发送、7天未登录用户召回邮件、课程购买后学习提醒推送、课程评价请求推送等自动化运营流程；(5) 数据导出——支持核心数据CSV/Excel导出，方便深度分析。验证标准：数据仪表盘可实时查看核心指标，运营工具可用，自动化运营流程生效。</span>
+        <span class="deliverable">交付物：管理员数据看板前端页面、用户管理后台、消息推送系统、优惠券发放工具、用户分群分析模块、自动化运营流程配置</span>
+      </li>
+      <li>
+        <span class="day-label">周五</span>
+        <span class="task-desc">【运营/营销 用户增长策略迭代与社区建设】迭代用户增长策略并建设用户社区。具体任务：(1) 增长数据分析——分析本周各渠道的引流效果（各渠道访问量/注册量/转化率/获客成本），识别高效渠道并加大投入、低效渠道及时调整；(2) 裂变增长机制——设计用户裂变机制：邀请好友注册双方各得优惠券、分享课程到社交媒体得积分/优惠券、学员案例征集（优秀学员作品展示+奖励），开发裂变功能（邀请链接生成/邀请记录追踪/奖励自动发放）；(3) 社区建设——创建Discord/Slack社区（技术交流频道/课程答疑频道/项目展示频道/招聘频道），制定社区规则与管理制度，邀请首批学员加入社区；(4) 内容社群运营——在社区每周举办1次技术分享（周五晚上直播分享Agent开发实战）、每月举办1次项目Demo Day（学员展示项目）、定期发布技术挑战赛（限时完成Agent开发任务，优秀者奖励）；(5) 课程答疑机制——建立课程答疑流程（学员在课程讨论区提问→助教24小时内回答→常见问题沉淀到FAQ），招募2-3位助教协助答疑；(6) 首批用户深度访谈——联系10位首批付费用户进行深度访谈（学习体验/课程建议/产品建议/价格反馈），形成用户访谈报告指导后续优化。验证标准：裂变功能上线，社区建立并运营，答疑机制运转，10份用户访谈完成。</span>
+        <span class="deliverable">交付物：增长数据分析报告.md、裂变功能代码、Discord/Slack社区建立、社区运营规则.md、课程答疑流程文档.md、用户访谈报告10份</span>
+      </li>
+      <li>
+        <span class="day-label">周六</span>
+        <span class="task-desc">【内容输出 第13周内容储备】整理本周内容。具体任务：(1) 营销周报——统计本周营销数据（各渠道引流数据/注册用户数/课程销量/收入/获客成本/ROI），形成营销周报；(2) 博客文章2篇——基于本周技术文章的延伸：《Agent开发学习路径：从入门到企业级实战》、《大模型应用技术选型2026：LangChain生态全景》；(3) 社区运营周报——记录社区建设进展（成员数/活跃度/讨论话题/答疑统计）；(4) 用户反馈周报——汇总本周用户反馈（产品Bug/功能建议/课程建议），按优先级排序；(5) 录制下周课程预告（M5 LangGraph多Agent系统预告）；(6) 优化本周营销内容——根据数据反馈优化文章标题/视频封面/落地页文案。验证标准：营销周报数据完整，社区运营正常运转。</span>
+        <span class="deliverable">交付物：营销周报.md、博客文章2篇、社区运营周报.md、用户反馈周报.md、下周课程预告视频、营销内容优化记录</span>
+      </li>
+    </ul>
+  </div>
+
+  <!-- ==================== 第14周 ==================== -->
+  <div class="week-card">
+    <div class="week-header">
+      <span class="week-num">第14周</span>
+      <span class="week-title">M5 LangGraph多Agent系统（上）：核心概念、状态图、多Agent协作</span>
+      <span class="week-goal">本周目标：完成M5模块前3节课程录制，在产品中实现多Agent工作流引擎基础能力</span>
+    </div>
+    <ul class="day-list">
+      <li>
+        <span class="day-label">周一</span>
+        <span class="task-desc">【课程录制 M5-1 LangGraph核心概念】录制LangGraph核心概念课程。核心内容包括：(1) LangGraph背景与动机——LangChain的局限性（链式调用难以处理复杂状态/循环/条件分支）、LangGraph的设计理念（基于状态图的Agent编排，支持循环/分支/并行/人机交互）、LangGraph与LangChain的关系（LangGraph是LangChain生态的一部分，用于构建更复杂的Agent系统）；(2) 状态图（StateGraph）核心概念——State（状态：Agent执行过程中的共享数据，使用TypedDict定义）、Node（节点：执行具体操作的函数，接收状态返回状态更新）、Edge（边：节点间的连接，定义执行顺序）、Conditional Edge（条件边：根据状态动态决定下一个执行节点）四大核心概念详解；(3) 第一个LangGraph应用——构建一个简单的问答Agent：定义State（question/answer/messages）→定义节点（retrieve_node/generate_node）→定义边（retrieve→generate）→编译为可执行图→调用invoke执行，完整代码演示；(4) 图的编译与执行——compile()方法编译图为可执行应用、invoke()同步执行、stream()流式执行（可查看每个节点的中间状态）、ainvoke()/astream()异步执行、批处理batch()；(5) 状态管理——状态的合并策略（默认覆盖合并/自定义reducer如列表追加）、状态的持久化（Checkpoint持久化到数据库）、状态的回溯（从历史检查点恢复）；(6) LangGraph Studio——LangGraph可视化调试工具的使用，查看图的执行流程与中间状态。要求包含从零构建LangGraph应用的完整实战。</span>
+        <span class="deliverable">交付物：M5-1课程视频（55-65分钟）、配套PPT、LangGraph入门Demo代码（含状态图构建与执行）、LangGraph核心概念图解.png</span>
+      </li>
+      <li>
+        <span class="day-label">周二</span>
+        <span class="task-desc">【产品开发 产品多Agent工作流引擎基础】在产品中实现多Agent工作流引擎基础。具体任务：(1) 工作流引擎设计——设计基于LangGraph的工作流引擎架构：Workflow（工作流定义：节点+边+状态Schema）、WorkflowInstance（工作流实例：运行时状态+检查点）、WorkflowService（工作流服务：创建/执行/暂停/恢复/查询）；(2) 数据库设计——workflows表（id/name/description/graph_definition/status/created_at）、workflow_instances表（id/workflow_id/state/checkpoint/status/created_at/updated_at）、workflow_logs表（id/instance_id/node_name/input/output/duration/status）；(3) 状态图动态构建——实现从数据库存储的graph_definition（JSON格式）动态构建LangGraph StateGraph，支持运行时定义节点与边；(4) 节点类型实现——实现基础节点类型：LLMNode（调用大模型）、ToolNode（调用工具）、RetrievalNode（向量检索）、ConditionNode（条件判断）、CodeNode（执行Python代码）、HumanNode（人工确认节点）；(5) 工作流执行引擎——实现WorkflowExecutor，支持同步/异步执行、流式输出中间状态、检查点持久化（存入PostgreSQL）、执行暂停与恢复；(6) 工作流管理API——实现/api/v1/workflows接口（CRUD工作流定义）、/api/v1/workflows/{id}/run（执行工作流）、/api/v1/workflows/instances/{id}（查询执行状态）；(7) 工作流可视化编辑器后端——实现工作流定义的JSON Schema校验、节点参数校验。验证标准：工作流引擎可执行多节点工作流，支持检查点与暂停恢复。</span>
+        <span class="deliverable">交付物：工作流引擎代码（WorkflowService+WorkflowExecutor）、6种节点类型实现、工作流管理API、数据库设计、API文档</span>
+      </li>
+      <li>
+        <span class="day-label">周三</span>
+        <span class="task-desc">【课程录制 M5-2 状态图与条件路由】录制LangGraph状态图与条件路由课程。核心内容包括：(1) 状态设计最佳实践——State的TypedDict定义规范、状态字段的类型选择（str/list/dict/Optional）、自定义Reducer（使用Annotated[list, add_messages]实现消息列表追加、自定义合并函数处理冲突状态）、状态设计的粒度控制（不宜过细导致节点耦合、不宜过粗导致状态冗余）；(2) 条件路由（Conditional Edge）——add_conditional_edges()的使用、条件函数的编写（接收状态返回下一个节点名）、基于状态字段的路由（如根据answer_quality决定是否重新生成）、多路条件路由（一个节点根据条件路由到多个不同节点）；(3) 循环（Cycle）——LangGraph中实现循环的方式（通过条件边将后续节点路由回前序节点）、循环终止条件设计（最大迭代次数/质量阈值/用户确认）、ReAct Agent的循环实现（Think→Act→Observe→Think循环）；(4) 并行执行——使用RunnableParallel或多个边实现节点并行执行、并行结果的合并策略、并行执行的错误处理；(5) 子图（Subgraph）——将复杂图拆分为子图复用、子图的状态映射、子图的嵌套调用；(6) 人机交互（Human-in-the-Loop）——interrupt_before/interrupt_after在关键节点暂停等待人工确认、人工修改状态后继续执行、人工审批工作流的实现（如文档发布前人工审核）；(7) 实战——构建一个带条件路由的RAG Agent：检索→评估检索质量→质量低则查询改写后重新检索→质量高则生成答案→评估答案质量→质量低则重新生成→质量高则返回。要求包含条件路由、循环、人机交互的综合实战。</span>
+        <span class="deliverable">交付物：M5-2课程视频（55-65分钟）、配套PPT、条件路由与循环示例代码、人机交互实战代码、带条件路由的RAG Agent完整代码</span>
+      </li>
+      <li>
+        <span class="day-label">周四</span>
+        <span class="task-desc">【产品开发 产品Agent工作流可视化编辑器】开发产品Agent工作流可视化编辑器。具体任务：(1) 可视化编辑器前端——基于React Flow开发拖拽式工作流编辑器，支持从节点面板拖拽节点到画布、节点间连线定义执行顺序、双击节点编辑参数、右键菜单（删除/复制/启用/禁用）、画布缩放与平移、自动布局；(2) 节点面板——展示可用节点类型（LLM/Tool/Retrieval/Condition/Code/Human），每种节点显示图标与简介，支持搜索；(3) 节点参数编辑——每种节点类型的参数编辑面板：LLMNode（选择模型/配置Prompt模板/配置温度）、ToolNode（选择工具/配置参数）、RetrievalNode（选择知识库/配置Top-K/配置检索模式）、ConditionNode（配置条件表达式）、CodeNode（代码编辑器）、HumanNode（配置审批人/审批提示）；(4) 条件路由可视化——条件节点的多条出线可视化（不同条件不同颜色的连线）、条件表达式编辑器；(5) 工作流保存与加载——将画布上的工作流定义序列化为JSON保存到后端、从后端加载工作流定义还原画布、支持工作流版本管理；(6) 工作流执行与调试——在编辑器中直接运行工作流、实时展示每个节点的执行状态（等待/执行中/成功/失败）、点击节点查看输入输出、支持从指定节点重新执行；(7) 工作流模板——预置5+工作流模板（基础RAG问答/多知识库问答/文档处理流水线/Agent工具编排/人工审核发布）。验证标准：可视化编辑器可拖拽创建工作流，工作流可保存加载与执行调试。</span>
+        <span class="deliverable">交付物：工作流可视化编辑器前端代码（React Flow）、节点参数编辑面板、工作流保存加载、执行调试功能、5+工作流模板</span>
+      </li>
+      <li>
+        <span class="day-label">周五</span>
+        <span class="task-desc">【课程录制 M5-3 多Agent协作模式】录制多Agent协作模式课程。核心内容包括：(1) 多Agent系统概述——单Agent的局限性（一个Agent处理所有任务容易出错/难以扩展）、多Agent系统的优势（专业化分工/并行处理/容错性强）、多Agent协作的挑战（通信开销/一致性/冲突处理）；(2) Supervisor模式——一个Supervisor Agent管理多个Worker Agent，Supervisor负责任务分配与结果汇总、Worker Agent负责执行具体任务，实现Supervisor模式的完整代码（Supervisor根据任务类型路由到不同Worker）；(3) Hierarchical模式——层级化Agent架构（顶层Manager→中层Team Lead→底层Worker），适用于复杂任务的层级分解，实现层级化Agent系统的代码示例；(4) Network模式——Agent间平等通信的网络拓扑，每个Agent可以与其他Agent通信，适用于需要灵活协作的场景，实现Agent间消息传递机制；(5) Swarm模式——受群体智能启发的Agent协作模式，大量简单Agent通过简单规则涌现出复杂行为，适用于大规模并行任务；(6) Agent通信协议——Agent间如何传递消息（直接调用/消息队列/共享状态）、消息格式设计（sender/receiver/content/metadata）、通信的同步与异步；(7) 任务分解与分配——Supervisor如何将复杂任务分解为子任务、如何将子任务分配给最合适的Worker Agent、分配策略（轮询/负载均衡/能力匹配/随机）；(8) 结果聚合与冲突解决——多个Worker结果如何聚合（投票/加权/Supervisor决策）、结果冲突时的解决策略（优先级/置信度/人工介入）；(9) 实战——构建一个多Agent协作的知识库系统：Supervisor Agent（任务分配）→检索Agent（文档检索）→分析Agent（内容分析）→写作Agent（答案生成）→审核Agent（质量校验），展示完整的多Agent协作流程。要求包含4+协作模式的实现与对比。</span>
+        <span class="deliverable">交付物：M5-3课程视频（60-70分钟）、配套PPT、4种多Agent协作模式代码、多Agent知识库系统完整代码、协作模式对比文档.md</span>
+      </li>
+      <li>
+        <span class="day-label">周六</span>
+        <span class="task-desc">【内容输出 第14周内容储备】整理本周内容。具体任务：(1) 3节课程笔记整理，重点制作LangGraph状态图与多Agent协作架构图；(2) 博客文章3篇——第1篇《LangGraph入门：用状态图构建复杂Agent系统》、第2篇《LangGraph条件路由与循环：让Agent拥有决策能力》、第3篇《多Agent协作模式详解：从Supervisor到Swarm》；(3) 产品开发周报——记录工作流引擎与可视化编辑器开发进展；(4) FAQ更新——新增LangGraph相关问题；(5) 营销内容——将M5课程预告发布到各渠道，制作LangGraph vs LangChain对比信息图；(6) 课程发布——将M5-1/M5-2/M5-3课程发布到课程平台。验证标准：3节课发布上线，博客与营销内容就绪。</span>
+        <span class="deliverable">交付物：课程笔记3份、LangGraph架构图.png、多Agent协作架构图.png、博客文章3篇、产品开发周报.md、FAQ更新版.md、M5前3节课程线上发布</span>
+      </li>
+    </ul>
+  </div>
+
+  <!-- ==================== 第15周 ==================== -->
+  <div class="week-card">
+    <div class="week-header">
+      <span class="week-num">第15周</span>
+      <span class="week-title">M5 LangGraph多Agent系统（下）：人机协作、监控调试、模块验收</span>
+      <span class="week-goal">本周目标：完成M5模块剩余2节课程与1节整合验收课，产品具备完整多Agent工作流能力</span>
+    </div>
+    <ul class="day-list">
+      <li>
+        <span class="day-label">周一</span>
+        <span class="task-desc">【课程录制 M5-4 人机协作Agent】录制人机协作Agent课程。核心内容包括：(1) 人机协作（Human-in-the-Loop）的必要性——完全自动化Agent的风险（错误决策/幻觉/安全风险）、人机协作的价值（人工把关/关键决策/质量保证）、人机协作的适用场景（高风险操作/创意任务/合规审查）；(2) LangGraph人机交互机制——interrupt_before（在指定节点执行前暂停等待人工确认）、interrupt_after（在指定节点执行后暂停等待人工确认）、使用Command(resume=...)恢复执行、人工修改状态后恢复（如修改检索结果后继续生成）、超时自动继续机制；(3) 人工审批工作流——构建文档发布审批工作流：AI生成文档→暂停等待人工审核→人工批准/拒绝/修改→批准则发布/拒绝则返回修改/修改后重新审核，完整实现；(4) 人工反馈集成——在Agent执行过程中收集人工反馈（对中间结果的评分/修改/建议）、将反馈注入状态影响后续执行、反馈数据用于Agent优化（如RLAIF）；(5) 人机协作UI设计——人工确认界面的设计（展示待确认内容/提供批准/拒绝/修改选项/显示Agent思考过程）、移动端审批支持（通过微信/钉钉推送审批通知）；(6) 多人协作——多个人类用户参与Agent工作流（如多人审核/多人讨论）、任务分配与通知机制、协作者权限管理；(7) 实战——构建一个人机协作的知识库问答系统：AI检索并生成答案→暂停等待用户确认答案方向→用户确认或调整→AI根据反馈优化答案→用户最终确认→答案入库。要求包含完整的人机协作工作流实现。</span>
+        <span class="deliverable">交付物：M5-4课程视频（55-65分钟）、配套PPT、人机协作Agent代码（含审批工作流）、人机协作UI设计文档.md</span>
+      </li>
+      <li>
+        <span class="day-label">周二</span>
+        <span class="task-desc">【产品开发 产品人机协作与多Agent功能】在产品中实现人机协作与多Agent功能。具体任务：(1) 人机协作节点——在HumanNode基础上增强：支持审批通知推送（邮件/站内通知）、审批超时自动处理（可配置超时策略：自动通过/自动拒绝/继续等待）、审批历史记录、移动端审批页面（响应式H5页面）；(2) 多Agent工作流模板——预置多Agent工作流模板：多Agent知识库问答（Supervisor+检索Agent+生成Agent+审核Agent）、文档处理流水线（解析Agent→分块Agent→分类Agent→摘要Agent→入库Agent）、智能客服（路由Agent→FAQ Agent→RAG Agent→工单Agent）；(3) Agent间通信——实现Agent间消息传递机制（通过共享状态传递数据）、Agent间任务委托（Agent A可以请求Agent B执行任务）、Agent执行结果汇总；(4) 工作流执行监控——开发工作流执行监控页面：实时展示工作流执行进度（节点状态时间线）、每个节点的输入输出详情、执行耗时统计、错误告警、支持从失败节点重试；(5) 工作流版本管理——支持工作流定义的版本管理（保存历史版本/版本对比/回滚到历史版本），工作流修改后不影响正在运行的实例；(6) 工作流权限控制——基于角色的权限控制（管理员可编辑工作流/普通用户只能执行预置工作流）、工作流执行权限分配。验证标准：人机协作可用，3+多Agent工作流模板可用，执行监控实时展示。</span>
+        <span class="deliverable">交付物：人机协作增强代码（通知/超时/历史/移动端）、3+多Agent工作流模板、工作流执行监控页面、版本管理模块、权限控制</span>
+      </li>
+      <li>
+        <span class="day-label">周三</span>
+        <span class="task-desc">【课程录制 M5-5 Agent监控与调试】录制Agent监控与调试课程。核心内容包括：(1) Agent可观测性概述——Agent系统的监控挑战（执行路径不确定/多步骤/多Agent交互）、可观测性三大支柱（日志/指标/追踪）在Agent系统中的应用；(2) LangSmith集成——LangSmith的简介与注册、LangChain/LangGraph与LangSmith的集成配置、Trace（追踪）的查看与分析（每个节点的输入输出/耗时/Token使用）、在LangSmith中调试Agent执行流程、LangSmith的评估功能（Dataset+Evaluator自动评估Agent质量）；(3) LangGraph Studio——LangGraph Studio的可视化调试（查看图的执行流程/节点状态变化/中间结果）、Studio的交互式执行（逐步执行/断点调试/状态修改）、Studio的部署与管理；(4) 自定义监控——在Agent节点中添加自定义监控指标（执行耗时/成功率/Token消耗/成本）、将监控数据推送到Prometheus、在Grafana中创建Agent监控仪表盘；(5) Agent日志设计——结构化日志（JSON格式记录节点名/输入/输出/耗时/状态/错误信息）、日志的分级与过滤、日志的聚合与分析（使用ELK/Loki）；(6) Agent调试技巧——常见Agent问题的排查方法（无限循环/错误决策/工具选择错误/状态污染）、断点调试技巧、A/B测试Agent不同配置的效果对比；(7) Agent评估——构建Agent评估数据集（输入-预期输出对）、评估指标设计（任务完成率/步骤数/Token消耗/延迟/用户满意度）、自动化评估流程（定期运行评估生成报告）；(8) 实战——为一个多Agent系统添加完整的监控与调试能力（LangSmith追踪+自定义指标+Grafana仪表盘+评估流程）。要求包含LangSmith集成实战和完整监控方案。</span>
+        <span class="deliverable">交付物：M5-5课程视频（55-65分钟）、配套PPT、LangSmith集成代码、Agent监控仪表盘配置、Agent评估框架代码、调试技巧文档.md</span>
+      </li>
+      <li>
+        <span class="day-label">周四</span>
+        <span class="task-desc">【产品开发 产品Agent监控与调试集成】在产品中集成Agent监控与调试能力。具体任务：(1) LangSmith集成——在后端配置LangSmith API Key，所有LangChain/LangGraph调用自动上报Trace到LangSmith，在管理员后台添加LangSmith Trace查看入口（嵌入式iframe或链接跳转）；(2) Agent监控仪表盘——在管理员后台开发Agent监控页面：展示Agent执行统计（总执行次数/成功率/平均耗时/平均Token消耗/平均成本）、执行趋势图（按天/周统计）、Agent类型分布（工具调用Agent/RAG Agent/多Agent工作流分布）、错误率与错误类型分布、Top 10慢请求分析；(3) Agent执行追踪——记录每次Agent执行的完整追踪信息（节点执行序列/每步输入输出/耗时/Token使用）到workflow_logs表，开发追踪详情查看页面（时间线展示执行流程，可展开每步详情）；(4) Agent评估系统——构建Agent评估模块：管理员可创建评估数据集（上传问答对）、配置评估指标（任务完成率/答案准确率/引用准确率）、触发评估运行并生成报告、评估结果趋势追踪；(5) Agent调试工具——在管理员后台开发Agent调试工具：输入测试用例→选择Agent配置→执行→查看完整执行流程与中间状态→对比不同配置的执行效果；(6) 告警规则——配置Agent监控告警（成功率<90%/平均耗时>30s/错误率>10%时告警）。验证标准：Agent监控仪表盘可用，执行追踪可查看，评估系统可运行，调试工具可用。</span>
+        <span class="deliverable">交付物：LangSmith集成配置、Agent监控仪表盘前端页面、执行追踪模块、Agent评估系统、Agent调试工具、告警配置</span>
+      </li>
+      <li>
+        <span class="day-label">周五</span>
+        <span class="task-desc">【课程录制 M5模块整合与验收】录制M5模块整合课程。核心内容包括：(1) LangGraph五大主题串讲——核心概念（状态图基础）→条件路由（复杂控制流）→多Agent协作（专业化分工）→人机协作（人工把关）→监控调试（可观测性），五大主题的逻辑关系与进阶路线；(2) 从单Agent到多Agent的演进——单Agent（LangChain AgentExecutor）→简单多Agent（LangGraph Supervisor）→复杂多Agent（层级化/网络化）→人机协作Agent的演进路线与适用场景分析；(3) 企业级Agent系统架构——展示完整的企业级Agent系统架构图（用户层→API层→工作流引擎层→Agent层[Supervisor/Worker Agents]→工具层→数据层→监控层），各层职责与技术选型；(4) LangGraph最佳实践——状态设计原则、节点粒度控制、错误处理策略、性能优化（并行化/缓存/批处理）、安全控制（权限/审计/限流）；(5) M5模块知识思维导图——制作M5模块完整知识图谱；(6) 综合实战项目说明——构建一个企业知识库多Agent系统：Supervisor Agent管理→检索Agent（混合检索）→分析Agent（内容分析与质量评估）→生成Agent（答案生成与引用标注）→审核Agent（答案质量校验与人工确认），支持人机协作与完整监控；(7) 常见陷阱与避坑指南——状态设计不当导致数据丢失、循环终止条件缺失导致无限循环、多Agent通信开销过大、人机交互阻塞导致超时等问题的解决方案。要求包含完整多Agent系统Demo和知识思维导图。</span>
+        <span class="deliverable">交付物：M5整合课程视频（60-70分钟）、配套PPT、企业级多Agent系统源码、M5知识思维导图（xmind/png）、避坑指南.md</span>
+      </li>
+      <li>
+        <span class="day-label">周六</span>
+        <span class="task-desc">【内容输出 第15周内容储备 + M5模块验收】整理本周内容并完成M5模块验收。具体任务：(1) 3节课程笔记整理；(2) 博客文章3篇——第1篇《人机协作Agent：让AI学会等待人工确认》、第2篇《Agent可观测性：用LangSmith监控与调试Agent系统》、第3篇《企业级多Agent系统架构：从Supervisor到人机协作》；(3) M5模块验收报告——三维验收：课程完成度（5节课程录制质量）、代码质量（工作流引擎代码规范/测试覆盖率）、产品功能（工作流引擎/可视化编辑器/多Agent模板/人机协作/监控调试是否全部可用），出具验收结论；(4) 产品M5阶段演示视频——录制10分钟演示视频，展示多Agent工作流编辑与执行、人机协作审批流程、Agent监控仪表盘；(5) 课程发布——将M5-4/M5-5/M5整合课程发布到课程平台；(6) FAQ更新。验收标准：M5模块5节课程全部完成并上线，产品具备多Agent工作流能力，验收报告通过。</span>
+        <span class="deliverable">交付物：课程笔记3份、博客文章3篇（1500+字/篇）、M5模块验收报告.md、产品M5阶段演示视频（10分钟）、M5后3节课程线上发布、FAQ更新版.md</span>
+      </li>
+    </ul>
+  </div>
+
+  <!-- ==================== 第16周 ==================== -->
+  <div class="week-card">
+    <div class="week-header">
+      <span class="week-num">第16周</span>
+      <span class="week-title">M6 生产级部署与可观测性（上）：部署架构、CI/CD、日志监控</span>
+      <span class="week-goal">本周目标：完成M6模块前3节课程录制，产品完成生产级部署优化与可观测性体系建设</span>
+    </div>
+    <ul class="day-list">
+      <li>
+        <span class="day-label">周一</span>
+        <span class="task-desc">【课程录制 M6-1 生产部署架构】录制AI应用生产部署架构课程。核心内容包括：(1) AI应用部署的特殊挑战——大模型API依赖（延迟/限流/成本）、GPU资源管理（Embedding/Reranker模型推理）、向量数据库运维（Milvus集群管理）、异步任务处理（文档处理流水线）、长连接管理（SSE流式输出）；(2) 部署架构设计——单体部署 vs 微服务部署的选择标准、AI应用的推荐架构（API网关→应用服务→AI服务层→数据层→基础设施层）、各层的职责与技术选型；(3) 容器编排——Docker Compose（单机部署，适合中小规模）vs Kubernetes（集群部署，适合大规模）的对比与选择、K8s核心概念（Pod/Service/Deployment/Ingress/ConfigMap/Secret）在AI应用部署中的应用、编写K8s部署YAML（Deployment/Service/Ingress/HPA）；(4) API网关——Nginx/Traefik/Kong作为API网关的对比、API网关在AI应用中的职责（路由/限流/认证/日志/监控）、配置示例；(5) 负载均衡——轮询/加权轮询/最少连接/IP哈希等负载均衡策略、AI应用的特殊负载均衡考虑（GPU资源感知/长连接保持）；(6) 数据库高可用——PostgreSQL主从复制与故障转移、Redis哨兵模式与集群模式、Milvus集群部署与数据分片、Elasticsearch集群配置；(7) CDN与边缘计算——静态资源CDN加速、API边缘缓存、Cloudflare Workers在AI应用中的应用；(8) 多环境管理——开发/测试/预发布/生产环境的配置管理、环境隔离策略、数据库与缓存的环境隔离。要求包含完整的K8s部署YAML示例和架构设计案例。</span>
+        <span class="deliverable">交付物：M6-1课程视频（55-65分钟）、配套PPT、K8s部署YAML模板、生产架构设计文档.md、AI应用部署架构图.png</span>
+      </li>
+      <li>
+        <span class="day-label">周二</span>
+        <span class="task-desc">【产品开发 产品生产环境优化】对产品进行生产环境深度优化。具体任务：(1) K8s迁移准备——编写产品全部服务的K8s部署YAML（frontend/backend/postgresql/redis/milvus/elasticsearch），配置资源限制（requests/limits）、配置健康检查（liveness/readiness probe）、配置HPA自动伸缩（CPU>70%自动扩容）、配置ConfigMap与Secret管理配置与敏感信息；(2) API网关优化——配置Nginx/Traefik作为API网关：路由规则（前端/后端/API/WebSocket/SSE分离路由）、限流配置（全局限流/按用户限流/按IP限流）、认证前置（JWT验证在网关层完成）、请求日志记录；(3) 数据库优化——PostgreSQL配置优化（连接池大小/shared_buffers/work_mem/max_connections）、添加慢查询日志、创建关键查询的复合索引、配置PgBouncer连接池中间件；Redis配置优化（maxmemory策略/持久化策略）；(4) Milvus生产优化——配置Milvus集群模式（多QueryNode/DataNode）、HNSW索引参数调优（根据数据量调整M/ef_construction/ef_search）、配置Milvus资源限制；(5) 异步任务优化——Celery Worker配置优化（并发数/预取配置/任务超时）、配置Celery Beat定时任务（定期清理过期数据/定期重建索引/定期评估RAG质量）、配置任务优先级队列；(6) 缓存策略优化——多级缓存设计（浏览器缓存→CDN缓存→Nginx缓存→Redis缓存→数据库）、缓存预热、缓存穿透/击穿/雪崩防护。验证标准：K8s部署YAML可用，网关限流生效，数据库慢查询消除，缓存命中率>80%。</span>
+        <span class="deliverable">交付物：K8s部署YAML全套、API网关配置（限流/认证/日志）、数据库优化配置与索引、Milvus集群配置、Celery优化配置、多级缓存设计与实现</span>
+      </li>
+      <li>
+        <span class="day-label">周三</span>
+        <span class="task-desc">【课程录制 M6-2 CI/CD流水线】录制CI/CD流水线课程。核心内容包括：(1) CI/CD核心概念——Continuous Integration（持续集成：代码合并时自动测试）、Continuous Delivery（持续交付：自动部署到预发布环境）、Continuous Deployment（持续部署：自动部署到生产环境）的区别与价值；(2) GitHub Actions——GitHub Actions的核心概念（Workflow/Job/Step/Action/Runner）、编写workflow YAML（触发条件/jobs定义/steps编排/环境变量/密钥管理）、常用Action（actions/checkout/actions/setup-python/actions/cache/docker/build-push-action）、条件执行与矩阵构建；(3) CI流程设计——代码推送触发CI：代码格式检查（Ruff/ESLint）→单元测试（pytest/Jest）→代码覆盖率检查（>80%）→安全扫描（pip-audit/npm audit/Trivy）→Docker镜像构建→镜像扫描，任一环节失败则阻止合并；(4) CD流程设计——代码合并到main分支触发CD：构建生产镜像→推送镜像仓库→部署到预发布环境→集成测试→人工审批→部署到生产环境→健康检查→通知团队；(5) 多环境部署策略——蓝绿部署（Blue-Green：两套环境切换）、金丝雀部署（Canary：逐步流量切换）、滚动部署（Rolling：逐个替换）的对比与实现；(6) 数据库迁移CI/CD——Alembic迁移脚本版本管理、迁移在CI中自动测试、生产环境迁移的回滚策略；(7) 回滚机制——自动回滚触发条件（健康检查失败/错误率飙升）、回滚到上一个稳定版本的自动化流程、数据库迁移回滚的注意事项；(8) GitOps——ArgoCD/Flux的GitOps理念（Git作为唯一真相源/声明式部署/自动同步）、GitOps在AI应用部署中的实践。要求包含完整的GitHub Actions workflow YAML和部署策略实战。</span>
+        <span class="deliverable">交付物：M6-2课程视频（50-60分钟）、配套PPT、GitHub Actions workflow YAML模板（CI+CD）、部署策略对比文档.md、回滚方案文档.md</span>
+      </li>
+      <li>
+        <span class="day-label">周四</span>
+        <span class="task-desc">【产品开发 产品CI/CD流水线完善】完善产品的CI/CD流水线。具体任务：(1) CI流水线完善——配置GitHub Actions CI workflow：代码推送/PR时触发→Ruff代码检查→pytest单元测试（覆盖率>80%）→前端ESLint+Jest测试→Docker镜像构建→Trivy镜像安全扫描→镜像推送（仅main分支），配置并行Job加速CI（后端测试与前端测试并行）；(2) CD流水线完善——配置CD workflow：main分支推送触发→构建生产镜像→部署到Staging环境→Staging环境集成测试→手动审批（GitHub Environment Protection Rules）→部署到Production→健康检查→Slack/钉钉通知；(3) 数据库迁移自动化——在CD流程中集成Alembic迁移：部署前自动执行alembic upgrade head→迁移失败则停止部署并告警→配置迁移回滚预案（alembic downgrade）；(4) 蓝绿部署实现——配置两套生产环境（Blue/Green），通过Nginx upstream切换流量，新版本部署到非活跃环境→健康检查通过→切换流量→旧版本保持一段时间作为回滚备份；(5) 自动回滚——配置健康检查脚本（部署后连续检查3次/api/health，任一失败则自动回滚到上一版本），配置Prometheus告警触发的自动回滚（错误率>10%持续2分钟则回滚）；(6) 部署通知——集成Slack/钉钉Webhook，部署开始/成功/失败/回滚时自动通知团队，通知包含部署版本/环境/变更摘要/回滚链接。验证标准：CI流水线全流程通过，CD可自动部署到生产并支持回滚。</span>
+        <span class="deliverable">交付物：CI workflow YAML（完整流水线）、CD workflow YAML（含审批/蓝绿/回滚）、数据库迁移自动化、自动回滚脚本、部署通知集成</span>
+      </li>
+      <li>
+        <span class="day-label">周五</span>
+        <span class="task-desc">【课程录制 M6-3 日志与监控】录制日志与监控课程。核心内容包括：(1) 可观测性三支柱——日志（Logs：离散事件记录）、指标（Metrics：聚合数值数据）、追踪（Traces：请求全链路追踪）的定义与关系，三者如何配合实现系统可观测性；(2) 日志系统——结构化日志（JSON格式：timestamp/level/logger/message/request_id/extra fields）、Python logging配置（Handler/Formatter/Filter/日志分级）、日志中间件（FastAPI中间件记录每个请求的方法/路径/状态码/耗时/请求ID）、日志收集架构（应用→Filebeat→Logstash→Elasticsearch→Kibana 或 应用→Promtail→Loki→Grafana）、日志查询与分析（Kibana KQL查询/日志聚合/异常检测）；(3) 指标监控——Prometheus指标类型（Counter/Gauge/Histogram/Summary）、Python应用集成Prometheus client（prometheus_fastapi_instrumentator自动暴露HTTP指标/自定义业务指标）、Prometheus配置（scrape_config/告警规则Alertmanager）、Grafana仪表盘设计（系统指标/应用指标/业务指标三层仪表盘）；(4) 分布式追踪——OpenTelemetry标准与集成、Python应用集成OpenTelemetry（自动注入Trace ID/跨服务传播）、Jaeger/Zipkin追踪查看与分析、追踪在AI应用中的价值（查看RAG全链路：检索→重排序→生成的耗时分布）；(5) 告警系统——Alertmanager告警路由与分组、告警规则设计（基于指标阈值/基于日志异常/基于追踪延迟）、告警渠道（邮件/Slack/钉钉/Webhook）、告警抑制与静默（避免告警风暴）；(6) AI应用特有监控——大模型API调用监控（调用量/延迟/错误率/Token消耗/成本）、向量检索监控（检索延迟/Recall率/索引大小）、Agent执行监控（步骤数/成功率/循环检测）、RAG质量监控（RAGAS指标/用户反馈）；(7) 实战——为AI应用构建完整的可观测性体系：结构化日志+Prometheus指标+OpenTelemetry追踪+Grafana仪表盘+Alertmanager告警。要求包含完整的监控方案与仪表盘配置。</span>
+        <span class="deliverable">交付物：M6-3课程视频（55-65分钟）、配套PPT、日志收集配置代码、Prometheus+Grafana配置、OpenTelemetry集成代码、告警规则配置、可观测性架构图.png</span>
+      </li>
+      <li>
+        <span class="day-label">周六</span>
+        <span class="task-desc">【内容输出 第16周内容储备】整理本周内容。具体任务：(1) 3节课程笔记整理，重点制作生产部署架构图与可观测性架构图；(2) 博客文章3篇——第1篇《AI应用生产部署：从Docker到Kubernetes的进阶之路》、第2篇《CI/CD流水线设计：让AI应用部署自动化》、第3篇《AI应用可观测性：日志、指标、追踪三支柱实践》；(3) 产品开发周报——记录生产环境优化与CI/CD完善进展；(4) FAQ更新——新增部署与运维相关问题；(5) 课程发布——将M6-1/M6-2/M6-3课程发布到课程平台；(6) 运维手册编写——基于本周工作编写产品运维手册（部署流程/监控配置/告警处理/故障排查/备份恢复）。验证标准：3节课发布上线，运维手册可指导独立运维。</span>
+        <span class="deliverable">交付物：课程笔记3份、生产部署架构图.png、可观测性架构图.png、博客文章3篇、产品开发周报.md、FAQ更新版.md、M6前3节课程线上发布、产品运维手册.md</span>
+      </li>
+    </ul>
+  </div>
+
+  <!-- ==================== 第17周 ==================== -->
+  <div class="week-card">
+    <div class="week-header">
+      <span class="week-num">第17周</span>
+      <span class="week-title">M6 生产级部署与可观测性（下）：性能优化、安全加固、模块验收</span>
+      <span class="week-goal">本周目标：完成M6模块剩余2节课程与1节整合验收课，产品达到生产级性能与安全标准</span>
+    </div>
+    <ul class="day-list">
+      <li>
+        <span class="day-label">周一</span>
+        <span class="task-desc">【课程录制 M6-4 性能优化】录制AI应用性能优化课程。核心内容包括：(1) 性能优化方法论——性能优化的基本原则（测量优先/瓶颈驱动/渐进优化）、性能分析工具链（py-spy火焰图/pytest-benchmark/JMeter/Locust/WebPageTest）、性能优化的层次（前端/网络/后端/数据库/AI服务）；(2) 前端性能优化——Core Web Vitals（LCP/FID/CLS）优化、代码分割与懒加载（Next.js动态导入）、图片优化（WebP/AVIF/懒加载/响应式图片）、前端缓存（HTTP缓存/Service Worker/IndexedDB）、Bundle分析与优化（webpack-bundle-analyzer/tree-shaking）、首屏加载优化（SSR/SSG/预渲染）；(3) 后端性能优化——异步编程（asyncio/FastAPI异步路由）、数据库查询优化（N+1问题排查/批量查询/查询缓存）、连接池优化（数据库连接池/HTTP连接池）、Python性能优化（Cython/Numba/多进程）、API响应优化（分页/字段筛选/压缩）；(4) AI服务性能优化——大模型调用优化（流式输出/批处理/并发调用/结果缓存）、Embedding计算优化（批量计算/缓存/GPU加速）、向量检索优化（HNSW参数调优/量化/分区）、RAG流水线优化（并行检索/流水线化/缓存热点查询）；(5) 缓存策略——多级缓存架构（浏览器→CDN→Nginx→Redis→数据库）、缓存键设计、缓存失效策略（TTL/LRU/LFU）、缓存一致性保证（Cache Aside/Write Through/Write Behind）；(6) 并发与吞吐量优化——异步任务队列（Celery并发配置）、Worker进程/线程配置、数据库连接池大小调优、API并发限流与排队；(7) 性能测试——负载测试（Locust模拟并发用户）、压力测试（逐步加压到系统极限）、稳定性测试（长时间高负载运行）、性能基准建立与持续监控。要求包含完整的性能优化案例与前后对比数据。</span>
+        <span class="deliverable">交付物：M6-4课程视频（55-65分钟）、配套PPT、性能优化代码示例集、Locust负载测试脚本、性能优化前后对比报告.md</span>
+      </li>
+      <li>
+        <span class="day-label">周二</span>
+        <span class="task-desc">【产品开发 产品性能优化实战】对产品进行全面的性能优化。具体任务：(1) 前端性能优化——Next.js页面分析（使用@next/bundle-analyzer），优化Bundle大小（目标<300KB首屏）、图片优化（转换为WebP/配置懒加载）、配置Service Worker缓存静态资源、优化首屏LCP（<2.5s），使用Lighthouse审计评分（目标>90）；(2) 后端API优化——排查并修复N+1查询问题（使用SQLAlchemy eager loading）、API响应添加gzip压缩、配置数据库连接池（大小20/max_overflow=10）、实现API响应缓存（热点查询缓存到Redis，命中率>80%）、优化分页查询（cursor分页替代offset分页）；(3) RAG流水线优化——向量检索与BM25检索并行执行（节省50%检索时间）、热点查询结果缓存（Redis缓存Top-100热门查询的检索结果）、Embedding缓存命中率提升（优化缓存键设计）、Milvus HNSW参数调优（ef_search=128，检索延迟<50ms）；(4) 异步任务优化——Celery Worker并发数调优（根据CPU核心数配置）、文档处理流水线并行化（分块与向量化并行）、配置任务优先级（用户交互任务高优先级/后台处理任务低优先级）；(5) 负载测试——使用Locust模拟100并发用户进行负载测试，测试场景：注册登录/创建知识库/上传文档/RAG问答/Agent调用，目标：100并发下平均响应<2s，错误率<1%，吞吐量>50 req/s；(6) 性能基准建立——建立各核心API的性能基准（P50/P95/P99延迟），配置持续性能监控（Grafana展示API延迟趋势），配置性能退化告警（P95延迟增加50%时告警）。验证标准：前端Lighthouse>90，API P95<1s，RAG端到端<3s，100并发负载测试通过。</span>
+        <span class="deliverable">交付物：前端优化代码与Lighthouse报告、后端API优化代码、RAG流水线优化代码、Locust负载测试脚本与报告.md、性能基准文档.md</span>
+      </li>
+      <li>
+        <span class="day-label">周三</span>
+        <span class="task-desc">【课程录制 M6-5 安全加固】录制AI应用安全加固课程。核心内容包括：(1) AI应用安全威胁模型——OWASP Top 10在AI应用中的体现、AI特有安全威胁（Prompt注入/模型逆向/数据投毒/对抗样本/模型窃取）、安全防护的纵深防御理念；(2) 认证与授权安全——JWT安全最佳实践（短时效Token/Refresh Token/黑名单机制）、OAuth 2.0集成安全、基于角色的访问控制（RBAC）设计、API密钥管理（加密存储/定期轮换/使用范围限制）、多因素认证（MFA）；(3) API安全——API限流（防暴力破解/防DDoS）、CORS配置安全、CSRF防护、请求参数校验（Pydantic校验/SQL注入防护/XSS防护）、敏感数据脱敏（日志脱敏/响应脱敏）、API版本管理与废弃策略；(4) Prompt安全——Prompt注入攻击原理与防御（输入过滤/输出检测/系统Prompt保护/沙箱隔离）、敏感信息泄露防护（防止模型泄露系统Prompt/API Key/内部数据）、Prompt审计与日志；(5) 数据安全——数据加密（传输加密TLS/存储加密AES）、PII（个人身份信息）检测与脱敏、数据访问审计日志、数据保留与销毁策略、GDPR/数据隐私合规；(6) 模型安全——模型API Key保护（环境变量/密钥管理服务/使用代理）、模型调用审计（记录所有模型调用/检测异常使用）、模型降级与熔断（防止模型服务故障影响整体系统）、成本控制（防止恶意调用导致高额API费用）；(7) 基础设施安全——Docker容器安全（非root用户/只读文件系统/资源限制）、K8s安全（Pod Security Standards/Network Policies/RBAC）、网络安全（VPC/安全组/WAF）、密钥管理（Kubernetes Secrets/HashiCorp Vault/AWS Secrets Manager）；(8) 安全审计与合规——安全扫描自动化（Trivy镜像扫描/Bandit Python安全扫描/npm audit）、渗透测试准备、合规框架（SOC2/ISO27001要点）、安全事件响应流程。要求包含完整的安全加固方案与代码示例。</span>
+        <span class="deliverable">交付物：M6-5课程视频（60-70分钟）、配套PPT、安全加固代码示例集、安全检查清单.md、安全威胁模型文档.md</span>
+      </li>
+      <li>
+        <span class="day-label">周四</span>
+        <span class="task-desc">【产品开发 产品安全加固】对产品进行全面的安全加固。具体任务：(1) 认证授权加固——JWT Token缩短有效期（Access Token 30分钟/Refresh Token 7天）、实现Token黑名单（用户登出/密码修改时加入黑名单）、实现API调用频率限制（普通用户100次/分钟、免费用户10次/分钟）、配置RBAC权限校验中间件；(2) API安全加固——所有API参数添加Pydantic校验（类型/长度/格式/范围）、SQL注入防护（使用ORM参数化查询/禁用原生SQL拼接）、XSS防护（前端输出转义/CSP头部配置）、CORS严格配置（仅允许指定域名）、敏感数据脱敏（API Key/手机号/邮箱在日志与响应中脱敏）；(3) Prompt安全——实现Prompt注入检测（正则匹配+模型检测双层防护）、系统Prompt加密存储（不直接暴露给前端）、用户输入清洗（去除特殊指令标记）、模型输出安全检测（检测是否泄露系统信息）；(4) 数据安全——API Key使用AES加密存储、数据库连接使用SSL、敏感字段（密码/API Key）加密存储、实现PII检测（检测用户输入中的身份证号/手机号/银行卡号并脱敏）、配置数据访问审计日志；(5) 成本控制——实现用户级Token消耗限额（免费用户每日10万Token/付费用户每日100万Token）、模型调用异常检测（短时间内大量调用时告警/限制）、实现API调用熔断（Token消耗超过阈值时熔断）；(6) 安全扫描集成——CI流水线集成Bandit（Python安全扫描）、npm audit（前端依赖扫描）、Trivy（Docker镜像扫描），发现高危漏洞时阻止部署；(7) 安全审计——记录所有管理员操作日志、记录所有API Key访问日志、定期生成安全审计报告。验证标准：安全扫描无高危漏洞，Prompt注入防护生效，限流与成本控制生效。</span>
+        <span class="deliverable">交付物：认证授权加固代码、API安全加固代码、Prompt安全防护代码、数据安全模块、成本控制模块、安全扫描CI集成、安全审计日志模块</span>
+      </li>
+      <li>
+        <span class="day-label">周五</span>
+        <span class="task-desc">【课程录制 M6模块整合与验收】录制M6模块整合课程。核心内容包括：(1) 生产级部署五大主题串讲——部署架构（基础设施）→CI/CD（自动化）→日志监控（可观测性）→性能优化（效率）→安全加固（防护），五大主题构成生产级AI应用的完整运维体系；(2) 从开发到生产的完整路径——本地开发→Docker容器化→CI/CD自动化→K8s集群部署→监控告警→性能优化→安全加固的全路径回顾；(3) 生产级AI应用运维清单——部署检查清单（服务健康/数据备份/监控配置/告警配置/日志收集）、性能检查清单（响应时间/吞吐量/缓存命中率/资源利用率）、安全检查清单（认证授权/注入防护/数据加密/安全扫描），形成可操作的运维SOP；(4) AI应用运维的特殊考虑——大模型API成本管理与优化、GPU资源调度与管理、向量数据库运维（索引重建/数据迁移/容量规划）、异步任务运维（任务积压监控/失败重试/死信队列处理）；(5) M6模块知识思维导图——制作M6模块完整知识图谱；(6) 综合实战项目说明——将Phase 0的产品从本地环境升级为生产级部署，要求：K8s部署+CI/CD+完整监控+性能优化+安全加固，达到SLA 99.9%可用性；(7) 常见运维陷阱与避坑指南——数据库连接池耗尽、Milvus内存溢出、Celery任务积压、模型API限流、磁盘空间不足等常见运维问题的预防与解决。要求包含完整的生产级部署Demo和运维SOP。</span>
+        <span class="deliverable">交付物：M6整合课程视频（60-70分钟）、配套PPT、生产级部署完整配置、M6知识思维导图（xmind/png）、运维SOP文档.md、避坑指南.md</span>
+      </li>
+      <li>
+        <span class="day-label">周六</span>
+        <span class="task-desc">【内容输出 第17周内容储备 + M6模块验收】整理本周内容并完成M6模块验收。具体任务：(1) 3节课程笔记整理；(2) 博客文章3篇——第1篇《AI应用性能优化全攻略：从前端到后端到AI服务》、第2篇《AI应用安全加固：Prompt注入防护与数据安全》、第3篇《生产级AI应用运维：从部署到监控到安全的一体化方案》；(3) M6模块验收报告——三维验收：课程完成度（5节课程录制质量）、代码质量（部署配置/CI-CD/监控/安全代码规范）、产品功能（K8s部署/CI-CD流水线/监控告警/性能优化/安全加固是否全部完成），出具验收结论；(4) 产品M6阶段演示视频——录制10分钟演示视频，展示CI/CD自动部署流程、Grafana监控仪表盘、负载测试结果、安全扫描报告；(5) 课程发布——将M6-4/M6-5/M6整合课程发布到课程平台；(6) FAQ更新。验收标准：M6模块5节课程全部完成并上线，产品达到生产级标准，验收报告通过。</span>
+        <span class="deliverable">交付物：课程笔记3份、博客文章3篇（1500+字/篇）、M6模块验收报告.md、产品M6阶段演示视频（10分钟）、M6后3节课程线上发布、FAQ更新版.md</span>
+      </li>
+    </ul>
+  </div>
+
+  <!-- ==================== 第18周 ==================== -->
+  <div class="week-card">
+    <div class="week-header">
+      <span class="week-num">第18周</span>
+      <span class="week-title">用户反馈整合与课程优化迭代</span>
+      <span class="week-goal">本周目标：收集分析前8周用户反馈，优化课程内容与产品体验，完成产品V1.1版本迭代</span>
+    </div>
+    <ul class="day-list">
+      <li>
+        <span class="day-label">周一</span>
+        <span class="task-desc">【运营/优化 用户反馈深度分析】对前8周的用户反馈进行深度分析。具体任务：(1) 反馈数据汇总——汇总所有渠道的用户反馈（课程讨论区/产品反馈系统/社区/用户访谈/客服对话），分类整理为：课程内容反馈（难度/节奏/深度/实战性/代码质量）、产品体验反馈（功能/Bug/性能/UI/UX）、课程平台反馈（支付/播放/下载/社区）、价格反馈（定价/套餐/优惠）；(2) 量化分析——统计各类型反馈的数量与占比、识别Top 10高频问题、分析反馈趋势（随时间变化）、交叉分析（不同用户群体的反馈差异）；(3) 课程完成度分析——分析各课程的完课率/ drop-off点（哪个时间段流失最多）/评分分布/评价关键词，识别需要优化的课程；(4) 用户行为分析——分析用户学习路径（先学什么后学什么/跳过什么）、产品使用频率（哪些功能用得多/少）、用户留存分析（7日/30日留存率）；(5) 竞品分析——分析2-3个竞品课程/产品的优劣势，找出差异化优势与改进方向；(6) 优化方案制定——基于分析结果制定优化方案：课程内容优化（重录/补充/精简哪些内容）、产品功能优化（新增/改进/移除哪些功能）、运营策略优化（定价/推广/社区调整）。验证标准：反馈分析报告数据详实，优化方案可执行。</span>
+        <span class="deliverable">交付物：用户反馈分析报告.md（含数据统计/趋势分析/Top10问题）、课程完成度分析报告.md、用户行为分析报告.md、竞品分析报告.md、优化方案文档.md</span>
+      </li>
+      <li>
+        <span class="day-label">周二</span>
+        <span class="task-desc">【产品开发 产品V1.1版本迭代】根据用户反馈完成产品V1.1版本迭代。具体任务：(1) Bug修复——修复用户反馈的所有P0/P1 Bug（如SSE断连后不重连、文档上传大文件超时、RAG答案引用标注错位、Agent工具调用偶发超时等），进行回归测试确保不引入新问题；(2) 体验优化——根据UX反馈优化：文档上传增加拖拽支持与进度条、对话界面增加消息编辑与重新生成功能、知识库管理增加批量操作、搜索结果增加高亮匹配关键词、移动端适配优化（响应式布局调整）；(3) 新增功能——根据用户需求新增高频请求功能：文档预览功能（在线预览上传的文档）、知识库导出功能（导出知识库内容为JSON/Excel）、对话导出功能（导出对话记录）、问答历史搜索功能、知识库分享功能（生成分享链接让他人查看）；(4) 性能优化——根据监控数据优化：优化文档处理流水线（大文件分片上传+断点续传）、优化RAG问答（热点问题结果缓存预热）、优化前端（页面切换动画优化/骨架屏减少白屏感）；(5) 版本管理——使用语义化版本号（v1.1.0），编写CHANGELOG记录所有变更，在产品内显示版本更新日志通知用户。验证标准：所有P0/P1 Bug修复，5+新功能上线，用户体验明显提升。</span>
+        <span class="deliverable">交付物：V1.1版本代码（Bug修复+体验优化+5+新功能）、CHANGELOG.md、V1.1版本测试报告.md、V1.1版本上线</span>
+      </li>
+      <li>
+        <span class="day-label">周三</span>
+        <span class="task-desc">【运营/优化 课程内容优化重录】根据用户反馈优化课程内容。具体任务：(1) 课程内容优化清单——根据反馈分析结果，列出需要优化的课程清单：需要重录的课程（内容过时/错误较多/质量不达标）、需要补充内容的课程（深度不够/缺少实战案例/缺少基础概念铺垫）、需要精简的课程（冗余内容/节奏太慢）；(2) 重点课程重录——选择反馈最多的2-3节课进行重录或补充：如M0-1 LLM原理（补充更多图解和动画）、M2-3 LCEL链式调用（增加更多实战案例）、M4-5 RAG基础（补充完整代码走读），重录时注意改进：增加更多可视化图解、放慢语速、增加代码注释、增加"为什么"的解释；(3) 新增补充课程——根据反馈新增2-3节补充课程：如《Python异步编程基础》（为理解LangChain异步打基础）、《Pydantic入门》（为理解数据校验打基础）、《向量数学基础》（为理解Embedding打基础），降低学习门槛；(4) 课程资料优化——优化所有课程的配套资料：PPT排版美化、代码示例增加注释与README、补充每节课的"学习目标"与"知识点检查"；(5) 课程结构优化——优化课程体系页面：增加"前置知识"说明、增加"推荐学习路径"（不同基础的用户推荐不同路径）、增加"学习时间预估"；(6) 课程互动增强——在每节课后添加"课后练习"（3-5道练习题），在课程讨论区置顶"常见问题"帖。验证标准：2-3节课重录/补充完成，2-3节补充课程录制完成，所有课程资料优化完成。</span>
+        <span class="deliverable">交付物：重录/补充课程2-3节、新增基础补充课程2-3节、优化后的全部课程资料、课后练习题集、课程体系页面优化</span>
+      </li>
+      <li>
+        <span class="day-label">周四</span>
+        <span class="task-desc">【产品开发 产品用户体验深度优化】对产品进行用户体验深度优化。具体任务：(1) 用户引导优化——实现新用户引导流程（首次注册后的引导教程：创建知识库→上传文档→提问→查看引用），使用 shepherd.js 或 intro.js 实现步骤引导，降低新用户使用门槛；(2) 空状态优化——为所有空状态页面设计引导内容（如"还没有知识库，点击创建你的第一个知识库"配合插图），引导用户进行下一步操作；(3) 错误提示优化——优化所有错误提示信息（从技术性错误码改为用户友好的提示+建议操作），如"文档上传失败"改为"文档格式不支持，请上传PDF/Word/HTML/Markdown格式的文档"；(4) Loading状态优化——为所有异步操作添加合适的Loading状态（骨架屏/进度条/动画），并添加预估时间或进度百分比，减少用户等待焦虑；(5) 操作反馈优化——所有用户操作添加即时反馈（Toast通知/按钮状态变化/动画效果），如文档上传成功后Toast提示"文档上传成功，正在处理中..."；(6) 快捷键支持——实现常用快捷键（Ctrl+Enter发送消息/Ctrl+K快速搜索/Ctrl+N新建会话），提升高级用户效率；(7) 暗色模式——实现暗色模式切换（CSS变量+Tailwind dark mode），记住用户偏好；(8) 可访问性优化——添加ARIA标签、键盘导航支持、屏幕阅读器兼容，提升可访问性。验证标准：新用户引导流程可用，所有空状态/错误提示/Loading优化完成，暗色模式可用。</span>
+        <span class="deliverable">交付物：新用户引导流程代码、空状态设计、错误提示优化、Loading状态优化、快捷键支持、暗色模式、可访问性优化</span>
+      </li>
+      <li>
+        <span class="day-label">周五</span>
+        <span class="task-desc">【运营/优化 新课程规划与Phase 2内容预研】规划Phase 2新课程并进行内容预研。具体任务：(1) Phase 2课程规划——基于市场调研与用户需求，规划Phase 2的4个新模块：M7 多模态AI应用（图像理解/语音/视频）、M8 Agent安全与治理（深度安全/合规/治理框架）、M9 高级RAG与知识图谱（GraphRAG/多跳推理/知识图谱融合）、M10 AI应用工程化（微服务架构/模型部署/推理优化），每个模块规划5节课的主题与大纲；(2) 技术预研——对Phase 2涉及的关键技术进行预研：多模态模型（GPT-4V/Claude 3 Vision/Llama Vision）的API与能力、GraphRAG的技术原理与实现方案、模型量化与部署（vLLM/TGI/llama.cpp）、AI安全框架与合规要求；(3) 竞品课程调研——调研市面上的Agent/AI应用课程（国外：DeepLearning.AI/LangChain官方课程；国内：极客时间/慕课网相关课程），分析其内容覆盖/定价/教学模式，找出差异化机会；(4) 产品路线图更新——基于Phase 1的运营数据与用户反馈，更新产品路线图：V2.0（多模态支持）、V2.1（知识图谱）、V2.2（企业版功能）、V3.0（多租户SaaS），为每个版本规划核心功能与时间节点；(5) 定价策略优化——基于Phase 1的销售数据与价格反馈，优化定价策略：调整课程套餐价格/推出企业版定价/设计会员订阅制；(6) Phase 2内容日历——制定Phase 2的内容输出计划（10周×3篇博客=30篇博客主题规划）。验证标准：Phase 2课程大纲制定完成，技术预研报告完成，产品路线图更新。</span>
+        <span class="deliverable">交付物：Phase 2课程大纲.md（4模块×5节=20节）、技术预研报告.md、竞品课程调研报告.md、产品路线图V2.md、定价策略优化方案.md、Phase 2内容日历.xlsx</span>
+      </li>
+      <li>
+        <span class="day-label">周六</span>
+        <span class="task-desc">【内容输出 第18周内容储备】整理本周内容。具体任务：(1) 用户反馈优化周报——记录本周基于用户反馈所做的全部优化（课程优化/产品迭代/体验改进），形成周报；(2) 博客文章3篇——第1篇《倾听用户声音：AI课程与产品的8周迭代实录》、第2篇《产品V1.1发布：基于用户反馈的15项改进》、第3篇《Phase 2预告：多模态AI与知识图谱的进阶之路》；(3) 课程发布——将重录/补充的课程与新增基础课程发布到平台，通知已购买学员可免费学习新内容；(4) 用户通知——通过站内通知/邮件/微信群通知所有用户V1.1版本更新内容与新课程上线；(5) 社区运营——在社区发起"V1.1体验反馈"话题，收集用户对新版本的反馈；(6) 运营数据周报——统计本周运营数据（新增用户/活跃用户/课程销量/收入/社区活跃度）。验证标准：优化内容发布上线，用户通知到位，运营数据统计完整。</span>
+        <span class="deliverable">交付物：用户反馈优化周报.md、博客文章3篇、优化课程线上发布、用户通知文案与发送记录、社区运营记录、运营数据周报.md</span>
+      </li>
+    </ul>
+  </div>
+
+  <!-- ==================== 第19周 ==================== -->
+  <div class="week-card">
+    <div class="week-header">
+      <span class="week-num">第19周</span>
+      <span class="week-title">高级功能开发与Phase 2技术预研</span>
+      <span class="week-goal">本周目标：完成产品高级功能开发（知识图谱预研+多模态预研），为Phase 2课程录制做好技术准备</span>
+    </div>
+    <ul class="day-list">
+      <li>
+        <span class="day-label">周一</span>
+        <span class="task-desc">【课程录制/预研 M7多模态AI预研课程】录制多模态AI预研课程。核心内容包括：(1) 多模态AI概述——多模态（文本+图像+语音+视频）AI的定义与价值、单模态vs多模态的区别、多模态AI的应用场景（图像理解/文档OCR/视频分析/语音交互/多模态RAG）；(2) 主流多模态模型——GPT-4o（文本+图像+语音多模态）、Claude 3.5 Sonnet（强大的图像理解能力）、Gemini 1.5 Pro（原生多模态/支持视频）、LLaVA（开源多模态模型）、Qwen-VL（国产开源多模态），各模型的能力对比与API使用；(3) 图像理解API实战——使用GPT-4o/Claude进行图像理解：图像描述/图像问答/图像中文本提取（OCR）/图表数据提取/多图对比，完整API调用代码演示；(4) 语音处理——语音转文字（STT：OpenAI Whisper/阿里云语音识别）、文字转语音（TTS：OpenAI TTS/Azure TTS）、语音克隆技术概述；(5) 多模态RAG概念——传统RAG（纯文本）的局限性、多模态RAG的价值（支持图表/图片/扫描件的问答）、多模态RAG的技术方案（图文混合Embedding/多模态重排序/图文联合检索）；(6) 多模态Agent——Agent处理多模态输入（用户上传图片提问）、Agent生成多模态输出（生成图表/图片）、多模态工具调用（OCR工具/图像生成工具）。要求包含多模态API调用实战和多模态RAG概念讲解。</span>
+        <span class="deliverable">交付物：多模态预研课程视频（55-65分钟）、配套PPT、多模态API调用示例代码、多模态模型能力对比表.xlsx</span>
+      </li>
+      <li>
+        <span class="day-label">周二</span>
+        <span class="task-desc">【产品开发 产品多模态功能预研开发】在产品中预研多模态功能。具体任务：(1) 图像理解集成——在后端集成GPT-4o/Claude Vision API，实现/api/v1/chat/image接口，支持用户上传图片并提问（如"这张图表显示了什么趋势"、"提取这张发票中的信息"），返回模型对图像的理解结果；(2) 多模态文档处理——增强文档解析服务，支持图片型PDF的OCR处理（集成Tesseract或云OCR服务），将扫描件/图片型PDF中的文字提取为可检索文本，支持文档中的图表/图片的理解（将图片发送给多模态模型生成描述，将描述作为文档内容的一部分）；(3) 多模态RAG预研——实现基础的多模态RAG：文档中的图片通过多模态模型生成描述→描述向量化入库→检索时同时匹配文本与图片描述→生成答案时如涉及图片则引用原始图片，开发原型验证可行性；(4) 前端多模态交互——在对话界面支持图片上传（拖拽/粘贴/点击上传），在消息中展示图片缩略图，点击可查看大图，在RAG答案引用中展示引用的图片片段；(5) 语音输入预研——集成Web Speech API实现浏览器端语音输入（语音转文字后作为用户消息发送），评估语音输入的准确率与用户体验；(6) 性能评估——评估多模态功能的性能影响（图像上传/OCR处理/多模态模型调用的延迟与成本），制定优化方案。验证标准：图片问答可用，OCR处理可用，多模态RAG原型验证通过。</span>
+        <span class="deliverable">交付物：图像理解API集成代码、多模态文档解析（OCR）代码、多模态RAG原型代码、前端图片上传与展示组件、语音输入原型、性能评估报告.md</span>
+      </li>
+      <li>
+        <span class="day-label">周三</span>
+        <span class="task-desc">【课程录制/预研 M9知识图谱预研课程】录制知识图谱与GraphRAG预研课程。核心内容包括：(1) 知识图谱基础——知识图谱的定义（实体+关系+属性的三元组结构）、知识图谱 vs 向量数据库（结构化关系vs语义相似性）、知识图谱在AI应用中的价值（多跳推理/关系推理/可解释性）；(2) 知识图谱构建——实体抽取（NER：从文本中识别人名/地名/组织名/概念）、关系抽取（RE：识别实体间的关系）、属性抽取、知识融合（实体对齐/消歧）、知识存储（图数据库Neo4j/JanusGraph/NebulaGraph）；(3) GraphRAG原理——微软GraphRAG论文解读：从文档中抽取实体与关系构建知识图谱→使用社区检测算法（Leiden算法）将图谱划分为层次化社区→为每个社区生成摘要→查询时先检索相关社区摘要再检索具体实体，GraphRAG vs Vector RAG的对比（全局理解vs局部匹配）；(4) 知识图谱与RAG融合——KG-enhanced RAG（用知识图谱增强RAG：实体链接/关系推理/多跳检索）、RAG-enhanced KG（用RAG增强知识图谱：从非结构化文档自动构建知识图谱）、混合检索（向量检索+图检索）；(5) 图数据库Neo4j入门——Neo4j的安装与使用、Cypher查询语言基础（CREATE/MATCH/WHERE/RETURN）、Python集成（neo4j驱动）；(6) 多跳推理——基于知识图谱的多跳推理（如"A公司的CEO毕业的学校在哪个城市"需要两跳推理：A公司→CEO→毕业学校→所在城市）、推理路径的可解释性。要求包含知识图谱构建实战和GraphRAG概念详解。</span>
+        <span class="deliverable">交付物：知识图谱预研课程视频（55-65分钟）、配套PPT、知识图谱构建示例代码、GraphRAG原理图解.png、Neo4j Cypher速查表.md</span>
+      </li>
+      <li>
+        <span class="day-label">周四</span>
+        <span class="task-desc">【产品开发 产品知识图谱功能预研开发】在产品中预研知识图谱功能。具体任务：(1) Neo4j集成——在产品中集成Neo4j图数据库，配置连接与连接池，设计知识图谱的Node与Edge Schema（Document节点/Entity节点/Concept节点，CONTAINS/RELATES_TO/PART_OF关系）；(2) 实体抽取服务——实现EntityExtractor服务，使用LLM从文档分块中抽取实体（人名/地名/组织/概念/技术术语）与关系，返回结构化的三元组列表，支持配置抽取的实体类型与关系类型；(3) 知识图谱构建流水线——扩展文档处理流水线：文档解析→分块→向量化入库（已有）→实体抽取→三元组入Neo4j，使每个知识库同时拥有向量索引与知识图谱；(4) 图谱可视化——使用D3.js/vis.js/Cytoscape.js开发知识图谱可视化前端组件，展示知识库的实体与关系网络，支持缩放/拖拽/筛选/搜索节点，点击节点查看详情与关联文档；(5) 多跳检索预研——实现基于知识图谱的多跳检索原型：用户问题→实体识别→在图谱中查找相关实体→沿关系路径多跳扩展→返回推理路径与相关文档，验证多跳推理的可行性；(6) GraphRAG原型——实现简化版GraphRAG：社区检测（使用networkx的Leiden算法）→社区摘要生成→查询时社区摘要检索+向量检索融合，对比与纯Vector RAG的效果差异。验证标准：知识图谱可构建与可视化，多跳检索原型可用，GraphRAG原型验证通过。</span>
+        <span class="deliverable">交付物：Neo4j集成代码、实体抽取服务、知识图谱构建流水线、图谱可视化前端组件、多跳检索原型、GraphRAG原型代码</span>
+      </li>
+      <li>
+        <span class="day-label">周五</span>
+        <span class="task-desc">【课程录制/预研 M10模型部署与推理优化预研】录制模型部署与推理优化预研课程。核心内容包括：(1) 模型部署概述——为何需要本地部署模型（数据安全/成本控制/延迟优化/无网络依赖）、本地部署的模型类型（LLM/Embedding/Reranker/多模态）、部署方式对比（CPU推理/GPU推理/专用推理服务）；(2) 主流推理框架——vLLM（高吞吐量LLM推理/PagedAttention/连续批处理）、Text Generation Inference（TGI，HuggingFace的推理服务）、llama.cpp（CPU/边缘部署/量化推理）、Ollama（易用的本地模型管理）、Infinity（高性能Embedding/Reranker推理），各框架的特点与适用场景；(3) 模型量化——量化的原理（将FP16权重转换为INT8/INT4减少显存）、量化方法对比（GPTQ/AWQ/GGUF/SmoothQuant）、量化对性能与质量的影响、量化模型的获取与使用；(4) GPU推理优化——KV Cache优化（PagedAttention）、连续批处理（Continuous Batching）、张量并行（Tensor Parallelism）、流水线并行（Pipeline Parallelism）、Speculative Decoding（投机解码）；(5) Embedding/Reranker模型部署——使用Infinity/TEI部署BGE Embedding与Reranker模型、GPU vs CPU性能对比、批量推理优化；(6) 成本优化——自部署 vs API调用的成本对比分析（按月调用量计算盈亏平衡点）、模型选择对成本的影响（大模型vs小模型/开源vs闭源）、混合策略（简单任务用小模型/复杂任务用大模型）；(7) 实战——使用vLLM部署Qwen2.5-7B模型作为本地LLM服务，使用Infinity部署BGE-large-zh作为本地Embedding服务，在产品中切换为本地模型验证功能。要求包含vLLM部署实战和成本分析。</span>
+        <span class="deliverable">交付物：模型部署预研课程视频（60-70分钟）、配套PPT、vLLM部署配置代码、Infinity部署配置代码、成本分析报告.xlsx</span>
+      </li>
+      <li>
+        <span class="day-label">周六</span>
+        <span class="task-desc">【内容输出 第19周内容储备】整理本周内容。具体任务：(1) 3节预研课程笔记整理，重点制作多模态架构图与知识图谱架构图；(2) 博客文章3篇——第1篇《多模态AI应用开发：从图像理解到多模态RAG》、第2篇《GraphRAG技术详解：知识图谱增强的检索增强生成》、第3篇《大模型本地部署指南：vLLM与量化的工程实践》；(3) 产品开发周报——记录多模态与知识图谱预研开发进展；(4) 技术选型文档——基于预研结果编写Phase 2技术选型文档（多模态模型选型/图数据库选型/推理框架选型）；(5) 预研课程发布——将3节预研课程发布到课程平台（作为Phase 2的先导课程）；(6) 社区技术讨论——在社区发起"多模态RAG vs 传统RAG"与"GraphRAG vs Vector RAG"技术讨论话题。验证标准：3节预研课程发布，技术选型文档完成。</span>
+        <span class="deliverable">交付物：课程笔记3份、多模态架构图.png、知识图谱架构图.png、博客文章3篇、产品开发周报.md、Phase 2技术选型文档.md、3节预研课程线上发布</span>
+      </li>
+    </ul>
+  </div>
+
+  <!-- ==================== 第20周 ==================== -->
+  <div class="week-card">
+    <div class="week-header">
+      <span class="week-num">第20周</span>
+      <span class="week-title">Phase 1验收与Phase 2准备</span>
+      <span class="week-goal">本周目标：完成Phase 1全面验收（课程上线+产品V1.1+运营数据），为Phase 2做好准备</span>
+    </div>
+    <ul class="day-list">
+      <li>
+        <span class="day-label">周一</span>
+        <span class="day-label-wrapper"></span>
+        <span class="task-desc">【课程录制 Phase 1模块总览与验收标准】录制Phase 1总览课程。核心内容包括：(1) Phase 1成果回顾——课程上线（M0-M4的27节+M5的5节+M6的5节+预研3节+整合3节=43节课程全部上线）、产品迭代（从本地验证到线上部署/V1.0上线/V1.1优化/多模态与知识图谱预研）、运营成果（用户增长/课程销量/社区建设/内容营销）；(2) M5 LangGraph与M6生产部署核心知识点串讲——LangGraph（状态图/条件路由/多Agent/人机协作/监控调试）、生产部署（架构/CI-CD/监控/性能/安全），两大模块的知识点回顾；(3) Phase 1学习路径回顾——从Phase 0的基础到Phase 1的进阶，学习路径的递进关系（基础理论→框架工具→知识库→多Agent→生产部署）；(4) Phase 1关键数据——课程数据（43节课程/总时长约35小时/完课率/评分）、产品数据（注册用户/DAU/知识库数/文档数/问答次数）、运营数据（收入/获客成本/转化率/社区成员数）；(5) Phase 2预告——预告Phase 2的4大模块（M7多模态/M8安全治理/M9高级RAG/M10工程化）与产品V2.0规划；(6) 学员自测题——提供Phase 1的自测题（M5+M6共20题）。要求成果回顾全面，数据清晰。</span>
+        <span class="deliverable">交付物：Phase 1总览课程视频（50-60分钟）、配套PPT、Phase 1知识体系图谱.png、自测题库.md（20题）、Phase 1关键数据统计报告.md</span>
+      </li>
+      <li>
+        <span class="day-label">周二</span>
+        <span class="task-desc">【产品开发 产品V1.1最终验收与优化】完成产品V1.1的最终验收。具体任务：(1) 全功能回归测试——对V1.1版本进行全功能回归测试：用户系统/知识库管理/文档处理/RAG问答/混合检索/Agent工具调用/多Agent工作流/人机协作/Prompt管理/模型管理/监控仪表盘/多模态预研功能/知识图谱预研功能，确保所有功能正常；(2) 性能验收——验证V1.1性能指标：前端Lighthouse>90、API P95<1s、RAG端到端<3s、100并发负载测试通过、Milvus检索<50ms、Embedding缓存命中率>80%；(3) 安全验收——运行安全扫描（Bandit/npm audit/Trivy），验证无高危漏洞，验证Prompt注入防护/限流/数据加密/审计日志全部生效；(4) 生产环境健康检查——验证线上环境：所有服务健康检查通过、监控仪表盘数据正常、告警规则生效、备份策略执行正常、CI/CD流水线正常；(5) SLA评估——统计Phase 1期间的系统可用性（目标99.9%）、平均响应时间、错误率，评估是否达到SLA标准；(6) 技术债务评估——梳理Phase 1遗留的技术债务（预研功能未产品化/部分代码需重构/测试覆盖率不足/文档待更新），制定Phase 2偿还计划。验证标准：全功能测试通过，性能与安全达标，SLA 99.9%达成。</span>
+        <span class="deliverable">交付物：V1.1全功能回归测试报告.md、性能验收报告.md、安全扫描报告.md、生产环境健康检查报告.md、SLA评估报告.md、技术债务清单与偿还计划.md</span>
+      </li>
+      <li>
+        <span class="day-label">周三</span>
+        <span class="task-desc">【课程录制 Phase 1产品运营实战解析】录制Phase 1产品运营实战解析课程。核心内容包括：(1) 课程平台运营复盘——课程上线策略复盘（分批发布vs一次性发布的决策与效果）、课程定价策略复盘（套餐设计/优惠券/促销活动的效果分析）、课程完课率分析（哪些课程完课率高/低，原因分析）、课程评分与评价分析（好评与差评的关键因素）；(2) 产品运营复盘——用户增长复盘（各渠道获客效果/转化率/获客成本/ROI）、用户留存复盘（7日/30日留存率/留存因素分析/流失原因）、用户付费转化复盘（免费→付费转化率/转化因素/付费用户画像）；(3) 内容营销复盘——各渠道内容营销效果对比（微信公众号/知乎/B站/GitHub/技术社区）、爆款内容分析（哪些内容引流效果最好/为什么）、内容ROI分析（内容制作成本vs引流收入）；(4) 社区运营复盘——社区增长数据（成员数/活跃度/讨论量）、社区价值分析（社区对用户留存与付费转化的影响）、社区运营经验与教训；(5) 关键经验总结——产品运营的5个关键经验（数据驱动决策/用户反馈闭环/内容为王/社区驱动增长/持续迭代优化）、3个教训（初期营销投入不足/定价策略需更灵活/社区运营人力不足）；(6) Phase 2运营规划——基于Phase 1经验制定Phase 2运营策略（加大内容营销投入/优化定价策略/加强社区运营/探索企业客户）。要求数据详实，经验总结到位。</span>
+        <span class="deliverable">交付物：Phase 1运营实战解析课程视频（60-70分钟）、配套PPT、运营复盘报告.md（含全维度数据分析）、Phase 2运营策略规划.md</span>
+      </li>
+      <li>
+        <span class="day-label">周四</span>
+        <span class="task-desc">【产品开发 Phase 1全面验收与Phase 2准备】完成Phase 1全面验收并为Phase 2做准备。具体任务：(1) 课程完成度核对——核对Phase 1全部课程（M5×5+M6×5+预研×3+整合×3=16节，加上Phase 0的27节共43节），制作课程完成度核对表，确保全部上线；(2) Phase 1总结报告——编写全面总结报告：成果总结（43节课程上线/产品V1.1线上运营/多Agent工作流引擎/生产级部署/多模态与知识图谱预研/内容营销体系/用户社区）、关键经验（课程录制/产品开发/运营推广/社区建设）、教训反思、数据统计（课程总时长35小时/博客45篇/FAQ 150+条/代码30000+行/产品功能40+）；(3) Phase 2开发准备——准备Phase 2的开发环境与工具：多模态API Key申请（GPT-4o/Claude Vision）、Neo4j生产环境部署、vLLM GPU服务器准备、Phase 2项目分支创建；(4) Phase 2课程录制准备——准备Phase 2课程的PPT模板/代码模板/案例数据，制定录制计划；(5) 团队Phase 1复盘会议——组织团队复盘，回顾Phase 1执行情况（计划vs实际/亮点/不足/改进建议），形成会议纪要；(6) Phase 2启动会——召开Phase 2启动会，明确Phase 2目标/分工/计划/里程碑。验证标准：Phase 1全部课程上线，总结报告通过评审，Phase 2准备就绪。</span>
+        <span class="deliverable">交付物：Phase 1课程完成度核对表.xlsx、Phase 1总结报告.md、Phase 2开发准备清单.md、Phase 2课程录制计划.md、复盘会议纪要.md、Phase 2启动会纪要.md</span>
+      </li>
+      <li>
+        <span class="day-label">周五</span>
+        <span class="task-desc">【课程录制 Phase 1总结与Phase 2展望】录制Phase 1总结课程。核心内容包括：(1) Phase 1成果总结——课程成果（43节课程从基础到进阶完整覆盖Agent全栈技术）、产品成果（企业知识库产品V1.1线上运营，具备RAG问答/Agent工具调用/多Agent工作流/人机协作/生产级部署/监控告警/安全加固等40+功能）、运营成果（用户增长/课程收入/内容营销/社区建设）、团队成果（课程制作/产品开发/运营推广能力全面提升）；(2) 关键经验与教训——产品经验（从本地到线上的部署经验/性能优化经验/安全加固经验）、课程经验（课程录制效率提升/内容质量控制/学员反馈闭环）、运营经验（多渠道营销/社区驱动增长/数据驱动决策）、教训（初期低估运营投入/定价策略需更灵活/预研与产品化需平衡）；(3) 学员成果展示——展示优秀学员项目（基于课程知识构建的Agent应用/知识库系统），展示学员反馈与评价；(4) Phase 2展望——预告Phase 2的4大模块（M7多模态AI/M8安全治理/M9高级RAG与知识图谱/M10工程化与模型部署）与产品V2.0规划（多模态支持/知识图谱/企业版功能），Phase 2的前4周计划概览；(5) AI技术趋势展望——展望2026下半年AI技术趋势（Agent OS/多模态融合/AI-Native应用/Agent安全法规/开源模型爆发）；(6) Q&A与致谢——回答高频问题，感谢学员与团队。要求总结全面，展望清晰。</span>
+        <span class="deliverable">交付物：Phase 1总结课程视频（50-60分钟）、配套PPT、Phase 1总结报告.md（含成果/经验/教训/数据）、Phase 2规划预览.md（含4周计划概览）</span>
+      </li>
+      <li>
+        <span class="day-label">周六</span>
+        <span class="task-desc">【内容输出 Phase 1完整内容储备归档】完成Phase 1所有内容的最终归档。具体任务：(1) Phase 1课程笔记整理——将10周的课程笔记统一整理，按模块分类（M5/M6/预研/整合），形成Phase 1课程笔记合集；(2) Phase 1博客文章汇总——将10周的30篇博客文章汇总，按主题分类（LangGraph/生产部署/运营复盘/技术预研），形成Phase 1博客合集；(3) FAQ大全更新——将Phase 1的FAQ汇总整合到FAQ大全，更新至150+条；(4) 运营数据归档——归档Phase 1全部运营数据（用户数据/课程数据/收入数据/社区数据），形成运营数据存档；(5) 代码与文档归档——将Phase 1全部代码与文档归档，版本标签v1.1.0-phase1；(6) Phase 1内容发布包——打包Phase 1全部内容形成发布包；(7) Phase 2启动准备确认——确认Phase 2所需的全部准备工作就绪（环境/工具/计划/分工），正式进入Phase 2。验证标准：所有内容归档完成，Phase 2准备就绪。至此Phase 1全部完成。</span>
+        <span class="deliverable">交付物：Phase 1课程笔记合集.md（16篇）、Phase 1博客合集.md（30篇）、FAQ大全更新版.md（150+条）、运营数据存档.xlsx、代码与文档归档包（v1.1.0-phase1）、Phase 1内容发布包、Phase 2启动准备确认清单.md</span>
+      </li>
+    </ul>
+  </div>
+
+</section>

@@ -1,0 +1,422 @@
+<section class="phase-section" id="phase0">
+  <div class="phase-header">
+    <span class="phase-tag">Phase 0</span>
+    <h2>本地产品验证（第1-10周）</h2>
+    <div class="phase-meta">
+      <span>周期：10周</span>
+      <span>目标：本地开发核心功能 + 同步录制M0-M4课程</span>
+      <span>核心交付：25节课程视频 + 知识库系统MVP（文档上传/RAG检索/对话）</span>
+      <span>策略：产品优先，课程录制与产品开发双线并行</span>
+    </div>
+  </div>
+
+  <!-- 第1周 -->
+  <div class="week-card">
+    <div class="week-header">
+      <span class="week-num">第1周</span>
+      <span class="week-title">启动准备 - 课程大纲定稿与项目骨架搭建</span>
+      <span class="week-goal">周目标：完成M0-M4课程大纲最终定稿，并搭建前后端代码仓库骨架</span>
+    </div>
+    <ul class="day-list">
+      <li>
+        <span class="day-label">周一</span>
+        <span class="task-desc">定稿M0-M4五模块共<strong>25节</strong>课程大纲，明确每节课标题、时长（15-25分钟）、知识点清单、配套代码位置与课后练习，输出结构化Markdown大纲文件并通过自审</span>
+        <span class="deliverable">课程大纲v1.0.md</span>
+      </li>
+      <li>
+        <span class="day-label">周二</span>
+        <span class="task-desc">设计知识库系统产品架构，画出<strong>系统架构图</strong>（前端Astro/React + 后端Python FastAPI + 向量库 + 本地LLM），明确模块边界与数据流，输出架构说明文档</span>
+        <span class="deliverable">产品架构设计文档.md + 架构图.png</span>
+      </li>
+      <li>
+        <span class="day-label">周三</span>
+        <span class="task-desc">初始化代码仓库结构，创建monorepo（<strong>frontend/</strong>、<strong>backend/</strong>、<strong>courses/</strong>、<strong>docs/</strong>四个子目录），配置.gitignore、README、CONTRIBUTING开发规范</span>
+        <span class="deliverable">代码仓库骨架（GitHub/Gitee）</span>
+      </li>
+      <li>
+        <span class="day-label">周四</span>
+        <span class="task-desc">设计数据库schema，定义文档表、知识库表、对话历史表、用户表的字段与关系，输出ER图与建表SQL脚本，要求支持多知识库隔离</span>
+        <span class="deliverable">schema.sql + er-diagram.png</span>
+      </li>
+      <li>
+        <span class="day-label">周五</span>
+        <span class="task-desc">录制课程片头片尾模板（5秒开场+10秒结尾），配置录屏软件（OBS）参数：1080p/30fps/降噪麦克风，输出片头片尾视频素材包</span>
+        <span class="deliverable">片头片尾素材.mp4 + OBS配置预设</span>
+      </li>
+      <li>
+        <span class="day-label">周六</span>
+        <span class="task-desc">搭建前后端项目骨架：后端FastAPI初始化路由（/docs、/chat、/kb三个核心接口占位），前端Astro项目初始化首页与三个空页面，确保本地能跑通hello world</span>
+        <span class="deliverable">可运行的前后端骨架代码</span>
+      </li>
+    </ul>
+  </div>
+
+  <!-- 第2周 -->
+  <div class="week-card">
+    <div class="week-header">
+      <span class="week-num">第2周</span>
+      <span class="week-title">启动准备 - 开发环境配置与基础设施</span>
+      <span class="week-goal">周目标：完成双语言开发环境、本地LLM与向量库的本地化部署</span>
+    </div>
+    <ul class="day-list">
+      <li>
+        <span class="day-label">周一</span>
+        <span class="task-desc">配置Python开发环境：pyenv + poetry + ruff + black + pytest，统一Python 3.11版本，编写<strong>backend/README</strong>说明依赖安装步骤，跑通单元测试样例</span>
+        <span class="deliverable">backend环境配置脚本 + 测试通过截图</span>
+      </li>
+      <li>
+        <span class="day-label">周二</span>
+        <span class="task-desc">配置TypeScript开发环境：pnpm + vite + eslint + prettier + vitest，统一Node 20 LTS版本，编写<strong>frontend/README</strong>，确保lint与测试命令可用</span>
+        <span class="deliverable">frontend环境配置脚本 + 测试通过截图</span>
+      </li>
+      <li>
+        <span class="day-label">周三</span>
+        <span class="task-desc">配置Docker开发环境，编写<strong>docker-compose.yml</strong>（含postgres、redis、qdrant三个服务），实现一键启动本地依赖服务，编写启动说明</span>
+        <span class="deliverable">docker-compose.yml + 一键启动脚本</span>
+      </li>
+      <li>
+        <span class="day-label">周四</span>
+        <span class="task-desc">搭建本地LLM推理环境，安装<strong>Ollama</strong>并拉取qwen2.5:7b与bge-m3:567m模型，编写Python封装脚本验证推理可用，输出推理性能基准数据</span>
+        <span class="deliverable">llm_inference.py + 性能基准报告</span>
+      </li>
+      <li>
+        <span class="day-label">周五</span>
+        <span class="task-desc">配置向量数据库，本地部署<strong>Qdrant</strong>（Docker方式），编写集合初始化脚本与CRUD测试用例，验证向量写入与检索功能正常</span>
+        <span class="deliverable">qdrant_init.py + CRUD测试用例</span>
+      </li>
+      <li>
+        <span class="day-label">周六</span>
+        <span class="task-desc">搭建CI流水线，配置GitHub Actions：后端跑pytest+ruff，前端跑vitest+eslint+build，要求PR提交即触发，输出首次CI通过的截图</span>
+        <span class="deliverable">.github/workflows/ci.yml + CI通过截图</span>
+      </li>
+    </ul>
+  </div>
+
+  <!-- 第3周 -->
+  <div class="week-card">
+    <div class="week-header">
+      <span class="week-num">第3周</span>
+      <span class="week-title">M0 大模型基础（1/3）- QKV推导与训练链路</span>
+      <span class="week-goal">周目标：开发本地LLM推理引擎核心代码，并录制M0前3节课</span>
+    </div>
+    <ul class="day-list">
+      <li>
+        <span class="day-label">周一</span>
+        <span class="task-desc">实现产品端<strong>文档上传接口</strong>（/docs/upload），支持PDF/Markdown/TXT三种格式，含文件大小校验（&lt;20MB）与格式白名单，编写接口测试用例</span>
+        <span class="deliverable">upload_api.py + 接口测试用例</span>
+      </li>
+      <li>
+        <span class="day-label">周二</span>
+        <span class="task-desc">录制M0-1 <strong>QKV推导</strong>课程（25分钟），内容含Attention公式手推、Q/K/V矩阵维度推导、代码demo验证，配套代码上传至courses/m0/01-qkv</span>
+        <span class="deliverable">M0-1课程视频.mp4 + demo代码</span>
+      </li>
+      <li>
+        <span class="day-label">周三</span>
+        <span class="task-desc">编写QKV推导配套notebook demo，使用PyTorch从零实现Scaled Dot-Product Attention，要求可运行且输出可视化注意力热力图</span>
+        <span class="deliverable">attention_demo.ipynb</span>
+      </li>
+      <li>
+        <span class="day-label">周四</span>
+        <span class="task-desc">录制M0-2 <strong>训练链路认知</strong>课程（20分钟），讲解预训练→SFT→RLHF三阶段流程，绘制训练链路示意图，配套思维导图</span>
+        <span class="deliverable">M0-2课程视频.mp4 + 训练链路图.png</span>
+      </li>
+      <li>
+        <span class="day-label">周五</span>
+        <span class="task-desc">开发产品端<strong>文档解析模块</strong>，集成unstructured库解析PDF/Markdown为纯文本，按段落切分（每段512 token），写入数据库文档表</span>
+        <span class="deliverable">document_parser.py + 解析测试用例</span>
+      </li>
+      <li>
+        <span class="day-label">周六</span>
+        <span class="task-desc">录制M0-3 <strong>GRPO vs PPO</strong>课程（25分钟），对比两种RL算法原理、损失函数、适用场景，配套算法对比表与代码示例</span>
+        <span class="deliverable">M0-3课程视频.mp4 + 算法对比表.md</span>
+      </li>
+    </ul>
+  </div>
+
+  <!-- 第4周 -->
+  <div class="week-card">
+    <div class="week-header">
+      <span class="week-num">第4周</span>
+      <span class="week-title">M0 大模型基础（2/3）- KV Cache与采样策略</span>
+      <span class="week-goal">周目标：实现KV Cache与采样策略，录制M0第4-5节课，开发RAG检索原型</span>
+    </div>
+    <ul class="day-list">
+      <li>
+        <span class="day-label">周一</span>
+        <span class="task-desc">实现<strong>KV Cache机制</strong>，在LLM推理引擎中缓存历史K/V张量，编写对比测试验证开启/关闭Cache的吞吐量差异，要求加速比≥2x</span>
+        <span class="deliverable">kv_cache.py + 性能对比报告</span>
+      </li>
+      <li>
+        <span class="day-label">周二</span>
+        <span class="task-desc">录制M0-4 <strong>KV Cache</strong>课程（20分钟），讲解Cache原理、内存占用计算、PagedAttention优化思路，配套可视化图解</span>
+        <span class="deliverable">M0-4课程视频.mp4 + KV Cache图解.png</span>
+      </li>
+      <li>
+        <span class="day-label">周三</span>
+        <span class="task-desc">实现多种<strong>采样策略</strong>（greedy、top-k、top-p、temperature、beam search），统一接口设计，编写对比测试输出不同策略生成文本差异</span>
+        <span class="deliverable">sampling.py + 采样对比demo</span>
+      </li>
+      <li>
+        <span class="day-label">周四</span>
+        <span class="task-desc">录制M0-5 <strong>采样策略</strong>课程（20分钟），讲解各采样参数含义、对生成质量的影响、调参经验，配套参数对照表</span>
+        <span class="deliverable">M0-5课程视频.mp4 + 采样参数对照表.md</span>
+      </li>
+      <li>
+        <span class="day-label">周五</span>
+        <span class="task-desc">开发产品端<strong>RAG检索原型</strong>，实现文档→Embedding→Qdrant写入→相似度检索的完整链路，验证Top-5检索结果相关性≥80%</span>
+        <span class="deliverable">rag_retrieval.py + 检索质量评估报告</span>
+      </li>
+      <li>
+        <span class="day-label">周六</span>
+        <span class="task-desc">对LLM推理引擎做<strong>性能测试与优化</strong>，记录首token延迟、吞吐量、内存占用三项指标，输出基准测试报告并优化瓶颈点</span>
+        <span class="deliverable">perf_benchmark.md + 优化前后对比</span>
+      </li>
+    </ul>
+  </div>
+
+  <!-- 第5周 -->
+  <div class="week-card">
+    <div class="week-header">
+      <span class="week-num">第5周</span>
+      <span class="week-title">M0 大模型基础（3/3）- 课程收尾与产品对话功能</span>
+      <span class="week-goal">周目标：完成M0剩余2节课录制，整合推理引擎并开发产品对话功能</span>
+    </div>
+    <ul class="day-list">
+      <li>
+        <span class="day-label">周一</span>
+        <span class="task-desc">录制M0-6 <strong>大模型评估</strong>课程（20分钟），讲解perplexity、BLEU、人工评估、LLM-as-Judge四种评估方法，配套评估脚本demo</span>
+        <span class="deliverable">M0-6课程视频.mp4 + eval_demo.py</span>
+      </li>
+      <li>
+        <span class="day-label">周二</span>
+        <span class="task-desc">录制M0-7 <strong>M0模块总结与答疑</strong>课程（15分钟），梳理7节课知识图谱，回答预设高频问题，输出模块知识地图</span>
+        <span class="deliverable">M0-7课程视频.mp4 + M0知识地图.png</span>
+      </li>
+      <li>
+        <span class="day-label">周三</span>
+        <span class="task-desc">将LLM推理引擎整合到产品后端，封装为<strong>LLMService</strong>单例服务，提供generate()与stream_generate()两个接口，编写集成测试</span>
+        <span class="deliverable">llm_service.py + 集成测试用例</span>
+      </li>
+      <li>
+        <span class="day-label">周四</span>
+        <span class="task-desc">开发产品端<strong>对话功能</strong>接口（/chat），支持多轮对话上下文管理（保留最近10轮），返回流式响应，前端实现打字机效果展示</span>
+        <span class="deliverable">chat_api.py + 前端对话组件</span>
+      </li>
+      <li>
+        <span class="day-label">周五</span>
+        <span class="task-desc">编写M0模块配套技术文章（约3000字），覆盖QKV/训练链路/RL算法/KV Cache/采样/评估六大主题，发布至博客或公众号</span>
+        <span class="deliverable">M0模块技术文章.md</span>
+      </li>
+      <li>
+        <span class="day-label">周六</span>
+        <span class="task-desc">M0模块验收测试：核对7节课视频时长/画质/音质，检查配套代码可运行，确认知识地图完整，输出M0模块验收清单</span>
+        <span class="deliverable">M0模块验收清单.md</span>
+      </li>
+    </ul>
+  </div>
+
+  <!-- 第6周 -->
+  <div class="week-card">
+    <div class="week-header">
+      <span class="week-num">第6周</span>
+      <span class="week-title">M1-M2 环境搭建（1/2）- 双语言开发环境</span>
+      <span class="week-goal">周目标：完成M1全部3节课录制，开发产品端文档解析与分块功能</span>
+    </div>
+    <ul class="day-list">
+      <li>
+        <span class="day-label">周一</span>
+        <span class="task-desc">录制M1-1 <strong>TypeScript开发环境</strong>课程（20分钟），演示pnpm+vite+tsconfig配置，讲解类型系统与工程化实践，配套初始化模板</span>
+        <span class="deliverable">M1-1课程视频.mp4 + ts-starter模板</span>
+      </li>
+      <li>
+        <span class="day-label">周二</span>
+        <span class="task-desc">录制M1-2 <strong>Python开发环境</strong>课程（20分钟），演示pyenv+poetry+虚拟环境管理，讲解依赖锁定与发布流程，配套初始化模板</span>
+        <span class="deliverable">M1-2课程视频.mp4 + py-starter模板</span>
+      </li>
+      <li>
+        <span class="day-label">周三</span>
+        <span class="task-desc">录制M1-3 <strong>双语言协同开发</strong>课程（25分钟），讲解前后端通过REST/SSE通信、共享类型定义（openapi-typescript）、Monorepo组织方式</span>
+        <span class="deliverable">M1-3课程视频.mp4 + 协同开发示例代码</span>
+      </li>
+      <li>
+        <span class="day-label">周四</span>
+        <span class="task-desc">开发产品端<strong>智能分块模块</strong>，实现按段落/固定长度/语义三种分块策略，支持配置overlap，编写分块质量评估用例</span>
+        <span class="deliverable">chunker.py + 分块策略测试</span>
+      </li>
+      <li>
+        <span class="day-label">周五</span>
+        <span class="task-desc">将文档解析与分块集成到产品上传链路，实现上传→解析→分块→Embedding→入库<strong>全流程自动化</strong>，编写端到端测试</span>
+        <span class="deliverable">e2e_upload_test.py + 流程文档</span>
+      </li>
+      <li>
+        <span class="day-label">周六</span>
+        <span class="task-desc">M1模块验收：核对3节课视频与配套模板，确认双语言环境配置文档完整，输出M1模块验收清单</span>
+        <span class="deliverable">M1模块验收清单.md</span>
+      </li>
+    </ul>
+  </div>
+
+  <!-- 第7周 -->
+  <div class="week-card">
+    <div class="week-header">
+      <span class="week-num">第7周</span>
+      <span class="week-title">M1-M2 LangChain（2/2）- 核心组件与结构化输出</span>
+      <span class="week-goal">周目标：完成M2全部5节课录制，将LangChain集成到产品对话链路</span>
+    </div>
+    <ul class="day-list">
+      <li>
+        <span class="day-label">周一</span>
+        <span class="task-desc">录制M2-1 <strong>LangChain入门与组件概览</strong>课程（20分钟），讲解LangChain生态、核心抽象（LLM/ChatModel/Prompt/Chain），配套入门demo</span>
+        <span class="deliverable">M2-1课程视频.mp4 + langchain_intro.ipynb</span>
+      </li>
+      <li>
+        <span class="day-label">周二</span>
+        <span class="task-desc">录制M2-2 <strong>Prompt模板与消息角色</strong>课程（20分钟），演示PromptTemplate、ChatPromptTemplate、FewShotPromptTemplate三种模板用法</span>
+        <span class="deliverable">M2-2课程视频.mp4 + prompt模板示例</span>
+      </li>
+      <li>
+        <span class="day-label">周三</span>
+        <span class="task-desc">录制M2-3 <strong>Chain链路与LCEL表达式</strong>课程（25分钟），讲解LCEL语法、Runnable接口、链路组合（pipe/parallel），配套复杂链路demo</span>
+        <span class="deliverable">M2-3课程视频.mp4 + lcel_demo.py</span>
+      </li>
+      <li>
+        <span class="day-label">周四</span>
+        <span class="task-desc">录制M2-4 <strong>结构化输出</strong>课程（25分钟），演示with_structured_output、Pydantic模型、JSON模式三种方案，配套抽取任务demo</span>
+        <span class="deliverable">M2-4课程视频.mp4 + structured_output_demo.py</span>
+      </li>
+      <li>
+        <span class="day-label">周五</span>
+        <span class="task-desc">录制M2-5 <strong>Memory记忆与历史管理</strong>课程（20分钟），讲解ConversationBufferMemory、SummaryMemory、向量记忆三种策略及适用场景</span>
+        <span class="deliverable">M2-5课程视频.mp4 + memory_demo.py</span>
+      </li>
+      <li>
+        <span class="day-label">周六</span>
+        <span class="task-desc">将LangChain集成到产品对话链路，用LCEL重构/chat接口，支持<strong>结构化输出</strong>（提取问题意图）与<strong>Memory记忆</strong>，编写对比测试</span>
+        <span class="deliverable">chat_chain.py + 重构后接口测试</span>
+      </li>
+    </ul>
+  </div>
+
+  <!-- 第8周 -->
+  <div class="week-card">
+    <div class="week-header">
+      <span class="week-num">第8周</span>
+      <span class="week-title">M3 工具调用与MCP（1/2）- Function Calling</span>
+      <span class="week-goal">周目标：实现Function Calling并录制M3前2节课，开发产品端工具管理</span>
+    </div>
+    <ul class="day-list">
+      <li>
+        <span class="day-label">周一</span>
+        <span class="task-desc">录制M3-1 <strong>Function Calling原理与实践</strong>课程（25分钟），讲解工具调用流程、JSON Schema定义、模型决策机制，配套天气查询demo</span>
+        <span class="deliverable">M3-1课程视频.mp4 + function_calling_demo.py</span>
+      </li>
+      <li>
+        <span class="day-label">周二</span>
+        <span class="task-desc">实现产品端<strong>Function Calling集成</strong>，定义3个内置工具（知识库检索、文档摘要、计算器），编写工具注册与调用框架</span>
+        <span class="deliverable">tools_registry.py + 3个内置工具</span>
+      </li>
+      <li>
+        <span class="day-label">周三</span>
+        <span class="task-desc">录制M3-2 <strong>多工具编排与并行调用</strong>课程（25分钟），讲解工具选择策略、并行调用、错误处理与重试机制，配套多工具编排demo</span>
+        <span class="deliverable">M3-2课程视频.mp4 + multi_tool_demo.py</span>
+      </li>
+      <li>
+        <span class="day-label">周四</span>
+        <span class="task-desc">开发产品端<strong>工具管理后台</strong>，支持工具列表展示、启用/禁用、参数配置，前端实现工具配置表单页面</span>
+        <span class="deliverable">tools_admin_api.py + 前端管理页面</span>
+      </li>
+      <li>
+        <span class="day-label">周五</span>
+        <span class="task-desc">工具调用<strong>集成测试</strong>，构造10个典型对话场景验证工具选择准确率（要求≥90%），输出测试报告与失败case分析</span>
+        <span class="deliverable">tools_integration_test.py + 测试报告</span>
+      </li>
+      <li>
+        <span class="day-label">周六</span>
+        <span class="task-desc">编写M3前半部分配套技术文章（约2500字），覆盖Function Calling原理、多工具编排、产品落地实践，发布至博客</span>
+        <span class="deliverable">M3技术文章（上）.md</span>
+      </li>
+    </ul>
+  </div>
+
+  <!-- 第9周 -->
+  <div class="week-card">
+    <div class="week-header">
+      <span class="week-num">第9周</span>
+      <span class="week-title">M3 工具调用与MCP（2/2）- MCP协议实战</span>
+      <span class="week-goal">周目标：实现MCP Server并录制M3剩余3节课，完成MCP产品集成</span>
+    </div>
+    <ul class="day-list">
+      <li>
+        <span class="day-label">周一</span>
+        <span class="task-desc">录制M3-3 <strong>MCP协议入门</strong>课程（25分钟），讲解MCP架构（Client/Server/Host）、协议规范、与Function Calling对比，配套架构图</span>
+        <span class="deliverable">M3-3课程视频.mp4 + MCP架构图.png</span>
+      </li>
+      <li>
+        <span class="day-label">周二</span>
+        <span class="task-desc">实现<strong>MCP Server</strong>，基于官方Python SDK开发知识库检索MCP工具，支持stdio与SSE两种传输方式，编写Server测试</span>
+        <span class="deliverable">mcp_server.py + Server测试用例</span>
+      </li>
+      <li>
+        <span class="day-label">周三</span>
+        <span class="task-desc">录制M3-4 <strong>MCP工具开发实战</strong>课程（25分钟），演示从0开发一个MCP Server，含工具定义、资源暴露、Prompt模板，配套完整代码</span>
+        <span class="deliverable">M3-4课程视频.mp4 + mcp_server_starter</span>
+      </li>
+      <li>
+        <span class="day-label">周四</span>
+        <span class="task-desc">录制M3-5 <strong>MCP在产品中的集成</strong>课程（25分钟），演示将MCP Server接入知识库产品，讲解工具发现、动态加载、权限控制</span>
+        <span class="deliverable">M3-5课程视频.mp4 + 集成示例代码</span>
+      </li>
+      <li>
+        <span class="day-label">周五</span>
+        <span class="task-desc">将MCP集成到产品，实现<strong>动态工具发现与加载</strong>，支持配置多个MCP Server，前端展示可用工具列表，编写集成测试</span>
+        <span class="deliverable">mcp_integration.py + 集成测试</span>
+      </li>
+      <li>
+        <span class="day-label">周六</span>
+        <span class="task-desc">M3模块验收：核对5节课视频与配套代码，确认Function Calling与MCP两条链路均可运行，输出M3模块验收清单</span>
+        <span class="deliverable">M3模块验收清单.md</span>
+      </li>
+    </ul>
+  </div>
+
+  <!-- 第10周 -->
+  <div class="week-card">
+    <div class="week-header">
+      <span class="week-num">第10周</span>
+      <span class="week-title">M4 向量检索知识库 + Phase 0整体验收</span>
+      <span class="week-goal">周目标：完成M4全部5节课录制与RAG知识库核心功能，完成Phase 0整体验收</span>
+    </div>
+    <ul class="day-list">
+      <li>
+        <span class="day-label">周一</span>
+        <span class="task-desc">录制M4-1 <strong>RAG基础与架构</strong>课程（25分钟），讲解RAG全流程（检索→增强→生成）、朴素RAG痛点、进阶RAG优化方向，配套架构图</span>
+        <span class="deliverable">M4-1课程视频.mp4 + RAG架构图.png</span>
+      </li>
+      <li>
+        <span class="day-label">周二</span>
+        <span class="task-desc">录制M4-2 <strong>向量数据库选型与实践</strong>课程（25分钟），对比Qdrant/Milvus/Chroma/Pinecone四款向量库，演示Qdrant集合管理与HNSW索引配置</span>
+        <span class="deliverable">M4-2课程视频.mp4 + 向量库对比表.md</span>
+      </li>
+      <li>
+        <span class="day-label">周三</span>
+        <span class="task-desc">录制M4-3 <strong>Embedding模型与中文优化</strong>课程（20分钟），对比bge-m3/m3e/text-embedding-3，讲解维度、显存、效果权衡，配套相似度对比demo</span>
+        <span class="deliverable">M4-3课程视频.mp4 + embedding_benchmark.py</span>
+      </li>
+      <li>
+        <span class="day-label">周四</span>
+        <span class="task-desc">录制M4-4 <strong>检索优化（Rerank与HyDE）</strong>课程（25分钟），讲解Rerank模型、HyDE假设文档、查询改写三种优化技术，配套效果对比</span>
+        <span class="deliverable">M4-4课程视频.mp4 + retrieval_optimization.py</span>
+      </li>
+      <li>
+        <span class="day-label">周五</span>
+        <span class="task-desc">录制M4-5 <strong>知识库产品实战</strong>课程（25分钟），串联M4前4节内容，演示从0搭建一个完整知识库产品，配套产品源码导览</span>
+        <span class="deliverable">M4-5课程视频.mp4 + 产品源码导览.md</span>
+      </li>
+      <li>
+        <span class="day-label">周六</span>
+        <span class="task-desc"><strong>Phase 0整体验收</strong>：核对25节课视频清单、知识库系统MVP三大功能（文档上传/RAG检索/对话）端到端可用，输出Phase 0验收报告与Phase 1启动准备清单</span>
+        <span class="deliverable">Phase 0验收报告.md + Phase 1准备清单</span>
+      </li>
+    </ul>
+  </div>
+</section>

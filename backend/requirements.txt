@@ -20,6 +20,7 @@ minio>=7.2.0
 
 # === 认证 ===
 python-jose[cryptography]>=3.3.0
+bcrypt==4.0.1          # lock: passlib 1.7.4 与 bcrypt >=4.1 不兼容，自检时误抛 72 字节截断错误
 passlib[bcrypt]>=1.7.4
 
 # === LLM Provider（SaaS 模式）===

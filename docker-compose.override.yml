@@ -1,0 +1,13 @@
+# === 本地开发端口重映射 ===
+# 本机 PostgreSQL (5432) 和 Redis (6379) 已在运行，
+# 将容器端口映射到高位端口避免冲突。
+# 注意：!override 标签用于「替换」而非「追加」端口列表（compose v2.24+）。
+# 容器间内部通信仍使用 5432/6379，不受影响。
+services:
+  postgres:
+    ports: !override
+      - "15432:5432"
+
+  redis:
+    ports: !override
+      - "16379:6379"

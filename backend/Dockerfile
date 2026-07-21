@@ -8,9 +8,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc libpq-dev curl && \
     rm -rf /var/lib/apt/lists/*
 
-# 安装 Python 依赖
+# 先安装 CPU 版 torch（容器无 GPU，避免下载 1.3GB CUDA 库，构建从 45min 降至 ~5min）
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu --timeout 120 --retries 10
+
+# 安装其余 Python 依赖（torch 已满足，docling 不会重复拉 CUDA 版）
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt --timeout 120 --retries 10
 
 # 复制源码
 COPY . .

@@ -18,7 +18,7 @@ from fastapi import APIRouter, Body, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db_session
-from app.deps import require_module
+from app.deps import get_current_active_user, require_module
 from app.models.user import User
 from app.schemas.common import ApiResponse
 from app.services.analytics_service import AnalyticsService
@@ -29,16 +29,13 @@ router = APIRouter(prefix="/analytics", tags=["analytics"])
 @router.get("/dashboard")
 async def get_dashboard(
     days: int = Query(30, ge=1, le=365, description="统计周期（天）"),
-    user: User = Depends(require_module("analytics_dashboard")),
+    user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse:
     """仪表盘汇总 — 一次返回所有六项指标。
 
-    需 admin 或 kb_admin 权限。
+    所有登录用户可查看；空数据时返回默认值。
     """
-    if user.role not in ("admin", "kb_admin"):
-        return ApiResponse(code=403, data=None, message="需要管理员权限")
-
     service = AnalyticsService(db)
     data = await service.get_dashboard(days)
     return ApiResponse(code=0, data=data, message="success")

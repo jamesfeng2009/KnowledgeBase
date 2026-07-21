@@ -211,9 +211,32 @@ const currentPath = Astro.url.pathname;
                 <span class="topbar-notification-icon">🔔</span>
                 <span class="topbar-notification-badge" id="notification-badge">0</span>
               </a>
-              <div class="topbar-user" id="user-menu-trigger">
-                <div class="avatar avatar-sm" id="user-avatar">U</div>
-                <span class="topbar-user-name" id="user-name">用户</span>
+              <div class="topbar-user-wrap">
+                <div class="topbar-user" id="user-menu-trigger" role="button" tabindex="0" aria-haspopup="menu" aria-expanded="false">
+                  <div class="avatar avatar-sm" id="user-avatar">U</div>
+                  <span class="topbar-user-name" id="user-name">用户</span>
+                  <span class="topbar-user-caret" aria-hidden="true">▾</span>
+                </div>
+                <!-- 用户下拉菜单 -->
+                <div class="user-dropdown" id="user-dropdown" role="menu" aria-label="用户菜单">
+                  <div class="user-dropdown-header">
+                    <div class="avatar avatar-sm" id="user-dropdown-avatar">U</div>
+                    <div class="user-dropdown-info">
+                      <div class="user-dropdown-name" id="user-dropdown-name">用户</div>
+                      <div class="user-dropdown-email" id="user-dropdown-email"></div>
+                    </div>
+                  </div>
+                  <div class="user-dropdown-divider"></div>
+                  <a href="/settings/system" class="user-dropdown-item" role="menuitem">
+                    <span class="user-dropdown-icon">⚙️</span>
+                    <span>账号设置</span>
+                  </a>
+                  <div class="user-dropdown-divider"></div>
+                  <button type="button" class="user-dropdown-item user-dropdown-logout" id="logout-btn" role="menuitem">
+                    <span class="user-dropdown-icon">🚪</span>
+                    <span>退出登录</span>
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -281,12 +304,14 @@ const currentPath = Astro.url.pathname;
             const user = result.data || result;
             const nameEl = document.getElementById('user-name');
             const avatarEl = document.getElementById('user-avatar');
-            if (nameEl && user.name) {
-              nameEl.textContent = user.name;
-            }
-            if (avatarEl && user.name) {
-              avatarEl.textContent = user.name.charAt(0).toUpperCase();
-            }
+            const dropdownNameEl = document.getElementById('user-dropdown-name');
+            const dropdownEmailEl = document.getElementById('user-dropdown-email');
+            const dropdownAvatarEl = document.getElementById('user-dropdown-avatar');
+            if (nameEl && user.name) nameEl.textContent = user.name;
+            if (avatarEl && user.name) avatarEl.textContent = user.name.charAt(0).toUpperCase();
+            if (dropdownNameEl && user.name) dropdownNameEl.textContent = user.name;
+            if (dropdownEmailEl && user.email) dropdownEmailEl.textContent = user.email;
+            if (dropdownAvatarEl && user.name) dropdownAvatarEl.textContent = user.name.charAt(0).toUpperCase();
           } else if (response.status === 401) {
             localStorage.removeItem('ekb_access_token');
             if (!window.location.pathname.startsWith('/auth/')) {
@@ -298,12 +323,43 @@ const currentPath = Astro.url.pathname;
         }
       }
 
-      // 用户菜单点击 - 登出
-      document.getElementById('user-menu-trigger')?.addEventListener('click', () => {
-        if (confirm('确定要退出登录吗？')) {
-          localStorage.removeItem('ekb_access_token');
-          window.location.href = '/auth/login';
+      // 用户下拉菜单：显示/隐藏
+      const userMenuTrigger = document.getElementById('user-menu-trigger');
+      const userDropdown = document.getElementById('user-dropdown');
+
+      function toggleUserDropdown(open?: boolean) {
+        if (!userDropdown || !userMenuTrigger) return;
+        const willOpen = open ?? !userDropdown.classList.contains('open');
+        userDropdown.classList.toggle('open', willOpen);
+        userMenuTrigger.setAttribute('aria-expanded', String(willOpen));
+      }
+
+      userMenuTrigger?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleUserDropdown();
+      });
+      userMenuTrigger?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          toggleUserDropdown();
         }
+      });
+
+      // 点击菜单外区域关闭
+      document.addEventListener('click', (e) => {
+        if (!userDropdown?.classList.contains('open')) return;
+        const wrap = (e.target as HTMLElement).closest('.topbar-user-wrap');
+        if (!wrap) toggleUserDropdown(false);
+      });
+      // ESC 关闭
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') toggleUserDropdown(false);
+      });
+
+      // 退出登录：直接执行，不再弹 confirm
+      document.getElementById('logout-btn')?.addEventListener('click', () => {
+        localStorage.removeItem('ekb_access_token');
+        window.location.href = '/auth/login';
       });
 
       // 加载未读通知数量（右上角红点）
@@ -371,6 +427,108 @@ const currentPath = Astro.url.pathname;
         border-radius: var(--radius-full);
         line-height: 1;
         border: 2px solid var(--surface, #fff);
+      }
+
+      /* 顶部栏用户区 + 下拉菜单 */
+      .topbar-user-wrap {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+      }
+      .topbar-user {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--space-2);
+        padding: 4px 8px;
+        border-radius: var(--radius);
+        cursor: pointer;
+        transition: background var(--transition-fast);
+      }
+      .topbar-user:hover {
+        background: var(--surface-hover);
+      }
+      .topbar-user-caret {
+        font-size: var(--text-xs);
+        color: var(--text-muted);
+        transition: transform var(--transition-fast);
+      }
+      .topbar-user[aria-expanded='true'] .topbar-user-caret {
+        transform: rotate(180deg);
+      }
+
+      .user-dropdown {
+        position: absolute;
+        top: calc(100% + 6px);
+        right: 0;
+        min-width: 220px;
+        background: var(--surface, #fff);
+        border: 1px solid var(--border, #e5e7eb);
+        border-radius: var(--radius-md, 8px);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+        padding: var(--space-2);
+        z-index: 1000;
+        opacity: 0;
+        visibility: hidden;
+        transform: translateY(-4px);
+        transition: opacity var(--transition-fast), transform var(--transition-fast), visibility var(--transition-fast);
+      }
+      .user-dropdown.open {
+        opacity: 1;
+        visibility: visible;
+        transform: translateY(0);
+      }
+      .user-dropdown-header {
+        display: flex;
+        align-items: center;
+        gap: var(--space-3);
+        padding: var(--space-2) var(--space-3);
+      }
+      .user-dropdown-name {
+        font-size: var(--text-sm);
+        font-weight: 600;
+        color: var(--text-primary);
+        line-height: 1.3;
+      }
+      .user-dropdown-email {
+        font-size: var(--text-xs);
+        color: var(--text-muted);
+        line-height: 1.3;
+      }
+      .user-dropdown-divider {
+        height: 1px;
+        background: var(--border, #e5e7eb);
+        margin: var(--space-1) 0;
+      }
+      .user-dropdown-item {
+        display: flex;
+        align-items: center;
+        gap: var(--space-2);
+        width: 100%;
+        padding: var(--space-2) var(--space-3);
+        border: none;
+        background: transparent;
+        color: var(--text-secondary);
+        font-size: var(--text-sm);
+        text-align: left;
+        text-decoration: none;
+        border-radius: var(--radius);
+        cursor: pointer;
+        transition: background var(--transition-fast), color var(--transition-fast);
+      }
+      .user-dropdown-item:hover {
+        background: var(--surface-hover);
+        color: var(--text-primary);
+      }
+      .user-dropdown-icon {
+        font-size: var(--text-base);
+        line-height: 1;
+      }
+      .user-dropdown-logout {
+        color: var(--danger, #ef4444);
+      }
+      .user-dropdown-logout:hover {
+        background: rgba(239, 68, 68, 0.08);
+        color: var(--danger, #ef4444);
       }
     </style>
   </body>

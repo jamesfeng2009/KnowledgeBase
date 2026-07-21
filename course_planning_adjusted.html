@@ -1,0 +1,708 @@
+<section class="course-planning" id="adjusted-planning">
+  <div class="planning-header">
+    <span class="planning-tag">课程规划调整版</span>
+    <h2>AI Agent 全栈教程 — 课程完整规划（项目调整版）</h2>
+    <div class="planning-meta">
+      <span class="meta-item">规划日期：2026 年 7 月</span>
+      <span class="meta-item">总周期：40 周（4 个 Phase）</span>
+      <span class="meta-item">课程模块：12 个核心模块 / 82 节课程</span>
+      <span class="meta-item">差异化亮点：全栈产品闭环 + 企业级工程化 + 商业化落地</span>
+      <span class="meta-item">技术栈：Python FastAPI + Go APISIX + Astro + LangChain/LangGraph</span>
+    </div>
+  </div>
+
+  <!-- ==================== 一、调整说明 ==================== -->
+  <div class="section-block" id="adjustment-notes">
+    <h3>一、本次调整说明</h3>
+    <div class="block-content">
+      <p><strong>调整背景：</strong>原课程规划（2026年6月版）以竞品分析为基础，设计了12个核心模块的AI Agent全栈教程，差异化亮点为"可靠性工程 + Rust 基础设施"。现基于实际项目执行需求，将课程规划与4阶段40周执行计划深度对齐，实现"课程录制 + 产品开发 + 内容输出"三位一体的闭环模式。</p>
+      <p><strong>核心调整点：</strong></p>
+      <ul class="adjust-list">
+        <li><strong>时间维度调整：</strong>从无明确时间线的模块列表，调整为4个Phase × 10周 = 40周的精确执行计划，每周周一至周六均有明确任务分解</li>
+        <li><strong>差异化调整：</strong>从"Rust 基础设施"调整为"全栈产品闭环"——学员不仅学课程，还跟着从0到1构建一个真实的企业级AI知识库产品（V1.0→V3.1），产品本身就是课程的最佳实战项目</li>
+        <li><strong>技术栈调整：</strong>从竞品的 Node.js/TypeScript + LangChain.js，调整为 Python FastAPI（AI后端）+ Go APISIX（API网关）+ Astro（前端），更贴近企业级生产环境</li>
+        <li><strong>教学模式调整：</strong>从纯课程录制，调整为"周一/三/五课程录制 + 周二/四产品开发 + 周六内容输出"的混合模式，学员可以同时学习课程和参与产品构建</li>
+        <li><strong>商业化调整：</strong>新增Phase 3商业化模块（17节课程），覆盖SaaS定价、企业销售、开放API、插件系统、Marketplace、私有化部署、国际化等企业级话题</li>
+        <li><strong>课程总量调整：</strong>从原计划的约60节课程扩展为82节课程，新增多模态AI、Agent安全、知识图谱、工程化最佳实践等高级模块</li>
+      </ul>
+      <p><strong>调整原则：</strong>课程内容服务于产品构建，产品构建反哺课程内容——每一节课的技术点都在产品中有对应的实现，每一个产品功能都有对应的课程讲解，形成"学以致用、用以促学"的正向循环。</p>
+    </div>
+  </div>
+
+  <!-- ==================== 二、竞品分析摘要（调整版） ==================== -->
+  <div class="section-block" id="competitor-analysis">
+    <h3>二、竞品分析摘要（调整版）</h3>
+    <div class="block-content">
+      <p><strong>竞品概况：</strong>「前端转 AI Agent 全栈通关秘籍」（作者"神光"，品牌"神光的编程秘籍"），共28篇文章，配套GitHub代码仓库。技术栈为 Node.js / TypeScript + LangChain.js，使用通义千问 qwen-plus 作为大模型，覆盖从大模型原理到 Agent 全栈开发的完整链路。定位面向有前端/Node.js基础、想转AI Agent方向的开发者，偏应用层而非算法层。</p>
+      <p><strong>竞品优势：</strong>(1) 内容口语化、入门友好；(2) 28篇文章覆盖面广；(3) 配套GitHub代码可运行；(4) 面向前端转AI的明确人群。</p>
+      <p><strong>竞品不足：</strong>(1) 缺少生产级部署与运维内容；(2) 无安全防护与合规相关内容；(3) 无多模态AI内容；(4) 无知识图谱与高级RAG内容；(5) 无商业化与产品运营内容；(6) 缺少企业级架构设计（多租户/SSO/API网关/插件系统）；(7) 技术栈单一（仅Node.js），缺少多语言架构视角；(8) 无真实产品作为实战项目。</p>
+      <p><strong>本课程差异化策略：</strong></p>
+      <table class="diff-table">
+        <thead>
+          <tr>
+            <th>维度</th>
+            <th>竞品</th>
+            <th>本课程（调整版）</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>技术栈</td>
+            <td>Node.js / TypeScript 单一栈</td>
+            <td>Python + Go + TypeScript 多语言栈，更贴近企业级</td>
+          </tr>
+          <tr>
+            <td>课程数量</td>
+            <td>28篇文章</td>
+            <td>82节系统化课程（4 Phase / 12 模块）</td>
+          </tr>
+          <tr>
+            <td>实战项目</td>
+            <td>GitHub 示例代码</td>
+            <td>完整企业级产品（V1.0→V3.1，100+功能，真实上线运营）</td>
+          </tr>
+          <tr>
+            <td>生产部署</td>
+            <td>无</td>
+            <td>Docker + K8s + CI/CD + 监控告警全链路</td>
+          </tr>
+          <tr>
+            <td>安全防护</td>
+            <td>无</td>
+            <td>Prompt注入防护 + PII检测 + 红队测试 + 合规审计</td>
+          </tr>
+          <tr>
+            <td>多模态</td>
+            <td>无</td>
+            <td>GPT-4o + Claude Vision + OCR + 语音 + 视频</td>
+          </tr>
+          <tr>
+            <td>知识图谱</td>
+            <td>无</td>
+            <td>Neo4j + GraphRAG + 实体关系抽取</td>
+          </tr>
+          <tr>
+            <td>商业化</td>
+            <td>无</td>
+            <td>SaaS定价 + 企业销售 + 开放API + 插件生态 + Marketplace</td>
+          </tr>
+          <tr>
+            <td>企业级</td>
+            <td>无</td>
+            <td>多租户 + SSO + API网关 + 插件系统 + 私有化部署</td>
+          </tr>
+          <tr>
+            <td>国际化</td>
+            <td>无</td>
+            <td>多语言 + 多Region + GDPR合规 + 海外推广</td>
+          </tr>
+          <tr>
+            <td>教学模式</td>
+            <td>纯文章/视频</td>
+            <td>课程录制 + 产品开发 + 内容输出 三位一体</td>
+          </tr>
+          <tr>
+            <td>时间规划</td>
+            <td>无明确时间线</td>
+            <td>40周精确执行计划（每天有明确任务）</td>
+          </tr>
+        </tbody>
+      </table>
+      <p><strong>差异化核心：</strong>本课程最大的差异化不是某个技术点，而是<strong>"全栈产品闭环"</strong>——学员跟着40周计划，不仅能学到82节系统化课程，还能从0到1构建一个真实的企业级AI知识库产品并上线运营。课程即产品，产品即课程，这是竞品无法复制的核心壁垒。</p>
+    </div>
+  </div>
+
+  <!-- ==================== 三、12个核心模块（映射4阶段） ==================== -->
+  <div class="section-block" id="module-mapping">
+    <h3>三、12个核心模块（映射4阶段执行计划）</h3>
+    <div class="block-content">
+      <p>原规划12个核心模块保留不变，但增加了精确的阶段映射、周次分配和课程节数，确保每个模块都有明确的执行时间窗口。</p>
+      <table class="module-table">
+        <thead>
+          <tr>
+            <th>模块</th>
+            <th>模块名称</th>
+            <th>课程数</th>
+            <th>所属Phase</th>
+            <th>执行周次</th>
+            <th>核心内容</th>
+            <th>对应产品功能</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>M0</td>
+            <td>大模型基础</td>
+            <td>3节</td>
+            <td>Phase 0</td>
+            <td>第1-2周</td>
+            <td>LLM原理、Prompt工程、Token与上下文窗口</td>
+            <td>产品AI对话基础</td>
+          </tr>
+          <tr>
+            <td>M1</td>
+            <td>环境搭建</td>
+            <td>3节</td>
+            <td>Phase 0</td>
+            <td>第1-2周</td>
+            <td>Python/Node环境、Docker、项目骨架</td>
+            <td>项目初始化与Docker化</td>
+          </tr>
+          <tr>
+            <td>M2</td>
+            <td>LangChain框架</td>
+            <td>5节</td>
+            <td>Phase 0</td>
+            <td>第3-4周</td>
+            <td>LLM包装器、Prompt模板、链式调用、输出解析、记忆模块</td>
+            <td>AI对话与上下文管理</td>
+          </tr>
+          <tr>
+            <td>M3</td>
+            <td>工具调用与MCP</td>
+            <td>5节</td>
+            <td>Phase 0</td>
+            <td>第5-6周</td>
+            <td>Function Calling、Tool设计、MCP协议、工具编排、错误处理</td>
+            <td>AI工具调用能力</td>
+          </tr>
+          <tr>
+            <td>M4</td>
+            <td>向量检索知识库</td>
+            <td>8节</td>
+            <td>Phase 0</td>
+            <td>第7-9周</td>
+            <td>Embedding、Milvus、文档分块、检索策略、RAG基础、重排序、混合检索、RAG优化</td>
+            <td>知识库RAG问答核心</td>
+          </tr>
+          <tr>
+            <td>M5</td>
+            <td>LangGraph多Agent</td>
+            <td>6节</td>
+            <td>Phase 1</td>
+            <td>第11-13周</td>
+            <td>LangGraph基础、状态图、多Agent协作、人机协作、Agent编排、复杂工作流</td>
+            <td>多Agent协作系统</td>
+          </tr>
+          <tr>
+            <td>M6</td>
+            <td>生产部署</td>
+            <td>10节</td>
+            <td>Phase 1</td>
+            <td>第14-20周</td>
+            <td>Docker Compose、K8s、CI/CD、监控告警、日志、性能优化、安全加固、高可用、成本优化、SRE</td>
+            <td>产品上线与生产运维</td>
+          </tr>
+          <tr>
+            <td>M7</td>
+            <td>多模态AI</td>
+            <td>6节</td>
+            <td>Phase 2</td>
+            <td>第21-23周</td>
+            <td>GPT-4o视觉、Claude Vision、OCR/PaddleOCR、语音ASR/TTS、视频理解、CLIP图文匹配</td>
+            <td>多模态知识库（图片/语音/视频）</td>
+          </tr>
+          <tr>
+            <td>M8</td>
+            <td>Agent安全</td>
+            <td>6节</td>
+            <td>Phase 2</td>
+            <td>第24-26周</td>
+            <td>Prompt注入防护、PII检测、红队测试、LlamaGuard、Presidio、安全审计</td>
+            <td>产品安全防护体系</td>
+          </tr>
+          <tr>
+            <td>M9</td>
+            <td>高级RAG与知识图谱</td>
+            <td>6节</td>
+            <td>Phase 2</td>
+            <td>第27-29周</td>
+            <td>GraphRAG、Neo4j知识图谱、实体关系抽取、多跳推理、知识推理、RAG评估</td>
+            <td>知识图谱与高级推理</td>
+          </tr>
+          <tr>
+            <td>M10</td>
+            <td>工程化最佳实践</td>
+            <td>4节</td>
+            <td>Phase 2</td>
+            <td>第29-30周</td>
+            <td>代码规范、测试工程、性能工程、FinOps成本工程</td>
+            <td>工程化升级与V2.0</td>
+          </tr>
+          <tr>
+            <td>M11</td>
+            <td>商业化与生态建设</td>
+            <td>20节</td>
+            <td>Phase 3</td>
+            <td>第31-40周</td>
+            <td>商业化运营、开放API与SDK、插件系统、企业客户与POC、国际化、全项目总结</td>
+            <td>V3.0/V3.1企业版 + 生态 + 国际化</td>
+          </tr>
+        </tbody>
+        <tfoot>
+          <tr>
+            <td colspan="2"><strong>合计</strong></td>
+            <td><strong>82节</strong></td>
+            <td colspan="2"><strong>4 Phase / 40周</strong></td>
+            <td colspan="2"><strong>12个核心模块 / 产品V1.0→V3.1</strong></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  </div>
+
+  <!-- ==================== 四、4阶段执行路线图 ==================== -->
+  <div class="section-block" id="phase-roadmap">
+    <h3>四、4阶段执行路线图</h3>
+    <div class="block-content">
+
+      <div class="phase-summary">
+        <h4>Phase 0：本地产品验证（第1-10周）— 24节课程</h4>
+        <div class="phase-detail">
+          <p><strong>目标：</strong>完成M0-M4全部基础模块课程录制，同时搭建企业知识库产品V1.0本地骨架，实现"课程+产品"双线并行。</p>
+          <p><strong>课程模块：</strong>M0大模型基础（3节）+ M1环境搭建（3节）+ M2 LangChain框架（5节）+ M3工具调用与MCP（5节）+ M4向量检索知识库（8节）= 24节</p>
+          <p><strong>产品里程碑：</strong>V1.0本地版（基础对话 + RAG知识库 + 工具调用 + 本地运行）</p>
+          <p><strong>核心交付物：</strong>24节课程视频+笔记+代码 / 产品V1.0本地可运行 / 全部内容储备不发布</p>
+          <ul class="week-breakdown">
+            <li><strong>第1-2周：</strong>M0大模型基础 + M1环境搭建 + 项目初始化（产品骨架搭建）</li>
+            <li><strong>第3-4周：</strong>M2 LangChain框架（产品AI对话模块开发）</li>
+            <li><strong>第5-6周：</strong>M3工具调用与MCP（产品工具调用模块开发）</li>
+            <li><strong>第7-9周：</strong>M4向量检索知识库（产品RAG核心模块开发）</li>
+            <li><strong>第10周：</strong>本地产品验证完成 + M0-M4模块验收</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="phase-summary">
+        <h4>Phase 1：上线发布（第11-20周）— 16节课程</h4>
+        <div class="phase-detail">
+          <p><strong>目标：</strong>完成M5-M6进阶模块课程录制，同时完成产品V1.0线上部署与发布，实现产品正式上线运营。</p>
+          <p><strong>课程模块：</strong>M5 LangGraph多Agent（6节）+ M6生产部署（10节）= 16节</p>
+          <p><strong>产品里程碑：</strong>V1.0线上版（多Agent + K8s部署 + 监控告警 + 正式上线）</p>
+          <p><strong>核心交付物：</strong>16节课程视频+笔记+代码 / 产品V1.0线上部署 / 全部课程正式发布</p>
+          <ul class="week-breakdown">
+            <li><strong>第11-13周：</strong>M5 LangGraph多Agent（产品多Agent协作系统开发）</li>
+            <li><strong>第14-16周：</strong>M6生产部署上（Docker Compose + K8s + CI/CD + 监控告警）</li>
+            <li><strong>第17-19周：</strong>M6生产部署下（性能优化 + 安全加固 + 高可用 + 成本优化 + SRE）</li>
+            <li><strong>第20周：</strong>产品V1.0正式上线 + Phase 1全面验收</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="phase-summary">
+        <h4>Phase 2：高级AI能力（第21-30周）— 22节课程</h4>
+        <div class="phase-detail">
+          <p><strong>目标：</strong>完成M7-M10高级模块课程录制，同时完成产品V2.0升级（多模态 + 安全 + 知识图谱 + 工程化）。</p>
+          <p><strong>课程模块：</strong>M7多模态AI（6节）+ M8 Agent安全（6节）+ M9高级RAG与知识图谱（6节）+ M10工程化最佳实践（4节）= 22节</p>
+          <p><strong>产品里程碑：</strong>V2.0进阶版（多模态知识库 + 安全防护 + 知识图谱 + 工程化升级）</p>
+          <p><strong>核心交付物：</strong>22节课程视频+笔记+代码 / 产品V2.0线上升级 / 开源社区版发布</p>
+          <ul class="week-breakdown">
+            <li><strong>第21-23周：</strong>M7多模态AI（产品多模态模块开发：图片/语音/视频）</li>
+            <li><strong>第24-26周：</strong>M8 Agent安全（产品安全防护体系开发）</li>
+            <li><strong>第27-29周：</strong>M9高级RAG与知识图谱（产品知识图谱模块开发）</li>
+            <li><strong>第29-30周：</strong>M10工程化最佳实践 + V2.0发布 + Phase 2验收</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="phase-summary">
+        <h4>Phase 3：商业化与生态建设（第31-40周）— 20节课程</h4>
+        <div class="phase-detail">
+          <p><strong>目标：</strong>完成商业化与生态模块课程录制，同时完成产品V3.0/V3.1企业版升级（多租户 + SSO + 开放API + 插件 + Marketplace + 私有化 + 国际化），实现商业化运营。</p>
+          <p><strong>课程模块：</strong>商业化运营（3节）+ 开放API与SDK（3节）+ 插件系统（3节）+ 企业客户与POC（3节）+ 国际化（3节）+ 全项目总结（2节）+ Phase验收与整合（3节）= 20节</p>
+          <p><strong>产品里程碑：</strong>V3.0企业版 + V3.1国际化版（多租户/SSO/开放API/插件/Marketplace/私有化/多语言/多Region）</p>
+          <p><strong>核心交付物：</strong>20节课程视频+笔记+代码 / 产品V3.1企业版 / 商业化运营 / 40周全项目归档</p>
+          <ul class="week-breakdown">
+            <li><strong>第31-32周：</strong>商业化运营（产品V3.0企业版：多租户 + SSO + 计费）</li>
+            <li><strong>第33-34周：</strong>开放API与SDK（产品开放API网关 + 多语言SDK）</li>
+            <li><strong>第35-36周：</strong>插件系统（产品插件架构 + 沙箱 + 开发者文档）</li>
+            <li><strong>第37-38周：</strong>企业客户与POC（Marketplace + 私有化部署 + 企业销售）</li>
+            <li><strong>第39周：</strong>国际化（多语言 + 多Region + GDPR合规 + 海外推广）</li>
+            <li><strong>第40周：</strong>Phase 3验收 + 全项目最终验收 + 未来规划</li>
+          </ul>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ==================== 五、差异化策略（调整版） ==================== -->
+  <div class="section-block" id="differentiation-strategy">
+    <h3>五、差异化策略（调整版）</h3>
+    <div class="block-content">
+      <p><strong>原差异化亮点：</strong>可靠性工程 + Rust 基础设施</p>
+      <p><strong>调整后差异化亮点：</strong>全栈产品闭环 + 企业级工程化 + 商业化落地</p>
+
+      <div class="diff-highlight">
+        <h4>差异化亮点 1：全栈产品闭环（核心壁垒）</h4>
+        <p>竞品只有课程和示例代码，本课程同时构建一个<strong>真实的企业级AI知识库产品</strong>（从V1.0到V3.1，100+功能，真实上线运营）。学员不仅学课程，还跟着从0到1构建产品，每个技术点都有对应的product实现。课程即产品，产品即课程——这是竞品无法复制的核心壁垒。</p>
+        <ul>
+          <li>Phase 0：产品V1.0本地版（基础对话 + RAG知识库）</li>
+          <li>Phase 1：产品V1.0线上版（K8s部署 + 监控 + 正式上线）</li>
+          <li>Phase 2：产品V2.0进阶版（多模态 + 安全 + 知识图谱）</li>
+          <li>Phase 3：产品V3.1企业版（多租户 + SSO + 插件 + Marketplace + 国际化）</li>
+        </ul>
+      </div>
+
+      <div class="diff-highlight">
+        <h4>差异化亮点 2：企业级工程化（深度壁垒）</h4>
+        <p>竞品偏应用层入门，本课程深入企业级工程化：多语言架构（Python + Go + TypeScript）、微服务架构（API网关 + 多服务）、K8s生产部署、全链路监控（Prometheus + Grafana + ELK）、安全防护（Prompt注入 + PII + 红队测试）、FinOps成本工程。学员学完不仅会写AI应用，还能构建企业级生产系统。</p>
+        <ul>
+          <li>多语言架构：Python FastAPI（AI后端）+ Go APISIX（API网关）+ Astro（前端）</li>
+          <li>生产部署：Docker → K8s → CI/CD → 监控告警 → SRE全链路</li>
+          <li>安全防护：LlamaGuard + Presidio + WAF + 红队测试 + 合规审计</li>
+          <li>可观测性：日志 + 指标 + 链路追踪 + 告警 + Dashboard</li>
+        </ul>
+      </div>
+
+      <div class="diff-highlight">
+        <h4>差异化亮点 3：商业化落地（商业壁垒）</h4>
+        <p>竞品无商业化内容，本课程新增Phase 3（20节课程）专门讲商业化：SaaS定价策略、企业销售流程、POC转化、开放API与SDK、插件系统与生态、Agent模板Marketplace、私有化部署、国际化与海外推广。学员学完不仅会技术，还懂如何将AI产品商业化变现。</p>
+        <ul>
+          <li>SaaS商业化：分层定价（免费/Pro/Pro+/企业版）+ 计费系统 + 订阅管理</li>
+          <li>企业级功能：多租户 + SSO（SAML/OAuth/OIDC）+ RBAC权限</li>
+          <li>开放生态：开放API + 多语言SDK + 插件系统 + Marketplace</li>
+          <li>私有化部署：一键安装 + 离线部署 + 升级回滚</li>
+          <li>国际化：多语言 + 多Region + GDPR合规 + 海外推广</li>
+        </ul>
+      </div>
+
+      <div class="diff-highlight">
+        <h4>差异化亮点 4：可靠性工程（保留原亮点）</h4>
+        <p>保留原规划的可靠性工程亮点，但实现方式从Rust调整为Python + Go多语言架构。包括：降级策略（多模型fallback/本地模型备用）、熔断与限流（API网关层熔断/令牌桶限流）、故障自愈（健康检查/自动重启/自动扩缩容）、SLO保障（P99延迟<3s/可用性>99.9%/错误率<0.1%）、全链路可观测（日志/指标/追踪/告警）。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 六、每周节奏与教学模式 ==================== -->
+  <div class="section-block" id="weekly-rhythm">
+    <h3>六、每周节奏与教学模式</h3>
+    <div class="block-content">
+      <table class="rhythm-table">
+        <thead>
+          <tr>
+            <th>星期</th>
+            <th>模式</th>
+            <th>核心任务</th>
+            <th>产出</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>周一</td>
+            <td>课程录制</td>
+            <td>录制1节课程视频（60-90分钟），包含技术讲解 + 代码演示 + 实战案例</td>
+            <td>课程视频 + PPT + 笔记 + 代码</td>
+          </tr>
+          <tr>
+            <td>周二</td>
+            <td>产品开发</td>
+            <td>基于周一课程技术点，在产品中实现对应功能（编码 + 测试 + 调试）</td>
+            <td>产品代码提交 + 功能验收</td>
+          </tr>
+          <tr>
+            <td>周三</td>
+            <td>课程录制</td>
+            <td>录制1节课程视频，通常为进阶内容或实战项目</td>
+            <td>课程视频 + PPT + 笔记 + 代码</td>
+          </tr>
+          <tr>
+            <td>周四</td>
+            <td>产品开发</td>
+            <td>继续产品功能开发，或进行代码审查、性能优化、Bug修复</td>
+            <td>产品代码提交 + 功能验收</td>
+          </tr>
+          <tr>
+            <td>周五</td>
+            <td>课程录制</td>
+            <td>录制1节课程视频，通常为模块总结或验收课程</td>
+            <td>课程视频 + PPT + 笔记 + 代码</td>
+          </tr>
+          <tr>
+            <td>周六</td>
+            <td>内容输出</td>
+            <td>内容储备（不正式发布）：课程笔记整理、FAQ编写、博客撰写、代码归档</td>
+            <td>课程笔记 + FAQ + 博客 + 代码归档</td>
+          </tr>
+        </tbody>
+      </table>
+      <p><strong>每周产出：</strong>3节课程 + 2天产品开发 + 1天内容输出 = 每周3节课程 + 产品功能持续迭代</p>
+      <p><strong>发布策略：</strong>Phase 0内容全部储备不发布（第10周验收后统一发布M0-M4）；Phase 1开始同步发布（课程上线即发布）；Phase 2-3持续同步发布。</p>
+    </div>
+  </div>
+
+  <!-- ==================== 七、产品版本演进路线 ==================== -->
+  <div class="section-block" id="product-evolution">
+    <h3>七、产品版本演进路线</h3>
+    <div class="block-content">
+      <table class="version-table">
+        <thead>
+          <tr>
+            <th>版本</th>
+            <th>阶段</th>
+            <th>周次</th>
+            <th>核心功能</th>
+            <th>技术栈</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>V1.0 本地版</td>
+            <td>Phase 0</td>
+            <td>第1-10周</td>
+            <td>AI对话 + RAG知识库 + 工具调用 + 文档上传 + 本地运行</td>
+            <td>Python FastAPI + SQLite + Milvus + LangChain</td>
+          </tr>
+          <tr>
+            <td>V1.0 线上版</td>
+            <td>Phase 1</td>
+            <td>第11-20周</td>
+            <td>多Agent协作 + K8s部署 + 监控告警 + 用户认证 + 正式上线</td>
+            <td>+ LangGraph + K8s + PostgreSQL + Prometheus/Grafana</td>
+          </tr>
+          <tr>
+            <td>V2.0 进阶版</td>
+            <td>Phase 2</td>
+            <td>第21-30周</td>
+            <td>多模态（图片/语音/视频）+ 安全防护 + 知识图谱 + 工程化升级</td>
+            <td>+ GPT-4o/Claude Vision + LlamaGuard/Presidio + Neo4j</td>
+          </tr>
+          <tr>
+            <td>V3.0 企业版</td>
+            <td>Phase 3</td>
+            <td>第31-36周</td>
+            <td>多租户 + SSO + 开放API + 插件系统 + 计费 + Marketplace</td>
+            <td>+ Go APISIX + 插件沙箱 + SDK（Python/JS/Go）</td>
+          </tr>
+          <tr>
+            <td>V3.1 国际化版</td>
+            <td>Phase 3</td>
+            <td>第37-40周</td>
+            <td>多语言 + 多Region + 私有化部署 + GDPR合规 + 海外推广</td>
+            <td>+ i18n + 多Region部署 + 离线部署包</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ==================== 八、课程发布策略 ==================== -->
+  <div class="section-block" id="release-strategy">
+    <h3>八、课程发布策略（调整版）</h3>
+    <div class="block-content">
+      <div class="release-phase">
+        <h4>Phase 0（第1-10周）：储备期 — 不发布</h4>
+        <p>全部24节课程录制完成后仅储备，不正式发布。原因：(1) 基础课程需要与产品V1.0同步验证，确保技术点可行；(2) 储备内容可以在后续阶段作为"批量上线"的素材；(3) Phase 0结束后统一发布M0-M4，形成基础模块完整包。</p>
+      </div>
+      <div class="release-phase">
+        <h4>Phase 1（第11-20周）：同步发布期 — 边录边发</h4>
+        <p>Phase 1开始同步发布课程。策略：(1) 第11周一次性发布Phase 0的24节基础课程（M0-M4完整包）；(2) Phase 1的16节课程（M5-M6）每周录制完成后当周发布；(3) 配合产品V1.0上线，进行"课程+产品"联合营销。</p>
+      </div>
+      <div class="release-phase">
+        <h4>Phase 2（第21-30周）：持续发布期 — 高级模块</h4>
+        <p>Phase 2持续同步发布。策略：(1) 每周发布2-3节课程；(2) 配合产品V2.0升级，进行"多模态+安全+知识图谱"专题营销；(3) 开源社区版发布，吸引开发者社区。</p>
+      </div>
+      <div class="release-phase">
+        <h4>Phase 3（第31-40周）：商业化发布期 — 企业级</h4>
+        <p>Phase 3商业化发布。策略：(1) 每周发布2节课程；(2) 配合产品V3.0/V3.1企业版，进行"企业级AI知识库"专题营销；(3) 推出企业版课程包（商业化+开放API+插件+企业客户+国际化）；(4) 第40周发布全项目总结课程和40周回顾。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 九、营销策略（调整版） ==================== -->
+  <div class="section-block" id="marketing-strategy">
+    <h3>九、营销策略（调整版）</h3>
+    <div class="block-content">
+      <div class="marketing-channel">
+        <h4>渠道1：技术内容营销</h4>
+        <p>每周发布3-5篇技术博客（课程精华提炼）、1-2个技术短视频（课程片段）、1篇深度文章（模块总结）。发布平台：掘金、知乎、CSDN、微信公众号、B站、YouTube。目标：建立"AI Agent全栈教程第一品牌"的认知。</p>
+      </div>
+      <div class="marketing-channel">
+        <h4>渠道2：开源社区营销</h4>
+        <p>Phase 2开源产品社区版（GitHub），通过Star/Fork/Issue/PR吸引开发者。策略：完善的README + 在线Demo + 快速开始指南 + 贡献指南 + 社区讨论区。目标：GitHub Star 1000+，Contributor 50+。</p>
+      </div>
+      <div class="marketing-channel">
+        <h4>渠道3：产品驱动增长（PLG）</h4>
+        <p>产品本身作为获客渠道：免费版吸引注册 → Pro版转化付费 → 企业版签大客户。产品内嵌"由XX课程驱动构建"标识，课程页面展示"学课程构建此产品"引导。目标：注册用户→付费用户转化率>5%。</p>
+      </div>
+      <div class="marketing-channel">
+        <h4>渠道4：企业客户直销</h4>
+        <p>Phase 3启动企业客户拓展：POC验证 → 方案定制 → 合同签约 → 客户成功。渠道：行业展会、技术沙龙、企业内训、合作伙伴推荐、LinkedIn出海。目标：签约企业客户10+。</p>
+      </div>
+      <div class="marketing-channel">
+        <h4>渠道5：生态合作营销</h4>
+        <p>Phase 3建设生态：插件开发者社区（插件市场）、Agent模板市场（模板创作者）、SDK生态（多语言SDK）、合作伙伴网络（技术/渠道/解决方案伙伴）。目标：插件50+，模板20+，开发者100+。</p>
+      </div>
+      <div class="marketing-channel">
+        <h4>渠道6：国际化营销</h4>
+        <p>Phase 3后期启动国际化：Product Hunt发布、HackerNews、Reddit、Twitter、YouTube英文频道、海外技术博客。目标：海外用户占比>20%，海外收入占比>10%。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 十、风险与应对 ==================== -->
+  <div class="section-block" id="risk-management">
+    <h3>十、风险与应对（调整版）</h3>
+    <div class="block-content">
+      <table class="risk-table">
+        <thead>
+          <tr>
+            <th>风险</th>
+            <th>影响</th>
+            <th>应对措施</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>课程录制进度滞后</td>
+            <td>高</td>
+            <td>每周3节固定节奏，周六储备缓冲；如连续2周未达标，暂停产品开发1周全力补课</td>
+          </tr>
+          <tr>
+            <td>产品开发阻塞课程</td>
+            <td>中</td>
+            <td>课程内容基于已验证的技术点录制，避免"边学边教"；产品开发使用课程已讲技术</td>
+          </tr>
+          <tr>
+            <td>技术选型失误</td>
+            <td>高</td>
+            <td>Phase 0充分验证技术栈；保留替代方案（如Milvus→Qdrant，FastAPI→Flask）；每Phase末技术评审</td>
+          </tr>
+          <tr>
+            <td>用户增长不及预期</td>
+            <td>中</td>
+            <td>Phase 1上线后启动内容营销；Phase 2开源获客；Phase 3企业直销+PLG双轮驱动</td>
+          </tr>
+          <tr>
+            <td>商业化收入不及预期</td>
+            <td>中</td>
+            <td>分阶段商业化（先个人付费→再企业付费）；控制成本（FinOps）；保留融资选项</td>
+          </tr>
+          <tr>
+            <td>团队精力分散</td>
+            <td>高</td>
+            <td>严格遵循周一/三/五课程、周二/四产品、周六内容的节奏；避免临时插队任务</td>
+          </tr>
+          <tr>
+            <td>AI技术快速迭代</td>
+            <td>中</td>
+            <td>课程设计注重原理与方法论（非特定API）；每Phase末更新前沿技术；保留课程V2.0更新计划</td>
+          </tr>
+          <tr>
+            <td>安全合规风险</td>
+            <td>高</td>
+            <td>Phase 2全面安全防护；Phase 3 GDPR合规；定期安全审计与渗透测试</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ==================== 十一、成功指标 ==================== -->
+  <div class="section-block" id="success-metrics">
+    <h3>十一、成功指标（KPI）</h3>
+    <div class="block-content">
+      <table class="kpi-table">
+        <thead>
+          <tr>
+            <th>维度</th>
+            <th>Phase 0 结束（第10周）</th>
+            <th>Phase 1 结束（第20周）</th>
+            <th>Phase 2 结束（第30周）</th>
+            <th>Phase 3 结束（第40周）</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>课程数量</td>
+            <td>24节（储备）</td>
+            <td>40节（已发布）</td>
+            <td>62节（已发布）</td>
+            <td>82节（全部发布）</td>
+          </tr>
+          <tr>
+            <td>产品版本</td>
+            <td>V1.0本地版</td>
+            <td>V1.0线上版</td>
+            <td>V2.0进阶版</td>
+            <td>V3.1国际化版</td>
+          </tr>
+          <tr>
+            <td>注册用户</td>
+            <td>0（未发布）</td>
+            <td>500+</td>
+            <td>2000+</td>
+            <td>5000+</td>
+          </tr>
+          <tr>
+            <td>付费用户</td>
+            <td>0</td>
+            <td>20+</td>
+            <td>100+</td>
+            <td>300+</td>
+          </tr>
+          <tr>
+            <td>企业客户</td>
+            <td>0</td>
+            <td>0</td>
+            <td>2+</td>
+            <td>10+</td>
+          </tr>
+          <tr>
+            <td>MRR（月经常性收入）</td>
+            <td>0</td>
+            <td>¥2,000+</td>
+            <td>¥10,000+</td>
+            <td>¥50,000+</td>
+          </tr>
+          <tr>
+            <td>GitHub Star</td>
+            <td>0</td>
+            <td>0</td>
+            <td>500+</td>
+            <td>1000+</td>
+          </tr>
+          <tr>
+            <td>社区成员</td>
+            <td>0</td>
+            <td>100+</td>
+            <td>500+</td>
+            <td>2000+</td>
+          </tr>
+          <tr>
+            <td>课程完课率</td>
+            <td>—</td>
+            <td>>60%</td>
+            <td>>70%</td>
+            <td>>80%</td>
+          </tr>
+          <tr>
+            <td>课程评分</td>
+            <td>—</td>
+            <td>>4.0</td>
+            <td>>4.3</td>
+            <td>>4.5</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ==================== 十二、总结 ==================== -->
+  <div class="section-block" id="conclusion">
+    <h3>十二、总结</h3>
+    <div class="block-content">
+      <p>本次课程规划调整的核心思路是<strong>"课程+产品双线并行、4阶段40周精确执行"</strong>。相比原规划，调整后的方案具有以下优势：</p>
+      <ol>
+        <li><strong>可执行性更强：</strong>每周周一至周六都有明确任务分解，不再是模糊的模块列表，而是精确到每天做什么、完成标准是什么、交付物是什么</li>
+        <li><strong>差异化更明显：</strong>从"Rust基础设施"调整为"全栈产品闭环"，学员跟着40周计划构建一个真实的企业级产品，这是竞品无法复制的核心壁垒</li>
+        <li><strong>商业化更完整：</strong>新增Phase 3（20节课程）覆盖商业化全链路，学员不仅学技术，还学如何将AI产品变现</li>
+        <li><strong>课程更系统：</strong>从28篇扩展为82节系统化课程，覆盖从大模型基础到企业级商业化的完整链路</li>
+        <li><strong>技术更前沿：</strong>新增多模态AI、Agent安全、知识图谱、GraphRAG等前沿技术模块</li>
+        <li><strong>工程更深入：</strong>从应用层入门深入到企业级工程化（K8s/监控/安全/FinOps），学员能构建生产级系统</li>
+      </ol>
+      <p><strong>最终目标：</strong>40周完成82节系统化课程 + 企业级AI知识库产品V3.1（100+功能/多语言/多Region/插件生态/Marketplace/私有化部署），实现课程教学与产品商业化的双赢。</p>
+    </div>
+  </div>
+
+</section>

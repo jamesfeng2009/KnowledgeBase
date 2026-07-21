@@ -18,7 +18,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db_session
-from app.deps import require_module
+from app.deps import get_current_active_user, require_module
 from app.models.user import User
 from app.schemas.common import ApiResponse
 from app.services.notification_hub import subscribe_stream
@@ -46,10 +46,10 @@ async def get_notifications(
 
 @router.get("/unread-count")
 async def get_unread_count(
-    user: User = Depends(require_module("knowledge_push")),
+    user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse:
-    """获取未读通知数量。"""
+    """获取未读通知数量。所有登录用户可查看。"""
     service = NotificationService(db)
     notifications = await service.get_user_notifications(
         user_id=str(user.id),

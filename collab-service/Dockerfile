@@ -8,9 +8,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 make g++ && \
     rm -rf /var/lib/apt/lists/*
 
-# 安装依赖
+# 安装依赖（构建需要 devDependencies 中的 typescript，不能用 --production）
 COPY package.json package-lock.json* ./
-RUN npm ci --production || npm install --production
+RUN npm ci || npm install
 
 # 复制源码
 COPY tsconfig.json ./
