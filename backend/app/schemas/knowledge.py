@@ -201,3 +201,64 @@ class DocumentSummaryResponse(BaseModel):
     )
     file_path: str | None = Field(default=None, description="原文件存储路径")
     created_at: datetime = Field(..., description="创建时间")
+
+
+# ======================================================================
+# 多平台文档导入 Schema — P0 多平台解析
+# ======================================================================
+
+
+class DocumentImportRequest(BaseModel):
+    """多平台文档导入请求 — 从 Confluence/Obsidian 等外部平台拉取文档并导入知识库。
+
+    适配器通过 adapter_registry 获取，fetch 后创建 Document 记录，
+    触发 Celery 异步解析（HTML 清洗 / Markdown 解析 → chunker → 向量化）。
+    """
+
+    kb_id: uuid.UUID = Field(..., description="目标知识库 ID")
+    source: str = Field(
+        ...,
+        description=(
+            "来源平台: confluence / obsidian / feishu / notion"
+        ),
+    )
+    doc_url_or_id: str = Field(
+        ...,
+        min_length=1,
+        description=(
+            "文档 URL 或 ID: Confluence pageId / Obsidian 文件路径 / "
+            "飞书 doc token / Notion pageId"
+        ),
+    )
+    title: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=500,
+        description="自定义标题，为空时使用平台原始标题",
+    )
+    credentials: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "平台凭证: Confluence {base_url, username, api_token} / "
+            "Obsidian {vault_path} / 飞书 {app_id, app_secret} / "
+            "Notion {integration_token}"
+        ),
+    )
+    classification: Classification = Field(
+        default=Classification.internal,
+        description="文档密级",
+    )
+
+
+class DocumentImportResponse(BaseModel):
+    """文档导入响应。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    doc_id: uuid.UUID = Field(..., description="创建的文档 ID")
+    source: str = Field(..., description="来源平台")
+    title: str = Field(..., description="文档标题")
+    source_url: str = Field(default="", description="原始文档 URL")
+    format: str = Field(..., description="内容格式: html / markdown")
+    status: str = Field(default="draft", description="文档状态")
+    message: str = Field(default="导入成功，正在异步解析", description="处理消息")

@@ -1369,17 +1369,18 @@ async def _parse_xlsx(doc: Any) -> str:
 
 
 def _parse_html(doc: Any) -> str:
-    """解析 HTML 文档 — 去除标签提取纯文本。"""
+    """解析 HTML 文档 — 使用 WikiHtmlCleaner 清洗为语义化 HTML。
+
+    升级：从"去全部标签提纯文本"改为"保留 h1-h6/table/ul-ol 结构的语义化 HTML"。
+    这样 chunker 的 _split_html 可按标题分块，表格结构也保留。
+    """
     try:
-        import re
+        from app.document.wiki_cleaner import clean_wiki_html
 
         html = doc.content_html or ""
-        # 移除 script 和 style 标签
-        clean = re.sub(r"<(script|style)[^>]*>.*?</\1>", "", html, flags=re.DOTALL)
-        # 移除 HTML 标签
-        text = re.sub(r"<[^>]+>", "", clean)
-        # 压缩空白
-        return re.sub(r"\s+", " ", text).strip()
+        if not html:
+            return doc.content_text or ""
+        return clean_wiki_html(html)
     except Exception as exc:
         logger.warning("html.parse_error", error=str(exc))
         return doc.content_text or ""

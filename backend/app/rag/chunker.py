@@ -568,7 +568,7 @@ class SemanticChunker:
 
     @staticmethod
     def _split_markdown(content: str, doc_id: str) -> list[Chunk]:
-        """按 Markdown 标题（# / ## / ###）分割，提取标题路径作为上下文锚点（P3）。
+        """按 Markdown 标题（# / ## / ### / #### / ##### / ######）分割。
 
         P3 标题路径：每个 chunk 的 title_path 字段记录从根标题到当前标题的完整路径，
         如 "Redis 深度解析 > 集群架构 > 哈希槽分配"，用于：
@@ -576,8 +576,8 @@ class SemanticChunker:
         - 检索时提供来源层级信息；
         - 生成时帮助 LLM 理解信息在文档中的位置。
         """
-        # 匹配行首 1~3 个 # 的标题
-        pattern = re.compile(r"^(#{1,3})\s+(.+)$", re.MULTILINE)
+        # 匹配行首 1~6 个 # 的标题（扩展支持 h4-h6，与 _split_html 一致）
+        pattern = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
         matches = list(pattern.finditer(content))
 
         if len(matches) < _MIN_STRUCTURAL_CHUNKS:
@@ -644,16 +644,17 @@ class SemanticChunker:
 
     @staticmethod
     def _split_html(content: str, doc_id: str) -> list[Chunk]:
-        """按 HTML 标题标签（<h1>/<h2>/<h3>）分割，提取标题路径（P3）。
+        """按 HTML 标题标签（<h1>-<h6>）分割，提取标题路径（P3）。
 
         改进：
+        - 支持 h1-h6 全覆盖（Wiki PRD 常用 h4-h6，原仅 h1-h3）；
         - 补章节标题：title_path 作为 [标题路径] 前缀拼入 content，
           让 embedding 阶段即可感知上下文层级，检索精度提升；
         - 超长拆分：超过 _STRUCTURAL_MAX_CHARS 的章节按 token 上限拆分，
           与 _split_markdown 保持一致，保持 title_path 前缀。
         """
-        # 同时匹配标签和标题文本
-        pattern = re.compile(r"<(h[1-3])[^>]*>(.*?)</\1>", re.IGNORECASE | re.DOTALL)
+        # 匹配 h1-h6 标签（Wiki PRD 常用 h4-h6，扩展覆盖范围）
+        pattern = re.compile(r"<(h[1-6])[^>]*>(.*?)</\1>", re.IGNORECASE | re.DOTALL)
         matches = list(pattern.finditer(content))
 
         if len(matches) < _MIN_STRUCTURAL_CHUNKS:

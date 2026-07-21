@@ -31,6 +31,8 @@ from app.schemas.knowledge import (
     DocResponse,
     DocUpdate,
     DocVersionResponse,
+    DocumentImportRequest,
+    DocumentImportResponse,
     DocumentSummaryResponse,
 )
 from app.services.knowledge_service import KnowledgeService
@@ -1074,3 +1076,160 @@ async def get_document_summary(
     )
 
     return ApiResponse(code=0, data=summary, message="success")
+
+
+# ======================================================================
+# P0 多平台文档导入 — Confluence / Obsidian / 飞书 / Notion
+# ======================================================================
+
+
+@router.post(
+    "/documents/import",
+    response_model=ApiResponse[DocumentImportResponse],
+    status_code=201,
+)
+async def import_document_from_source(
+    req: DocumentImportRequest,
+    db: AsyncSession = Depends(get_db_session),
+    user: User = Depends(get_current_active_user),
+) -> ApiResponse[DocumentImportResponse]:
+    """从外部平台导入文档 — 通过适配器拉取后创建 Document 并触发异步解析。
+
+    流程：
+        1. 从 adapter_registry 获取对应平台适配器
+        2. 调用 adapter.fetch() 拉取文档（HTML 或 Markdown）
+        3. 创建 Document 记录（content_text 存原始内容，doc_type 按格式映射）
+        4. 触发 Celery 异步解析任务（HTML 清洗 / Markdown 解析 → chunker → 向量化）
+
+    支持平台：
+        - confluence: Confluence REST API → HTML（WikiHtmlCleaner 清洗）
+        - obsidian: 本地 .md 文件 → Markdown（MarkdownParser 解析）
+        - feishu: 飞书 OpenAPI 导出 → DOCX（DOCXParser 解析）
+        - notion: Notion blocks API → Markdown（MarkdownParser 解析）
+
+    凭证通过 credentials dict 传入，不持久化到数据库。
+    """
+    from app.document.source_adapters.base import AdapterError
+    from app.document.source_adapters.registry import adapter_registry
+
+    # 1. 获取适配器
+    adapter = adapter_registry.get(req.source)
+    if adapter is None:
+        available = [a["adapter_id"] for a in adapter_registry.list_adapters()]
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"不支持的平台: {req.source}。"
+                f"已注册平台: {', '.join(available) or '无'}"
+            ),
+        )
+
+    # 2. 拉取文档
+    try:
+        fetched = await adapter.fetch(req.doc_url_or_id, req.credentials)
+    except AdapterError as exc:
+        logger.warning(
+            "document.import.fetch_failed",
+            source=req.source,
+            doc_url_or_id=req.doc_url_or_id[:100],
+            error=str(exc),
+            status_code=exc.status_code,
+        )
+        http_status = (
+            status.HTTP_404_NOT_FOUND
+            if exc.status_code == 404
+            else status.HTTP_502_BAD_GATEWAY
+        )
+        raise HTTPException(
+            status_code=http_status,
+            detail=f"拉取文档失败: {exc}",
+        ) from exc
+    except Exception as exc:
+        logger.exception(
+            "document.import.unexpected_error",
+            source=req.source,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"拉取文档时发生意外错误: {exc}",
+        ) from exc
+
+    if not fetched.content or not fetched.content.strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="拉取到的文档内容为空",
+        )
+
+    # 3. 确定标题和文档类型
+    doc_title = req.title or fetched.title or f"Imported from {req.source}"
+    # 格式映射：html → html，markdown → md
+    doc_type = "html" if fetched.format == "html" else "md"
+
+    # 4. 创建文档记录
+    service = KnowledgeService(db, user)
+    try:
+        doc = await service.upload_document(
+            kb_id=req.kb_id,
+            title=doc_title,
+            content=fetched.content,
+            doc_type=doc_type,
+        )
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+
+    # 5. 更新 file_path 和 classification
+    from app.repositories.knowledge_repository import DocumentRepository
+
+    doc_repo = DocumentRepository(db)
+    await doc_repo.update(
+        doc.id,
+        file_path=fetched.source_url or f"{req.source}://{fetched.doc_id}",
+        classification=req.classification.value,
+    )
+
+    # 6. 触发 Celery 异步解析任务
+    try:
+        from tasks.document_tasks import process_document
+
+        process_document.delay(str(doc.id))
+        logger.info(
+            "document.import.triggered_parse",
+            doc_id=str(doc.id),
+            source=req.source,
+        )
+    except ImportError:
+        logger.warning(
+            "document.import.celery_unavailable",
+            doc_id=str(doc.id),
+        )
+    except Exception:
+        logger.exception(
+            "document.import.celery_error",
+            doc_id=str(doc.id),
+        )
+
+    logger.info(
+        "document.import.success",
+        doc_id=str(doc.id),
+        source=req.source,
+        title=doc_title,
+        format=fetched.format,
+        chars=len(fetched.content),
+    )
+
+    return ApiResponse(
+        code=0,
+        data=DocumentImportResponse(
+            doc_id=doc.id,
+            source=req.source,
+            title=doc_title,
+            source_url=fetched.source_url,
+            format=fetched.format,
+            status="draft",
+            message="导入成功，正在异步解析",
+        ),
+        message="success",
+    )

@@ -26,6 +26,7 @@ _PARSER_CLASSES: dict[str, type[DocumentParser]] = {}
 def _register_parsers() -> None:
     """注册所有原有文档解析器 — 延迟导入避免循环依赖。"""
     from app.document.docx_parser import DOCXParser
+    from app.document.markdown_parser import MarkdownParser
     from app.document.pdf_parser import PDFParser
     from app.document.pptx_parser import PPTXParser
     from app.document.xlsx_parser import XLSXParser
@@ -35,6 +36,9 @@ def _register_parsers() -> None:
     _PARSER_CLASSES["docx"] = DOCXParser
     _PARSER_CLASSES["xlsx"] = XLSXParser
     _PARSER_CLASSES["xls"] = XLSXParser  # 别名
+    # Markdown — Obsidian/Notion/飞书导出等，零依赖始终可用
+    _PARSER_CLASSES["md"] = MarkdownParser
+    _PARSER_CLASSES["markdown"] = MarkdownParser  # 别名
     # 注意：不注册 "doc" 和 "ppt" 旧格式别名
     # python-docx / python-pptx 只支持 OOXML (.docx/.pptx)，
     # 旧格式由 _parse_document 路由层做兜底提示
