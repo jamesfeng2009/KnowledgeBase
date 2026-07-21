@@ -1946,29 +1946,29 @@ python -m pytest tests/test_model_fields_p0p2.py -v       # P0-P2 字段补全�
 
 | 测试文件 | 测试数 | 覆盖范围 |
 |----------|--------|----------|
-| `test_chunk_optimization.py` | 45 | Q&A 分块、内容类型路由、标题路径、Context Cliff、格式智能检测（Docling Markdown vs Legacy HTML） |
+| `test_chunk_optimization.py` | 55 | Q&A 分块、内容类型路由、标题路径、Context Cliff、格式智能检测（Docling Markdown vs Legacy HTML） |
 | `test_token_optimization.py` | 27 | CacheAligner、Prompt Caching、稳定 System Prompt、增量上下文 |
 | `test_p1_token_optimization.py` | 32 | 跨轮去重、Reflect 摘要、L1 注入、历史窗口化 |
 | `test_p2_token_optimization.py` | 35 | ContextBudgetManager、三段式压缩、引擎集成 |
-| `test_document_tasks_chunker.py` | 30 | SemanticChunker 接入、索引元数据、端到端策略验证 |
+| `test_document_tasks_chunker.py` | 47 | SemanticChunker 接入、索引元数据、端到端策略验证 |
 | `test_vector_store.py` | 44 | VectorStoreBase 抽象、OpenSearch k-NN / Milvus 双后端、工厂、检索器集成 |
 | `test_audit_workflow.py` | 19 | 文档审核流程串联、密级路由、AuditService.approve 触发发布 |
-| `test_tool_guard.py` | 30 | DangerousToolGuard 守卫拦截、确认管理、engine 集成 |
+| `test_tool_guard.py` | 32 | DangerousToolGuard 守卫拦截、确认管理、engine 集成 |
 | `test_video_rag.py` | 34 | ASR Provider 工厂、视频处理器、视频转写分块、document_tasks 集成、关键帧 VLM 并发 |
 | `test_document_parser.py` | 230 | Docling 统一解析、PDF 表格/图片上传/小图过滤/VLM/扫描页 OCR、PPTX GROUP 递归/图表数据/图片上传/小图过滤/列宽对齐/备注、DOCX 标题层级映射/列表结构/分页检测/图片上传/页眉页脚、XLSX 双引擎降级/列宽对齐、独立音频 ASR、旧格式兜底、factory 路由、document_tasks 集成、配置项 |
 | `test_quality_guard.py` | 33 | 检索质量检查、重试决策、生成质量评估、低置信度标记、engine 集成 |
-| `test_rate_limiter.py` | 16 | 令牌桶消费/补充、客户端隔离、API Key/IP 标识、429 响应、健康检查豁免 |
+| `test_rate_limiter.py` | 22 | 令牌桶消费/补充、客户端隔离、API Key/IP 标识、429 响应、健康检查豁免 |
 | `test_eval.py` | 55 | 数据集加载、Recall@K/MRR/NDCG 计算、Runner 集成、回归检测、DB 持久化、CLI 退出码 |
 | `test_skill_finder.py` | 58 | SkillMetadata 匹配分数、SkillRegistry 加载/索引/按需加载、SkillFinder 中英文匹配/阈值/fallback/max_skills、分词器、config 配置项、Server/MCPClient/Engine 集成 |
 | `test_dashscope_provider.py` | 27 | DashScopeProvider 继承 VLLMProvider、初始化、chat/tool_use、DashScopeEmbedder 维度/embed、factory 路由、config 配置项、向后兼容性 |
-| `test_minio_client.py` | 8 | MinIO upload/download/delete/exists、懒初始化、bucket 自动创建与缓存 |
+| `test_minio_client.py` | 20 | MinIO upload/download/delete/exists、懒初始化、bucket 自动创建与缓存 |
 | `test_migration.py` | 46 | Pydantic V2 field_validator（DATABASE_URL/数值/CORS）、model_validator（部署模式/SECRET_KEY）、迁移文件存在性/upgrade/downgrade、alembic env.py 配置、迁移 runner 端到端 SQLite |
 | `test_upload_summary.py` | 53 | P0 文件大小校验（MAX_UPLOAD_SIZE_MB 超限 413/MagicMock 回退）、P1 解析摘要响应（preview/structure/warnings/pages/char_count/parse_status）、结构标签提取、页数推断、解析状态推断、解析任务 warnings 收集、旧格式警告、认证强制、**DB 字段优先读取（page_count/char_count/parse_status/parse_warnings）**、**任务持久化解析元数据**、**迁移文件验证（4 字段 add_column/drop_column）** |
 | `test_model_fields_p0p2.py` | 63 | P0-P2 字段补全：P0-1 tenant_id（KnowledgeBase/Document）、P0-2 MessageRepository limit 参数、P0-3 AgentCheckpoint ORM 模型、P0-4 stream_agent_response 异步生成器、P0-5 ApiKeyResponse expires_at/tenant_id、P1 DocResponse 8 字段、Notification.read_at DateTime 类型、10 模型 tenant_id、UsageRecord duration_ms/success/request_id、Subscription 6 字段补全、P2 Response Schema（7 个）+ updated_at（4 个）、迁移文件验证 |
 | `test_testing_platform.py` | 64 | 智能测试平台：6 张表 ORM 模型、10 个枚举、5 个服务（需求提取/用例生成/评审/管理/编排）、28 个 API 端点、3 个 Celery 任务、JSON 解析 |
 | `test_knowledge_compounding.py` | 47 | 知识回流层：3 张表 ORM 模型、Pydantic Schema、KnowledgeCompoundingService（5 步闭环：收集/提取/沉淀/冲突检测/复用注入）、JSON 解析、Celery 任务、API 路由注册 |
-| 其他测试 | 215 | API 端点、服务层、模型层、记忆引擎等 |
-| **合计** | **1211** | **全部通过，零回归** |
+| 其他测试 | 454 | API 端点、服务层、模型层、记忆引擎、连接器、通知、图谱、多模态、租户门控、P0/P1/P2 适配器等 |
+| **合计** | **1397** | **1393 passed + 3 skipped + 1 pre-existing failure（DashScope API key 环境问题），零回归** |
 
 ---
 
