@@ -20,6 +20,7 @@
 - [文档处理流水线](#文档处理流水线)
 - [LLM Provider 抽象层](#llm-provider-抽象层)
 - [API 限流](#api-限流)
+- [智能测试平台](#智能测试平台)
 - [离线评测系统](#离线评测系统)
 - [部署指南](#部署指南)
 - [测试](#测试)
@@ -1538,6 +1539,83 @@ session 级（user_model_preferences 表）  >  system 默认（models.json is_d
 ### LangFuse 全链路追踪
 
 Agent Loop 的每个节点（think/retrieve/tool_call/generate/reflect）通过 `@trace_node` 装饰器自动记录到 LangFuse，支持五节点 Agent Loop 追踪。LangFuse 未配置时静默降级为纯日志，不影响主流程。
+
+---
+
+## 智能测试平台
+
+基于知识库的 AI 驱动测试平台，实现从 PRD/UI 稿到测试用例的全流程自动化：需求自动拆分 → AI 用例生成 → 用例评审 → 统一管理 → AI 自动编排。
+
+**核心能力**：
+- **需求自动拆分**：从 PRD、UI 稿（支持飞书 Wiki、Confluence、Notion、Obsidian 多平台解析）自动提取原子需求点，分类（功能/非功能/UI/API/性能）+ 优先级 + 验收标准
+- **AI 用例生成**：结合需求点 + 技术方案 + 接口文档，LLM 自动生成结构化测试用例（前置条件、测试步骤、预期结果）
+- **用例评审**：复用审核工作流模式（pending → approved/rejected），支持评审建议和摘要
+- **用例统一管理**：CRUD + 批量操作 + 多维度筛选（状态/类型/优先级/关键词）+ 用例编号自动生成
+- **AI 自动编排**：根据用例优先级、测试类型依赖、执行节点容量，LLM 生成执行顺序和节点分配方案
+
+```mermaid
+flowchart LR
+    PRD[PRD/UI 稿<br/>飞书/Confluence/Notion] --> PARSE[多平台文档解析]
+    PARSE --> EXTRACT[AI 需求拆分<br/>RequirementAnalysisService]
+    EXTRACT --> REQ[TestRequirement<br/>需求点]
+    REQ --> GEN[AI 用例生成<br/>TestCaseGenerationService]
+    TECH[技术方案] --> GEN
+    API[接口文档] --> GEN
+    GEN --> CASE[TestCase<br/>测试用例]
+    CASE --> REVIEW[用例评审<br/>TestReviewService]
+    REVIEW -->|approved| MGMT[统一管理<br/>TestCaseManagementService]
+    REVIEW -->|rejected| CASE
+    MGMT --> PLAN[测试计划<br/>TestPlan]
+    PLAN --> ORCH[AI 自动编排<br/>TestOrchestrationService]
+    ORCH --> EXEC[执行记录<br/>TestExecution]
+```
+
+**数据模型**（6 张表）：
+
+| 表 | 说明 |
+|----|------|
+| `test_projects` | 测试项目，关联 PRD/技术方案/接口文档 |
+| `test_requirements` | 需求点，从 PRD 自动拆分 |
+| `test_cases` | 测试用例，AI 生成或手动创建 |
+| `test_reviews` | 用例评审记录 |
+| `test_plans` | 测试计划，含 AI 编排方案 |
+| `test_executions` | 用例执行记录 |
+
+**服务层**（5 个服务）：
+
+| 服务 | 职责 |
+|------|------|
+| `RequirementAnalysisService` | LLM 驱动的需求点提取、分类、验收标准生成 |
+| `TestCaseGenerationService` | LLM 驱动的结构化用例生成（结合技术方案+接口文档） |
+| `TestReviewService` | 用例评审提交/通过/驳回，复用审核工作流模式 |
+| `TestCaseManagementService` | 用例 CRUD、批量操作、多维度筛选、统计聚合 |
+| `TestOrchestrationService` | LLM 驱动的执行顺序编排、节点分配、依赖分析 |
+
+**API 端点**（28 个，prefix=`/api/v1/testing`）：
+
+| 分组 | 端点 | 说明 |
+|------|------|------|
+| 项目 | `POST/GET/PUT /projects` | 测试项目 CRUD |
+| 需求 | `POST /requirements/extract` | AI 从文档提取需求点 |
+| 需求 | `GET/PUT /requirements` | 需求点查询/更新 |
+| 用例 | `POST /cases/generate` | AI 生成测试用例 |
+| 用例 | `POST/GET/PUT/DELETE /cases` | 用例 CRUD |
+| 用例 | `POST /cases/batch-status` | 批量更新状态 |
+| 评审 | `POST /reviews` | 提交用例评审 |
+| 评审 | `GET /reviews/pending` | 待评审列表 |
+| 评审 | `PUT /reviews/{id}/approve` | 通过评审 |
+| 评审 | `PUT /reviews/{id}/reject` | 驳回评审 |
+| 计划 | `POST /plans` | 创建测试计划 |
+| 计划 | `POST /plans/{id}/orchestrate` | AI 编排执行方案 |
+| 执行 | `POST/GET /executions` | 执行记录 |
+| 统计 | `GET /stats` | 测试平台统计 |
+
+**多租户门控**：注册为 `testing_platform` 模块，Pro 套餐及以上可用。
+
+**Celery 异步任务**：
+- `extract_requirements_task` — 异步需求提取
+- `generate_test_cases_task` — 异步用例生成
+- `orchestrate_test_plan_task` — 异步 AI 编排
 
 ---
 

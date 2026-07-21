@@ -98,6 +98,13 @@ MODULE_REGISTRY: list[ModuleDef] = [
         description="图片智能解析、表格结构化、扫描件 OCR、白板拍照入库",
         category="integration",
     ),
+    # === 智能测试平台 ===
+    ModuleDef(
+        id="testing_platform",
+        name="智能测试平台",
+        description="PRD/UI 稿自动需求拆分、AI 用例生成、用例评审、统一管理、AI 自动编排",
+        category="intelligence",
+    ),
 ]
 
 # ------------------------------------------------------------------
@@ -123,6 +130,7 @@ PLAN_DEFAULTS: dict[str, list[str]] = {
             "knowledge_graph",
             "expert_discovery",
             "knowledge_push",
+            "testing_platform",
         }
     ),
     "enterprise": sorted(MODULE_IDS),

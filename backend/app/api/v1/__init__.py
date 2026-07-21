@@ -31,6 +31,7 @@ from app.api.v1.search import router as search_router
 from app.api.v1.settings import router as settings_router
 from app.api.v1.stats import router as stats_router
 from app.api.v1.tenants import router as tenants_router
+from app.api.v1.testing import router as testing_router
 from app.api.v1.users import router as users_router
 
 api_router = APIRouter(prefix="/api/v1")
@@ -60,3 +61,4 @@ api_router.include_router(reports_router)
 api_router.include_router(stats_router)
 api_router.include_router(approvals_router)
 api_router.include_router(models_router)
+api_router.include_router(testing_router)

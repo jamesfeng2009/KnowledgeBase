@@ -23,6 +23,14 @@ from app.models.notification import Notification
 from app.models.qa import QaAnswer, QaQuestion
 from app.models.user import Department, KbMember, User
 from app.models.user_model_preference import UserModelPreference
+from app.models.testing import (
+    TestExecution,
+    TestPlan,
+    TestProject,
+    TestRequirement,
+    TestReview,
+    TestCase,
+)
 
 __all__ = [
     "Base",
@@ -63,4 +71,11 @@ __all__ = [
     "ToolApproval",
     # P2: 用户模型偏好
     "UserModelPreference",
+    # 智能测试平台
+    "TestProject",
+    "TestRequirement",
+    "TestCase",
+    "TestReview",
+    "TestPlan",
+    "TestExecution",
 ]
