@@ -400,8 +400,9 @@ class TestEngineBudgetIntegration:
 
         # answer 调用应重置
         tokens = []
-        async for token in engine.answer("test", "user-1", "session-1"):
-            tokens.append(token)
+        async for chunk in engine.answer("test", "user-1", "session-1"):
+            if isinstance(chunk, str):
+                tokens.append(chunk)
 
         stats = engine._budget.get_stats()
         assert stats["compress_count"] == 0
@@ -456,15 +457,16 @@ class TestEngineBudgetIntegration:
 
         llm.chat = mock_chat
 
-        # Mock _tool_call — 每轮返回不同的长结果（避免被 P1-Opt3 去重）
+        # Mock _tool_call_streaming — 每轮返回不同的长结果（避免被 P1-Opt3 去重）
         async def mock_tool_call(state):
             i = state["iteration"]
             state["tool_results"].append({
                 "tool": f"search_erp_{i}",
                 "result": f"第{i}轮不同结果 " + "数据" * 200,  # ~400 chars each
             })
+            yield  # 异步生成器需要 yield
 
-        engine._tool_call = mock_tool_call
+        engine._tool_call_streaming = mock_tool_call
 
         await engine._run_decision_loop(state)
 
@@ -495,8 +497,9 @@ class TestEngineBudgetIntegration:
                 "tool": "search_erp",
                 "result": "大量数据 " * 200,
             })
+            yield  # 异步生成器需要 yield
 
-        engine._tool_call = mock_tool_call
+        engine._tool_call_streaming = mock_tool_call
 
         await engine._run_decision_loop(state)
 
@@ -531,8 +534,9 @@ class TestEngineBudgetIntegration:
                 "tool": f"search_erp_{i}",
                 "result": f"第{i}轮不同结果 " + "数据" * 200,
             })
+            yield  # 异步生成器需要 yield
 
-        engine._tool_call = mock_tool_call
+        engine._tool_call_streaming = mock_tool_call
 
         await engine._run_decision_loop(state)
 
@@ -555,8 +559,9 @@ class TestEngineBudgetIntegration:
         with patch("app.rag.engine.TraceContext", return_value=mock_trace):
             engine, _ = _make_engine(max_iterations=2)
             tokens = []
-            async for token in engine.answer("test", "user-1", "session-1"):
-                tokens.append(token)
+            async for chunk in engine.answer("test", "user-1", "session-1"):
+                if isinstance(chunk, str):
+                    tokens.append(chunk)
 
         # 检查 finalize 被调用且 metadata 包含 budget 字段
         assert mock_trace.finalize.called
@@ -579,8 +584,9 @@ class TestBackwardCompatibility:
         """answer() 仍正确 yield token。"""
         engine, _ = _make_engine()
         tokens = []
-        async for token in engine.answer("test query", "user-1", "session-1"):
-            tokens.append(token)
+        async for chunk in engine.answer("test query", "user-1", "session-1"):
+            if isinstance(chunk, str):
+                tokens.append(chunk)
         assert len(tokens) > 0
         assert "".join(tokens) == "这是答案"
 

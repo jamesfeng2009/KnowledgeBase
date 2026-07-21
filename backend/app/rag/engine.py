@@ -18,7 +18,9 @@ Agentic RAG 主引擎 — 单一职责：编排 think → retrieve/tool_call →
 关键设计：
     - ``max_iterations`` 防止无限循环（默认 5 次）；
     - **权限过滤在重排之前**（核心安全约束）：检索召回 → ABAC 权限过滤 → 重排；
-    - ``answer()`` / ``answer_with_graph()`` 均返回 ``AsyncIterator[str]`` 供 SSE 流式消费；
+    - ``answer()`` 返回 ``AsyncIterator[SSEEvent | str]`` 供 SSE 流式消费
+      （SSE 事件：thinking/retrieve/tool_call/sources/quality/done；str：token）；
+    - ``answer_with_graph()`` 返回 ``AsyncIterator[str]``（LangGraph 可选路径）；
     - 工具调用通过 MCPClient 转发，不耦合具体工具实现。
 
 遵循单一职责：本模块只负责流程编排，检索/重排/生成/权限均委托注入的组件。
@@ -28,6 +30,7 @@ Agentic RAG 主引擎 — 单一职责：编排 think → retrieve/tool_call →
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any, TypedDict
 
@@ -42,6 +45,7 @@ from app.rag.tool_guard import DangerousToolGuard, GuardAction
 from app.rag.reranker import RerankerBase
 from app.rag.retriever import HybridRetriever
 from app.utils.logger import get_logger
+from app.utils.sse import SSEEvent, SSEEventType
 
 # 延迟导入 LangGraph（可能未安装）— 安装时可通过 build_graph() / answer_with_graph()
 # 使用声明式状态图驱动 Agent Loop，并支持 PostgresSaver 断点恢复；
@@ -110,6 +114,8 @@ class AgentState(TypedDict, total=False):
     max_iterations: int
     kb_ids: list[str] | None
     memory_context: str
+    # 多租户预留 — 当前不实施隔离逻辑，仅预留字段供未来扩展。
+    tenant_id: str | None
     # --- LangGraph 专用字段（纯 Python 路径不使用）---
     # think 节点产出的路由信号：retrieve / tool_call / generate。
     _decision: str
@@ -130,9 +136,9 @@ class AgenticRAGEngine:
             generator=Generator(get_llm_provider()),
             permission_filter=my_filter,
         )
-        # 默认路径（纯 Python while 循环）
-        async for token in engine.answer(query, user_id, session_id):
-            yield token  # SSE 流式输出
+        # 默认路径（纯 Python while 循环）— yield SSEEvent | str
+        async for chunk in engine.answer(query, user_id, session_id):
+            yield chunk  # SSEEvent（thinking/retrieve/tool_call/...）或 str token
 
     LangGraph 可选路径（安装 langgraph 后）::
 
@@ -227,14 +233,24 @@ class AgenticRAGEngine:
         session_id: str,
         kb_ids: list[str] | None = None,
         memory_context: str = "",
-    ) -> AsyncIterator[str]:
-        """Agentic RAG 主入口 — 返回答案 token 流供 SSE 消费。
+        tenant_id: str | None = None,
+    ) -> AsyncIterator[SSEEvent | str]:
+        """Agentic RAG 主入口 — 返回 SSE 事件流供前端实时消费。
 
-        流程：
-            1. 查询 Token 缓存，命中则直接返回；
-            2. 执行 Agent Loop（think → retrieve/tool_call → generate → reflect）；
-            3. 生成阶段流式 yield token；
-            4. 生成完成后回写缓存。
+        P0-2 重构：从仅生成阶段 yield token 升级为全流程 yield SSE 事件，
+        让用户在 think / retrieve / tool_call 阶段就能看到实时进度。
+
+        事件流时序::
+
+            event: thinking         ← think 阶段（每轮）
+            event: retrieve_start   ← 检索开始
+            event: retrieve_end     ← 检索完成（含文档数）
+            event: tool_call_start  ← 工具调用开始（P0-3）
+            event: tool_call_end    ← 工具调用完成（P0-3）
+            data: 根据…             ← token（generate 阶段，plain str）
+            event: sources          ← 引用来源
+            event: quality          ← 质量评分
+            event: done             ← 结束信号（含 token_count / iterations）
 
         Args:
             query: 用户问题。
@@ -242,9 +258,11 @@ class AgenticRAGEngine:
             session_id: 会话 ID。
             kb_ids: 可选，限定检索的知识库范围。
             memory_context: 记忆引擎提供的上下文。
+            tenant_id: 多租户预留（当前不实施隔离逻辑）。
 
         Yields:
-            str: 答案文本片段。
+            SSEEvent | str: SSE 事件对象（thinking/retrieve/tool_call/sources/
+            quality/done）或 token 字符串（generate 阶段）。
         """
         # 1. 缓存命中检查
         if self.cache is not None:
@@ -270,6 +288,7 @@ class AgenticRAGEngine:
             "max_iterations": self.max_iterations,
             "kb_ids": kb_ids,
             "memory_context": memory_context,
+            "tenant_id": tenant_id,
         }
         # 重置检索重试计数
         self._retrieval_retry_count = 0
@@ -288,10 +307,11 @@ class AgenticRAGEngine:
         )
         self._trace_ctx.start()
 
-        # 3. 执行 think / retrieve / tool_call 循环（非流式），直到决定生成
-        await self._run_decision_loop(state)
+        # 3. 执行 think / retrieve / tool_call 循环 — 流式 yield SSE 事件
+        async for event in self._run_decision_loop_streaming(state):
+            yield event
 
-        # 4. 流式生成答案
+        # 4. 流式生成答案（plain str token，_to_sse_stream 自动包装为 data:）
         answer_parts: list[str] = []
         async for token in self.generator.generate(
             query=state["query"],
@@ -307,26 +327,50 @@ class AgenticRAGEngine:
         state["answer"] = answer
         eval_result = await self._reflect(state)
 
-        # 5.5 质量守卫：低置信度时通过 SSE 通知前端
-        if state.get("low_confidence"):
-            quality_event = json.dumps(
+        # 6. yield sources 事件（引用来源）
+        if state["retrieved_docs"]:
+            sources = [
                 {
-                    "type": "quality",
-                    "low_confidence": True,
-                    "message": "本次回答的置信度较低，建议核实关键信息",
-                },
-                ensure_ascii=False,
+                    "id": doc.get("chunk_id", ""),
+                    "title": doc.get("title", doc.get("doc_title", "")),
+                    "content": doc.get("content", "")[:200],
+                    "score": doc.get("score", 0.0),
+                }
+                for doc in state["retrieved_docs"]
+            ]
+            yield SSEEvent(
+                data={"sources": sources},
+                event=SSEEventType.SOURCES,
             )
-            yield f"data: {quality_event}\n\n"
 
-        # 6. 回写缓存
+        # 7. yield quality 事件（质量评分 + 低置信度标记）
+        quality_data: dict[str, Any] = {
+            "low_confidence": state.get("low_confidence", False),
+        }
+        if eval_result is not None:
+            quality_data.update(
+                {
+                    "citation_accuracy": eval_result.citation_accuracy,
+                    "completeness": eval_result.completeness,
+                    "faithfulness": eval_result.hallucination_inverse,
+                    "total_score": eval_result.total_score,
+                }
+            )
+        if state.get("low_confidence"):
+            quality_data["message"] = "本次回答的置信度较低，建议核实关键信息"
+        yield SSEEvent(
+            data=quality_data,
+            event=SSEEventType.QUALITY,
+        )
+
+        # 8. 回写缓存
         if self.cache is not None and answer:
             try:
                 await self.cache.set(query, answer)
             except Exception as exc:
                 log.warning("engine.cache.set_error", error=str(exc))
 
-        # 7. 结束 Trace（含质量评分上报）
+        # 9. 结束 Trace（含质量评分上报）
         if self._trace_ctx is not None:
             budget_stats = self._budget.get_stats()
             trace_metadata = {
@@ -352,6 +396,18 @@ class AgenticRAGEngine:
                 output=answer[:500],
                 metadata=trace_metadata,
             )
+
+        # 10. yield done 事件（结束信号 + 统计摘要）
+        yield SSEEvent(
+            data={
+                "message_id": session_id,
+                "token_count": len(answer) // 4,
+                "iterations": state["iteration"],
+                "retrieved_docs": len(state["retrieved_docs"]),
+                "tool_calls": len(state["tool_results"]),
+            },
+            event=SSEEventType.DONE,
+        )
 
     # ------------------------------------------------------------------
     # LangGraph 可选路径 — 声明式状态图 + 断点恢复
@@ -598,19 +654,36 @@ class AgenticRAGEngine:
     # ------------------------------------------------------------------
 
     async def _run_decision_loop(self, state: AgentState) -> None:
-        """执行 think → retrieve/tool_call 的循环，直到决定生成或达到上限。
+        """执行 think → retrieve/tool_call 的循环（非流式版本，向后兼容）。
 
-        这是 Agent Loop 的核心：用 ``while`` 循环替代 LangGraph 的图边，
-        通过 ``_think`` 返回的路由信号决定下一步动作。
+        委托给 ``_run_decision_loop_streaming`` 并排空事件流，
+        供 ``answer_with_graph`` 及测试用例调用。
 
-        P0-Opt2: Live-Zone 增量上下文传递 — 循环开始前初始化稳定前缀
-        [system_stable, user_query]，后续每轮只追加增量结果（短摘要），
-        不重建完整 messages 列表。前缀字节稳定以命中 Anthropic KV Cache。
+        历史文档参考：
+            P0-Opt2: Live-Zone 增量上下文传递 — 循环开始前初始化稳定前缀
+            [system_stable, user_query]，后续每轮只追加增量结果（短摘要），
+            不重建完整 messages 列表。前缀字节稳定以命中 Anthropic KV Cache。
 
-        P2-Opt6: 上下文预算保护 — 每轮 think 前检查 messages 总 token 数，
-        超过预算（2000 tok）时压缩早期中间消息为单条摘要。
-        Head（system + query）和 Tail（最近 2 条）保持不变，确保
-        KV Cache 前缀稳定且 Live Zone 上下文完整。
+            P2-Opt6: 上下文预算保护 — 每轮 think 前检查 messages 总 token 数，
+            超过预算（2000 tok）时压缩早期中间消息为单条摘要。
+        """
+        async for _ in self._run_decision_loop_streaming(state):
+            pass
+
+    async def _run_decision_loop_streaming(
+        self, state: AgentState
+    ) -> AsyncIterator[SSEEvent]:
+        """执行 think → retrieve/tool_call 循环 — 流式 yield SSE 事件。
+
+        P0-2 核心：在 think / retrieve / tool_call 阶段向客户端推送实时进度事件，
+        让用户在等待生成时看到 Agent 正在做什么。
+
+        事件流：
+            - thinking：每轮 think 开始时
+            - retrieve_start / retrieve_end：检索前后
+            - tool_call_start / tool_call_end：每个工具调用前后（P0-3）
+
+        逻辑与原 ``_run_decision_loop`` 完全等价，仅增加了 SSE 事件 yield。
         """
         kb_ids = state.get("kb_ids")
 
@@ -631,6 +704,15 @@ class AgenticRAGEngine:
                 )
                 break
 
+            # yield thinking 事件 — 让用户看到 Agent 正在分析
+            yield SSEEvent(
+                data={
+                    "content": f"正在分析问题（第 {state['iteration']} 轮）...",
+                    "iteration": state["iteration"],
+                },
+                event=SSEEventType.THINKING,
+            )
+
             # think：LLM 决策下一步（读取 state["messages"] 稳定前缀 + 增量结果）
             # P2-Opt6: think 前检查上下文预算，超限时压缩早期消息
             if self._budget.should_compress(state["messages"]):
@@ -639,7 +721,26 @@ class AgenticRAGEngine:
             decision = await self._think(state)
 
             if decision == "retrieve":
+                # yield retrieve_start 事件
+                yield SSEEvent(
+                    data={
+                        "query": state["query"],
+                        "iteration": state["iteration"],
+                    },
+                    event=SSEEventType.RETRIEVE_START,
+                )
+
                 await self._retrieve(state, kb_ids)
+
+                # yield retrieve_end 事件
+                yield SSEEvent(
+                    data={
+                        "doc_count": len(state["retrieved_docs"]),
+                        "iteration": state["iteration"],
+                    },
+                    event=SSEEventType.RETRIEVE_END,
+                )
+
                 # P0-Opt2: 追加增量结果摘要（非重建），前缀保持稳定
                 state["messages"].append(
                     {
@@ -649,7 +750,9 @@ class AgenticRAGEngine:
                 )
                 continue
             if decision == "tool_call":
-                await self._tool_call(state)
+                # P0-3: yield tool_call_start/end 事件
+                async for event in self._tool_call_streaming(state):
+                    yield event
                 # P0-Opt2 + P1-Opt3: 只追加最新工具结果摘要（经去重），不重传历史结果
                 if state["tool_results"]:
                     latest = state["tool_results"][-1]
@@ -862,15 +965,34 @@ class AgenticRAGEngine:
 
     @trace_node("tool_call")
     async def _tool_call(self, state: AgentState) -> None:
-        """通过 MCP Client 调用企业系统工具。
+        """通过 MCP Client 调用企业系统工具（非流式版本，向后兼容）。
 
-        将 MCP 工具列表传给 LLM，由 LLM 决定调用哪个工具及入参，
-        再通过 MCPClient.call_tool_from_llm 转发执行。
+        委托给 ``_tool_call_streaming`` 并排空事件流。
+        供 LangGraph 图节点 ``_graph_tool_call`` 及测试用例调用。
 
         Find Skills 渐进式技能加载：
             - SKILL_FINDER_ENABLED=True 时，先从用户查询匹配相关技能，
               只加载匹配工具的完整 schema（按需加载，节省 token）；
             - SKILL_FINDER_ENABLED=False 或匹配失败时，fallback 到全量加载。
+        """
+        async for _ in self._tool_call_streaming(state):
+            pass
+
+    async def _tool_call_streaming(
+        self, state: AgentState
+    ) -> AsyncIterator[SSEEvent]:
+        """通过 MCP Client 调用工具 — 流式 yield tool_call_start/end 事件。
+
+        P0-3 核心：在每个工具调用前后推送 SSE 事件，让用户看到工具执行进度。
+
+        事件流：
+            - tool_call_start：工具开始执行（含 tool_name / arguments）
+            - tool_call_end：工具执行完成（含 result / duration_ms / status）
+
+        工具调用守卫（DangerousToolGuard）在 ``_execute_tool_use`` 内部处理：
+            - 只读工具 → 直接放行；
+            - 危险工具 → 需要用户确认（P1 将扩展为持久化审批）；
+            - 未确认的危险工具被阻断，返回结构化错误给 LLM。
         """
         # Find Skills 渐进式技能加载 — 按需加载工具 schema
         tools = await self._get_tools_for_query(state["query"])
@@ -892,7 +1014,48 @@ class AgenticRAGEngine:
         try:
             async for chunk in self.llm.chat(messages, tools=tools, stream=False):
                 if isinstance(chunk, dict) and chunk.get("type") == "tool_use":
+                    tool_name = chunk.get("name", "unknown")
+                    tool_use_id = chunk.get("id", "")
+                    tool_input = chunk.get("input", {})
+
+                    # yield tool_call_start 事件
+                    yield SSEEvent(
+                        data={
+                            "tool_name": tool_name,
+                            "tool_use_id": tool_use_id,
+                            "arguments": tool_input,
+                        },
+                        event=SSEEventType.TOOL_CALL_START,
+                    )
+
+                    # 执行工具并计时
+                    start_time = time.monotonic()
                     await self._execute_tool_use(state, chunk)
+                    duration_ms = int((time.monotonic() - start_time) * 1000)
+
+                    # 获取工具执行结果摘要和状态
+                    latest_result = (
+                        state["tool_results"][-1] if state["tool_results"] else None
+                    )
+                    result_summary = ""
+                    status = "success"
+                    if latest_result and isinstance(latest_result, dict):
+                        result_str = str(latest_result.get("result", ""))
+                        result_summary = result_str[:500]
+                        if '"error"' in result_str or '"blocked_by_guard"' in result_str:
+                            status = "error"
+
+                    # yield tool_call_end 事件
+                    yield SSEEvent(
+                        data={
+                            "tool_use_id": tool_use_id,
+                            "tool_name": tool_name,
+                            "result": result_summary,
+                            "duration_ms": duration_ms,
+                            "status": status,
+                        },
+                        event=SSEEventType.TOOL_CALL_END,
+                    )
         except Exception as exc:
             log.error("engine.tool_call.error", error=str(exc))
 

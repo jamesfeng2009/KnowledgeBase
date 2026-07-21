@@ -356,7 +356,8 @@ class TestAnswerStream:
         engine, _, _, _ = _make_engine(llm_response="generate")
 
         tokens = []
-        async for token in engine.answer("test query", "user-1", "session-1"):
-            tokens.append(token)
+        async for chunk in engine.answer("test query", "user-1", "session-1"):
+            if isinstance(chunk, str):
+                tokens.append(chunk)
 
         assert "".join(tokens) == "这是答案"

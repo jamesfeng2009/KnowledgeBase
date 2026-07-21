@@ -14,6 +14,45 @@ from typing import Any, AsyncGenerator, Optional
 from fastapi.responses import StreamingResponse
 
 
+class SSEEventType:
+    """SSE 事件类型统一常量 — 所有业务代码引用此类，禁止硬编码字符串。
+
+    事件流时序示例（一次含工具调用的对话）::
+
+        event: meta             data: {"conversation_id":"...","agent_type":"qa"}
+        event: thinking         data: {"content":"正在分析问题..."}
+        event: retrieve_start   data: {"query":"重写后的查询"}
+        event: retrieve_end     data: {"doc_count":3,"sources":[...]}
+        event: tool_call_start  data: {"tool_name":"query_oa_approval","tool_use_id":"tu_001","arguments":{...}}
+        event: tool_call_end    data: {"tool_use_id":"tu_001","result":"...","duration_ms":320,"status":"success"}
+        data: 根据               ← token（默认事件，无 event 字段）
+        event: sources          data: {"sources":[...]}
+        event: quality          data: {"score":0.85,"low_confidence":false}
+        event: done             data: {"message_id":"...","token_count":156,"model_used":"claude-sonnet-4"}
+    """
+
+    # 会话元数据
+    META = "meta"
+    # 思考过程（Agent Loop think 阶段）
+    THINKING = "thinking"
+    # 检索过程
+    RETRIEVE_START = "retrieve_start"
+    RETRIEVE_END = "retrieve_end"
+    # 工具调用
+    TOOL_CALL_START = "tool_call_start"
+    TOOL_CALL_DELTA = "tool_call_delta"
+    TOOL_CALL_END = "tool_call_end"
+    # 生成
+    TOKEN = "token"
+    SOURCES = "sources"
+    # 审批（P1 预留）
+    APPROVAL_REQUIRED = "approval_required"
+    # 结束
+    QUALITY = "quality"
+    DONE = "done"
+    ERROR = "error"
+
+
 @dataclass
 class SSEEvent:
     """SSE 事件 — 封装 data / event / id 三个字段。
@@ -61,11 +100,15 @@ async def _to_sse_stream(generator: AsyncGenerator) -> AsyncGenerator[str, None]
     - dict / list：json.dumps 后作为 data；
     - 其他类型：包装为 ``{"type": "data", "data": ...}`` 后序列化。
 
-    流结束自动发送一个 ``event=done`` 终止事件。
+    若生成器已 yield ``event=done`` 的 SSEEvent，则流末尾不再自动追加
+    重复的 done 事件；否则自动发送一个 ``event=done`` 终止事件作为安全兜底。
     """
+    done_yielded = False
     async for chunk in generator:
         if isinstance(chunk, SSEEvent):
             yield chunk.to_text()
+            if chunk.event == SSEEventType.DONE:
+                done_yielded = True
         elif isinstance(chunk, str):
             yield format_sse_event(chunk)
         elif isinstance(chunk, (dict, list)):
@@ -78,7 +121,8 @@ async def _to_sse_stream(generator: AsyncGenerator) -> AsyncGenerator[str, None]
                     default=str,
                 )
             )
-    yield format_sse_event(json.dumps({"type": "done"}), event="done")
+    if not done_yielded:
+        yield format_sse_event(json.dumps({"type": "done"}), event="done")
 
 
 def sse_response(generator: AsyncGenerator) -> StreamingResponse:

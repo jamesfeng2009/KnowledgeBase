@@ -197,16 +197,17 @@ class TestChatStream:
     async def test_chat_stream(
         self, auth_client: httpx.AsyncClient
     ) -> None:
-        """POST /api/v1/chat 应返回 SSE 流。"""
+        """POST /api/v1/chat/stream 应返回 SSE 流。"""
 
         class _FakeChatService:
             async def chat(self, **kwargs):
-                yield "data: 你好\n\n"
-                yield "event: done\ndata: {}\n\n"
+                yield "你好"
+                from app.utils.sse import SSEEvent, SSEEventType
+                yield SSEEvent(data={}, event=SSEEventType.DONE)
 
         with patch("app.api.v1.chat.ChatService", return_value=_FakeChatService()):
             response = await auth_client.post(
-                "/api/v1/chat",
+                "/api/v1/chat/stream",
                 json={"query": "测试问题", "agent_type": "qa"},
             )
 

@@ -26,8 +26,8 @@ RAG 引擎层 — 检索增强生成的完整流水线。
         generator=Generator(get_llm_provider()),
         permission_filter=my_filter,
     )
-    async for token in engine.answer(query, user_id, session_id):
-        yield token
+    async for chunk in engine.answer(query, user_id, session_id):
+        yield chunk  # SSEEvent（thinking/retrieve/tool_call/...）或 str token
 
 LangGraph 可选路径（安装 langgraph 后）::
 

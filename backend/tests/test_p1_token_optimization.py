@@ -234,8 +234,9 @@ class TestEngineDedupIntegration:
 
         # answer 调用应重置
         tokens = []
-        async for token in engine.answer("test", "user-1", "session-1"):
-            tokens.append(token)
+        async for chunk in engine.answer("test", "user-1", "session-1"):
+            if isinstance(chunk, str):
+                tokens.append(chunk)
 
         assert engine._dedup.get_seen_count() == 0
 
@@ -256,14 +257,15 @@ class TestEngineDedupIntegration:
 
         llm.chat = mock_chat
 
-        # Mock _tool_call 返回相同结果
-        async def mock_tool_call(state):
+        # Mock _tool_call_streaming 返回相同结果（异步生成器）
+        async def mock_tool_call_streaming(state):
             state["tool_results"].append({
                 "tool": "search_erp",
                 "result": "订单 BG2024001 金额 5000 元 状态已审批",
             })
+            yield  # 异步生成器需要 yield
 
-        engine._tool_call = mock_tool_call
+        engine._tool_call_streaming = mock_tool_call_streaming
 
         await engine._run_decision_loop(state)
 
@@ -520,13 +522,15 @@ class TestChatServiceWindowing:
             {"role": "user", "content": "历史问题1"},
             {"role": "assistant", "content": "历史回答1"},
         ]
+        # Mock to_system_prompt 返回包含 short_term 内容的字符串
+        memory_ctx.to_system_prompt = lambda render_short_term=True: "记忆上下文：历史问题1"
 
-        messages = await service._build_llm_messages(
+        result = await service._build_engine_memory_context(
             "conv-1", "qa", memory_ctx
         )
 
-        # 应使用 memory_ctx 中的 short_term
-        assert any(m["content"] == "历史问题1" for m in messages)
+        # 结果应包含 short_term 内容
+        assert "历史问题1" in result
         # msg_repo.get_by_conversation 不应被调用
         mock_msg_repo.get_by_conversation.assert_not_called()
 
@@ -543,7 +547,7 @@ class TestChatServiceWindowing:
         service.llm = AsyncMock()
         service.memory = AsyncMock()
 
-        await service._build_llm_messages("conv-1", "qa", None)
+        await service._build_engine_memory_context("conv-1", "qa", None)
 
         # 应调用 msg_repo.get_by_conversation 且带 limit 参数
         mock_msg_repo.get_by_conversation.assert_called_once()
@@ -573,8 +577,9 @@ class TestBackwardCompatibility:
         )
 
         tokens = []
-        async for token in engine.answer("test query", "user-1", "session-1"):
-            tokens.append(token)
+        async for chunk in engine.answer("test query", "user-1", "session-1"):
+            if isinstance(chunk, str):
+                tokens.append(chunk)
 
         assert "".join(tokens) == "这是答案"
 

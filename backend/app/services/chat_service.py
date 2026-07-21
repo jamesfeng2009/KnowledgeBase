@@ -1,38 +1,46 @@
 """
-AI 对话服务 — 单一职责：编排对话会话与 LLM 流式生成。
+AI 对话服务 — 单一职责：编排对话会话与 Agentic RAG 引擎流式生成。
 
-遵循单一职责：ChatService 只负责对话流程编排（会话管理 → 消息持久化 → 记忆加载 → LLM 调用 → SSE 输出），
-不感知具体 LLM 实现（依赖 LLMProvider 抽象），也不直接操作数据库表（委托 Repository）。
+P0-4 重构：从直接调用 LLMProvider 升级为通过 AgenticRAGEngine.answer() 统一走
+Agent Loop（think → retrieve/tool_call → generate → reflect），所有 agent_type
+共用同一引擎路径，agent_type 仅影响系统提示词和工具集。
 
-遵循开闭原则：通过依赖注入组合 ConversationRepository / MessageRepository / LLMProvider / MemoryManager，
-新增 Agent 类型只需在 _SYSTEM_PROMPTS 注册表中追加提示词，不修改 chat 方法分支逻辑。
+遵循单一职责：ChatService 只负责对话流程编排（会话管理 → 消息持久化 → 记忆加载 →
+引擎调用 → SSE 输出），不感知具体 RAG 实现（依赖 AgenticRAGEngine 抽象），
+也不直接操作数据库表（委托 Repository）。
+
+遵循开闭原则：通过依赖注入组合 ConversationRepository / MessageRepository /
+MemoryManager / AgenticRAGEngine，新增 Agent 类型只需在 _SYSTEM_PROMPTS
+注册表中追加提示词，不修改 chat 方法分支逻辑。
 """
 
 from __future__ import annotations
 
-import json
 from collections.abc import AsyncIterator
 from typing import Any
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.llm.base import LLMProvider, Message
+from app.llm.base import LLMProvider
 from app.llm.factory import get_llm_provider
 from app.memory import MemoryContext, MemoryManager
 from app.models.conversation import Conversation, Message as MessageModel
 from app.models.user import User
+from app.rag.factory import get_rag_engine
 from app.repositories.conversation_repository import (
     ConversationRepository,
     MessageRepository,
 )
 from app.utils.logger import get_logger
-from app.utils.sse import format_sse_event
+from app.utils.sse import SSEEvent, SSEEventType
 
 logger = get_logger(__name__)
 
 # Agent 类型 → 系统提示词映射。
 # 开闭原则落点：新增 Agent 类型只需在此字典追加一项，chat 方法无需改动。
+# P0-4：系统提示词通过 memory_context 注入引擎的 generate 阶段，
+# 引擎的 think 阶段使用自己的稳定决策 prompt（_THINK_SYSTEM_STABLE）。
 _SYSTEM_PROMPTS: dict[str, str] = {
     "qa": (
         "你是一个企业知识库问答助手。请基于上下文和知识库内容，"
@@ -50,19 +58,20 @@ _SYSTEM_PROMPTS: dict[str, str] = {
 
 
 class ChatService:
-    """AI 对话服务 — 简化版 Agentic RAG。
+    """AI 对话服务 — Agentic RAG 引擎集成。
 
-    chat 方法为异步生成器，以 SSE 文本块形式逐 token yield，
-    供 FastAPI StreamingResponse 直接消费。
+    P0-4：chat 方法通过 AgenticRAGEngine.answer() 走完整的 Agent Loop，
+    yield SSEEvent | str 供 ``sse_response()`` 包装为 SSE 文本流。
 
     会话生命周期：
     1. 若未提供 conversation_id，则创建新对话；
     2. 持久化用户消息；
     3. 加载四级记忆上下文（Mem0 偏好 + Checkpoint 状态 + 工作记忆）；
-    4. 将记忆注入系统提示词，拼装历史上下文，调用 LLMProvider 流式生成；
-    5. 流式结束后持久化完整 AI 回复消息；
-    6. 保存记忆（Checkpoint 快照 + 提取用户偏好）；
-    7. yield SSE 格式的 token 与元数据 / 结束事件。
+    4. 构建引擎 memory_context（系统提示词 + 记忆 + 对话历史）；
+    5. yield meta 事件（conversation_id 绑定）；
+    6. 调用 AgenticRAGEngine.answer()，透传所有 SSE 事件和 token；
+    7. 流式结束后持久化完整 AI 回复消息；
+    8. 保存记忆（Checkpoint 快照 + 提取用户偏好）。
     """
 
     def __init__(self, db: AsyncSession, user: User) -> None:
@@ -88,27 +97,32 @@ class ChatService:
         query: str,
         conversation_id: UUID | None,
         agent_type: str,
-    ) -> AsyncIterator[str]:
-        """与 AI 对话，流式返回 SSE 格式的 token。
+        tenant_id: str | None = None,
+    ) -> AsyncIterator[SSEEvent | str]:
+        """与 AI 对话，流式返回 SSE 事件和 token。
+
+        P0-4 重构：通过 AgenticRAGEngine.answer() 走完整的 Agent Loop，
+        所有 agent_type 统一走引擎路径，不分流。
 
         流程：
         1. 获取或创建对话（无 conversation_id 时新建）；
         2. 保存用户消息到数据库；
         3. 加载四级记忆上下文（短期窗口 + Checkpoint + Mem0 偏好 + 工作记忆）；
-        4. 构建含记忆上下文的 LLM 消息列表；
-        5. 向客户端推送对话元数据（conversation_id 绑定）；
-        6. 调用 LLM Provider 流式生成，逐 token yield SSE；
+        4. 构建引擎 memory_context（系统提示词 + 记忆 + 对话历史）；
+        5. yield meta 事件（conversation_id + agent_type）；
+        6. 调用 AgenticRAGEngine.answer()，透传所有 SSE 事件和 token；
         7. 累积完整回复后保存为 assistant 消息；
-        8. 保存记忆（Checkpoint 快照 + 提取用户偏好）；
-        9. yield 结束事件。
+        8. 保存记忆（Checkpoint 快照 + 提取用户偏好）。
 
         Args:
             query: 用户输入的问题。
             conversation_id: 对话 ID，为 None 时创建新对话。
             agent_type: Agent 类型 — qa / workflow / action。
+            tenant_id: 多租户预留（当前不实施隔离逻辑）。
 
         Yields:
-            SSE 协议文本块（``data: ...``），包含 token / 元数据 / 结束事件。
+            SSEEvent | str: SSE 事件对象（meta/thinking/retrieve/tool_call/
+            sources/quality/done）或 token 字符串。
 
         Raises:
             PermissionError: 指定的对话不属于当前用户。
@@ -138,31 +152,33 @@ class ChatService:
             recent_messages=[{"role": "user", "content": query}],
         )
 
-        # 4. 构建发送给 LLM 的消息上下文（含记忆上下文）
-        messages = await self._build_llm_messages(
+        # 4. 构建引擎 memory_context（系统提示词 + 记忆 + 对话历史）
+        memory_context = await self._build_engine_memory_context(
             conversation_id, agent_type, memory_ctx
         )
 
         # 5. 向客户端推送对话元数据（便于前端绑定会话）
-        yield format_sse_event(
-            json.dumps(
-                {
-                    "type": "conversation",
-                    "conversation_id": str(conversation_id),
-                    "agent_type": agent_type,
-                },
-                ensure_ascii=False,
-            ),
-            event="meta",
+        yield SSEEvent(
+            data={
+                "conversation_id": str(conversation_id),
+                "agent_type": agent_type,
+            },
+            event=SSEEventType.META,
         )
 
-        # 6. 流式调用 LLM，逐 token yield SSE
+        # 6. 调用 Agentic RAG 引擎，透传所有 SSE 事件和 token
+        engine = get_rag_engine()
         full_response_parts: list[str] = []
-        async for chunk in self.llm.chat(messages, stream=True):
-            # 简化版仅处理文本片段，跳过工具调用 dict
+        async for chunk in engine.answer(
+            query=query,
+            user_id=str(self.user.id),
+            session_id=str(conversation_id),
+            memory_context=memory_context,
+            tenant_id=tenant_id,
+        ):
             if isinstance(chunk, str):
                 full_response_parts.append(chunk)
-                yield format_sse_event(chunk)
+            yield chunk
 
         # 7. 持久化完整 AI 回复
         assistant_content = "".join(full_response_parts)
@@ -188,10 +204,7 @@ class ChatService:
         except Exception as e:
             logger.warning("memory_save_failed", error=str(e))
 
-        # 9. 推送结束事件
-        yield format_sse_event(
-            json.dumps({"type": "done"}), event="done"
-        )
+        # 引擎已 yield done 事件，无需重复发送
 
     # ------------------------------------------------------------------
     # 对话查询
@@ -221,7 +234,7 @@ class ChatService:
         return await self.msg_repo.get_by_conversation(conversation_id)
 
     # ------------------------------------------------------------------
-    # Agent 调用（P0-4：补全 stream_agent_response 方法）
+    # Agent 调用
     # ------------------------------------------------------------------
 
     async def stream_agent_response(
@@ -231,12 +244,10 @@ class ChatService:
         session_id: str | None = None,
         context: dict | None = None,
     ) -> AsyncIterator[str]:
-        """Agent 调用入口 — 复用 chat 流式管线，支持 Agent 配置覆盖。
+        """Agent 调用入口 — 复用 chat 流式管线，仅提取 token 文本。
 
-        本方法是对 chat() 的薄封装，差异点：
-        1. agent_type 从 agent_config.name / agent_config.agent_type 推断；
-        2. session_id（字符串形式 UUID）可直接复用已有对话；
-        3. context 额外注入到 LLM 消息前缀（如 Agent 的系统提示词）。
+        P0-4 更新：chat() 现在 yield SSEEvent | str，本方法过滤出 str token
+        供 Agent 调用方使用（跳过 SSEEvent 事件对象）。
 
         Args:
             query: 用户输入的问题。
@@ -245,7 +256,7 @@ class ChatService:
             context: 可选，额外上下文（如 system_prompt 覆盖）。
 
         Yields:
-            流式文本块（非 SSE 格式，由调用方包装为 SSE）。
+            str: 纯文本 token 片段。
         """
         # 推断 agent_type：优先 agent_config.agent_type，回退 name
         agent_type = getattr(agent_config, "agent_type", None) or getattr(
@@ -260,40 +271,27 @@ class ChatService:
             except (ValueError, AttributeError):
                 conversation_id = None
 
-        # 复用 chat() 的流式管线
+        # 复用 chat() 的流式管线，仅提取 str token
         async for chunk in self.chat(query, conversation_id, agent_type):
-            # chat() yield 的是 SSE 格式文本，提取 content 字段返回纯文本
-            # SSE 格式：data: {"type": "token", "content": "..."}\n\n
-            if chunk.startswith("data: ") and chunk.endswith("\n\n"):
-                payload = chunk[6:-2].strip()
-                try:
-                    import json
-
-                    data = json.loads(payload)
-                    # 只传递 token 类型的内容，跳过 meta 和 done 事件
-                    if data.get("type") == "token" and "content" in data:
-                        yield data["content"]
-                except (json.JSONDecodeError, KeyError):
-                    # 非 JSON 或缺少字段，跳过
-                    continue
-            else:
-                # 非 SSE 格式，直接透传
+            if isinstance(chunk, str):
                 yield chunk
 
     # ------------------------------------------------------------------
     # 内部工具
     # ------------------------------------------------------------------
 
-    async def _build_llm_messages(
+    async def _build_engine_memory_context(
         self,
         conversation_id: UUID,
         agent_type: str,
         memory_ctx: MemoryContext | None = None,
-    ) -> list[Message]:
-        """构建发送给 LLMProvider 的消息列表。
+    ) -> str:
+        """构建传给 AgenticRAGEngine.answer() 的 memory_context 字符串。
 
-        结构：[系统提示词 + 记忆上下文] + [历史消息（含刚保存的用户消息）]。
-        历史消息从数据库加载，确保上下文完整。
+        P0-4：将系统提示词 + 记忆上下文 + 对话历史合并为一个字符串，
+        传入引擎的 generate 阶段作为上下文补充。
+
+        结构：[系统提示词] + [记忆片段（偏好 + 短期窗口）] + [对话历史]
 
         Args:
             conversation_id: 对话 ID。
@@ -301,40 +299,32 @@ class ChatService:
             memory_ctx: 记忆上下文（四级记忆合并），为 None 时不注入。
 
         Returns:
-            Message TypedDict 列表。
+            memory_context 字符串。
         """
+        parts: list[str] = []
+
+        # 1. 系统提示词（agent_type 决定角色定位）
         system_prompt = _SYSTEM_PROMPTS.get(agent_type, _SYSTEM_PROMPTS["qa"])
+        parts.append(system_prompt)
 
-        # 注入记忆上下文到系统提示词
-        # P1-Opt5: render_short_term=True — 使用 memory_ctx 中的 L1 短期窗口，
-        # 不再从 DB 重新加载全部历史（修复 W4 + W7: 双重加载浪费）。
+        # 2. 记忆片段（偏好 + 短期窗口）
         if memory_ctx:
-            memory_fragment = memory_ctx.to_system_prompt(render_short_term=True)
-            if memory_fragment:
-                system_prompt = system_prompt + "\n\n" + memory_fragment
+            fragment = memory_ctx.to_system_prompt(render_short_term=True)
+            if fragment:
+                parts.append(fragment)
 
-        messages: list[Message] = [
-            Message(role="system", content=system_prompt)
-        ]
-
-        # P1-Opt5: 历史消息窗口化 — 优先使用 memory_ctx.short_term（已加载），
-        # fallback 时从 DB 加载但加 limit（修复 W4: 之前无 limit 全量加载）。
-        _HISTORY_WINDOW = 16  # 最近 8 轮对话（16 条消息）
-
-        if memory_ctx and memory_ctx.short_term:
-            # 使用已加载的 L1 短期窗口，不再从 DB 重复加载
-            recent = memory_ctx.short_term[-_HISTORY_WINDOW:]
-            for msg in recent:
-                messages.append(Message(
-                    role=msg.get("role", "user"),
-                    content=str(msg.get("content", "")),
-                ))
-        else:
-            # Fallback: memory_ctx 无 short_term 时从 DB 加载（带 limit）
+        # 3. 对话历史 — 若记忆上下文无 short_term，从 DB 加载
+        if not (memory_ctx and memory_ctx.short_term):
+            _HISTORY_WINDOW = 16  # 最近 8 轮对话（16 条消息）
             history = await self.msg_repo.get_by_conversation(
                 conversation_id, limit=_HISTORY_WINDOW
             )
-            for msg in history:
-                messages.append(Message(role=msg.role, content=msg.content))
+            if history:
+                history_lines: list[str] = []
+                for msg in history[:-1]:  # 排除最后一条（刚保存的当前用户消息）
+                    role_label = "用户" if msg.role == "user" else "助手"
+                    history_lines.append(f"[{role_label}] {msg.content}")
+                if history_lines:
+                    parts.append("对话历史：\n" + "\n".join(history_lines))
 
-        return messages
+        return "\n\n".join(parts)

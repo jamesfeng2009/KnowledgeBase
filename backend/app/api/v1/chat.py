@@ -2,11 +2,11 @@
 对话路由 — 单一职责：处理 AI 对话的 SSE 流式响应与对话历史查询。
 
 遵循分层架构：本模块仅做 HTTP 路由和请求/响应序列化，
-业务逻辑（会话管理、LLM 调用、消息持久化）委托给 ChatService。
+业务逻辑（会话管理、RAG 引擎调用、消息持久化）委托给 ChatService。
 
 SSE 说明：
-ChatService.chat 是异步生成器，已产出 SSE 协议文本块（format_sse_event），
-因此直接使用 StreamingResponse 透传，不再二次封装。
+ChatService.chat 是异步生成器，产出 SSEEvent | str 对象，
+由 ``sse_response()`` 统一包装为 SSE 协议文本流（含 event/data 字段）。
 """
 
 from __future__ import annotations
@@ -14,7 +14,6 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
-from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db_session
@@ -27,25 +26,30 @@ from app.schemas.conversation import (
     MessageResponse,
 )
 from app.services.chat_service import ChatService
+from app.utils.sse import sse_response
 
 router = APIRouter(tags=["AI 对话"])
 
 
-@router.post("/chat")
+@router.post("/chat/stream")
 async def chat(
     body: ChatRequest,
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
-) -> StreamingResponse:
+):
     """AI 对话 — SSE 流式返回。
 
-    ChatService.chat 产出 SSE 格式的 token 流（含元数据与结束事件），
-    本端点直接以 ``text/event-stream`` 透传，不使用 ApiResponse 包装。
+    ChatService.chat 产出 SSEEvent | str 对象流，由 ``sse_response()`` 包装为
+    ``text/event-stream`` 响应。事件类型包括：
 
-    流事件类型：
     - ``event=meta``: 对话元数据（conversation_id, agent_type）；
+    - ``event=thinking``: Agent 思考进度（P0-2）；
+    - ``event=retrieve_start/retrieve_end``: 检索进度（P0-2）；
+    - ``event=tool_call_start/tool_call_end``: 工具调用进度（P0-3）；
     - ``data``（默认）: 逐 token 的文本片段；
-    - ``event=done``: 流结束标记。
+    - ``event=sources``: 引用来源（P0-2）；
+    - ``event=quality``: 质量评分（P0-2）；
+    - ``event=done``: 流结束标记（含 token_count / iterations）。
     """
     service = ChatService(db, user)
     generator = service.chat(
@@ -53,15 +57,7 @@ async def chat(
         conversation_id=body.conversation_id,
         agent_type=body.agent_type.value,
     )
-    return StreamingResponse(
-        generator,
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
+    return sse_response(generator)
 
 
 @router.get("/conversations", response_model=ApiResponse[list[ConversationResponse]])
