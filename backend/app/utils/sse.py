@@ -7,11 +7,16 @@ SSE 流式响应封装 — 单一职责：将异步生成器输出转为 SSE 协
 
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass
 from typing import Any, AsyncGenerator, Optional
 
 from fastapi.responses import StreamingResponse
+
+from app.utils.logger import get_logger
+
+log = get_logger(__name__)
 
 
 class SSEEventType:
@@ -35,6 +40,8 @@ class SSEEventType:
     META = "meta"
     # 思考过程（Agent Loop think 阶段）
     THINKING = "thinking"
+    # 查询重写（P2-B）
+    QUERY_REWRITE = "query_rewrite"
     # 检索过程
     RETRIEVE_START = "retrieve_start"
     RETRIEVE_END = "retrieve_end"
@@ -73,7 +80,9 @@ class SSEEvent:
         return format_sse_event(payload, event=self.event, id=self.id)
 
 
-def format_sse_event(data: str, event: str = None, id: str = None) -> str:
+def format_sse_event(
+    data: str, event: Optional[str] = None, id: Optional[str] = None
+) -> str:
     """将字段格式化为 SSE 协议文本块（以两个换行结尾）。
 
     - data 按行拆分，每行加 ``data: `` 前缀（符合 SSE 规范）。
@@ -90,6 +99,10 @@ def format_sse_event(data: str, event: str = None, id: str = None) -> str:
     return "\n".join(lines) + "\n\n"
 
 
+# 心跳间隔（秒）— 模块级常量，便于测试调整
+_HEARTBEAT_INTERVAL: float = 30.0
+
+
 async def _to_sse_stream(generator: AsyncGenerator) -> AsyncGenerator[str, None]:
     """将异步生成器转为 SSE 文本流。
 
@@ -102,25 +115,70 @@ async def _to_sse_stream(generator: AsyncGenerator) -> AsyncGenerator[str, None]
 
     若生成器已 yield ``event=done`` 的 SSEEvent，则流末尾不再自动追加
     重复的 done 事件；否则自动发送一个 ``event=done`` 终止事件作为安全兜底。
+
+    优雅关闭支持：
+    - 30 秒心跳保活（SSE 注释 ``: heartbeat\\n\\n``），防止代理超时断连；
+      心跳通过 ``asyncio.wait`` 实现 — 超时不取消 pending 的 ``__anext__``
+      任务，发送心跳后继续 await 同一任务，LLM 长时间静默不会杀死整个流；
+    - 客户端断连时捕获 CancelledError，优雅退出不抛异常。
     """
     done_yielded = False
-    async for chunk in generator:
-        if isinstance(chunk, SSEEvent):
-            yield chunk.to_text()
-            if chunk.event == SSEEventType.DONE:
-                done_yielded = True
-        elif isinstance(chunk, str):
-            yield format_sse_event(chunk)
-        elif isinstance(chunk, (dict, list)):
-            yield format_sse_event(json.dumps(chunk, ensure_ascii=False))
-        else:
-            yield format_sse_event(
-                json.dumps(
-                    {"type": "data", "data": chunk},
-                    ensure_ascii=False,
-                    default=str,
+    heartbeat_interval = _HEARTBEAT_INTERVAL
+
+    # 挂起的 __anext__ 任务 — 跨心跳复用，超时绝不取消。
+    anext_task: asyncio.Task | None = None
+
+    try:
+        while True:
+            if anext_task is None:
+                anext_task = asyncio.ensure_future(generator.__anext__())
+
+            try:
+                done, _pending = await asyncio.wait(
+                    {anext_task}, timeout=heartbeat_interval
                 )
-            )
+            except asyncio.CancelledError:
+                # 客户端断连或服务关闭 — 优雅退出
+                log.debug("sse.stream_cancelled")
+                break
+
+            if not done:
+                # 心跳保活 — SSE 注释行，浏览器忽略但不超时；
+                # 继续等待同一个 anext 任务，不取消、不重建。
+                yield ": heartbeat\n\n"
+                continue
+
+            task, anext_task = anext_task, None
+            try:
+                chunk = task.result()
+            except StopAsyncIteration:
+                break
+            except asyncio.CancelledError:
+                # 底层生成器被取消 — 优雅退出
+                log.debug("sse.stream_cancelled")
+                break
+
+            if isinstance(chunk, SSEEvent):
+                yield chunk.to_text()
+                if chunk.event == SSEEventType.DONE:
+                    done_yielded = True
+            elif isinstance(chunk, str):
+                yield format_sse_event(chunk)
+            elif isinstance(chunk, (dict, list)):
+                yield format_sse_event(json.dumps(chunk, ensure_ascii=False))
+            else:
+                yield format_sse_event(
+                    json.dumps(
+                        {"type": "data", "data": chunk},
+                        ensure_ascii=False,
+                        default=str,
+                    )
+                )
+    finally:
+        # 清理仍挂起的 anext 任务，避免泄漏（客户端断连 / 流被提前关闭）
+        if anext_task is not None:
+            anext_task.cancel()
+
     if not done_yielded:
         yield format_sse_event(json.dumps({"type": "done"}), event="done")
 

@@ -325,7 +325,6 @@ class LlamaIndexPipeline:
         
         self._ensure_initialized()
         try:
-            from llama_index.core import KnowledgeGraphIndex
             
             # 使用已有图谱索引检索
             retriever = self._vector_index.as_retriever(

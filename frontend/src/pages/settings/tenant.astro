@@ -654,16 +654,20 @@ const breadcrumb = [{ label: '设置', href: '/settings/tenant' }, { label: '租
           el.checked = true;
           return;
         }
+        console.log('[Tenant Settings] 切换模块状态:', { module: mod.name, enabled });
         const oldEnabled = mod.enabled;
         // 乐观更新本地缓存
         mod.enabled = enabled;
         try {
           await toggleTenantModule(moduleId, enabled);
+          console.log('[Tenant Settings] 模块切换成功:', { module: mod.name, enabled });
         } catch (err) {
           // 回滚开关状态
           mod.enabled = oldEnabled;
           el.checked = oldEnabled;
-          alert('模块切换失败：' + getErrMsg(err, '请重试'));
+          const errorMsg = getErrMsg(err, '请重试');
+          console.error('[Tenant Settings] 模块切换失败:', { module: mod.name, error: errorMsg });
+          alert('模块切换失败：' + errorMsg);
         }
       });
     });
@@ -678,6 +682,7 @@ const breadcrumb = [{ label: '设置', href: '/settings/tenant' }, { label: '租
         getTenantUsage(),
         getTenantModules(),
       ]);
+      console.log('[Tenant Settings] 租户信息加载成功:', { tenant_id: tenant.id, plan: tenant.plan, name: tenant.name });
       renderTenant(tenant);
       renderUsage(tenant, usage);
       renderModules(modules);
@@ -761,6 +766,7 @@ const breadcrumb = [{ label: '设置', href: '/settings/tenant' }, { label: '租
   }
 
   // ===== 初始化 =====
+  console.log('[Tenant Settings] 页面加载，开始获取租户信息');
   bindEvents();
   loadAll();
 </script>

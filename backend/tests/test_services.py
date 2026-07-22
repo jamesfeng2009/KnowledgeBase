@@ -32,11 +32,11 @@ from app.services.quality_service import (
 
 
 class TestPermissionService:
-    """PermissionService 文档过滤测试 — admin 路径（纯内存，无 DB）。"""
+    """PermissionService 文档过滤测试 — admin / editor 路径（纯内存，无 DB）。"""
 
     @pytest.mark.asyncio
     async def test_permission_service_filter_admin_internal(self) -> None:
-        """admin + internal 密级：仅保留 public/internal，过滤 confidential/secret。"""
+        """admin 统一口径：放行所有密级 — 即使自身 clearance_level 为 internal。"""
         from app.services.permission_service import PermissionService
 
         user = SimpleNamespace(role="admin", clearance_level="internal", id=uuid4())
@@ -52,8 +52,8 @@ class TestPermissionService:
         result = await service.filter_documents(docs)
 
         classifications = {d.classification for d in result}
-        assert classifications == {"public", "internal"}
-        assert len(result) == 2
+        assert classifications == {"public", "internal", "confidential", "secret"}
+        assert len(result) == 4
 
     @pytest.mark.asyncio
     async def test_permission_service_filter_admin_secret(self) -> None:
@@ -73,25 +73,80 @@ class TestPermissionService:
         assert len(result) == 2
 
     @pytest.mark.asyncio
-    async def test_permission_service_filter_unknown_classification(self) -> None:
-        """未知 classification 默认为 internal 级别（权重 1）。"""
+    async def test_permission_service_filter_editor_by_clearance(self) -> None:
+        """非 admin（editor）仍按 KB 归属 + clearance_level 过滤 — 不受 admin 放行影响。"""
+        from unittest.mock import MagicMock
+
         from app.services.permission_service import PermissionService
 
-        user = SimpleNamespace(role="admin", clearance_level="internal", id=uuid4())
-        service = PermissionService(db=AsyncMock(), user=user)
+        kb_accessible = uuid4()
+        kb_other = uuid4()
+        user = SimpleNamespace(role="editor", clearance_level="internal", id=uuid4())
 
-        docs = [SimpleNamespace(classification="weird_level", kb_id=uuid4())]
+        # mock db.execute → 返回可访问知识库 ID 集合
+        db = AsyncMock()
+        exec_result = MagicMock()
+        exec_result.all.return_value = [(kb_accessible,)]
+        db.execute = AsyncMock(return_value=exec_result)
+        service = PermissionService(db=db, user=user)
+
+        docs = [
+            SimpleNamespace(classification="public", kb_id=kb_accessible),
+            SimpleNamespace(classification="internal", kb_id=kb_accessible),
+            SimpleNamespace(classification="confidential", kb_id=kb_accessible),
+            SimpleNamespace(classification="secret", kb_id=kb_accessible),
+            SimpleNamespace(classification="public", kb_id=kb_other),
+        ]
+
+        result = await service.filter_documents(docs)
+
+        classifications = {d.classification for d in result}
+        assert classifications == {"public", "internal"}
+        assert len(result) == 2
+
+    @pytest.mark.asyncio
+    async def test_permission_service_filter_unknown_classification(self) -> None:
+        """未知 classification 默认为 internal 级别（权重 1）。"""
+        from unittest.mock import MagicMock
+
+        from app.services.permission_service import PermissionService
+
+        kb_accessible = uuid4()
+        user = SimpleNamespace(role="editor", clearance_level="internal", id=uuid4())
+
+        db = AsyncMock()
+        exec_result = MagicMock()
+        exec_result.all.return_value = [(kb_accessible,)]
+        db.execute = AsyncMock(return_value=exec_result)
+        service = PermissionService(db=db, user=user)
+
+        docs = [SimpleNamespace(classification="weird_level", kb_id=kb_accessible)]
 
         result = await service.filter_documents(docs)
 
         # _CLEARANCE_ORDER.get("weird_level", 1) = 1 <= 1 (internal) -> 保留
         assert len(result) == 1
 
-    def test_allowed_classifications(self) -> None:
-        """allowed_classifications 返回的密级应与 filter_documents 一致。"""
+    def test_allowed_classifications_admin(self) -> None:
+        """admin 的 allowed_classifications 返回全部密级（统一口径，与 filter_documents 一致）。"""
         from app.services.permission_service import PermissionService
 
         user = SimpleNamespace(role="admin", clearance_level="internal", id=uuid4())
+        service = PermissionService(db=AsyncMock(), user=user)
+
+        allowed = service.allowed_classifications()
+
+        assert "public" in allowed
+        assert "internal" in allowed
+        assert "confidential" in allowed
+        assert "secret" in allowed
+        assert allowed == list(_CLEARANCE_ORDER.keys())
+
+    def test_allowed_classifications_non_admin(self) -> None:
+        """非 admin（editor）的 allowed_classifications 仍按 clearance_level 截断。"""
+        from app.services.permission_service import PermissionService
+
+        user = SimpleNamespace(role="editor", clearance_level="internal", id=uuid4())
         service = PermissionService(db=AsyncMock(), user=user)
 
         allowed = service.allowed_classifications()

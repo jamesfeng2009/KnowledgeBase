@@ -1,0 +1,356 @@
+---
+/**
+ * AI 服务 Provider 健康状态卡片 — 展示所有 Provider 的可用性
+ *
+ * 数据来源：GET /health/providers（Redis 缓存优先，幂等）
+ * 自动刷新：每 30 秒
+ * 状态颜色：健康=绿 / 异常=红
+ * 熔断状态：closed=绿 / open=红 / half_open=橙
+ *
+ * P2-A Task 4: 前端健康监控面板
+ */
+---
+
+<div class="card" id="provider-health-card">
+  <div class="card-header">
+    <h3>AI 服务健康状态</h3>
+    <div class="header-right">
+      <span class="source-badge" id="provider-source-badge">-</span>
+      <span class="refresh-hint">每 30 秒自动刷新</span>
+    </div>
+  </div>
+  <div class="summary-bar" id="provider-summary">
+    <span class="summary-item">
+      <span class="summary-value" id="provider-healthy-count">-</span>
+      <span class="summary-label">健康</span>
+    </span>
+    <span class="summary-divider">/</span>
+    <span class="summary-item">
+      <span class="summary-value" id="provider-total-count">-</span>
+      <span class="summary-label">总计</span>
+    </span>
+  </div>
+  <div id="provider-health-body">
+    <p class="text-muted loading-text">加载中...</p>
+  </div>
+</div>
+
+<style>
+  .card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  .source-badge {
+    font-size: var(--text-xs);
+    padding: 2px var(--space-2);
+    border-radius: var(--radius-sm);
+    background: var(--surface-muted);
+    color: var(--text-muted);
+    font-weight: 500;
+  }
+  .source-badge.cache {
+    background: var(--info-bg);
+    color: var(--info);
+  }
+  .source-badge.fresh {
+    background: var(--primary-bg);
+    color: var(--primary);
+  }
+  .refresh-hint {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+  }
+  .summary-bar {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-4);
+    border-bottom: 1px solid var(--border-muted, rgba(0, 0, 0, 0.06));
+  }
+  .summary-item {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-1);
+  }
+  .summary-value {
+    font-size: var(--text-xl, 1.25rem);
+    font-weight: 700;
+    color: var(--text);
+  }
+  .summary-value.healthy {
+    color: var(--success);
+  }
+  .summary-value.all-healthy {
+    color: var(--success);
+  }
+  .summary-value.has-unhealthy {
+    color: var(--danger);
+  }
+  .summary-label {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+  }
+  .summary-divider {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+  }
+  .loading-text {
+    padding: var(--space-4);
+    text-align: center;
+  }
+  .provider-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+    max-height: 480px;
+    overflow-y: auto;
+  }
+  .provider-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+  .group-label {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: var(--space-1) 0;
+  }
+  .provider-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-md);
+    background: var(--surface-muted);
+  }
+  .provider-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .provider-name {
+    font-weight: 500;
+    font-size: var(--text-sm);
+  }
+  .provider-detail {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  .latency-badge {
+    color: var(--text-muted);
+  }
+  .latency-badge.slow {
+    color: var(--warning);
+  }
+  .error-text {
+    color: var(--danger);
+    font-size: var(--text-xs);
+    margin-top: 2px;
+    max-width: 280px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .provider-badges {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+  }
+  .health-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: 2px var(--space-2);
+    border-radius: var(--radius-sm);
+    font-size: var(--text-xs);
+    font-weight: 600;
+  }
+  .health-healthy {
+    background: var(--success-bg);
+    color: var(--success);
+  }
+  .health-unhealthy {
+    background: var(--danger-bg);
+    color: var(--danger);
+  }
+  .circuit-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px var(--space-2);
+    border-radius: var(--radius-sm);
+    font-size: var(--text-xs);
+    font-weight: 500;
+  }
+  .circuit-closed {
+    background: var(--success-bg);
+    color: var(--success);
+  }
+  .circuit-open {
+    background: var(--danger-bg);
+    color: var(--danger);
+  }
+  .circuit-half_open {
+    background: var(--warning-bg);
+    color: var(--warning);
+  }
+  .error-message {
+    color: var(--danger);
+    padding: var(--space-4);
+    text-align: center;
+  }
+</style>
+
+<script>
+  import {
+    getProviderHealth,
+    getProviderTypeLabel,
+    getCircuitStateLabel,
+  } from '@/lib/apis/health';
+  import type { ProviderHealth, ProviderType } from '@/lib/apis/health';
+
+  /** HTML 转义（含引号，可安全用于属性上下文），防止接口返回内容注入 XSS */
+  function escapeHtml(s: string): string {
+    return s
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  /** 按类型分组 Provider */
+  function groupByType(providers: ProviderHealth[]): Map<ProviderType, ProviderHealth[]> {
+    const groups = new Map<ProviderType, ProviderHealth[]>();
+    for (const p of providers) {
+      const list = groups.get(p.type) || [];
+      list.push(p);
+      groups.set(p.type, list);
+    }
+    return groups;
+  }
+
+  /** 格式化延迟 */
+  function formatLatency(ms: number | null): string {
+    if (ms === null) return '-';
+    if (ms < 1000) return `${ms.toFixed(0)}ms`;
+    return `${(ms / 1000).toFixed(2)}s`;
+  }
+
+  /** 格式化时间戳 */
+  function formatTime(iso: string): string {
+    try {
+      const d = new Date(iso);
+      return d.toLocaleTimeString('zh-CN', { hour12: false });
+    } catch {
+      return iso;
+    }
+  }
+
+  async function loadProviderHealth() {
+    const body = document.getElementById('provider-health-body');
+    const sourceBadge = document.getElementById('provider-source-badge');
+    const healthyEl = document.getElementById('provider-healthy-count');
+    const totalEl = document.getElementById('provider-total-count');
+    if (!body) return;
+
+    try {
+      const resp = await getProviderHealth();
+      const providers: ProviderHealth[] = Object.values(resp.providers);
+
+      // 更新摘要
+      if (healthyEl) {
+        healthyEl.textContent = String(resp.healthy_count);
+        healthyEl.className = 'summary-value ' +
+          (resp.healthy_count === resp.total ? 'all-healthy' : 'has-unhealthy');
+      }
+      if (totalEl) totalEl.textContent = String(resp.total);
+
+      // 更新来源标签
+      if (sourceBadge) {
+        sourceBadge.textContent = resp.source === 'cache' ? '缓存' : '实时';
+        sourceBadge.className = 'source-badge ' + resp.source;
+      }
+
+      if (providers.length === 0) {
+        body.innerHTML = '<p class="text-muted loading-text">暂无已注册的 Provider</p>';
+        return;
+      }
+
+      // 按类型分组渲染
+      const groups = groupByType(providers);
+      const typeOrder: ProviderType[] = ['llm', 'embedder', 'reranker', 'vectorstore'];
+      const stateClassMap: Record<string, string> = {
+        closed: 'circuit-closed',
+        open: 'circuit-open',
+        half_open: 'circuit-half_open',
+      };
+
+      const groupHtml = typeOrder
+        .filter((t) => groups.has(t))
+        .map((type) => {
+          const items = groups.get(type)!;
+          const itemHtml = items.map((p: ProviderHealth) => {
+            const healthClass = p.healthy ? 'health-healthy' : 'health-unhealthy';
+            const healthLabel = p.healthy ? '健康' : '异常';
+            const circuitClass = stateClassMap[p.circuit_state] || 'circuit-closed';
+            const circuitLabel = getCircuitStateLabel(p.circuit_state);
+            const latency = formatLatency(p.latency_ms);
+            const latencyClass = p.latency_ms !== null && p.latency_ms > 2000 ? 'slow' : '';
+            const errorHtml = p.error
+              ? `<div class="error-text" title="${escapeHtml(p.error)}">${escapeHtml(p.error)}</div>`
+              : '';
+
+            return `
+              <div class="provider-item">
+                <div class="provider-info">
+                  <div class="provider-name">${escapeHtml(p.name)}</div>
+                  <div class="provider-detail">
+                    <span class="latency-badge ${latencyClass}">${latency}</span>
+                    <span>${formatTime(p.last_check)}</span>
+                  </div>
+                  ${errorHtml}
+                </div>
+                <div class="provider-badges">
+                  <span class="circuit-badge ${circuitClass}">${circuitLabel}</span>
+                  <span class="health-badge ${healthClass}">${healthLabel}</span>
+                </div>
+              </div>
+            `;
+          }).join('');
+
+          return `
+            <div class="provider-group">
+              <div class="group-label">${getProviderTypeLabel(type)}</div>
+              ${itemHtml}
+            </div>
+          `;
+        }).join('');
+
+      body.innerHTML = `<div class="provider-list">${groupHtml}</div>`;
+    } catch (err) {
+      body.innerHTML = `<p class="error-message">状态加载失败: ${escapeHtml((err as Error).message || '未知错误')}</p>`;
+    }
+  }
+
+  // 首次加载
+  loadProviderHealth();
+
+  // 每 30 秒刷新；页面切走/卸载时清理定时器，避免后台泄漏与重复刷新
+  const refreshTimer = setInterval(loadProviderHealth, 30000);
+  const stopRefresh = () => clearInterval(refreshTimer);
+  document.addEventListener('astro:before-swap', stopRefresh, { once: true });
+  window.addEventListener('pagehide', stopRefresh, { once: true });
+</script>

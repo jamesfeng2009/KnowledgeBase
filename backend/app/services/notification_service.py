@@ -14,6 +14,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from typing import Any
+from uuid import UUID
 
 from sqlalchemy import and_, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,9 +22,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.comment import DocumentComment
 from app.models.knowledge import Document
 from app.models.notification import Notification
-from app.models.qa import QaAnswer
 from app.models.user import User
 from app.utils.logger import get_logger
+from app.utils.tenant import apply_tenant_filter
 
 logger = get_logger(__name__)
 
@@ -37,8 +38,9 @@ RELATED_DEPTH: int = 1
 class NotificationService:
     """知识主动推送服务 — 个性化推荐 + 变更通知 + 缺口预警。"""
 
-    def __init__(self, db: AsyncSession) -> None:
+    def __init__(self, db: AsyncSession, tenant_id: UUID | None = None) -> None:
         self.db = db
+        self._tenant_id = tenant_id
 
     # ------------------------------------------------------------------
     # 1. 个性化知识日报
@@ -129,7 +131,7 @@ class NotificationService:
             return 0
 
         # 找到评论过该文档的用户
-        comment_result = await self.db.execute(
+        comment_stmt = (
             select(DocumentComment.user_id)
             .where(
                 and_(
@@ -137,14 +139,16 @@ class NotificationService:
                     DocumentComment.deleted_at.is_(None),
                 )
             )
-            .distinct()
         )
+        comment_stmt = apply_tenant_filter(comment_stmt, DocumentComment, self._tenant_id)
+        comment_stmt = comment_stmt.distinct()
+        comment_result = await self.db.execute(comment_stmt)
         user_ids = {r.user_id for r in comment_result if r.user_id}
 
         # 找到文档作者
-        doc_result = await self.db.execute(
-            select(Document.owner_id).where(Document.id == doc_uid)
-        )
+        doc_stmt = select(Document.owner_id).where(Document.id == doc_uid)
+        doc_stmt = apply_tenant_filter(doc_stmt, Document, self._tenant_id)
+        doc_result = await self.db.execute(doc_stmt)
         doc_row = doc_result.first()
         if doc_row and doc_row.owner_id:
             user_ids.discard(doc_row.owner_id)  # 不通知作者自己
@@ -247,6 +251,7 @@ class NotificationService:
         query = select(Notification).where(Notification.user_id == user_uid)
         if unread_only:
             query = query.where(Notification.is_read.is_(False))
+        query = apply_tenant_filter(query, Notification, self._tenant_id)
         query = query.order_by(desc(Notification.created_at)).limit(limit)
 
         result = await self.db.execute(query)
@@ -277,9 +282,9 @@ class NotificationService:
         except (ValueError, TypeError):
             return False
 
-        result = await self.db.execute(
-            select(Notification).where(Notification.id == notif_uid)
-        )
+        stmt = select(Notification).where(Notification.id == notif_uid)
+        stmt = apply_tenant_filter(stmt, Notification, self._tenant_id)
+        result = await self.db.execute(stmt)
         notification = result.scalars().first()
         if not notification:
             return False
@@ -303,14 +308,14 @@ class NotificationService:
         except (ValueError, TypeError):
             return 0
 
-        result = await self.db.execute(
-            select(Notification).where(
-                and_(
-                    Notification.user_id == user_uid,
-                    Notification.is_read.is_(False),
-                )
+        stmt = select(Notification).where(
+            and_(
+                Notification.user_id == user_uid,
+                Notification.is_read.is_(False),
             )
         )
+        stmt = apply_tenant_filter(stmt, Notification, self._tenant_id)
+        result = await self.db.execute(stmt)
         notifications = result.scalars().all()
         now = datetime.utcnow()
         for n in notifications:
@@ -327,7 +332,7 @@ class NotificationService:
         self, user_uid: uuid.UUID, limit: int = 5
     ) -> list[Document]:
         """获取用户最近评论过的文档。"""
-        result = await self.db.execute(
+        stmt = (
             select(Document)
             .join(DocumentComment, DocumentComment.doc_id == Document.id)
             .where(
@@ -337,19 +342,18 @@ class NotificationService:
                     Document.deleted_at.is_(None),
                 )
             )
-            .order_by(desc(DocumentComment.created_at))
-            .limit(limit)
         )
+        stmt = apply_tenant_filter(stmt, Document, self._tenant_id)
+        stmt = stmt.order_by(desc(DocumentComment.created_at)).limit(limit)
+        result = await self.db.execute(stmt)
         return list(result.scalars().all())
 
     async def _get_popular_docs(self, limit: int = 5) -> list[Document]:
         """按浏览量获取热门文档（用户无活跃记录时的兜底）。"""
-        result = await self.db.execute(
-            select(Document)
-            .where(Document.deleted_at.is_(None))
-            .order_by(desc(Document.view_count))
-            .limit(limit)
-        )
+        stmt = select(Document).where(Document.deleted_at.is_(None))
+        stmt = apply_tenant_filter(stmt, Document, self._tenant_id)
+        stmt = stmt.order_by(desc(Document.view_count)).limit(limit)
+        result = await self.db.execute(stmt)
         return list(result.scalars().all())
 
     async def _find_related_by_title(
@@ -360,7 +364,7 @@ class NotificationService:
             return []
         # 取标题前 2 个字符作为关键词（中文短词匹配）
         keyword = f"%{title[:2]}%"
-        result = await self.db.execute(
+        stmt = (
             select(Document)
             .where(
                 and_(
@@ -368,9 +372,10 @@ class NotificationService:
                     Document.title.ilike(keyword),
                 )
             )
-            .order_by(desc(Document.view_count))
-            .limit(DIGEST_COUNT)
         )
+        stmt = apply_tenant_filter(stmt, Document, self._tenant_id)
+        stmt = stmt.order_by(desc(Document.view_count)).limit(DIGEST_COUNT)
+        result = await self.db.execute(stmt)
         docs = []
         for doc in result.scalars().all():
             doc_id_str = str(doc.id)
@@ -385,15 +390,15 @@ class NotificationService:
 
     async def _get_users_by_role(self, role: str) -> list[User]:
         """获取指定角色的所有活跃用户。"""
-        result = await self.db.execute(
-            select(User).where(
-                and_(
-                    User.role == role,
-                    User.is_active.is_(True),
-                    User.deleted_at.is_(None),
-                )
+        stmt = select(User).where(
+            and_(
+                User.role == role,
+                User.is_active.is_(True),
+                User.deleted_at.is_(None),
             )
         )
+        stmt = apply_tenant_filter(stmt, User, self._tenant_id)
+        result = await self.db.execute(stmt)
         return list(result.scalars().all())
 
     async def _create_notification(

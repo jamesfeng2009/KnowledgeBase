@@ -654,7 +654,7 @@ const breadcrumb = [{ label: '场景应用', href: '/scenes/onboarding' }, { lab
 
   // ===== 工具函数 =====
   function escapeHtml(s: unknown): string {
-    return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
   function isOnboardingKb(name: string, desc: string): boolean {

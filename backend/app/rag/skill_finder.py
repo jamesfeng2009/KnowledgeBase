@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import re
 
-from app.rag.skill_registry import SkillMetadata, SkillRegistry
+from app.rag.skill_registry import SkillRegistry
 from app.utils.logger import get_logger
 
 log = get_logger(__name__)

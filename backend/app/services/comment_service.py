@@ -26,16 +26,22 @@ class CommentService:
     由上层 API 层统一翻译为 HTTP 状态码。
     """
 
-    def __init__(self, db: AsyncSession, user: User) -> None:
+    def __init__(
+        self, db: AsyncSession, user: User, tenant_id: UUID | None = None
+    ) -> None:
         """初始化评论服务，注入依赖。
 
         Args:
             db: 异步数据库会话。
             user: 当前已认证用户。
+            tenant_id: 租户 ID，用于多租户数据隔离。
         """
         self.db: AsyncSession = db
         self.user: User = user
-        self.comment_repo: DocumentCommentRepository = DocumentCommentRepository(db)
+        self._tenant_id = tenant_id
+        self.comment_repo: DocumentCommentRepository = DocumentCommentRepository(
+            db, tenant_id=tenant_id
+        )
 
     # ------------------------------------------------------------------
     # 评论操作

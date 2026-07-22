@@ -24,6 +24,7 @@ import json
 import re
 import uuid
 from typing import Any
+from uuid import UUID
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,6 +33,7 @@ from app.llm.base import LLMProvider, Message
 from app.models.knowledge import Document
 from app.models.testing import TestCase, TestRequirement
 from app.utils.logger import get_logger
+from app.utils.tenant import apply_tenant_filter
 
 log = get_logger(__name__)
 
@@ -81,9 +83,12 @@ class TestCaseGenerationService:
         - db: AsyncSession 实例（由 API 层的 Depends(get_db_session) 提供）
     """
 
-    def __init__(self, llm: LLMProvider, db: AsyncSession) -> None:
+    def __init__(
+        self, llm: LLMProvider, db: AsyncSession, tenant_id: UUID | None = None
+    ) -> None:
         self.llm = llm
         self.db = db
+        self._tenant_id = tenant_id
 
     # ------------------------------------------------------------------
     # 核心方法
@@ -171,11 +176,11 @@ class TestCaseGenerationService:
             created.append(self._to_dict(test_case))
 
         # 7. 更新需求状态为 cases_ready
-        await self.db.execute(
-            update(TestRequirement)
-            .where(TestRequirement.id == requirement.id)
-            .values(status="cases_ready")
+        stmt = update(TestRequirement).where(
+            TestRequirement.id == requirement.id
         )
+        stmt = apply_tenant_filter(stmt, TestRequirement, self._tenant_id)
+        await self.db.execute(stmt.values(status="cases_ready"))
         await self.db.flush()
 
         log.info(
@@ -201,13 +206,13 @@ class TestCaseGenerationService:
         Returns:
             下一个可用的用例编号字符串。
         """
-        result = await self.db.execute(
-            select(TestCase.case_no).where(
-                TestCase.project_id == project_id,
-                TestCase.deleted_at.is_(None),
-                TestCase.case_no.isnot(None),
-            )
+        stmt = select(TestCase.case_no).where(
+            TestCase.project_id == project_id,
+            TestCase.deleted_at.is_(None),
+            TestCase.case_no.isnot(None),
         )
+        stmt = apply_tenant_filter(stmt, TestCase, self._tenant_id)
+        result = await self.db.execute(stmt)
         existing_nos = result.scalars().all()
 
         max_seq = 0
@@ -265,12 +270,12 @@ class TestCaseGenerationService:
         self, req_uuid: uuid.UUID
     ) -> TestRequirement | None:
         """获取需求点 ORM 实例（含软删除过滤）。"""
-        result = await self.db.execute(
-            select(TestRequirement).where(
-                TestRequirement.id == req_uuid,
-                TestRequirement.deleted_at.is_(None),
-            )
+        stmt = select(TestRequirement).where(
+            TestRequirement.id == req_uuid,
+            TestRequirement.deleted_at.is_(None),
         )
+        stmt = apply_tenant_filter(stmt, TestRequirement, self._tenant_id)
+        result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
     async def _get_context_docs(
@@ -287,12 +292,12 @@ class TestCaseGenerationService:
         if not doc_ids:
             return []
         doc_uuids = [uuid.UUID(did) for did in doc_ids]
-        result = await self.db.execute(
-            select(Document).where(
-                Document.id.in_(doc_uuids),
-                Document.deleted_at.is_(None),
-            )
+        stmt = select(Document).where(
+            Document.id.in_(doc_uuids),
+            Document.deleted_at.is_(None),
         )
+        stmt = apply_tenant_filter(stmt, Document, self._tenant_id)
+        result = await self.db.execute(stmt)
         return list(result.scalars().all())
 
     @staticmethod

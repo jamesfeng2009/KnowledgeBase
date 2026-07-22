@@ -97,41 +97,22 @@ def upgrade() -> None:
     # ============================================================
     # P1-3: notifications.read_at 类型从 String(30) 改为 DateTime
     # ============================================================
-    # 历史数据清理：移除非时间格式的脏数据（PostgreSQL 用 !~ 正则，
-    # SQLite 无正则操作符，用 LENGTH + LIKE 近似过滤）
-    bind = op.get_bind()
-    dialect = bind.dialect.name
-    if dialect == "postgresql":
-        op.execute(
-            "UPDATE notifications SET read_at = NULL "
-            "WHERE read_at IS NOT NULL AND read_at !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T'"
-        )
-    else:
-        # SQLite（测试用）及其他方言：跳过正则清理，直接转换
-        # 非法时间字符串在 CAST 时会变为 NULL
-        pass
+    # 历史数据清理：移除非时间格式的脏数据
+    op.execute(
+        "UPDATE notifications SET read_at = NULL "
+        "WHERE read_at IS NOT NULL AND read_at !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T'"
+    )
 
-    # 类型转换：PostgreSQL 用 USING 子句，SQLite 用 CAST
-    if dialect == "postgresql":
-        op.alter_column(
-            "notifications",
-            "read_at",
-            existing_type=sa.String(length=30),
-            type_=sa.DateTime(timezone=True),
-            existing_nullable=True,
-            postgresql_using="read_at::timestamp with time zone",
-            comment="已读时间（UTC 时间戳）",
-        )
-    else:
-        # SQLite: alter_column 通过 batch 模式重建表
-        with op.batch_alter_table("notifications") as batch_op:
-            batch_op.alter_column(
-                "read_at",
-                existing_type=sa.String(length=30),
-                type_=sa.DateTime(timezone=True),
-                existing_nullable=True,
-                comment="已读时间（UTC 时间戳）",
-            )
+    # 类型转换：PostgreSQL USING 子句
+    op.alter_column(
+        "notifications",
+        "read_at",
+        existing_type=sa.String(length=30),
+        type_=sa.DateTime(timezone=True),
+        existing_nullable=True,
+        postgresql_using="read_at::timestamp with time zone",
+        comment="已读时间（UTC 时间戳）",
+    )
 
     # ============================================================
     # P1-4: 10 个表新增 tenant_id
@@ -288,25 +269,14 @@ def downgrade() -> None:
         op.drop_column(table_name, "tenant_id")
 
     # P1-3: notifications.read_at 回滚为 String(30)
-    bind = op.get_bind()
-    if bind.dialect.name == "postgresql":
-        op.alter_column(
-            "notifications",
-            "read_at",
-            existing_type=sa.DateTime(timezone=True),
-            type_=sa.String(length=30),
-            existing_nullable=True,
-            comment="已读时间 ISO 格式",
-        )
-    else:
-        with op.batch_alter_table("notifications") as batch_op:
-            batch_op.alter_column(
-                "read_at",
-                existing_type=sa.DateTime(timezone=True),
-                type_=sa.String(length=30),
-                existing_nullable=True,
-                comment="已读时间 ISO 格式",
-            )
+    op.alter_column(
+        "notifications",
+        "read_at",
+        existing_type=sa.DateTime(timezone=True),
+        type_=sa.String(length=30),
+        existing_nullable=True,
+        comment="已读时间 ISO 格式",
+    )
 
     # P0-3: 删除 agent_checkpoints 表
     op.drop_table("agent_checkpoints")

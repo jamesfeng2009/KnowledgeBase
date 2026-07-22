@@ -100,7 +100,6 @@ class ASRProvider(ABC):
         Returns:
             合并后的转写片段列表（时间戳已偏移到原始音频时间线）。
         """
-        import asyncio
         import os
         import subprocess
         import tempfile

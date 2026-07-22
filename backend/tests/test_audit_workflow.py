@@ -62,7 +62,7 @@ class TestSubmitForAudit:
 
         owner_id = _uuid.UUID(_TEST_UUID)
 
-        with patch("app.database.async_session_factory", return_value=mock_session_cm), \
+        with patch("app.database.task_db_session", return_value=mock_session_cm), \
              patch("app.repositories.base.BaseRepository", return_value=mock_repo):
 
             await _submit_for_audit(_TEST_UUID, owner_id)
@@ -89,7 +89,7 @@ class TestSubmitForAudit:
         mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session_cm.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("app.database.async_session_factory", return_value=mock_session_cm), \
+        with patch("app.database.task_db_session", return_value=mock_session_cm), \
              patch("app.repositories.base.BaseRepository", return_value=mock_repo):
 
             await _submit_for_audit(_TEST_UUID, _uuid.UUID(_TEST_UUID))
@@ -123,7 +123,7 @@ class TestPublishDocument:
         mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session_cm.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("app.database.async_session_factory", return_value=mock_session_cm), \
+        with patch("app.database.task_db_session", return_value=mock_session_cm), \
              patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo):
 
             await _publish_document(_TEST_UUID)
@@ -146,7 +146,7 @@ class TestPublishDocument:
         mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session_cm.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("app.database.async_session_factory", return_value=mock_session_cm), \
+        with patch("app.database.task_db_session", return_value=mock_session_cm), \
              patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo):
 
             # 不应抛出异常
@@ -203,7 +203,7 @@ class TestDocumentClassificationRouting:
         mock_doc = self._make_mock_doc(classification="confidential")
         mocks = self._setup_mocks(mock_doc)
 
-        with patch("app.database.async_session_factory", return_value=mocks["session_cm"]), \
+        with patch("app.database.task_db_session", return_value=mocks["session_cm"]), \
              patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mocks["repo"]), \
              patch("tasks.document_tasks._generate_embeddings", new_callable=AsyncMock, return_value=[]), \
              patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock), \
@@ -225,7 +225,7 @@ class TestDocumentClassificationRouting:
         mock_doc = self._make_mock_doc(classification="secret")
         mocks = self._setup_mocks(mock_doc)
 
-        with patch("app.database.async_session_factory", return_value=mocks["session_cm"]), \
+        with patch("app.database.task_db_session", return_value=mocks["session_cm"]), \
              patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mocks["repo"]), \
              patch("tasks.document_tasks._generate_embeddings", new_callable=AsyncMock, return_value=[]), \
              patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock), \
@@ -245,7 +245,7 @@ class TestDocumentClassificationRouting:
         mock_doc = self._make_mock_doc(classification="public")
         mocks = self._setup_mocks(mock_doc)
 
-        with patch("app.database.async_session_factory", return_value=mocks["session_cm"]), \
+        with patch("app.database.task_db_session", return_value=mocks["session_cm"]), \
              patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mocks["repo"]), \
              patch("tasks.document_tasks._generate_embeddings", new_callable=AsyncMock, return_value=[]), \
              patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock), \
@@ -266,7 +266,7 @@ class TestDocumentClassificationRouting:
         mock_doc = self._make_mock_doc(classification="internal")
         mocks = self._setup_mocks(mock_doc)
 
-        with patch("app.database.async_session_factory", return_value=mocks["session_cm"]), \
+        with patch("app.database.task_db_session", return_value=mocks["session_cm"]), \
              patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mocks["repo"]), \
              patch("tasks.document_tasks._generate_embeddings", new_callable=AsyncMock, return_value=[]), \
              patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock), \
@@ -286,7 +286,7 @@ class TestDocumentClassificationRouting:
         mock_doc = self._make_mock_doc(classification=None)
         mocks = self._setup_mocks(mock_doc)
 
-        with patch("app.database.async_session_factory", return_value=mocks["session_cm"]), \
+        with patch("app.database.task_db_session", return_value=mocks["session_cm"]), \
              patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mocks["repo"]), \
              patch("tasks.document_tasks._generate_embeddings", new_callable=AsyncMock, return_value=[]), \
              patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock), \

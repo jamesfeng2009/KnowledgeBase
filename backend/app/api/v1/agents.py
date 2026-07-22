@@ -11,9 +11,8 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -112,6 +111,7 @@ async def get_agent(
 
 @router.post("/agents/{agent_id}/invoke")
 async def invoke_agent(
+    request: Request,
     agent_id: uuid.UUID,
     body: AgentInvokeRequest,
     db: AsyncSession = Depends(get_db_session),
@@ -144,7 +144,8 @@ async def invoke_agent(
     try:
         from app.services.chat_service import ChatService
 
-        chat_service = ChatService(db, user)
+        tenant_id = getattr(request.state, "tenant_id", None)
+        chat_service = ChatService(db, user, tenant_id=tenant_id)
 
         async def event_stream():
             """SSE 事件流生成器。"""

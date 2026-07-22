@@ -28,8 +28,8 @@ class FeedbackRepository(BaseRepository[Feedback]):
     Feedback 模型不支持软删除，所有查询不包含 deleted_at 过滤。
     """
 
-    def __init__(self, session: AsyncSession) -> None:
-        super().__init__(Feedback, session)
+    def __init__(self, session: AsyncSession, tenant_id: UUID | None = None) -> None:
+        super().__init__(Feedback, session, tenant_id=tenant_id)
 
     async def get_by_status(self, status: str) -> list[Feedback]:
         """按状态查询反馈列表（按创建时间倒序）。
@@ -37,20 +37,16 @@ class FeedbackRepository(BaseRepository[Feedback]):
         Args:
             status: 反馈状态 — open/processing/resolved/closed。
         """
-        stmt = (
-            select(Feedback)
-            .where(Feedback.status == status)
-            .order_by(Feedback.created_at.desc())
-        )
+        stmt = select(Feedback).where(Feedback.status == status)
+        stmt = self._apply_all_filters(stmt)
+        stmt = stmt.order_by(Feedback.created_at.desc())
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
     async def get_by_user(self, user_id: UUID) -> list[Feedback]:
         """查询某用户提交的所有反馈（按创建时间倒序）。"""
-        stmt = (
-            select(Feedback)
-            .where(Feedback.user_id == user_id)
-            .order_by(Feedback.created_at.desc())
-        )
+        stmt = select(Feedback).where(Feedback.user_id == user_id)
+        stmt = self._apply_all_filters(stmt)
+        stmt = stmt.order_by(Feedback.created_at.desc())
         result = await self.session.execute(stmt)
         return list(result.scalars().all())

@@ -60,6 +60,11 @@ export function createCollabProvider(
     docId,
     ydoc,
     {
+      // 安全说明：浏览器 WebSocket API 无法自定义 Authorization 请求头，
+      // y-websocket 仅支持经 URL query 传递 Token（collab-service 从 ?token= 读取，
+      // 签名由 APISIX 网关验证）。已知风险：Token 会进入 WS 服务访问日志。
+      // 待后端支持「POST 换取短时 ws ticket」后改为 ticket 传递
+      // （当前后端无 ticket 接口，暂保留 URL 参数方案）。
       params: { token },
       connect: true,
       // 重连最大间隔 30s（指数退避），对应 y-websocket 的 maxBackoffTime 选项
@@ -90,6 +95,9 @@ export function subscribeComments(
   token: string,
   onNewComment: (comment: Comment) => void
 ): () => void {
+  // 安全说明：浏览器 WebSocket 无法自定义请求头，Token 只能随 URL query 传递
+  // （collab-service /ws/comments 从 ?token= 读取）。已知风险：Token 会进入访问日志；
+  // 待后端支持「POST 换取短时 ws ticket」后改造（当前无 ticket 接口，暂保留）。
   const params = new URLSearchParams({ doc_id: docId, token });
   const ws = new WebSocket(`${wsUrl}/ws/comments?${params.toString()}`);
 

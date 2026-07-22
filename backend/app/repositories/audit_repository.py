@@ -26,10 +26,14 @@ class AuditRepository(BaseRepository[AuditFlow]):
     """审核流程仓储 — 封装 audit_flows 表的领域查询。
 
     AuditFlow 模型支持软删除，所有查询自动过滤 deleted_at IS NULL。
+    AuditFlow 已新增 tenant_id 列，BaseRepository 的标准 CRUD 方法
+    通过 _apply_all_filters 自动注入租户过滤。自定义查询方法
+    （get_by_status / get_by_resource / get_by_submitter / get_by_reviewer）
+    通过 _apply_all_filters 手动注入租户隔离条件。
     """
 
-    def __init__(self, session: AsyncSession) -> None:
-        super().__init__(AuditFlow, session)
+    def __init__(self, session: AsyncSession, tenant_id: UUID | None = None) -> None:
+        super().__init__(AuditFlow, session, tenant_id=tenant_id)
 
     async def get_by_status(self, status: str) -> list[AuditFlow]:
         """按状态查询审核列表（按创建时间倒序，排除已软删除）。
@@ -37,7 +41,7 @@ class AuditRepository(BaseRepository[AuditFlow]):
         Args:
             status: 审核状态 — pending/approved/rejected。
         """
-        stmt = (
+        stmt = self._apply_all_filters(
             select(AuditFlow)
             .where(
                 AuditFlow.status == status,
@@ -59,7 +63,7 @@ class AuditRepository(BaseRepository[AuditFlow]):
             resource_type: 资源类型 — document/kb/question。
             resource_id: 资源 ID。
         """
-        stmt = (
+        stmt = self._apply_all_filters(
             select(AuditFlow)
             .where(
                 AuditFlow.resource_type == resource_type,
@@ -77,7 +81,7 @@ class AuditRepository(BaseRepository[AuditFlow]):
         Args:
             submitter_id: 提交者用户 ID。
         """
-        stmt = (
+        stmt = self._apply_all_filters(
             select(AuditFlow)
             .where(
                 AuditFlow.submitter_id == submitter_id,
@@ -94,7 +98,7 @@ class AuditRepository(BaseRepository[AuditFlow]):
         Args:
             reviewer_id: 审核者用户 ID。
         """
-        stmt = (
+        stmt = self._apply_all_filters(
             select(AuditFlow)
             .where(
                 AuditFlow.reviewer_id == reviewer_id,

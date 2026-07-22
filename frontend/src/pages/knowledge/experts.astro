@@ -514,7 +514,8 @@ const breadcrumb = [{ label: '知识', href: '/knowledge' }, { label: '专家发
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 
   // 渲染头像：有图片显示图片，否则显示首字母 + 哈希背景色

@@ -84,7 +84,37 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception as exc:
         log.warning("app.approval_restore_failed", error=str(exc))
 
+    # 注册需要清理的资源（按优先级降序清理）
+    from app.utils.resource_manager import resource_manager
+
+    try:
+        from app.database import engine
+
+        resource_manager.register("pg_engine", engine.dispose, priority=40)
+    except ImportError:
+        pass
+
+    try:
+        from app.services.notification_hub import notification_hub
+
+        if hasattr(notification_hub, "close"):
+            resource_manager.register(
+                "notification_hub", notification_hub.close, priority=60
+            )
+    except ImportError:
+        pass
+
     yield
+
+    # === 优雅关闭：按优先级逆序清理所有资源 ===
+    log.info("app.shutting_down", app_name=settings.APP_NAME)
+    try:
+        await asyncio.wait_for(
+            resource_manager.cleanup(timeout=settings.SHUTDOWN_TIMEOUT),
+            timeout=settings.SHUTDOWN_TIMEOUT + 5,  # 总超时比单资源超时多 5 秒
+        )
+    except asyncio.TimeoutError:
+        log.warning("app.shutdown_timeout_exceeded", timeout=settings.SHUTDOWN_TIMEOUT)
     log.info("app.stopped", app_name=settings.APP_NAME)
 
 
@@ -184,3 +214,104 @@ async def health_check_db() -> ApiResponse:
             data={"status": "error", "database": str(exc)},
             message="database connection failed",
         )
+
+
+@app.get("/health/circuit-breakers", response_model=ApiResponse, tags=["系统"])
+async def health_circuit_breakers() -> ApiResponse:
+    """熔断器状态查询 — 返回所有熔断器的当前状态。
+
+    用于前端展示熔断状态、运维监控告警。
+    返回数据结构::
+
+        {
+            "dashscope": {"name": "dashscope", "state": "closed", ...},
+            "anthropic": {"name": "anthropic", "state": "open", ...},
+            "vllm": {"name": "vllm", "state": "closed", ...}
+        }
+    """
+    from app.utils.circuit_breaker import get_all_circuit_status
+
+    statuses = get_all_circuit_status()
+    any_open = any(s["state"] == "open" for s in statuses.values())
+    return ApiResponse(
+        code=0,
+        data={
+            "breakers": statuses,
+            "any_open": any_open,
+        },
+        message="success" if not any_open else "warning: 有熔断器处于 OPEN 状态",
+    )
+
+
+@app.get("/health/providers", response_model=ApiResponse, tags=["系统"])
+async def health_providers(request: Request) -> ApiResponse:
+    """AI 服务 Provider 健康状态查询 — 幂等 GET 端点。
+
+    优先从 Redis 读取 Celery 定时任务的缓存结果（TTL=60s），
+    缓存不存在时降级为同步检查。
+
+    信息泄漏防护：非 admin（含未认证）仅返回健康状态摘要；
+    ``error`` 细节（可能包含 API key 片段、内部 URL）仅 admin 可见。
+
+    返回数据结构::
+
+        {
+            "providers": {
+                "embedder_openai": {"name": "...", "healthy": true, ...},
+                ...
+            },
+            "source": "cache" | "fresh",
+            "healthy_count": 8,
+            "total": 10
+        }
+    """
+    from app.services.health_check import (
+        HealthCheckService,
+        is_request_admin,
+        sanitize_providers,
+    )
+
+    log.info("api.health_providers.start")
+    service = HealthCheckService()
+    # 权限门控 — error 细节仅 admin 可见
+    include_details = await is_request_admin(request)
+
+    # 优先读 Redis 缓存
+    cached = await service.load_from_redis()
+    if cached:
+        healthy_count = sum(1 for h in cached.values() if h.healthy)
+        log.info(
+            "api.health_providers.cache_hit",
+            total=len(cached),
+            healthy=healthy_count,
+        )
+        return ApiResponse(
+            code=0,
+            data={
+                "providers": sanitize_providers(cached, include_details),
+                "source": "cache",
+                "healthy_count": healthy_count,
+                "total": len(cached),
+            },
+            message="success",
+        )
+
+    # 缓存不存在 — 同步执行健康检查
+    log.info("api.health_providers.cache_miss")
+    results = await service.check_all()
+    healthy_count = sum(1 for h in results.values() if h.healthy)
+    log.info(
+        "api.health_providers.fresh_check",
+        total=len(results),
+        healthy=healthy_count,
+    )
+    return ApiResponse(
+        code=0,
+        data={
+            "providers": sanitize_providers(results, include_details),
+            "source": "fresh",
+            "healthy_count": healthy_count,
+            "total": len(results),
+        },
+        message="success",
+    )

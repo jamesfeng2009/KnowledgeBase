@@ -5,6 +5,8 @@
  * 包含：核心指标 / 搜索热词云 / 零点击搜索词 / 热门文档 / 知识覆盖率 / 知识新鲜度 / 贡献者排名
  */
 import DefaultLayout from '@/layouts/DefaultLayout.astro';
+import CircuitBreakerCard from '@/components/admin/CircuitBreakerCard.astro';
+import ProviderHealthCard from '@/components/admin/ProviderHealthCard.astro';
 
 const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '运营看板' }];
 ---
@@ -92,6 +94,12 @@ const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '运营�
       <div class="card-header"><h3>贡献者排名</h3></div>
       <div class="opd-block-body" id="contributors-body"></div>
     </div>
+
+    <!-- 8. 熔断器状态（P1-A） -->
+    <CircuitBreakerCard />
+
+    <!-- 9. AI 服务健康状态（P2-A） -->
+    <ProviderHealthCard />
   </div>
 </DefaultLayout>
 
@@ -560,7 +568,8 @@ const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '运营�
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 
   function formatNum(n: number): string {

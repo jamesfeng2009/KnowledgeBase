@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db_session
@@ -28,6 +28,7 @@ router = APIRouter(prefix="/approvals", tags=["工具审批"])
 
 @router.get("/pending")
 async def list_pending_approvals(
+    request: Request,
     session_id: str | None = None,
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
@@ -40,7 +41,8 @@ async def list_pending_approvals(
     Returns:
         {"pending": [ToolApprovalResponse], "total": int}
     """
-    service = ApprovalService(db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = ApprovalService(db, tenant_id=tenant_id)
     approvals = await service.get_pending_approvals(user, session_id)
     return {
         "pending": [
@@ -52,6 +54,7 @@ async def list_pending_approvals(
 
 @router.post("/{approval_id}/approve")
 async def approve_tool(
+    request: Request,
     approval_id: UUID,
     _body: ApprovalActionRequest | None = None,
     db: AsyncSession = Depends(get_db_session),
@@ -61,7 +64,8 @@ async def approve_tool(
 
     批准后该工具在当前会话内不再需要重复审批。
     """
-    service = ApprovalService(db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = ApprovalService(db, tenant_id=tenant_id)
     try:
         approval = await service.approve(approval_id, user)
         await db.commit()
@@ -78,13 +82,15 @@ async def approve_tool(
 
 @router.post("/{approval_id}/reject")
 async def reject_tool(
+    request: Request,
     approval_id: UUID,
     _body: ApprovalActionRequest | None = None,
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
 ) -> dict:
     """拒绝工具执行 — 用户拒绝执行危险工具。"""
-    service = ApprovalService(db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = ApprovalService(db, tenant_id=tenant_id)
     try:
         approval = await service.reject(approval_id, user)
         await db.commit()
@@ -101,12 +107,14 @@ async def reject_tool(
 
 @router.get("/{approval_id}")
 async def get_approval(
+    request: Request,
     approval_id: UUID,
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
 ) -> dict:
     """查询单个审批记录详情。"""
-    service = ApprovalService(db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = ApprovalService(db, tenant_id=tenant_id)
     approval = await service.get_approval_by_id(approval_id)
     if approval is None:
         raise HTTPException(status_code=404, detail="审批记录不存在")

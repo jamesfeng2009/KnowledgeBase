@@ -24,7 +24,7 @@ from __future__ import annotations
 import math
 import uuid
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -235,17 +235,19 @@ async def update_project(
 
 @router.post("/requirements/extract")
 async def extract_requirements(
+    request: Request,
     body: RequirementExtractRequest,
     user: User = Depends(require_module("testing_platform")),
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse:
     """从 PRD / UI 稿文档自动提取原子需求点 — 调用 LLM 分析。"""
+    tenant_id = getattr(request.state, "tenant_id", None)
     try:
         llm = get_llm_provider()
     except Exception:
         return ApiResponse(code=503, data=None, message="LLM 服务不可用")
 
-    service = RequirementAnalysisService(llm, db)
+    service = RequirementAnalysisService(llm, db, tenant_id=tenant_id)
     try:
         result = await service.extract_requirements(
             body.project_id,
@@ -262,6 +264,7 @@ async def extract_requirements(
 
 @router.get("/requirements")
 async def list_requirements(
+    request: Request,
     project_id: uuid.UUID = Query(..., description="项目 ID"),
     page: int = Query(default=1, ge=1, description="页码"),
     size: int = Query(default=20, ge=1, le=100, description="每页数量"),
@@ -269,7 +272,8 @@ async def list_requirements(
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse:
     """分页查询项目的需求点列表。"""
-    service = RequirementAnalysisService(_get_llm_or_none(), db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = RequirementAnalysisService(_get_llm_or_none(), db, tenant_id=tenant_id)
     items, total = await service.list_requirements(project_id, page=page, size=size)
     return ApiResponse(
         code=0,
@@ -280,12 +284,14 @@ async def list_requirements(
 
 @router.get("/requirements/{requirement_id}")
 async def get_requirement(
+    request: Request,
     requirement_id: uuid.UUID,
     user: User = Depends(require_module("testing_platform")),
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse:
     """获取需求点详情。"""
-    service = RequirementAnalysisService(_get_llm_or_none(), db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = RequirementAnalysisService(_get_llm_or_none(), db, tenant_id=tenant_id)
     requirement = await service.get_requirement(requirement_id)
     if requirement is None:
         return ApiResponse(code=404, data=None, message="需求点不存在")
@@ -298,13 +304,15 @@ async def get_requirement(
 
 @router.put("/requirements/{requirement_id}")
 async def update_requirement(
+    request: Request,
     requirement_id: uuid.UUID,
     body: TestRequirementUpdate,
     user: User = Depends(require_module("testing_platform")),
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse:
     """更新需求点 — 仅更新提供的字段。"""
-    service = RequirementAnalysisService(_get_llm_or_none(), db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = RequirementAnalysisService(_get_llm_or_none(), db, tenant_id=tenant_id)
     update_data = body.model_dump(exclude_unset=True, exclude_none=True)
     try:
         requirement = await service.update_requirement(
@@ -327,17 +335,19 @@ async def update_requirement(
 
 @router.post("/cases/generate")
 async def generate_cases(
+    request: Request,
     body: TestCaseGenerateRequest,
     user: User = Depends(require_module("testing_platform")),
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse:
     """AI 生成测试用例 — 基于需求点 + 上下文文档调用 LLM 生成。"""
+    tenant_id = getattr(request.state, "tenant_id", None)
     try:
         llm = get_llm_provider()
     except Exception:
         return ApiResponse(code=503, data=None, message="LLM 服务不可用")
 
-    service = TestCaseGenerationService(llm, db)
+    service = TestCaseGenerationService(llm, db, tenant_id=tenant_id)
     try:
         result = await service.generate_cases(
             body.requirement_id,
@@ -353,12 +363,14 @@ async def generate_cases(
 
 @router.post("/cases", status_code=201)
 async def create_case(
+    request: Request,
     body: TestCaseCreate,
     user: User = Depends(require_module("testing_platform")),
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse:
     """手动创建测试用例。"""
-    service = TestCaseManagementService(db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = TestCaseManagementService(db, tenant_id=tenant_id)
     try:
         case = await service.create_case(
             project_id=uuid.UUID(body.project_id),
@@ -388,6 +400,7 @@ async def create_case(
 
 @router.get("/cases")
 async def list_cases(
+    request: Request,
     project_id: uuid.UUID = Query(..., description="项目 ID"),
     status: str | None = Query(default=None, description="用例状态"),
     test_type: str | None = Query(default=None, description="测试类型"),
@@ -399,7 +412,8 @@ async def list_cases(
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse:
     """分页查询测试用例 — 支持多维度筛选与标题关键字搜索。"""
-    service = TestCaseManagementService(db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = TestCaseManagementService(db, tenant_id=tenant_id)
     cases, total = await service.list_cases(
         project_id=project_id,
         status=status,
@@ -423,12 +437,14 @@ async def list_cases(
 
 @router.get("/cases/{case_id}")
 async def get_case(
+    request: Request,
     case_id: uuid.UUID,
     user: User = Depends(require_module("testing_platform")),
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse:
     """获取测试用例详情。"""
-    service = TestCaseManagementService(db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = TestCaseManagementService(db, tenant_id=tenant_id)
     case = await service.get_case(case_id)
     if case is None:
         return ApiResponse(code=404, data=None, message="测试用例不存在")
@@ -441,13 +457,15 @@ async def get_case(
 
 @router.put("/cases/{case_id}")
 async def update_case(
+    request: Request,
     case_id: uuid.UUID,
     body: TestCaseUpdate,
     user: User = Depends(require_module("testing_platform")),
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse:
     """更新测试用例 — 仅更新提供的字段。"""
-    service = TestCaseManagementService(db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = TestCaseManagementService(db, tenant_id=tenant_id)
     update_data = body.model_dump(exclude_unset=True, exclude_none=True)
     try:
         case = await service.update_case(case_id, **update_data)
@@ -463,12 +481,14 @@ async def update_case(
 
 @router.delete("/cases/{case_id}")
 async def delete_case(
+    request: Request,
     case_id: uuid.UUID,
     user: User = Depends(require_module("testing_platform")),
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse:
     """软删除测试用例 — 设置 deleted_at，不物理删除。"""
-    service = TestCaseManagementService(db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = TestCaseManagementService(db, tenant_id=tenant_id)
     try:
         await service.delete_case(case_id)
     except ValueError as exc:
@@ -479,12 +499,14 @@ async def delete_case(
 
 @router.post("/cases/batch-status")
 async def batch_update_status(
+    request: Request,
     body: BatchStatusUpdateBody,
     user: User = Depends(require_module("testing_platform")),
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse:
     """批量更新用例状态 — 仅更新未软删除的用例。"""
-    service = TestCaseManagementService(db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = TestCaseManagementService(db, tenant_id=tenant_id)
     updated_count = await service.batch_update_status(body.case_ids, body.status)
     await db.commit()
     return ApiResponse(
@@ -501,12 +523,14 @@ async def batch_update_status(
 
 @router.post("/reviews", status_code=201)
 async def submit_for_review(
+    request: Request,
     body: TestReviewSubmit,
     user: User = Depends(require_module("testing_platform")),
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse:
     """提交用例评审 — 将用例状态变更为 pending_review。"""
-    service = TestReviewService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = TestReviewService(db, user, tenant_id=tenant_id)
     try:
         review = await service.submit_for_review(
             uuid.UUID(body.case_id),
@@ -524,13 +548,15 @@ async def submit_for_review(
 
 @router.get("/reviews/pending")
 async def list_pending_reviews(
+    request: Request,
     page: int = Query(default=1, ge=1, description="页码"),
     size: int = Query(default=20, ge=1, le=100, description="每页数量"),
     user: User = Depends(require_module("testing_platform")),
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse:
     """分页查询待评审列表。"""
-    service = TestReviewService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = TestReviewService(db, user, tenant_id=tenant_id)
     reviews, total = await service.get_pending_reviews(page=page, size=size)
     return ApiResponse(
         code=0,
@@ -546,12 +572,14 @@ async def list_pending_reviews(
 
 @router.get("/reviews/{review_id}")
 async def get_review(
+    request: Request,
     review_id: uuid.UUID,
     user: User = Depends(require_module("testing_platform")),
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse:
     """获取评审详情。"""
-    service = TestReviewService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = TestReviewService(db, user, tenant_id=tenant_id)
     review = await service.get_review(review_id)
     if review is None:
         return ApiResponse(code=404, data=None, message="评审记录不存在")
@@ -564,13 +592,15 @@ async def get_review(
 
 @router.put("/reviews/{review_id}/approve")
 async def approve_review(
+    request: Request,
     review_id: uuid.UUID,
     body: TestReviewAction,
     user: User = Depends(require_module("testing_platform")),
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse:
     """通过评审 — 评审状态变更为 approved，用例状态联动为 approved。"""
-    service = TestReviewService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = TestReviewService(db, user, tenant_id=tenant_id)
     try:
         review = await service.approve(
             review_id,
@@ -589,13 +619,15 @@ async def approve_review(
 
 @router.put("/reviews/{review_id}/reject")
 async def reject_review(
+    request: Request,
     review_id: uuid.UUID,
     body: TestReviewAction,
     user: User = Depends(require_module("testing_platform")),
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse:
     """驳回评审 — 评审状态变更为 rejected，用例状态回退为 draft。"""
-    service = TestReviewService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = TestReviewService(db, user, tenant_id=tenant_id)
     try:
         review = await service.reject(
             review_id,
@@ -614,12 +646,14 @@ async def reject_review(
 
 @router.get("/cases/{case_id}/reviews")
 async def get_case_reviews(
+    request: Request,
     case_id: uuid.UUID,
     user: User = Depends(require_module("testing_platform")),
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse:
     """查询某用例的全部评审历史。"""
-    service = TestReviewService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = TestReviewService(db, user, tenant_id=tenant_id)
     reviews = await service.get_reviews_by_case(case_id)
     return ApiResponse(
         code=0,
@@ -635,12 +669,14 @@ async def get_case_reviews(
 
 @router.post("/plans", status_code=201)
 async def create_plan(
+    request: Request,
     body: TestPlanCreate,
     user: User = Depends(require_module("testing_platform")),
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse:
     """创建测试计划 — 初始状态为 draft，不依赖 LLM。"""
-    service = TestOrchestrationService(_get_llm_or_none(), db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = TestOrchestrationService(_get_llm_or_none(), db, tenant_id=tenant_id)
     plan = await service.create_plan(
         project_id=uuid.UUID(body.project_id),
         name=body.name,
@@ -659,18 +695,20 @@ async def create_plan(
 
 @router.post("/plans/{plan_id}/orchestrate")
 async def orchestrate_plan(
+    request: Request,
     plan_id: uuid.UUID,
     body: TestPlanOrchestrateRequest,
     user: User = Depends(require_module("testing_platform")),
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse:
     """AI 编排测试计划 — 调用 LLM 生成执行顺序与节点分配方案。"""
+    tenant_id = getattr(request.state, "tenant_id", None)
     try:
         llm = get_llm_provider()
     except Exception:
         return ApiResponse(code=503, data=None, message="LLM 服务不可用")
 
-    service = TestOrchestrationService(llm, db)
+    service = TestOrchestrationService(llm, db, tenant_id=tenant_id)
     try:
         plan = await service.orchestrate(
             plan_id,
@@ -689,12 +727,14 @@ async def orchestrate_plan(
 
 @router.get("/plans/{plan_id}")
 async def get_plan(
+    request: Request,
     plan_id: uuid.UUID,
     user: User = Depends(require_module("testing_platform")),
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse:
     """获取测试计划详情。"""
-    service = TestOrchestrationService(_get_llm_or_none(), db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = TestOrchestrationService(_get_llm_or_none(), db, tenant_id=tenant_id)
     plan = await service.get_plan(plan_id)
     if plan is None:
         return ApiResponse(code=404, data=None, message="测试计划不存在")
@@ -707,6 +747,7 @@ async def get_plan(
 
 @router.get("/plans")
 async def list_plans(
+    request: Request,
     project_id: uuid.UUID = Query(..., description="项目 ID"),
     page: int = Query(default=1, ge=1, description="页码"),
     size: int = Query(default=20, ge=1, le=100, description="每页数量"),
@@ -714,7 +755,8 @@ async def list_plans(
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse:
     """分页查询项目的测试计划列表。"""
-    service = TestOrchestrationService(_get_llm_or_none(), db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = TestOrchestrationService(_get_llm_or_none(), db, tenant_id=tenant_id)
     plans, total = await service.list_plans(project_id, page=page, size=size)
     return ApiResponse(
         code=0,
@@ -735,12 +777,14 @@ async def list_plans(
 
 @router.post("/executions", status_code=201)
 async def record_execution(
+    request: Request,
     body: TestExecutionCreate,
     user: User = Depends(require_module("testing_platform")),
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse:
     """记录用例执行结果 — 根据状态自动设置时间戳。"""
-    service = TestOrchestrationService(_get_llm_or_none(), db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = TestOrchestrationService(_get_llm_or_none(), db, tenant_id=tenant_id)
     execution = await service.record_execution(
         case_id=uuid.UUID(body.case_id),
         plan_id=uuid.UUID(body.plan_id) if body.plan_id else None,
@@ -762,6 +806,7 @@ async def record_execution(
 
 @router.get("/executions")
 async def list_executions(
+    request: Request,
     plan_id: uuid.UUID | None = Query(default=None, description="计划 ID"),
     case_id: uuid.UUID | None = Query(default=None, description="用例 ID"),
     page: int = Query(default=1, ge=1, description="页码"),
@@ -770,7 +815,8 @@ async def list_executions(
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse:
     """分页查询执行记录 — 支持按计划或用例过滤。"""
-    service = TestOrchestrationService(_get_llm_or_none(), db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = TestOrchestrationService(_get_llm_or_none(), db, tenant_id=tenant_id)
     executions, total = await service.list_executions(
         plan_id=plan_id,
         case_id=case_id,
@@ -796,12 +842,14 @@ async def list_executions(
 
 @router.get("/stats")
 async def get_stats(
+    request: Request,
     project_id: uuid.UUID | None = Query(default=None, description="项目 ID（可选）"),
     user: User = Depends(require_module("testing_platform")),
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse:
     """获取测试平台统计数据 — 用例 / 需求 / 计划 / 执行的多维度聚合。"""
-    service = TestCaseManagementService(db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = TestCaseManagementService(db, tenant_id=tenant_id)
     stats = await service.get_stats(project_id=project_id)
     return ApiResponse(
         code=0,

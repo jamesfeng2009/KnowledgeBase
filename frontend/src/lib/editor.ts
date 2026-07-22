@@ -125,14 +125,18 @@ export async function uploadImage(
  * 注册图片拖拽与粘贴处理
  * 拖拽或粘贴图片时自动上传到 R2，禁止 base64 内嵌
  *
+ * 返回清理函数：调用方（如 useEffect cleanup）在重跑或卸载时调用，
+ * 移除已注册的监听器，防止重复注册导致同一图片被重复上传。
+ *
  * @param editor - Tiptap 编辑器实例
  * @param getToken - 获取认证 Token 的函数
+ * @returns 清理函数，调用后移除本函数注册的所有事件监听
  */
-export function setupImageHandlers(editor: Editor, getToken: () => string): void {
+export function setupImageHandlers(editor: Editor, getToken: () => string): () => void {
   const editorDom = editor.view.dom;
 
   // 拖拽图片自动上传
-  editorDom.addEventListener('drop', async (event: DragEvent) => {
+  const handleDrop = async (event: DragEvent) => {
     const files = event.dataTransfer?.files;
     if (!files || files.length === 0) return;
 
@@ -148,10 +152,10 @@ export function setupImageHandlers(editor: Editor, getToken: () => string): void
         alert(error instanceof Error ? error.message : '图片上传失败');
       }
     }
-  });
+  };
 
   // 粘贴图片（如截图）自动上传
-  editorDom.addEventListener('paste', async (event: ClipboardEvent) => {
+  const handlePaste = async (event: ClipboardEvent) => {
     const items = event.clipboardData?.items;
     if (!items) return;
 
@@ -169,7 +173,16 @@ export function setupImageHandlers(editor: Editor, getToken: () => string): void
         alert(error instanceof Error ? error.message : '图片上传失败');
       }
     }
-  });
+  };
+
+  editorDom.addEventListener('drop', handleDrop);
+  editorDom.addEventListener('paste', handlePaste);
+
+  // 清理函数：移除本函数注册的监听器（幂等，可重复调用）
+  return () => {
+    editorDom.removeEventListener('drop', handleDrop);
+    editorDom.removeEventListener('paste', handlePaste);
+  };
 }
 
 /**

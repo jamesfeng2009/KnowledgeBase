@@ -19,6 +19,7 @@ from app.models.qa import QaAnswer, QaQuestion
 from app.models.user import User
 from app.repositories.qa_repository import QaAnswerRepository, QaQuestionRepository
 from app.utils.pagination import PageResult, PaginationParams, paginate
+from app.utils.tenant import apply_tenant_filter
 
 
 class QaService:
@@ -28,17 +29,25 @@ class QaService:
     由上层 API 层统一翻译为 HTTP 状态码。
     """
 
-    def __init__(self, db: AsyncSession, user: User) -> None:
+    def __init__(
+        self, db: AsyncSession, user: User, tenant_id: UUID | None = None
+    ) -> None:
         """初始化问答服务，注入依赖。
 
         Args:
             db: 异步数据库会话。
             user: 当前已认证用户。
+            tenant_id: 租户 ID，用于多租户数据隔离。
         """
         self.db: AsyncSession = db
         self.user: User = user
-        self.question_repo: QaQuestionRepository = QaQuestionRepository(db)
-        self.answer_repo: QaAnswerRepository = QaAnswerRepository(db)
+        self._tenant_id = tenant_id
+        self.question_repo: QaQuestionRepository = QaQuestionRepository(
+            db, tenant_id=tenant_id
+        )
+        self.answer_repo: QaAnswerRepository = QaAnswerRepository(
+            db, tenant_id=tenant_id
+        )
 
     # ------------------------------------------------------------------
     # 提问
@@ -90,6 +99,7 @@ class QaService:
         if status:
             stmt = stmt.where(QaQuestion.status == status)
 
+        stmt = apply_tenant_filter(stmt, QaQuestion, self._tenant_id)
         stmt = stmt.order_by(QaQuestion.created_at.desc())
         return await paginate(stmt, params, self.db)
 

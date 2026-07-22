@@ -17,6 +17,7 @@ MemoryManager / AgenticRAGEngine，新增 Agent 类型只需在 _SYSTEM_PROMPTS
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
@@ -36,6 +37,23 @@ from app.utils.logger import get_logger
 from app.utils.sse import SSEEvent, SSEEventType
 
 logger = get_logger(__name__)
+
+
+@dataclass
+class PreparedChat:
+    """流式开始前完成准备工作的聊天上下文。
+
+    所有 DB 读写均已在 ``prepare_chat`` 中完成 — 携带的数据均为
+    原生类型（UUID / str），不持有 ORM 对象或 DB 连接引用。
+    """
+
+    query: str
+    conversation_id: UUID
+    agent_type: str
+    tenant_id: str | None
+    memory_context: str
+    resolved_model_id: str
+    default_model_id: str
 
 # Agent 类型 → 系统提示词映射。
 # 开闭原则落点：新增 Agent 类型只需在此字典追加一项，chat 方法无需改动。
@@ -74,17 +92,25 @@ class ChatService:
     8. 保存记忆（Checkpoint 快照 + 提取用户偏好）。
     """
 
-    def __init__(self, db: AsyncSession, user: User) -> None:
+    def __init__(
+        self, db: AsyncSession, user: User, tenant_id: UUID | None = None
+    ) -> None:
         """初始化对话服务，注入依赖。
 
         Args:
             db: 异步数据库会话。
             user: 当前已认证用户。
+            tenant_id: 租户 ID，用于多租户数据隔离。
         """
         self.db: AsyncSession = db
         self.user: User = user
-        self.conv_repo: ConversationRepository = ConversationRepository(db)
-        self.msg_repo: MessageRepository = MessageRepository(db)
+        self._tenant_id = tenant_id
+        self.conv_repo: ConversationRepository = ConversationRepository(
+            db, tenant_id=tenant_id
+        )
+        self.msg_repo: MessageRepository = MessageRepository(
+            db, tenant_id=tenant_id
+        )
         self.llm: LLMProvider = get_llm_provider()
         self.memory: MemoryManager = MemoryManager(db)
 
@@ -92,27 +118,18 @@ class ChatService:
     # 核心对话
     # ------------------------------------------------------------------
 
-    async def chat(
+    async def prepare_chat(
         self,
         query: str,
         conversation_id: UUID | None,
         agent_type: str,
         tenant_id: str | None = None,
-    ) -> AsyncIterator[SSEEvent | str]:
-        """与 AI 对话，流式返回 SSE 事件和 token。
+    ) -> PreparedChat:
+        """流式开始前的全部 DB 读写（准备阶段）。
 
-        P0-4 重构：通过 AgenticRAGEngine.answer() 走完整的 Agent Loop，
-        所有 agent_type 统一走引擎路径，不分流。
-
-        流程：
-        1. 获取或创建对话（无 conversation_id 时新建）；
-        2. 保存用户消息到数据库；
-        3. 加载四级记忆上下文（短期窗口 + Checkpoint + Mem0 偏好 + 工作记忆）；
-        4. 构建引擎 memory_context（系统提示词 + 记忆 + 对话历史）；
-        5. yield meta 事件（conversation_id + agent_type）；
-        6. 调用 AgenticRAGEngine.answer()，透传所有 SSE 事件和 token；
-        7. 累积完整回复后保存为 assistant 消息；
-        8. 保存记忆（Checkpoint 快照 + 提取用户偏好）。
+        完成会话获取/创建、权限校验、用户消息持久化、记忆上下文加载、
+        模型解析。调用方在此之后应立即 commit 并释放 DB 连接回池，
+        使 SSE 长连接期间不持有连接池连接（防高并发池耗尽）。
 
         Args:
             query: 用户输入的问题。
@@ -120,12 +137,12 @@ class ChatService:
             agent_type: Agent 类型 — qa / workflow / action。
             tenant_id: 多租户预留（当前不实施隔离逻辑）。
 
-        Yields:
-            SSEEvent | str: SSE 事件对象（meta/thinking/retrieve/tool_call/
-            sources/quality/done）或 token 字符串。
+        Returns:
+            PreparedChat: 流式阶段所需的全部上下文（原生类型，不含 ORM 对象）。
 
         Raises:
-            PermissionError: 指定的对话不属于当前用户。
+            PermissionError: 指定的对话不属于当前用户 — 在 SSE 流开始前
+                抛出，由 API 层转为 SSE error 事件返回友好错误。
         """
         # 1. 获取或创建对话
         if conversation_id is None:
@@ -157,8 +174,7 @@ class ChatService:
             conversation_id, agent_type, memory_ctx
         )
 
-        # 5. 向客户端推送对话元数据（便于前端绑定会话）
-        # P2-5: 解析会话级模型选择（两级优先级：session > system default）
+        # 5. 解析会话级模型选择（两级优先级：session > system default）
         from app.llm.model_config import get_default_model
         from app.services.model_selection_service import ModelSelectionService
 
@@ -169,6 +185,40 @@ class ChatService:
         default_model = get_default_model()
         default_model_id = default_model["id"] if default_model else ""
 
+        return PreparedChat(
+            query=query,
+            conversation_id=conversation_id,
+            agent_type=agent_type,
+            tenant_id=tenant_id,
+            memory_context=memory_context,
+            resolved_model_id=resolved_model_id,
+            default_model_id=default_model_id,
+        )
+
+    async def stream_chat(
+        self,
+        prepared: PreparedChat,
+    ) -> AsyncIterator[SSEEvent | str]:
+        """流式阶段 — SSE 长连接期间不持有 DB 连接池连接。
+
+        进入本方法前调用方应已完成 ``prepare_chat`` 并释放连接；
+        引擎仅在危险工具审批等极少数路径才按需短暂重新获取连接；
+        流式结束后的持久化使用短事务，写完即释放。
+
+        权限异常统一转为 SSE error 事件 — 前端可收到友好错误，
+        而不是裸断流 / HTTP 500。
+
+        Yields:
+            SSEEvent | str: SSE 事件对象（meta/thinking/retrieve/tool_call/
+            sources/quality/done）或 token 字符串。
+        """
+        query = prepared.query
+        conversation_id = prepared.conversation_id
+        agent_type = prepared.agent_type
+        resolved_model_id = prepared.resolved_model_id
+        default_model_id = prepared.default_model_id
+
+        # 5. 向客户端推送对话元数据（便于前端绑定会话）
         yield SSEEvent(
             data={
                 "conversation_id": str(conversation_id),
@@ -190,21 +240,62 @@ class ChatService:
         else:
             engine = get_rag_engine()
         full_response_parts: list[str] = []
-        async for chunk in engine.answer(
-            query=query,
-            user_id=str(self.user.id),
-            session_id=str(conversation_id),
-            memory_context=memory_context,
-            tenant_id=tenant_id,
-            db=self.db,
-            user_uuid=self.user.id,
-        ):
-            if isinstance(chunk, str):
-                full_response_parts.append(chunk)
-            yield chunk
+        try:
+            async for chunk in engine.answer(
+                query=query,
+                user_id=str(self.user.id),
+                session_id=str(conversation_id),
+                memory_context=prepared.memory_context,
+                tenant_id=prepared.tenant_id,
+                db=self.db,
+                user_uuid=self.user.id,
+            ):
+                if isinstance(chunk, str):
+                    full_response_parts.append(chunk)
+                yield chunk
+        except PermissionError as exc:
+            # 权限异常 → SSE error 事件（前端可友好展示，而非断流）
+            logger.info(
+                "chat.stream_permission_denied",
+                error=str(exc),
+                conversation_id=str(conversation_id),
+            )
+            yield SSEEvent(
+                data={"type": "error", "message": str(exc)},
+                event=SSEEventType.ERROR,
+            )
+            return
+
+        # 7-8. 流式结束后的持久化 — 短事务，写完即释放连接回池
+        await self._persist_assistant_result(
+            conversation_id,
+            query,
+            "".join(full_response_parts),
+            resolved_model_id,
+        )
+
+    async def _persist_assistant_result(
+        self,
+        conversation_id: UUID,
+        query: str,
+        assistant_content: str,
+        resolved_model_id: str,
+    ) -> None:
+        """持久化 AI 回复并写入记忆 — 短事务，写完即释放连接回池。
+
+        session 若在流式前已被 close（连接已归还池），此处由 SQLAlchemy
+        按需重新获取连接；补设 RLS 租户上下文后一次性 commit + close。
+        """
+        from sqlalchemy import text
+
+        if self._tenant_id:
+            # 补设 RLS 租户上下文（连接已更换，原 SET LOCAL 随事务结束失效）
+            await self.db.execute(
+                text("SET LOCAL app.tenant_id = :tid"),
+                {"tid": str(self._tenant_id)},
+            )
 
         # 7. 持久化完整 AI 回复
-        assistant_content = "".join(full_response_parts)
         await self.msg_repo.create_message(
             conversation_id,
             "assistant",
@@ -228,7 +319,57 @@ class ChatService:
         except Exception as e:
             logger.warning("memory_save_failed", error=str(e))
 
+        await self.db.commit()
+        await self.db.close()
+
         # 引擎已 yield done 事件，无需重复发送
+
+    async def chat(
+        self,
+        query: str,
+        conversation_id: UUID | None,
+        agent_type: str,
+        tenant_id: str | None = None,
+    ) -> AsyncIterator[SSEEvent | str]:
+        """与 AI 对话，流式返回 SSE 事件和 token。
+
+        P0-4 重构：通过 AgenticRAGEngine.answer() 走完整的 Agent Loop，
+        所有 agent_type 统一走引擎路径，不分流。
+
+        组合 ``prepare_chat``（准备阶段 DB 读写）与 ``stream_chat``
+        （流式生成），供非 SSE 端点（如 agents）复用。
+
+        流程：
+        1. 获取或创建对话（无 conversation_id 时新建）；
+        2. 保存用户消息到数据库；
+        3. 加载四级记忆上下文（短期窗口 + Checkpoint + Mem0 偏好 + 工作记忆）；
+        4. 构建引擎 memory_context（系统提示词 + 记忆 + 对话历史）；
+        5. yield meta 事件（conversation_id + agent_type）；
+        6. 调用 AgenticRAGEngine.answer()，透传所有 SSE 事件和 token；
+        7. 累积完整回复后保存为 assistant 消息；
+        8. 保存记忆（Checkpoint 快照 + 提取用户偏好）。
+
+        Args:
+            query: 用户输入的问题。
+            conversation_id: 对话 ID，为 None 时创建新对话。
+            agent_type: Agent 类型 — qa / workflow / action。
+            tenant_id: 多租户预留（当前不实施隔离逻辑）。
+
+        Yields:
+            SSEEvent | str: SSE 事件对象（meta/thinking/retrieve/tool_call/
+            sources/quality/done）或 token 字符串。
+
+        Raises:
+            PermissionError: 指定的对话不属于当前用户。
+        """
+        prepared = await self.prepare_chat(
+            query=query,
+            conversation_id=conversation_id,
+            agent_type=agent_type,
+            tenant_id=tenant_id,
+        )
+        async for chunk in self.stream_chat(prepared):
+            yield chunk
 
     # ------------------------------------------------------------------
     # 对话查询

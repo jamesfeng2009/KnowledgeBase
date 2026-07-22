@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from uuid import UUID
 
 from app.utils.logger import get_logger
 from app.vlm.provider import VisionProvider
@@ -27,8 +28,11 @@ class MultimodalService:
     复用 VLM Provider 抽象层，SaaS 和私有部署统一接口。
     """
 
-    def __init__(self, vlm: VisionProvider | None = None) -> None:
+    def __init__(
+        self, vlm: VisionProvider | None = None, tenant_id: UUID | None = None
+    ) -> None:
         self._vlm = vlm
+        self._tenant_id = tenant_id
 
     @property
     def vlm(self) -> VisionProvider:

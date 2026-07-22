@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import uuid
 from typing import Any
+from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -38,14 +39,18 @@ class GapDetectorService:
         await service.address_gap(gap_id, suggestion="已补充报销流程文档")
     """
 
-    def __init__(self, db: AsyncSession) -> None:
+    def __init__(self, db: AsyncSession, tenant_id: UUID | None = None) -> None:
         """初始化知识缺口检测服务。
 
         Args:
             db: 异步数据库会话。
+            tenant_id: 租户 ID，用于多租户数据隔离。
         """
         self.db: AsyncSession = db
-        self.gap_repo: KnowledgeGapRepository = KnowledgeGapRepository(db)
+        self._tenant_id = tenant_id
+        self.gap_repo: KnowledgeGapRepository = KnowledgeGapRepository(
+            db, tenant_id=tenant_id
+        )
 
     # ------------------------------------------------------------------
     # 记录无结果查询

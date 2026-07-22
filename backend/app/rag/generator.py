@@ -69,6 +69,10 @@ class Generator:
 
         Yields:
             str: 答案文本片段。
+
+        Raises:
+            Exception: LLM 调用失败时原样抛出（错误不作为答案产出，
+                上层因此不会将错误文本写入缓存或持久化）。
         """
         system_prompt = self._build_system_prompt(retrieved_docs, tool_results, memory_context)
         messages: list[Message] = [
@@ -88,8 +92,11 @@ class Generator:
                 if isinstance(chunk, str) and chunk:
                     yield chunk
         except Exception as exc:
+            # LLM 错误不得作为答案 yield — 错误文本会被 engine 拼进 answer
+            # 并回写缓存 / 持久化为 assistant 消息，造成错误答案被缓存复用。
+            # 记录日志后原样抛出，由上层决定降级策略（不产出即不写缓存）。
             log.error("generator.error", error=str(exc))
-            yield f"\n\n[生成出错: {exc}]"
+            raise
 
     # ------------------------------------------------------------------
     # Prompt 组装

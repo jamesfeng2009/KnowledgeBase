@@ -24,7 +24,7 @@ from __future__ import annotations
 import math
 import uuid
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db_session
@@ -82,6 +82,7 @@ def _get_llm_or_none():
 
 @router.post("/extract")
 async def extract_knowledge(
+    request: Request,
     body: ExtractionRequest,
     user: User = Depends(require_module("testing_platform")),
     db: AsyncSession = Depends(get_db_session),
@@ -90,12 +91,13 @@ async def extract_knowledge(
 
     收集执行结果 → AI 知识提取 → 4 类资产沉淀 → 冲突检测。
     """
+    tenant_id = getattr(request.state, "tenant_id", None)
     try:
         llm = get_llm_provider()
     except Exception:
         return ApiResponse(code=503, data=None, message="LLM 服务不可用")
 
-    service = KnowledgeCompoundingService(llm, db)
+    service = KnowledgeCompoundingService(llm, db, tenant_id=tenant_id)
     try:
         result = await service.extract_knowledge(
             body.execution_id,
@@ -114,6 +116,7 @@ async def extract_knowledge(
 
 @router.get("/assets")
 async def list_assets(
+    request: Request,
     project_id: uuid.UUID | None = Query(default=None, description="项目 ID"),
     asset_type: str | None = Query(default=None, description="资产类型"),
     status: str | None = Query(default=None, description="资产状态"),
@@ -123,7 +126,8 @@ async def list_assets(
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse:
     """分页查询知识资产列表 — 支持按项目/类型/状态筛选。"""
-    service = KnowledgeCompoundingService(_get_llm_or_none(), db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = KnowledgeCompoundingService(_get_llm_or_none(), db, tenant_id=tenant_id)
     assets, total = await service.list_assets(
         project_id=project_id,
         asset_type=asset_type,
@@ -145,12 +149,14 @@ async def list_assets(
 
 @router.get("/assets/{asset_id}")
 async def get_asset(
+    request: Request,
     asset_id: uuid.UUID,
     user: User = Depends(require_module("testing_platform")),
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse:
     """获取知识资产详情。"""
-    service = KnowledgeCompoundingService(_get_llm_or_none(), db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = KnowledgeCompoundingService(_get_llm_or_none(), db, tenant_id=tenant_id)
     asset = await service.get_asset(asset_id)
     if asset is None:
         return ApiResponse(code=404, data=None, message="知识资产不存在")
@@ -168,17 +174,19 @@ async def get_asset(
 
 @router.post("/conflicts/detect")
 async def detect_conflicts(
+    request: Request,
     body: ConflictDetectionRequest,
     user: User = Depends(require_module("testing_platform")),
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse:
     """检测指定知识资产与已有资产的冲突。"""
+    tenant_id = getattr(request.state, "tenant_id", None)
     try:
         llm = get_llm_provider()
     except Exception:
         return ApiResponse(code=503, data=None, message="LLM 服务不可用")
 
-    service = KnowledgeCompoundingService(llm, db)
+    service = KnowledgeCompoundingService(llm, db, tenant_id=tenant_id)
     try:
         conflicts = await service.detect_conflicts(body.asset_id)
     except ValueError as exc:
@@ -193,6 +201,7 @@ async def detect_conflicts(
 
 @router.get("/conflicts")
 async def list_conflicts(
+    request: Request,
     resolution: str | None = Query(default=None, description="解决方案"),
     page: int = Query(default=1, ge=1, description="页码"),
     size: int = Query(default=20, ge=1, le=100, description="每页数量"),
@@ -200,7 +209,8 @@ async def list_conflicts(
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse:
     """分页查询知识冲突列表。"""
-    service = KnowledgeCompoundingService(_get_llm_or_none(), db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = KnowledgeCompoundingService(_get_llm_or_none(), db, tenant_id=tenant_id)
     conflicts, total = await service.list_conflicts(
         resolution=resolution,
         page=page,
@@ -220,13 +230,15 @@ async def list_conflicts(
 
 @router.put("/conflicts/{conflict_id}/resolve")
 async def resolve_conflict(
+    request: Request,
     conflict_id: uuid.UUID,
     body: ConflictResolveRequest,
     user: User = Depends(require_module("testing_platform")),
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse:
     """解决知识冲突 — 更新解决方案和资产状态。"""
-    service = KnowledgeCompoundingService(_get_llm_or_none(), db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = KnowledgeCompoundingService(_get_llm_or_none(), db, tenant_id=tenant_id)
     try:
         conflict = await service.resolve_conflict(
             conflict_id,
@@ -251,6 +263,7 @@ async def resolve_conflict(
 
 @router.post("/reuse/inject")
 async def inject_for_reuse(
+    request: Request,
     body: ReuseInjectionRequest,
     user: User = Depends(require_module("testing_platform")),
     db: AsyncSession = Depends(get_db_session),
@@ -259,7 +272,8 @@ async def inject_for_reuse(
 
     实现知识复利：历史测试经验自动回流到下一轮用例生成。
     """
-    service = KnowledgeCompoundingService(_get_llm_or_none(), db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = KnowledgeCompoundingService(_get_llm_or_none(), db, tenant_id=tenant_id)
     try:
         result = await service.inject_for_reuse(
             body.requirement_id,
@@ -287,6 +301,7 @@ async def inject_for_reuse(
 
 @router.get("/tasks")
 async def list_tasks(
+    request: Request,
     project_id: uuid.UUID | None = Query(default=None, description="项目 ID"),
     task_type: str | None = Query(default=None, description="任务类型"),
     status: str | None = Query(default=None, description="任务状态"),
@@ -296,7 +311,8 @@ async def list_tasks(
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse:
     """分页查询回流任务列表。"""
-    service = KnowledgeCompoundingService(_get_llm_or_none(), db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = KnowledgeCompoundingService(_get_llm_or_none(), db, tenant_id=tenant_id)
     tasks, total = await service.list_tasks(
         project_id=project_id,
         task_type=task_type,
@@ -323,12 +339,14 @@ async def list_tasks(
 
 @router.get("/stats")
 async def get_stats(
+    request: Request,
     project_id: uuid.UUID | None = Query(default=None, description="项目 ID（可选）"),
     user: User = Depends(require_module("testing_platform")),
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse:
     """获取知识回流统计数据 — 资产 / 任务 / 冲突 / 复用注入的多维度聚合。"""
-    service = KnowledgeCompoundingService(_get_llm_or_none(), db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = KnowledgeCompoundingService(_get_llm_or_none(), db, tenant_id=tenant_id)
     stats = await service.get_stats(project_id=project_id)
     return ApiResponse(
         code=0,

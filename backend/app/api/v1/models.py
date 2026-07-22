@@ -9,9 +9,8 @@ P2 核心：前端通过这些端点查询可用模型列表、设置会话级�
 """
 from __future__ import annotations
 
-from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -62,6 +61,7 @@ class SessionModelResponse(BaseModel):
 
 @router.get("")
 async def list_models(
+    request: Request,
     session_id: str | None = None,
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
@@ -73,7 +73,8 @@ async def list_models(
     Args:
         session_id: 可选，会话 ID。传入时响应包含 current_model_id。
     """
-    service = ModelSelectionService(db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = ModelSelectionService(db, tenant_id=tenant_id)
     models = await service.get_available_models_for_user(user.id)
 
     current_model_id = None
@@ -88,6 +89,7 @@ async def list_models(
 
 @router.get("/session/{session_id}")
 async def get_session_model(
+    request: Request,
     session_id: str,
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
@@ -96,7 +98,8 @@ async def get_session_model(
 
     优先级：session 级（DB）> system 默认（models.json is_default）。
     """
-    service = ModelSelectionService(db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = ModelSelectionService(db, tenant_id=tenant_id)
     model_id = await service.resolve_model(user.id, session_id)
 
     # 查找模型显示名称
@@ -114,8 +117,9 @@ async def get_session_model(
 
 @router.put("/session/{session_id}")
 async def set_session_model(
+    request: Request,
     session_id: str,
-    request: SessionModelRequest,
+    body: SessionModelRequest,
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
 ) -> SessionModelResponse:
@@ -126,11 +130,12 @@ async def set_session_model(
 
     Args:
         session_id: 会话 ID。
-        request: 包含 model_id 的请求体。
+        body: 包含 model_id 的请求体。
     """
-    service = ModelSelectionService(db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = ModelSelectionService(db, tenant_id=tenant_id)
     try:
-        await service.set_session_model(user.id, session_id, request.model_id)
+        await service.set_session_model(user.id, session_id, body.model_id)
         await db.commit()
     except ValueError as exc:
         await db.rollback()
@@ -145,11 +150,11 @@ async def set_session_model(
     # 返回完整模型信息
     from app.llm.model_config import get_model_by_id
 
-    model_config = get_model_by_id(request.model_id)
+    model_config = get_model_by_id(body.model_id)
     display_name = model_config.get("display_name", "") if model_config else ""
 
     return SessionModelResponse(
         session_id=session_id,
-        model_id=request.model_id,
+        model_id=body.model_id,
         model_display_name=display_name,
     )

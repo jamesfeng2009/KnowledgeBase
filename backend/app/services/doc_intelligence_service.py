@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +25,7 @@ from app.llm.base import LLMProvider, Message
 from app.models.action import DocumentAction
 from app.models.knowledge import Document
 from app.utils.logger import get_logger
+from app.utils.tenant import apply_tenant_filter
 
 logger = get_logger(__name__)
 
@@ -36,9 +38,10 @@ DOC_CATEGORIES = [
 class DocIntelligenceService:
     """文档智能处理服务 — LLM 自动摘要/标签/分类/行动项/FAQ。"""
 
-    def __init__(self, llm: LLMProvider, db: AsyncSession) -> None:
+    def __init__(self, llm: LLMProvider, db: AsyncSession, tenant_id: UUID | None = None) -> None:
         self.llm = llm
         self.db = db
+        self._tenant_id = tenant_id
 
     # ------------------------------------------------------------------
     # 核心方法
@@ -272,11 +275,13 @@ class DocIntelligenceService:
         """获取文档 ORM 实例（含 knowledge_base 关联）。"""
         from sqlalchemy.orm import selectinload
 
-        result = await self.db.execute(
+        stmt = (
             select(Document)
             .where(Document.id == doc_uuid)
             .options(selectinload(Document.knowledge_base))
         )
+        stmt = apply_tenant_filter(stmt, Document, self._tenant_id)
+        result = await self.db.execute(stmt)
         return result.scalars().first()
 
     @staticmethod

@@ -30,53 +30,85 @@ async def _daily_personal_digest() -> dict:
     from sqlalchemy import select
 
     from app.database import async_session_factory
+    from app.models.billing import Tenant
     from app.models.user import User
     from app.services.notification_service import NotificationService
 
     async with async_session_factory() as db:
-        # 查询所有活跃用户
-        result = await db.execute(
-            select(User).where(
-                User.is_active.is_(True),
-                User.deleted_at.is_(None),
-            )
+        # 按租户迭代：先查询所有活跃租户，再逐租户查询用户并生成日报，
+        # 确保 NotificationService 带有 tenant_id 实现多租户数据隔离
+        tenants_result = await db.execute(
+            select(Tenant).where(Tenant.deleted_at.is_(None))
         )
-        users = result.scalars().all()
+        tenants = list(tenants_result.scalars().all())
 
+        total_users = 0
         sent_count = 0
-        for user in users:
-            try:
-                service = NotificationService(db)
-                recs = await service.generate_personal_digest(str(user.id))
-                if recs:
-                    sent_count += 1
-            except Exception as exc:
-                logger.warning(
-                    "notification.digest_user_failed",
-                    user_id=str(user.id),
-                    error=str(exc),
+        for tenant in tenants:
+            # 查询该租户下的活跃用户
+            users_result = await db.execute(
+                select(User).where(
+                    User.is_active.is_(True),
+                    User.deleted_at.is_(None),
+                    User.tenant_id == tenant.id,
                 )
+            )
+            users = list(users_result.scalars().all())
+            total_users += len(users)
+
+            for user in users:
+                try:
+                    service = NotificationService(db, tenant_id=tenant.id)
+                    recs = await service.generate_personal_digest(str(user.id))
+                    if recs:
+                        sent_count += 1
+                except Exception as exc:
+                    logger.warning(
+                        "notification.digest_user_failed",
+                        user_id=str(user.id),
+                        error=str(exc),
+                    )
 
         await db.commit()
         logger.info(
             "notification.daily_digest_completed",
-            total_users=len(users),
+            total_users=total_users,
             sent=sent_count,
         )
-        return {"total_users": len(users), "sent": sent_count}
+        return {"total_users": total_users, "sent": sent_count}
 
 
 async def _daily_gap_alert() -> dict:
     """知识缺口预警 — 通知知识管理员。"""
+    from sqlalchemy import select
+
     from app.database import async_session_factory
+    from app.models.billing import Tenant
     from app.services.notification_service import NotificationService
 
     async with async_session_factory() as db:
-        service = NotificationService(db)
-        notified = await service.send_gap_alert()
+        # 按租户迭代：逐租户创建带 tenant_id 的 NotificationService，确保多租户隔离
+        tenants_result = await db.execute(
+            select(Tenant).where(Tenant.deleted_at.is_(None))
+        )
+        tenants = list(tenants_result.scalars().all())
+
+        total_notified = 0
+        for tenant in tenants:
+            try:
+                service = NotificationService(db, tenant_id=tenant.id)
+                notified = await service.send_gap_alert()
+                total_notified += notified
+            except Exception as exc:
+                logger.warning(
+                    "notification.gap_alert_tenant_failed",
+                    tenant_id=str(tenant.id),
+                    error=str(exc),
+                )
+
         await db.commit()
-        logger.info("notification.gap_alert_completed", notified=notified)
-        return {"notified": notified}
+        logger.info("notification.gap_alert_completed", notified=total_notified)
+        return {"notified": total_notified}
 
 
 # ------------------------------------------------------------------

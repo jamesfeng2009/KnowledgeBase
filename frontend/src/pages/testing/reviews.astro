@@ -123,7 +123,8 @@ const breadcrumb = [{ label: '测试平台', href: '/testing' }, { label: '用�
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 
   /** 判断是否为 401/未登录错误（已在底层处理跳转，业务层需静默退出） */

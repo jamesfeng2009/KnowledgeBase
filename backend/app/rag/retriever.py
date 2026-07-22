@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import time
 import uuid
 from typing import Any
 
@@ -31,6 +32,9 @@ settings = get_settings()
 
 # 检索超时（秒）— 用于全文检索的 HTTP 客户端
 _SEARCH_TIMEOUT: float = 5.0
+
+# OpenSearch 故障后的重试探测间隔（秒）— 避免一次失败永久禁用 BM25
+_OPENSEARCH_RETRY_INTERVAL: float = 30.0
 
 
 class HybridRetriever:
@@ -52,11 +56,15 @@ class HybridRetriever:
         vector_store: VectorStoreBase | None = None,
     ) -> None:
         self._embedder: EmbeddingProvider | None = embedder
-        self._http: httpx.AsyncClient = http_client or httpx.AsyncClient(
+        from app.utils.retry import build_retry_http_client
+
+        self._http: httpx.AsyncClient = http_client or build_retry_http_client(
             timeout=_SEARCH_TIMEOUT
         )
         self._vector_store: VectorStoreBase | None = vector_store
         self._opensearch_available: bool | None = None
+        # 故障后的下次重试探测时间（monotonic）— 失败不粘性禁用，允许自动恢复
+        self._opensearch_retry_at: float = 0.0
 
     # ------------------------------------------------------------------
     # 懒初始化
@@ -138,7 +146,8 @@ class HybridRetriever:
         """通过 VectorStoreBase 适配器执行向量检索。
 
         向量后端由 VECTOR_STORE 配置决定（默认 OpenSearch k-NN，可选 Milvus）。
-        适配器内部处理服务不可用的优雅降级，此处不再重复判断。
+        适配器的 search 经熔断器保护：后端故障时异常向上传播（熔断器
+        记录失败，OPEN 后快速拒绝），此处捕获并降级为空列表。
         """
         embedder = await self._get_embedder()
         if embedder is None:
@@ -167,11 +176,18 @@ class HybridRetriever:
         kb_ids: list[str] | None,
         top_k: int,
     ) -> list[dict[str, Any]]:
-        """通过 OpenSearch REST API 执行全文检索（BM25）。"""
-        if self._opensearch_available is False:
-            return []
+        """通过 OpenSearch REST API 执行全文检索（BM25）。
 
-        url = f"{settings.OPENSEARCH_URL}/document_chunks/_search"
+        索引名取自统一配置 ``settings.OPENSEARCH_INDEX``，与写入方保持一致；
+        失败后按 ``_OPENSEARCH_RETRY_INTERVAL`` 间隔重试探测，可自动恢复，
+        不做一次性永久禁用。
+        """
+        if self._opensearch_available is False:
+            if time.monotonic() < self._opensearch_retry_at:
+                return []
+            log.info("retriever.opensearch.retry_probe")
+
+        url = f"{settings.OPENSEARCH_URL}/{settings.OPENSEARCH_INDEX}/_search"
         query_clause: dict[str, Any] = {
             "bool": {
                 "must": [
@@ -198,10 +214,13 @@ class HybridRetriever:
             resp.raise_for_status()
             data: Any = resp.json()
             self._opensearch_available = True
+            self._opensearch_retry_at = 0.0
         except Exception as exc:
             if self._opensearch_available is not False:
                 log.warning("retriever.opensearch.unavailable", error=str(exc))
             self._opensearch_available = False
+            # 设定下次重试时间，超时后自动重新探测（非粘性禁用）
+            self._opensearch_retry_at = time.monotonic() + _OPENSEARCH_RETRY_INTERVAL
             return []
 
         return self._parse_opensearch_results(data, top_k)

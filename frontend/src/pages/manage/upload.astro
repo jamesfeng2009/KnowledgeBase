@@ -60,6 +60,8 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
             <h3>上传列表</h3>
             <button class="btn btn-ghost btn-sm" id="clear-list">清空</button>
           </div>
+          <!-- P1-B: 上传查重提示 -->
+          <div id="upload-dedup-warn" class="dedup-warn" style="display: none;"></div>
           <div id="upload-list"></div>
         </div>
       </div>
@@ -119,6 +121,17 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
 </DefaultLayout>
 
 <style>
+  /* P1-B: 上传查重提示（告警语义，对齐 global.css .alert-error/.alert-success 范式） */
+  .dedup-warn {
+    padding: var(--space-2) var(--space-3);
+    margin: var(--space-2) var(--space-4);
+    background: var(--warning-bg);
+    border: 1px solid var(--warning);
+    border-radius: var(--radius-md);
+    color: var(--warning);
+    font-size: var(--text-sm);
+  }
+
   .upload-layout {
     display: grid;
     grid-template-columns: 1fr 320px;
@@ -621,6 +634,23 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
   function addFiles(files: FileList | File[]) {
     Array.from(files).forEach((file) => {
       const isMultipart = file.size > MULTIPART_THRESHOLD;
+
+      // P1-B: 客户端查重 — 同一会话内检测重复文件
+      const fingerprint = computeFileFingerprint(file);
+      const existingDup = uploadItems.find(
+        (i) => computeFileFingerprint(i.file) === fingerprint
+      );
+      if (existingDup) {
+        // 已有相同文件在上传列表中，跳过并提示
+        const warnEl = document.getElementById('upload-dedup-warn');
+        if (warnEl) {
+          warnEl.textContent = `⚠ 文件 "${file.name}" 已在上传列表中，已跳过重复添加`;
+          warnEl.style.display = 'block';
+          setTimeout(() => { warnEl.style.display = 'none'; }, 5000);
+        }
+        return;
+      }
+
       const item: UploadItem = {
         file,
         progress: 0,
@@ -1680,7 +1710,7 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
   }
 
   function escapeHtml(s: string): string {
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
   // === 标签页切换 ===

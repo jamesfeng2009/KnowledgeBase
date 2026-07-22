@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import uuid
 from typing import Any
+from uuid import UUID
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.feedback import Feedback
 from app.repositories.feedback_repository import FeedbackRepository
 from app.utils.logger import get_logger
+from app.utils.tenant import apply_tenant_filter
 
 log = get_logger(__name__)
 
@@ -40,14 +42,18 @@ class FeedbackLoopService:
         suggestions = await service.get_improvement_suggestions()
     """
 
-    def __init__(self, db: AsyncSession) -> None:
+    def __init__(self, db: AsyncSession, tenant_id: UUID | None = None) -> None:
         """初始化反馈闭环服务。
 
         Args:
             db: 异步数据库会话。
+            tenant_id: 租户 ID，用于多租户数据隔离。
         """
         self.db: AsyncSession = db
-        self.feedback_repo: FeedbackRepository = FeedbackRepository(db)
+        self._tenant_id = tenant_id
+        self.feedback_repo: FeedbackRepository = FeedbackRepository(
+            db, tenant_id=tenant_id
+        )
 
     # ------------------------------------------------------------------
     # 处理反馈
@@ -186,6 +192,7 @@ class FeedbackLoopService:
             select(Feedback.type, func.count())
             .group_by(Feedback.type)
         )
+        type_stmt = apply_tenant_filter(type_stmt, Feedback, self._tenant_id)
         type_result = await self.db.execute(type_stmt)
         type_dist = {row[0]: row[1] for row in type_result.all()}
 
@@ -194,6 +201,7 @@ class FeedbackLoopService:
             select(Feedback.status, func.count())
             .group_by(Feedback.status)
         )
+        status_stmt = apply_tenant_filter(status_stmt, Feedback, self._tenant_id)
         status_result = await self.db.execute(status_stmt)
         status_dist = {row[0]: row[1] for row in status_result.all()}
 
@@ -202,6 +210,7 @@ class FeedbackLoopService:
             select(Feedback.priority, func.count())
             .group_by(Feedback.priority)
         )
+        priority_stmt = apply_tenant_filter(priority_stmt, Feedback, self._tenant_id)
         priority_result = await self.db.execute(priority_stmt)
         priority_dist = {row[0]: row[1] for row in priority_result.all()}
 

@@ -20,13 +20,16 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
-import logging
 import os
+import uuid
 from typing import Any
 
-logger = logging.getLogger(__name__)
+from celery_app import celery_app
+from app.utils.logger import get_logger
+from app.utils.retry import make_celery_retry_kwargs
+
+log = get_logger(__name__)
 
 # ASR 分段时长（秒）— 8 分钟 WAV ~24MB < Whisper 25MB 限制
 _ASR_SEGMENT_DURATION = 480
@@ -37,6 +40,7 @@ _ASR_SEGMENT_DURATION = 480
 # ======================================================================
 
 
+@celery_app.task(name="tasks.video_tasks.process_video_multipart")
 def process_video_multipart(doc_id: str) -> None:
     """GB 视频处理入口 — 提取音轨 → 触发并行 ASR + 关键帧 → finalize。
 
@@ -57,7 +61,7 @@ def process_video_multipart(doc_id: str) -> None:
         from celery_app import celery_app
         from celery import chord, group
     except ImportError:
-        logger.warning("video_tasks.celery_not_installed")
+        log.warning("video_tasks.celery_not_installed")
         _process_video_fallback(doc_id)
         return
 
@@ -77,9 +81,9 @@ def process_video_multipart(doc_id: str) -> None:
         )(
             finalize_video_task.s(doc_id, wav_path)
         )
-        logger.info("video_multipart.chord_dispatched", doc_id=doc_id)
+        log.info("video_multipart.chord_dispatched", doc_id=doc_id)
     except Exception:
-        logger.exception("video_multipart.chord_failed", doc_id=doc_id)
+        log.exception("video_multipart.chord_failed", doc_id=doc_id)
         # Chord 失败时降级为串行处理
         _process_video_fallback(doc_id, wav_path)
 
@@ -105,7 +109,6 @@ def _extract_audio_stage(doc_id: str) -> str | None:
         import tempfile
 
         from app.config import get_settings
-        from app.models.knowledge import Document
         from app.utils.minio_client import download_file
 
         settings = get_settings()
@@ -114,19 +117,17 @@ def _extract_audio_stage(doc_id: str) -> str | None:
         import asyncio
 
         async def _get_doc() -> Any:
-            from sqlalchemy import select
+            from app.database import task_db_session
+            from app.repositories.knowledge_repository import DocumentRepository
 
-            from app.database import async_session_factory
-
-            async with async_session_factory() as db:
-                result = await db.execute(
-                    select(Document).where(Document.id == doc_id)
-                )
-                return result.scalar_one_or_none()
+            async with task_db_session() as db:
+                # 按主键查找文档，无需租户过滤（仅读取 file_path）
+                repo = DocumentRepository(db)
+                return await repo.get_by_id(uuid.UUID(doc_id))
 
         doc = asyncio.run(_get_doc())
         if not doc or not doc.file_path:
-            logger.warning("video_multipart.no_file_path", doc_id=doc_id)
+            log.warning("video_multipart.no_file_path", doc_id=doc_id)
             return None
 
         # 从 MinIO 下载视频到临时文件
@@ -161,7 +162,7 @@ def _extract_audio_stage(doc_id: str) -> str | None:
             pass
 
         if not wav_path:
-            logger.warning("video_multipart.audio_extract_failed", doc_id=doc_id)
+            log.warning("video_multipart.audio_extract_failed", doc_id=doc_id)
             return None
 
         _update_parse_progress(
@@ -173,7 +174,7 @@ def _extract_audio_stage(doc_id: str) -> str | None:
         return wav_path
 
     except Exception:
-        logger.exception("video_multipart.extract_audio_error", doc_id=doc_id)
+        log.exception("video_multipart.extract_audio_error", doc_id=doc_id)
         return None
 
 
@@ -182,6 +183,10 @@ def _extract_audio_stage(doc_id: str) -> str | None:
 # ======================================================================
 
 
+@celery_app.task(
+    name="tasks.video_tasks.asr_multipart_task",
+    **make_celery_retry_kwargs(),
+)
 def asr_multipart_task(doc_id: str, wav_path: str) -> dict[str, Any]:
     """分段 ASR 转写 — 逐段调用 Whisper，结果存 Redis（P2-D）。
 
@@ -249,7 +254,7 @@ def asr_multipart_task(doc_id: str, wav_path: str) -> dict[str, Any]:
             )
             client.close()
         except Exception:
-            logger.debug("video_multipart.asr_redis_failed", doc_id=doc_id)
+            log.debug("video_multipart.asr_redis_failed", doc_id=doc_id)
 
         _update_parse_progress(
             doc_id, "parsing",
@@ -261,7 +266,7 @@ def asr_multipart_task(doc_id: str, wav_path: str) -> dict[str, Any]:
         return {"doc_id": doc_id, "segments": seg_list, "text": text}
 
     except Exception as exc:
-        logger.exception("video_multipart.asr_failed", doc_id=doc_id)
+        log.exception("video_multipart.asr_failed", doc_id=doc_id)
         _update_parse_progress(
             doc_id, "parsing",
             message=f"ASR 转写失败: {exc}",
@@ -275,6 +280,7 @@ def asr_multipart_task(doc_id: str, wav_path: str) -> dict[str, Any]:
 # ======================================================================
 
 
+@celery_app.task(name="tasks.video_tasks.keyframe_task")
 def keyframe_task(doc_id: str) -> dict[str, Any]:
     """关键帧提取 + VLM 描述（P2-D）。
 
@@ -303,17 +309,17 @@ def keyframe_task(doc_id: str) -> dict[str, Any]:
         import asyncio
 
         # 获取视频文件路径
-        from app.models.knowledge import Document
-        from sqlalchemy import select
+        from app.models.knowledge import Document  # noqa: F401  # 保留供类型推断
+        from sqlalchemy import select  # noqa: F401  # 保留供其他分支使用
 
         async def _get_doc() -> Any:
-            from app.database import async_session_factory
+            from app.database import task_db_session
+            from app.repositories.knowledge_repository import DocumentRepository
 
-            async with async_session_factory() as db:
-                result = await db.execute(
-                    select(Document).where(Document.id == doc_id)
-                )
-                return result.scalar_one_or_none()
+            async with task_db_session() as db:
+                # 按主键查找文档，无需租户过滤（仅读取 file_path）
+                repo = DocumentRepository(db)
+                return await repo.get_by_id(uuid.UUID(doc_id))
 
         doc = asyncio.run(_get_doc())
         if not doc or not doc.file_path:
@@ -358,7 +364,7 @@ def keyframe_task(doc_id: str) -> dict[str, Any]:
         return {"doc_id": doc_id, "keyframes": descriptions}
 
     except Exception as exc:
-        logger.exception("video_multipart.keyframe_failed", doc_id=doc_id)
+        log.exception("video_multipart.keyframe_failed", doc_id=doc_id)
         _update_parse_progress(
             doc_id, "parsing",
             message=f"关键帧提取失败: {exc}",
@@ -372,6 +378,10 @@ def keyframe_task(doc_id: str) -> dict[str, Any]:
 # ======================================================================
 
 
+@celery_app.task(
+    name="tasks.video_tasks.finalize_video_task",
+    **make_celery_retry_kwargs(),
+)
 def finalize_video_task(
     asr_keyframe_results: list,
     doc_id: str,
@@ -437,7 +447,7 @@ def finalize_video_task(
         text = asr_result.get("text", "")
 
         if not segments:
-            logger.warning("video_multipart.finalize_no_segments", doc_id=doc_id)
+            log.warning("video_multipart.finalize_no_segments", doc_id=doc_id)
             _update_parse_progress(
                 doc_id, "failed",
                 message="ASR 无转写结果，无法处理",
@@ -446,17 +456,16 @@ def finalize_video_task(
 
         # 2. 更新文档 content_text
         async def _update_doc_content() -> None:
-            from sqlalchemy import select
+            from app.database import task_db_session
+            from app.repositories.knowledge_repository import DocumentRepository
 
-            from app.database import async_session_factory
-            from app.models.knowledge import Document
-
-            async with async_session_factory() as db:
-                result = await db.execute(
-                    select(Document).where(Document.id == doc_id)
-                )
-                doc = result.scalar_one_or_none()
+            async with task_db_session() as db:
+                # 先无租户过滤地查找文档，获取其 tenant_id
+                repo = DocumentRepository(db)
+                doc = await repo.get_by_id(uuid.UUID(doc_id))
                 if doc:
+                    # 后续操作使用租户感知的仓储，确保多租户数据隔离
+                    repo = DocumentRepository(db, tenant_id=doc.tenant_id)
                     doc.content_text = text
                     doc.content = text
                     await db.commit()
@@ -464,24 +473,29 @@ def finalize_video_task(
         asyncio.run(_update_doc_content())
 
         # 3. 分块（复用 document_tasks._chunk_video_document）
-        from app.models.knowledge import Document
-        from sqlalchemy import select
+        from app.models.knowledge import Document  # noqa: F401  # 保留供类型推断
+        from sqlalchemy import select  # noqa: F401  # 保留供其他分支使用
 
         async def _get_doc() -> Any:
-            from app.database import async_session_factory
+            from app.database import task_db_session
+            from app.repositories.knowledge_repository import DocumentRepository
 
-            async with async_session_factory() as db:
-                result = await db.execute(
-                    select(Document).where(Document.id == doc_id)
-                )
-                return result.scalar_one_or_none()
+            async with task_db_session() as db:
+                # 按主键查找文档，无需租户过滤（仅读取元数据）
+                repo = DocumentRepository(db)
+                return await repo.get_by_id(uuid.UUID(doc_id))
 
         doc = asyncio.run(_get_doc())
         if not doc:
             _update_parse_progress(doc_id, "failed", message="文档不存在")
             return
 
-        from tasks.document_tasks import _chunk_video_document
+        # 3. 分块 — 修复：原实现调用签名不符的 _chunk_video_document（4 参 vs 真实 2 参）
+        # 与不存在的 _embed_and_index，视频文档必失败。现对齐 document_tasks 真实函数：
+        # 直接复用 chord 已产出的 ASR segments 与关键帧描述做语义分块
+        # （与 _chunk_video_document 末步一致，避免重复 ASR/关键帧提取）。
+        from app.rag.chunker import SemanticChunker
+        from tasks.document_tasks import _chunk_document
 
         _update_parse_progress(
             doc_id, "chunking",
@@ -489,20 +503,29 @@ def finalize_video_task(
             sub_stage="chunking",
         )
 
-        chunk_objects = asyncio.run(
-            _chunk_video_document(doc, text, segments, keyframe_descriptions)
-        )
+        chunker = SemanticChunker()
+        chunk_objects = chunker.chunk_video_transcript(segments, keyframe_descriptions)
+        if not chunk_objects:
+            # 语义分块无结果时降级为普通文本分块（与 _chunk_video_document 降级策略一致）
+            log.info("video_multipart.chunk_fallback_to_text", doc_id=doc_id)
+            chunk_objects = _chunk_document(text, "txt")
 
-        # 4. 向量化 + 索引（复用 document_tasks 的逻辑）
+        # 4. 向量化 + 索引（对齐 document_tasks 真实函数签名：
+        #    _generate_embeddings(chunks) + _build_indexes(doc_id, chunk_objects, chunks, embeddings)）
         _update_parse_progress(
             doc_id, "embedding",
             message=f"向量化 {len(chunk_objects)} 个分块...",
             sub_stage="embedding",
         )
 
-        from tasks.document_tasks import _embed_and_index
+        from tasks.document_tasks import _build_indexes, _generate_embeddings
 
-        asyncio.run(_embed_and_index(doc, chunk_objects))
+        async def _embed_and_index() -> None:
+            chunks = [c.content for c in chunk_objects]
+            embeddings = await _generate_embeddings(chunks)
+            await _build_indexes(doc_id, chunk_objects, chunks, embeddings)
+
+        asyncio.run(_embed_and_index())
 
         # 5. 更新文档状态
         _update_parse_progress(
@@ -512,15 +535,16 @@ def finalize_video_task(
         )
 
         async def _publish_doc() -> None:
-            from app.database import async_session_factory
-            from app.models.knowledge import Document
+            from app.database import task_db_session
+            from app.repositories.knowledge_repository import DocumentRepository
 
-            async with async_session_factory() as db:
-                result = await db.execute(
-                    select(Document).where(Document.id == doc_id)
-                )
-                doc = result.scalar_one_or_none()
+            async with task_db_session() as db:
+                # 先无租户过滤地查找文档，获取其 tenant_id
+                repo = DocumentRepository(db)
+                doc = await repo.get_by_id(uuid.UUID(doc_id))
                 if doc:
+                    # 后续操作使用租户感知的仓储，确保多租户数据隔离
+                    repo = DocumentRepository(db, tenant_id=doc.tenant_id)
                     doc.status = "published"
                     await db.commit()
 
@@ -553,14 +577,14 @@ def finalize_video_task(
 
         # 8. 链式触发文档智能处理（摘要/标签/分类）
         try:
-            from tasks.intelligence_tasks import process_document_intelligence
+            from tasks.intelligence_tasks import process_intelligence
 
-            process_document_intelligence.delay(doc_id)
+            process_intelligence.delay(doc_id)
         except Exception:
-            logger.debug("video_multipart.intelligence_trigger_failed", doc_id=doc_id)
+            log.debug("video_multipart.intelligence_trigger_failed", doc_id=doc_id)
 
     except Exception as exc:
-        logger.exception("video_multipart.finalize_failed", doc_id=doc_id)
+        log.exception("video_multipart.finalize_failed", doc_id=doc_id)
         _update_parse_progress(
             doc_id, "failed",
             message=f"合并处理失败: {exc}",
@@ -578,7 +602,7 @@ def _process_video_fallback(doc_id: str, wav_path: str = "") -> None:
     直接调用 asr_multipart_task + keyframe_task + finalize_video_task，
     不并行，但保证功能可用。
     """
-    logger.info("video_multipart.fallback_serial", doc_id=doc_id)
+    log.info("video_multipart.fallback_serial", doc_id=doc_id)
 
     if not wav_path:
         wav_path = _extract_audio_stage(doc_id) or ""

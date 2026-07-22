@@ -6,11 +6,12 @@
 2. TenantService 读写（获取启用模块、更新、开关、套餐默认回退）
 3. require_module 依赖注入（基础模块通过、可选模块门控、租户不存在兜底）
 
-不依赖外部服务，使用 SQLite 内存数据库。
+不依赖外部服务，使用 PostgreSQL 数据库。
 """
 
 from __future__ import annotations
 
+import os
 import uuid
 
 import pytest
@@ -143,8 +144,8 @@ class TestModuleRegistry:
 
 @pytest_asyncio.fixture
 async def db_session():
-    """创建 SQLite 内存数据库用于测试。"""
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    """创建 PostgreSQL 数据库用于测试。"""
+    engine = create_async_engine(os.environ["DATABASE_URL"], echo=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

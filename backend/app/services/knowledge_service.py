@@ -23,6 +23,7 @@ from app.repositories.knowledge_repository import (
 )
 from app.services.permission_service import PermissionService
 from app.utils.pagination import PageResult, PaginationParams, paginate
+from app.utils.tenant import apply_tenant_filter
 
 
 class KnowledgeService:
@@ -33,18 +34,28 @@ class KnowledgeService:
     由上层 API 层（FastAPI exception_handler）统一翻译为 HTTP 状态码。
     """
 
-    def __init__(self, db: AsyncSession, user: User) -> None:
+    def __init__(
+        self, db: AsyncSession, user: User, tenant_id: UUID | None = None
+    ) -> None:
         """初始化知识库服务，注入依赖。
 
         Args:
             db: 异步数据库会话，事务由 get_db_session 统一管理。
             user: 当前已认证用户，用于权限判定与 owner_id 回填。
+            tenant_id: 租户 ID，用于多租户数据隔离。
         """
         self.db: AsyncSession = db
         self.user: User = user
-        self.kb_repo: KnowledgeBaseRepository = KnowledgeBaseRepository(db)
-        self.doc_repo: DocumentRepository = DocumentRepository(db)
-        self.permission: PermissionService = PermissionService(db, user)
+        self._tenant_id = tenant_id
+        self.kb_repo: KnowledgeBaseRepository = KnowledgeBaseRepository(
+            db, tenant_id=tenant_id
+        )
+        self.doc_repo: DocumentRepository = DocumentRepository(
+            db, tenant_id=tenant_id
+        )
+        self.permission: PermissionService = PermissionService(
+            db, user, tenant_id=tenant_id
+        )
 
     # ------------------------------------------------------------------
     # 知识库 CRUD
@@ -157,11 +168,11 @@ class KnowledgeService:
 
         if self.user.role == "admin":
             # admin 可见全部知识库
-            stmt = (
-                select(KnowledgeBase)
-                .where(KnowledgeBase.deleted_at.is_(None))
-                .order_by(KnowledgeBase.created_at.desc())
+            stmt = select(KnowledgeBase).where(
+                KnowledgeBase.deleted_at.is_(None)
             )
+            stmt = apply_tenant_filter(stmt, KnowledgeBase, self._tenant_id)
+            stmt = stmt.order_by(KnowledgeBase.created_at.desc())
         else:
             # 普通用户：所有者或成员
             member_subq = select(KbMember.kb_id).where(
@@ -176,8 +187,9 @@ class KnowledgeService:
                         KnowledgeBase.id.in_(member_subq),
                     ),
                 )
-                .order_by(KnowledgeBase.created_at.desc())
             )
+            stmt = apply_tenant_filter(stmt, KnowledgeBase, self._tenant_id)
+            stmt = stmt.order_by(KnowledgeBase.created_at.desc())
 
         return await paginate(stmt, params, self.db)
 
@@ -245,13 +257,17 @@ class KnowledgeService:
 
         Raises:
             ValueError: 文档不存在。
-            PermissionError: 当前用户无权编辑该文档所属知识库。
+            PermissionError: 当前用户无权编辑该文档所属知识库，或密级不足。
         """
         doc = await self.doc_repo.get_by_id(doc_id)
         if doc is None:
             raise ValueError(f"文档 {doc_id} 不存在")
         if not await self.permission.check_function(doc.kb_id):
             raise PermissionError("无权编辑该文档")
+        # 密级校验（安全）：与 list_documents 保持一致 — 密级超过用户
+        # clearance_level 的文档禁止修改，防止越权篡改。
+        if doc.classification not in self.permission.allowed_classifications():
+            raise PermissionError("密级不足，无权编辑该文档")
 
         # 仅更新非 None 字段，避免覆盖未传入的内容
         update_fields: dict = {}
@@ -280,13 +296,17 @@ class KnowledgeService:
 
         Raises:
             ValueError: 文档不存在。
-            PermissionError: 当前用户无权访问该文档所属知识库。
+            PermissionError: 当前用户无权访问该文档所属知识库，或密级不足。
         """
         doc = await self.doc_repo.get_by_id(doc_id)
         if doc is None:
             raise ValueError(f"文档 {doc_id} 不存在")
         if not await self.permission.check_function(doc.kb_id):
             raise PermissionError("无权访问该文档")
+        # 密级校验（安全）：与 list_documents 保持一致 — 密级超过用户
+        # clearance_level 的文档禁止读取，防止越权访问。
+        if doc.classification not in self.permission.allowed_classifications():
+            raise PermissionError("密级不足，无权访问该文档")
         return doc
 
     async def list_documents(
@@ -322,6 +342,7 @@ class KnowledgeService:
                 Document.deleted_at.is_(None),
                 Document.classification.in_(allowed),
             )
-            .order_by(Document.created_at.desc())
         )
+        stmt = apply_tenant_filter(stmt, Document, self._tenant_id)
+        stmt = stmt.order_by(Document.created_at.desc())
         return await paginate(stmt, params, self.db)

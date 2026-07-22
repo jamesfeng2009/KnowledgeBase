@@ -15,6 +15,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta
 from typing import Any
+from uuid import UUID
 
 from sqlalchemy import Integer, and_, cast, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +25,7 @@ from app.models.knowledge import Document
 from app.models.qa import QaAnswer
 from app.models.user import User
 from app.utils.logger import get_logger
+from app.utils.tenant import apply_tenant_filter
 
 logger = get_logger(__name__)
 
@@ -43,8 +45,9 @@ CONTRIB_WEIGHT_COMMENT: float = 0.3
 class ExpertService:
     """专家发现服务 — 基于文档/问答/评论计算用户-主题关联。"""
 
-    def __init__(self, db: AsyncSession) -> None:
+    def __init__(self, db: AsyncSession, tenant_id: UUID | None = None) -> None:
         self.db = db
+        self._tenant_id = tenant_id
 
     # ------------------------------------------------------------------
     # 核心方法
@@ -76,7 +79,7 @@ class ExpertService:
         kw = f"%{keyword.strip()}%"
 
         # 1. 文档作者统计（权重 40%）
-        doc_result = await self.db.execute(
+        doc_stmt = (
             select(
                 Document.owner_id,
                 func.count(Document.id).label("doc_count"),
@@ -88,15 +91,17 @@ class ExpertService:
                     Document.title.ilike(kw),
                 )
             )
-            .group_by(Document.owner_id)
         )
+        doc_stmt = apply_tenant_filter(doc_stmt, Document, self._tenant_id)
+        doc_stmt = doc_stmt.group_by(Document.owner_id)
+        doc_result = await self.db.execute(doc_stmt)
         doc_scores: dict[str, float] = {}
         for r in doc_result:
             if r.owner_id:
                 doc_scores[str(r.owner_id)] = r.doc_count * WEIGHT_DOC
 
         # 2. 问答回答统计（权重 30%，采纳回答额外加权）
-        answer_result = await self.db.execute(
+        answer_stmt = (
             select(
                 QaAnswer.user_id,
                 func.count(QaAnswer.id).label("answer_count"),
@@ -108,8 +113,10 @@ class ExpertService:
                     QaAnswer.content.ilike(kw),
                 )
             )
-            .group_by(QaAnswer.user_id)
         )
+        answer_stmt = apply_tenant_filter(answer_stmt, QaAnswer, self._tenant_id)
+        answer_stmt = answer_stmt.group_by(QaAnswer.user_id)
+        answer_result = await self.db.execute(answer_stmt)
         answer_scores: dict[str, float] = {}
         for r in answer_result:
             if r.user_id:
@@ -117,7 +124,7 @@ class ExpertService:
                 answer_scores[str(r.user_id)] = score * WEIGHT_ANSWER / 0.3
 
         # 3. 评论统计（权重 15%）
-        comment_result = await self.db.execute(
+        comment_stmt = (
             select(
                 DocumentComment.user_id,
                 func.count(DocumentComment.id).label("comment_count"),
@@ -128,8 +135,10 @@ class ExpertService:
                     DocumentComment.content.ilike(kw),
                 )
             )
-            .group_by(DocumentComment.user_id)
         )
+        comment_stmt = apply_tenant_filter(comment_stmt, DocumentComment, self._tenant_id)
+        comment_stmt = comment_stmt.group_by(DocumentComment.user_id)
+        comment_result = await self.db.execute(comment_stmt)
         comment_scores: dict[str, float] = {}
         for r in comment_result:
             if r.user_id:
@@ -191,7 +200,7 @@ class ExpertService:
         except (ValueError, TypeError):
             return []
 
-        result = await self.db.execute(
+        stmt = (
             select(Document.title, Document.category)
             .where(
                 and_(
@@ -199,9 +208,10 @@ class ExpertService:
                     Document.deleted_at.is_(None),
                 )
             )
-            .order_by(desc(Document.created_at))
-            .limit(50)
         )
+        stmt = apply_tenant_filter(stmt, Document, self._tenant_id)
+        stmt = stmt.order_by(desc(Document.created_at)).limit(50)
+        result = await self.db.execute(stmt)
 
         # 按分类统计
         category_counts: dict[str, int] = {}
@@ -244,7 +254,7 @@ class ExpertService:
         since = datetime.utcnow() - timedelta(days=days)
 
         # 1. 文档作者统计
-        doc_result = await self.db.execute(
+        doc_stmt = (
             select(
                 Document.owner_id,
                 func.count(Document.id).label("doc_count"),
@@ -253,15 +263,17 @@ class ExpertService:
                 Document.deleted_at.is_(None),
                 Document.created_at >= since,
             )
-            .group_by(Document.owner_id)
         )
+        doc_stmt = apply_tenant_filter(doc_stmt, Document, self._tenant_id)
+        doc_stmt = doc_stmt.group_by(Document.owner_id)
+        doc_result = await self.db.execute(doc_stmt)
         doc_counts: dict[str, int] = {}
         for r in doc_result:
             if r.owner_id:
                 doc_counts[str(r.owner_id)] = r.doc_count
 
         # 2. 问答回答统计（含采纳数）
-        answer_result = await self.db.execute(
+        answer_stmt = (
             select(
                 QaAnswer.user_id,
                 func.count(QaAnswer.id).label("answer_count"),
@@ -271,8 +283,10 @@ class ExpertService:
                 QaAnswer.deleted_at.is_(None),
                 QaAnswer.created_at >= since,
             )
-            .group_by(QaAnswer.user_id)
         )
+        answer_stmt = apply_tenant_filter(answer_stmt, QaAnswer, self._tenant_id)
+        answer_stmt = answer_stmt.group_by(QaAnswer.user_id)
+        answer_result = await self.db.execute(answer_stmt)
         answer_counts: dict[str, dict[str, int]] = {}
         for r in answer_result:
             if r.user_id:
@@ -282,7 +296,7 @@ class ExpertService:
                 }
 
         # 3. 评论统计
-        comment_result = await self.db.execute(
+        comment_stmt = (
             select(
                 DocumentComment.user_id,
                 func.count(DocumentComment.id).label("comment_count"),
@@ -291,8 +305,10 @@ class ExpertService:
                 DocumentComment.deleted_at.is_(None),
                 DocumentComment.created_at >= since,
             )
-            .group_by(DocumentComment.user_id)
         )
+        comment_stmt = apply_tenant_filter(comment_stmt, DocumentComment, self._tenant_id)
+        comment_stmt = comment_stmt.group_by(DocumentComment.user_id)
+        comment_result = await self.db.execute(comment_stmt)
         comment_counts: dict[str, int] = {}
         for r in comment_result:
             if r.user_id:
@@ -338,7 +354,7 @@ class ExpertService:
 
     async def _get_user_info(self, user_uid: uuid.UUID) -> User | None:
         """获取用户基本信息。"""
-        result = await self.db.execute(
-            select(User).where(User.id == user_uid)
-        )
+        stmt = select(User).where(User.id == user_uid)
+        stmt = apply_tenant_filter(stmt, User, self._tenant_id)
+        result = await self.db.execute(stmt)
         return result.scalars().first()

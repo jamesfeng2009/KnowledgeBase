@@ -4,7 +4,7 @@
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Body, Depends, Query
+from fastapi import APIRouter, Body, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db_session
@@ -122,6 +122,7 @@ async def create_relationship(
 
 @router.get("/recommendations/{doc_id}")
 async def get_recommendations(
+    request: Request,
     doc_id: str,
     top_k: int = Query(5, ge=1, le=20, description="推荐数量"),
     user: User = Depends(require_module("knowledge_graph")),
@@ -137,7 +138,8 @@ async def get_recommendations(
     结果按用户密级过滤，确保只返回用户可见的文档。
     """
     service = get_graph_service()
-    perm = PermissionService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    perm = PermissionService(db, user, tenant_id=tenant_id)
     recommendations = await service.get_related_recommendations(
         doc_id=doc_id,
         user_id=str(user.id),

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
+from uuid import UUID
 
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.testing import TestCase, TestReview
 from app.models.user import User
 from app.utils.logger import get_logger
+from app.utils.tenant import apply_tenant_filter
 
 log = get_logger(__name__)
 
@@ -51,15 +53,19 @@ class TestReviewService:
         approved = await service.approve(review_id, comment="通过")
     """
 
-    def __init__(self, db: AsyncSession, user: User) -> None:
+    def __init__(
+        self, db: AsyncSession, user: User, tenant_id: UUID | None = None
+    ) -> None:
         """初始化评审服务。
 
         Args:
             db: 异步数据库会话，事务由 ``get_db_session`` 依赖统一管理。
             user: 当前操作用户，用于填充 submitter_id / reviewer_id。
+            tenant_id: 租户 ID，用于多租户数据隔离。
         """
         self.db: AsyncSession = db
         self.user: User = user
+        self._tenant_id = tenant_id
 
     # ------------------------------------------------------------------
     # 提交评审
@@ -102,11 +108,9 @@ class TestReviewService:
         self.db.add(review)
 
         # 联动更新用例状态为 pending_review
-        await self.db.execute(
-            update(TestCase)
-            .where(TestCase.id == case_id)
-            .values(status="pending_review")
-        )
+        stmt = update(TestCase).where(TestCase.id == case_id)
+        stmt = apply_tenant_filter(stmt, TestCase, self._tenant_id)
+        await self.db.execute(stmt.values(status="pending_review"))
         await self.db.flush()
 
         log.info(
@@ -139,14 +143,15 @@ class TestReviewService:
         count_stmt = select(func.count()).select_from(TestReview).where(
             TestReview.status == "pending"
         )
+        count_stmt = apply_tenant_filter(count_stmt, TestReview, self._tenant_id)
         total = (await self.db.execute(count_stmt)).scalar_one()
 
         # 分页数据
         offset = (page - 1) * size
+        stmt = select(TestReview).where(TestReview.status == "pending")
+        stmt = apply_tenant_filter(stmt, TestReview, self._tenant_id)
         stmt = (
-            select(TestReview)
-            .where(TestReview.status == "pending")
-            .order_by(TestReview.created_at.desc())
+            stmt.order_by(TestReview.created_at.desc())
             .offset(offset)
             .limit(size)
         )
@@ -163,9 +168,9 @@ class TestReviewService:
         Returns:
             ``TestReview`` 或 ``None``（不存在时）。
         """
-        result = await self.db.execute(
-            select(TestReview).where(TestReview.id == review_id)
-        )
+        stmt = select(TestReview).where(TestReview.id == review_id)
+        stmt = apply_tenant_filter(stmt, TestReview, self._tenant_id)
+        result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
     async def get_reviews_by_case(self, case_id: uuid.UUID) -> list[TestReview]:
@@ -177,11 +182,9 @@ class TestReviewService:
         Returns:
             评审记录列表（可能为空）。
         """
-        stmt = (
-            select(TestReview)
-            .where(TestReview.case_id == case_id)
-            .order_by(TestReview.created_at.desc())
-        )
+        stmt = select(TestReview).where(TestReview.case_id == case_id)
+        stmt = apply_tenant_filter(stmt, TestReview, self._tenant_id)
+        stmt = stmt.order_by(TestReview.created_at.desc())
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
 
@@ -259,6 +262,7 @@ class TestReviewService:
             TestCase.id == case_id,
             TestCase.deleted_at.is_(None),
         )
+        stmt = apply_tenant_filter(stmt, TestCase, self._tenant_id)
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -294,10 +298,10 @@ class TestReviewService:
         review_summary = self._build_review_summary(review_status, suggestions, comment)
         now = datetime.now(timezone.utc)
 
+        review_stmt = update(TestReview).where(TestReview.id == review_id)
+        review_stmt = apply_tenant_filter(review_stmt, TestReview, self._tenant_id)
         await self.db.execute(
-            update(TestReview)
-            .where(TestReview.id == review_id)
-            .values(
+            review_stmt.values(
                 status=review_status,
                 reviewer_id=self.user.id,
                 resolved_at=now,
@@ -308,11 +312,9 @@ class TestReviewService:
         )
 
         # 联动更新用例状态
-        await self.db.execute(
-            update(TestCase)
-            .where(TestCase.id == review.case_id)
-            .values(status=case_status)
-        )
+        case_stmt = update(TestCase).where(TestCase.id == review.case_id)
+        case_stmt = apply_tenant_filter(case_stmt, TestCase, self._tenant_id)
+        await self.db.execute(case_stmt.values(status=case_status))
         await self.db.flush()
 
         # 刷新 ORM 实例以反映更新后的字段值

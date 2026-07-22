@@ -16,6 +16,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from uuid import UUID
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.approval import ToolApproval
 from app.models.user import User
 from app.utils.logger import get_logger
+from app.utils.tenant import apply_tenant_filter
 
 log = get_logger(__name__)
 
@@ -33,8 +35,9 @@ _APPROVAL_TTL_SECONDS: int = 3600  # 1 小时
 class ApprovalService:
     """工具审批服务 — 审批记录 CRUD + 恢复 + 会话级缓存。"""
 
-    def __init__(self, db: AsyncSession) -> None:
+    def __init__(self, db: AsyncSession, tenant_id: UUID | None = None) -> None:
         self.db: AsyncSession = db
+        self._tenant_id = tenant_id
         # 会话级确认缓存：session_id → set[tool_name]
         # 用于引擎快速判断工具是否已确认，避免每次查 DB
         self._session_confirmed: dict[str, set[str]] = {}
@@ -119,15 +122,17 @@ class ApprovalService:
         """
         approval = await self._get_and_validate(approval_id, user)
 
-        await self.db.execute(
+        stmt = (
             update(ToolApproval)
             .where(ToolApproval.id == approval_id)
-            .values(
-                status="approved",
-                resolved_at=datetime.now(timezone.utc),
-                resolved_by=user.id,
-            )
         )
+        stmt = apply_tenant_filter(stmt, ToolApproval, self._tenant_id)
+        stmt = stmt.values(
+            status="approved",
+            resolved_at=datetime.now(timezone.utc),
+            resolved_by=user.id,
+        )
+        await self.db.execute(stmt)
         await self.db.flush()
 
         # 会话级缓存 — 标记该工具为已确认
@@ -163,15 +168,17 @@ class ApprovalService:
         """
         approval = await self._get_and_validate(approval_id, user)
 
-        await self.db.execute(
+        stmt = (
             update(ToolApproval)
             .where(ToolApproval.id == approval_id)
-            .values(
-                status="rejected",
-                resolved_at=datetime.now(timezone.utc),
-                resolved_by=user.id,
-            )
         )
+        stmt = apply_tenant_filter(stmt, ToolApproval, self._tenant_id)
+        stmt = stmt.values(
+            status="rejected",
+            resolved_at=datetime.now(timezone.utc),
+            resolved_by=user.id,
+        )
+        await self.db.execute(stmt)
         await self.db.flush()
 
         log.info(
@@ -206,8 +213,9 @@ class ApprovalService:
                 ToolApproval.user_id == user.id,
                 ToolApproval.status == "pending",
             )
-            .order_by(ToolApproval.created_at.desc())
         )
+        stmt = apply_tenant_filter(stmt, ToolApproval, self._tenant_id)
+        stmt = stmt.order_by(ToolApproval.created_at.desc())
         if session_id:
             stmt = stmt.where(ToolApproval.session_id == session_id)
         result = await self.db.execute(stmt)
@@ -217,9 +225,9 @@ class ApprovalService:
         self, approval_id: uuid.UUID
     ) -> ToolApproval | None:
         """按 ID 查询审批记录。"""
-        result = await self.db.execute(
-            select(ToolApproval).where(ToolApproval.id == approval_id)
-        )
+        stmt = select(ToolApproval).where(ToolApproval.id == approval_id)
+        stmt = apply_tenant_filter(stmt, ToolApproval, self._tenant_id)
+        result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
     async def get_agent_state_snapshot(
@@ -267,23 +275,25 @@ class ApprovalService:
         now = datetime.now(timezone.utc)
 
         # 1. 标记已过期的 pending 审批为 expired
-        await self.db.execute(
+        expire_stmt = (
             update(ToolApproval)
             .where(
                 ToolApproval.status == "pending",
                 ToolApproval.expire_at < now,
             )
-            .values(status="expired")
         )
+        expire_stmt = apply_tenant_filter(expire_stmt, ToolApproval, self._tenant_id)
+        expire_stmt = expire_stmt.values(status="expired")
+        await self.db.execute(expire_stmt)
         await self.db.flush()
 
         # 2. 查询仍活跃的 pending 审批
-        result = await self.db.execute(
-            select(ToolApproval).where(
-                ToolApproval.status == "pending",
-                ToolApproval.expire_at >= now,
-            )
+        active_stmt = select(ToolApproval).where(
+            ToolApproval.status == "pending",
+            ToolApproval.expire_at >= now,
         )
+        active_stmt = apply_tenant_filter(active_stmt, ToolApproval, self._tenant_id)
+        result = await self.db.execute(active_stmt)
         active = list(result.scalars().all())
 
         # 3. 加载到会话级缓存

@@ -22,8 +22,8 @@ from app.repositories.base import BaseRepository
 class DocumentCommentRepository(BaseRepository[DocumentComment]):
     """文档评论仓储 — 封装评论表的领域查询。"""
 
-    def __init__(self, session: AsyncSession) -> None:
-        super().__init__(DocumentComment, session)
+    def __init__(self, session: AsyncSession, tenant_id: UUID | None = None) -> None:
+        super().__init__(DocumentComment, session, tenant_id=tenant_id)
 
     async def get_by_doc(self, doc_id: UUID) -> list[DocumentComment]:
         """查询指定文档下的顶层评论（排除已软删除）。
@@ -38,8 +38,9 @@ class DocumentCommentRepository(BaseRepository[DocumentComment]):
                 DocumentComment.parent_id.is_(None),
                 DocumentComment.deleted_at.is_(None),
             )
-            .order_by(DocumentComment.created_at.asc())
         )
+        stmt = self._apply_all_filters(stmt)
+        stmt = stmt.order_by(DocumentComment.created_at.asc())
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
@@ -55,7 +56,8 @@ class DocumentCommentRepository(BaseRepository[DocumentComment]):
                 DocumentComment.parent_id == comment_id,
                 DocumentComment.deleted_at.is_(None),
             )
-            .order_by(DocumentComment.created_at.asc())
         )
+        stmt = self._apply_all_filters(stmt)
+        stmt = stmt.order_by(DocumentComment.created_at.asc())
         result = await self.session.execute(stmt)
         return list(result.scalars().all())

@@ -28,8 +28,8 @@ class KnowledgeGapRepository(BaseRepository[KnowledgeGap]):
     KnowledgeGap 模型不支持软删除，所有查询不包含 deleted_at 过滤。
     """
 
-    def __init__(self, session: AsyncSession) -> None:
-        super().__init__(KnowledgeGap, session)
+    def __init__(self, session: AsyncSession, tenant_id: UUID | None = None) -> None:
+        super().__init__(KnowledgeGap, session, tenant_id=tenant_id)
 
     async def get_by_topic(self, topic: str) -> KnowledgeGap | None:
         """按主题精确查询缺口（用于去重与计数递增）。
@@ -38,6 +38,7 @@ class KnowledgeGapRepository(BaseRepository[KnowledgeGap]):
             topic: 缺口主题（高频无结果查询词）。
         """
         stmt = select(KnowledgeGap).where(KnowledgeGap.topic == topic)
+        stmt = self._apply_all_filters(stmt)
         result = await self.session.execute(stmt)
         return result.scalars().first()
 
@@ -59,6 +60,7 @@ class KnowledgeGapRepository(BaseRepository[KnowledgeGap]):
         if status is not None:
             stmt = stmt.where(KnowledgeGap.status == status)
 
+        stmt = self._apply_all_filters(stmt)
         stmt = stmt.order_by(KnowledgeGap.search_count.desc())
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
@@ -70,6 +72,9 @@ class KnowledgeGapRepository(BaseRepository[KnowledgeGap]):
         suggestion: str | None = None,
     ) -> KnowledgeGap | None:
         """更新缺口状态与处理建议。
+
+        租户隔离说明：本方法通过 get_by_id 获取记录（已应用 _apply_all_filters
+        租户过滤），因此不会跨租户更新；无需额外追加 tenant_id 条件。
 
         Args:
             id: 缺口 ID。
@@ -88,6 +93,10 @@ class KnowledgeGapRepository(BaseRepository[KnowledgeGap]):
 
     async def increment_search_count(self, topic: str) -> KnowledgeGap:
         """递增指定主题的搜索次数；不存在则创建新缺口。
+
+        租户隔离说明：本方法通过 get_by_topic（已应用 _apply_all_filters 租户过滤）
+        查询记录，通过 create（自动注入 tenant_id）创建记录，因此不会跨租户操作；
+        无需额外追加 tenant_id 条件。
 
         自动根据搜索次数更新优先级：
         - search_count >= 10 → high

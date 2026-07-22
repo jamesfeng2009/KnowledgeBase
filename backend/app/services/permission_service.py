@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.knowledge import Document, KnowledgeBase
 from app.models.user import KbMember, User
+from app.utils.tenant import apply_tenant_filter
 
 # 密级权重表 — 数字越大密级越高。
 # 用户只能访问 classification 权重 <= 自身 clearance_level 权重的文档。
@@ -34,15 +35,19 @@ class PermissionService:
     通过依赖注入接收数据库会话与当前用户，所有方法均围绕"当前用户能做什么"展开。
     """
 
-    def __init__(self, db: AsyncSession, user: User) -> None:
+    def __init__(
+        self, db: AsyncSession, user: User, tenant_id: UUID | None = None
+    ) -> None:
         """初始化权限服务。
 
         Args:
             db: 异步数据库会话。
             user: 当前请求的已认证用户。
+            tenant_id: 租户 ID，用于多租户数据隔离。
         """
         self.db: AsyncSession = db
         self.user: User = user
+        self._tenant_id = tenant_id
 
     # ------------------------------------------------------------------
     # 密级辅助
@@ -56,6 +61,8 @@ class PermissionService:
 
         admin 角色不受密级限制（返回全部密级）。
         """
+        if self.user.role == "admin":
+            return list(_CLEARANCE_ORDER.keys())
         user_level = _CLEARANCE_ORDER.get(self.user.clearance_level, 1)
         return [name for name, level in _CLEARANCE_ORDER.items() if level <= user_level]
 
@@ -88,6 +95,7 @@ class PermissionService:
             KnowledgeBase.id == kb_id,
             KnowledgeBase.deleted_at.is_(None),
         )
+        kb_stmt = apply_tenant_filter(kb_stmt, KnowledgeBase, self._tenant_id)
         kb_result = await self.db.execute(kb_stmt)
         kb = kb_result.scalars().first()
         if kb is None:
@@ -102,6 +110,7 @@ class PermissionService:
             KbMember.kb_id == kb_id,
             KbMember.user_id == self.user.id,
         )
+        member_stmt = apply_tenant_filter(member_stmt, KbMember, self._tenant_id)
         member_result = await self.db.execute(member_stmt)
         return member_result.scalars().first() is not None
 
@@ -127,16 +136,14 @@ class PermissionService:
         """
         user_level = _CLEARANCE_ORDER.get(self.user.clearance_level, 1)
 
-        # admin 仅受密级约束
+        # admin 可访问所有文档（统一口径：admin 放行所有密级，
+        # 与 check_function 的 admin 语义一致）
         if self.user.role == "admin":
-            return [
-                doc
-                for doc in documents
-                if _CLEARANCE_ORDER.get(doc.classification, 1) <= user_level
-            ]
+            return documents
 
         # 普通用户：先查出可访问的知识库 ID 集合
         member_subq = select(KbMember.kb_id).where(KbMember.user_id == self.user.id)
+        member_subq = apply_tenant_filter(member_subq, KbMember, self._tenant_id)
         accessible_stmt = (
             select(KnowledgeBase.id)
             .where(
@@ -147,6 +154,7 @@ class PermissionService:
                 ),
             )
         )
+        accessible_stmt = apply_tenant_filter(accessible_stmt, KnowledgeBase, self._tenant_id)
         result = await self.db.execute(accessible_stmt)
         accessible_kb_ids: set[UUID] = {row[0] for row in result.all()}
 

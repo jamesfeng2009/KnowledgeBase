@@ -32,6 +32,7 @@ from openai import AsyncOpenAI
 
 from app.config import get_settings
 from app.llm.vllm_provider import VLLMProvider
+from app.utils.circuit_breaker import get_circuit_breaker
 
 settings = get_settings()
 
@@ -49,6 +50,8 @@ class DashScopeProvider(VLLMProvider):
         - 支持流式输出（stream=True）
     """
 
+    _circuit_breaker_name: str = "dashscope"
+
     def __init__(self, model: str | None = None) -> None:
         """初始化 DashScope 异步客户端。
 
@@ -61,3 +64,4 @@ class DashScopeProvider(VLLMProvider):
             api_key=settings.DASHSCOPE_API_KEY,
         )
         self.default_model = model or settings.DASHSCOPE_LLM_MODEL
+        self._cb = get_circuit_breaker(self._circuit_breaker_name)

@@ -28,12 +28,12 @@ import re
 import uuid
 from datetime import datetime
 from typing import Any
+from uuid import UUID
 
 from sqlalchemy import select, update, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.llm.base import LLMProvider, Message
-from app.models.knowledge import Document
 from app.models.knowledge_compounding import (
     CompoundingTask,
     KnowledgeAsset,
@@ -41,6 +41,7 @@ from app.models.knowledge_compounding import (
 )
 from app.models.testing import TestCase, TestExecution, TestRequirement
 from app.utils.logger import get_logger
+from app.utils.tenant import apply_tenant_filter
 
 log = get_logger(__name__)
 
@@ -88,9 +89,12 @@ class KnowledgeCompoundingService:
         - db: AsyncSession 实例（由 API 层的 Depends(get_db_session) 提供）
     """
 
-    def __init__(self, llm: LLMProvider | None, db: AsyncSession) -> None:
+    def __init__(
+        self, llm: LLMProvider | None, db: AsyncSession, tenant_id: UUID | None = None
+    ) -> None:
         self.llm = llm
         self.db = db
+        self._tenant_id = tenant_id
 
     # ==================================================================
     # Step 1: 执行结果收集
@@ -186,11 +190,9 @@ class KnowledgeCompoundingService:
             }
 
         # 标记为 pending
-        await self.db.execute(
-            update(TestExecution)
-            .where(TestExecution.id == exec_uuid)
-            .values(compounding_status="pending")
-        )
+        stmt = update(TestExecution).where(TestExecution.id == exec_uuid)
+        stmt = apply_tenant_filter(stmt, TestExecution, self._tenant_id)
+        await self.db.execute(stmt.values(compounding_status="pending"))
         await self.db.flush()
 
         # 创建回流任务
@@ -231,11 +233,9 @@ class KnowledgeCompoundingService:
             await self.db.flush()
 
             # 标记执行记录为已处理
-            await self.db.execute(
-                update(TestExecution)
-                .where(TestExecution.id == exec_uuid)
-                .values(compounding_status="processed")
-            )
+            stmt = update(TestExecution).where(TestExecution.id == exec_uuid)
+            stmt = apply_tenant_filter(stmt, TestExecution, self._tenant_id)
+            await self.db.execute(stmt.values(compounding_status="processed"))
 
             log.info(
                 "compounding.extracted",
@@ -677,20 +677,23 @@ class KnowledgeCompoundingService:
         if status:
             conditions.append(KnowledgeAsset.status == status)
 
-        total = await self.db.scalar(
+        count_stmt = (
             select(func.count())
             .select_from(KnowledgeAsset)
             .where(*conditions)
-        ) or 0
+        )
+        count_stmt = apply_tenant_filter(count_stmt, KnowledgeAsset, self._tenant_id)
+        total = await self.db.scalar(count_stmt) or 0
 
         offset = (page - 1) * size
-        result = await self.db.execute(
-            select(KnowledgeAsset)
-            .where(*conditions)
-            .order_by(KnowledgeAsset.created_at.desc())
+        stmt = select(KnowledgeAsset).where(*conditions)
+        stmt = apply_tenant_filter(stmt, KnowledgeAsset, self._tenant_id)
+        stmt = (
+            stmt.order_by(KnowledgeAsset.created_at.desc())
             .offset(offset)
             .limit(size)
         )
+        result = await self.db.execute(stmt)
         return list(result.scalars().all()), total
 
     async def get_asset(self, asset_id: uuid.UUID) -> KnowledgeAsset | None:
@@ -714,20 +717,23 @@ class KnowledgeCompoundingService:
         if status:
             conditions.append(CompoundingTask.status == status)
 
-        total = await self.db.scalar(
+        count_stmt = (
             select(func.count())
             .select_from(CompoundingTask)
             .where(*conditions)
-        ) or 0
+        )
+        count_stmt = apply_tenant_filter(count_stmt, CompoundingTask, self._tenant_id)
+        total = await self.db.scalar(count_stmt) or 0
 
         offset = (page - 1) * size
-        result = await self.db.execute(
-            select(CompoundingTask)
-            .where(*conditions)
-            .order_by(CompoundingTask.created_at.desc())
+        stmt = select(CompoundingTask).where(*conditions)
+        stmt = apply_tenant_filter(stmt, CompoundingTask, self._tenant_id)
+        stmt = (
+            stmt.order_by(CompoundingTask.created_at.desc())
             .offset(offset)
             .limit(size)
         )
+        result = await self.db.execute(stmt)
         return list(result.scalars().all()), total
 
     async def list_conflicts(
@@ -741,20 +747,23 @@ class KnowledgeCompoundingService:
         if resolution:
             conditions.append(KnowledgeConflict.resolution == resolution)
 
-        total = await self.db.scalar(
+        count_stmt = (
             select(func.count())
             .select_from(KnowledgeConflict)
             .where(*conditions)
-        ) or 0
+        )
+        count_stmt = apply_tenant_filter(count_stmt, KnowledgeConflict, self._tenant_id)
+        total = await self.db.scalar(count_stmt) or 0
 
         offset = (page - 1) * size
-        result = await self.db.execute(
-            select(KnowledgeConflict)
-            .where(*conditions)
-            .order_by(KnowledgeConflict.created_at.desc())
+        stmt = select(KnowledgeConflict).where(*conditions)
+        stmt = apply_tenant_filter(stmt, KnowledgeConflict, self._tenant_id)
+        stmt = (
+            stmt.order_by(KnowledgeConflict.created_at.desc())
             .offset(offset)
             .limit(size)
         )
+        result = await self.db.execute(stmt)
         return list(result.scalars().all()), total
 
     async def resolve_conflict(
@@ -778,9 +787,9 @@ class KnowledgeCompoundingService:
         Raises:
             ValueError: 冲突不存在。
         """
-        result = await self.db.execute(
-            select(KnowledgeConflict).where(KnowledgeConflict.id == conflict_id)
-        )
+        stmt = select(KnowledgeConflict).where(KnowledgeConflict.id == conflict_id)
+        stmt = apply_tenant_filter(stmt, KnowledgeConflict, self._tenant_id)
+        result = await self.db.execute(stmt)
         conflict = result.scalar_one_or_none()
         if conflict is None:
             raise ValueError(f"知识冲突不存在: {conflict_id}")
@@ -793,23 +802,23 @@ class KnowledgeCompoundingService:
 
         # 根据解决方案更新资产状态
         if resolution == "new_wins":
-            await self.db.execute(
-                update(KnowledgeAsset)
-                .where(KnowledgeAsset.id == conflict.new_asset_id)
-                .values(status="active")
+            stmt = update(KnowledgeAsset).where(
+                KnowledgeAsset.id == conflict.new_asset_id
             )
+            stmt = apply_tenant_filter(stmt, KnowledgeAsset, self._tenant_id)
+            await self.db.execute(stmt.values(status="active"))
         elif resolution == "existing_wins":
-            await self.db.execute(
-                update(KnowledgeAsset)
-                .where(KnowledgeAsset.id == conflict.new_asset_id)
-                .values(status="deprecated")
+            stmt = update(KnowledgeAsset).where(
+                KnowledgeAsset.id == conflict.new_asset_id
             )
+            stmt = apply_tenant_filter(stmt, KnowledgeAsset, self._tenant_id)
+            await self.db.execute(stmt.values(status="deprecated"))
         elif resolution == "merged":
-            await self.db.execute(
-                update(KnowledgeAsset)
-                .where(KnowledgeAsset.id == conflict.new_asset_id)
-                .values(status="active")
+            stmt = update(KnowledgeAsset).where(
+                KnowledgeAsset.id == conflict.new_asset_id
             )
+            stmt = apply_tenant_filter(stmt, KnowledgeAsset, self._tenant_id)
+            await self.db.execute(stmt.values(status="active"))
         await self.db.flush()
         return conflict
 
@@ -823,60 +832,86 @@ class KnowledgeCompoundingService:
             asset_conditions.append(KnowledgeAsset.project_id == project_id)
 
         # 资产总数
-        total_assets = await self.db.scalar(
+        asset_count_stmt = (
             select(func.count())
             .select_from(KnowledgeAsset)
             .where(*asset_conditions)
-        ) or 0
+        )
+        asset_count_stmt = apply_tenant_filter(
+            asset_count_stmt, KnowledgeAsset, self._tenant_id
+        )
+        total_assets = await self.db.scalar(asset_count_stmt) or 0
 
         # 按类型统计
-        type_result = await self.db.execute(
+        type_stmt = (
             select(KnowledgeAsset.asset_type, func.count())
             .where(*asset_conditions)
-            .group_by(KnowledgeAsset.asset_type)
         )
+        type_stmt = apply_tenant_filter(type_stmt, KnowledgeAsset, self._tenant_id)
+        type_stmt = type_stmt.group_by(KnowledgeAsset.asset_type)
+        type_result = await self.db.execute(type_stmt)
         assets_by_type = {row[0]: row[1] for row in type_result}
 
         # 按状态统计
-        status_result = await self.db.execute(
+        status_stmt = (
             select(KnowledgeAsset.status, func.count())
             .where(*asset_conditions)
-            .group_by(KnowledgeAsset.status)
         )
+        status_stmt = apply_tenant_filter(status_stmt, KnowledgeAsset, self._tenant_id)
+        status_stmt = status_stmt.group_by(KnowledgeAsset.status)
+        status_result = await self.db.execute(status_stmt)
         assets_by_status = {row[0]: row[1] for row in status_result}
 
         # 任务统计
         task_conditions = []
         if project_id:
             task_conditions.append(CompoundingTask.project_id == project_id)
-        total_tasks = await self.db.scalar(
+        task_count_stmt = (
             select(func.count())
             .select_from(CompoundingTask)
             .where(*task_conditions)
-        ) or 0
-        task_status_result = await self.db.execute(
+        )
+        task_count_stmt = apply_tenant_filter(
+            task_count_stmt, CompoundingTask, self._tenant_id
+        )
+        total_tasks = await self.db.scalar(task_count_stmt) or 0
+        task_status_stmt = (
             select(CompoundingTask.status, func.count())
             .where(*task_conditions)
-            .group_by(CompoundingTask.status)
         )
+        task_status_stmt = apply_tenant_filter(
+            task_status_stmt, CompoundingTask, self._tenant_id
+        )
+        task_status_stmt = task_status_stmt.group_by(CompoundingTask.status)
+        task_status_result = await self.db.execute(task_status_stmt)
         tasks_by_status = {row[0]: row[1] for row in task_status_result}
 
         # 冲突统计
-        total_conflicts = await self.db.scalar(
-            select(func.count()).select_from(KnowledgeConflict)
-        ) or 0
-        unresolved_conflicts = await self.db.scalar(
+        conflict_count_stmt = select(func.count()).select_from(KnowledgeConflict)
+        conflict_count_stmt = apply_tenant_filter(
+            conflict_count_stmt, KnowledgeConflict, self._tenant_id
+        )
+        total_conflicts = await self.db.scalar(conflict_count_stmt) or 0
+        unresolved_stmt = (
             select(func.count())
             .select_from(KnowledgeConflict)
             .where(KnowledgeConflict.resolution == "pending")
-        ) or 0
+        )
+        unresolved_stmt = apply_tenant_filter(
+            unresolved_stmt, KnowledgeConflict, self._tenant_id
+        )
+        unresolved_conflicts = await self.db.scalar(unresolved_stmt) or 0
 
         # 复用注入次数
-        reuse_count = await self.db.scalar(
+        reuse_stmt = (
             select(func.count())
             .select_from(CompoundingTask)
             .where(CompoundingTask.task_type == "reuse_injection")
-        ) or 0
+        )
+        reuse_stmt = apply_tenant_filter(
+            reuse_stmt, CompoundingTask, self._tenant_id
+        )
+        reuse_count = await self.db.scalar(reuse_stmt) or 0
 
         return {
             "total_assets": total_assets,
@@ -917,45 +952,45 @@ class KnowledgeCompoundingService:
         self, exec_uuid: uuid.UUID
     ) -> TestExecution | None:
         """获取执行记录 ORM 实例。"""
-        result = await self.db.execute(
-            select(TestExecution).where(TestExecution.id == exec_uuid)
-        )
+        stmt = select(TestExecution).where(TestExecution.id == exec_uuid)
+        stmt = apply_tenant_filter(stmt, TestExecution, self._tenant_id)
+        result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
     async def _get_test_case(
         self, case_uuid: uuid.UUID
     ) -> TestCase | None:
         """获取测试用例 ORM 实例（含软删除过滤）。"""
-        result = await self.db.execute(
-            select(TestCase).where(
-                TestCase.id == case_uuid,
-                TestCase.deleted_at.is_(None),
-            )
+        stmt = select(TestCase).where(
+            TestCase.id == case_uuid,
+            TestCase.deleted_at.is_(None),
         )
+        stmt = apply_tenant_filter(stmt, TestCase, self._tenant_id)
+        result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
     async def _get_requirement(
         self, req_uuid: uuid.UUID
     ) -> TestRequirement | None:
         """获取需求点 ORM 实例（含软删除过滤）。"""
-        result = await self.db.execute(
-            select(TestRequirement).where(
-                TestRequirement.id == req_uuid,
-                TestRequirement.deleted_at.is_(None),
-            )
+        stmt = select(TestRequirement).where(
+            TestRequirement.id == req_uuid,
+            TestRequirement.deleted_at.is_(None),
         )
+        stmt = apply_tenant_filter(stmt, TestRequirement, self._tenant_id)
+        result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
     async def _get_asset(
         self, asset_uuid: uuid.UUID
     ) -> KnowledgeAsset | None:
         """获取知识资产 ORM 实例（含软删除过滤）。"""
-        result = await self.db.execute(
-            select(KnowledgeAsset).where(
-                KnowledgeAsset.id == asset_uuid,
-                KnowledgeAsset.deleted_at.is_(None),
-            )
+        stmt = select(KnowledgeAsset).where(
+            KnowledgeAsset.id == asset_uuid,
+            KnowledgeAsset.deleted_at.is_(None),
         )
+        stmt = apply_tenant_filter(stmt, KnowledgeAsset, self._tenant_id)
+        result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
     async def _get_existing_assets(
@@ -964,14 +999,14 @@ class KnowledgeCompoundingService:
         exclude_id: uuid.UUID,
     ) -> list[KnowledgeAsset]:
         """查询同类型的已有知识资产（status=active）。"""
-        result = await self.db.execute(
-            select(KnowledgeAsset).where(
-                KnowledgeAsset.asset_type == asset_type,
-                KnowledgeAsset.id != exclude_id,
-                KnowledgeAsset.deleted_at.is_(None),
-                KnowledgeAsset.status.in_(["active", "draft"]),
-            )
+        stmt = select(KnowledgeAsset).where(
+            KnowledgeAsset.asset_type == asset_type,
+            KnowledgeAsset.id != exclude_id,
+            KnowledgeAsset.deleted_at.is_(None),
+            KnowledgeAsset.status.in_(["active", "draft"]),
         )
+        stmt = apply_tenant_filter(stmt, KnowledgeAsset, self._tenant_id)
+        result = await self.db.execute(stmt)
         return list(result.scalars().all())
 
     async def _retrieve_relevant_assets(

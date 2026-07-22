@@ -17,15 +17,17 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from typing import Any
+from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.feedback import Feedback
-from app.models.knowledge import Document, KnowledgeBase
+from app.models.knowledge import Document
 from app.repositories.feedback_repository import FeedbackRepository
 from app.repositories.knowledge_repository import DocumentRepository
 from app.utils.logger import get_logger
+from app.utils.tenant import apply_tenant_filter
 
 log = get_logger(__name__)
 
@@ -49,15 +51,21 @@ class QualityService:
         low_docs = await service.get_low_quality_docs(threshold=0.6)
     """
 
-    def __init__(self, db: AsyncSession) -> None:
+    def __init__(self, db: AsyncSession, tenant_id: UUID | None = None) -> None:
         """初始化质量控制服务。
 
         Args:
             db: 异步数据库会话。
+            tenant_id: 租户 ID，用于多租户数据隔离。
         """
         self.db: AsyncSession = db
-        self.doc_repo: DocumentRepository = DocumentRepository(db)
-        self.feedback_repo: FeedbackRepository = FeedbackRepository(db)
+        self._tenant_id = tenant_id
+        self.doc_repo: DocumentRepository = DocumentRepository(
+            db, tenant_id=tenant_id
+        )
+        self.feedback_repo: FeedbackRepository = FeedbackRepository(
+            db, tenant_id=tenant_id
+        )
 
     # ------------------------------------------------------------------
     # 单文档质量评分
@@ -145,6 +153,7 @@ class QualityService:
         else:
             # 全部文档（排除已软删除）
             stmt = select(Document).where(Document.deleted_at.is_(None))
+            stmt = apply_tenant_filter(stmt, Document, self._tenant_id)
             result = await self.db.execute(stmt)
             docs = list(result.scalars().all())
 
@@ -215,6 +224,7 @@ class QualityService:
             低质量文档详情列表（含评分信息）。
         """
         stmt = select(Document).where(Document.deleted_at.is_(None))
+        stmt = apply_tenant_filter(stmt, Document, self._tenant_id)
         result = await self.db.execute(stmt)
         docs = list(result.scalars().all())
 
@@ -276,6 +286,7 @@ class QualityService:
         stmt = select(Feedback).where(
             Feedback.related_message_id.isnot(None),
         )
+        stmt = apply_tenant_filter(stmt, Feedback, self._tenant_id)
         result = await self.db.execute(stmt)
         all_feedbacks = list(result.scalars().all())
 
@@ -305,6 +316,7 @@ class QualityService:
         """
         # 查询所有反馈（简化实现，实际应关联到文档）
         stmt = select(Feedback)
+        stmt = apply_tenant_filter(stmt, Feedback, self._tenant_id)
         result = await self.db.execute(stmt)
         feedbacks = list(result.scalars().all())
 

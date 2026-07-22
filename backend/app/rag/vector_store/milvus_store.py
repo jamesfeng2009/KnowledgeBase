@@ -9,7 +9,11 @@ Milvus 向量存储实现 — 可选后端。
     - 需要专用向量引擎的高级特性（IVF/PQ 压缩、分区、动态 Schema）；
     - 私有部署场景（独立 Milvus 集群）。
 
-遵循优雅降级：Milvus 不可用时返回空列表 / 0，不抛异常。
+降级策略：
+    - search 经 ``@circuit_call`` 熔断器保护，异常向上传播以记录失败；
+      熔断 OPEN 后快速拒绝（CircuitBreakerOpenError），由调用方
+      （retriever）捕获并降级为空列表；
+    - upsert / delete / health_check 遵循优雅降级，不可用时返回 0 / None。
 """
 
 from __future__ import annotations
@@ -20,6 +24,7 @@ import httpx
 
 from app.config import get_settings
 from app.rag.vector_store.base import VectorStoreBase
+from app.utils.circuit_breaker import circuit_call
 from app.utils.logger import get_logger
 
 if TYPE_CHECKING:
@@ -46,7 +51,9 @@ class MilvusVectorStore(VectorStoreBase):
         http_client: httpx.AsyncClient | None = None,
         collection_name: str = _MILVUS_COLLECTION,
     ) -> None:
-        self._http: httpx.AsyncClient = http_client or httpx.AsyncClient(
+        from app.utils.retry import build_retry_http_client
+
+        self._http: httpx.AsyncClient = http_client or build_retry_http_client(
             timeout=_TIMEOUT
         )
         self._collection: str = collection_name
@@ -65,16 +72,19 @@ class MilvusVectorStore(VectorStoreBase):
     # search
     # ------------------------------------------------------------------
 
+    @circuit_call("vectorstore_milvus")
     async def search(
         self,
         query_vec: list[float],
         kb_ids: list[str] | None = None,
         top_k: int = 20,
     ) -> list[dict[str, Any]]:
-        """通过 Milvus REST API 执行向量相似度检索。"""
+        """通过 Milvus REST API 执行向量相似度检索 — 异常向上传播以触发熔断器。"""
         if self._available is False:
             return []
 
+        import time
+        t0 = time.monotonic()
         url = f"{self._base_url()}/v2/vectordb/entities/search"
         payload: dict[str, Any] = {
             "collectionName": self._collection,
@@ -93,18 +103,15 @@ class MilvusVectorStore(VectorStoreBase):
         if kb_ids:
             payload["filter"] = 'kb_id in ["' + '", "'.join(kb_ids) + '"]'
 
-        try:
-            resp = await self._http.post(url, json=payload)
-            resp.raise_for_status()
-            data: Any = resp.json()
-            self._available = True
-        except Exception as exc:
-            if self._available is not False:
-                log.warning("vector_store.milvus.search_failed", error=str(exc))
-            self._available = False
-            return []
-
-        return self._parse_results(data, top_k)
+        log.info("vector_store.milvus.search_start", top_k=top_k, has_kb_filter=bool(kb_ids))
+        resp = await self._http.post(url, json=payload)
+        resp.raise_for_status()
+        data: Any = resp.json()
+        self._available = True
+        results = self._parse_results(data, top_k)
+        elapsed_ms = round((time.monotonic() - t0) * 1000, 2)
+        log.info("vector_store.milvus.search_done", count=len(results), latency_ms=elapsed_ms)
+        return results
 
     @staticmethod
     def _parse_results(data: Any, top_k: int) -> list[dict[str, Any]]:
@@ -146,8 +153,13 @@ class MilvusVectorStore(VectorStoreBase):
         doc_id: str,
         chunks: list[Chunk],
         embeddings: list[list[float]],
+        kb_id: str | None = None,
     ) -> int:
-        """批量写入向量数据到 Milvus collection。"""
+        """批量写入向量数据到 Milvus collection。
+
+        ``kb_id`` 字段写入文档所属知识库 ID（入参或 chunk 携带），
+        与检索端按知识库过滤对齐；历史 bug 曾错误写入 doc_id。
+        """
         if not embeddings or not chunks:
             return 0
 
@@ -167,7 +179,7 @@ class MilvusVectorStore(VectorStoreBase):
                     "chunk_id": chunk.id,
                     "content": chunk.content,
                     "embedding": embeddings[i],
-                    "kb_id": chunk.doc_id or doc_id,
+                    "kb_id": self._resolve_kb_id(chunk, doc_id, kb_id),
                     "title_path": chunk.title_path,
                     "content_type": chunk.content_type,
                     "chunk_strategy": chunk.chunk_strategy,

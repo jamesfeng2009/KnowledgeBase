@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db_session
@@ -27,12 +27,14 @@ router = APIRouter(tags=["文档评论"])
     response_model=ApiResponse[list[CommentResponse]],
 )
 async def list_comments(
+    request: Request,
     doc_id: UUID,
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse[list[CommentResponse]]:
     """查询指定文档下的顶层评论列表。"""
-    service = CommentService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = CommentService(db, user, tenant_id=tenant_id)
     comments = await service.list_comments(doc_id)
     return ApiResponse(
         code=0,
@@ -47,13 +49,15 @@ async def list_comments(
     status_code=201,
 )
 async def create_comment(
+    request: Request,
     doc_id: UUID,
     body: CommentCreate,
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse[CommentResponse]:
     """在文档下发表评论或回复。"""
-    service = CommentService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = CommentService(db, user, tenant_id=tenant_id)
     comment = await service.create_comment(
         doc_id=doc_id,
         content=body.content,
@@ -71,12 +75,14 @@ async def create_comment(
     response_model=ApiResponse[CommentResponse],
 )
 async def resolve_comment(
+    request: Request,
     comment_id: UUID,
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse[CommentResponse]:
     """标记评论为已解决（仅评论作者或 admin）。"""
-    service = CommentService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = CommentService(db, user, tenant_id=tenant_id)
     comment = await service.resolve_comment(comment_id)
     return ApiResponse(
         code=0,

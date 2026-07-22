@@ -326,7 +326,8 @@ const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '标签�
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 
   document.getElementById('tag-search')?.addEventListener('input', renderTags);

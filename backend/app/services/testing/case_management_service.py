@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
+from uuid import UUID
 
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,6 +34,7 @@ from app.models.testing import (
     TestRequirement,
 )
 from app.utils.logger import get_logger
+from app.utils.tenant import apply_tenant_filter
 
 log = get_logger(__name__)
 
@@ -51,13 +53,15 @@ class TestCaseManagementService:
         stats = await service.get_stats(project_id)
     """
 
-    def __init__(self, db: AsyncSession) -> None:
+    def __init__(self, db: AsyncSession, tenant_id: UUID | None = None) -> None:
         """初始化用例管理服务。
 
         Args:
             db: 异步数据库会话，事务由 ``get_db_session`` 依赖统一管理。
+            tenant_id: 租户 ID，用于多租户数据隔离。
         """
         self.db: AsyncSession = db
+        self._tenant_id = tenant_id
 
     # ------------------------------------------------------------------
     # 查询
@@ -105,14 +109,15 @@ class TestCaseManagementService:
 
         # 总数
         count_stmt = select(func.count()).select_from(TestCase).where(*conditions)
+        count_stmt = apply_tenant_filter(count_stmt, TestCase, self._tenant_id)
         total = (await self.db.execute(count_stmt)).scalar_one()
 
         # 分页数据
         offset = (page - 1) * size
+        stmt = select(TestCase).where(*conditions)
+        stmt = apply_tenant_filter(stmt, TestCase, self._tenant_id)
         stmt = (
-            select(TestCase)
-            .where(*conditions)
-            .order_by(TestCase.created_at.desc())
+            stmt.order_by(TestCase.created_at.desc())
             .offset(offset)
             .limit(size)
         )
@@ -133,6 +138,7 @@ class TestCaseManagementService:
             TestCase.id == case_id,
             TestCase.deleted_at.is_(None),
         )
+        stmt = apply_tenant_filter(stmt, TestCase, self._tenant_id)
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -198,9 +204,9 @@ class TestCaseManagementService:
             raise ValueError(f"测试用例不存在: {case_id}")
 
         if kwargs:
-            await self.db.execute(
-                update(TestCase).where(TestCase.id == case_id).values(**kwargs)
-            )
+            stmt = update(TestCase).where(TestCase.id == case_id)
+            stmt = apply_tenant_filter(stmt, TestCase, self._tenant_id)
+            await self.db.execute(stmt.values(**kwargs))
             await self.db.flush()
             await self.db.refresh(case)
 
@@ -224,10 +230,10 @@ class TestCaseManagementService:
         if case is None:
             raise ValueError(f"测试用例不存在: {case_id}")
 
+        stmt = update(TestCase).where(TestCase.id == case_id)
+        stmt = apply_tenant_filter(stmt, TestCase, self._tenant_id)
         await self.db.execute(
-            update(TestCase)
-            .where(TestCase.id == case_id)
-            .values(deleted_at=datetime.now(timezone.utc))
+            stmt.values(deleted_at=datetime.now(timezone.utc))
         )
         await self.db.flush()
 
@@ -254,14 +260,15 @@ class TestCaseManagementService:
         if not case_ids:
             return 0
 
-        result = await self.db.execute(
+        stmt = (
             update(TestCase)
             .where(
                 TestCase.id.in_(case_ids),
                 TestCase.deleted_at.is_(None),
             )
-            .values(status=status)
         )
+        stmt = apply_tenant_filter(stmt, TestCase, self._tenant_id)
+        result = await self.db.execute(stmt.values(status=status))
         await self.db.flush()
 
         updated_count = result.rowcount or 0
@@ -318,27 +325,27 @@ class TestCaseManagementService:
         if project_id:
             case_base.append(TestCase.project_id == project_id)
 
+        total_cases_stmt = (
+            select(func.count()).select_from(TestCase).where(*case_base)
+        )
+        total_cases_stmt = apply_tenant_filter(
+            total_cases_stmt, TestCase, self._tenant_id
+        )
         total_cases = (
-            await self.db.execute(
-                select(func.count()).select_from(TestCase).where(*case_base)
-            )
+            await self.db.execute(total_cases_stmt)
         ).scalar_one()
 
         # 按状态分组
-        status_stmt = (
-            select(TestCase.status, func.count())
-            .where(*case_base)
-            .group_by(TestCase.status)
-        )
+        status_stmt = select(TestCase.status, func.count()).where(*case_base)
+        status_stmt = apply_tenant_filter(status_stmt, TestCase, self._tenant_id)
+        status_stmt = status_stmt.group_by(TestCase.status)
         status_result = await self.db.execute(status_stmt)
         cases_by_status = {row[0]: row[1] for row in status_result}
 
         # 按类型分组
-        type_stmt = (
-            select(TestCase.test_type, func.count())
-            .where(*case_base)
-            .group_by(TestCase.test_type)
-        )
+        type_stmt = select(TestCase.test_type, func.count()).where(*case_base)
+        type_stmt = apply_tenant_filter(type_stmt, TestCase, self._tenant_id)
+        type_stmt = type_stmt.group_by(TestCase.test_type)
         type_result = await self.db.execute(type_stmt)
         cases_by_type = {row[0]: row[1] for row in type_result}
 
@@ -412,13 +419,11 @@ class TestCaseManagementService:
         Returns:
             用例编号字符串，如 ``TC-0001``。
         """
-        stmt = (
-            select(func.max(TestCase.case_no))
-            .where(
-                TestCase.project_id == project_id,
-                TestCase.deleted_at.is_(None),
-            )
+        stmt = select(func.max(TestCase.case_no)).where(
+            TestCase.project_id == project_id,
+            TestCase.deleted_at.is_(None),
         )
+        stmt = apply_tenant_filter(stmt, TestCase, self._tenant_id)
         result = await self.db.execute(stmt)
         max_case_no = result.scalar_one_or_none()
 

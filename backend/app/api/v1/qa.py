@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db_session
@@ -33,6 +33,7 @@ router = APIRouter(prefix="/qa", tags=["问答社区"])
     response_model=ApiResponse[PageResponse[QaQuestionResponse]],
 )
 async def list_questions(
+    request: Request,
     status: QaQuestionStatus | None = Query(default=None, description="状态过滤"),
     page: int = Query(default=1, ge=1, description="页码"),
     size: int = Query(default=20, ge=1, le=100, description="每页数量"),
@@ -40,7 +41,8 @@ async def list_questions(
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse[PageResponse[QaQuestionResponse]]:
     """分页查询问题列表，可按状态过滤。"""
-    service = QaService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = QaService(db, user, tenant_id=tenant_id)
     result = await service.list_questions(
         status=status.value if status else None,
         page=page,
@@ -65,12 +67,14 @@ async def list_questions(
     status_code=201,
 )
 async def create_question(
+    request: Request,
     body: QaQuestionCreate,
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse[QaQuestionResponse]:
     """创建问答帖。"""
-    service = QaService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = QaService(db, user, tenant_id=tenant_id)
     question = await service.create_question(
         kb_id=body.kb_id,
         title=body.title,
@@ -89,12 +93,14 @@ async def create_question(
     response_model=ApiResponse[QaQuestionResponse],
 )
 async def get_question(
+    request: Request,
     question_id: UUID,
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse[QaQuestionResponse]:
     """获取问题详情（浏览数自动 +1）。"""
-    service = QaService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = QaService(db, user, tenant_id=tenant_id)
     question = await service.get_question(question_id)
     return ApiResponse(
         code=0,
@@ -109,13 +115,15 @@ async def get_question(
     status_code=201,
 )
 async def create_answer(
+    request: Request,
     question_id: UUID,
     body: QaAnswerCreate,
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse[QaAnswerResponse]:
     """为指定问题创建回答。"""
-    service = QaService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = QaService(db, user, tenant_id=tenant_id)
     answer = await service.create_answer(
         question_id=question_id,
         content=body.content,
@@ -133,12 +141,14 @@ async def create_answer(
     response_model=ApiResponse[QaAnswerResponse],
 )
 async def accept_answer(
+    request: Request,
     answer_id: UUID,
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse[QaAnswerResponse]:
     """采纳回答（仅问题作者或 admin 可操作）。"""
-    service = QaService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = QaService(db, user, tenant_id=tenant_id)
     answer = await service.accept_answer(answer_id)
     return ApiResponse(
         code=0,

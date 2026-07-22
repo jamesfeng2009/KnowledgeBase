@@ -114,6 +114,48 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
       let currentConvId: string | null = null;
       let currentAgent: 'qa' | 'workflow' | 'action' = 'qa';
       let isStreaming = false;
+      // 当前流式请求的中止控制器：流式进行中切换会话/新建对话时中止当前流，
+      // 防止后续 token 继续写入已切换的会话消息区（竞态）
+      let streamAbortController: AbortController | null = null;
+
+      // ===== 流式渲染节流 =====
+      // 每个 token 都全量 Markdown 重渲染是 O(n²)，长回复会明显卡顿；
+      // 改为按时间窗口节流渲染（每 80ms 最多一次），流结束后再做最终完整渲染。
+      const STREAM_RENDER_INTERVAL = 80;
+      let streamRenderTimer: ReturnType<typeof setTimeout> | null = null;
+      let streamRenderPending: (() => void) | null = null;
+
+      /** 调度一次节流渲染：窗口期内多次调用只保留最新一次 */
+      function scheduleStreamRender(render: () => void) {
+        streamRenderPending = render;
+        if (streamRenderTimer) return;
+        streamRenderTimer = setTimeout(() => {
+          streamRenderTimer = null;
+          const fn = streamRenderPending;
+          streamRenderPending = null;
+          fn?.();
+        }, STREAM_RENDER_INTERVAL);
+      }
+
+      /** 立即执行待渲染内容（用于 error 事件等需即时展示的场景） */
+      function flushStreamRender() {
+        if (streamRenderTimer) {
+          clearTimeout(streamRenderTimer);
+          streamRenderTimer = null;
+        }
+        const fn = streamRenderPending;
+        streamRenderPending = null;
+        fn?.();
+      }
+
+      /** 丢弃待渲染内容（流结束/中止后调用，避免延迟渲染覆盖最终内容） */
+      function cancelStreamRender() {
+        if (streamRenderTimer) {
+          clearTimeout(streamRenderTimer);
+          streamRenderTimer = null;
+        }
+        streamRenderPending = null;
+      }
       // P2-6: 模型选择器状态
       let availableModels: Array<{ id: string; display_name: string; is_default: boolean; tier: string }> = [];
       let currentModelId: string | null = null;
@@ -296,6 +338,12 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
       }
 
       function selectConversation(id: string) {
+        // 流式进行中切换会话：先中止当前流，防止后续 token 写入已切换的会话（竞态）
+        // abort 幂等 — 重复切换/重复点击不会产生额外副作用
+        if (isStreaming && streamAbortController) {
+          console.log('[Chat] 流式进行中切换会话，中止当前流');
+          streamAbortController.abort();
+        }
         currentConvId = id;
         const conv = conversations.find((c) => c.id === id);
         renderConversationList();
@@ -397,6 +445,9 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
         // 流式累积文本状态（通过对象引用传递给 handleSSEEvent）
         const streamState = { fullText: '' };
 
+        // 每次发送创建新的 AbortController，供切换会话/新建对话时中止当前流
+        streamAbortController = new AbortController();
+
         try {
           const res = await fetch(`${API_BASE}/api/v1/chat/stream`, {
             method: 'POST',
@@ -405,6 +456,7 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
               Accept: 'text/event-stream',
               Authorization: `Bearer ${token}`,
             },
+            signal: streamAbortController.signal,
             body: JSON.stringify({
               query,
               // 仅在已有会话时携带 conversation_id，新会话由后端自动创建
@@ -427,6 +479,10 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
           const decoder = new TextDecoder();
           let buffer = '';
           const sources: any[] = [];
+          // 事件解析状态必须跨 reader.read() 保持：
+          // 一个 SSE 事件可能被 TCP 分包拆到多次 read() 中，若状态声明在循环内会被重置，导致事件静默丢失
+          let evtType = '';
+          let evtData = '';
 
           while (true) {
             const { done, value } = await reader.read();
@@ -435,9 +491,6 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
             buffer += decoder.decode(value, { stream: true });
             const lines = buffer.split('\n');
             buffer = lines.pop() || '';
-
-            let evtType = '';
-            let evtData = '';
 
             for (const line of lines) {
               const trimmed = line.trim();
@@ -458,12 +511,20 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
             }
           }
 
-          // 处理最后的数据
-          if (buffer.trim().startsWith('data:')) {
-            handleSSEEvent('', buffer.trim().slice(5).trim(), contentEl, sources, streamState, statusEl, toolsEl);
+          // 处理最后的数据：先冲刷缓冲区最后一行，再派发未派发完的事件
+          const lastLine = buffer.trim();
+          if (lastLine.startsWith('event:')) {
+            evtType = lastLine.slice(6).trim();
+          } else if (lastLine.startsWith('data:')) {
+            const d = lastLine.slice(5).trim();
+            evtData = evtData ? `${evtData}\n${d}` : d;
+          }
+          if (evtData) {
+            handleSSEEvent(evtType, evtData, contentEl, sources, streamState, statusEl, toolsEl);
           }
 
-          // 最终一次渲染（去掉光标）
+          // 最终一次渲染（去掉光标）：先丢弃节流队列中未执行的渲染，避免覆盖最终结果
+          cancelStreamRender();
           contentEl.innerHTML = `<div class="markdown-body">${renderMarkdownStream(streamState.fullText)}</div>`;
 
           if (isNewConversation) {
@@ -485,18 +546,177 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
             conv?.messages.push({ role: 'assistant', content: streamState.fullText });
           }
         } catch (err) {
-          contentEl.innerHTML =
-            '<span class="text-danger">连接异常：' +
-            escapeHtml(err instanceof Error ? err.message : String(err)) +
-            '</span>';
+          // 用户主动中止（切换会话/新建对话）不视为错误：仅记录日志，不展示错误提示
+          if ((err as { name?: string })?.name === 'AbortError') {
+            console.log('[Chat] 流式输出已中止（切换会话或新建对话）');
+          } else {
+            contentEl.innerHTML =
+              '<span class="text-danger">连接异常：' +
+              escapeHtml(err instanceof Error ? err.message : String(err)) +
+              '</span>';
+          }
         } finally {
+          // 兜底丢弃未执行的节流渲染，避免延迟写入已切换的会话
+          cancelStreamRender();
           const cursor = aiEl.querySelector('.chat-cursor');
           cursor?.remove();
           // 流式结束后绑定代码复制按钮和引用点击事件
           bindCodeCopyButtons(aiEl);
           bindCitationClicks(aiEl);
           isStreaming = false;
+          streamAbortController = null;
           sendBtn.disabled = false;
+        }
+      }
+
+      /**
+       * P2-B: 渲染查询重写面板 — 展示检索前的查询优化过程
+       *
+       * 在 AI 消息状态区显示一个可折叠的面板，包含：
+       * - 原始查询 → 优化后查询（若有变化）
+       * - 策略徽章（rewrite/expansion/decomposition/hyde）
+       * - 扩展词、子查询、HyDE 文档
+       * - 缓存命中标记 + 耗时
+       *
+       * 前端日志：记录查询重写事件的关键信息，便于调试。
+       */
+      function renderQueryRewritePanel(statusEl: HTMLElement, data: any) {
+        // P2-B 幂等性保护 — 避免重复的 query_rewrite 事件重复渲染面板
+        if (statusEl.dataset.queryRewriteRendered === '1') {
+          console.log('[P2-B query_rewrite] 已渲染过查询重写面板，跳过重复事件（幂等保护）');
+          return;
+        }
+        statusEl.dataset.queryRewriteRendered = '1';
+
+        // 前端日志 — 记录查询重写事件
+        console.log('[P2-B query_rewrite]', {
+          original: data?.original?.slice(0, 80),
+          search_query: data?.search_query?.slice(0, 80),
+          strategy: data?.strategy,
+          cache_hit: data?.cache_hit,
+          latency_ms: data?.latency_ms,
+          has_expanded: (data?.expanded_terms || []).length > 0,
+          has_sub_queries: (data?.sub_queries || []).length > 0,
+          has_hyde: !!data?.hyde_document,
+        });
+
+        const original = data?.original || '';
+        const searchQuery = data?.search_query || original;
+        const rewritten = data?.rewritten || '';
+        const expandedTerms: string[] = data?.expanded_terms || [];
+        const subQueries: string[] = data?.sub_queries || [];
+        const hydeDoc = data?.hyde_document || '';
+        const strategies: string[] = data?.strategy || [];
+        const latencyMs = data?.latency_ms || 0;
+        const cacheHit = data?.cache_hit || false;
+
+        // 策略标签映射
+        const strategyLabels: Record<string, string> = {
+          rewrite: '查询重写',
+          expansion: '同义扩展',
+          decomposition: '查询分解',
+          hyde: '假设文档',
+        };
+        const strategyBadges = strategies
+          .map((s) => `<span class="qr-strategy-badge qr-strategy-${s}">${strategyLabels[s] || s}</span>`)
+          .join('');
+
+        // 缓存标记
+        const cacheBadge = cacheHit
+          ? '<span class="qr-cache-hit" title="命中缓存">⚡缓存</span>'
+          : '';
+
+        // 耗时
+        const latencyBadge = latencyMs > 0
+          ? `<span class="qr-latency">${latencyMs.toFixed(0)}ms</span>`
+          : '';
+
+        // 查询变化展示（仅当 searchQuery 与 original 不同时显示）
+        const queryChanged = searchQuery !== original;
+        const queryDiffHtml = queryChanged
+          ? `<div class="qr-query-diff">
+               <div class="qr-query-original">${escapeHtml(original)}</div>
+               <div class="qr-query-arrow">↓</div>
+               <div class="qr-query-rewritten">${escapeHtml(searchQuery)}</div>
+             </div>`
+          : '';
+
+        // 扩展词
+        const expandedTermsHtml = expandedTerms.length > 0
+          ? `<div class="qr-section">
+               <div class="qr-section-label">扩展词</div>
+               <div class="qr-tags">${expandedTerms.map((t) => `<span class="qr-tag">${escapeHtml(t)}</span>`).join('')}</div>
+             </div>`
+          : '';
+
+        // 子查询
+        const subQueriesHtml = subQueries.length > 0
+          ? `<div class="qr-section">
+               <div class="qr-section-label">子查询</div>
+               <ol class="qr-sub-queries">${subQueries.map((q) => `<li>${escapeHtml(q)}</li>`).join('')}</ol>
+             </div>`
+          : '';
+
+        // HyDE 文档（截断显示）
+        const hydeHtml = hydeDoc
+          ? `<div class="qr-section">
+               <div class="qr-section-label">假设文档</div>
+               <div class="qr-hyde-doc">${escapeHtml(hydeDoc.slice(0, 200))}${hydeDoc.length > 200 ? '...' : ''}</div>
+             </div>`
+          : '';
+
+        // 详情区域（默认折叠）
+        const hasDetails = queryChanged || expandedTerms.length > 0 || subQueries.length > 0 || !!hydeDoc;
+        const detailsHtml = hasDetails
+          ? `<div class="qr-details" style="display:none">
+               ${queryDiffHtml}
+               ${expandedTermsHtml}
+               ${subQueriesHtml}
+               ${hydeHtml}
+             </div>`
+          : '';
+
+        // 折叠按钮（仅有详情时显示）
+        const toggleBtn = hasDetails
+          ? `<button class="qr-toggle-btn" type="button">展开详情</button>`
+          : '';
+
+        statusEl.innerHTML = `
+          <div class="chat-status-item chat-status-query-rewrite">
+            <span class="chat-status-dot"></span>
+            <div class="qr-content">
+              <div class="qr-header">
+                <span class="qr-title">查询优化</span>
+                ${strategyBadges}
+                ${cacheBadge}
+                ${latencyBadge}
+                ${toggleBtn}
+              </div>
+              ${detailsHtml}
+            </div>
+          </div>`;
+
+        // 绑定折叠/展开
+        if (hasDetails) {
+          const toggle = statusEl.querySelector('.qr-toggle-btn');
+          const details = statusEl.querySelector('.qr-details') as HTMLElement;
+          toggle?.addEventListener('click', () => {
+            const isHidden = details.style.display === 'none';
+            details.style.display = isHidden ? '' : 'none';
+            (toggle as HTMLElement).textContent = isHidden ? '收起详情' : '展开详情';
+          });
+        }
+
+        // 3 秒后自动折叠详情（若已展开）
+        if (hasDetails) {
+          setTimeout(() => {
+            const details = statusEl.querySelector('.qr-details') as HTMLElement;
+            const toggle = statusEl.querySelector('.qr-toggle-btn') as HTMLElement;
+            if (details && details.style.display !== 'none' && toggle) {
+              details.style.display = 'none';
+              toggle.textContent = '展开详情';
+            }
+          }, 3000);
         }
       }
 
@@ -518,6 +738,16 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
 
         const evtType = type || parsed?.type || 'message';
 
+        // P2-B: 前端日志 — 记录所有 SSE 事件（便于调试和问题排查）
+        // 跳过高频 token 事件，避免日志刷屏
+        if (evtType !== 'token' && evtType !== 'chunk' && evtType !== 'message') {
+          console.log('[SSE]', evtType, {
+            has_data: !!parsed,
+            data_keys: parsed && typeof parsed === 'object' ? Object.keys(parsed).slice(0, 5) : null,
+            timestamp: new Date().toISOString(),
+          });
+        }
+
         if (evtType === 'token' || evtType === 'chunk' || evtType === 'message') {
           // P0-6: 首个 token 到达时清除状态区
           if (statusEl && !state.fullText) {
@@ -525,9 +755,12 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
           }
           const text = parsed?.text || String(parsed);
           state.fullText += text;
-          // 流式增量渲染：每次新 token 到达后重新渲染整个累积文本
-          contentEl.innerHTML = `<div class="markdown-body">${renderMarkdownStream(state.fullText)}</div><span class="chat-cursor"></span>`;
-          messagesEl.scrollTop = messagesEl.scrollHeight;
+          // 流式增量渲染：节流渲染（每 80ms 最多一次），避免每个 token 全量重渲染导致 O(n²) 卡顿；
+          // 流结束后由 sendMessage 做最终完整渲染
+          scheduleStreamRender(() => {
+            contentEl.innerHTML = `<div class="markdown-body">${renderMarkdownStream(state.fullText)}</div><span class="chat-cursor"></span>`;
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+          });
         } else if (evtType === 'meta') {
           // P0-6: 绑定会话 ID
           if (parsed?.conversation_id && !currentConvId) {
@@ -539,6 +772,12 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
             if (modelSelectorEl && modelSelectorEl.value !== parsed.model_id) {
               modelSelectorEl.value = parsed.model_id;
             }
+          }
+        } else if (evtType === 'query_rewrite') {
+          // P2-B: 查询重写展示 — 在状态区显示查询优化过程
+          if (statusEl) {
+            renderQueryRewritePanel(statusEl, parsed);
+            messagesEl.scrollTop = messagesEl.scrollHeight;
           }
         } else if (evtType === 'thinking') {
           // P0-6: Agent 思考进度
@@ -598,7 +837,9 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
           // P0-7: 工具调用完成 — 更新 ToolCallCard
           if (toolsEl) {
             const toolUseId = parsed?.tool_use_id || '';
-            const card = toolsEl.querySelector(`[data-tool-use-id="${toolUseId}"]`);
+            // toolUseId 由服务端生成，可能包含引号/反斜杠等特殊字符，
+            // 直接拼入选择器会失效甚至被注入，统一用 CSS.escape 转义
+            const card = toolsEl.querySelector(`[data-tool-use-id="${CSS.escape(toolUseId)}"]`);
             if (card) {
               const statusEl2 = card.querySelector('.tool-call-status');
               const resultSection = card.querySelector('.tool-call-result-section') as HTMLElement;
@@ -636,7 +877,7 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
             const argsStr = Object.keys(args).length > 0
               ? JSON.stringify(args, null, 2)
               : '(无参数)';
-            const card = toolsEl.querySelector(`[data-tool-use-id="${toolUseId}"]`) as HTMLElement | null;
+            const card = toolsEl.querySelector(`[data-tool-use-id="${CSS.escape(toolUseId)}"]`) as HTMLElement | null;
             if (card) {
               // 将 ToolCallCard 转为审批卡片
               card.classList.add('tool-call-approval');
@@ -704,8 +945,12 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
           }
         } else if (evtType === 'error') {
           state.fullText += `\n\n> **[错误]** ${parsed?.message || '未知错误'}\n`;
-          contentEl.innerHTML = `<div class="markdown-body">${renderMarkdownStream(state.fullText)}</div><span class="chat-cursor"></span>`;
-          messagesEl.scrollTop = messagesEl.scrollHeight;
+          // 错误内容需即时展示：调度后立即冲刷节流队列，不等待节流窗口
+          scheduleStreamRender(() => {
+            contentEl.innerHTML = `<div class="markdown-body">${renderMarkdownStream(state.fullText)}</div><span class="chat-cursor"></span>`;
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+          });
+          flushStreamRender();
         }
       }
 
@@ -841,11 +1086,18 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
         return String(s)
           .replace(/&/g, '&amp;')
           .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;');
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
       }
 
       // 事件绑定
       $('new-chat-btn')?.addEventListener('click', () => {
+        // 流式进行中新建对话：先中止当前流，防止流写入已清空的界面（竞态）
+        if (isStreaming && streamAbortController) {
+          console.log('[Chat] 流式进行中新建对话，中止当前流');
+          streamAbortController.abort();
+        }
         currentConvId = null;
         renderConversationList();
         renderWelcome();
@@ -1510,6 +1762,148 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
       @keyframes pulse {
         0%, 100% { opacity: 1; transform: scale(1); }
         50% { opacity: 0.5; transform: scale(0.8); }
+      }
+
+      /* === P2-B: 查询重写面板 === */
+      .chat-status-query-rewrite {
+        align-items: flex-start;
+        padding: var(--space-3);
+      }
+      .chat-status-query-rewrite .chat-status-dot {
+        background: var(--primary);
+        margin-top: 4px;
+      }
+      .qr-content {
+        flex: 1;
+        min-width: 0;
+      }
+      .qr-header {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: var(--space-2);
+      }
+      .qr-title {
+        font-weight: 600;
+        font-size: var(--text-sm);
+        color: var(--text);
+      }
+      .qr-strategy-badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: var(--radius-full);
+        font-size: var(--text-xs);
+        font-weight: 500;
+        background: var(--primary-bg);
+        color: var(--primary);
+      }
+      .qr-strategy-rewrite { background: var(--info-bg); color: var(--info); }
+      .qr-strategy-expansion { background: var(--success-bg); color: var(--success); }
+      .qr-strategy-decomposition { background: var(--warning-bg); color: var(--warning); }
+      .qr-strategy-hyde { background: #ede9fe; color: #7c3aed; }
+      .qr-cache-hit {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: var(--radius-full);
+        font-size: var(--text-xs);
+        font-weight: 500;
+        background: var(--warning-bg);
+        color: var(--warning);
+      }
+      .qr-latency {
+        font-size: var(--text-xs);
+        color: var(--text-muted);
+        font-family: var(--font-mono);
+      }
+      .qr-toggle-btn {
+        margin-left: auto;
+        padding: 2px 8px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        background: transparent;
+        color: var(--text-secondary);
+        font-size: var(--text-xs);
+        cursor: pointer;
+        transition: all var(--transition-fast);
+      }
+      .qr-toggle-btn:hover {
+        border-color: var(--primary);
+        color: var(--primary);
+      }
+      .qr-details {
+        margin-top: var(--space-2);
+        padding: var(--space-2) var(--space-3);
+        background: var(--surface);
+        border-radius: var(--radius-sm);
+        border: 1px solid var(--border);
+        animation: status-fade-in 0.2s ease;
+      }
+      .qr-query-diff {
+        margin-bottom: var(--space-2);
+      }
+      .qr-query-original {
+        padding: var(--space-1) var(--space-2);
+        background: var(--surface-muted);
+        border-radius: var(--radius-xs);
+        font-size: var(--text-xs);
+        color: var(--text-muted);
+        text-decoration: line-through;
+      }
+      .qr-query-arrow {
+        text-align: center;
+        color: var(--text-muted);
+        font-size: var(--text-xs);
+        margin: var(--space-1) 0;
+      }
+      .qr-query-rewritten {
+        padding: var(--space-1) var(--space-2);
+        background: var(--primary-bg);
+        border-radius: var(--radius-xs);
+        font-size: var(--text-xs);
+        color: var(--primary);
+        font-weight: 500;
+      }
+      .qr-section {
+        margin-top: var(--space-2);
+      }
+      .qr-section-label {
+        font-size: var(--text-xs);
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: var(--space-1);
+      }
+      .qr-tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--space-1);
+      }
+      .qr-tag {
+        display: inline-block;
+        padding: 2px 8px;
+        background: var(--surface-muted);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-full);
+        font-size: var(--text-xs);
+        color: var(--text-secondary);
+      }
+      .qr-sub-queries {
+        margin: 0;
+        padding-left: var(--space-5);
+        font-size: var(--text-xs);
+        color: var(--text-secondary);
+      }
+      .qr-sub-queries li {
+        margin: var(--space-1) 0;
+      }
+      .qr-hyde-doc {
+        padding: var(--space-2);
+        background: var(--surface-muted);
+        border-radius: var(--radius-xs);
+        border-left: 3px solid #7c3aed;
+        font-size: var(--text-xs);
+        color: var(--text-secondary);
+        line-height: var(--lh-relaxed);
       }
 
       /* === P0-7: ToolCallCard 组件 === */

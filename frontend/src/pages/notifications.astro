@@ -296,7 +296,8 @@ const breadcrumb = [{ label: '通知中心' }];
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 
   /** 时间格式化：今天 HH:mm / 昨天 HH:mm / 更早 YYYY-MM-DD */

@@ -25,8 +25,8 @@ from app.repositories.base import BaseRepository
 class KnowledgeBaseRepository(BaseRepository[KnowledgeBase]):
     """知识库仓储 — 封装知识库表的领域查询。"""
 
-    def __init__(self, session: AsyncSession) -> None:
-        super().__init__(KnowledgeBase, session)
+    def __init__(self, session: AsyncSession, tenant_id: UUID | None = None) -> None:
+        super().__init__(KnowledgeBase, session, tenant_id=tenant_id)
 
     async def get_by_owner(self, owner_id: UUID) -> list[KnowledgeBase]:
         """查询某用户拥有的所有知识库（排除已软删除）。"""
@@ -36,8 +36,9 @@ class KnowledgeBaseRepository(BaseRepository[KnowledgeBase]):
                 KnowledgeBase.owner_id == owner_id,
                 KnowledgeBase.deleted_at.is_(None),
             )
-            .order_by(KnowledgeBase.created_at.desc())
         )
+        stmt = self._apply_all_filters(stmt)
+        stmt = stmt.order_by(KnowledgeBase.created_at.desc())
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
@@ -58,8 +59,9 @@ class KnowledgeBaseRepository(BaseRepository[KnowledgeBase]):
                     KnowledgeBase.id.in_(member_subq),
                 ),
             )
-            .order_by(KnowledgeBase.created_at.desc())
         )
+        stmt = self._apply_all_filters(stmt)
+        stmt = stmt.order_by(KnowledgeBase.created_at.desc())
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
@@ -67,8 +69,8 @@ class KnowledgeBaseRepository(BaseRepository[KnowledgeBase]):
 class DocumentRepository(BaseRepository[Document]):
     """文档仓储 — 封装文档表的领域查询。"""
 
-    def __init__(self, session: AsyncSession) -> None:
-        super().__init__(Document, session)
+    def __init__(self, session: AsyncSession, tenant_id: UUID | None = None) -> None:
+        super().__init__(Document, session, tenant_id=tenant_id)
 
     async def get_by_kb(self, kb_id: UUID) -> list[Document]:
         """查询指定知识库下的所有文档（排除已软删除）。"""
@@ -78,8 +80,9 @@ class DocumentRepository(BaseRepository[Document]):
                 Document.kb_id == kb_id,
                 Document.deleted_at.is_(None),
             )
-            .order_by(Document.created_at.desc())
         )
+        stmt = self._apply_all_filters(stmt)
+        stmt = stmt.order_by(Document.created_at.desc())
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
@@ -95,8 +98,9 @@ class DocumentRepository(BaseRepository[Document]):
                 Document.classification == classification,
                 Document.deleted_at.is_(None),
             )
-            .order_by(Document.created_at.desc())
         )
+        stmt = self._apply_all_filters(stmt)
+        stmt = stmt.order_by(Document.created_at.desc())
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
@@ -119,7 +123,8 @@ class DocumentRepository(BaseRepository[Document]):
                     Document.content_text.ilike(pattern),
                 ),
             )
-            .order_by(Document.created_at.desc())
         )
+        stmt = self._apply_all_filters(stmt)
+        stmt = stmt.order_by(Document.created_at.desc())
         result = await self.session.execute(stmt)
         return list(result.scalars().all())

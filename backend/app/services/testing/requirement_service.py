@@ -22,6 +22,7 @@ import json
 import re
 import uuid
 from typing import Any
+from uuid import UUID
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +31,7 @@ from app.llm.base import LLMProvider, Message
 from app.models.knowledge import Document
 from app.models.testing import TestRequirement
 from app.utils.logger import get_logger
+from app.utils.tenant import apply_tenant_filter
 
 log = get_logger(__name__)
 
@@ -79,9 +81,12 @@ class RequirementAnalysisService:
         - db: AsyncSession 实例（由 API 层的 Depends(get_db_session) 提供）
     """
 
-    def __init__(self, llm: LLMProvider, db: AsyncSession) -> None:
+    def __init__(
+        self, llm: LLMProvider, db: AsyncSession, tenant_id: UUID | None = None
+    ) -> None:
         self.llm = llm
         self.db = db
+        self._tenant_id = tenant_id
 
     # ------------------------------------------------------------------
     # 核心方法
@@ -198,16 +203,19 @@ class RequirementAnalysisService:
                 TestRequirement.deleted_at.is_(None),
             )
         )
+        count_stmt = apply_tenant_filter(
+            count_stmt, TestRequirement, self._tenant_id
+        )
         total = await self.db.scalar(count_stmt) or 0
 
         # 分页查询
+        stmt = select(TestRequirement).where(
+            TestRequirement.project_id == project_id,
+            TestRequirement.deleted_at.is_(None),
+        )
+        stmt = apply_tenant_filter(stmt, TestRequirement, self._tenant_id)
         stmt = (
-            select(TestRequirement)
-            .where(
-                TestRequirement.project_id == project_id,
-                TestRequirement.deleted_at.is_(None),
-            )
-            .order_by(TestRequirement.created_at.desc())
+            stmt.order_by(TestRequirement.created_at.desc())
             .offset(offset)
             .limit(size)
         )
@@ -228,12 +236,12 @@ class RequirementAnalysisService:
         Returns:
             TestRequirement ORM 实例，不存在时返回 None。
         """
-        result = await self.db.execute(
-            select(TestRequirement).where(
-                TestRequirement.id == requirement_id,
-                TestRequirement.deleted_at.is_(None),
-            )
+        stmt = select(TestRequirement).where(
+            TestRequirement.id == requirement_id,
+            TestRequirement.deleted_at.is_(None),
         )
+        stmt = apply_tenant_filter(stmt, TestRequirement, self._tenant_id)
+        result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
     async def update_requirement(
@@ -312,12 +320,12 @@ class RequirementAnalysisService:
 
     async def _get_doc(self, doc_uuid: uuid.UUID) -> Document | None:
         """获取文档 ORM 实例（含软删除过滤）。"""
-        result = await self.db.execute(
-            select(Document).where(
-                Document.id == doc_uuid,
-                Document.deleted_at.is_(None),
-            )
+        stmt = select(Document).where(
+            Document.id == doc_uuid,
+            Document.deleted_at.is_(None),
         )
+        stmt = apply_tenant_filter(stmt, Document, self._tenant_id)
+        result = await self.db.execute(stmt)
         return result.scalars().first()
 
     @staticmethod

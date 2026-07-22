@@ -14,10 +14,9 @@ P1 增强：解析摘要响应（/documents/{doc_id}/summary）— 返回 previe
 
 from __future__ import annotations
 
-import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,11 +35,88 @@ from app.schemas.knowledge import (
     DocumentSummaryResponse,
 )
 from app.services.knowledge_service import KnowledgeService
+from app.utils.logger import get_logger
 from app.utils.pagination import PageResult, PaginationParams, paginate
 
-logger = logging.getLogger(__name__)
+log = get_logger(__name__)
 
 router = APIRouter(tags=["文档管理"])
+
+# 上传流式读取分块大小（1MB）— 避免一次性全量读入内存
+_UPLOAD_READ_CHUNK_BYTES = 1 * 1024 * 1024
+# Content-Length 预检的 multipart 表单开销余量（边界/表单字段/文件名等）
+_MULTIPART_FORM_OVERHEAD_BYTES = 1 * 1024 * 1024
+
+
+def _max_upload_bytes() -> int:
+    """读取上传大小上限（字节）。
+
+    读取 ``settings.MAX_UPLOAD_SIZE_MB``（默认 50MB）；
+    配置缺失、非 int 或 <= 0 时回退 50MB（兼容 MagicMock 测试场景）。
+    """
+    settings = get_settings()
+    max_mb = getattr(settings, "MAX_UPLOAD_SIZE_MB", 50)
+    if not isinstance(max_mb, int) or max_mb <= 0:
+        max_mb = 50
+    return max_mb * 1024 * 1024
+
+
+def _raise_upload_too_large(max_bytes: int) -> None:
+    """抛出 413 — 文件大小超过上限。"""
+    max_mb = max_bytes // (1024 * 1024)
+    log.warning("upload.size_exceeded", max_mb=max_mb)
+    raise HTTPException(
+        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+        detail=(
+            f"文件大小超过上限 {max_mb}MB，"
+            f"请压缩后上传或联系管理员调整 MAX_UPLOAD_SIZE_MB"
+        ),
+    )
+
+
+def _check_content_length(request: Request) -> None:
+    """Content-Length 预检 — 内存 DoS 防护第一道闸门。
+
+    在任何正文读取之前执行：若声明的请求体大小已确定超过
+    上限 + multipart 表单开销余量，直接 413 拒绝，不读取任何字节。
+    未声明 Content-Length（如 chunked 传输）时跳过，
+    由 ``_read_upload_bounded`` 的分块计数兜底。
+    """
+    content_length = request.headers.get("content-length")
+    if not content_length or not content_length.isdigit():
+        return
+    max_bytes = _max_upload_bytes()
+    if int(content_length) > max_bytes + _MULTIPART_FORM_OVERHEAD_BYTES:
+        _raise_upload_too_large(max_bytes)
+
+
+async def _read_upload_bounded(file: UploadFile) -> bytes:
+    """分块流式读取上传内容并累计计数 — 内存 DoS 防护第二道闸门。
+
+    每读一块即校验累计大小，超限立即 413 拒绝：
+    内存占用最多为 上限 + 1 个分块，不会先把超大文件全量读入内存。
+
+    Returns:
+        文件完整二进制内容（未超限时）。
+
+    Raises:
+        HTTPException: 413 Payload Too Large 当累计大小超过配置上限。
+    """
+    max_bytes = _max_upload_bytes()
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(_UPLOAD_READ_CHUNK_BYTES)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            log.warning(
+                "upload.stream_size_exceeded", total_bytes=total, max_bytes=max_bytes
+            )
+            _raise_upload_too_large(max_bytes)
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 def _validate_upload_size(content_bytes: bytes) -> None:
@@ -52,21 +128,84 @@ def _validate_upload_size(content_bytes: bytes) -> None:
     Raises:
         HTTPException: 413 Payload Too Large 当文件超过配置上限。
     """
-    settings = get_settings()
-    max_mb = getattr(settings, "MAX_UPLOAD_SIZE_MB", 50)
-    # 兼容 MagicMock 测试场景 — 仅在获得真实 int 时校验
-    if not isinstance(max_mb, int) or max_mb <= 0:
-        max_mb = 50
+    max_bytes = _max_upload_bytes()
+    if len(content_bytes) > max_bytes:
+        _raise_upload_too_large(max_bytes)
 
-    size_mb = len(content_bytes) / (1024 * 1024)
-    if size_mb > max_mb:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=(
-                f"文件大小 {size_mb:.2f}MB 超过上限 {max_mb}MB，"
-                f"请压缩后上传或联系管理员调整 MAX_UPLOAD_SIZE_MB"
-            ),
-        )
+
+async def _check_kb_write_access(
+    db: AsyncSession,
+    user: User,
+    kb_id: UUID,
+    tenant_id: UUID | None,
+) -> None:
+    """校验当前用户是否拥有目标知识库的写权限（安全 — 防 IDOR）。
+
+    知识库不存在、跨租户不可见或用户无写权限时统一拒绝。
+
+    Raises:
+        HTTPException: 403 — 无权向该知识库上传文档。
+    """
+    from app.services.permission_service import PermissionService
+
+    permission = PermissionService(db, user, tenant_id=tenant_id)
+    if not await permission.check_function(kb_id):
+        raise HTTPException(status_code=403, detail="无权向该知识库上传文档")
+
+
+async def _load_multipart_session(upload_id: str) -> dict | None:
+    """读取 Redis 中的多段上传会话元数据（不存在或异常返回 None）。
+
+    使用 redis.asyncio 客户端 — 调用方均为 async 上下文，
+    同步客户端会阻塞事件循环。
+    """
+    import json
+
+    try:
+        import redis.asyncio as aioredis
+
+        client = aioredis.from_url(get_settings().REDIS_URL, decode_responses=True)
+        try:
+            raw = await client.get(f"ekb:multipart:{upload_id}")
+        finally:
+            await client.aclose()
+        return json.loads(raw) if raw else None
+    except Exception:
+        log.debug("multipart.session_load_failed", exc_info=True)
+        return None
+
+
+async def _delete_multipart_session(upload_id: str) -> None:
+    """清理 Redis 中的多段上传会话（异步客户端，不阻塞事件循环）。"""
+    try:
+        import redis.asyncio as aioredis
+
+        client = aioredis.from_url(get_settings().REDIS_URL, decode_responses=True)
+        try:
+            await client.delete(f"ekb:multipart:{upload_id}")
+        finally:
+            await client.aclose()
+    except Exception:
+        log.debug("multipart.session_delete_failed", exc_info=True)
+
+
+def _check_multipart_session(
+    session: dict | None,
+    user: User,
+    object_name: str | None = None,
+) -> None:
+    """校验多段上传会话归属与对象路径绑定（安全 — 防 IDOR）。
+
+    - 会话不存在 / 已过期 → 404；
+    - 会话属于其他用户（非 admin）→ 403；
+    - object_name 与会话记录不符（防止借用自有会话写入他人命名空间）→ 403。
+    """
+    if session is None:
+        raise HTTPException(status_code=404, detail="上传会话不存在或已过期")
+    if user.role != "admin" and session.get("user_id") != str(user.id):
+        raise HTTPException(status_code=403, detail="无权操作他人的上传会话")
+    if object_name and session.get("object_name") and session["object_name"] != object_name:
+        raise HTTPException(status_code=403, detail="object_name 与上传会话不匹配")
 
 
 # ======================================================================
@@ -76,6 +215,7 @@ def _validate_upload_size(content_bytes: bytes) -> None:
 
 @router.get("/documents", response_model=ApiResponse[PageResponse[DocResponse]])
 async def list_documents(
+    request: Request,
     kb_id: UUID | None = Query(default=None, description="按知识库过滤"),
     status_filter: str | None = Query(default=None, alias="status", description="按状态过滤"),
     keyword: str | None = Query(default=None, description="标题关键词"),
@@ -85,7 +225,8 @@ async def list_documents(
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse[PageResponse[DocResponse]]:
     """分页查询文档列表（支持知识库、状态、关键词过滤）。"""
-    service = KnowledgeService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = KnowledgeService(db, user, tenant_id=tenant_id)
     params = PaginationParams(page=page, size=size)
     allowed = service.permission.allowed_classifications()
 
@@ -93,6 +234,9 @@ async def list_documents(
         Document.deleted_at.is_(None),
         Document.classification.in_(allowed),
     )
+    # 多租户隔离（安全）：仅返回当前租户的文档，杜绝跨租户数据可见
+    if tenant_id is not None:
+        stmt = stmt.where(Document.tenant_id == tenant_id)
     if kb_id is not None:
         stmt = stmt.where(Document.kb_id == kb_id)
     if status_filter is not None:
@@ -133,6 +277,7 @@ async def list_documents(
 
 @router.post("/documents/upload", response_model=ApiResponse[DocResponse], status_code=201)
 async def upload_document_file(
+    request: Request,
     kb_id: UUID = Query(..., description="目标知识库 ID"),
     title: str = Query(..., min_length=1, max_length=500, description="文档标题"),
     file: UploadFile = File(..., description="上传的文件"),
@@ -148,7 +293,8 @@ async def upload_document_file(
     P0: 上传后自动触发 process_document Celery 任务（修复原端点未调用的缺陷）。
     P0: doc_type_map 补全 pptx/xlsx/xls/txt/csv（修复原映射缺失导致误归 md）。
     """
-    service = KnowledgeService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = KnowledgeService(db, user, tenant_id=tenant_id)
 
     # 根据文件扩展名推断文档类型
     # P0 修复：补全所有受支持的格式，避免 pptx/xlsx 被误归为 md
@@ -169,11 +315,11 @@ async def upload_document_file(
     }
     doc_type = doc_type_map.get(ext, "md")
 
-    # 读取文件内容
-    content_bytes = await file.read()
-
-    # P0: 文件大小校验（读取后立即校验，超限直接拒绝）
-    _validate_upload_size(content_bytes)
+    # P0 安全修复（内存 DoS 防护）：先校验大小再读取 —
+    # 1) Content-Length 预检：声明大小超限直接 413，不读取任何字节；
+    # 2) 分块流式读取 + 累计计数：超限即拒，绝不先全量读入内存。
+    _check_content_length(request)
+    content_bytes = await _read_upload_bounded(file)
 
     # 尝试解码为文本（二进制格式如 docx/pdf 无法直接解码）
     try:
@@ -193,24 +339,27 @@ async def upload_document_file(
             content_type=file.content_type,
         )
     except ImportError:
-        logger.debug("MinIO 客户端未安装，文件路径仅记录文件名")
+        log.debug("MinIO 客户端未安装，文件路径仅记录文件名")
         file_path = f"minio://ekb-documents/{kb_id}/{title}"
     except Exception:
-        logger.exception("MinIO 上传失败")
+        log.exception("MinIO 上传失败")
         file_path = f"local://{filename}"
 
-    # 创建文档记录
-    doc = await service.upload_document(
-        kb_id=kb_id,
-        title=title,
-        content=content_text,
-        doc_type=doc_type,
-    )
+    # 创建文档记录（service 层校验知识库写权限；PermissionError 映射为 403）
+    try:
+        doc = await service.upload_document(
+            kb_id=kb_id,
+            title=title,
+            content=content_text,
+            doc_type=doc_type,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
-    # 更新 file_path
+    # 更新 file_path（租户隔离的 Repository）
     from app.repositories.knowledge_repository import DocumentRepository
 
-    doc_repo = DocumentRepository(db)
+    doc_repo = DocumentRepository(db, tenant_id=tenant_id)
     await doc_repo.update(doc.id, file_path=file_path)
 
     # P0 修复：上传成功后立即触发 Celery 异步解析任务
@@ -219,15 +368,15 @@ async def upload_document_file(
     try:
         from tasks.document_tasks import process_document
 
-        process_document.delay(str(doc.id))
-        logger.info("文档 %s 已触发 Celery 异步解析任务", doc.id)
+        process_document.delay(str(doc.id), tenant_id=str(tenant_id) if tenant_id else None)
+        log.info("文档 %s 已触发 Celery 异步解析任务", doc.id)
     except ImportError:
-        logger.warning(
+        log.warning(
             "Celery 任务模块未安装，文档 %s 不会自动解析，需手动触发", doc.id
         )
     except Exception:
         # Celery 不可用时不应阻断上传响应，仅记录日志
-        logger.exception("触发 Celery 解析任务失败，文档 %s 需手动处理", doc.id)
+        log.exception("触发 Celery 解析任务失败，文档 %s 需手动处理", doc.id)
 
     return ApiResponse(
         code=0,
@@ -243,9 +392,11 @@ async def upload_document_file(
 
 @router.post("/documents/multipart/init", response_model=ApiResponse[dict])
 async def init_multipart_upload(
+    request: Request,
     kb_id: UUID = Query(..., description="目标知识库 ID"),
     title: str = Query(..., min_length=1, max_length=500, description="文档标题"),
     filename: str = Query(..., description="原始文件名（用于推断 doc_type）"),
+    db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse[dict]:
     """初始化多段上传 — 返回 upload_id（P2-A）。
@@ -253,11 +404,17 @@ async def init_multipart_upload(
     前端发起 GB 级视频上传时调用此端点，获取 upload_id 后逐片上传。
     upload_id 同时存入 Redis（TTL 24h），用于断点续传校验。
 
+    安全：初始化前校验当前用户对目标知识库的写权限（防 IDOR），
+    防止向他人知识库命名空间写入分片。
+
     Returns:
         {"upload_id": "xxx", "object_name": "kb_id/title"}
     """
     import json
     import time
+
+    tenant_id = getattr(request.state, "tenant_id", None)
+    await _check_kb_write_access(db, user, kb_id, tenant_id)
 
     object_name = f"{kb_id}/{title}"
 
@@ -270,22 +427,22 @@ async def init_multipart_upload(
             object_name=object_name,
         )
     except ImportError:
-        logger.warning("multipart.minio_not_installed")
+        log.warning("multipart.minio_not_installed")
         raise HTTPException(503, detail="MinIO 未安装，不支持多段上传")
     except Exception:
-        logger.exception("multipart.init_failed")
+        log.exception("multipart.init_failed")
         raise HTTPException(500, detail="初始化多段上传失败")
 
     # 在 Redis 记录会话元数据（用于孤儿分片清理和断点续传）
     # P1 加固：用 minio_upload_id 作为 key（与前端后续操作使用的 ID 一致），
     # session 包含 minio_upload_id，供清理任务调用 abort_multipart_upload。
+    # 使用 redis.asyncio — 同步客户端会阻塞事件循环。
     try:
-        import redis
+        import redis.asyncio as aioredis
 
-        from app.config import get_settings
-
-        settings = get_settings()
-        client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+        client = aioredis.from_url(
+            get_settings().REDIS_URL, decode_responses=True
+        )
         session = {
             "kb_id": str(kb_id),
             "title": title,
@@ -296,14 +453,16 @@ async def init_multipart_upload(
             "created_at": time.time(),
             "status": "initiated",
         }
-        client.setex(
-            f"ekb:multipart:{minio_upload_id}",
-            86400,  # 24h TTL
-            json.dumps(session, ensure_ascii=False),
-        )
-        client.close()
+        try:
+            await client.setex(
+                f"ekb:multipart:{minio_upload_id}",
+                86400,  # 24h TTL
+                json.dumps(session, ensure_ascii=False),
+            )
+        finally:
+            await client.aclose()
     except Exception:
-        logger.debug("multipart.session_redis_failed", upload_id=minio_upload_id)
+        log.debug("multipart.session_redis_failed", upload_id=minio_upload_id)
 
     return ApiResponse(
         code=0,
@@ -331,6 +490,12 @@ async def upload_part(
     if part_number < 1 or part_number > 10000:
         raise HTTPException(400, detail="part_number 必须在 1-10000 之间")
 
+    # 安全：校验上传会话归属与 object_name 绑定（防 IDOR —
+    # 阻止向他人上传会话注入分片，进而污染他人文档内容）
+    _check_multipart_session(
+        await _load_multipart_session(upload_id), user, object_name
+    )
+
     # 读取分片内容（单片 ≤ 10MB，内存安全）
     data = await file.read()
 
@@ -348,12 +513,13 @@ async def upload_part(
     except ImportError:
         raise HTTPException(503, detail="MinIO 未安装")
     except Exception:
-        logger.exception("multipart.upload_part_failed", part_number=part_number)
+        log.exception("multipart.upload_part_failed", part_number=part_number)
         raise HTTPException(500, detail=f"分片 {part_number} 上传失败")
 
 
 @router.post("/documents/multipart/{upload_id}/complete", response_model=ApiResponse[DocResponse])
 async def complete_multipart_upload(
+    request: Request,
     upload_id: str,
     payload: dict,
     db: AsyncSession = Depends(get_db_session),
@@ -381,6 +547,12 @@ async def complete_multipart_upload(
 
     if not parts or not object_name or not kb_id_str or not title:
         raise HTTPException(400, detail="缺少必要参数 parts/object_name/kb_id/title")
+
+    # 安全：校验上传会话归属与 object_name 绑定（防 IDOR —
+    # 阻止合并他人上传会话或借用自有会话写入他人命名空间）
+    _check_multipart_session(
+        await _load_multipart_session(upload_id), user, object_name
+    )
 
     # P0: 完整性校验 — 防止分片乱序、缺片、etag 不匹配导致视频损坏
     sorted_parts = sorted(parts, key=lambda p: p.get("part_number", 0))
@@ -455,7 +627,7 @@ async def complete_multipart_upload(
     except HTTPException:
         raise
     except Exception:
-        logger.warning("multipart.list_parts_check_failed", exc_info=True)
+        log.warning("multipart.list_parts_check_failed", exc_info=True)
         # list_parts 失败不阻断合并（降级），仅记录日志
 
     # 1. 调用 MinIO 合并分片
@@ -471,7 +643,7 @@ async def complete_multipart_upload(
     except ImportError:
         raise HTTPException(503, detail="MinIO 未安装")
     except Exception:
-        logger.exception("multipart.complete_failed")
+        log.exception("multipart.complete_failed")
         raise HTTPException(500, detail="合并分片失败")
 
     # 2. 创建文档记录
@@ -480,43 +652,37 @@ async def complete_multipart_upload(
     except ValueError:
         raise HTTPException(400, detail="kb_id 格式错误")
 
-    service = KnowledgeService(db, user)
-    doc = await service.upload_document(
-        kb_id=kb_id,
-        title=title,
-        content="",  # 视频文档无文本内容，由 Celery ASR 转写填充
-        doc_type=doc_type,
-    )
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = KnowledgeService(db, user, tenant_id=tenant_id)
+    try:
+        doc = await service.upload_document(
+            kb_id=kb_id,
+            title=title,
+            content="",  # 视频文档无文本内容，由 Celery ASR 转写填充
+            doc_type=doc_type,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
-    # 3. 更新 file_path 指向 MinIO 合并后的对象
+    # 3. 更新 file_path 指向 MinIO 合并后的对象（租户隔离的 Repository）
     from app.repositories.knowledge_repository import DocumentRepository
 
-    doc_repo = DocumentRepository(db)
+    doc_repo = DocumentRepository(db, tenant_id=tenant_id)
     await doc_repo.update(doc.id, file_path=file_path)
 
     # 4. 触发 Celery 异步解析（复用 P0 逻辑）
     try:
         from tasks.document_tasks import process_document
 
-        process_document.delay(str(doc.id))
-        logger.info("multipart 文档 %s 已触发 Celery 解析", doc.id)
+        process_document.delay(str(doc.id), tenant_id=str(tenant_id) if tenant_id else None)
+        log.info("multipart 文档 %s 已触发 Celery 解析", doc.id)
     except ImportError:
-        logger.warning("Celery 未安装，文档 %s 需手动触发解析", doc.id)
+        log.warning("Celery 未安装，文档 %s 需手动触发解析", doc.id)
     except Exception:
-        logger.exception("触发 Celery 解析失败，文档 %s 需手动处理", doc.id)
+        log.exception("触发 Celery 解析失败，文档 %s 需手动处理", doc.id)
 
-    # 5. 清理 Redis 会话
-    try:
-        import redis
-
-        from app.config import get_settings
-
-        settings = get_settings()
-        client = redis.from_url(settings.REDIS_URL, decode_responses=True)
-        client.delete(f"ekb:multipart:{upload_id}")
-        client.close()
-    except Exception:
-        pass
+    # 5. 清理 Redis 会话（异步客户端，不阻塞事件循环）
+    await _delete_multipart_session(upload_id)
 
     return ApiResponse(
         code=0,
@@ -540,6 +706,11 @@ async def list_uploaded_parts(
         {"parts": [{"part_number": 1, "etag": "...", "size": 10485760}, ...],
          "count": N}
     """
+    # 安全：校验上传会话归属（防 IDOR — 阻止窥探他人上传会话的分片信息）
+    _check_multipart_session(
+        await _load_multipart_session(upload_id), user, object_name
+    )
+
     try:
         from app.utils.minio_client import list_parts
 
@@ -556,7 +727,7 @@ async def list_uploaded_parts(
     except ImportError:
         raise HTTPException(503, detail="MinIO 未安装")
     except Exception:
-        logger.exception("multipart.list_parts_failed")
+        log.exception("multipart.list_parts_failed")
         raise HTTPException(500, detail="查询已上传分片失败")
 
 
@@ -570,7 +741,15 @@ async def abort_multipart_upload(
 
     用户取消上传时调用，MinIO 删除该 upload_id 下所有分片。
     幂等：重复调用或 upload_id 已失效时返回成功。
+
+    安全：会话存在且属于其他用户时拒绝（防 IDOR — 阻止恶意取消
+    他人正在进行的上传）；会话不存在时保持幂等语义返回成功。
     """
+    # 安全：仅当会话存在且归属他人时拒绝；会话缺失保持幂等
+    session = await _load_multipart_session(upload_id)
+    if session is not None:
+        _check_multipart_session(session, user, object_name)
+
     try:
         from app.utils.minio_client import abort_multipart_upload as _abort
 
@@ -582,21 +761,11 @@ async def abort_multipart_upload(
     except ImportError:
         raise HTTPException(503, detail="MinIO 未安装")
     except Exception:
-        logger.exception("multipart.abort_failed")
+        log.exception("multipart.abort_failed")
         # abort 失败不阻断用户操作，返回成功（幂等）
 
-    # 清理 Redis 会话
-    try:
-        import redis
-
-        from app.config import get_settings
-
-        settings = get_settings()
-        client = redis.from_url(settings.REDIS_URL, decode_responses=True)
-        client.delete(f"ekb:multipart:{upload_id}")
-        client.close()
-    except Exception:
-        pass
+    # 清理 Redis 会话（异步客户端，不阻塞事件循环；幂等可重复调用）
+    await _delete_multipart_session(upload_id)
 
     return ApiResponse(code=0, data={"aborted": True}, message="success")
 
@@ -625,10 +794,10 @@ async def get_document_parse_progress(
             # 无进度记录 — 可能任务尚未启动或已超时清理
             progress = {"stage": "unknown", "message": "暂无进度信息"}
     except ImportError:
-        logger.debug("document_tasks 模块未安装，无法查询解析进度")
+        log.debug("document_tasks 模块未安装，无法查询解析进度")
         progress = {"stage": "unknown", "message": "进度查询不可用"}
     except Exception:
-        logger.exception("查询文档 %s 解析进度失败", doc_id)
+        log.exception("查询文档 %s 解析进度失败", doc_id)
         progress = {"stage": "unknown", "message": "进度查询异常"}
 
     return ApiResponse(code=0, data=progress, message="success")
@@ -636,12 +805,14 @@ async def get_document_parse_progress(
 
 @router.get("/documents/{doc_id}", response_model=ApiResponse[DocResponse])
 async def get_document(
+    request: Request,
     doc_id: UUID,
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse[DocResponse]:
     """获取文档详情。"""
-    service = KnowledgeService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = KnowledgeService(db, user, tenant_id=tenant_id)
     doc = await service.get_document(doc_id)
     return ApiResponse(
         code=0,
@@ -652,6 +823,7 @@ async def get_document(
 
 @router.put("/documents/{doc_id}", response_model=ApiResponse[DocResponse])
 async def update_document(
+    request: Request,
     doc_id: UUID,
     body: DocUpdate,
     db: AsyncSession = Depends(get_db_session),
@@ -661,7 +833,8 @@ async def update_document(
 
     更新前自动保存当前内容为版本快照（用于版本回溯）。
     """
-    service = KnowledgeService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = KnowledgeService(db, user, tenant_id=tenant_id)
 
     # 获取更新前的文档（用于版本快照）
     old_doc = await service.get_document(doc_id)
@@ -709,12 +882,14 @@ async def update_document(
 
 @router.delete("/documents/{doc_id}", response_model=ApiResponse)
 async def delete_document(
+    request: Request,
     doc_id: UUID,
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse:
     """软删除文档（仅所有者或 admin 可操作）。"""
-    service = KnowledgeService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = KnowledgeService(db, user, tenant_id=tenant_id)
     doc = await service.get_document(doc_id)
 
     if doc.owner_id != user.id and user.role != "admin":
@@ -740,6 +915,7 @@ async def delete_document(
     response_model=ApiResponse[dict],
 )
 async def upload_document_image(
+    request: Request,
     doc_id: UUID,
     file: UploadFile = File(..., description="图片文件"),
     db: AsyncSession = Depends(get_db_session),
@@ -751,7 +927,8 @@ async def upload_document_image(
 
     P0: 文件大小校验 — 图片同样受 MAX_UPLOAD_SIZE_MB 限制。
     """
-    service = KnowledgeService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = KnowledgeService(db, user, tenant_id=tenant_id)
     doc = await service.get_document(doc_id)
 
     # 校验文件类型
@@ -762,10 +939,8 @@ async def upload_document_image(
             detail=f"不支持的图片类型: {file.content_type}",
         )
 
-    content_bytes = await file.read()
-
-    # P0: 图片大小校验
-    _validate_upload_size(content_bytes)
+    # P0 安全修复（内存 DoS 防护）：分块流式读取 + 累计计数，超限即拒
+    content_bytes = await _read_upload_bounded(file)
     ext_map = {
         "image/png": "png",
         "image/jpeg": "jpg",
@@ -786,10 +961,10 @@ async def upload_document_image(
             content_type=file.content_type,
         )
     except ImportError:
-        logger.debug("MinIO 客户端未安装，返回占位 URL")
+        log.debug("MinIO 客户端未安装，返回占位 URL")
         image_url = f"/uploads/{object_name}"
     except Exception:
-        logger.exception("MinIO 图片上传失败")
+        log.exception("MinIO 图片上传失败")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="图片上传失败",
@@ -812,12 +987,14 @@ async def upload_document_image(
     response_model=ApiResponse[list[DocVersionResponse]],
 )
 async def list_document_versions(
+    request: Request,
     doc_id: UUID,
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse[list[DocVersionResponse]]:
     """获取文档版本历史。"""
-    service = KnowledgeService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = KnowledgeService(db, user, tenant_id=tenant_id)
     await service.get_document(doc_id)
 
     stmt = (
@@ -840,6 +1017,7 @@ async def list_document_versions(
     response_model=ApiResponse[DocResponse],
 )
 async def restore_document_version(
+    request: Request,
     doc_id: UUID,
     ver_id: UUID,
     db: AsyncSession = Depends(get_db_session),
@@ -849,7 +1027,8 @@ async def restore_document_version(
 
     将历史版本的内容写回文档，并保存当前内容为新版本快照。
     """
-    service = KnowledgeService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = KnowledgeService(db, user, tenant_id=tenant_id)
     doc = await service.get_document(doc_id)
 
     # 查询目标版本
@@ -996,6 +1175,7 @@ def _infer_parse_status(doc: Document) -> str:
     response_model=ApiResponse[DocumentSummaryResponse],
 )
 async def get_document_summary(
+    request: Request,
     doc_id: UUID,
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
@@ -1012,7 +1192,8 @@ async def get_document_summary(
 
     用于上传后立即展示解析结果概览，提升用户感知。
     """
-    service = KnowledgeService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = KnowledgeService(db, user, tenant_id=tenant_id)
     doc = await service.get_document(doc_id)
 
     content_text = doc.content_text or ""
@@ -1089,6 +1270,7 @@ async def get_document_summary(
     status_code=201,
 )
 async def import_document_from_source(
+    request: Request,
     req: DocumentImportRequest,
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
@@ -1128,7 +1310,7 @@ async def import_document_from_source(
     try:
         fetched = await adapter.fetch(req.doc_url_or_id, req.credentials)
     except AdapterError as exc:
-        logger.warning(
+        log.warning(
             "document.import.fetch_failed",
             source=req.source,
             doc_url_or_id=req.doc_url_or_id[:100],
@@ -1145,7 +1327,7 @@ async def import_document_from_source(
             detail=f"拉取文档失败: {exc}",
         ) from exc
     except Exception as exc:
-        logger.exception(
+        log.exception(
             "document.import.unexpected_error",
             source=req.source,
         )
@@ -1166,7 +1348,8 @@ async def import_document_from_source(
     doc_type = "html" if fetched.format == "html" else "md"
 
     # 4. 创建文档记录
-    service = KnowledgeService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = KnowledgeService(db, user, tenant_id=tenant_id)
     try:
         doc = await service.upload_document(
             kb_id=req.kb_id,
@@ -1194,24 +1377,24 @@ async def import_document_from_source(
     try:
         from tasks.document_tasks import process_document
 
-        process_document.delay(str(doc.id))
-        logger.info(
+        process_document.delay(str(doc.id), tenant_id=str(tenant_id) if tenant_id else None)
+        log.info(
             "document.import.triggered_parse",
             doc_id=str(doc.id),
             source=req.source,
         )
     except ImportError:
-        logger.warning(
+        log.warning(
             "document.import.celery_unavailable",
             doc_id=str(doc.id),
         )
     except Exception:
-        logger.exception(
+        log.exception(
             "document.import.celery_error",
             doc_id=str(doc.id),
         )
 
-    logger.info(
+    log.info(
         "document.import.success",
         doc_id=str(doc.id),
         source=req.source,

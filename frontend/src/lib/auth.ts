@@ -3,7 +3,7 @@
  * 管理 JWT Token 存储和用户认证状态
  */
 
-import { get } from './api';
+import { get, ApiError } from './api';
 
 /** Token 在 localStorage 中的存储键名 */
 const TOKEN_KEY = 'ekb_access_token';
@@ -58,15 +58,23 @@ export function isAuthenticated(): boolean {
  */
 export async function getCurrentUser(): Promise<User | null> {
   if (!isAuthenticated()) {
+    console.log('[Auth] 未认证状态，无 tenant_id');
     return null;
   }
 
   try {
     const response = await get<{ data: User }>('/api/v1/auth/me');
+    console.log('[Auth] 获取用户信息成功:', { user_id: response.data.id, tenant_id: response.data.tenant_id || null, role: response.data.role });
     return response.data;
-  } catch {
-    // Token 无效或请求失败，清除 Token
-    removeToken();
+  } catch (err) {
+    // 仅 401（Token 过期/无效）才清除登录状态；
+    // 网络抖动、5xx 等临时故障保留 Token，避免用户被误登出
+    if (err instanceof ApiError && err.status === 401) {
+      console.warn('[Auth] Token 已过期或无效，清除登录状态');
+      removeToken();
+    } else {
+      console.warn('[Auth] 获取用户信息失败（网络或服务异常），保留登录状态:', err instanceof Error ? err.message : String(err));
+    }
     return null;
   }
 }

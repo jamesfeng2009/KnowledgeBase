@@ -85,6 +85,32 @@ export function renderMarkdown(text: string): string {
 }
 
 /**
+ * 对已有 HTML（如协同编辑器产出的富文本）做 XSS 白名单过滤
+ * 用于文档详情等直接渲染服务端 HTML 的场景，防止存储型 XSS
+ * @param html - 未受信任的 HTML 字符串
+ * @returns 安全的 HTML 字符串
+ */
+export function sanitizeHtml(html: string): string {
+  if (!html) return '';
+  return DOMPurify.sanitize(html, SANITIZE_CONFIG);
+}
+
+/**
+ * HTML 转义（含双引号/单引号），可安全用于标签内容与属性上下文（如 title="..."）
+ * 用于把未受信任的文本插入 innerHTML 模板字符串前做转义，防止 XSS 注入
+ * @param s - 未受信任的原始文本
+ * @returns 转义后的安全字符串
+ */
+export function escapeHtml(s: string): string {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
  * 将引用标注 [1] [2] ... 替换为可点击的徽章 span
  * 仅替换正文中的引用，跳过 <pre>/<code> 代码块内的内容
  */

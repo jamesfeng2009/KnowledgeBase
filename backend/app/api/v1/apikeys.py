@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db_session
@@ -35,11 +35,13 @@ router = APIRouter(tags=["API 密钥管理"])
 
 @router.get("/apikeys", response_model=ApiResponse[list[ApiKeyResponse]])
 async def list_api_keys(
+    request: Request,
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse[list[ApiKeyResponse]]:
     """获取 API 密钥列表（不含明文密钥）。"""
-    service = ApiKeyService(db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = ApiKeyService(db, tenant_id=tenant_id)
     keys = await service.list_keys()
 
     return ApiResponse(
@@ -66,6 +68,7 @@ async def list_api_keys(
     status_code=201,
 )
 async def create_api_key(
+    request: Request,
     body: ApiKeyCreate,
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
@@ -74,7 +77,8 @@ async def create_api_key(
 
     创建后请妥善保存密钥，后续无法再次获取明文。
     """
-    service = ApiKeyService(db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = ApiKeyService(db, tenant_id=tenant_id)
     api_key, plaintext = await service.create_key(
         name=body.name,
         scopes=body.scopes,
@@ -97,12 +101,14 @@ async def create_api_key(
 
 @router.delete("/apikeys/{key_id}", response_model=ApiResponse)
 async def revoke_api_key(
+    request: Request,
     key_id: UUID,
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse:
     """停用 API 密钥（软停用，不物理删除）。"""
-    service = ApiKeyService(db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = ApiKeyService(db, tenant_id=tenant_id)
     result = await service.revoke_key(key_id)
     if not result:
         raise HTTPException(

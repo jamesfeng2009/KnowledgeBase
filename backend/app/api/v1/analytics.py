@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Body, Depends, Query
+from fastapi import APIRouter, Body, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db_session
@@ -28,6 +28,7 @@ router = APIRouter(prefix="/analytics", tags=["analytics"])
 
 @router.get("/dashboard")
 async def get_dashboard(
+    request: Request,
     days: int = Query(30, ge=1, le=365, description="统计周期（天）"),
     user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db_session),
@@ -36,13 +37,15 @@ async def get_dashboard(
 
     所有登录用户可查看；空数据时返回默认值。
     """
-    service = AnalyticsService(db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = AnalyticsService(db, tenant_id=tenant_id)
     data = await service.get_dashboard(days)
     return ApiResponse(code=0, data=data, message="success")
 
 
 @router.get("/search-hotwords")
 async def get_search_hotwords(
+    request: Request,
     days: int = Query(30, ge=1, le=365),
     top_k: int = Query(20, ge=1, le=100),
     user: User = Depends(require_module("analytics_dashboard")),
@@ -52,13 +55,15 @@ async def get_search_hotwords(
     if user.role not in ("admin", "kb_admin"):
         return ApiResponse(code=403, data=None, message="需要管理员权限")
 
-    service = AnalyticsService(db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = AnalyticsService(db, tenant_id=tenant_id)
     data = await service.get_search_hotwords(days, top_k)
     return ApiResponse(code=0, data=data, message="success")
 
 
 @router.get("/zero-click")
 async def get_zero_click_queries(
+    request: Request,
     days: int = Query(30, ge=1, le=365),
     top_k: int = Query(20, ge=1, le=100),
     user: User = Depends(require_module("analytics_dashboard")),
@@ -68,13 +73,15 @@ async def get_zero_click_queries(
     if user.role not in ("admin", "kb_admin"):
         return ApiResponse(code=403, data=None, message="需要管理员权限")
 
-    service = AnalyticsService(db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = AnalyticsService(db, tenant_id=tenant_id)
     data = await service.get_zero_click_queries(days, top_k)
     return ApiResponse(code=0, data=data, message="success")
 
 
 @router.get("/popular-docs")
 async def get_popular_documents(
+    request: Request,
     days: int = Query(30, ge=1, le=365),
     top_k: int = Query(10, ge=1, le=50),
     user: User = Depends(require_module("analytics_dashboard")),
@@ -84,13 +91,15 @@ async def get_popular_documents(
     if user.role not in ("admin", "kb_admin"):
         return ApiResponse(code=403, data=None, message="需要管理员权限")
 
-    service = AnalyticsService(db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = AnalyticsService(db, tenant_id=tenant_id)
     data = await service.get_popular_documents(days, top_k)
     return ApiResponse(code=0, data=data, message="success")
 
 
 @router.get("/coverage")
 async def get_knowledge_coverage(
+    request: Request,
     user: User = Depends(require_module("analytics_dashboard")),
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse:
@@ -98,13 +107,15 @@ async def get_knowledge_coverage(
     if user.role not in ("admin", "kb_admin"):
         return ApiResponse(code=403, data=None, message="需要管理员权限")
 
-    service = AnalyticsService(db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = AnalyticsService(db, tenant_id=tenant_id)
     data = await service.get_knowledge_coverage()
     return ApiResponse(code=0, data=data, message="success")
 
 
 @router.get("/freshness")
 async def get_knowledge_freshness(
+    request: Request,
     user: User = Depends(require_module("analytics_dashboard")),
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse:
@@ -112,13 +123,15 @@ async def get_knowledge_freshness(
     if user.role not in ("admin", "kb_admin"):
         return ApiResponse(code=403, data=None, message="需要管理员权限")
 
-    service = AnalyticsService(db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = AnalyticsService(db, tenant_id=tenant_id)
     data = await service.get_knowledge_freshness()
     return ApiResponse(code=0, data=data, message="success")
 
 
 @router.get("/contributors")
 async def get_top_contributors(
+    request: Request,
     days: int = Query(30, ge=1, le=365),
     top_k: int = Query(10, ge=1, le=50),
     user: User = Depends(require_module("analytics_dashboard")),
@@ -128,13 +141,15 @@ async def get_top_contributors(
     if user.role not in ("admin", "kb_admin"):
         return ApiResponse(code=403, data=None, message="需要管理员权限")
 
-    service = AnalyticsService(db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = AnalyticsService(db, tenant_id=tenant_id)
     data = await service.get_top_contributors(days, top_k)
     return ApiResponse(code=0, data=data, message="success")
 
 
 @router.post("/log-search")
 async def log_search(
+    request: Request,
     query: str = Body(..., embed=True),
     result_count: int = Body(0, embed=True),
     source: str = Body("knowledge_base", embed=True),
@@ -145,7 +160,8 @@ async def log_search(
 
     前端每次搜索时调用此端点记录行为日志。
     """
-    service = AnalyticsService(db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = AnalyticsService(db, tenant_id=tenant_id)
     await service.log_search(
         query=query,
         user_id=str(user.id),

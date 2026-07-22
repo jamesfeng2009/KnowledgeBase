@@ -15,12 +15,12 @@
 """
 from __future__ import annotations
 
-import json
 from typing import Any
 from uuid import UUID
 
 from app.config import get_settings
 from app.utils.logger import get_logger
+from app.utils.tenant import apply_tenant_filter
 
 logger = get_logger(__name__)
 settings = get_settings()
@@ -63,12 +63,13 @@ class GraphService:
     #: 推荐缓存 TTL（秒）— 5 分钟，平衡新鲜度与命中率。
     _RECOMMEND_TTL: int = 300
 
-    def __init__(self) -> None:
+    def __init__(self, tenant_id: UUID | None = None) -> None:
         self._driver = None
         self._initialized = False
         # Redis 懒初始化（关联推荐缓存用）
         self._redis = None
         self._redis_available: bool | None = None
+        self._tenant_id = tenant_id
 
     async def _ensure_connected(self) -> bool:
         """延迟初始化 Neo4j 连接。"""
@@ -482,9 +483,9 @@ class GraphService:
             from app.models.knowledge import Document
 
             # 获取当前文档标题
-            doc_result = await db_session.execute(
-                select(Document).where(Document.id == UUID(doc_id))
-            )
+            doc_stmt = select(Document).where(Document.id == UUID(doc_id))
+            doc_stmt = apply_tenant_filter(doc_stmt, Document, self._tenant_id)
+            doc_result = await db_session.execute(doc_stmt)
             current_doc = doc_result.scalars().first()
             if not current_doc or not current_doc.title:
                 return []
@@ -503,8 +504,6 @@ class GraphService:
                         Document.deleted_at.is_(None),
                         Document.status == "published",
                     )
-                    .order_by(Document.view_count.desc())
-                    .limit(top_k)
                 )
             else:
                 # OR ILIKE 模糊匹配
@@ -519,10 +518,10 @@ class GraphService:
                         Document.status == "published",
                         or_(*conditions) if conditions else True,
                     )
-                    .order_by(Document.view_count.desc())
-                    .limit(top_k)
                 )
 
+            stmt = apply_tenant_filter(stmt, Document, self._tenant_id)
+            stmt = stmt.order_by(Document.view_count.desc()).limit(top_k)
             result = await db_session.execute(stmt)
             docs = list(result.scalars().all())
 

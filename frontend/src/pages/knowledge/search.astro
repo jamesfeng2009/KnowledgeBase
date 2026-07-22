@@ -402,7 +402,7 @@ const breadcrumb = [{ label: '知识', href: '/knowledge' }, { label: '知识搜
   if (initKb) selectedKbIds.add(initKb);
 
   function escapeHtml(s: string): string {
-    return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
   // ===== 加载知识库筛选面板 =====

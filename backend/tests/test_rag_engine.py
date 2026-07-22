@@ -43,10 +43,11 @@ class FakeLLM:
 
 
 class FakeRetriever:
-    """Mock HybridRetriever — 返回预设候选文档。"""
+    """Mock HybridRetriever — 返回预设候选文档，记录接收到的查询。"""
 
     def __init__(self, candidates: list[dict[str, Any]] | None = None) -> None:
         self.candidates = candidates or []
+        self.search_query: str = ""
 
     async def search(
         self,
@@ -54,15 +55,17 @@ class FakeRetriever:
         kb_ids: list[str] | None = None,
         top_k: int = 20,
     ) -> list[dict[str, Any]]:
+        self.search_query = query
         return self.candidates
 
 
 class FakeReranker:
-    """Mock RerankerBase — 记录调用与接收到的文档。"""
+    """Mock RerankerBase — 记录调用与接收到的查询和文档。"""
 
     def __init__(self) -> None:
         self.called: bool = False
         self.received_docs: list[dict[str, Any]] = []
+        self.rerank_query: str = ""
 
     async def rerank(
         self,
@@ -71,6 +74,7 @@ class FakeReranker:
         top_k: int = 5,
     ) -> list[dict[str, Any]]:
         self.called = True
+        self.rerank_query = query
         self.received_docs = list(documents)
         return [
             {"index": i, "score": 0.9 - i * 0.1, "content": d.get("content", "")}
@@ -115,6 +119,7 @@ def _make_engine(
     candidates: list[dict[str, Any]] | None = None,
     permission_filter=None,
     max_iterations: int = 5,
+    query_rewriter=None,
 ) -> tuple[AgenticRAGEngine, FakeLLM, FakeRetriever, FakeReranker]:
     """构造带 Mock 组件的 RAG 引擎。"""
     llm = FakeLLM(llm_response)
@@ -130,6 +135,7 @@ def _make_engine(
         cache=None,
         permission_filter=permission_filter,
         max_iterations=max_iterations,
+        query_rewriter=query_rewriter,
     )
     return engine, llm, retriever, reranker
 
@@ -138,6 +144,7 @@ def _make_state(**overrides: Any) -> AgentState:
     """构造测试用 AgentState。"""
     state: AgentState = {
         "query": "报销流程怎么走",
+        "rewritten_query": None,
         "user_id": "user-001",
         "session_id": "session-001",
         "messages": [],

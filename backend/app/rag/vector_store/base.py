@@ -63,6 +63,7 @@ class VectorStoreBase(ABC):
         doc_id: str,
         chunks: list[Chunk],
         embeddings: list[list[float]],
+        kb_id: str | None = None,
     ) -> int:
         """批量写入（插入或更新）向量数据。
 
@@ -70,6 +71,9 @@ class VectorStoreBase(ABC):
             doc_id: 文档 ID。
             chunks: Chunk 对象列表（含元数据）。
             embeddings: 与 chunks 对应的向量嵌入列表。
+            kb_id: 文档所属知识库 ID — 写入 ``kb_id`` 字段，
+                与检索端按知识库过滤（``terms: {kb_id: ...}``）对齐；
+                缺省时回退使用 chunk 携带的 kb_id。
 
         Returns:
             成功写入的向量数量。
@@ -97,6 +101,15 @@ class VectorStoreBase(ABC):
     # ------------------------------------------------------------------
     # 公共工具方法
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _resolve_kb_id(chunk: Chunk, doc_id: str, kb_id: str | None = None) -> str:
+        """解析写入向量库的知识库 ID — 与检索端 kb_id 过滤对齐（安全）。
+
+        优先级：显式入参 ``kb_id`` > chunk 携带的 ``kb_id`` 属性 >
+        ``chunk.doc_id`` / ``doc_id``（兼容旧调用方的兜底值）。
+        """
+        return kb_id or getattr(chunk, "kb_id", None) or getattr(chunk, "doc_id", None) or doc_id
 
     @staticmethod
     def _format_result(

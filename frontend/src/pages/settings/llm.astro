@@ -549,7 +549,8 @@ const breadcrumb = [{ label: '设置', href: '/settings/tenant' }, { label: 'LLM
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 
   loadConfig();

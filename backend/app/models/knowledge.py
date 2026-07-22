@@ -64,6 +64,13 @@ class Document(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
         String(20), default="internal", comment="密级: public/internal/confidential/secret"
     )
     file_path: Mapped[str | None] = mapped_column(String(500), nullable=True, comment="原始文件路径")
+    file_size: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, comment="文件大小（字节），用于 GB 视频分流判断"
+    )
+    # P1-B: 内容哈希 — SHA-256(纯文本内容)，用于跨知识库查重和增量更新
+    content_hash: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, comment="内容 SHA-256 哈希（去重 + 增量更新）"
+    )
     yjs_update: Mapped[bytes | None] = mapped_column(nullable=True, comment="Yjs 二进制状态")
     view_count: Mapped[int] = mapped_column(Integer, default=0, comment="浏览次数")
     summary: Mapped[str | None] = mapped_column(Text, nullable=True, comment="AI 自动摘要")

@@ -19,7 +19,6 @@ Confluence storage format 使用 ac:/ri: XML 命名空间，清洗器会剥离�
 from __future__ import annotations
 
 from typing import Any
-from urllib.parse import urljoin
 
 from app.document.source_adapters.base import (
     AdapterError,

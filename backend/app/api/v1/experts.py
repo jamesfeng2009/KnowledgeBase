@@ -9,7 +9,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db_session
@@ -23,19 +23,22 @@ router = APIRouter(prefix="/experts", tags=["experts"])
 
 @router.get("")
 async def find_experts(
+    request: Request,
     q: str = Query(..., min_length=1, description="搜索关键词"),
     top_k: int = Query(5, ge=1, le=20, description="返回数量"),
     user: User = Depends(require_module("expert_discovery")),
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse:
     """按关键词查找相关专家 — 基于文档/问答/评论加权。"""
-    service = ExpertService(db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = ExpertService(db, tenant_id=tenant_id)
     experts = await service.find_experts(keyword=q, top_k=top_k)
     return ApiResponse(code=0, data=experts, message="success")
 
 
 @router.get("/top")
 async def get_top_contributors(
+    request: Request,
     days: int = Query(30, ge=1, le=365),
     top_k: int = Query(10, ge=1, le=50),
     user: User = Depends(require_module("expert_discovery")),
@@ -49,18 +52,21 @@ async def get_top_contributors(
     if user.role not in ("admin", "kb_admin"):
         return ApiResponse(code=403, data=None, message="需要管理员权限")
 
-    service = ExpertService(db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = ExpertService(db, tenant_id=tenant_id)
     data = await service.get_top_contributors(days, top_k)
     return ApiResponse(code=0, data=data, message="success")
 
 
 @router.get("/{user_id}/expertise")
 async def get_user_expertise(
+    request: Request,
     user_id: str,
     current_user: User = Depends(require_module("expert_discovery")),
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse:
     """获取用户的专业领域。"""
-    service = ExpertService(db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = ExpertService(db, tenant_id=tenant_id)
     expertise = await service.get_user_expertise(user_id)
     return ApiResponse(code=0, data=expertise, message="success")

@@ -160,20 +160,34 @@ def cleanup_orphan_multipart_uploads() -> dict[str, Any]:
 
 async def _detect_gaps_async() -> dict[str, Any]:
     """异步检测知识缺口。"""
+    from sqlalchemy import select
+
     from app.database import async_session_factory
+    from app.models.billing import Tenant
     from app.services.gap_detector_service import GapDetectorService
 
     async with async_session_factory() as session:
-        service = GapDetectorService(session)
-        gaps = await service.detect_gaps()
+        # 按租户迭代：逐租户创建带 tenant_id 的 GapDetectorService，确保多租户隔离
+        tenants_result = await session.execute(
+            select(Tenant).where(Tenant.deleted_at.is_(None))
+        )
+        tenants = list(tenants_result.scalars().all())
 
-        # 获取全部 open 缺口用于统计
-        all_gaps = await service.get_gaps()
+        total_gaps = 0
+        high_freq_gaps = 0
+        for tenant in tenants:
+            service = GapDetectorService(session, tenant_id=tenant.id)
+            gaps = await service.detect_gaps()
+
+            # 获取全部 open 缺口用于统计
+            all_gaps = await service.get_gaps()
+            high_freq_gaps += len(gaps)
+            total_gaps += len(all_gaps)
 
         return {
             "status": "success",
-            "total_gaps": len(all_gaps),
-            "high_frequency_gaps": len(gaps),
+            "total_gaps": total_gaps,
+            "high_frequency_gaps": high_freq_gaps,
             "detected_at": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -181,7 +195,9 @@ async def _detect_gaps_async() -> dict[str, Any]:
 async def _check_expiration_async() -> dict[str, Any]:
     """异步检查知识过期预警 — 调用 Graphiti 时间线。"""
     from app.database import async_session_factory
+    from app.models.billing import Tenant
     from app.models.memory import KnowledgeEntity
+    from app.utils.tenant import apply_tenant_filter
     from sqlalchemy import select
     from datetime import timedelta
 
@@ -189,34 +205,39 @@ async def _check_expiration_async() -> dict[str, Any]:
     threshold = now + timedelta(days=7)
 
     async with async_session_factory() as session:
-        # 查询即将过期（valid_to 在未来 7 天内且非 NULL）的知识实体
-        stmt = (
-            select(KnowledgeEntity)
-            .where(
-                KnowledgeEntity.valid_to.isnot(None),
-                KnowledgeEntity.valid_to <= threshold,
-                KnowledgeEntity.valid_to >= now,
-            )
+        # 按租户迭代：逐租户查询即将过期的知识实体，确保多租户隔离
+        tenants_result = await session.execute(
+            select(Tenant).where(Tenant.deleted_at.is_(None))
         )
-        result = await session.execute(stmt)
-        expiring_entities = list(result.scalars().all())
+        tenants = list(tenants_result.scalars().all())
 
-        expiring_list = [
-            {
-                "id": str(e.id),
-                "name": e.name,
-                "entity_type": e.entity_type,
-                "valid_from": e.valid_from.isoformat() if e.valid_from else None,
-                "valid_to": e.valid_to.isoformat() if e.valid_to else None,
-            }
-            for e in expiring_entities
-        ]
+        expiring_list: list[dict[str, Any]] = []
+        for tenant in tenants:
+            # 查询即将过期（valid_to 在未来 7 天内且非 NULL）的知识实体
+            stmt = (
+                select(KnowledgeEntity)
+                .where(
+                    KnowledgeEntity.valid_to.isnot(None),
+                    KnowledgeEntity.valid_to <= threshold,
+                    KnowledgeEntity.valid_to >= now,
+                )
+            )
+            stmt = apply_tenant_filter(stmt, KnowledgeEntity, tenant.id)
+            result = await session.execute(stmt)
+            for e in result.scalars().all():
+                expiring_list.append({
+                    "id": str(e.id),
+                    "name": e.name,
+                    "entity_type": e.entity_type,
+                    "valid_from": e.valid_from.isoformat() if e.valid_from else None,
+                    "valid_to": e.valid_to.isoformat() if e.valid_to else None,
+                })
 
         await session.commit()
 
         return {
             "status": "success",
-            "expiring_count": len(expiring_entities),
+            "expiring_count": len(expiring_list),
             "expiring_entities": expiring_list,
             "checked_at": now.isoformat(),
         }
@@ -225,27 +246,34 @@ async def _check_expiration_async() -> dict[str, Any]:
 async def _cleanup_expired_facts_async() -> dict[str, Any]:
     """异步清理过期的记忆事实。"""
     from app.database import async_session_factory
+    from app.models.billing import Tenant
     from app.models.memory import MemoryFact
-    from sqlalchemy import select, update
+    from app.utils.tenant import apply_tenant_filter
+    from sqlalchemy import select
     from datetime import datetime, timezone
 
     now = datetime.now(timezone.utc)
 
     async with async_session_factory() as session:
-        # 查询已过期但仍然 active 的事实
-        stmt = select(MemoryFact).where(
-            MemoryFact.expires_at.isnot(None),
-            MemoryFact.expires_at < now,
-            MemoryFact.is_active.is_(True),
+        # 按租户迭代：逐租户查询并清理过期的记忆事实，确保多租户隔离
+        tenants_result = await session.execute(
+            select(Tenant).where(Tenant.deleted_at.is_(None))
         )
-        result = await session.execute(stmt)
-        expired_facts = list(result.scalars().all())
+        tenants = list(tenants_result.scalars().all())
 
-        # 批量标记为 inactive
         cleaned_count = 0
-        for fact in expired_facts:
-            fact.is_active = False
-            cleaned_count += 1
+        for tenant in tenants:
+            # 查询已过期但仍然 active 的事实
+            stmt = select(MemoryFact).where(
+                MemoryFact.expires_at.isnot(None),
+                MemoryFact.expires_at < now,
+                MemoryFact.is_active.is_(True),
+            )
+            stmt = apply_tenant_filter(stmt, MemoryFact, tenant.id)
+            result = await session.execute(stmt)
+            for fact in result.scalars().all():
+                fact.is_active = False
+                cleaned_count += 1
 
         await session.commit()
 
@@ -258,14 +286,38 @@ async def _cleanup_expired_facts_async() -> dict[str, Any]:
 
 async def _generate_quality_report_async() -> dict[str, Any]:
     """异步生成知识质量报告。"""
+    from sqlalchemy import select
+
     from app.database import async_session_factory
+    from app.models.billing import Tenant
     from app.services.quality_service import QualityService
 
     async with async_session_factory() as session:
-        service = QualityService(session)
-        report = await service.get_quality_report(kb_id=None)
+        # 按租户迭代：逐租户创建带 tenant_id 的 QualityService，确保多租户隔离
+        tenants_result = await session.execute(
+            select(Tenant).where(Tenant.deleted_at.is_(None))
+        )
+        tenants = list(tenants_result.scalars().all())
 
-        return report
+        merged_report: dict[str, Any] = {
+            "status": "success",
+            "total_docs": 0,
+            "average_score": 0,
+            "low_quality_count": 0,
+            "tenant_reports": [],
+        }
+        total_score = 0
+        for tenant in tenants:
+            service = QualityService(session, tenant_id=tenant.id)
+            report = await service.get_quality_report(kb_id=None)
+            merged_report["total_docs"] += report.get("total_docs", 0)
+            merged_report["low_quality_count"] += report.get("low_quality_count", 0)
+            total_score += report.get("average_score", 0)
+            merged_report["tenant_reports"].append(report)
+
+        if tenants:
+            merged_report["average_score"] = total_score / len(tenants)
+        return merged_report
 
 
 async def _cleanup_orphan_multipart_uploads_async() -> dict[str, Any]:

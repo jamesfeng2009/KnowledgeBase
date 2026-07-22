@@ -59,6 +59,9 @@ export function CollabEditor({ docId, user, wsToken, wsUrl }: CollabEditorProps)
       `${wsUrl}/ws/collab`,
       docId,
       doc,
+      // 安全说明：浏览器 WebSocket 无法自定义请求头，wsToken 只能经 URL query
+      // 传递（collab-service 从 ?token= 读取）。待后端支持「POST 换取短时 ws ticket」
+      // 后改造（当前无 ticket 接口，暂保留）。
       { params: { token: wsToken } }
     );
     new IndexeddbPersistence(docId, doc);
@@ -97,7 +100,10 @@ export function CollabEditor({ docId, user, wsToken, wsUrl }: CollabEditorProps)
   // 3. 图片拖拽 / 粘贴自动上传
   useEffect(() => {
     if (!editor) return;
-    setupImageHandlers(editor, () => wsToken);
+    // setupImageHandlers 返回清理函数：effect 重跑（依赖变化 / StrictMode 双调用）
+    // 或组件卸载时先移除旧监听，确保同一 editor DOM 上只注册一次，
+    // 避免重复注册导致同一图片被重复上传
+    return setupImageHandlers(editor, () => wsToken);
   }, [editor, wsToken]);
 
   // 4. 自动保存（编辑器变化后 debounce 5 秒）

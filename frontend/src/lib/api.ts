@@ -69,12 +69,29 @@ function buildUrl(path: string, params?: Record<string, string | number | boolea
   return url.toString();
 }
 
+/** 从 JWT token 中解析 tenant_id（用于日志） */
+function logTenantContext(): void {
+  const token = getToken();
+  if (!token) return;
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    if (payload.tenant_id) {
+      console.log('[Tenant] 当前租户上下文:', { tenant_id: payload.tenant_id, user_id: payload.sub, role: payload.role });
+    }
+  } catch {
+    // Token 格式无效，忽略
+  }
+}
+
 /** 统一请求方法 */
 async function request<T = unknown>(
   path: string,
   options: RequestOptions = {}
 ): Promise<T> {
   const { method = 'GET', body, skipAuth, contentType } = options;
+
+  // 日志：打印当前租户上下文（tenant_id / user_id / role）
+  logTenantContext();
 
   const headers = buildHeaders({ ...options, skipAuth, contentType });
 
@@ -90,6 +107,17 @@ async function request<T = unknown>(
   };
 
   try {
+    // 日志：记录 API 请求（带租户上下文）
+    const token = getToken();
+    let tenantId: string | undefined;
+    if (token) {
+      try {
+        const payload = JSON.parse(atob(token.split('.')[1]));
+        tenantId = payload.tenant_id;
+      } catch { /* ignore */ }
+    }
+    console.log('[API Request]', { method, path, tenant_id: tenantId || null });
+
     const response = await fetch(buildUrl(path), config);
 
     // 401 未授权：清除 Token 并跳转登录页
@@ -105,6 +133,7 @@ async function request<T = unknown>(
     const data = await response.json().catch(() => null);
 
     if (!response.ok) {
+      console.warn('[API Error]', { method, path, status: response.status, tenant_id: tenantId || null });
       const message = (data as { message?: string })?.message || `请求失败 (${response.status})`;
       throw new ApiError(message, response.status, data);
     }

@@ -22,6 +22,7 @@ import anthropic
 from app.config import get_settings
 from app.llm.base import LLMProvider, Message, Tool, ToolUse
 from app.llm.cache_aligner import check_cache_alignment
+from app.utils.circuit_breaker import get_circuit_breaker
 from app.utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -46,6 +47,8 @@ _PASSTHROUGH_PARAMS: tuple[str, ...] = (
 class AnthropicProvider(LLMProvider):
     """Anthropic Claude Provider — SaaS 模式主力 LLM。"""
 
+    _circuit_breaker_name: str = "anthropic"
+
     def __init__(self, model: str | None = None) -> None:
         """初始化 Anthropic 异步客户端。
 
@@ -55,6 +58,7 @@ class AnthropicProvider(LLMProvider):
         """
         self.client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
         self.default_model = self._resolve_model(model or "sonnet")
+        self._cb = get_circuit_breaker(self._circuit_breaker_name)
 
     @staticmethod
     def _resolve_model(model: str) -> str:
@@ -135,33 +139,101 @@ class AnthropicProvider(LLMProvider):
 
         流式模式：先逐片段 yield 文本，流结束后再 yield 完整 tool_use 块
         （tool_use 的 input 需由 SDK 装配完毕，故延后到流结束统一输出）。
-        """
-        api_kwargs = self._build_api_kwargs(messages, tools, kwargs)
 
-        if stream:
-            async with self.client.messages.stream(**api_kwargs) as stream_resp:
-                async for text in stream_resp.text_stream:
-                    if text:
-                        yield text
-                # 流结束后取完整消息，统一输出 tool_use 块
-                final_message = await stream_resp.get_final_message()
-                for block in final_message.content:
-                    if block.type == "tool_use":
+        熔断保护：调用前检查熔断器状态，调用后记录成功/失败。
+        流式途中客户端断开（GeneratorExit / CancelledError）时，在 finally
+        中释放 half-open 探测许可，避免熔断器永久卡 HALF_OPEN。
+        """
+        from app.utils.circuit_breaker import CircuitBreakerOpenError, CircuitState
+
+        # 熔断器检查 — OPEN 状态快速失败
+        if self._cb.state == CircuitState.OPEN:
+            if self._cb._should_transition_to_half_open():
+                self._cb.state = CircuitState.HALF_OPEN
+                self._cb.half_open_calls = 0
+                log.info("circuit_breaker.transition", name=self._cb.name,
+                         from_state="open", to_state="half_open")
+            else:
+                log.warning("circuit_breaker.rejected", name=self._cb.name, state="open")
+                raise CircuitBreakerOpenError(self._cb.name, self._cb.state)
+
+        # half-open 探测许可 — 获取后必须在 finally 中记录结果或释放，
+        # 否则流式中断会泄漏许可，half_open_calls 达到上限后永久拒绝请求。
+        half_open_probe = False
+        if self._cb.state == CircuitState.HALF_OPEN:
+            if self._cb.half_open_calls >= self._cb.half_open_max_calls:
+                log.warning("circuit_breaker.rejected", name=self._cb.name, state="half_open")
+                raise CircuitBreakerOpenError(self._cb.name, self._cb.state)
+            self._cb.half_open_calls += 1
+            half_open_probe = True
+
+        import time
+        t0 = time.monotonic()
+        # 调用结果是否已记录到熔断器（成功/失败均置 True）
+        outcome_recorded = False
+
+        try:
+            api_kwargs = self._build_api_kwargs(messages, tools, kwargs)
+            log.info("llm.anthropic.chat.start", model=api_kwargs.get("model"),
+                     msg_count=len(messages), stream=stream, has_tools=bool(tools))
+
+            if stream:
+                async with self.client.messages.stream(**api_kwargs) as stream_resp:
+                    async for text in stream_resp.text_stream:
+                        if text:
+                            yield text
+                    # 流结束后取完整消息，统一输出 tool_use 块
+                    final_message = await stream_resp.get_final_message()
+                    for block in final_message.content:
+                        if block.type == "tool_use":
+                            yield ToolUse(
+                                type="tool_use",
+                                id=block.id,
+                                name=block.name,
+                                input=dict(block.input) if block.input else {},
+                            )
+            else:
+                resp = await self.client.messages.create(**api_kwargs)
+                for block in resp.content:
+                    if block.type == "text":
+                        yield block.text
+                    elif block.type == "tool_use":
                         yield ToolUse(
                             type="tool_use",
                             id=block.id,
                             name=block.name,
                             input=dict(block.input) if block.input else {},
                         )
-        else:
-            resp = await self.client.messages.create(**api_kwargs)
-            for block in resp.content:
-                if block.type == "text":
-                    yield block.text
-                elif block.type == "tool_use":
-                    yield ToolUse(
-                        type="tool_use",
-                        id=block.id,
-                        name=block.name,
-                        input=dict(block.input) if block.input else {},
-                    )
+
+            # 调用成功 — 记录到熔断器
+            elapsed_ms = round((time.monotonic() - t0) * 1000, 2)
+            log.info("llm.anthropic.chat.success", latency_ms=elapsed_ms)
+            self._cb._record_success()
+            outcome_recorded = True
+
+        except CircuitBreakerOpenError:
+            raise
+        except Exception as exc:
+            # 调用失败 — 记录到熔断器
+            elapsed_ms = round((time.monotonic() - t0) * 1000, 2)
+            log.warning("llm.anthropic.chat.error", error=str(exc), latency_ms=elapsed_ms)
+            self._cb._record_failure()
+            outcome_recorded = True
+            raise
+        finally:
+            # GeneratorExit（客户端断连）/ CancelledError（任务取消）路径：
+            # 既非成功也非失败，不记录结果；但必须释放 half-open 探测许可，
+            # 否则 half_open_calls 达到上限后熔断器永久卡 HALF_OPEN。
+            if half_open_probe and not outcome_recorded:
+                with self._cb._lock:
+                    if (
+                        self._cb.state == CircuitState.HALF_OPEN
+                        and self._cb.half_open_calls > 0
+                    ):
+                        self._cb.half_open_calls -= 1
+                        log.info(
+                            "circuit_breaker.probe_released",
+                            name=self._cb.name,
+                            half_open_calls=self._cb.half_open_calls,
+                            reason="stream_aborted",
+                        )

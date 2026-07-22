@@ -297,6 +297,24 @@ const currentPath = Astro.url.pathname;
         }
       });
 
+      /**
+       * 渲染用户头像：有 avatar 图片则用图片，否则回退为用户名首字母
+       * 顶栏触发器与下拉菜单头部共用同一逻辑；
+       * 重复调用幂等 —— replaceChildren/textContent 整体替换，不叠加子节点
+       */
+      function renderAvatar(el: HTMLElement | null, name?: string, avatarUrl?: string) {
+        if (!el) return;
+        if (avatarUrl) {
+          const img = document.createElement('img');
+          img.src = avatarUrl;
+          img.alt = name || '用户头像';
+          img.className = 'avatar-img';
+          el.replaceChildren(img);
+        } else if (name) {
+          el.textContent = name.charAt(0).toUpperCase();
+        }
+      }
+
       // 加载用户信息
       async function loadUser() {
         const token = localStorage.getItem('ekb_access_token');
@@ -323,10 +341,11 @@ const currentPath = Astro.url.pathname;
             const dropdownEmailEl = document.getElementById('user-dropdown-email');
             const dropdownAvatarEl = document.getElementById('user-dropdown-avatar');
             if (nameEl && user.name) nameEl.textContent = user.name;
-            if (avatarEl && user.name) avatarEl.textContent = user.name.charAt(0).toUpperCase();
             if (dropdownNameEl && user.name) dropdownNameEl.textContent = user.name;
             if (dropdownEmailEl && user.email) dropdownEmailEl.textContent = user.email;
-            if (dropdownAvatarEl && user.name) dropdownAvatarEl.textContent = user.name.charAt(0).toUpperCase();
+            // 顶栏与下拉菜单头像统一渲染（头像图 / 用户名首字母）
+            renderAvatar(avatarEl, user.name, user.avatar);
+            renderAvatar(dropdownAvatarEl, user.name, user.avatar);
           } else if (response.status === 401) {
             localStorage.removeItem('ekb_access_token');
             if (!window.location.pathname.startsWith('/auth/')) {
@@ -542,7 +561,7 @@ const currentPath = Astro.url.pathname;
         color: var(--danger, #ef4444);
       }
       .user-dropdown-logout:hover {
-        background: rgba(239, 68, 68, 0.08);
+        background: var(--danger-bg, rgba(239, 68, 68, 0.08));
         color: var(--danger, #ef4444);
       }
     </style>

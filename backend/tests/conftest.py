@@ -2,7 +2,7 @@
 
 提供测试基础设施：
 - 事件循环（session 级）；
-- 内存 SQLite 数据库会话（自动建表，含 PG 类型兼容 shim）；
+- PostgreSQL 数据库会话（自动建表）；
 - 模拟已认证用户。
 """
 import asyncio
@@ -20,35 +20,17 @@ sys.path.insert(0, str(backend_root))
 
 # 测试环境变量 — 在导入 app 模块前设置
 os.environ.setdefault("DEPLOY_MODE", "saas")
-os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///test.db")
-os.environ.setdefault("REDIS_URL", "redis://localhost:6379/15")
+os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://ekb:ekb@localhost:15432/ekb")
+os.environ.setdefault("REDIS_URL", "redis://localhost:16379/15")
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only")
+# dummy API key — 避免 Provider 构造时报错（实际调用在测试中 mock）
+os.environ.setdefault("OPENAI_API_KEY", "test-dummy-key")
+os.environ.setdefault("ANTHROPIC_API_KEY", "test-dummy-key")
 
 
-# ------------------------------------------------------------------
-# PostgreSQL 类型 → SQLite 兼容 shim
-# ORM 模型使用了 JSONB / ARRAY（PostgreSQL 专有类型），
-# 在 SQLite 内存库建表时需编译为 SQLite 可识别的类型。
-# ------------------------------------------------------------------
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB  # noqa: E402
-from sqlalchemy.ext.compiler import compiles  # noqa: E402
-
-
-@compiles(JSONB, "sqlite")
-def _compile_jsonb_sqlite(element, compiler, **kw):  # type: ignore[no-untyped-def]
-    """将 JSONB 编译为 SQLite 的 JSON 类型。"""
-    return compiler.visit_JSON(element, **kw)
-
-
-@compiles(ARRAY, "sqlite")
-def _compile_array_sqlite(element, compiler, **kw):  # type: ignore[no-untyped-def]
-    """将 ARRAY 编译为 SQLite 的 JSON 类型（以 JSON 数组存储）。"""
-    return compiler.visit_JSON(element, **kw)
-
-
-@pytest.fixture(scope="session")
+@pytest.fixture
 def event_loop():
-    """创建 session 级事件循环。"""
+    """创建函数级事件循环 — asyncpg 连接绑定到事件循环，必须每个测试独立。"""
     loop = asyncio.new_event_loop()
     yield loop
     loop.close()
@@ -56,10 +38,9 @@ def event_loop():
 
 @pytest_asyncio.fixture
 async def db_session():
-    """创建测试用数据库会话（内存 SQLite）。
+    """创建测试用数据库会话（PostgreSQL）。
 
-    自动创建所有表（通过 PG→SQLite 类型 shim 兼容 JSONB/ARRAY），
-    测试结束后销毁引擎，保证测试隔离。
+    自动创建所有表，测试结束后销毁引擎，保证测试隔离。
     """
     from sqlalchemy.ext.asyncio import (
         AsyncSession,
@@ -69,8 +50,11 @@ async def db_session():
 
     from app.models.base import Base
 
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    engine = create_async_engine(os.environ["DATABASE_URL"], echo=False)
     async with engine.begin() as conn:
+        # 先 drop 再 create — 确保表结构与当前 model 定义一致
+        # （PostgreSQL 的 create_all 不会 ALTER 已存在的表）
+        await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
 
     session_factory = async_sessionmaker(

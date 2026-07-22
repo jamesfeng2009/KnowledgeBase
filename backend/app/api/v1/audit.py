@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -45,12 +45,14 @@ class AuditCommentBody(BaseModel):
 
 @router.post("", response_model=ApiResponse[AuditFlowResponse], status_code=201)
 async def submit_for_review(
+    request: Request,
     body: AuditSubmitBody,
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse[AuditFlowResponse]:
     """提交资源审核。"""
-    service = AuditService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = AuditService(db, user, tenant_id=tenant_id)
     audit = await service.submit_for_review(
         resource_type=body.resource_type.value,
         resource_id=body.resource_id,
@@ -68,13 +70,15 @@ async def submit_for_review(
     response_model=ApiResponse[PageResponse[AuditFlowResponse]],
 )
 async def list_pending(
+    request: Request,
     page: int = Query(default=1, ge=1, description="页码"),
     size: int = Query(default=20, ge=1, le=100, description="每页数量"),
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse[PageResponse[AuditFlowResponse]]:
     """分页查询待审核列表（按优先级降序 + 创建时间升序）。"""
-    service = AuditService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = AuditService(db, user, tenant_id=tenant_id)
     result = await service.list_pending(page=page, size=size)
     return ApiResponse(
         code=0,
@@ -94,13 +98,15 @@ async def list_pending(
     response_model=ApiResponse[AuditFlowResponse],
 )
 async def approve_audit(
+    request: Request,
     audit_id: UUID,
     body: AuditCommentBody,
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse[AuditFlowResponse]:
     """通过审核。"""
-    service = AuditService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = AuditService(db, user, tenant_id=tenant_id)
     audit = await service.approve(audit_id, comment=body.comment)
     return ApiResponse(
         code=0,
@@ -114,13 +120,15 @@ async def approve_audit(
     response_model=ApiResponse[AuditFlowResponse],
 )
 async def reject_audit(
+    request: Request,
     audit_id: UUID,
     body: AuditCommentBody,
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse[AuditFlowResponse]:
     """驳回审核。"""
-    service = AuditService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = AuditService(db, user, tenant_id=tenant_id)
     audit = await service.reject(audit_id, comment=body.comment)
     return ApiResponse(
         code=0,

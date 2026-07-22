@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
-from typing import Any
 
 from app.agents.base import AgentState, BaseAgent
 from app.utils.logger import get_logger

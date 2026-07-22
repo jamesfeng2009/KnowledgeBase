@@ -29,8 +29,8 @@ from app.repositories.base import BaseRepository
 class TenantRepository(BaseRepository[Tenant]):
     """租户仓储 — 封装租户表的领域查询。"""
 
-    def __init__(self, session: AsyncSession) -> None:
-        super().__init__(Tenant, session)
+    def __init__(self, session: AsyncSession, tenant_id: UUID | None = None) -> None:
+        super().__init__(Tenant, session, tenant_id=tenant_id)
 
     async def get_by_domain(self, domain: str) -> Tenant | None:
         """根据域名查询租户（排除已软删除）。
@@ -51,8 +51,8 @@ class UsageRecordRepository(BaseRepository[UsageRecord]):
     UsageRecord 模型不支持软删除，所有查询不包含 deleted_at 过滤。
     """
 
-    def __init__(self, session: AsyncSession) -> None:
-        super().__init__(UsageRecord, session)
+    def __init__(self, session: AsyncSession, tenant_id: UUID | None = None) -> None:
+        super().__init__(UsageRecord, session, tenant_id=tenant_id)
 
     async def get_by_tenant(
         self,
@@ -68,6 +68,10 @@ class UsageRecordRepository(BaseRepository[UsageRecord]):
             end_date: 结束时间（不包含，<）。
 
         时间范围使用 [start_date, end_date) 半开区间，避免跨日统计重复。
+
+        租户隔离说明：本方法已通过显式参数 ``tenant_id`` 过滤
+        （UsageRecord.tenant_id == tenant_id），无需再追加 _apply_all_filters，
+        避免与 self._tenant_id 重复过滤。
         """
         stmt = (
             select(UsageRecord)
@@ -86,6 +90,10 @@ class UsageRecordRepository(BaseRepository[UsageRecord]):
 
         对 cost_cents 字段求和。若无用量记录，返回 0。
         返回 int 类型（分），由上层转换为元展示。
+
+        租户隔离说明：本方法已通过显式参数 ``tenant_id`` 过滤
+        （UsageRecord.tenant_id == tenant_id），无需再追加 _apply_all_filters，
+        避免与 self._tenant_id 重复过滤。
         """
         stmt = select(func.sum(UsageRecord.cost_cents)).where(
             UsageRecord.tenant_id == tenant_id,

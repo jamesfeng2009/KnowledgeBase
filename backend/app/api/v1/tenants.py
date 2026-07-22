@@ -17,8 +17,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
-from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, HTTPException, status
 from sqlalchemy import func, select
@@ -26,8 +24,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db_session
 from app.deps import get_current_active_user
-from app.models.billing import Tenant, UsageRecord
-from app.models.knowledge import Document, KnowledgeBase
+from app.models.billing import Tenant
+from app.models.knowledge import Document
 from app.models.user import User
 from app.schemas.common import ApiResponse
 from app.schemas.settings import TenantConfig, TenantConfigUpdate, TenantUsage

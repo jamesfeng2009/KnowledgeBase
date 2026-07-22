@@ -6,11 +6,14 @@
 
 遵循依赖倒置：路由通过 ``Depends(get_current_active_user)`` 获取当前用户，
 不直接解析 JWT 或查询数据库。
+
+多租户隔离：require_module 从 request.state.tenant_id 获取租户 ID，
+正确传入 TenantService 进行模块门控。
 """
 
 from __future__ import annotations
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -108,14 +111,17 @@ def require_module(module_name: str):
     """
 
     async def _check_module(
+        request: Request,
         user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db_session),
     ) -> User:
         # 延迟导入避免循环依赖
         from app.services.tenant_service import TenantService
 
+        # 从中间件注入的 request.state 获取租户 ID
+        tenant_id = getattr(request.state, "tenant_id", None)
         service = TenantService(db)
-        if not await service.is_module_enabled(module_name):
+        if not await service.is_module_enabled(module_name, tenant_id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"当前套餐未包含「{module_name}」功能",
@@ -123,3 +129,27 @@ def require_module(module_name: str):
         return user
 
     return _check_module
+
+
+# ------------------------------------------------------------------
+# 租户上下文依赖 — 从 request.state 获取 tenant_id
+# ------------------------------------------------------------------
+
+
+def get_tenant_id(request: Request) -> "object | None":
+    """从 request.state 获取当前请求的租户 ID。
+
+    由 TenantContextMiddleware 注入，无 JWT 或无 tenant_id 时返回 None
+    （单租户兜底场景）。
+
+    使用方式::
+
+        @router.get("/items")
+        async def list_items(
+            tenant_id: UUID | None = Depends(get_tenant_id),
+            db: AsyncSession = Depends(get_db_session),
+        ):
+            service = MyService(db, tenant_id=tenant_id)
+            ...
+    """
+    return getattr(request.state, "tenant_id", None)

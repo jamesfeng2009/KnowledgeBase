@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db_session
@@ -34,6 +34,7 @@ router = APIRouter(tags=["搜索"])
 
 @router.get("/search", response_model=ApiResponse[SearchResponse])
 async def search(
+    request: Request,
     q: str = Query(..., min_length=1, max_length=1000, description="查询词"),
     kb_ids: str | None = Query(
         default=None,
@@ -65,7 +66,8 @@ async def search(
                 detail="kb_ids 参数格式错误，应为逗号分隔的 UUID",
             )
 
-    service = SearchService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = SearchService(db, user, tenant_id=tenant_id)
     result = await service.search(
         query=q,
         kb_ids=parsed_kb_ids,
@@ -87,6 +89,7 @@ async def search(
 
 @router.get("/search/suggest", response_model=ApiResponse[list[SearchSuggestion]])
 async def search_suggest(
+    request: Request,
     q: str = Query(..., min_length=1, max_length=200, description="输入文本"),
     limit: int = Query(default=10, ge=1, le=50, description="返回建议数量"),
     db: AsyncSession = Depends(get_db_session),
@@ -96,7 +99,8 @@ async def search_suggest(
 
     基于文档标题前缀匹配，返回用户可能想搜索的完整词。
     """
-    service = SearchService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = SearchService(db, user, tenant_id=tenant_id)
     suggestions = await service.suggest(q, limit=limit)
 
     return ApiResponse(
@@ -108,6 +112,7 @@ async def search_suggest(
 
 @router.post("/search/reindex", response_model=ApiResponse[ReindexResponse])
 async def reindex(
+    request: Request,
     body: ReindexRequest,
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
@@ -122,7 +127,8 @@ async def reindex(
             detail="仅管理员可重建索引",
         )
 
-    service = SearchService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = SearchService(db, user, tenant_id=tenant_id)
     task_id = await service.reindex(kb_ids=body.kb_ids, force=body.force)
 
     return ApiResponse(
@@ -138,6 +144,7 @@ async def reindex(
 
 @router.get("/search/unified")
 async def unified_search(
+    request: Request,
     q: str = Query(..., min_length=1, max_length=1000, description="查询词"),
     sources: str | None = Query(
         default=None,
@@ -158,7 +165,8 @@ async def unified_search(
 
     外部系统搜索结果依赖连接器是否已启用。
     """
-    service = SearchService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = SearchService(db, user, tenant_id=tenant_id)
     parsed_sources = None
     if sources:
         parsed_sources = [s.strip() for s in sources.split(",") if s.strip()]

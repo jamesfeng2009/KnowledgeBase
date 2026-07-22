@@ -13,9 +13,8 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any
 
-from app.document.base import DocumentParser, ParsedSection
+from app.document.base import DocumentParser
 from app.utils.logger import get_logger
 
 log = get_logger(__name__)

@@ -13,7 +13,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,13 +29,15 @@ router = APIRouter(prefix="/notifications", tags=["notifications"])
 
 @router.get("")
 async def get_notifications(
+    request: Request,
     unread_only: bool = Query(False, description="仅返回未读"),
     limit: int = Query(20, ge=1, le=100),
     user: User = Depends(require_module("knowledge_push")),
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse:
     """获取当前用户的通知列表。"""
-    service = NotificationService(db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = NotificationService(db, tenant_id=tenant_id)
     notifications = await service.get_user_notifications(
         user_id=str(user.id),
         unread_only=unread_only,
@@ -46,11 +48,13 @@ async def get_notifications(
 
 @router.get("/unread-count")
 async def get_unread_count(
+    request: Request,
     user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse:
     """获取未读通知数量。所有登录用户可查看。"""
-    service = NotificationService(db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = NotificationService(db, tenant_id=tenant_id)
     notifications = await service.get_user_notifications(
         user_id=str(user.id),
         unread_only=True,
@@ -81,12 +85,14 @@ async def notification_stream(
 
 @router.put("/{notification_id}/read")
 async def mark_read(
+    request: Request,
     notification_id: str,
     user: User = Depends(require_module("knowledge_push")),
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse:
     """标记单条通知为已读。"""
-    service = NotificationService(db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = NotificationService(db, tenant_id=tenant_id)
     success = await service.mark_as_read(notification_id)
     if not success:
         return ApiResponse(code=404, data=None, message="通知不存在")
@@ -96,11 +102,13 @@ async def mark_read(
 
 @router.put("/read-all")
 async def mark_all_read(
+    request: Request,
     user: User = Depends(require_module("knowledge_push")),
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse:
     """标记当前用户所有通知为已读。"""
-    service = NotificationService(db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = NotificationService(db, tenant_id=tenant_id)
     count = await service.mark_all_read(str(user.id))
     await db.commit()
     return ApiResponse(code=0, data={"updated": count}, message="success")
@@ -108,6 +116,7 @@ async def mark_all_read(
 
 @router.post("/trigger-digest")
 async def trigger_digest(
+    request: Request,
     user: User = Depends(require_module("knowledge_push")),
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse:
@@ -115,7 +124,8 @@ async def trigger_digest(
     if user.role not in ("admin", "kb_admin"):
         return ApiResponse(code=403, data=None, message="需要管理员权限")
 
-    service = NotificationService(db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = NotificationService(db, tenant_id=tenant_id)
     recommendations = await service.generate_personal_digest(str(user.id))
     await db.commit()
     return ApiResponse(
@@ -127,6 +137,7 @@ async def trigger_digest(
 
 @router.post("/trigger-gap-alert")
 async def trigger_gap_alert(
+    request: Request,
     user: User = Depends(require_module("knowledge_push")),
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse:
@@ -134,7 +145,8 @@ async def trigger_gap_alert(
     if user.role not in ("admin", "kb_admin"):
         return ApiResponse(code=403, data=None, message="需要管理员权限")
 
-    service = NotificationService(db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = NotificationService(db, tenant_id=tenant_id)
     notified = await service.send_gap_alert()
     await db.commit()
     return ApiResponse(

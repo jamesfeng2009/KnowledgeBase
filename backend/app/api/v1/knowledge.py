@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db_session
@@ -36,13 +36,15 @@ router = APIRouter(tags=["知识库管理"])
 
 @router.get("/knowledge", response_model=ApiResponse[PageResponse[KbResponse]])
 async def list_knowledge_bases(
+    request: Request,
     page: int = Query(default=1, ge=1, description="页码"),
     size: int = Query(default=20, ge=1, le=100, description="每页数量"),
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse[PageResponse[KbResponse]]:
     """分页查询当前用户可访问的知识库列表。"""
-    service = KnowledgeService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = KnowledgeService(db, user, tenant_id=tenant_id)
     result = await service.list_kbs(page=page, size=size)
     return ApiResponse(
         code=0,
@@ -59,12 +61,14 @@ async def list_knowledge_bases(
 
 @router.post("/knowledge", response_model=ApiResponse[KbResponse], status_code=201)
 async def create_knowledge_base(
+    request: Request,
     body: KbCreate,
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse[KbResponse]:
     """创建知识库，当前用户自动成为所有者。"""
-    service = KnowledgeService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = KnowledgeService(db, user, tenant_id=tenant_id)
     kb = await service.create_kb(
         name=body.name,
         description=body.description,
@@ -79,12 +83,14 @@ async def create_knowledge_base(
 
 @router.get("/knowledge/{kb_id}", response_model=ApiResponse[KbResponse])
 async def get_knowledge_base(
+    request: Request,
     kb_id: UUID,
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse[KbResponse]:
     """获取知识库详情。"""
-    service = KnowledgeService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = KnowledgeService(db, user, tenant_id=tenant_id)
     kb = await service.get_kb(kb_id)
     return ApiResponse(
         code=0,
@@ -95,13 +101,15 @@ async def get_knowledge_base(
 
 @router.put("/knowledge/{kb_id}", response_model=ApiResponse[KbResponse])
 async def update_knowledge_base(
+    request: Request,
     kb_id: UUID,
     body: KbUpdate,
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse[KbResponse]:
     """更新知识库信息（仅所有者或 admin）。"""
-    service = KnowledgeService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = KnowledgeService(db, user, tenant_id=tenant_id)
     update_fields = body.model_dump(exclude_unset=True)
     kb = await service.update_kb(kb_id, **update_fields)
     return ApiResponse(
@@ -113,12 +121,14 @@ async def update_knowledge_base(
 
 @router.delete("/knowledge/{kb_id}", response_model=ApiResponse)
 async def delete_knowledge_base(
+    request: Request,
     kb_id: UUID,
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse:
     """软删除知识库（仅所有者或 admin）。"""
-    service = KnowledgeService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = KnowledgeService(db, user, tenant_id=tenant_id)
     await service.delete_kb(kb_id)
     return ApiResponse(code=0, message="success")
 
@@ -133,6 +143,7 @@ async def delete_knowledge_base(
     response_model=ApiResponse[PageResponse[DocResponse]],
 )
 async def list_documents(
+    request: Request,
     kb_id: UUID,
     page: int = Query(default=1, ge=1, description="页码"),
     size: int = Query(default=20, ge=1, le=100, description="每页数量"),
@@ -140,7 +151,8 @@ async def list_documents(
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse[PageResponse[DocResponse]]:
     """分页查询指定知识库下的文档列表。"""
-    service = KnowledgeService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = KnowledgeService(db, user, tenant_id=tenant_id)
     result = await service.list_documents(kb_id=kb_id, page=page, size=size)
     return ApiResponse(
         code=0,
@@ -161,13 +173,15 @@ async def list_documents(
     status_code=201,
 )
 async def upload_document(
+    request: Request,
     kb_id: UUID,
     body: DocCreate,
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse[DocResponse]:
     """向知识库上传/新建文档。"""
-    service = KnowledgeService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = KnowledgeService(db, user, tenant_id=tenant_id)
     doc = await service.upload_document(
         kb_id=kb_id,
         title=body.title,
@@ -183,12 +197,14 @@ async def upload_document(
 
 @router.get("/documents/{doc_id}", response_model=ApiResponse[DocResponse])
 async def get_document(
+    request: Request,
     doc_id: UUID,
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse[DocResponse]:
     """获取文档详情。"""
-    service = KnowledgeService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = KnowledgeService(db, user, tenant_id=tenant_id)
     doc = await service.get_document(doc_id)
     return ApiResponse(
         code=0,
@@ -199,13 +215,15 @@ async def get_document(
 
 @router.put("/documents/{doc_id}", response_model=ApiResponse[DocResponse])
 async def update_document(
+    request: Request,
     doc_id: UUID,
     body: DocUpdate,
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse[DocResponse]:
     """更新文档内容（支持协同编辑场景）。"""
-    service = KnowledgeService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = KnowledgeService(db, user, tenant_id=tenant_id)
     doc = await service.update_document(
         doc_id,
         content_html=body.content_html,

@@ -13,6 +13,7 @@ BaseRepository 的查询方法自动过滤 deleted_at IS NULL。
 from __future__ import annotations
 
 import uuid
+from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,16 +41,20 @@ class AuditService:
         approved = await service.approve(audit_id, "内容合规，通过")
     """
 
-    def __init__(self, db: AsyncSession, user: User) -> None:
+    def __init__(
+        self, db: AsyncSession, user: User, tenant_id: UUID | None = None
+    ) -> None:
         """初始化审核服务。
 
         Args:
             db: 异步数据库会话，事务由 ``get_db_session`` 依赖统一管理。
             user: 当前操作用户，用于填充 submitter_id / reviewer_id 和审计日志。
+            tenant_id: 租户 ID，用于多租户数据隔离。
         """
         self._db = db
         self._user = user
-        self._repo = BaseRepository(AuditFlow, db)
+        self._tenant_id = tenant_id
+        self._repo = BaseRepository(AuditFlow, db, tenant_id=tenant_id)
 
     async def submit_for_review(
         self,
@@ -72,6 +77,7 @@ class AuditService:
             resource_id=resource_id,
             submitter_id=self._user.id,
             priority=priority,
+            tenant_id=self._tenant_id,
         )
         log.info(
             "audit.submitted",
@@ -110,6 +116,9 @@ class AuditService:
                 AuditFlow.created_at.asc(),
             )
         )
+        # 多租户隔离：tenant_id 非 None 时仅返回当前租户的审核记录
+        if self._tenant_id is not None:
+            stmt = stmt.where(AuditFlow.tenant_id == self._tenant_id)
         params = PaginationParams(page=page, size=size)
         return await paginate(stmt, params, self._db)
 

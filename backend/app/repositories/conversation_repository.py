@@ -28,8 +28,8 @@ from app.repositories.base import BaseRepository
 class ConversationRepository(BaseRepository[Conversation]):
     """对话仓储 — 封装对话表的领域查询。"""
 
-    def __init__(self, session: AsyncSession) -> None:
-        super().__init__(Conversation, session)
+    def __init__(self, session: AsyncSession, tenant_id: UUID | None = None) -> None:
+        super().__init__(Conversation, session, tenant_id=tenant_id)
 
     async def get_by_user(self, user_id: UUID) -> list[Conversation]:
         """查询某用户的所有对话（排除已软删除，按创建时间倒序）。"""
@@ -39,8 +39,9 @@ class ConversationRepository(BaseRepository[Conversation]):
                 Conversation.user_id == user_id,
                 Conversation.deleted_at.is_(None),
             )
-            .order_by(Conversation.created_at.desc())
         )
+        stmt = self._apply_all_filters(stmt)
+        stmt = stmt.order_by(Conversation.created_at.desc())
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
@@ -59,6 +60,7 @@ class ConversationRepository(BaseRepository[Conversation]):
                 Conversation.deleted_at.is_(None),
             )
         )
+        stmt = self._apply_all_filters(stmt)
         result = await self.session.execute(stmt)
         return result.scalars().first()
 
@@ -69,8 +71,8 @@ class MessageRepository(BaseRepository[Message]):
     Message 模型不支持软删除，所有查询不包含 deleted_at 过滤。
     """
 
-    def __init__(self, session: AsyncSession) -> None:
-        super().__init__(Message, session)
+    def __init__(self, session: AsyncSession, tenant_id: UUID | None = None) -> None:
+        super().__init__(Message, session, tenant_id=tenant_id)
 
     async def get_by_conversation(
         self, conv_id: UUID, limit: int | None = None
@@ -89,17 +91,20 @@ class MessageRepository(BaseRepository[Message]):
         )
         if limit is not None and limit > 0:
             # 截断最近 N 条：子查询按倒序取 limit 条，外层再正序排列
-            sub = (
+            sub_stmt = (
                 select(Message.id)
                 .where(Message.conversation_id == conv_id)
                 .order_by(Message.created_at.desc())
                 .limit(limit)
-            ).subquery()
+            )
+            sub_stmt = self._apply_all_filters(sub_stmt)
+            sub = sub_stmt.subquery()
             stmt = (
                 select(Message)
                 .where(Message.id.in_(select(sub.c.id)))
                 .order_by(Message.created_at.asc())
             )
+        stmt = self._apply_all_filters(stmt)
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 

@@ -634,3 +634,199 @@ class TestVideoConfig:
         assert settings.VIDEO_KEYFRAME_ENABLED is True
         assert settings.VIDEO_KEYFRAME_SCENE_THRESHOLD == 0.3
         assert settings.VIDEO_KEYFRAME_MAX_COUNT == 100
+
+
+# ======================================================================
+# finalize_video_task 修复回归测试
+# ======================================================================
+# 原实现：调用 _chunk_video_document(doc, text, segments, keyframe_descriptions)
+# （真实签名为 2 参 → TypeError）与不存在的 _embed_and_index（→ ImportError），
+# 视频文档 finalize 必失败。修复后：直接复用 chord 产出的 segments/keyframes
+# 调 SemanticChunker.chunk_video_transcript 分块（空则 _chunk_document 兜底），
+# 向量化与索引走 _generate_embeddings + _build_indexes 真实签名。
+
+
+class _CeleryTaskStub:
+    """celery_app.task 装饰器桩 — 保留原函数使其可直接调用。"""
+
+    @staticmethod
+    def task(*_args, **_kwargs):
+        def _decorator(fn):
+            return fn
+
+        return _decorator
+
+
+def _load_video_tasks_module():
+    """以受控方式加载真实的 tasks/video_tasks.py（celery_app 打桩）。
+
+    套件中 celery_app 可能被注入 MagicMock；此处用桩 celery_app exec
+    源码加载独立模块对象，拿到可调用的真实 finalize_video_task。
+    """
+    import types as _types
+    from pathlib import Path
+
+    stub_celery_app = _types.ModuleType("celery_app")
+    stub_celery_app.celery_app = _CeleryTaskStub()
+
+    path = Path(__file__).resolve().parent.parent / "tasks" / "video_tasks.py"
+    source = path.read_text(encoding="utf-8")
+    module = _types.ModuleType("ekb_test_video_tasks_finalize")
+    module.__file__ = str(path)
+
+    saved = sys.modules.get("celery_app")
+    sys.modules["celery_app"] = stub_celery_app
+    try:
+        exec(compile(source, str(path), "exec"), module.__dict__)
+    finally:
+        if saved is not None:
+            sys.modules["celery_app"] = saved
+        else:
+            sys.modules.pop("celery_app", None)
+    return module
+
+
+class TestFinalizeVideoTask:
+    """finalize_video_task 对齐 document_tasks 真实函数签名（Bug 修复回归）。"""
+
+    @pytest.fixture()
+    def harness(self, monkeypatch):
+        import types as _types
+        from contextlib import asynccontextmanager
+
+        module = _load_video_tasks_module()
+        calls: dict[str, Any] = {
+            "progress": [],
+            "chunk": None,
+            "fallback_chunk": None,
+            "embed": None,
+            "indexes": None,
+        }
+
+        # --- document_tasks 依赖打桩 ---
+        import tasks.document_tasks as doc_tasks
+
+        monkeypatch.setattr(
+            doc_tasks,
+            "_update_parse_progress",
+            lambda *a, **k: calls["progress"].append((a, k)),
+        )
+
+        chunk_objects = [MagicMock(content="分块内容一"), MagicMock(content="分块内容二")]
+
+        class _FakeChunker:
+            def chunk_video_transcript(self, segments, keyframe_descriptions):
+                calls["chunk"] = (segments, keyframe_descriptions)
+                return list(chunk_objects)
+
+        monkeypatch.setattr("app.rag.chunker.SemanticChunker", _FakeChunker)
+
+        def _fake_chunk_document(text, doc_type="md", **_kwargs):
+            calls["fallback_chunk"] = (text, doc_type)
+            return [MagicMock(content="兜底分块")]
+
+        monkeypatch.setattr(doc_tasks, "_chunk_document", _fake_chunk_document)
+
+        async def _fake_generate_embeddings(chunks):
+            calls["embed"] = chunks
+            return [[0.1, 0.2], [0.3, 0.4]][: len(chunks)]
+
+        async def _fake_build_indexes(doc_id, c_objects, chunks, embeddings):
+            calls["indexes"] = (doc_id, c_objects, chunks, embeddings)
+
+        monkeypatch.setattr(doc_tasks, "_generate_embeddings", _fake_generate_embeddings)
+        monkeypatch.setattr(doc_tasks, "_build_indexes", _fake_build_indexes)
+
+        # --- DB 打桩：task_db_session + DocumentRepository ---
+        fake_db = AsyncMock()
+
+        @asynccontextmanager
+        async def _fake_session():
+            yield fake_db
+
+        monkeypatch.setattr("app.database.task_db_session", _fake_session)
+
+        fake_doc = MagicMock()
+        fake_doc.tenant_id = None
+        fake_doc.file_path = "local:///tmp/fake.mp4"
+
+        class _FakeRepo:
+            def __init__(self, db, tenant_id=None):
+                pass
+
+            async def get_by_id(self, doc_uuid):
+                return fake_doc
+
+        monkeypatch.setattr(
+            "app.repositories.knowledge_repository.DocumentRepository", _FakeRepo
+        )
+
+        # --- intelligence 链式触发打桩 ---
+        intel_module = _types.ModuleType("tasks.intelligence_tasks")
+        intel_module.process_intelligence = MagicMock()
+        monkeypatch.setitem(sys.modules, "tasks.intelligence_tasks", intel_module)
+
+        # --- redis 打桩（清理缓存分支快速失败，不影响主流程） ---
+        monkeypatch.setattr(
+            "redis.from_url", MagicMock(side_effect=Exception("no redis"))
+        )
+
+        return module, calls, chunk_objects
+
+    def test_finalize_uses_real_signatures(self, harness):
+        """分块/向量化/索引全部按真实签名调用，不再 TypeError/ImportError。"""
+        module, calls, chunk_objects = harness
+        segments = [{"start": 0.0, "end": 5.0, "text": "你好"}]
+        keyframes = [{"timestamp": 1.0, "description": "画面"}]
+        doc_id = "12345678-1234-5678-1234-567812345678"
+        asr_result = {"doc_id": doc_id, "segments": segments, "text": "你好"}
+        kf_result = {"doc_id": doc_id, "keyframes": keyframes}
+
+        module.finalize_video_task([asr_result, kf_result], doc_id, "")
+
+        # 分块：直接复用 chord 产出的 segments/keyframes
+        assert calls["chunk"] == (segments, keyframes)
+        # 不再触发兜底文本分块
+        assert calls["fallback_chunk"] is None
+        # 向量化：_generate_embeddings 收到 chunk 文本列表
+        assert calls["embed"] == ["分块内容一", "分块内容二"]
+        # 索引：_build_indexes(doc_id, chunk_objects, chunks, embeddings)
+        idx = calls["indexes"]
+        assert idx is not None
+        assert idx[0] == doc_id
+        assert idx[1] == chunk_objects
+        assert idx[2] == ["分块内容一", "分块内容二"]
+        assert idx[3] == [[0.1, 0.2], [0.3, 0.4]]
+        # 完成进度
+        stages = [a[1] for a, _k in calls["progress"] if len(a) > 1]
+        assert "done" in stages
+
+    def test_finalize_empty_chunks_fallback_to_text(self, harness, monkeypatch):
+        """语义分块无结果时降级 _chunk_document(text, "txt") 兜底。"""
+        module, calls, _chunk_objects = harness
+
+        class _EmptyChunker:
+            def chunk_video_transcript(self, segments, keyframe_descriptions):
+                return []
+
+        monkeypatch.setattr("app.rag.chunker.SemanticChunker", _EmptyChunker)
+
+        doc_id = "12345678-1234-5678-1234-567812345678"
+        asr_result = {"doc_id": doc_id, "segments": [{"start": 0, "end": 1, "text": "嗯"}], "text": "嗯"}
+        module.finalize_video_task([asr_result], doc_id, "")
+
+        assert calls["fallback_chunk"] == ("嗯", "txt")
+        # 兜底分块照常走向量化 + 索引
+        assert calls["embed"] == ["兜底分块"]
+        assert calls["indexes"] is not None
+
+    def test_finalize_no_segments_marks_failed(self, harness):
+        """无 ASR 结果时标记失败并提前返回（不进入分块/索引）。"""
+        module, calls, _chunk_objects = harness
+
+        module.finalize_video_task([], "doc-empty", "")
+
+        stages = [a[1] for a, _k in calls["progress"] if len(a) > 1]
+        assert "failed" in stages
+        assert calls["chunk"] is None
+        assert calls["indexes"] is None

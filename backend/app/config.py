@@ -54,6 +54,10 @@ class Settings(BaseSettings):
 
     # === OpenSearch ===
     OPENSEARCH_URL: str = "http://localhost:9200"
+    # 全文 BM25 检索索引名 — 必须与写入方（tasks/document_tasks 的
+    # _build_opensearch_index、tasks/index_tasks）使用同一索引，
+    # 否则检索端查询不存在的索引会导致 BM25 被静默禁用。
+    OPENSEARCH_INDEX: str = "ekb_documents"
 
     # === 向量存储后端 ===
     # os_knn: OpenSearch k-NN（默认，< 500 万向量场景）
@@ -234,6 +238,48 @@ class Settings(BaseSettings):
     LANGFUSE_SECRET_KEY: str = ""
     LANGFUSE_HOST: str = "https://cloud.langfuse.com"
 
+    # === P1-A 优雅关闭 ===
+    SHUTDOWN_TIMEOUT: int = 30  # 优雅关闭超时（秒），uvicorn --timeout-graceful-shutdown
+    SHUTDOWN_GRACE_PERIOD_CORE: int = 30  # core-engine Docker stop_grace_period
+    SHUTDOWN_GRACE_PERIOD_CELERY: int = 60  # celery-worker Docker stop_grace_period
+
+    # === P1-A 指数退避重试（三层体系共享参数）===
+    RETRY_BACKOFF_BASE: float = 1.0  # 基础延迟（秒），HTTP 调用
+    RETRY_BACKOFF_BASE_CELERY: float = 5.0  # Celery 任务基础延迟（秒）
+    RETRY_BACKOFF_BASE_DB: float = 0.5  # 数据库操作基础延迟（秒）
+    RETRY_BACKOFF_MAX: float = 60.0  # 最大延迟上限（秒）
+    RETRY_MAX_ATTEMPTS: int = 3  # 最大重试次数
+    RETRY_JITTER: float = 1.0  # 抖动范围（秒），全抖动模式
+
+    # === P1-A 熔断器 ===
+    CIRCUIT_BREAKER_FAILURE_THRESHOLD: int = 5  # 连续失败次数触发熔断
+    CIRCUIT_BREAKER_RECOVERY_TIMEOUT: float = 30.0  # OPEN → HALF_OPEN 冷却时间（秒）
+    CIRCUIT_BREAKER_HALF_OPEN_MAX_CALLS: int = 1  # 半开状态最多探测请求数
+
+    # === P1-B 幂等锁 ===
+    TASK_LOCK_TTL: int = 1800  # Celery 任务幂等锁 TTL（秒），默认 30 分钟
+    TASK_LOCK_REDIS_PREFIX: str = "lock:task:"  # 任务锁 Redis key 前缀
+
+    # === P1-B 内容哈希去重 ===
+    DEDUP_SCOPE_KB_ONLY: bool = True  # 查重范围仅限同 KB 内（False=全局查重）
+
+    # === P2-A Provider 健康检查 + 故障转移 ===
+    HEALTH_CHECK_INTERVAL: int = 30  # 健康检查间隔（秒）
+    HEALTH_CHECK_CACHE_TTL: int = 60  # 健康检查结果 Redis 缓存 TTL（秒）
+    LLM_FAILOVER_CHAIN: str = ""  # LLM 故障转移链 "dashscope,vllm"
+    EMBEDDER_FAILOVER_CHAIN: str = ""  # Embedder 故障转移链 "openai,tei"
+    RERANKER_FAILOVER_CHAIN: str = ""  # Reranker 故障转移链 "cohere,tei"
+    VECTOR_STORE_FAILOVER_CHAIN: str = ""  # VectorStore 故障转移链 "opensearch,milvus"
+
+    # === P2-B 查询重写/扩展 ===
+    QUERY_REWRITE_ENABLED: bool = True  # 查询重写（修正拼写/消歧）
+    QUERY_EXPANSION_ENABLED: bool = True  # 查询扩展（同义词/相关词）
+    QUERY_DECOMPOSITION_ENABLED: bool = False  # 查询分解（复杂查询拆子查询）
+    HYDE_ENABLED: bool = False  # HyDE 假设文档生成
+
+    # === P3 缓存容量上限 ===
+    CACHE_L2_MAX_SIZE: int = 1000  # L2 语义缓存（进程内存）最大条目数，超容逐出最旧（LRU）
+
     # ================================================================
     # Pydantic V2 校验器 — 结构性校验硬失败，运营性校验发 warning
     # ================================================================
@@ -241,11 +287,10 @@ class Settings(BaseSettings):
     @field_validator("DATABASE_URL")
     @classmethod
     def validate_database_url(cls, v: str) -> str:
-        """DATABASE_URL 必须使用异步驱动，否则 SQLAlchemy 异步引擎无法启动。"""
-        allowed = ("postgresql+asyncpg://", "sqlite+aiosqlite://")
-        if not v.startswith(allowed):
+        """DATABASE_URL 必须使用 PostgreSQL 异步驱动，否则 SQLAlchemy 异步引擎无法启动。"""
+        if not v.startswith("postgresql+asyncpg://"):
             raise ValueError(
-                f"DATABASE_URL 必须使用异步驱动 ({' / '.join(allowed)})，"
+                f"DATABASE_URL 必须使用 postgresql+asyncpg:// 异步驱动，"
                 f"当前值: {v}"
             )
         return v
@@ -264,12 +309,34 @@ class Settings(BaseSettings):
         "MAX_UPLOAD_SIZE_MB",
         "VIDEO_KEYFRAME_INTERVAL",
         "VIDEO_KEYFRAME_MAX",
+        "SHUTDOWN_TIMEOUT",
+        "SHUTDOWN_GRACE_PERIOD_CORE",
+        "SHUTDOWN_GRACE_PERIOD_CELERY",
+        "RETRY_MAX_ATTEMPTS",
+        "CIRCUIT_BREAKER_FAILURE_THRESHOLD",
+        "CIRCUIT_BREAKER_HALF_OPEN_MAX_CALLS",
+        "TASK_LOCK_TTL",
     )
     @classmethod
     def validate_positive_int(cls, v: int) -> int:
         """数值配置必须为正整数。"""
         if v <= 0:
             raise ValueError(f"值必须为正整数，当前: {v}")
+        return v
+
+    @field_validator(
+        "RETRY_BACKOFF_BASE",
+        "RETRY_BACKOFF_BASE_CELERY",
+        "RETRY_BACKOFF_BASE_DB",
+        "RETRY_BACKOFF_MAX",
+        "RETRY_JITTER",
+        "CIRCUIT_BREAKER_RECOVERY_TIMEOUT",
+    )
+    @classmethod
+    def validate_positive_float(cls, v: float) -> float:
+        """浮点数配置必须为正数。"""
+        if v <= 0:
+            raise ValueError(f"值必须为正数，当前: {v}")
         return v
 
     @field_validator(

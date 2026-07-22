@@ -16,7 +16,7 @@ import logging
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -90,12 +90,14 @@ async def list_users(
 
 @router.get("/users/{user_id}", response_model=ApiResponse[UserResponse])
 async def get_user(
+    request: Request,
     user_id: UUID,
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse[UserResponse]:
     """获取用户详情。"""
-    user_repo = UserRepository(db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    user_repo = UserRepository(db, tenant_id=tenant_id)
     target = await user_repo.get_by_id(user_id)
     if target is None:
         raise HTTPException(
@@ -111,6 +113,7 @@ async def get_user(
 
 @router.put("/users/{user_id}/role", response_model=ApiResponse[UserResponse])
 async def update_user_role(
+    request: Request,
     user_id: UUID,
     role: UserRole = Query(..., description="新角色: admin/kb_admin/editor/viewer"),
     db: AsyncSession = Depends(get_db_session),
@@ -119,7 +122,8 @@ async def update_user_role(
     """修改用户角色（仅 admin 权限）。"""
     _require_admin(user)
 
-    user_repo = UserRepository(db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    user_repo = UserRepository(db, tenant_id=tenant_id)
     target = await user_repo.get_by_id(user_id)
     if target is None:
         raise HTTPException(

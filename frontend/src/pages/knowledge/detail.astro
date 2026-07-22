@@ -455,6 +455,7 @@ const docId = Astro.url.searchParams.get('id') || 'new';
   import { getDocument, getDocumentSummary, getDocumentVersions, type DocVersion } from '@/lib/apis/knowledge';
   import { getRecommendations, type Recommendation } from '@/lib/apis/graph';
   import { getComments, createComment, resolveComment } from '@/lib/apis/comments';
+  import { sanitizeHtml } from '@/lib/markdown';
 
   const TOKEN_KEY = 'ekb_access_token';
 
@@ -562,7 +563,7 @@ const docId = Astro.url.searchParams.get('id') || 'new';
         <div id="parse-meta" class="parse-meta"></div>
       </div>
 
-      <div class="doc-content">${doc.content || '<p>暂无内容</p>'}</div>
+      <div class="doc-content">${doc.content ? sanitizeHtml(doc.content) : '<p>暂无内容</p>'}</div>
 
       <div class="comment-section">
         <div class="comment-header">
@@ -957,7 +958,7 @@ const docId = Astro.url.searchParams.get('id') || 'new';
   }
 
   function escapeHtml(s: string): string {
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
   loadDoc();

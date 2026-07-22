@@ -1,22 +1,28 @@
 """
-中间件配置 — 单一职责：注册 CORS、请求日志、API 限流中间件。
+中间件配置 — 单一职责：注册 CORS、请求日志、API 限流、租户上下文中间件。
 
 遵循单一职责：本模块仅负责中间件的注册与配置，
 不包含业务逻辑（CORS 策略来自 Settings，日志格式由 structlog 处理）。
 
 分布式预备（P0）：限流器支持 Redis-backed 模式，多 API 实例共享计数。
 Redis 不可用时自动降级为内存令牌桶，保证限流功能始终可用。
+
+多租户隔离（P0）：TenantContextMiddleware 从 JWT 解析 tenant_id，
+写入 request.state.tenant_id，供下游依赖注入和 Repository 使用。
 """
 
 from __future__ import annotations
 
 import time
+from uuid import UUID
 
+import structlog
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
+from app.utils.crypto import decode_access_token
 from app.utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -283,47 +289,79 @@ def setup_middleware(app: FastAPI) -> None:
                 burst=settings.RATE_LIMIT_BURST,
             )
 
-    # --- 请求日志 + 限流中间件 ---
+    # --- 请求日志 + 限流 + 租户上下文中间件 ---
     @app.middleware("http")
-    async def log_and_rate_limit(request: Request, call_next):
-        """记录每个 HTTP 请求 + 按客户端限流。"""
-        # 限流检查（健康检查等路径豁免）
-        if _rate_limiter is not None:
-            path = request.url.path
-            if not path.startswith(_EXEMPT_PATHS):
-                client_id = _get_client_id(request)
-                # RedisRateLimiter.allow 是异步的，RateLimiter.allow 是同步的
-                if isinstance(_rate_limiter, RedisRateLimiter):
-                    allowed = await _rate_limiter.allow(client_id)
-                else:
-                    allowed = _rate_limiter.allow(client_id)
-                if not allowed:
-                    log.warning(
-                        "ratelimit.exceeded",
-                        client_id=client_id,
-                        path=path,
-                    )
-                    return JSONResponse(
-                        status_code=429,
-                        content={
-                            "code": 429,
-                            "message": "请求过于频繁，请稍后再试",
-                        },
-                        headers={
-                            "Retry-After": "60",
-                        },
-                    )
+    async def log_rate_limit_tenant_context(request: Request, call_next):
+        """记录每个 HTTP 请求 + 按客户端限流 + 注入租户上下文。
 
-        # 请求日志
-        start_time = time.perf_counter()
-        response = await call_next(request)
-        duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
+        租户上下文通过 structlog.contextvars 绑定到当前请求的整个生命周期，
+        确保所有日志条目（包括 Service 层日志）都自动携带 tenant_id。
+        """
 
-        log.info(
-            "http.request",
-            method=request.method,
-            path=request.url.path,
-            status_code=response.status_code,
-            duration_ms=duration_ms,
+        # --- 租户上下文注入（在限流之前，确保所有请求都有租户上下文） ---
+        tenant_id: UUID | None = None
+        path = request.url.path
+        if not path.startswith(_EXEMPT_PATHS):
+            # 从 Authorization header 解析 JWT 提取 tenant_id
+            auth_header = request.headers.get("authorization", "")
+            token = auth_header.replace("Bearer ", "") if auth_header.startswith("Bearer ") else ""
+            if token:
+                try:
+                    payload = decode_access_token(token)
+                    tid_str = payload.get("tenant_id")
+                    if tid_str:
+                        tenant_id = UUID(tid_str)
+                except Exception:
+                    pass  # 无效 JWT 不阻断请求，后续 get_current_user 会处理 401
+
+        request.state.tenant_id = tenant_id
+
+        # 将 tenant_id 绑定到 structlog 上下文变量，
+        # 使当前请求内所有日志条目自动携带 tenant_id
+        structlog.contextvars.bind_contextvars(
+            tenant_id=str(tenant_id) if tenant_id else None,
         )
-        return response
+
+        try:
+            # --- 限流检查（健康检查等路径豁免） ---
+            if _rate_limiter is not None:
+                if not path.startswith(_EXEMPT_PATHS):
+                    client_id = _get_client_id(request)
+                    # RedisRateLimiter.allow 是异步的，RateLimiter.allow 是同步的
+                    if isinstance(_rate_limiter, RedisRateLimiter):
+                        allowed = await _rate_limiter.allow(client_id)
+                    else:
+                        allowed = _rate_limiter.allow(client_id)
+                    if not allowed:
+                        log.warning(
+                            "ratelimit.exceeded",
+                            client_id=client_id,
+                            path=path,
+                        )
+                        return JSONResponse(
+                            status_code=429,
+                            content={
+                                "code": 429,
+                                "message": "请求过于频繁，请稍后再试",
+                            },
+                            headers={
+                                "Retry-After": "60",
+                            },
+                        )
+
+            # --- 请求日志 ---
+            start_time = time.perf_counter()
+            response = await call_next(request)
+            duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
+
+            log.info(
+                "http.request",
+                method=request.method,
+                path=request.url.path,
+                status_code=response.status_code,
+                duration_ms=duration_ms,
+            )
+            return response
+        finally:
+            # 清理 structlog 上下文变量，避免跨请求泄漏
+            structlog.contextvars.clear_contextvars()

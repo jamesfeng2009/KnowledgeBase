@@ -96,9 +96,7 @@ def get_current_revision() -> str | None:
             return None
 
         # alembic stamp 表使用同步连接查询
-        sync_url = db_url.replace("+asyncpg", "+psycopg2").replace(
-            "+aiosqlite", ""
-        )
+        sync_url = db_url.replace("+asyncpg", "+psycopg2")
         engine = create_engine(sync_url)
         with engine.connect() as conn:
             context = MigrationContext.configure(conn)

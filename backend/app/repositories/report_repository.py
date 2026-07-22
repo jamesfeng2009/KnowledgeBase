@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
+from uuid import UUID
 
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,13 +34,15 @@ class ReportRepository:
     所有方法返回原始 dict，由上层 Schema 完成序列化。
     """
 
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, tenant_id: UUID | None = None) -> None:
         """初始化报表仓储。
 
         Args:
             session: 异步数据库会话，由依赖注入 get_db_session 提供。
+            tenant_id: 租户 ID，用于后续租户维度的报表统计过滤。
         """
         self.session: AsyncSession = session
+        self._tenant_id: UUID | None = tenant_id
 
     async def get_usage_stats(
         self, start_date: datetime, end_date: datetime
@@ -73,6 +76,8 @@ class ReportRepository:
                 UsageRecord.created_at < end_date,
             )
         )
+        if self._tenant_id is not None:
+            stmt = stmt.where(UsageRecord.tenant_id == self._tenant_id)
         result = await self.session.execute(stmt)
         row = result.one_or_none()
         if row is None:
@@ -132,9 +137,10 @@ class ReportRepository:
                 UsageRecord.created_at >= start_date,
                 UsageRecord.created_at < end_date,
             )
-            .group_by(period)
-            .order_by(period)
         )
+        if self._tenant_id is not None:
+            stmt = stmt.where(UsageRecord.tenant_id == self._tenant_id)
+        stmt = stmt.group_by(period).order_by(period)
         result = await self.session.execute(stmt)
         rows = result.all()
         return [
@@ -175,6 +181,10 @@ class ReportRepository:
                 UsageRecord.created_at < end_date,
             )
         )
+        if self._tenant_id is not None:
+            summary_stmt = summary_stmt.where(
+                UsageRecord.tenant_id == self._tenant_id
+            )
         summary_result = await self.session.execute(summary_stmt)
         summary_row = summary_result.one_or_none()
 
@@ -188,8 +198,10 @@ class ReportRepository:
                 UsageRecord.created_at >= start_date,
                 UsageRecord.created_at < end_date,
             )
-            .group_by(UsageRecord.model)
         )
+        if self._tenant_id is not None:
+            model_stmt = model_stmt.where(UsageRecord.tenant_id == self._tenant_id)
+        model_stmt = model_stmt.group_by(UsageRecord.model)
         model_result = await self.session.execute(model_stmt)
         by_model = {
             row.model: float(int(row.cost or 0)) / 100.0
@@ -206,8 +218,10 @@ class ReportRepository:
                 UsageRecord.created_at >= start_date,
                 UsageRecord.created_at < end_date,
             )
-            .group_by(UsageRecord.request_type)
         )
+        if self._tenant_id is not None:
+            type_stmt = type_stmt.where(UsageRecord.tenant_id == self._tenant_id)
+        type_stmt = type_stmt.group_by(UsageRecord.request_type)
         type_result = await self.session.execute(type_stmt)
         by_request_type = {
             row.request_type: float(int(row.cost or 0)) / 100.0
@@ -260,6 +274,8 @@ class ReportRepository:
             )
             .where(Document.deleted_at.is_(None))
         )
+        if self._tenant_id is not None:
+            doc_stmt = doc_stmt.where(Document.tenant_id == self._tenant_id)
         doc_result = await self.session.execute(doc_stmt)
         doc_row = doc_result.one_or_none()
 
@@ -268,6 +284,8 @@ class ReportRepository:
             select(func.count(KnowledgeBase.id))
             .where(KnowledgeBase.deleted_at.is_(None))
         )
+        if self._tenant_id is not None:
+            kb_stmt = kb_stmt.where(KnowledgeBase.tenant_id == self._tenant_id)
         total_kbs = await self.session.scalar(kb_stmt)
 
         return {

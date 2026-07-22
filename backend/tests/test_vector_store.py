@@ -47,6 +47,15 @@ from app.rag.vector_store.factory import (
 )
 from app.rag.vector_store.milvus_store import MilvusVectorStore
 from app.rag.vector_store.opensearch_store import OpenSearchVectorStore
+from app.utils.circuit_breaker import reset_all_circuit_breakers
+
+
+@pytest.fixture(autouse=True)
+def _reset_breakers():
+    """每个测试前后重置全局熔断器状态，避免跨文件状态污染。"""
+    reset_all_circuit_breakers()
+    yield
+    reset_all_circuit_breakers()
 
 
 # ======================================================================
@@ -270,28 +279,23 @@ class TestOpenSearchVectorStore:
         assert store._available is True
 
     @pytest.mark.asyncio
-    async def test_search_returns_empty_on_error(self) -> None:
-        """服务不可用时返回空列表。"""
+    async def test_search_raises_on_error(self) -> None:
+        """服务不可用时异常向上传播，触发熔断器记录失败（由调用方降级为空列表）。"""
         error_response = MockResponse(status_code=500)
         client = _make_mock_http(post_return=error_response)
         store = OpenSearchVectorStore(http_client=client)
 
-        results = await store.search(query_vec=[0.1] * 1024)
-        assert results == []
-        assert store._available is False
+        with pytest.raises(httpx.HTTPStatusError):
+            await store.search(query_vec=[0.1] * 1024)
 
     @pytest.mark.asyncio
-    async def test_search_short_circuits_after_failure(self) -> None:
-        """标记为不可用后，后续 search 直接返回空列表。"""
-        error_response = MockResponse(status_code=500)
-        client = _make_mock_http(post_return=error_response)
+    async def test_search_short_circuits_when_unavailable(self) -> None:
+        """_available=False（由写入/健康检查路径标记）时 search 快速返回空列表。"""
+        ok_response = MockResponse(json_data={"hits": {"hits": []}})
+        client = _make_mock_http(post_return=ok_response)
         store = OpenSearchVectorStore(http_client=client)
+        store._available = False
 
-        # 第一次调用失败
-        await store.search(query_vec=[0.1] * 1024)
-        assert store._available is False
-
-        # 第二次调用应短路
         results = await store.search(query_vec=[0.1] * 1024)
         assert results == []
 
@@ -436,25 +440,22 @@ class TestMilvusVectorStore:
         assert results == []
 
     @pytest.mark.asyncio
-    async def test_search_returns_empty_on_error(self) -> None:
-        """服务不可用时返回空列表。"""
+    async def test_search_raises_on_error(self) -> None:
+        """服务不可用时异常向上传播，触发熔断器记录失败（由调用方降级为空列表）。"""
         error_response = MockResponse(status_code=500)
         client = _make_mock_http(post_return=error_response)
         store = MilvusVectorStore(http_client=client)
 
-        results = await store.search(query_vec=[0.1] * 1024)
-        assert results == []
-        assert store._available is False
+        with pytest.raises(httpx.HTTPStatusError):
+            await store.search(query_vec=[0.1] * 1024)
 
     @pytest.mark.asyncio
-    async def test_search_short_circuits_after_failure(self) -> None:
-        """标记为不可用后，后续 search 直接返回空列表。"""
-        error_response = MockResponse(status_code=500)
-        client = _make_mock_http(post_return=error_response)
+    async def test_search_short_circuits_when_unavailable(self) -> None:
+        """_available=False（由写入/健康检查路径标记）时 search 快速返回空列表。"""
+        ok_response = MockResponse(json_data={"data": []})
+        client = _make_mock_http(post_return=ok_response)
         store = MilvusVectorStore(http_client=client)
-
-        await store.search(query_vec=[0.1] * 1024)
-        assert store._available is False
+        store._available = False
 
         results = await store.search(query_vec=[0.1] * 1024)
         assert results == []

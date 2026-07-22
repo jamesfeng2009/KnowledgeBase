@@ -1,9 +1,10 @@
 """
 专家发现服务测试 — 测试专家查找和专业领域分析。
 
-不依赖外部服务，使用 SQLite 内存数据库。
+不依赖外部服务，使用 PostgreSQL 数据库。
 """
 
+import os
 import uuid
 
 import pytest
@@ -21,8 +22,8 @@ from app.services.expert_service import ExpertService
 
 @pytest_asyncio.fixture
 async def db_session():
-    """创建 SQLite 内存数据库用于测试。"""
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    """创建 PostgreSQL 数据库用于测试。"""
+    engine = create_async_engine(os.environ["DATABASE_URL"], echo=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

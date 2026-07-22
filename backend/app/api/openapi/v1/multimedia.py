@@ -11,9 +11,8 @@
 """
 from __future__ import annotations
 
-from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi import APIRouter, Depends, UploadFile, File
 from pydantic import BaseModel, Field
 
 from app.api.openapi.deps import require_scope

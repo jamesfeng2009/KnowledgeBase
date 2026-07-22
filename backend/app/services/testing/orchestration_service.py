@@ -26,6 +26,7 @@ import json
 import re
 import uuid
 from datetime import datetime, timezone
+from uuid import UUID
 
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,6 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.llm.base import LLMProvider, Message
 from app.models.testing import TestCase, TestExecution, TestPlan
 from app.utils.logger import get_logger
+from app.utils.tenant import apply_tenant_filter
 
 log = get_logger(__name__)
 
@@ -98,15 +100,19 @@ class TestOrchestrationService:
         execution = await service.record_execution(case_id, status="passed")
     """
 
-    def __init__(self, llm: LLMProvider, db: AsyncSession) -> None:
+    def __init__(
+        self, llm: LLMProvider, db: AsyncSession, tenant_id: UUID | None = None
+    ) -> None:
         """初始化编排服务。
 
         Args:
             llm: LLM Provider 实例，用于生成 AI 编排方案。
             db: 异步数据库会话，事务由 ``get_db_session`` 依赖统一管理。
+            tenant_id: 租户 ID，用于多租户数据隔离。
         """
         self.llm: LLMProvider = llm
         self.db: AsyncSession = db
+        self._tenant_id = tenant_id
 
     # ------------------------------------------------------------------
     # 计划管理
@@ -167,6 +173,7 @@ class TestOrchestrationService:
             TestPlan.id == plan_id,
             TestPlan.deleted_at.is_(None),
         )
+        stmt = apply_tenant_filter(stmt, TestPlan, self._tenant_id)
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -192,13 +199,14 @@ class TestOrchestrationService:
         ]
 
         count_stmt = select(func.count()).select_from(TestPlan).where(*conditions)
+        count_stmt = apply_tenant_filter(count_stmt, TestPlan, self._tenant_id)
         total = (await self.db.execute(count_stmt)).scalar_one()
 
         offset = (page - 1) * size
+        stmt = select(TestPlan).where(*conditions)
+        stmt = apply_tenant_filter(stmt, TestPlan, self._tenant_id)
         stmt = (
-            select(TestPlan)
-            .where(*conditions)
-            .order_by(TestPlan.created_at.desc())
+            stmt.order_by(TestPlan.created_at.desc())
             .offset(offset)
             .limit(size)
         )
@@ -269,10 +277,10 @@ class TestOrchestrationService:
         orchestration = self._normalize_orchestration(orchestration)
 
         # 保存编排方案并更新状态
+        stmt = update(TestPlan).where(TestPlan.id == plan_id)
+        stmt = apply_tenant_filter(stmt, TestPlan, self._tenant_id)
         await self.db.execute(
-            update(TestPlan)
-            .where(TestPlan.id == plan_id)
-            .values(
+            stmt.values(
                 ai_orchestration=orchestration,
                 status="active",
             )
@@ -380,15 +388,17 @@ class TestOrchestrationService:
         count_stmt = select(func.count()).select_from(TestExecution)
         if conditions:
             count_stmt = count_stmt.where(*conditions)
+        count_stmt = apply_tenant_filter(count_stmt, TestExecution, self._tenant_id)
         total = (await self.db.execute(count_stmt)).scalar_one()
 
         offset = (page - 1) * size
-        stmt = select(TestExecution).order_by(
-            TestExecution.created_at.desc()
-        )
+        stmt = select(TestExecution)
         if conditions:
             stmt = stmt.where(*conditions)
-        stmt = stmt.offset(offset).limit(size)
+        stmt = apply_tenant_filter(stmt, TestExecution, self._tenant_id)
+        stmt = stmt.order_by(
+            TestExecution.created_at.desc()
+        ).offset(offset).limit(size)
 
         result = await self.db.execute(stmt)
         executions = list(result.scalars().all())
@@ -432,6 +442,7 @@ class TestOrchestrationService:
             TestCase.id.in_(uuid_ids),
             TestCase.deleted_at.is_(None),
         )
+        stmt = apply_tenant_filter(stmt, TestCase, self._tenant_id)
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
 

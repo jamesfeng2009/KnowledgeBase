@@ -267,7 +267,7 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '知识库
   let kbs: KnowledgeBase[] = [];
 
   function escapeHtml(s: string): string {
-    return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
   // ===== 加载知识库列表 =====

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -41,12 +41,14 @@ class FeedbackStatusBody(BaseModel):
 
 @router.post("", response_model=ApiResponse[FeedbackResponse], status_code=201)
 async def create_feedback(
+    request: Request,
     body: FeedbackCreate,
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse[FeedbackResponse]:
     """创建用户反馈。"""
-    service = FeedbackService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = FeedbackService(db, user, tenant_id=tenant_id)
     feedback = await service.create_feedback(
         type=body.type.value,
         content=body.content,
@@ -61,6 +63,7 @@ async def create_feedback(
 
 @router.get("", response_model=ApiResponse[PageResponse[FeedbackResponse]])
 async def list_feedback(
+    request: Request,
     status: FeedbackStatus | None = Query(default=None, description="状态过滤"),
     page: int = Query(default=1, ge=1, description="页码"),
     size: int = Query(default=20, ge=1, le=100, description="每页数量"),
@@ -68,7 +71,8 @@ async def list_feedback(
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse[PageResponse[FeedbackResponse]]:
     """分页查询反馈列表，可按状态过滤。"""
-    service = FeedbackService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = FeedbackService(db, user, tenant_id=tenant_id)
     result = await service.list_feedback(
         status=status.value if status else None,
         page=page,
@@ -92,13 +96,15 @@ async def list_feedback(
     response_model=ApiResponse[FeedbackResponse],
 )
 async def respond_to_feedback(
+    request: Request,
     feedback_id: UUID,
     body: FeedbackRespondBody,
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse[FeedbackResponse]:
     """回复用户反馈，同时将状态置为 processing。"""
-    service = FeedbackService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = FeedbackService(db, user, tenant_id=tenant_id)
     feedback = await service.respond_to_feedback(feedback_id, body.response)
     return ApiResponse(
         code=0,
@@ -112,13 +118,15 @@ async def respond_to_feedback(
     response_model=ApiResponse[FeedbackResponse],
 )
 async def update_feedback_status(
+    request: Request,
     feedback_id: UUID,
     body: FeedbackStatusBody,
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse[FeedbackResponse]:
     """更新反馈状态。"""
-    service = FeedbackService(db, user)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = FeedbackService(db, user, tenant_id=tenant_id)
     feedback = await service.update_feedback_status(
         feedback_id, body.status.value
     )

@@ -8,9 +8,8 @@ LangGraph Checkpoint 会话状态管理 — 单一职责：持久化 Agent Loop 
 """
 
 import uuid
-from typing import Any
 
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.utils.logger import get_logger

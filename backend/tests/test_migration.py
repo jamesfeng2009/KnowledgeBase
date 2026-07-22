@@ -4,8 +4,7 @@ Alembic 迁移 + Pydantic V2 校验测试。
 测试覆盖：
     1. Pydantic V2 field_validator — 结构性校验硬失败；
     2. Pydantic V2 model_validator — 运营性校验发 warning；
-    3. Alembic 迁移文件存在性 + 可导入性；
-    4. 迁移 runner（run_migrations）在 SQLite 上端到端执行。
+    3. Alembic 迁移文件存在性 + 可导入性。
 """
 
 from __future__ import annotations
@@ -33,11 +32,6 @@ class TestDatabaseUrlValidator:
         s = Settings(DATABASE_URL="postgresql+asyncpg://u:p@localhost/db")
         assert s.DATABASE_URL.startswith("postgresql+asyncpg://")
 
-    def test_valid_sqlite_aiosqlite(self):
-        """sqlite+aiosqlite 驱动通过校验。"""
-        s = Settings(DATABASE_URL="sqlite+aiosqlite:///test.db")
-        assert s.DATABASE_URL.startswith("sqlite+aiosqlite://")
-
     def test_invalid_sync_postgresql_rejected(self):
         """同步 postgresql:// 驱动被拒绝。"""
         with pytest.raises(ValidationError, match="异步驱动"):
@@ -47,11 +41,6 @@ class TestDatabaseUrlValidator:
         """MySQL 驱动被拒绝。"""
         with pytest.raises(ValidationError, match="异步驱动"):
             Settings(DATABASE_URL="mysql+pymysql://u:p@localhost/db")
-
-    def test_invalid_sqlite_sync_rejected(self):
-        """同步 sqlite:// 驱动被拒绝。"""
-        with pytest.raises(ValidationError, match="异步驱动"):
-            Settings(DATABASE_URL="sqlite:///test.db")
 
 
 class TestPositiveIntValidator:
@@ -299,77 +288,3 @@ class TestAlembicEnvConfig:
         env_path = backend / "alembic" / "env.py"
         content = env_path.read_text()
         assert "compare_type=True" in content
-
-
-# ============================================================
-# 迁移 Runner 端到端测试（SQLite）
-# ============================================================
-
-
-class TestMigrationRunner:
-    """迁移运行器 — 在临时 SQLite DB 上端到端测试。
-
-    使用 SQLite+aiosqlite 执行 alembic upgrade head，
-    验证所有表的 DDL 能正确执行。
-    """
-
-    @pytest.fixture
-    def temp_sqlite_db(self, tmp_path, monkeypatch):
-        """创建临时 SQLite DB 并设置 DATABASE_URL。"""
-        db_path = tmp_path / "test_migration.db"
-        db_url = f"sqlite+aiosqlite:///{db_path}"
-        monkeypatch.setenv("DATABASE_URL", db_url)
-        # 同时清除可能存在的旧 DB 文件
-        if db_path.exists():
-            db_path.unlink()
-        yield db_url
-        # 清理
-        if db_path.exists():
-            db_path.unlink()
-
-    def test_run_migrations_creates_tables(self, temp_sqlite_db):
-        """run_migrations 在 SQLite 上创建所有表。"""
-        from app.utils.migration import run_migrations
-
-        result = run_migrations("head")
-        assert "成功" in result
-
-        # 验证表已创建 — 用同步 sqlite 检查
-        import sqlite3
-
-        db_file = temp_sqlite_db.replace("sqlite+aiosqlite:///", "")
-        conn = sqlite3.connect(db_file)
-        cursor = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-        )
-        tables = {row[0] for row in cursor.fetchall()}
-        conn.close()
-
-        # 核心表应存在
-        expected = {"users", "knowledge_bases", "documents", "conversations", "messages"}
-        assert expected.issubset(tables), f"缺少表: {expected - tables}"
-
-    def test_run_migrations_idempotent(self, temp_sqlite_db):
-        """重复执行 run_migrations 不报错（幂等性）。"""
-        from app.utils.migration import run_migrations
-
-        run_migrations("head")
-        # 再次执行应无异常
-        result = run_migrations("head")
-        assert "成功" in result
-
-    def test_get_current_revision_after_migrate(self, temp_sqlite_db):
-        """迁移后 get_current_revision 返回版本号。"""
-        from app.utils.migration import get_current_revision, run_migrations
-
-        run_migrations("head")
-        rev = get_current_revision()
-        assert rev is not None, "迁移后应有版本号"
-        assert len(rev) > 0
-
-    def test_get_current_revision_none_before_migrate(self, temp_sqlite_db):
-        """未迁移前 get_current_revision 返回 None。"""
-        from app.utils.migration import get_current_revision
-
-        rev = get_current_revision()
-        assert rev is None

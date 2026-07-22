@@ -1,0 +1,833 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>P2 设计方案 — Provider 健康检查 + 故障转移 & 查询重写/扩展</title>
+<style>
+:root {
+  --bg: #0d1117;
+  --card: #161b22;
+  --border: #30363d;
+  --text: #c9d1d9;
+  --text-dim: #8b949e;
+  --accent: #58a6ff;
+  --green: #3fb950;
+  --red: #f85149;
+  --yellow: #d29922;
+  --orange: #db6d28;
+  --code-bg: #1c2128;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, "Noto Sans CJK SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.7;
+  padding: 2rem;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+h1 { font-size: 1.8rem; color: var(--accent); border-bottom: 2px solid var(--border); padding-bottom: 0.5rem; margin-bottom: 1.5rem; }
+h2 { font-size: 1.4rem; color: var(--accent); margin-top: 2.5rem; margin-bottom: 1rem; border-left: 4px solid var(--accent); padding-left: 0.75rem; }
+h3 { font-size: 1.15rem; color: var(--text); margin-top: 1.8rem; margin-bottom: 0.8rem; }
+h4 { font-size: 1rem; color: var(--yellow); margin-top: 1.2rem; margin-bottom: 0.5rem; }
+p { margin-bottom: 0.8rem; }
+ul, ol { margin-left: 1.5rem; margin-bottom: 0.8rem; }
+li { margin-bottom: 0.3rem; }
+code {
+  background: var(--code-bg);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 0.9em;
+  color: var(--accent);
+}
+pre {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem;
+  overflow-x: auto;
+  margin-bottom: 1rem;
+}
+pre code { background: none; padding: 0; color: var(--text); }
+table { width: 100%; border-collapse: collapse; margin-bottom: 1rem; }
+th, td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; }
+th { background: var(--card); color: var(--accent); font-weight: 600; }
+tr:nth-child(even) { background: rgba(22, 27, 34, 0.5); }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 0.8em; font-weight: 600; }
+.badge-green { background: rgba(63, 185, 80, 0.15); color: var(--green); border: 1px solid var(--green); }
+.badge-red { background: rgba(248, 81, 73, 0.15); color: var(--red); border: 1px solid var(--red); }
+.badge-yellow { background: rgba(210, 153, 34, 0.15); color: var(--yellow); border: 1px solid var(--yellow); }
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1.2rem;
+  margin-bottom: 1rem;
+}
+.task-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--orange);
+  border-radius: 8px;
+  padding: 1rem 1.2rem;
+  margin-bottom: 1rem;
+}
+.task-id { color: var(--orange); font-weight: 700; font-size: 0.85rem; }
+.toc { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1.2rem; margin-bottom: 2rem; }
+.toc a { color: var(--accent); text-decoration: none; }
+.toc a:hover { text-decoration: underline; }
+.toc ul { list-style: none; margin-left: 0; }
+.toc > ul > li { margin-bottom: 0.5rem; }
+.toc ul ul { margin-left: 1.5rem; margin-top: 0.3rem; }
+.summary-box {
+  background: rgba(88, 166, 255, 0.08);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 1rem 1.2rem;
+  margin-bottom: 1.5rem;
+}
+.warn-box {
+  background: rgba(210, 153, 34, 0.08);
+  border: 1px solid var(--yellow);
+  border-radius: 8px;
+  padding: 1rem 1.2rem;
+  margin-bottom: 1.5rem;
+}
+.flow-arrow { color: var(--accent); font-weight: bold; }
+</style>
+</head>
+<body>
+
+<h1>P2 设计方案 — Provider 健康检查 + 故障转移 & 查询重写/扩展</h1>
+
+<div class="summary-box">
+<strong>状态：待 Review</strong> — 请审阅以下设计方案及详细 Task，确认后开始实施。<br>
+<strong>范围：</strong> P2-A（AI 服务可用性保障）+ P2-B（检索效果提升）<br>
+<strong>预估工作量：</strong> P2-A 约 5 个 Task，P2-B 约 5 个 Task
+</div>
+
+<div class="toc">
+<strong>目录</strong>
+<ul>
+  <li><a href="#p2a">P2-A: Provider 健康检查 + 故障转移</a>
+    <ul>
+      <li><a href="#p2a-current">现状分析</a></li>
+      <li><a href="#p2a-design">架构设计</a></li>
+      <li><a href="#p2a-tasks">详细 Task 分解</a></li>
+    </ul>
+  </li>
+  <li><a href="#p2b">P2-B: 查询重写/扩展</a>
+    <ul>
+      <li><a href="#p2b-current">现状分析</a></li>
+      <li><a href="#p2b-design">架构设计</a></li>
+      <li><a href="#p2b-tasks">详细 Task 分解</a></li>
+    </ul>
+  </li>
+  <li><a href="#config">配置变更汇总</a></li>
+  <li><a href="#test">测试计划</a></li>
+  <li><a href="#order">实施顺序</a></li>
+</ul>
+</div>
+
+<!-- ==================== P2-A ==================== -->
+
+<h2 id="p2a">P2-A: Provider 健康检查 + 故障转移</h2>
+
+<h3 id="p2a-current">现状分析</h3>
+
+<h4>Provider 熔断器覆盖现状</h4>
+
+<table>
+<tr><th>服务类型</th><th>Provider 实现</th><th>熔断器</th><th>健康检查</th><th>故障转移</th></tr>
+<tr><td rowspan="3">LLM</td><td>VLLMProvider</td><td><span class="badge badge-green">有</span></td><td><span class="badge badge-red">无</span></td><td><span class="badge badge-red">无</span></td></tr>
+<tr><td>DashScopeProvider</td><td><span class="badge badge-green">有</span></td><td><span class="badge badge-red">无</span></td><td><span class="badge badge-red">无</span></td></tr>
+<tr><td>AnthropicProvider</td><td><span class="badge badge-green">有</span></td><td><span class="badge badge-red">无</span></td><td><span class="badge badge-red">无</span></td></tr>
+<tr><td rowspan="3">Embedder</td><td>OpenAIEmbedder</td><td><span class="badge badge-red">无</span></td><td><span class="badge badge-red">无</span></td><td><span class="badge badge-red">无</span></td></tr>
+<tr><td>TEIEmbedder</td><td><span class="badge badge-red">无</span></td><td><span class="badge badge-red">无</span></td><td><span class="badge badge-red">无</span></td></tr>
+<tr><td>DashScopeEmbedder</td><td><span class="badge badge-red">无</span></td><td><span class="badge badge-red">无</span></td><td><span class="badge badge-red">无</span></td></tr>
+<tr><td rowspan="2">Reranker</td><td>CohereReranker</td><td><span class="badge badge-red">无</span></td><td><span class="badge badge-red">无</span></td><td><span class="badge badge-yellow">有 _fallback</span></td></tr>
+<tr><td>TEIReranker</td><td><span class="badge badge-red">无</span></td><td><span class="badge badge-red">无</span></td><td><span class="badge badge-yellow">有 _fallback</span></td></tr>
+<tr><td rowspan="2">VectorStore</td><td>OpenSearchStore</td><td><span class="badge badge-red">无</span></td><td><span class="badge badge-green">health_check()</span></td><td><span class="badge badge-red">无</span></td></tr>
+<tr><td>MilvusStore</td><td><span class="badge badge-red">无</span></td><td><span class="badge badge-green">health_check()</span></td><td><span class="badge badge-red">无</span></td></tr>
+</table>
+
+<h4>关键问题</h4>
+<ol>
+<li><strong>熔断器覆盖不完整：</strong>仅 3 个 LLM Provider 有熔断器保护，Embedder/Reranker/VectorStore 完全裸奔。当 OpenSearch 或 TEI 服务宕机时，每个请求都会等待超时后才失败，无快速失败机制。</li>
+<li><strong>健康检查无调度：</strong><code>VectorStoreBase.health_check()</code> 抽象方法已定义且两个实现都有具体实现，但从未被定时调用。系统无法主动感知服务状态变化。</li>
+<li><strong>熔断器 OPEN 即中断：</strong>当前 VLLMProvider/DashScopeProvider/AnthropicProvider 在熔断器 OPEN 状态直接抛出 <code>CircuitBreakerOpenError</code>，无故障转移到备用 Provider 的机制。</li>
+<li><strong>单 Provider 模式：</strong><code>get_llm_provider()</code> / <code>get_embedder()</code> / <code>get_reranker()</code> 均返回单一实例，无备用 Provider 池。</li>
+</ol>
+
+<h4>当前熔断器代码位置</h4>
+<pre><code># app/llm/vllm_provider.py — 内联熔断器检查（非装饰器模式）
+async def chat(self, messages, tools=None, stream=False, **kwargs):
+    if self._cb.state == CircuitState.OPEN:
+        if self._cb._should_transition_to_half_open():
+            self._cb.state = CircuitState.HALF_OPEN
+        else:
+            raise CircuitBreakerOpenError(self._cb.name, self._cb.state)
+    # ... 实际调用 ...
+    self._cb._record_success()  # 或 _record_failure()</code></pre>
+
+<h3 id="p2a-design">架构设计</h3>
+
+<h4>设计目标</h4>
+<ol>
+<li>所有 AI 服务 Provider 统一熔断器保护（LLM + Embedder + Reranker + VectorStore）</li>
+<li>定时健康检查调度（Celery Beat 每 30s 执行），结果存 Redis</li>
+<li>Provider 故障转移链 — 主 Provider 熔断时自动切换到备用 Provider</li>
+<li>统一健康状态 API + 前端监控面板</li>
+</ol>
+
+<h4>整体架构</h4>
+<pre><code>用户请求
+  │
+  ▼
+ProviderPool（故障转移层）
+  │ ├── 主 Provider（熔断器 CLOSED → 正常调用）
+  │ ├── 备用 Provider 1（主熔断 OPEN → 自动切换）
+  │ └── 备用 Provider 2（备用 1 也熔断 → 再切换）
+  │
+  ▼
+实际 Provider 调用（embed / rerank / search / chat）
+  │
+  ▼
+熔断器记录成功/失败
+  
+HealthCheckScheduler（Celery Beat 30s）
+  │ ├── 调用所有 Provider 的 health_check()
+  │ ├── 结果写入 Redis（health:provider:{name}, TTL=60s）
+  │ └── 更新熔断器状态（连续失败 → 强制 OPEN）</code></pre>
+
+<h4>组件 1: 熔断器覆盖扩展</h4>
+<p>将 <code>circuit_call</code> 装饰器应用到所有 Provider 的核心方法：</p>
+<table>
+<tr><th>Provider</th><th>方法</th><th>熔断器名称</th></tr>
+<tr><td>OpenAIEmbedder</td><td><code>embed()</code></td><td><code>embedder_openai</code></td></tr>
+<tr><td>TEIEmbedder</td><td><code>embed()</code></td><td><code>embedder_tei</code></td></tr>
+<tr><td>DashScopeEmbedder</td><td><code>embed()</code></td><td><code>embedder_dashscope</code></td></tr>
+<tr><td>CohereReranker</td><td><code>rerank()</code></td><td><code>reranker_cohere</code></td></tr>
+<tr><td>TEIReranker</td><td><code>rerank()</code></td><td><code>reranker_tei</code></td></tr>
+<tr><td>OpenSearchStore</td><td><code>search()</code></td><td><code>vectorstore_opensearch</code></td></tr>
+<tr><td>MilvusStore</td><td><code>search()</code></td><td><code>vectorstore_milvus</code></td></tr>
+</table>
+
+<div class="warn-box">
+<strong>设计决策 — 装饰器 vs 内联：</strong> 当前 LLM Provider 使用内联熔断器检查（在 chat() 方法中手动检查状态）。P2-A 将统一改为 <code>circuit_call</code> 装饰器模式，减少重复代码。LLM Provider 的内联检查将被装饰器替换。
+</div>
+
+<h4>组件 2: HealthCheckService</h4>
+<pre><code># app/services/health_check.py
+
+class HealthCheckService:
+    """AI 服务健康检查调度服务。"""
+    
+    async def check_all(self) -> dict[str, ProviderHealth]:
+        """检查所有 Provider 健康状态，结果存 Redis。"""
+        results = {}
+        # LLM Providers
+        for name, provider in get_all_llm_providers():
+            results[name] = await self._check_llm(name, provider)
+        # Embedders
+        for name, embedder in get_all_embedders():
+            results[name] = await self._check_embedder(name, embedder)
+        # Rerankers
+        for name, reranker in get_all_rerankers():
+            results[name] = await self._check_reranker(name, reranker)
+        # VectorStores
+        for name, store in get_all_vector_stores():
+            results[name] = await self._check_vector_store(name, store)
+        # 写入 Redis
+        await self._save_to_redis(results)
+        return results
+    
+    async def _check_embedder(self, name, embedder) -> ProviderHealth:
+        """轻量级 embed 健康检查 — embed("test") 验证可用性。"""
+        try:
+            vec = (await embedder.embed(["health_check"]))[0]
+            return ProviderHealth(name=name, healthy=True, latency_ms=...)
+        except Exception as e:
+            return ProviderHealth(name=name, healthy=False, error=str(e))
+    
+    async def _check_vector_store(self, name, store) -> ProviderHealth:
+        """调用已有 health_check() 方法。"""
+        healthy = await store.health_check()
+        return ProviderHealth(name=name, healthy=healthy)</code></pre>
+
+<h4>组件 3: ProviderPool 故障转移</h4>
+<pre><code># app/llm/provider_pool.py
+
+class ProviderPool(Generic[T]):
+    """Provider 池 — 管理主/备 Provider，自动故障转移。
+    
+    当主 Provider 的熔断器处于 OPEN 状态时，自动切换到下一个备用 Provider。
+    所有 Provider 的熔断器都处于 OPEN 时，抛出 AllProvidersUnavailableError。
+    """
+    
+    def __init__(self, providers: list[T], get_breaker_name: Callable[[T], str]):
+        self._providers = providers
+        self._get_breaker_name = get_breaker_name
+        self._current_index = 0
+    
+    async def call(self, method: str, *args, **kwargs):
+        """调用当前 Provider 的方法，熔断时自动切换。"""
+        for i, provider in enumerate(self._providers):
+            breaker = get_circuit_breaker(self._get_breaker_name(provider))
+            if breaker.state == CircuitState.OPEN:
+                if not breaker._should_transition_to_half_open():
+                    continue  # 跳过熔断中的 Provider
+            try:
+                # 尝试调用
+                result = await getattr(provider, method)(*args, **kwargs)
+                self._current_index = i
+                return result
+            except CircuitBreakerOpenError:
+                continue
+            except Exception:
+                breaker._record_failure()
+                continue
+        raise AllProvidersUnavailableError(...)</code></pre>
+
+<h4>故障转移链配置</h4>
+<pre><code># .env
+# LLM 故障转移链（逗号分隔，按优先级排序）
+LLM_FAILOVER_CHAIN=dashscope,vllm          # saas_dashscope 模式
+# LLM_FAILOVER_CHAIN=anthropic,dashscope  # saas 模式
+
+# Embedder 故障转移链
+EMBEDDER_FAILOVER_CHAIN=openai,tei          # saas 模式
+# EMBEDDER_FAILOVER_CHAIN=dashscope,tei    # saas_dashscope 模式
+
+# Reranker 故障转移链
+RERANKER_FAILOVER_CHAIN=cohere,tei          # saas 模式
+
+# VectorStore 故障转移链
+VECTOR_STORE_FAILOVER_CHAIN=opensearch,milvus
+
+# 健康检查
+HEALTH_CHECK_INTERVAL=30                    # 秒
+HEALTH_CHECK_CACHE_TTL=60                   # Redis TTL 秒</code></pre>
+
+<div class="warn-box">
+<strong>故障转移策略说明：</strong> 故障转移链为空时退化为单 Provider 模式（向后兼容）。仅当配置了 FAILOVER_CHAIN 时才启用 ProviderPool。这确保现有部署不受影响。
+</div>
+
+<h3 id="p2a-tasks">详细 Task 分解</h3>
+
+<div class="task-card">
+<p class="task-id">P2-A Task 1: 熔断器覆盖扩展</p>
+<p><strong>目标：</strong> 为 Embedder/Reranker/VectorStore 添加熔断器保护，统一 LLM Provider 为装饰器模式。</p>
+<p><strong>修改文件：</strong></p>
+<ul>
+<li><code>app/llm/embedder.py</code> — 3 个 Embedder 类的 <code>embed()</code> 方法添加 <code>@circuit_call</code> 装饰器</li>
+<li><code>app/rag/reranker.py</code> — 2 个 Reranker 类的 <code>rerank()</code> 方法添加 <code>@circuit_call</code> 装饰器</li>
+<li><code>app/rag/vector_store/opensearch_store.py</code> — <code>search()</code> 方法添加 <code>@circuit_call</code></li>
+<li><code>app/rag/vector_store/milvus_store.py</code> — <code>search()</code> 方法添加 <code>@circuit_call</code></li>
+<li><code>app/llm/vllm_provider.py</code> — 移除内联熔断器检查，改用 <code>@circuit_call</code> 装饰器</li>
+<li><code>app/llm/dashscope_provider.py</code> — 继承 VLLMProvider，无需额外修改</li>
+<li><code>app/llm/anthropic_provider.py</code> — 同 VLLMProvider 改为装饰器模式</li>
+</ul>
+<p><strong>测试文件：</strong> <code>tests/test_provider_circuit_breaker.py</code> — 验证所有 Provider 熔断器触发和恢复</p>
+<p><strong>预估：</strong> 2-3 小时</p>
+</div>
+
+<div class="task-card">
+<p class="task-id">P2-A Task 2: HealthCheckService + Celery Beat 调度</p>
+<p><strong>目标：</strong> 定时健康检查调度，结果存 Redis，API 暴露。</p>
+<p><strong>新建文件：</strong></p>
+<ul>
+<li><code>app/services/health_check.py</code> — HealthCheckService + ProviderHealth dataclass</li>
+<li><code>app/llm/registry.py</code> — get_all_llm_providers() / get_all_embedders() / get_all_rerankers() / get_all_vector_stores() 注册表查询函数</li>
+</ul>
+<p><strong>修改文件：</strong></p>
+<ul>
+<li><code>tasks/health_tasks.py</code> — 新建 Celery 任务 <code>health_check_all_providers</code></li>
+<li><code>app/celery_app.py</code> 或 <code>celery_app.py</code> — Celery Beat 添加 30s 定时任务</li>
+<li><code>app/main.py</code> — 添加 <code>GET /health/providers</code> API 端点</li>
+</ul>
+<p><strong>测试文件：</strong> <code>tests/test_health_check.py</code></p>
+<p><strong>预估：</strong> 2-3 小时</p>
+</div>
+
+<div class="task-card">
+<p class="task-id">P2-A Task 3: ProviderPool 故障转移</p>
+<p><strong>目标：</strong> Provider 池管理 + 自动故障转移。</p>
+<p><strong>新建文件：</strong></p>
+<ul>
+<li><code>app/llm/provider_pool.py</code> — ProviderPool 泛型类 + AllProvidersUnavailableError</li>
+</ul>
+<p><strong>修改文件：</strong></p>
+<ul>
+<li><code>app/llm/factory.py</code> — <code>get_llm_provider()</code> 返回 ProviderPool（配置 FAILOVER_CHAIN 时）或单 Provider（未配置时，向后兼容）</li>
+<li><code>app/llm/embedder.py</code> — <code>get_embedder()</code> 同上</li>
+<li><code>app/rag/reranker.py</code> — <code>get_reranker()</code> 同上</li>
+<li><code>app/rag/vector_store/__init__.py</code> — <code>get_vector_store()</code> 同上</li>
+<li><code>app/rag/engine.py</code> — <code>AgenticRAGEngine.__init__</code> 使用 ProviderPool</li>
+</ul>
+<p><strong>测试文件：</strong> <code>tests/test_provider_pool.py</code></p>
+<p><strong>预估：</strong> 3-4 小时</p>
+</div>
+
+<div class="task-card">
+<p class="task-id">P2-A Task 4: 前端健康监控面板</p>
+<p><strong>目标：</strong> 前端展示所有 Provider 健康状态 + 熔断器状态。</p>
+<p><strong>新建文件：</strong></p>
+<ul>
+<li><code>frontend/src/lib/apis/health.ts</code> — 扩展，添加 <code>getProviderHealth()</code></li>
+<li><code>frontend/src/components/admin/ProviderHealthCard.astro</code> — Provider 健康状态卡片</li>
+</ul>
+<p><strong>修改文件：</strong></p>
+<ul>
+<li><code>frontend/src/pages/admin/index.astro</code> — 添加 ProviderHealthCard</li>
+</ul>
+<p><strong>验证：</strong> <code>astro check</code> 零错误</p>
+<p><strong>预估：</strong> 1-2 小时</p>
+</div>
+
+<div class="task-card">
+<p class="task-id">P2-A Task 5: 配置 + 集成测试</p>
+<p><strong>目标：</strong> 配置项添加 + 端到端集成测试。</p>
+<p><strong>修改文件：</strong></p>
+<ul>
+<li><code>app/config.py</code> — 添加 LLM_FAILOVER_CHAIN / EMBEDDER_FAILOVER_CHAIN / RERANKER_FAILOVER_CHAIN / VECTOR_STORE_FAILOVER_CHAIN / HEALTH_CHECK_INTERVAL / HEALTH_CHECK_CACHE_TTL</li>
+</ul>
+<p><strong>测试文件：</strong> <code>tests/test_failover_integration.py</code> — 模拟主 Provider 故障，验证自动切换到备用 Provider</p>
+<p><strong>预估：</strong> 2 小时</p>
+</div>
+
+<!-- ==================== P2-B ==================== -->
+
+<h2 id="p2b">P2-B: 查询重写/扩展</h2>
+
+<h3 id="p2b-current">现状分析</h3>
+
+<h4>当前检索流程</h4>
+<pre><code>用户原始查询 (raw query)
+  │
+  ▼
+AgenticRAGEngine._retrieve()
+  │  query = state["query"]                    ← 原始查询，无任何改写
+  │
+  ▼
+HybridRetriever.search(query, kb_ids, top_k)
+  │  ├── _vector_search: embed([query])        ← 原始查询向量化
+  │  └── _fulltext_search: multi_match(query)  ← 原始查询全文检索
+  │
+  ▼
+Reranker.rerank(query, documents, top_k)       ← 原始查询重排
+  │
+  ▼
+QualityGuard.check_retrieval_quality()          ← 后置检查：分数低则扩展 top_k
+  │
+  ▼
+Generator.generate(query, retrieved_docs)       ← 生成回答</code></pre>
+
+<h4>关键问题</h4>
+<ol>
+<li><strong>无查询扩展：</strong>用户输入"报销"时，系统不会扩展为"报销 + 费用报销 + 报销流程 + 报销单据"，导致向量检索和全文检索召回不足。</li>
+<li><strong>无查询分解：</strong>复杂问题如"Qwen 和 Llama 在长文本处理上的区别是什么？"被当作单一查询处理，无法分别检索 Qwen 和 Llama 的相关文档再合并。</li>
+<li><strong>无 HyDE：</strong>向量检索使用原始查询的嵌入，而非"假设答案"的嵌入。研究表明 HyDE 可提升向量检索召回率 10-20%。</li>
+<li><strong>无查询分类：</strong>所有查询走同一条路径。简单事实型查询不需要 LLM 改写，对话型查询需要上下文补全，分析型查询需要分解。</li>
+<li><strong>QualityGuard 是后置补救：</strong>只在检索结果质量差时扩展 top_k 重排，不在检索前优化查询本身。</li>
+</ol>
+
+<h3 id="p2b-design">架构设计</h3>
+
+<h4>设计目标</h4>
+<ol>
+<li>可插拔查询重写管线 — 策略可独立开关</li>
+<li>零 LLM 调用策略（同义词扩展）优先，LLM 策略（HyDE/分解）可选 + 缓存</li>
+<li>查询分类路由 — 按查询类型选择重写策略</li>
+<li>成本控制 — 重复查询缓存命中时零 LLM 调用</li>
+</ol>
+
+<h4>查询重写管线</h4>
+<pre><code>用户原始查询
+  │
+  ▼
+QueryClassifier（查询分类）
+  │  ├── Factual（事实型）    → QueryExpansion only
+  │  ├── Analytical（分析型） → QueryExpansion + Decomposition
+  │  └── Conversational（对话型）→ ContextCompletion（上下文补全）
+  │
+  ▼
+QueryExpansion（查询扩展 — 零 LLM 调用）
+  │  ├── 领域同义词词典（企业知识库术语映射）
+  │  ├── 通用同义词扩展
+  │  └── 输出：扩展后的查询字符串
+  │
+  ▼（可选）
+QueryDecomposition（查询分解 — 1 LLM call, cached）
+  │  ├── 检测多部分问题
+  │  ├── 分解为子查询列表
+  │  └── 每个子查询独立检索后合并
+  │
+  ▼（可选）
+HyDE（假设文档嵌入 — 1 LLM call, cached）
+  │  ├── LLM 生成假设性答案
+  │  └── 用假设答案嵌入替代原始查询嵌入（仅影响向量检索）
+  │
+  ▼
+重写后查询 → HybridRetriever.search()</code></pre>
+
+<h4>插入点</h4>
+<p>在 <code>AgenticRAGEngine._retrieve()</code> 中，当前 line 907-910：</p>
+<pre><code># 当前代码：
+query = state["query"]
+candidates = await self.retriever.search(query, kb_ids=kb_ids, top_k=_RETRIEVE_TOP_K)
+
+# 改造后：
+query = state["query"]
+rewrite_result = await self._query_rewriter.rewrite(
+    query,
+    context=state.get("memory_context", ""),
+    conversation_history=state.get("messages", []),
+)
+# 向量检索使用 HyDE 嵌入（如有），全文检索使用扩展查询
+candidates = await self.retriever.search(
+    rewrite_result.search_query,
+    kb_ids=kb_ids,
+    top_k=_RETRIEVE_TOP_K,
+    query_embedding=rewrite_result.hypothetical_embedding,  # HyDE 可选
+)
+# SSE 通知前端查询被重写
+if rewrite_result.rewritten:
+    await self._emit_sse(SSEEventType.QUERY_REWRITE, {
+        "original": query,
+        "rewritten": rewrite_result.search_query,
+        "strategies": rewrite_result.strategies_applied,
+    })</code></pre>
+
+<h4>策略详细设计</h4>
+
+<h4>策略 1: QueryExpansion（零 LLM 调用）</h4>
+<pre><code># app/rag/query_rewriter.py
+
+class QueryExpansion:
+    """查询扩展 — 同义词 + 相关词注入，零 LLM 调用。"""
+    
+    # 领域词典 — 可通过配置文件覆盖
+    DOMAIN_SYNONYMS: dict[str, list[str]] = {
+        "报销": ["费用报销", "报销流程", "报销单据", "费用申请"],
+        "请假": ["休假", "调休", "年假", "事假", "病假"],
+        "入职": ["onboarding", "新员工", "入职流程"],
+        # ... 更多领域术语
+    }
+    
+    async def expand(self, query: str) -> str:
+        """扩展查询 — 匹配领域词典，注入同义词。"""
+        words = self._tokenize(query)
+        expanded_terms = set()
+        for word in words:
+            if word in self.DOMAIN_SYNONYMS:
+                expanded_terms.update(self.DOMAIN_SYNONYMS[word])
+        if expanded_terms:
+            return f"{query} {' '.join(expanded_terms)}"
+        return query</code></pre>
+
+<h4>策略 2: QueryDecomposition（1 LLM call, cached）</h4>
+<pre><code>class QueryDecomposition:
+    """查询分解 — 将复杂多部分问题分解为子查询。"""
+    
+    DECOMPOSE_PROMPT = """分析以下用户查询，判断是否需要分解为多个子查询。
+    
+用户查询: {query}
+    
+规则:
+- 如果查询包含多个独立子问题（如"A和B的区别"、"A的X以及B的Y"），分解为子查询。
+- 如果查询是单一问题，返回原查询。
+    
+输出JSON格式:
+{{"need_decompose": true/false, "sub_queries": ["子查询1", "子查询2"]}}
+"""
+    
+    async def decompose(self, query: str) -> list[str]:
+        # 1. 检查 Redis 缓存
+        cache_key = f"query_decompose:{sha256(query)}"
+        cached = await redis.get(cache_key)
+        if cached:
+            return json.loads(cached)
+        
+        # 2. LLM 调用
+        result = await llm.chat([{"role": "user", "content": self.DECOMPOSE_PROMPT.format(query=query)}])
+        parsed = json.loads(result)
+        
+        # 3. 缓存 (TTL=1h)
+        sub_queries = parsed.get("sub_queries", [query])
+        await redis.setex(cache_key, 3600, json.dumps(sub_queries))
+        
+        return sub_queries</code></pre>
+
+<h4>策略 3: HyDE（1 LLM call, cached）</h4>
+<pre><code>class HyDE:
+    """Hypothetical Document Embeddings — 生成假设答案用于向量检索。"""
+    
+    HYDE_PROMPT = """请基于以下问题，写一段简短的假设性答案（50-100字）。
+不需要准确，只需包含可能相关的关键词和概念。
+    
+问题: {query}
+    
+假设性答案:"""
+    
+    async def generate(self, query: str, embedder) -> list[float]:
+        # 1. 检查 Redis 缓存
+        cache_key = f"query_hyde:{sha256(query)}"
+        cached_embedding = await redis.get(cache_key)
+        if cached_embedding:
+            return json.loads(cached_embedding)
+        
+        # 2. LLM 生成假设答案
+        hypothetical_doc = await llm.chat([{"role": "user", "content": self.HYDE_PROMPT.format(query=query)}])
+        
+        # 3. 嵌入假设答案
+        embedding = (await embedder.embed([hypothetical_doc]))[0]
+        
+        # 4. 缓存 (TTL=1h)
+        await redis.setex(cache_key, 3600, json.dumps(embedding))
+        
+        return embedding</code></pre>
+
+<h4>查询分类</h4>
+<pre><code>class QueryClassifier:
+    """查询分类 — 按类型路由到不同重写策略。"""
+    
+    async def classify(self, query: str, context: str = "") -> QueryType:
+        """规则优先，LLM 兜底。"""
+        # 规则 1: 包含代词且无上下文 → 对话型
+        if any(pronoun in query for pronoun in ["它", "他", "她", "这个", "那个", "上面"]):
+            if not context:
+                return QueryType.CONVERSATIONAL
+        
+        # 规则 2: 包含对比/多部分关键词 → 分析型
+        analytical_markers = ["和", "与", "对比", "区别", "以及", "同时", "分别"]
+        if sum(1 for m in analytical_markers if m in query) >= 2:
+            return QueryType.ANALYTICAL
+        
+        # 规则 3: 默认事实型
+        return QueryType.FACTUAL</code></pre>
+
+<h4>成本控制</h4>
+<table>
+<tr><th>策略</th><th>LLM 调用</th><th>缓存</th><th>延迟</th></tr>
+<tr><td>QueryExpansion</td><td>0</td><td>不需要</td><td>~1ms（字典查找）</td></tr>
+<tr><td>QueryDecomposition</td><td>≤1（缓存命中时 0）</td><td>Redis, TTL=1h</td><td>~200ms（未命中）/ ~1ms（命中）</td></tr>
+<tr><td>HyDE</td><td>≤1（缓存命中时 0）</td><td>Redis, TTL=1h</td><td>~500ms（未命中）/ ~1ms（命中）</td></tr>
+<tr><td>QueryClassifier</td><td>0（规则优先）</td><td>不需要</td><td>~1ms</td></tr>
+</table>
+<p><strong>最坏情况：</strong>每次查询 2 LLM 调用（Decomposition + HyDE）<br>
+<strong>最佳情况：</strong>0 LLM 调用（Factual 查询 + 缓存命中）<br>
+<strong>默认配置：</strong>HyDE 关闭，Decomposition 开启，Expansion 始终开启</p>
+
+<h4>HybridRetriever 改造</h4>
+<p>需要给 <code>HybridRetriever.search()</code> 添加可选的 <code>query_embedding</code> 参数，用于 HyDE：</p>
+<pre><code>async def search(
+    self,
+    query: str,
+    kb_ids: list[str] | None = None,
+    top_k: int = 20,
+    query_embedding: list[float] | None = None,  # 新增：HyDE 嵌入
+) -> list[dict[str, Any]]:
+    # 向量检索：优先使用 query_embedding（HyDE），否则实时 embed
+    vector_results = await self._vector_search(
+        query, kb_ids, top_k, query_embedding=query_embedding
+    )
+    # 全文检索：始终使用扩展后的文本查询
+    fulltext_results = await self._fulltext_search(query, kb_ids, top_k)
+    ...</code></pre>
+
+<h3 id="p2b-tasks">详细 Task 分解</h3>
+
+<div class="task-card">
+<p class="task-id">P2-B Task 1: QueryRewriter 核心 + QueryExpansion</p>
+<p><strong>目标：</strong> 查询重写框架 + 零 LLM 调用的同义词扩展策略。</p>
+<p><strong>新建文件：</strong></p>
+<ul>
+<li><code>app/rag/query_rewriter.py</code> — QueryRewriter 管线 + QueryExpansion 策略 + RewriteResult dataclass</li>
+<li><code>app/rag/query_classifier.py</code> — QueryClassifier 规则分类</li>
+<li><code>config/synonyms.json</code> — 领域同义词词典（可配置覆盖）</li>
+</ul>
+<p><strong>测试文件：</strong> <code>tests/test_query_rewriter.py</code> — 验证扩展策略、分类规则</p>
+<p><strong>预估：</strong> 2-3 小时</p>
+</div>
+
+<div class="task-card">
+<p class="task-id">P2-B Task 2: QueryDecomposition 查询分解</p>
+<p><strong>目标：</strong> 复杂多部分问题分解为子查询，子查询独立检索后合并。</p>
+<p><strong>修改文件：</strong></p>
+<ul>
+<li><code>app/rag/query_rewriter.py</code> — 添加 QueryDecomposition 策略</li>
+<li><code>app/rag/retriever.py</code> — <code>HybridRetriever.search()</code> 支持 <code>query_embedding</code> 参数</li>
+</ul>
+<p><strong>设计要点：</strong></p>
+<ul>
+<li>LLM prompt 设计（JSON 输出，need_decompose + sub_queries）</li>
+<li>Redis 缓存（key: <code>query_decompose:{sha256(query)}</code>, TTL=1h）</li>
+<li>子查询结果合并策略（去重 + 分数归一化）</li>
+</ul>
+<p><strong>测试文件：</strong> <code>tests/test_query_decomposition.py</code></p>
+<p><strong>预估：</strong> 2-3 小时</p>
+</div>
+
+<div class="task-card">
+<p class="task-id">P2-B Task 3: HyDE 假设文档嵌入</p>
+<p><strong>目标：</strong> LLM 生成假设答案，用假设答案嵌入替代原始查询嵌入进行向量检索。</p>
+<p><strong>修改文件：</strong></p>
+<ul>
+<li><code>app/rag/query_rewriter.py</code> — 添加 HyDE 策略</li>
+<li><code>app/rag/retriever.py</code> — <code>_vector_search()</code> 接受 <code>query_embedding</code> 参数</li>
+</ul>
+<p><strong>设计要点：</strong></p>
+<ul>
+<li>LLM prompt 设计（生成 50-100 字假设性答案）</li>
+<li>Redis 缓存（key: <code>query_hyde:{sha256(query)}</code>, TTL=1h）</li>
+<li>仅影响向量检索，全文检索仍用扩展查询</li>
+<li>默认关闭（<code>QUERY_HYDE_ENABLED=false</code>），需手动开启</li>
+</ul>
+<p><strong>测试文件：</strong> <code>tests/test_hyde.py</code></p>
+<p><strong>预估：</strong> 2 小时</p>
+</div>
+
+<div class="task-card">
+<p class="task-id">P2-B Task 4: 引擎集成 + SSE 事件</p>
+<p><strong>目标：</strong> 将 QueryRewriter 集成到 AgenticRAGEngine._retrieve()，通过 SSE 通知前端。</p>
+<p><strong>修改文件：</strong></p>
+<ul>
+<li><code>app/rag/engine.py</code> — <code>__init__</code> 初始化 QueryRewriter，<code>_retrieve()</code> 集成重写步骤</li>
+<li><code>app/rag/engine.py</code> — 添加 <code>SSEEventType.QUERY_REWRITE</code> 事件</li>
+<li><code>app/rag/retriever.py</code> — <code>search()</code> 支持 <code>query_embedding</code> 参数</li>
+</ul>
+<p><strong>集成测试：</strong> <code>tests/test_rewrite_integration.py</code> — 端到端验证查询重写 → 检索 → 生成</p>
+<p><strong>预估：</strong> 2-3 小时</p>
+</div>
+
+<div class="task-card">
+<p class="task-id">P2-B Task 5: 配置 + 前端展示</p>
+<p><strong>目标：</strong> 配置项 + 前端展示查询重写信息。</p>
+<p><strong>修改文件：</strong></p>
+<ul>
+<li><code>app/config.py</code> — 添加 QUERY_REWRITE_ENABLED / QUERY_EXPANSION_ENABLED / QUERY_DECOMPOSITION_ENABLED / QUERY_HYDE_ENABLED / QUERY_REWRITE_CACHE_TTL</li>
+<li><code>frontend/src/pages/chat.astro</code>（或等效文件）— 展示查询重写信息（原始查询 → 重写后查询）</li>
+</ul>
+<p><strong>验证：</strong> <code>astro check</code> 零错误</p>
+<p><strong>预估：</strong> 1-2 小时</p>
+</div>
+
+<!-- ==================== 配置变更 ==================== -->
+
+<h2 id="config">配置变更汇总</h2>
+
+<h3>新增配置项（config.py）</h3>
+<pre><code># === P2-A: Provider 健康检查 + 故障转移 ===
+LLM_FAILOVER_CHAIN: str = ""                    # "dashscope,vllm"
+EMBEDDER_FAILOVER_CHAIN: str = ""               # "openai,tei"
+RERANKER_FAILOVER_CHAIN: str = ""               # "cohere,tei"
+VECTOR_STORE_FAILOVER_CHAIN: str = ""           # "opensearch,milvus"
+HEALTH_CHECK_INTERVAL: int = 30                 # 健康检查间隔（秒）
+HEALTH_CHECK_CACHE_TTL: int = 60                # Redis 缓存 TTL（秒）
+
+# === P2-B: 查询重写/扩展 ===
+QUERY_REWRITE_ENABLED: bool = True              # 查询重写总开关
+QUERY_EXPANSION_ENABLED: bool = True            # 同义词扩展（零 LLM）
+QUERY_DECOMPOSITION_ENABLED: bool = True        # 查询分解（1 LLM, cached）
+QUERY_HYDE_ENABLED: bool = False                # HyDE（1 LLM, cached，默认关闭）
+QUERY_REWRITE_CACHE_TTL: int = 3600             # 重写结果缓存 TTL（秒）</code></pre>
+
+<h3>新增文件汇总</h3>
+<table>
+<tr><th>文件路径</th><th>说明</th><th>所属 Task</th></tr>
+<tr><td><code>app/services/health_check.py</code></td><td>HealthCheckService</td><td>P2-A Task 2</td></tr>
+<tr><td><code>app/llm/registry.py</code></td><td>Provider 注册表查询</td><td>P2-A Task 2</td></tr>
+<tr><td><code>app/llm/provider_pool.py</code></td><td>ProviderPool 故障转移</td><td>P2-A Task 3</td></tr>
+<tr><td><code>tasks/health_tasks.py</code></td><td>健康检查 Celery 任务</td><td>P2-A Task 2</td></tr>
+<tr><td><code>frontend/.../ProviderHealthCard.astro</code></td><td>前端健康监控</td><td>P2-A Task 4</td></tr>
+<tr><td><code>app/rag/query_rewriter.py</code></td><td>查询重写管线</td><td>P2-B Task 1-3</td></tr>
+<tr><td><code>app/rag/query_classifier.py</code></td><td>查询分类</td><td>P2-B Task 1</td></tr>
+<tr><td><code>config/synonyms.json</code></td><td>领域同义词词典</td><td>P2-B Task 1</td></tr>
+</table>
+
+<h3>修改文件汇总</h3>
+<table>
+<tr><th>文件路径</th><th>修改内容</th><th>所属 Task</th></tr>
+<tr><td><code>app/llm/embedder.py</code></td><td>熔断器 + ProviderPool</td><td>P2-A Task 1, 3</td></tr>
+<tr><td><code>app/rag/reranker.py</code></td><td>熔断器 + ProviderPool</td><td>P2-A Task 1, 3</td></tr>
+<tr><td><code>app/rag/vector_store/*.py</code></td><td>熔断器 + ProviderPool</td><td>P2-A Task 1, 3</td></tr>
+<tr><td><code>app/llm/vllm_provider.py</code></td><td>内联 → 装饰器熔断器</td><td>P2-A Task 1</td></tr>
+<tr><td><code>app/llm/anthropic_provider.py</code></td><td>内联 → 装饰器熔断器</td><td>P2-A Task 1</td></tr>
+<tr><td><code>app/llm/factory.py</code></td><td>ProviderPool 集成</td><td>P2-A Task 3</td></tr>
+<tr><td><code>app/main.py</code></td><td>/health/providers API</td><td>P2-A Task 2</td></tr>
+<tr><td><code>app/config.py</code></td><td>新增配置项</td><td>P2-A Task 5, P2-B Task 5</td></tr>
+<tr><td><code>app/rag/engine.py</code></td><td>QueryRewriter 集成</td><td>P2-B Task 4</td></tr>
+<tr><td><code>app/rag/retriever.py</code></td><td>query_embedding 参数</td><td>P2-B Task 2-4</td></tr>
+<tr><td><code>celery_app.py</code></td><td>Beat 定时任务</td><td>P2-A Task 2</td></tr>
+</table>
+
+<!-- ==================== 测试计划 ==================== -->
+
+<h2 id="test">测试计划</h2>
+
+<h3>P2-A 测试</h3>
+<table>
+<tr><th>测试文件</th><th>覆盖范围</th><th>预估用例数</th></tr>
+<tr><td><code>test_provider_circuit_breaker.py</code></td><td>所有 Provider 熔断器触发/恢复</td><td>~30</td></tr>
+<tr><td><code>test_health_check.py</code></td><td>HealthCheckService + Redis 存储</td><td>~15</td></tr>
+<tr><td><code>test_provider_pool.py</code></td><td>ProviderPool 故障转移 + 向后兼容</td><td>~20</td></tr>
+<tr><td><code>test_failover_integration.py</code></td><td>端到端故障转移集成测试</td><td>~10</td></tr>
+</table>
+
+<h3>P2-B 测试</h3>
+<table>
+<tr><th>测试文件</th><th>覆盖范围</th><th>预估用例数</th></tr>
+<tr><td><code>test_query_rewriter.py</code></td><td>QueryExpansion + QueryClassifier</td><td>~25</td></tr>
+<tr><td><code>test_query_decomposition.py</code></td><td>查询分解 + 缓存</td><td>~15</td></tr>
+<tr><td><code>test_hyde.py</code></td><td>HyDE 生成 + 缓存</td><td>~10</td></tr>
+<tr><td><code>test_rewrite_integration.py</code></td><td>端到端重写 → 检索 → 生成</td><td>~10</td></tr>
+</table>
+
+<!-- ==================== 实施顺序 ==================== -->
+
+<h2 id="order">实施顺序</h2>
+
+<div class="card">
+<p><strong>P2-A（Provider 健康检查 + 故障转移）— 先执行</strong></p>
+<ol>
+<li><strong>Task 1:</strong> 熔断器覆盖扩展 → 所有 Provider 统一保护</li>
+<li><strong>Task 2:</strong> HealthCheckService + Celery Beat → 定时健康检查</li>
+<li><strong>Task 3:</strong> ProviderPool 故障转移 → 自动切换</li>
+<li><strong>Task 4:</strong> 前端健康监控面板 → 可视化</li>
+<li><strong>Task 5:</strong> 配置 + 集成测试 → 端到端验证</li>
+</ol>
+</div>
+
+<div class="card">
+<p><strong>P2-B（查询重写/扩展）— 后执行</strong></p>
+<ol>
+<li><strong>Task 1:</strong> QueryRewriter 核心 + QueryExpansion → 基础框架 + 零成本策略</li>
+<li><strong>Task 2:</strong> QueryDecomposition → 查询分解</li>
+<li><strong>Task 3:</strong> HyDE → 假设文档嵌入</li>
+<li><strong>Task 4:</strong> 引擎集成 + SSE 事件 → 端到端</li>
+<li><strong>Task 5:</strong> 配置 + 前端展示 → 完整闭环</li>
+</ol>
+</div>
+
+<div class="warn-box">
+<strong>实施原则：</strong> 每个 Task 完成后运行测试验证零回归，确保所有测试通过后再进入下一个 Task。P2-A 全部完成后再开始 P2-B。
+</div>
+
+<div class="summary-box">
+<strong>请 Review 以上设计方案：</strong>
+<ul>
+<li>确认 P2-A 和 P2-B 的架构设计是否符合预期</li>
+<li>确认 Task 分解粒度是否合适</li>
+<li>确认故障转移链配置策略（向后兼容 vs 强制配置）</li>
+<li>确认 HyDE 默认关闭的成本控制策略</li>
+<li>确认实施顺序（P2-A → P2-B）</li>
+</ul>
+确认后我将按 Task 顺序开始实施。
+</div>
+
+</body>
+</html>

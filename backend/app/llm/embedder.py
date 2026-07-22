@@ -16,12 +16,15 @@ from collections.abc import Callable
 from functools import lru_cache
 from typing import Any
 
-import httpx
 from openai import AsyncOpenAI
 
 from app.config import get_settings
+from app.utils.circuit_breaker import circuit_call
+from app.utils.logger import get_logger
 
 settings = get_settings()
+
+log = get_logger(__name__)
 
 # Embedder 工厂注册表 — deploy_mode → 工厂函数。
 _embedder_registry: dict[str, Callable[[], "EmbeddingProvider"]] = {}
@@ -48,11 +51,22 @@ class OpenAIEmbedder(EmbeddingProvider):
     def __init__(self) -> None:
         self.client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
 
+    @circuit_call("embedder_openai")
     async def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
-        resp = await self.client.embeddings.create(input=texts, model=self.model)
-        return [item.embedding for item in resp.data]
+        import time
+        t0 = time.monotonic()
+        log.info("embedder.openai.start", text_count=len(texts))
+        try:
+            resp = await self.client.embeddings.create(input=texts, model=self.model)
+            elapsed_ms = round((time.monotonic() - t0) * 1000, 2)
+            log.info("embedder.openai.success", dim=self.dim, latency_ms=elapsed_ms)
+            return [item.embedding for item in resp.data]
+        except Exception as exc:
+            elapsed_ms = round((time.monotonic() - t0) * 1000, 2)
+            log.warning("embedder.openai.error", error=str(exc), latency_ms=elapsed_ms)
+            raise
 
 
 class TEIEmbedder(EmbeddingProvider):
@@ -65,22 +79,37 @@ class TEIEmbedder(EmbeddingProvider):
     model = "BAAI/bge-m3"
 
     def __init__(self) -> None:
-        self.client = httpx.AsyncClient(timeout=60.0)
+        from app.utils.retry import build_retry_http_client
+
+        self.client = build_retry_http_client(timeout=60.0)
         self.base_url = settings.tei_embed_url
 
+    @circuit_call("embedder_tei")
     async def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
-        resp = await self.client.post(
-            f"{self.base_url}/embed",
-            json={"inputs": texts},
-        )
-        resp.raise_for_status()
-        data: Any = resp.json()
-        # TEI /embed 对单条输入返回单层 list，批量返回二层 list，统一规整。
-        if texts and isinstance(data, list) and data and isinstance(data[0], (int, float)):
-            return [list(map(float, data))]
-        return [list(map(float, vec)) for vec in data]
+        import time
+        t0 = time.monotonic()
+        log.info("embedder.tei.start", text_count=len(texts))
+        try:
+            resp = await self.client.post(
+                f"{self.base_url}/embed",
+                json={"inputs": texts},
+            )
+            resp.raise_for_status()
+            data: Any = resp.json()
+            # TEI /embed 对单条输入返回单层 list，批量返回二层 list，统一规整。
+            if texts and isinstance(data, list) and data and isinstance(data[0], (int, float)):
+                result = [list(map(float, data))]
+            else:
+                result = [list(map(float, vec)) for vec in data]
+            elapsed_ms = round((time.monotonic() - t0) * 1000, 2)
+            log.info("embedder.tei.success", dim=self.dim, latency_ms=elapsed_ms)
+            return result
+        except Exception as exc:
+            elapsed_ms = round((time.monotonic() - t0) * 1000, 2)
+            log.warning("embedder.tei.error", error=str(exc), latency_ms=elapsed_ms)
+            raise
 
 
 class DashScopeEmbedder(EmbeddingProvider):
@@ -101,11 +130,22 @@ class DashScopeEmbedder(EmbeddingProvider):
         # 动态读取维度配置（text-embedding-v3=1024, v2=1536）
         self.dim = settings.DASHSCOPE_EMBED_DIM
 
+    @circuit_call("embedder_dashscope")
     async def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
-        resp = await self.client.embeddings.create(input=texts, model=self.model)
-        return [item.embedding for item in resp.data]
+        import time
+        t0 = time.monotonic()
+        log.info("embedder.dashscope.start", text_count=len(texts))
+        try:
+            resp = await self.client.embeddings.create(input=texts, model=self.model)
+            elapsed_ms = round((time.monotonic() - t0) * 1000, 2)
+            log.info("embedder.dashscope.success", dim=self.dim, latency_ms=elapsed_ms)
+            return [item.embedding for item in resp.data]
+        except Exception as exc:
+            elapsed_ms = round((time.monotonic() - t0) * 1000, 2)
+            log.warning("embedder.dashscope.error", error=str(exc), latency_ms=elapsed_ms)
+            raise
 
 
 def register_embedder(

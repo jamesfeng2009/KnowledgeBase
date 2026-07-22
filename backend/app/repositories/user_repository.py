@@ -22,8 +22,8 @@ from app.repositories.base import BaseRepository
 class UserRepository(BaseRepository[User]):
     """用户仓储 — 封装 User 表的领域查询。"""
 
-    def __init__(self, session: AsyncSession) -> None:
-        super().__init__(User, session)
+    def __init__(self, session: AsyncSession, tenant_id: UUID | None = None) -> None:
+        super().__init__(User, session, tenant_id=tenant_id)
 
     async def get_by_email(self, email: str) -> User | None:
         """根据邮箱查询用户（排除已软删除）。
@@ -45,8 +45,9 @@ class UserRepository(BaseRepository[User]):
                 User.dept_id == dept_id,
                 User.deleted_at.is_(None),
             )
-            .order_by(User.created_at.desc())
         )
+        stmt = self._apply_all_filters(stmt)
+        stmt = stmt.order_by(User.created_at.desc())
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
@@ -59,7 +60,8 @@ class UserRepository(BaseRepository[User]):
                 User.deleted_at.is_(None),
                 User.is_active.is_(True),
             )
-            .order_by(User.created_at.desc())
         )
+        stmt = self._apply_all_filters(stmt)
+        stmt = stmt.order_by(User.created_at.desc())
         result = await self.session.execute(stmt)
         return list(result.scalars().all())

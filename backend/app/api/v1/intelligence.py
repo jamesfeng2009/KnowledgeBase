@@ -12,7 +12,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Body, Depends, Query
+from fastapi import APIRouter, Body, Depends, Query, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,6 +31,7 @@ router = APIRouter(prefix="/intelligence", tags=["intelligence"])
 
 @router.post("/{doc_id}/process")
 async def trigger_intelligence(
+    request: Request,
     doc_id: str,
     user: User = Depends(require_module("doc_intelligence")),
     db: AsyncSession = Depends(get_db_session),
@@ -60,7 +61,8 @@ async def trigger_intelligence(
     except Exception:
         return ApiResponse(code=503, data=None, message="LLM 服务不可用")
 
-    service = DocIntelligenceService(llm, db)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = DocIntelligenceService(llm, db, tenant_id=tenant_id)
     result = await service.process_all(doc_id)
     await db.commit()
     return ApiResponse(code=0, data=result, message="success")

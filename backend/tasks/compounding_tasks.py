@@ -37,11 +37,14 @@ def _run_async(coro):
 async def _extract_knowledge(
     execution_id: str,
     trigger_source: str = "execution_completed",
+    tenant_id: str | None = None,
 ) -> dict:
     """异步执行知识提取 — 调用 KnowledgeCompoundingService。"""
     from app.database import async_session_factory
     from app.llm.factory import get_llm_provider
     from app.services.knowledge_compounding import KnowledgeCompoundingService
+
+    tid = uuid.UUID(tenant_id) if tenant_id else None
 
     async with async_session_factory() as db:
         try:
@@ -50,7 +53,7 @@ async def _extract_knowledge(
             logger.warning("compounding.llm_unavailable", error=str(exc))
             llm = None
 
-        service = KnowledgeCompoundingService(llm, db)
+        service = KnowledgeCompoundingService(llm, db, tenant_id=tid)
         try:
             result = await service.extract_knowledge(
                 execution_id, trigger_source=trigger_source
@@ -77,11 +80,15 @@ async def _extract_knowledge(
             }
 
 
-async def _detect_conflicts(asset_id: str) -> dict:
+async def _detect_conflicts(
+    asset_id: str, tenant_id: str | None = None
+) -> dict:
     """异步执行冲突检测 — 调用 KnowledgeCompoundingService。"""
     from app.database import async_session_factory
     from app.llm.factory import get_llm_provider
     from app.services.knowledge_compounding import KnowledgeCompoundingService
+
+    tid = uuid.UUID(tenant_id) if tenant_id else None
 
     async with async_session_factory() as db:
         try:
@@ -90,7 +97,7 @@ async def _detect_conflicts(asset_id: str) -> dict:
             logger.warning("compounding.llm_unavailable", error=str(exc))
             llm = None
 
-        service = KnowledgeCompoundingService(llm, db)
+        service = KnowledgeCompoundingService(llm, db, tenant_id=tid)
         try:
             conflicts = await service.detect_conflicts(asset_id)
             await db.commit()
@@ -122,11 +129,14 @@ async def _detect_conflicts(asset_id: str) -> dict:
 async def _inject_for_reuse(
     requirement_id: str,
     max_assets: int = 5,
+    tenant_id: str | None = None,
 ) -> dict:
     """异步执行复用注入 — 调用 KnowledgeCompoundingService。"""
     from app.database import async_session_factory
     from app.llm.factory import get_llm_provider
     from app.services.knowledge_compounding import KnowledgeCompoundingService
+
+    tid = uuid.UUID(tenant_id) if tenant_id else None
 
     async with async_session_factory() as db:
         try:
@@ -135,7 +145,7 @@ async def _inject_for_reuse(
             logger.warning("compounding.llm_unavailable", error=str(exc))
             llm = None
 
-        service = KnowledgeCompoundingService(llm, db)
+        service = KnowledgeCompoundingService(llm, db, tenant_id=tid)
         try:
             result = await service.inject_for_reuse(
                 requirement_id, max_assets=max_assets
@@ -173,6 +183,7 @@ try:
     def extract_knowledge_task(
         execution_id: str,
         trigger_source: str = "execution_completed",
+        tenant_id: str | None = None,
     ) -> dict:
         """异步从测试执行结果提取知识资产。
 
@@ -182,6 +193,7 @@ try:
         Args:
             execution_id: 执行记录 ID（UUID 字符串）。
             trigger_source: 触发来源（execution_completed/manual/scheduled）。
+            tenant_id: 租户 ID（UUID 字符串），用于多租户数据隔离。
 
         Returns:
             处理结果摘要，含 status / asset_count / conflicts 等字段。
@@ -192,7 +204,7 @@ try:
         )
         try:
             result = _run_async(
-                _extract_knowledge(execution_id, trigger_source)
+                _extract_knowledge(execution_id, trigger_source, tenant_id)
             )
             logger.info(
                 "compounding.extract_knowledge_task_completed",
@@ -213,11 +225,14 @@ try:
             }
 
     @celery_app.task(name="tasks.compounding_tasks.detect_conflicts_task")
-    def detect_conflicts_task(asset_id: str) -> dict:
+    def detect_conflicts_task(
+        asset_id: str, tenant_id: str | None = None
+    ) -> dict:
         """异步检测知识资产冲突。
 
         Args:
             asset_id: 知识资产 ID（UUID 字符串）。
+            tenant_id: 租户 ID（UUID 字符串），用于多租户数据隔离。
 
         Returns:
             检测到的冲突列表。
@@ -227,7 +242,7 @@ try:
             asset_id=asset_id,
         )
         try:
-            result = _run_async(_detect_conflicts(asset_id))
+            result = _run_async(_detect_conflicts(asset_id, tenant_id))
             logger.info(
                 "compounding.detect_conflicts_task_completed",
                 asset_id=asset_id,
@@ -250,12 +265,14 @@ try:
     def inject_for_reuse_task(
         requirement_id: str,
         max_assets: int = 5,
+        tenant_id: str | None = None,
     ) -> dict:
         """异步复用注入 — 检索历史知识资产注入用例生成上下文。
 
         Args:
             requirement_id: 需求点 ID（UUID 字符串）。
             max_assets: 最大注入资产数，默认 5。
+            tenant_id: 租户 ID（UUID 字符串），用于多租户数据隔离。
 
         Returns:
             注入结果摘要，含 injected_assets / injection_context / asset_count。
@@ -266,7 +283,7 @@ try:
         )
         try:
             result = _run_async(
-                _inject_for_reuse(requirement_id, max_assets)
+                _inject_for_reuse(requirement_id, max_assets, tenant_id)
             )
             logger.info(
                 "compounding.inject_for_reuse_task_completed",

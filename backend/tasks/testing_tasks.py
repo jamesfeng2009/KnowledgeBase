@@ -38,11 +38,14 @@ async def _extract_requirements(
     project_id: str,
     doc_id: str,
     target_categories: list[str] | None = None,
+    tenant_id: str | None = None,
 ) -> dict:
     """异步执行需求提取 — 调用 RequirementAnalysisService。"""
     from app.database import async_session_factory
     from app.llm.factory import get_llm_provider
     from app.services.testing import RequirementAnalysisService
+
+    tid = uuid.UUID(tenant_id) if tenant_id else None
 
     async with async_session_factory() as db:
         try:
@@ -56,7 +59,7 @@ async def _extract_requirements(
                 "reason": "llm_unavailable",
             }
 
-        service = RequirementAnalysisService(llm, db)
+        service = RequirementAnalysisService(llm, db, tenant_id=tid)
         try:
             result = await service.extract_requirements(
                 project_id, doc_id, target_categories
@@ -96,11 +99,14 @@ async def _generate_test_cases(
     context_doc_ids: list[str] | None = None,
     test_type: str | None = None,
     max_cases: int = 5,
+    tenant_id: str | None = None,
 ) -> dict:
     """异步执行用例生成 — 调用 TestCaseGenerationService。"""
     from app.database import async_session_factory
     from app.llm.factory import get_llm_provider
     from app.services.testing import TestCaseGenerationService
+
+    tid = uuid.UUID(tenant_id) if tenant_id else None
 
     async with async_session_factory() as db:
         try:
@@ -113,7 +119,7 @@ async def _generate_test_cases(
                 "reason": "llm_unavailable",
             }
 
-        service = TestCaseGenerationService(llm, db)
+        service = TestCaseGenerationService(llm, db, tenant_id=tid)
         try:
             result = await service.generate_cases(
                 requirement_id,
@@ -151,11 +157,14 @@ async def _orchestrate_test_plan(
     plan_id: str,
     node_count: int = 3,
     consider_dependencies: bool = True,
+    tenant_id: str | None = None,
 ) -> dict:
     """异步执行计划编排 — 调用 TestOrchestrationService。"""
     from app.database import async_session_factory
     from app.llm.factory import get_llm_provider
     from app.services.testing import TestOrchestrationService
+
+    tid = uuid.UUID(tenant_id) if tenant_id else None
 
     async with async_session_factory() as db:
         try:
@@ -168,7 +177,7 @@ async def _orchestrate_test_plan(
                 "reason": "llm_unavailable",
             }
 
-        service = TestOrchestrationService(llm, db)
+        service = TestOrchestrationService(llm, db, tenant_id=tid)
         try:
             plan = await service.orchestrate(
                 uuid.UUID(plan_id),
@@ -214,6 +223,7 @@ try:
         project_id: str,
         doc_id: str,
         target_categories: list[str] | None = None,
+        tenant_id: str | None = None,
     ) -> dict:
         """异步从 PRD/UI 稿提取原子需求点。
 
@@ -224,6 +234,7 @@ try:
             project_id: 测试项目 ID（UUID 字符串）。
             doc_id: 来源文档 ID（知识库 Document UUID 字符串）。
             target_categories: 可选，指定提取的需求分类。
+            tenant_id: 租户 ID（UUID 字符串），用于多租户数据隔离。
 
         Returns:
             处理结果摘要，含 status / count / requirements 等字段。
@@ -235,7 +246,9 @@ try:
         )
         try:
             result = _run_async(
-                _extract_requirements(project_id, doc_id, target_categories)
+                _extract_requirements(
+                    project_id, doc_id, target_categories, tenant_id
+                )
             )
             logger.info(
                 "testing.extract_requirements_task_completed",
@@ -264,6 +277,7 @@ try:
         context_doc_ids: list[str] | None = None,
         test_type: str | None = None,
         max_cases: int = 5,
+        tenant_id: str | None = None,
     ) -> dict:
         """异步基于需求点 + 上下文文档生成测试用例。
 
@@ -276,6 +290,7 @@ try:
             context_doc_ids: 可选，额外上下文文档 ID 列表。
             test_type: 可选，指定测试类型。
             max_cases: 最大生成用例数，默认 5。
+            tenant_id: 租户 ID（UUID 字符串），用于多租户数据隔离。
 
         Returns:
             处理结果摘要，含 status / count / cases 等字段。
@@ -291,6 +306,7 @@ try:
                     context_doc_ids=context_doc_ids,
                     test_type=test_type,
                     max_cases=max_cases,
+                    tenant_id=tenant_id,
                 )
             )
             logger.info(
@@ -316,6 +332,7 @@ try:
         plan_id: str,
         node_count: int = 3,
         consider_dependencies: bool = True,
+        tenant_id: str | None = None,
     ) -> dict:
         """异步 AI 编排测试计划。
 
@@ -326,6 +343,7 @@ try:
             plan_id: 测试计划 ID（UUID 字符串）。
             node_count: 执行节点数量，默认 3。
             consider_dependencies: 是否考虑用例依赖关系，默认 True。
+            tenant_id: 租户 ID（UUID 字符串），用于多租户数据隔离。
 
         Returns:
             处理结果摘要，含 status / ai_orchestration 等字段。
@@ -341,6 +359,7 @@ try:
                     plan_id,
                     node_count=node_count,
                     consider_dependencies=consider_dependencies,
+                    tenant_id=tenant_id,
                 )
             )
             logger.info(

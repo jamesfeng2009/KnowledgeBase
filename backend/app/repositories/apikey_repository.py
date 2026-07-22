@@ -29,8 +29,8 @@ class ApiKeyRepository(BaseRepository[ApiKey]):
     ApiKey 模型不支持软删除，使用 is_active 字段标记停用状态。
     """
 
-    def __init__(self, session: AsyncSession) -> None:
-        super().__init__(ApiKey, session)
+    def __init__(self, session: AsyncSession, tenant_id: UUID | None = None) -> None:
+        super().__init__(ApiKey, session, tenant_id=tenant_id)
 
     async def get_by_prefix(self, key_prefix: str) -> ApiKey | None:
         """根据密钥前缀查询（用于鉴权时快速定位记录）。
@@ -60,9 +60,11 @@ class ApiKeyRepository(BaseRepository[ApiKey]):
         Returns:
             ApiKey 列表（按创建时间倒序）。
         """
-        stmt = select(ApiKey).order_by(ApiKey.created_at.desc())
+        stmt = select(ApiKey)
         if is_active is not None:
             stmt = stmt.where(ApiKey.is_active.is_(is_active))
+        stmt = self._apply_all_filters(stmt)
+        stmt = stmt.order_by(ApiKey.created_at.desc())
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
@@ -74,11 +76,10 @@ class ApiKeyRepository(BaseRepository[ApiKey]):
         Args:
             id: 密钥 ID。
         """
-        stmt = (
-            update(ApiKey)
-            .where(ApiKey.id == id)
-            .values(last_used_at=datetime.now(timezone.utc))
-        )
+        stmt = update(ApiKey).where(ApiKey.id == id)
+        if self._tenant_id is not None:
+            stmt = stmt.where(ApiKey.tenant_id == self._tenant_id)
+        stmt = stmt.values(last_used_at=datetime.now(timezone.utc))
         await self.session.execute(stmt)
         await self.session.flush()
 
@@ -93,11 +94,10 @@ class ApiKeyRepository(BaseRepository[ApiKey]):
         Returns:
             True 表示停用成功，False 表示密钥不存在。
         """
-        stmt = (
-            update(ApiKey)
-            .where(ApiKey.id == id)
-            .values(is_active=False)
-        )
+        stmt = update(ApiKey).where(ApiKey.id == id)
+        if self._tenant_id is not None:
+            stmt = stmt.where(ApiKey.tenant_id == self._tenant_id)
+        stmt = stmt.values(is_active=False)
         result = await self.session.execute(stmt)
         await self.session.flush()
         return result.rowcount > 0

@@ -9,7 +9,7 @@
 """
 from __future__ import annotations
 
-import asyncio
+import json
 import sys
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -38,7 +38,7 @@ if "pymilvus" not in sys.modules:
 
 import uuid as _uuid
 
-from app.rag.chunker import Chunk, SemanticChunker
+from app.rag.chunker import Chunk
 from tasks.document_tasks import (
     CHUNK_OVERLAP,
     CHUNK_SIZE,
@@ -51,6 +51,11 @@ from tasks.document_tasks import (
 
 _TEST_UUID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 _TEST_UUID_NOT_FOUND = "00000000-0000-0000-0000-000000000000"
+
+
+def _parse_bulk_body(body: str) -> list[dict[str, Any]]:
+    """解析 OpenSearch bulk NDJSON 请求体（action 行与 source 行交替）。"""
+    return [json.loads(line) for line in body.strip().split("\n") if line.strip()]
 
 
 # ======================================================================
@@ -247,24 +252,27 @@ class TestBuildIndexes:
         # Mock OpenSearch 客户端
         mock_client = AsyncMock()
         mock_client.indices.exists = AsyncMock(return_value=True)
-        mock_client.index = AsyncMock()
+        mock_client.bulk = AsyncMock(return_value={"errors": False, "items": []})
         mock_client.close = AsyncMock()
 
         with patch("opensearchpy.AsyncOpenSearch", return_value=mock_client):
             await _build_opensearch_index("doc-001", chunk_objects)
 
-        # 验证每个 chunk 被索引且包含元数据
-        assert mock_client.index.call_count == 2
-        for i, call in enumerate(mock_client.index.call_args_list):
-            body = call.kwargs.get("body", {})
-            assert body["doc_id"] == "doc-001"
-            assert body["chunk_id"] == f"chunk-{i}"
-            assert "content" in body
-            assert "title_path" in body
-            assert "content_type" in body
-            assert "chunk_strategy" in body
-            assert body["content_type"] == "tutorial"
-            assert body["chunk_strategy"] == "structural"
+        # 验证所有 chunk 通过单次 bulk 请求索引且包含元数据
+        assert mock_client.bulk.call_count == 1
+        lines = _parse_bulk_body(mock_client.bulk.call_args.kwargs.get("body", ""))
+        actions, sources = lines[0::2], lines[1::2]
+        assert len(actions) == len(sources) == 2
+        for i, (action, source) in enumerate(zip(actions, sources, strict=True)):
+            assert action["index"]["_id"] == f"chunk-{i}"
+            assert source["doc_id"] == "doc-001"
+            assert source["chunk_id"] == f"chunk-{i}"
+            assert "content" in source
+            assert "title_path" in source
+            assert "content_type" in source
+            assert "chunk_strategy" in source
+            assert source["content_type"] == "tutorial"
+            assert source["chunk_strategy"] == "structural"
 
     @pytest.mark.asyncio
     async def test_build_opensearch_index_creates_index_with_metadata_fields(self) -> None:
@@ -274,7 +282,7 @@ class TestBuildIndexes:
         mock_client = AsyncMock()
         mock_client.indices.exists = AsyncMock(return_value=False)
         mock_client.indices.create = AsyncMock()
-        mock_client.index = AsyncMock()
+        mock_client.bulk = AsyncMock(return_value={"errors": False, "items": []})
         mock_client.close = AsyncMock()
 
         with patch("opensearchpy.AsyncOpenSearch", return_value=mock_client):
@@ -957,7 +965,6 @@ class TestChunkRedisPersistence:
 
     def test_save_and_load_chunks_roundtrip(self) -> None:
         """chunk_objects 序列化到 Redis 再反序列化，数据完整。"""
-        import json
         import types
 
         # 确保 redis 模块存在
@@ -1042,3 +1049,328 @@ class TestChunkRedisPersistence:
             result = _load_chunks_from_redis(_TEST_UUID)
 
         assert result is None
+
+
+# ======================================================================
+# 修复回归测试 — chunk 序列化字段补全 / finalize 短路+幂等 / OpenSearch _id
+# ======================================================================
+
+
+class TestChunkRedisRoundTripFields:
+    """修复 1：chunk 经 Redis 序列化传递时补全 token_count/start_pos/end_pos。"""
+
+    def _ensure_redis_mock(self) -> None:
+        import types
+
+        if "redis" not in sys.modules:
+            mock_redis_mod = types.ModuleType("redis")
+            mock_redis_mod.from_url = MagicMock()
+            sys.modules["redis"] = mock_redis_mod
+
+    def test_roundtrip_preserves_token_and_position_fields(self) -> None:
+        """round-trip 后 token_count/start_pos/end_pos 完整恢复。"""
+        self._ensure_redis_mock()
+
+        from tasks.document_tasks import _load_chunks_from_redis, _save_chunks_to_redis
+
+        chunks = [
+            Chunk(
+                id="c1", doc_id=_TEST_UUID, content="第一段内容",
+                parent_id=None, start_pos=0, end_pos=120, token_count=42,
+                title_path="标题", content_type="plain", chunk_strategy="structural",
+            ),
+            Chunk(
+                id="c2", doc_id=_TEST_UUID, content="第二段内容",
+                parent_id="c1", start_pos=120, end_pos=260, token_count=57,
+                title_path="标题 > 子标题", content_type="plain", chunk_strategy="semantic",
+            ),
+        ]
+
+        saved_payload: list[str] = []
+        mock_client = MagicMock()
+        mock_client.setex = lambda key, ttl, value: saved_payload.append(value)
+        mock_client.get = lambda key: saved_payload[0] if saved_payload else None
+
+        with patch("redis.from_url", return_value=mock_client):
+            assert _save_chunks_to_redis(_TEST_UUID, chunks) is True
+            loaded = _load_chunks_from_redis(_TEST_UUID)
+
+        assert loaded is not None
+        assert len(loaded) == 2
+        # 关键断言：位置与 token 字段不丢失
+        assert loaded[0].start_pos == 0
+        assert loaded[0].end_pos == 120
+        assert loaded[0].token_count == 42
+        assert loaded[1].start_pos == 120
+        assert loaded[1].end_pos == 260
+        assert loaded[1].token_count == 57
+        # 原有字段不受影响
+        assert loaded[1].parent_id == "c1"
+        assert loaded[1].chunk_strategy == "semantic"
+
+    def test_roundtrip_legacy_payload_defaults_to_zero(self) -> None:
+        """旧格式数据（无位置/token 字段）反序列化向后兼容，默认 0。"""
+        self._ensure_redis_mock()
+
+        import json as _json
+
+        from tasks.document_tasks import _load_chunks_from_redis
+
+        legacy_payload = _json.dumps(
+            [
+                {
+                    "id": "c1",
+                    "doc_id": _TEST_UUID,
+                    "content": "旧格式内容",
+                    "parent_id": None,
+                    "title_path": "",
+                    "content_type": "plain",
+                    "chunk_strategy": "fallback",
+                }
+            ],
+            ensure_ascii=False,
+        )
+
+        mock_client = MagicMock()
+        mock_client.get = MagicMock(return_value=legacy_payload)
+
+        with patch("redis.from_url", return_value=mock_client):
+            loaded = _load_chunks_from_redis(_TEST_UUID)
+
+        assert loaded is not None
+        assert loaded[0].start_pos == 0
+        assert loaded[0].end_pos == 0
+        assert loaded[0].token_count == 0
+
+
+class TestFinalizeFailedShortCircuit:
+    """修复 2：finalize 标记 failed 后短路发布流程，重复执行幂等。"""
+
+    def _make_doc(
+        self,
+        content_text: str = "",
+        status: str = "draft",
+        classification: str = "internal",
+    ):
+        mock_doc = MagicMock()
+        mock_doc.id = _uuid.UUID(_TEST_UUID)
+        mock_doc.content_text = content_text
+        mock_doc.classification = classification
+        mock_doc.parse_warnings = None
+        mock_doc.status = status
+        mock_doc.owner_id = _uuid.UUID(_TEST_UUID)
+        return mock_doc
+
+    def _make_db_mocks(self, mock_doc):
+        """构造 task_db_session + DocumentRepository 的 mock。"""
+        from contextlib import asynccontextmanager
+
+        mock_repo = AsyncMock()
+        mock_repo.get_by_id = AsyncMock(return_value=mock_doc)
+
+        mock_session = AsyncMock()
+        mock_session.commit = AsyncMock()
+
+        @asynccontextmanager
+        async def mock_task_db_session():
+            yield mock_session
+
+        return mock_task_db_session, mock_repo, mock_session
+
+    @pytest.mark.asyncio
+    async def test_failed_parse_short_circuits_publish(self) -> None:
+        """无正文内容（parse_status=failed）时不发布、不审核、不触发智能处理。"""
+        from tasks.document_tasks import _finalize_document_async
+
+        mock_doc = self._make_doc(content_text="")
+        mock_task_db_session, mock_repo, mock_session = self._make_db_mocks(mock_doc)
+
+        with patch("app.database.task_db_session", mock_task_db_session), \
+             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo), \
+             patch("tasks.document_tasks._update_parse_progress") as mock_progress, \
+             patch("tasks.document_tasks._cleanup_chunks_redis"), \
+             patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock) as mock_audit, \
+             patch("tasks.intelligence_tasks.process_intelligence.delay") as mock_intel:
+
+            result = await _finalize_document_async(_TEST_UUID, [])
+
+        assert result["status"] == "failed"
+        assert "error" in result
+        # 状态一致：parse_status 与 status 均为 failed
+        assert mock_doc.parse_status == "failed"
+        assert mock_doc.status == "failed"
+        # 短路：不提交审核、不触发智能处理
+        mock_audit.assert_not_called()
+        mock_intel.assert_not_called()
+        # 进度标记为 failed 而非 done
+        assert any(
+            call.kwargs.get("stage") == "failed" for call in mock_progress.call_args_list
+        )
+
+    @pytest.mark.asyncio
+    async def test_failed_parse_repeat_finalize_is_idempotent(self) -> None:
+        """重复 finalize 失败文档：状态保持 failed，无重复发布副作用（幂等）。"""
+        from tasks.document_tasks import _finalize_document_async
+
+        mock_doc = self._make_doc(content_text="")
+        mock_task_db_session, mock_repo, mock_session = self._make_db_mocks(mock_doc)
+
+        with patch("app.database.task_db_session", mock_task_db_session), \
+             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo), \
+             patch("tasks.document_tasks._update_parse_progress"), \
+             patch("tasks.document_tasks._cleanup_chunks_redis"), \
+             patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock) as mock_audit, \
+             patch("tasks.intelligence_tasks.process_intelligence.delay") as mock_intel:
+
+            first = await _finalize_document_async(_TEST_UUID, [])
+            # 模拟 chord 重放：第二次 finalize（doc.status 已是 failed）
+            second = await _finalize_document_async(_TEST_UUID, [])
+
+        assert first["status"] == "failed"
+        assert second["status"] == "failed"
+        assert mock_doc.status == "failed"
+        # 两次执行均无审核/智能处理副作用
+        mock_audit.assert_not_called()
+        mock_intel.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_repeat_finalize_published_is_idempotent(self) -> None:
+        """文档已 published 时重复 finalize：不重复发布、不重复触发智能处理。"""
+        from tasks.document_tasks import _finalize_document_async
+
+        mock_doc = self._make_doc(content_text="正文内容", status="published")
+        mock_task_db_session, mock_repo, mock_session = self._make_db_mocks(mock_doc)
+
+        with patch("app.database.task_db_session", mock_task_db_session), \
+             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo), \
+             patch("tasks.document_tasks._update_parse_progress"), \
+             patch("tasks.document_tasks._cleanup_chunks_redis"), \
+             patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock) as mock_audit, \
+             patch("tasks.intelligence_tasks.process_intelligence.delay") as mock_intel:
+
+            result = await _finalize_document_async(_TEST_UUID, [])
+
+        assert result["status"] == "success"
+        assert result["final_status"] == "published"
+        assert result.get("idempotent") is True
+        # 状态不被翻转，无重复发布副作用
+        assert mock_doc.status == "published"
+        mock_audit.assert_not_called()
+        mock_intel.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_repeat_finalize_pending_review_skips_audit(self) -> None:
+        """文档已 pending_review 时重复 finalize：不重复提交审核流程。"""
+        from tasks.document_tasks import _finalize_document_async
+
+        mock_doc = self._make_doc(
+            content_text="机密内容", status="pending_review", classification="confidential"
+        )
+        mock_task_db_session, mock_repo, mock_session = self._make_db_mocks(mock_doc)
+
+        with patch("app.database.task_db_session", mock_task_db_session), \
+             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo), \
+             patch("tasks.document_tasks._update_parse_progress"), \
+             patch("tasks.document_tasks._cleanup_chunks_redis"), \
+             patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock) as mock_audit, \
+             patch("tasks.intelligence_tasks.process_intelligence.delay") as mock_intel:
+
+            result = await _finalize_document_async(_TEST_UUID, [])
+
+        assert result["status"] == "success"
+        assert result["final_status"] == "pending_review"
+        # 不重复提交审核、不重复触发智能处理
+        mock_audit.assert_not_called()
+        mock_intel.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_first_finalize_still_publishes_normally(self) -> None:
+        """回归：首次 finalize（draft 状态）仍正常发布并触发智能处理。"""
+        from tasks.document_tasks import _finalize_document_async
+
+        mock_doc = self._make_doc(content_text="正文内容", status="draft")
+        mock_task_db_session, mock_repo, mock_session = self._make_db_mocks(mock_doc)
+
+        with patch("app.database.task_db_session", mock_task_db_session), \
+             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo), \
+             patch("tasks.document_tasks._update_parse_progress"), \
+             patch("tasks.document_tasks._cleanup_chunks_redis"), \
+             patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock), \
+             patch("tasks.intelligence_tasks.process_intelligence.delay") as mock_intel:
+
+            result = await _finalize_document_async(_TEST_UUID, [])
+
+        assert result["status"] == "success"
+        assert result["final_status"] == "published"
+        assert mock_doc.status == "published"
+        mock_intel.assert_called_once()
+
+
+class TestOpenSearchDeterministicId:
+    """修复 3：OpenSearch 写入以确定性 chunk_id 作 _id，重复执行 upsert 幂等。"""
+
+    def _make_chunk_objects(self, count: int = 3) -> list[Chunk]:
+        return [
+            Chunk(
+                id=f"chunk-{i}",
+                doc_id="doc-001",
+                content=f"这是第{i+1}个分块的内容。",
+                parent_id=None if i == 0 else "chunk-0",
+                start_pos=i * 100,
+                end_pos=(i + 1) * 100,
+                token_count=50,
+                title_path=f"标题 > 子标题{i+1}" if i > 0 else "标题",
+                content_type="tutorial",
+                chunk_strategy="structural",
+            )
+            for i in range(count)
+        ]
+
+    def _make_mock_client(self) -> AsyncMock:
+        mock_client = AsyncMock()
+        mock_client.indices.exists = AsyncMock(return_value=True)
+        mock_client.bulk = AsyncMock(return_value={"errors": False, "items": []})
+        mock_client.close = AsyncMock()
+        return mock_client
+
+    def _extract_bulk_ids(self, mock_client: AsyncMock) -> list[str]:
+        """从 bulk NDJSON 请求体中提取所有 action 行的 _id。"""
+        body = mock_client.bulk.call_args.kwargs.get("body", "")
+        return [line["index"]["_id"] for line in _parse_bulk_body(body)[0::2]]
+
+    @pytest.mark.asyncio
+    async def test_index_uses_chunk_id_as_document_id(self) -> None:
+        """每个 chunk 的写入都指定 _id=chunk.id（确定性）。"""
+        chunk_objects = self._make_chunk_objects(2)
+        mock_client = self._make_mock_client()
+
+        with patch("opensearchpy.AsyncOpenSearch", return_value=mock_client):
+            await _build_opensearch_index("doc-001", chunk_objects)
+
+        assert mock_client.bulk.call_count == 1
+        lines = _parse_bulk_body(mock_client.bulk.call_args.kwargs.get("body", ""))
+        actions, sources = lines[0::2], lines[1::2]
+        for i, (action, source) in enumerate(zip(actions, sources, strict=True)):
+            assert action["index"]["_id"] == f"chunk-{i}"
+            assert source["chunk_id"] == f"chunk-{i}"
+
+    @pytest.mark.asyncio
+    async def test_repeat_indexing_upserts_same_ids(self) -> None:
+        """重复任务执行：两次写入使用相同 _id 集合（upsert 语义，不产生重复文档）。"""
+        chunk_objects = self._make_chunk_objects(3)
+
+        first_client = self._make_mock_client()
+        second_client = self._make_mock_client()
+
+        with patch("opensearchpy.AsyncOpenSearch", return_value=first_client):
+            await _build_opensearch_index("doc-001", chunk_objects)
+        with patch("opensearchpy.AsyncOpenSearch", return_value=second_client):
+            await _build_opensearch_index("doc-001", chunk_objects)
+
+        first_ids = self._extract_bulk_ids(first_client)
+        second_ids = self._extract_bulk_ids(second_client)
+        # 幂等：重复执行写入相同数量的文档，且 _id 完全一致（覆盖而非新增）
+        assert len(first_ids) == len(second_ids) == 3
+        assert first_ids == second_ids == ["chunk-0", "chunk-1", "chunk-2"]
+        # 所有 _id 均显式指定（无 None → 不会依赖 OpenSearch 自动生成）
+        assert all(fid is not None for fid in first_ids + second_ids)

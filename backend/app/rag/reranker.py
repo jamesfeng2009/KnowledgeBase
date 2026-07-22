@@ -20,9 +20,9 @@ from collections.abc import Callable
 from functools import lru_cache
 from typing import Any
 
-import httpx
 
 from app.config import get_settings
+from app.utils.circuit_breaker import circuit_call
 from app.utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -77,37 +77,39 @@ class CohereReranker(RerankerBase):
         self.client = cohere.AsyncClientV2(api_key=settings.COHERE_API_KEY)
         self.model = "rerank-multilingual-v3.0"
 
+    @circuit_call("reranker_cohere")
     async def rerank(
         self,
         query: str,
         documents: list[str | dict[str, Any]],
         top_k: int = 5,
     ) -> list[dict[str, Any]]:
+        """对文档列表重排 — 异常向上传播以触发熔断器，由调用方负责降级。"""
         if not documents:
             return []
+        import time
+        t0 = time.monotonic()
         texts = [_extract_content(d) for d in documents]
-        try:
-            resp = await self.client.rerank(
-                model=self.model,
-                query=query,
-                documents=texts,
-                top_n=min(top_k, len(texts)),
+        log.info("reranker.cohere.start", query_len=len(query), doc_count=len(texts), top_k=top_k)
+        resp = await self.client.rerank(
+            model=self.model,
+            query=query,
+            documents=texts,
+            top_n=min(top_k, len(texts)),
+        )
+        results: list[dict[str, Any]] = []
+        for item in resp.results:
+            idx = item.index
+            results.append(
+                {
+                    "index": idx,
+                    "score": float(item.relevance_score),
+                    "content": texts[idx] if idx < len(texts) else "",
+                }
             )
-            results: list[dict[str, Any]] = []
-            for item in resp.results:
-                idx = item.index
-                results.append(
-                    {
-                        "index": idx,
-                        "score": float(item.relevance_score),
-                        "content": texts[idx] if idx < len(texts) else "",
-                    }
-                )
-            log.debug("reranker.cohere", count=len(results))
-            return results
-        except Exception as exc:
-            log.warning("reranker.cohere.error", error=str(exc))
-            return self._fallback(documents, top_k)
+        elapsed_ms = round((time.monotonic() - t0) * 1000, 2)
+        log.info("reranker.cohere.success", count=len(results), latency_ms=elapsed_ms)
+        return results
 
     @staticmethod
     def _fallback(
@@ -129,34 +131,40 @@ class TEIReranker(RerankerBase):
     """
 
     def __init__(self) -> None:
-        self.client = httpx.AsyncClient(timeout=10.0)
+        from app.utils.retry import build_retry_http_client
+
+        self.client = build_retry_http_client(timeout=10.0)
         self.base_url = settings.tei_reranker_url
 
+    @circuit_call("reranker_tei")
     async def rerank(
         self,
         query: str,
         documents: list[str | dict[str, Any]],
         top_k: int = 5,
     ) -> list[dict[str, Any]]:
+        """对文档列表重排 — 异常向上传播以触发熔断器，由调用方负责降级。"""
         if not documents:
             return []
+        import time
+        t0 = time.monotonic()
         texts = [_extract_content(d) for d in documents]
         payload: dict[str, Any] = {
             "query": query,
             "texts": texts,
             "top_k": min(top_k, len(texts)),
         }
-        try:
-            resp = await self.client.post(
-                f"{self.base_url}/rerank",
-                json=payload,
-            )
-            resp.raise_for_status()
-            data: Any = resp.json()
-            return self._parse_tei_response(data, texts, top_k)
-        except Exception as exc:
-            log.warning("reranker.tei.error", error=str(exc))
-            return self._fallback(documents, top_k)
+        log.info("reranker.tei.start", query_len=len(query), doc_count=len(texts), top_k=top_k)
+        resp = await self.client.post(
+            f"{self.base_url}/rerank",
+            json=payload,
+        )
+        resp.raise_for_status()
+        data: Any = resp.json()
+        results = self._parse_tei_response(data, texts, top_k)
+        elapsed_ms = round((time.monotonic() - t0) * 1000, 2)
+        log.info("reranker.tei.success", count=len(results), latency_ms=elapsed_ms)
+        return results
 
     @staticmethod
     def _parse_tei_response(

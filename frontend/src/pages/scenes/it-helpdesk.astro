@@ -487,7 +487,7 @@ const breadcrumb = [{ label: '场景应用', href: '/scenes/it-helpdesk' }, { la
   }
 
   function escapeHtml(s: string): string {
-    return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
   // 弹窗

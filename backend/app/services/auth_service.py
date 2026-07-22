@@ -53,7 +53,9 @@ class AuthService:
         self.db = db
         self.user_repo = UserRepository(db)
 
-    async def register(self, email: str, password: str, name: str) -> User:
+    async def register(
+        self, email: str, password: str, name: str, tenant_id: UUID | None = None
+    ) -> User:
         """注册新用户。
 
         新用户默认角色为 ``viewer``，默认密级为 ``internal``，
@@ -63,6 +65,7 @@ class AuthService:
             email: 用户邮箱（唯一）。
             password: 明文密码（由服务端哈希存储）。
             name: 用户姓名。
+            tenant_id: 租户 ID（多租户场景，可选）。
 
         Returns:
             新创建的 User 对象。
@@ -82,6 +85,7 @@ class AuthService:
             role="viewer",
             clearance_level="internal",
             is_active=True,
+            tenant_id=tenant_id,
         )
         return user
 
@@ -117,8 +121,12 @@ class AuthService:
         if not verify_password(password, user.hashed_password):
             raise ValueError("邮箱或密码错误")
 
-        # JWT payload 中写入用户 ID（sub）和角色（role）
-        token = create_access_token({"sub": str(user.id), "role": user.role})
+        # JWT payload 中写入用户 ID（sub）、角色（role）和租户 ID（tenant_id）
+        token = create_access_token({
+            "sub": str(user.id),
+            "role": user.role,
+            "tenant_id": str(user.tenant_id) if user.tenant_id else None,
+        })
         return TokenResponse(
             access_token=token,
             token_type="bearer",

@@ -4,7 +4,7 @@
 
 import uuid
 
-from sqlalchemy import ForeignKey, String, Text
+from sqlalchemy import ForeignKey, Index, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -15,6 +15,9 @@ class AuditFlow(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     """审核流程表 — 文档发布等操作的审核。"""
 
     __tablename__ = "audit_flows"
+    __table_args__ = (
+        Index("ix_audit_flows_tenant_id", "tenant_id"),
+    )
 
     resource_type: Mapped[str] = mapped_column(
         String(50), nullable=False, comment="资源类型: document/kb/question"
@@ -34,4 +37,8 @@ class AuditFlow(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     comment: Mapped[str | None] = mapped_column(Text, nullable=True, comment="审核意见")
     priority: Mapped[str] = mapped_column(
         String(20), default="normal", comment="优先级: low/normal/high"
+    )
+    # 多租户隔离 — SaaS 模式下按租户隔离审核流程，私有部署为 NULL
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True, comment="租户 ID（多租户隔离）"
     )

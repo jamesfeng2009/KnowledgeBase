@@ -59,7 +59,12 @@ export function triggerGapAlert(): Promise<{ notified: number }> {
 
 /**
  * 创建 SSE 通知推送连接
- * 后端 30 秒心跳保活，返回 EventSource 和清理函数
+ * 后端 30 秒心跳保活，返回清理函数
+ *
+ * 安全说明：Token 不再拼在 URL 查询参数（会进入访问日志 / 浏览器历史）。
+ * 原生 EventSource 不支持自定义请求头，且后端仅接受 Authorization: Bearer
+ * 头鉴权（OAuth2PasswordBearer），故改用 fetch + ReadableStream 实现 SSE。
+ * 注意：fetch 实现无浏览器自动重连，断线后由调用方决定是否重建连接。
  */
 export function createNotificationStream(
   onMessage: (notification: Notification) => void,
@@ -68,24 +73,79 @@ export function createNotificationStream(
   const token = localStorage.getItem('ekb_access_token');
   const apiBase = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
 
-  const eventSource = new EventSource(`${apiBase}${BASE}/stream?token=${token}`);
+  // 通过 AbortController 实现 close()，中止进行中的流读取
+  const abortController = new AbortController();
 
-  eventSource.onmessage = (event) => {
+  void (async () => {
     try {
-      const data = JSON.parse(event.data);
-      if (data.type === 'notification' && data.data) {
-        onMessage(data.data as Notification);
-      }
-    } catch {
-      // 忽略心跳等非 JSON 消息
-    }
-  };
+      const res = await fetch(`${apiBase}${BASE}/stream`, {
+        headers: {
+          Accept: 'text/event-stream',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        signal: abortController.signal,
+      });
 
-  if (onError) {
-    eventSource.onerror = onError;
-  }
+      if (res.status === 401) {
+        // 与 api.ts 行为对齐：401 清除 Token 并跳转登录页
+        localStorage.removeItem('ekb_access_token');
+        if (window.location.pathname !== '/auth/login') {
+          window.location.href = '/auth/login';
+        }
+        return;
+      }
+      if (!res.ok || !res.body) {
+        throw new Error(`通知推送流连接失败 (${res.status})`);
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      // 事件解析状态必须跨 reader.read() 保持（SSE 事件可能被 TCP 分包拆到多次 read 中）
+      let currentData = '';
+
+      // 空行表示一个事件结束，派发累积的 data 内容
+      const dispatchEvent = () => {
+        if (!currentData) return;
+        const raw = currentData;
+        currentData = '';
+        try {
+          const data = JSON.parse(raw);
+          if (data.type === 'notification' && data.data) {
+            onMessage(data.data as Notification);
+          }
+        } catch {
+          // 忽略心跳等非 JSON 消息
+        }
+      };
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (trimmed === '') {
+            dispatchEvent();
+          } else if (trimmed.startsWith('data:')) {
+            const d = trimmed.slice(5).trim();
+            currentData = currentData ? `${currentData}\n${d}` : d;
+          }
+        }
+      }
+      dispatchEvent(); // 冲刷流末尾未派发的事件
+    } catch (err) {
+      // 主动 close() 触发的中止不属于错误
+      if (!abortController.signal.aborted) {
+        console.warn('[Notifications] SSE 通知流异常:', err);
+        onError?.(new Event('error'));
+      }
+    }
+  })();
 
   return {
-    close: () => eventSource.close(),
+    close: () => abortController.abort(),
   };
 }

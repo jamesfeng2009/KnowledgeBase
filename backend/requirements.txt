@@ -6,7 +6,6 @@ python-multipart>=0.0.12
 # === 数据库 ===
 sqlalchemy[asyncio]>=2.0.36
 asyncpg>=0.30.0
-aiosqlite>=0.20.0  # SQLite 异步驱动（开发/测试环境用）
 alembic>=1.14.0
 
 # === 缓存 ===
@@ -57,6 +56,8 @@ mcp>=1.0.0
 
 # === 工具 ===
 httpx>=0.28.0
+httpx-retry>=0.1.6  # HTTP 传输层重试（L1：httpx Transport）
+tenacity>=9.0.0     # 函数级重试装饰器（L2：tenacity @with_retry）
 pydantic>=2.10.0
 pydantic-settings>=2.6.0
 python-dotenv>=1.0.1

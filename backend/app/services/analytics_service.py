@@ -14,16 +14,17 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta
+from uuid import UUID
 
 from sqlalchemy import Integer, cast, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.action import DocumentAction
 from app.models.analytics import SearchLog
 from app.models.comment import DocumentComment
 from app.models.knowledge import Document
 from app.models.qa import QaAnswer
 from app.utils.logger import get_logger
+from app.utils.tenant import apply_tenant_filter
 
 logger = get_logger(__name__)
 
@@ -36,8 +37,9 @@ FRESHNESS_EXPIRING_SOON_DAYS: int = 150
 class AnalyticsService:
     """知识健康度分析服务 — 为管理员仪表盘提供数据。"""
 
-    def __init__(self, db: AsyncSession) -> None:
+    def __init__(self, db: AsyncSession, tenant_id: UUID | None = None) -> None:
         self.db = db
+        self._tenant_id = tenant_id
 
     # ------------------------------------------------------------------
     # 汇总接口
@@ -93,16 +95,16 @@ class AnalyticsService:
             [{"keyword": "报销", "count": 42}, ...]
         """
         since = datetime.utcnow() - timedelta(days=days)
-        result = await self.db.execute(
+        stmt = (
             select(
                 SearchLog.query,
                 func.count(SearchLog.id).label("search_count"),
             )
             .where(SearchLog.created_at >= since)
-            .group_by(SearchLog.query)
-            .order_by(desc("search_count"))
-            .limit(top_k)
         )
+        stmt = apply_tenant_filter(stmt, SearchLog, self._tenant_id)
+        stmt = stmt.group_by(SearchLog.query).order_by(desc("search_count")).limit(top_k)
+        result = await self.db.execute(stmt)
         return [
             {"keyword": r.query, "count": r.search_count}
             for r in result
@@ -123,7 +125,7 @@ class AnalyticsService:
             [{"keyword": "报销", "count": 5}, ...]
         """
         since = datetime.utcnow() - timedelta(days=days)
-        result = await self.db.execute(
+        stmt = (
             select(
                 SearchLog.query,
                 func.count(SearchLog.id).label("count"),
@@ -132,10 +134,10 @@ class AnalyticsService:
                 SearchLog.created_at >= since,
                 SearchLog.clicked.is_(False),
             )
-            .group_by(SearchLog.query)
-            .order_by(desc("count"))
-            .limit(top_k)
         )
+        stmt = apply_tenant_filter(stmt, SearchLog, self._tenant_id)
+        stmt = stmt.group_by(SearchLog.query).order_by(desc("count")).limit(top_k)
+        result = await self.db.execute(stmt)
         return [
             {"keyword": r.query, "count": r.count}
             for r in result
@@ -153,12 +155,13 @@ class AnalyticsService:
         Returns:
             [{"id": "...", "title": "...", "views": 123}, ...]
         """
-        result = await self.db.execute(
+        stmt = (
             select(Document.id, Document.title, Document.view_count)
             .where(Document.deleted_at.is_(None))
-            .order_by(desc(Document.view_count))
-            .limit(top_k)
         )
+        stmt = apply_tenant_filter(stmt, Document, self._tenant_id)
+        stmt = stmt.order_by(desc(Document.view_count)).limit(top_k)
+        result = await self.db.execute(stmt)
         return [
             {"id": str(r.id), "title": r.title, "views": r.view_count}
             for r in result
@@ -174,21 +177,25 @@ class AnalyticsService:
             {"covered_topics": 15, "searched_topics": 20, "coverage_ratio": 0.75}
         """
         # 已覆盖主题（文档分类去重）
-        covered_result = await self.db.execute(
+        covered_stmt = (
             select(func.count(func.distinct(Document.category)))
             .where(
                 Document.deleted_at.is_(None),
                 Document.category.isnot(None),
             )
         )
+        covered_stmt = apply_tenant_filter(covered_stmt, Document, self._tenant_id)
+        covered_result = await self.db.execute(covered_stmt)
         covered = covered_result.scalar() or 0
 
         # 搜索主题（近 30 天热词去重）
         since = datetime.utcnow() - timedelta(days=30)
-        searched_result = await self.db.execute(
+        searched_stmt = (
             select(func.count(func.distinct(SearchLog.query)))
             .where(SearchLog.created_at >= since)
         )
+        searched_stmt = apply_tenant_filter(searched_stmt, SearchLog, self._tenant_id)
+        searched_result = await self.db.execute(searched_stmt)
         searched = searched_result.scalar() or 0
 
         ratio = covered / searched if searched > 0 else 0
@@ -236,9 +243,11 @@ class AnalyticsService:
             logger.warning("analytics.freshness_error", error=str(exc))
             return await self._freshness_from_pg()
 
-        total_result = await self.db.execute(
+        total_stmt = (
             select(func.count(Document.id)).where(Document.deleted_at.is_(None))
         )
+        total_stmt = apply_tenant_filter(total_stmt, Document, self._tenant_id)
+        total_result = await self.db.execute(total_stmt)
         total_docs = total_result.scalar() or 1
 
         return {
@@ -264,26 +273,32 @@ class AnalyticsService:
         expire_threshold = now - timedelta(days=FRESHNESS_EXPIRE_DAYS)
         expiring_threshold = now - timedelta(days=FRESHNESS_EXPIRING_SOON_DAYS)
 
-        total_result = await self.db.execute(
+        total_stmt = (
             select(func.count(Document.id)).where(Document.deleted_at.is_(None))
         )
+        total_stmt = apply_tenant_filter(total_stmt, Document, self._tenant_id)
+        total_result = await self.db.execute(total_stmt)
         total_docs = total_result.scalar() or 0
 
-        expired_result = await self.db.execute(
+        expired_stmt = (
             select(func.count(Document.id)).where(
                 Document.deleted_at.is_(None),
                 Document.updated_at < expire_threshold,
             )
         )
+        expired_stmt = apply_tenant_filter(expired_stmt, Document, self._tenant_id)
+        expired_result = await self.db.execute(expired_stmt)
         expired = expired_result.scalar() or 0
 
-        expiring_result = await self.db.execute(
+        expiring_stmt = (
             select(func.count(Document.id)).where(
                 Document.deleted_at.is_(None),
                 Document.updated_at >= expire_threshold,
                 Document.updated_at < expiring_threshold,
             )
         )
+        expiring_stmt = apply_tenant_filter(expiring_stmt, Document, self._tenant_id)
+        expiring_result = await self.db.execute(expiring_stmt)
         expiring_soon = expiring_result.scalar() or 0
 
         freshness_rate = round((total_docs - expired) / total_docs, 2) if total_docs > 0 else 1.0
@@ -313,7 +328,7 @@ class AnalyticsService:
         since = datetime.utcnow() - timedelta(days=days)
 
         # 文档作者统计
-        doc_result = await self.db.execute(
+        doc_stmt = (
             select(
                 Document.owner_id,
                 func.count(Document.id).label("doc_count"),
@@ -322,15 +337,17 @@ class AnalyticsService:
                 Document.deleted_at.is_(None),
                 Document.created_at >= since,
             )
-            .group_by(Document.owner_id)
         )
+        doc_stmt = apply_tenant_filter(doc_stmt, Document, self._tenant_id)
+        doc_stmt = doc_stmt.group_by(Document.owner_id)
+        doc_result = await self.db.execute(doc_stmt)
         doc_counts: dict = {}
         for r in doc_result:
             if r.owner_id:
                 doc_counts[str(r.owner_id)] = r.doc_count
 
         # 采纳回答统计
-        answer_result = await self.db.execute(
+        answer_stmt = (
             select(
                 QaAnswer.user_id,
                 func.count(QaAnswer.id).label("answer_count"),
@@ -340,8 +357,10 @@ class AnalyticsService:
                 QaAnswer.deleted_at.is_(None),
                 QaAnswer.created_at >= since,
             )
-            .group_by(QaAnswer.user_id)
         )
+        answer_stmt = apply_tenant_filter(answer_stmt, QaAnswer, self._tenant_id)
+        answer_stmt = answer_stmt.group_by(QaAnswer.user_id)
+        answer_result = await self.db.execute(answer_stmt)
         answer_counts: dict = {}
         for r in answer_result:
             if r.user_id:
@@ -351,7 +370,7 @@ class AnalyticsService:
                 }
 
         # 评论统计
-        comment_result = await self.db.execute(
+        comment_stmt = (
             select(
                 DocumentComment.user_id,
                 func.count(DocumentComment.id).label("comment_count"),
@@ -360,8 +379,10 @@ class AnalyticsService:
                 DocumentComment.deleted_at.is_(None),
                 DocumentComment.created_at >= since,
             )
-            .group_by(DocumentComment.user_id)
         )
+        comment_stmt = apply_tenant_filter(comment_stmt, DocumentComment, self._tenant_id)
+        comment_stmt = comment_stmt.group_by(DocumentComment.user_id)
+        comment_result = await self.db.execute(comment_stmt)
         comment_counts: dict = {}
         for r in comment_result:
             if r.user_id:

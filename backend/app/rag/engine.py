@@ -42,7 +42,7 @@ from app.rag.cache import TokenCache
 from app.rag.context_budget import ContextBudgetManager
 from app.rag.context_dedup import CrossTurnDeduplicator
 from app.rag.generator import Generator
-from app.rag.tool_guard import DangerousToolGuard, GuardAction
+from app.rag.tool_guard import DangerousToolGuard
 from app.rag.reranker import RerankerBase
 from app.rag.retriever import HybridRetriever
 from app.utils.logger import get_logger
@@ -124,6 +124,8 @@ class AgentState(TypedDict, total=False):
     """
 
     query: str
+    # P2-B: 查询重写后的查询文本（用于检索），None 表示未重写
+    rewritten_query: str | None
     user_id: str
     session_id: str
     messages: list[Message]
@@ -182,6 +184,7 @@ class AgenticRAGEngine:
         checkpointer: Any = None,
         tool_guard: DangerousToolGuard | None = None,
         quality_guard: Any = None,
+        query_rewriter: Any = None,
     ) -> None:
         self.llm = llm
         self.mcp = mcp_client
@@ -218,6 +221,17 @@ class AgenticRAGEngine:
                 self._quality_guard = None
         # 检索重试计数（每次 answer 调用时重置）
         self._retrieval_retry_count: int = 0
+
+        # P2-B: 查询重写器 — 检索前优化用户查询
+        # 传入时直接使用，未传入时尝试从工厂获取（可能返回 None）
+        self._query_rewriter = query_rewriter
+        if self._query_rewriter is None:
+            try:
+                from app.rag.query_rewriter import get_query_rewriter
+                self._query_rewriter = get_query_rewriter()
+            except Exception as exc:
+                log.warning("engine.query_rewriter_init_failed", error=str(exc))
+                self._query_rewriter = None
 
         # Find Skills 渐进式技能加载 — 按需加载工具 schema，避免全量加载浪费 token
         # 启动时从 MCP Server 构建轻量技能索引，Agent Loop 每轮按查询匹配相关技能
@@ -284,16 +298,16 @@ class AgenticRAGEngine:
             session_id: 会话 ID。
             kb_ids: 可选，限定检索的知识库范围。
             memory_context: 记忆引擎提供的上下文。
-            tenant_id: 多租户预留（当前不实施隔离逻辑）。
+            tenant_id: 租户 ID（答案缓存按租户隔离，防止跨租户答案泄漏）。
 
         Yields:
             SSEEvent | str: SSE 事件对象（thinking/retrieve/tool_call/sources/
             quality/done）或 token 字符串（generate 阶段）。
         """
-        # 1. 缓存命中检查
+        # 1. 缓存命中检查（缓存 key 含 tenant_id，跨租户互不可见）
         if self.cache is not None:
             try:
-                cached = await self.cache.get(query)
+                cached = await self.cache.get(query, tenant_id=tenant_id)
                 if cached is not None:
                     log.info("engine.cache.hit", session_id=session_id)
                     yield cached
@@ -304,6 +318,7 @@ class AgenticRAGEngine:
         # 2. 初始化状态
         state: AgentState = {
             "query": query,
+            "rewritten_query": None,
             "user_id": user_id,
             "session_id": session_id,
             "messages": [],
@@ -332,6 +347,35 @@ class AgenticRAGEngine:
             metadata={"query": query[:200]},
         )
         self._trace_ctx.start()
+
+        # 2.8 P2-B: 查询重写 — 检索前优化用户查询
+        if self._query_rewriter is not None:
+            try:
+                rewrite_result = await self._query_rewriter.rewrite(
+                    query=query,
+                    context=memory_context,
+                )
+                rewritten = rewrite_result.get_search_query()
+                if rewritten and rewritten != query:
+                    state["rewritten_query"] = rewritten
+                    log.info(
+                        "engine.query_rewritten",
+                        original=query[:100],
+                        rewritten=rewritten[:100],
+                        strategy=rewrite_result.strategy,
+                        latency_ms=rewrite_result.latency_ms,
+                    )
+                # 发送 query_rewrite SSE 事件 — 让前端展示重写过程
+                yield SSEEvent(
+                    data=rewrite_result.to_dict(),
+                    event=SSEEventType.QUERY_REWRITE,
+                )
+            except Exception as exc:
+                log.warning(
+                    "engine.query_rewrite_failed",
+                    error=str(exc),
+                    query=query[:100],
+                )
 
         # 3. 执行 think / retrieve / tool_call 循环 — 流式 yield SSE 事件
         # P1-4: 传入 db / user_uuid 以支持审批记录持久化
@@ -392,10 +436,10 @@ class AgenticRAGEngine:
             event=SSEEventType.QUALITY,
         )
 
-        # 8. 回写缓存
+        # 8. 回写缓存（key 含 tenant_id，跨租户互不可见）
         if self.cache is not None and answer:
             try:
-                await self.cache.set(query, answer)
+                await self.cache.set(query, answer, tenant_id=tenant_id)
             except Exception as exc:
                 log.warning("engine.cache.set_error", error=str(exc))
 
@@ -516,6 +560,7 @@ class AgenticRAGEngine:
         session_id: str,
         kb_ids: list[str] | None = None,
         memory_context: str = "",
+        tenant_id: str | None = None,
     ) -> AsyncIterator[str]:
         """LangGraph 驱动的 RAG 入口 — 返回答案 token 流。
 
@@ -529,6 +574,7 @@ class AgenticRAGEngine:
             session_id: 会话 ID（同时用作 LangGraph thread_id）。
             kb_ids: 可选，限定检索的知识库范围。
             memory_context: 记忆引擎提供的上下文。
+            tenant_id: 租户 ID（答案缓存按租户隔离，防止跨租户答案泄漏）。
 
         Yields:
             str: 答案文本片段。
@@ -538,10 +584,10 @@ class AgenticRAGEngine:
                 "LangGraph not installed — 请回退到默认的 answer() 方法。"
             )
 
-        # 1. 缓存命中检查（与 answer() 行为一致）
+        # 1. 缓存命中检查（与 answer() 行为一致，key 含 tenant_id）
         if self.cache is not None:
             try:
-                cached = await self.cache.get(query)
+                cached = await self.cache.get(query, tenant_id=tenant_id)
                 if cached is not None:
                     log.info("engine.cache.hit", session_id=session_id)
                     yield cached
@@ -601,11 +647,11 @@ class AgenticRAGEngine:
             yield f"[Graph 执行出错: {exc}]"
             return
 
-        # 4. 回写缓存
+        # 4. 回写缓存（key 含 tenant_id，跨租户互不可见）
         answer = "".join(answer_parts)
         if self.cache is not None and answer:
             try:
-                await self.cache.set(query, answer)
+                await self.cache.set(query, answer, tenant_id=tenant_id)
             except Exception as exc:
                 log.warning("engine.cache.set_error", error=str(exc))
 
@@ -904,7 +950,9 @@ class AgenticRAGEngine:
 
         正确顺序：检索召回 → ABAC 权限过滤 → 重排 → 生成
         """
-        query = state["query"]
+        # P2-B: 优先使用重写后的查询进行检索，回退到原始查询
+        query = state.get("rewritten_query") or state["query"]
+        original_query = state["query"]
 
         # 1. 多路检索召回候选
         candidates = await self.retriever.search(query, kb_ids=kb_ids, top_k=_RETRIEVE_TOP_K)
@@ -912,6 +960,8 @@ class AgenticRAGEngine:
             "engine.retrieve.candidates",
             count=len(candidates),
             iteration=state["iteration"],
+            query_used=query[:100],
+            is_rewritten=query != original_query,
         )
 
         # 2. ABAC 权限过滤（必须在重排之前！）
@@ -929,11 +979,12 @@ class AgenticRAGEngine:
                 # 权限过滤出错时保守处理：返回空，避免泄露越权文档
                 filtered = []
 
-        # 3. 重排
+        # 3. 重排 — 使用原始用户查询（非重写查询）进行重排
+        # HyDE 生成的是文档而非查询，不适合做重排输入
         if filtered:
             try:
                 reranked = await self.reranker.rerank(
-                    query=query,
+                    query=original_query,
                     documents=filtered,
                     top_k=_RERANK_TOP_K,
                 )
@@ -957,7 +1008,7 @@ class AgenticRAGEngine:
                             retry_count=self._retrieval_retry_count,
                         )
                         reranked = await self.reranker.rerank(
-                            query=query,
+                            query=original_query,
                             documents=filtered,
                             top_k=expanded_top_k,
                         )

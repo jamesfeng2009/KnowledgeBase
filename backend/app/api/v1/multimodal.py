@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, Depends, File, Request, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db_session
@@ -23,6 +23,7 @@ router = APIRouter(prefix="/multimodal", tags=["multimodal"])
 
 @router.post("/image")
 async def process_image(
+    request: Request,
     file: UploadFile = File(..., description="图片文件"),
     user: User = Depends(require_module("multimodal")),
     db: AsyncSession = Depends(get_db_session),
@@ -36,13 +37,15 @@ async def process_image(
     image_data = await file.read()
     mime_type = file.content_type or "image/png"
 
-    service = MultimodalService()
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = MultimodalService(tenant_id=tenant_id)
     result = await service.process_image(image_data, mime_type)
     return ApiResponse(code=0, data=result, message="success")
 
 
 @router.post("/table")
 async def process_table(
+    request: Request,
     file: UploadFile = File(..., description="表格图片文件"),
     user: User = Depends(require_module("multimodal")),
     db: AsyncSession = Depends(get_db_session),
@@ -56,13 +59,15 @@ async def process_table(
     image_data = await file.read()
     mime_type = file.content_type or "image/png"
 
-    service = MultimodalService()
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = MultimodalService(tenant_id=tenant_id)
     result = await service.process_table(image_data, mime_type)
     return ApiResponse(code=0, data=result, message="success")
 
 
 @router.post("/scanned-pdf")
 async def process_scanned_pdf(
+    request: Request,
     file: UploadFile = File(..., description="扫描件图片"),
     user: User = Depends(require_module("multimodal")),
     db: AsyncSession = Depends(get_db_session),
@@ -76,13 +81,15 @@ async def process_scanned_pdf(
     image_data = await file.read()
     mime_type = file.content_type or "image/png"
 
-    service = MultimodalService()
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = MultimodalService(tenant_id=tenant_id)
     result = await service.process_scanned_pdf(image_data, mime_type)
     return ApiResponse(code=0, data={"text": result}, message="success")
 
 
 @router.post("/whiteboard")
 async def process_whiteboard(
+    request: Request,
     file: UploadFile = File(..., description="白板照片"),
     user: User = Depends(require_module("multimodal")),
     db: AsyncSession = Depends(get_db_session),
@@ -96,6 +103,7 @@ async def process_whiteboard(
     image_data = await file.read()
     mime_type = file.content_type or "image/png"
 
-    service = MultimodalService()
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = MultimodalService(tenant_id=tenant_id)
     result = await service.process_whiteboard(image_data, mime_type)
     return ApiResponse(code=0, data=result, message="success")

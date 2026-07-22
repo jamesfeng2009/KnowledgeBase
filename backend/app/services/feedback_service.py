@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import uuid
+from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +19,7 @@ from app.models.user import User
 from app.repositories.feedback_repository import FeedbackRepository
 from app.utils.logger import get_logger
 from app.utils.pagination import PageResult, PaginationParams, paginate
+from app.utils.tenant import apply_tenant_filter
 
 log = get_logger(__name__)
 
@@ -35,16 +37,20 @@ class FeedbackService:
         page = await service.list_feedback(status="open", page=1, size=20)
     """
 
-    def __init__(self, db: AsyncSession, user: User) -> None:
+    def __init__(
+        self, db: AsyncSession, user: User, tenant_id: UUID | None = None
+    ) -> None:
         """初始化反馈服务。
 
         Args:
             db: 异步数据库会话，事务由 ``get_db_session`` 依赖统一管理。
             user: 当前操作用户，用于填充 user_id 和审计日志。
+            tenant_id: 租户 ID，用于多租户数据隔离。
         """
         self._db = db
         self._user = user
-        self._repo = FeedbackRepository(db)
+        self._tenant_id = tenant_id
+        self._repo = FeedbackRepository(db, tenant_id=tenant_id)
 
     async def create_feedback(
         self,
@@ -96,6 +102,7 @@ class FeedbackService:
         stmt = select(Feedback)
         if status:
             stmt = stmt.where(Feedback.status == status)
+        stmt = apply_tenant_filter(stmt, Feedback, self._tenant_id)
         stmt = stmt.order_by(Feedback.created_at.desc())
 
         params = PaginationParams(page=page, size=size)

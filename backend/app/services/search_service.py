@@ -21,11 +21,11 @@ from uuid import UUID
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.connectors.base import ExternalSearchResult
 from app.models.knowledge import Document, KnowledgeBase
 from app.models.user import KbMember, User
 from app.services.permission_service import PermissionService
-from app.schemas.search import SearchResult, SearchType
+from app.schemas.search import SearchType
+from app.utils.tenant import apply_tenant_filter
 
 logger = logging.getLogger(__name__)
 
@@ -38,16 +38,22 @@ class SearchService:
     保证搜索功能始终可用。
     """
 
-    def __init__(self, db: AsyncSession, user: User) -> None:
+    def __init__(
+        self, db: AsyncSession, user: User, tenant_id: UUID | None = None
+    ) -> None:
         """初始化搜索服务，注入依赖。
 
         Args:
             db: 异步数据库会话，事务由 get_db_session 统一管理。
             user: 当前已认证用户，用于权限判定与密级过滤。
+            tenant_id: 租户 ID，用于多租户数据隔离。
         """
         self.db: AsyncSession = db
         self.user: User = user
-        self.permission: PermissionService = PermissionService(db, user)
+        self._tenant_id = tenant_id
+        self.permission: PermissionService = PermissionService(
+            db, user, tenant_id=tenant_id
+        )
 
     # ------------------------------------------------------------------
     # 检索引擎加载
@@ -176,9 +182,9 @@ class SearchService:
                     Document.title.ilike(f"%{query}%"),
                 ),
             )
-            .distinct()
-            .limit(limit)
         )
+        stmt = apply_tenant_filter(stmt, Document, self._tenant_id)
+        stmt = stmt.distinct().limit(limit)
         result = await self.db.execute(stmt)
         titles = result.scalars().all()
 
@@ -237,6 +243,7 @@ class SearchService:
             stmt = select(KnowledgeBase.id).where(
                 KnowledgeBase.deleted_at.is_(None)
             )
+            stmt = apply_tenant_filter(stmt, KnowledgeBase, self._tenant_id)
             result = await self.db.execute(stmt)
             return [row[0] for row in result.all()]
 
@@ -244,6 +251,7 @@ class SearchService:
         member_subq = select(KbMember.kb_id).where(
             KbMember.user_id == self.user.id
         )
+        member_subq = apply_tenant_filter(member_subq, KbMember, self._tenant_id)
         stmt = (
             select(KnowledgeBase.id)
             .where(
@@ -254,6 +262,7 @@ class SearchService:
                 ),
             )
         )
+        stmt = apply_tenant_filter(stmt, KnowledgeBase, self._tenant_id)
         result = await self.db.execute(stmt)
         accessible: set[UUID] = {row[0] for row in result.all()}
 
@@ -291,9 +300,9 @@ class SearchService:
                     Document.content_text.ilike(pattern),
                 ),
             )
-            .order_by(Document.created_at.desc())
-            .limit(100)
         )
+        stmt = apply_tenant_filter(stmt, Document, self._tenant_id)
+        stmt = stmt.order_by(Document.created_at.desc()).limit(100)
         result = await self.db.execute(stmt)
         rows = result.all()
 

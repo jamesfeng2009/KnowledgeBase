@@ -97,6 +97,8 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
         const email = (document.getElementById('email') as HTMLInputElement).value;
         const password = (document.getElementById('password') as HTMLInputElement).value;
 
+        console.log('[Auth] 登录尝试:', { email });
+
         // 隐藏错误提示，显示加载状态
         errorMsg.style.display = 'none';
         submitBtn.disabled = true;
@@ -119,6 +121,8 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
             // 存储 Token
             const accessToken = result.data?.access_token || result.access_token;
             if (accessToken) {
+              const userData = result.data?.user || result.user;
+              console.log('[Auth] 登录成功:', { user_id: userData?.id, tenant_id: userData?.tenant_id || null, role: userData?.role });
               localStorage.setItem('ekb_access_token', accessToken);
               window.location.href = '/';
             } else {
@@ -126,11 +130,14 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
             }
           } else {
             const message = result.detail || result.message || '登录失败，请检查邮箱和密码';
+            console.warn('[Auth] 登录失败:', { email, error: message });
             errorMsg.textContent = message;
             errorMsg.style.display = 'block';
           }
         } catch (error) {
-          errorMsg.textContent = error instanceof Error ? error.message : '网络请求异常，请稍后重试';
+          const errMsg = error instanceof Error ? error.message : '网络请求异常，请稍后重试';
+          console.warn('[Auth] 登录失败:', { email, error: errMsg });
+          errorMsg.textContent = errMsg;
           errorMsg.style.display = 'block';
         } finally {
           submitBtn.disabled = false;

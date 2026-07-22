@@ -67,6 +67,18 @@ export async function* createSSEStream(
     body: JSON.stringify(body),
   });
 
+  // 401 未授权：清除 Token 并跳转登录页（与 api.ts 的 request() 行为对齐）
+  if (response.status === 401) {
+    console.warn('[SSE] 401 未授权，清除 Token 并跳转登录页');
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem(TOKEN_KEY);
+      if (window.location.pathname !== '/auth/login') {
+        window.location.href = '/auth/login';
+      }
+    }
+    throw new Error('登录已过期，请重新登录');
+  }
+
   // 检查响应状态
   if (!response.ok) {
     const errorData = await response.json().catch(() => null);
@@ -84,15 +96,27 @@ export async function* createSSEStream(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+  // 事件解析状态必须跨 reader.read() 保持：
+  // 一个 SSE 事件可能被 TCP 分包拆到多次 read() 中，若状态声明在循环内会被重置，导致事件静默丢失
+  let currentEvent = '';
+  let currentData = '';
 
   try {
     while (true) {
       const { done, value } = await reader.read();
 
       if (done) {
-        // 处理缓冲区中剩余的数据
-        if (buffer.trim()) {
-          const event = parseSSELine(buffer);
+        // 冲刷缓冲区中最后一行（可能是不含换行的事件行）
+        const lastLine = buffer.trim();
+        if (lastLine.startsWith('event:')) {
+          currentEvent = lastLine.slice(6).trim();
+        } else if (lastLine.startsWith('data:')) {
+          const dataLine = lastLine.slice(5).trim();
+          currentData = currentData ? `${currentData}\n${dataLine}` : dataLine;
+        }
+        // 冲刷未派发完的最后一个事件
+        if (currentData || currentEvent) {
+          const event = parseSSEData(currentEvent, currentData);
           if (event) {
             yield event;
           }
@@ -107,9 +131,6 @@ export async function* createSSEStream(
       // SSE 事件以空行分隔（两个连续换行）
       const lines = buffer.split('\n');
       buffer = lines.pop() || '';
-
-      let currentEvent = '';
-      let currentData = '';
 
       for (const line of lines) {
         const trimmed = line.trim();
@@ -139,13 +160,6 @@ export async function* createSSEStream(
   } finally {
     reader.releaseLock();
   }
-}
-
-/** 解析单行 SSE 数据（兼容旧格式） */
-function parseSSELine(line: string): SSEEvent | null {
-  const trimmed = line.trim();
-  if (!trimmed.startsWith('data:')) return null;
-  return parseSSEData('', trimmed.slice(5).trim());
 }
 
 /** 解析 SSE event + data 字段 */
@@ -191,10 +205,30 @@ export async function streamChat(
     onToolCallEnd?: (data: { tool_use_id: string; tool_name?: string; result?: string; duration_ms?: number; status?: string }) => void;
     onApprovalRequired?: (data: { approval_id: string; tool_name: string; tool_use_id: string; arguments?: unknown; reason?: string; irreversible?: boolean; session_id?: string }) => void;
     onQuality?: (data: { low_confidence?: boolean; total_score?: number; message?: string }) => void;
+    /** P2-B: 查询重写事件 — 展示检索前的查询优化过程 */
+    onQueryRewrite?: (data: {
+      original: string;
+      rewritten: string;
+      expanded_terms: string[];
+      sub_queries: string[];
+      hyde_document: string | null;
+      strategy: string[];
+      latency_ms: number;
+      cache_hit: boolean;
+      search_query: string;
+    }) => void;
     onDone?: () => void;
     onError?: (error: Error) => void;
   }
 ): Promise<void> {
+  // 防止 onDone 被调用两次：服务端 'done' 事件触发一次，流结束兜底一次
+  let doneFired = false;
+  const fireDone = () => {
+    if (!doneFired) {
+      doneFired = true;
+      callbacks.onDone?.();
+    }
+  };
   try {
     for await (const event of createSSEStream(url, body)) {
       switch (event.type) {
@@ -227,15 +261,28 @@ export async function streamChat(
         case 'quality':
           callbacks.onQuality?.(event.data as { low_confidence?: boolean; total_score?: number; message?: string });
           break;
+        case 'query_rewrite':
+          callbacks.onQueryRewrite?.(event.data as {
+            original: string;
+            rewritten: string;
+            expanded_terms: string[];
+            sub_queries: string[];
+            hyde_document: string | null;
+            strategy: string[];
+            latency_ms: number;
+            cache_hit: boolean;
+            search_query: string;
+          });
+          break;
         case 'done':
         case 'complete':
-          callbacks.onDone?.();
+          fireDone();
           break;
         case 'error':
           throw new Error((event.data as { message?: string }).message || '流式输出错误');
       }
     }
-    callbacks.onDone?.();
+    fireDone();
   } catch (error) {
     callbacks.onError?.(error instanceof Error ? error : new Error(String(error)));
   }

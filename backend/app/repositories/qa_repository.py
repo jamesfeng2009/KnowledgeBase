@@ -24,8 +24,8 @@ from app.repositories.base import BaseRepository
 class QaQuestionRepository(BaseRepository[QaQuestion]):
     """问答帖仓储 — 封装问题表的领域查询。"""
 
-    def __init__(self, session: AsyncSession) -> None:
-        super().__init__(QaQuestion, session)
+    def __init__(self, session: AsyncSession, tenant_id: UUID | None = None) -> None:
+        super().__init__(QaQuestion, session, tenant_id=tenant_id)
 
     async def get_open_questions(self) -> list[QaQuestion]:
         """查询所有未关闭的问题（status = open 或 answered，排除已软删除）。
@@ -38,8 +38,9 @@ class QaQuestionRepository(BaseRepository[QaQuestion]):
                 QaQuestion.status != "closed",
                 QaQuestion.deleted_at.is_(None),
             )
-            .order_by(QaQuestion.created_at.desc())
         )
+        stmt = self._apply_all_filters(stmt)
+        stmt = stmt.order_by(QaQuestion.created_at.desc())
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
@@ -51,8 +52,9 @@ class QaQuestionRepository(BaseRepository[QaQuestion]):
                 QaQuestion.kb_id == kb_id,
                 QaQuestion.deleted_at.is_(None),
             )
-            .order_by(QaQuestion.created_at.desc())
         )
+        stmt = self._apply_all_filters(stmt)
+        stmt = stmt.order_by(QaQuestion.created_at.desc())
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
@@ -71,8 +73,10 @@ class QaQuestionRepository(BaseRepository[QaQuestion]):
                 QaQuestion.id == question_id,
                 QaQuestion.deleted_at.is_(None),
             )
-            .values(view_count=QaQuestion.view_count + 1)
         )
+        if self._tenant_id is not None:
+            stmt = stmt.where(QaQuestion.tenant_id == self._tenant_id)
+        stmt = stmt.values(view_count=QaQuestion.view_count + 1)
         result = await self.session.execute(stmt)
         return (result.rowcount or 0) > 0
 
@@ -80,8 +84,8 @@ class QaQuestionRepository(BaseRepository[QaQuestion]):
 class QaAnswerRepository(BaseRepository[QaAnswer]):
     """回答仓储 — 封装回答表的领域查询。"""
 
-    def __init__(self, session: AsyncSession) -> None:
-        super().__init__(QaAnswer, session)
+    def __init__(self, session: AsyncSession, tenant_id: UUID | None = None) -> None:
+        super().__init__(QaAnswer, session, tenant_id=tenant_id)
 
     async def get_by_question(self, question_id: UUID) -> list[QaAnswer]:
         """查询指定问题下的所有回答（排除已软删除）。
@@ -94,11 +98,12 @@ class QaAnswerRepository(BaseRepository[QaAnswer]):
                 QaAnswer.question_id == question_id,
                 QaAnswer.deleted_at.is_(None),
             )
-            .order_by(
-                QaAnswer.is_accepted.desc(),
-                QaAnswer.vote_count.desc(),
-                QaAnswer.created_at.asc(),
-            )
+        )
+        stmt = self._apply_all_filters(stmt)
+        stmt = stmt.order_by(
+            QaAnswer.is_accepted.desc(),
+            QaAnswer.vote_count.desc(),
+            QaAnswer.created_at.asc(),
         )
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
@@ -127,8 +132,10 @@ class QaAnswerRepository(BaseRepository[QaAnswer]):
                 QaAnswer.id != answer_id,
                 QaAnswer.deleted_at.is_(None),
             )
-            .values(is_accepted=False)
         )
+        if self._tenant_id is not None:
+            unaccept_stmt = unaccept_stmt.where(QaAnswer.tenant_id == self._tenant_id)
+        unaccept_stmt = unaccept_stmt.values(is_accepted=False)
         await self.session.execute(unaccept_stmt)
 
         # 采纳当前回答

@@ -312,7 +312,8 @@ const breadcrumb = [{ label: '设置', href: '/settings/tenant' }, { label: 'Web
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 
   /** ISO 时间转本地可读格式 */

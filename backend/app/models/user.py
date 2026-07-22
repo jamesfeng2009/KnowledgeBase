@@ -3,9 +3,8 @@
 """
 
 import uuid
-from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, func
+from sqlalchemy import Boolean, ForeignKey, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -55,8 +54,12 @@ class User(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     )
     ldap_dn: Mapped[str | None] = mapped_column(String(500), nullable=True, comment="LDAP DN")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, comment="是否激活")
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True, comment="租户 ID"
+    )
 
     department: Mapped[Department | None] = relationship()
+    tenant: Mapped["Tenant | None"] = relationship()
 
 
 class KbMember(UUIDMixin, TimestampMixin, Base):

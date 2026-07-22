@@ -75,6 +75,7 @@ class UserResponse(BaseModel):
         default=ClearanceLevel.internal, description="数据密级"
     )
     is_active: bool = Field(default=True, description="是否激活")
+    tenant_id: uuid.UUID | None = Field(default=None, description="租户 ID")
     created_at: datetime = Field(..., description="创建时间")
 
 

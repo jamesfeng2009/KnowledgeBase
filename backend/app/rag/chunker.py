@@ -28,6 +28,10 @@ import uuid
 from dataclasses import dataclass, replace
 from typing import Any, Sequence
 
+from app.utils.hash import (
+    compute_chunk_hash_with_metadata,
+    generate_deterministic_chunk_id,
+)
 from app.utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -145,11 +149,15 @@ class SemanticChunker:
         content: str,
         doc_type: str,
         content_type: str = "auto",
+        doc_id: str | None = None,
     ) -> list[Chunk]:
         """对文档内容执行分块，返回 Chunk 列表。
 
         P1 内容类型路由优先：当 content_type 明确时主动选择分块策略，
         否则按优先级依次尝试结构化 / 语义 / 父子索引 / 固定长度兜底。
+
+        P1-B 确定性 ID：传入 doc_id 时，chunk ID 使用 uuid5(doc_id + hash + index)
+        生成，相同内容重复处理生成相同 ID，支持幂等写入和增量更新。
 
         Args:
             content: 文档纯文本内容。
@@ -159,6 +167,7 @@ class SemanticChunker:
                 - "tutorial"/"specification"/"report": 结构化分块（带标题路径 P3）；
                 - "plain": 语义分块（TextTiling）；
                 - "auto"（默认）: 走四级兜底链。
+            doc_id: 文档 ID（P1-B）。传入时启用确定性 chunk ID，不传时用随机 UUID。
 
         Returns:
             Chunk 列表，至少包含一个分块。
@@ -166,50 +175,88 @@ class SemanticChunker:
         if not content or not content.strip():
             return []
 
-        doc_id = str(uuid.uuid4())
+        internal_doc_id = doc_id or str(uuid.uuid4())
         ct = content_type if content_type in _VALID_CONTENT_TYPES else "auto"
 
         # P1: 内容类型显式路由
         if ct == "faq":
-            chunks = self._qa_split(content, doc_id)
+            chunks = self._qa_split(content, internal_doc_id)
             if chunks:
                 log.debug("chunker.qa", count=len(chunks))
-                return chunks
+                return self._assign_deterministic_ids(chunks, internal_doc_id) if doc_id else chunks
             # QA 分块未产出有效结果，降级到兜底链
 
         if ct in ("tutorial", "specification", "report"):
-            chunks = self._structural_split(content, doc_id, doc_type)
+            chunks = self._structural_split(content, internal_doc_id, doc_type)
             if self._is_valid(chunks):
                 log.debug("chunker.structural_by_type", count=len(chunks), content_type=ct)
-                return chunks
+                return self._assign_deterministic_ids(chunks, internal_doc_id) if doc_id else chunks
             # 结构化分块无效，降级到语义分块
 
         if ct == "plain":
-            chunks = self._semantic_split(content, doc_id)
+            chunks = self._semantic_split(content, internal_doc_id)
             if self._is_valid(chunks):
                 log.debug("chunker.semantic_by_type", count=len(chunks))
-                return self._parent_child_index(content, chunks, doc_id)
+                chunks = self._parent_child_index(content, chunks, internal_doc_id)
+                return self._assign_deterministic_ids(chunks, internal_doc_id) if doc_id else chunks
             # 语义分块无效，降级到兜底
 
         # auto 模式 — 四级兜底链
         # 1. 结构化分块：检测内容格式（Markdown # 标题 / HTML <h> 标签）
         #    不再依赖 doc_type — Docling 输出 Markdown 但 doc_type 可能是 pdf/docx
-        chunks = self._structural_split(content, doc_id, doc_type)
+        chunks = self._structural_split(content, internal_doc_id, doc_type)
         if self._is_valid(chunks):
             log.debug("chunker.structural", count=len(chunks), doc_type=doc_type)
-            return chunks
+            return self._assign_deterministic_ids(chunks, internal_doc_id) if doc_id else chunks
 
         # 2. 语义分块：TextTiling 相似度
-        chunks = self._semantic_split(content, doc_id)
+        chunks = self._semantic_split(content, internal_doc_id)
         if self._is_valid(chunks):
             log.debug("chunker.semantic", count=len(chunks))
-            return self._parent_child_index(content, chunks, doc_id)
+            chunks = self._parent_child_index(content, chunks, internal_doc_id)
+            return self._assign_deterministic_ids(chunks, internal_doc_id) if doc_id else chunks
 
         # 3. 父子索引在语义分块后已构建，若仍无效则走兜底
         # 4. 固定长度兜底
-        chunks = self._fixed_split(content, doc_id)
+        chunks = self._fixed_split(content, internal_doc_id)
         log.debug("chunker.fallback", count=len(chunks))
-        return chunks
+        return self._assign_deterministic_ids(chunks, internal_doc_id) if doc_id else chunks
+
+    @staticmethod
+    def _assign_deterministic_ids(chunks: list[Chunk], doc_id: str) -> list[Chunk]:
+        """为 chunk 列表重分配确定性 ID（P1-B）。
+
+        使用 uuid5(doc_id + content_hash + index) 生成 ID，
+        相同内容重复处理时生成相同 ID，支持幂等写入。
+        同时更新 parent_id 以保持父子关系一致。
+
+        Args:
+            chunks: 原始 chunk 列表（ID 为随机 UUID）。
+            doc_id: 文档 ID。
+
+        Returns:
+            重分配 ID 后的 chunk 列表。
+        """
+        if not chunks:
+            return chunks
+
+        # 第一遍：计算新 ID 映射
+        old_to_new: dict[str, str] = {}
+        for idx, chunk in enumerate(chunks):
+            chunk_hash = compute_chunk_hash_with_metadata(
+                chunk.content, chunk.title_path, chunk.content_type
+            )
+            new_id = generate_deterministic_chunk_id(doc_id, chunk_hash, idx)
+            old_to_new[chunk.id] = new_id
+
+        # 第二遍：替换 ID 和 parent_id
+        result: list[Chunk] = []
+        for chunk in chunks:
+            new_id = old_to_new[chunk.id]
+            new_parent_id = old_to_new[chunk.parent_id] if chunk.parent_id else None
+            result.append(replace(chunk, id=new_id, parent_id=new_parent_id))
+
+        return result
 
     # ------------------------------------------------------------------
     # 视频转写分块 — P0 ASR + P1 关键帧 VLM

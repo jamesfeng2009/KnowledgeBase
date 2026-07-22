@@ -502,7 +502,8 @@ const breadcrumb = [
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 
   /** 获取 properties 对象（兼容 parameters.properties 与 parameters 直接是 properties 的情况） */

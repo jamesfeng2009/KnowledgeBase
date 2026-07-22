@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import asyncio
+import uuid
 
 from app.utils.logger import get_logger
 
@@ -24,11 +25,15 @@ def _run_async(coro):
         loop.close()
 
 
-async def _process_intelligence(doc_id: str) -> dict:
+async def _process_intelligence(
+    doc_id: str, tenant_id: str | None = None
+) -> dict:
     """异步执行文档智能处理。"""
     from app.database import async_session_factory
     from app.llm.factory import get_llm_provider
     from app.services.doc_intelligence_service import DocIntelligenceService
+
+    tid = uuid.UUID(tenant_id) if tenant_id else None
 
     async with async_session_factory() as db:
         try:
@@ -37,7 +42,7 @@ async def _process_intelligence(doc_id: str) -> dict:
             logger.warning("intelligence.llm_unavailable", error=str(exc))
             return {"doc_id": doc_id, "status": "skipped", "reason": "llm_unavailable"}
 
-        service = DocIntelligenceService(llm, db)
+        service = DocIntelligenceService(llm, db, tenant_id=tid)
         result = await service.process_all(doc_id)
         await db.commit()
         return result
@@ -46,9 +51,15 @@ async def _process_intelligence(doc_id: str) -> dict:
 # 延迟导入 celery_app，避免循环依赖
 try:
     from celery_app import celery_app
+    from app.utils.retry import make_celery_retry_kwargs
 
-    @celery_app.task(name="tasks.intelligence_tasks.process_intelligence")
-    def process_intelligence(doc_id: str) -> dict:
+    @celery_app.task(
+        name="tasks.intelligence_tasks.process_intelligence",
+        **make_celery_retry_kwargs(),
+    )
+    def process_intelligence(
+        doc_id: str, tenant_id: str | None = None
+    ) -> dict:
         """文档入库后自动执行智能处理。
 
         执行五项自动化：
@@ -62,13 +73,14 @@ try:
 
         Args:
             doc_id: 文档 ID（UUID 字符串）。
+            tenant_id: 租户 ID（UUID 字符串），用于多租户数据隔离。
 
         Returns:
             处理结果摘要。
         """
         logger.info("intelligence.task_started", doc_id=doc_id)
         try:
-            result = _run_async(_process_intelligence(doc_id))
+            result = _run_async(_process_intelligence(doc_id, tenant_id))
             logger.info("intelligence.task_completed", doc_id=doc_id, result=result)
             return result
         except Exception as exc:

@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import uuid
+from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,6 +27,7 @@ from app.llm.model_config import (
 )
 from app.models.user_model_preference import UserModelPreference
 from app.utils.logger import get_logger
+from app.utils.tenant import apply_tenant_filter
 
 log = get_logger(__name__)
 
@@ -42,8 +44,9 @@ class ModelSelectionService:
         model_id = await service.resolve_model(user_id, session_id)
     """
 
-    def __init__(self, db: AsyncSession) -> None:
+    def __init__(self, db: AsyncSession, tenant_id: UUID | None = None) -> None:
         self._db = db
+        self._tenant_id = tenant_id
 
     async def get_session_model(
         self, user_id: uuid.UUID, session_id: str
@@ -61,6 +64,7 @@ class ModelSelectionService:
             UserModelPreference.user_id == user_id,
             UserModelPreference.session_id == session_id,
         )
+        stmt = apply_tenant_filter(stmt, UserModelPreference, self._tenant_id)
         result = await self._db.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -106,6 +110,7 @@ class ModelSelectionService:
             UserModelPreference.user_id == user_id,
             UserModelPreference.session_id == session_id,
         )
+        stmt = apply_tenant_filter(stmt, UserModelPreference, self._tenant_id)
         result = await self._db.execute(stmt)
         existing = result.scalar_one_or_none()
 

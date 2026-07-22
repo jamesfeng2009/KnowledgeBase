@@ -41,14 +41,16 @@ class ApiKeyService:
             # plaintext 仅此一次返回给用户
     """
 
-    def __init__(self, db: AsyncSession) -> None:
+    def __init__(self, db: AsyncSession, tenant_id: UUID | None = None) -> None:
         """初始化 API 密钥服务。
 
         Args:
             db: 异步数据库会话，事务由 get_db_session 统一管理。
+            tenant_id: 租户 ID，用于多租户数据隔离。
         """
         self.db: AsyncSession = db
-        self.repo: ApiKeyRepository = ApiKeyRepository(db)
+        self._tenant_id = tenant_id
+        self.repo: ApiKeyRepository = ApiKeyRepository(db, tenant_id=tenant_id)
 
     # ------------------------------------------------------------------
     # 密钥生成与哈希

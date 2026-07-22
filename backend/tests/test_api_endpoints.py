@@ -200,7 +200,12 @@ class TestChatStream:
         """POST /api/v1/chat/stream 应返回 SSE 流。"""
 
         class _FakeChatService:
-            async def chat(self, **kwargs):
+            async def prepare_chat(self, **kwargs):
+                from types import SimpleNamespace as NS
+
+                return NS(conversation_id=uuid4())
+
+            async def stream_chat(self, prepared):
                 yield "你好"
                 from app.utils.sse import SSEEvent, SSEEventType
                 yield SSEEvent(data={}, event=SSEEventType.DONE)

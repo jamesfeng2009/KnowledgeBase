@@ -1,0 +1,148 @@
+---
+/**
+ * 熔断器状态卡片 — 展示所有下游服务的熔断状态
+ *
+ * 数据来源：GET /health/circuit-breakers
+ * 自动刷新：每 30 秒
+ * 状态颜色：closed=绿 / open=红 / half_open=橙
+ */
+---
+
+<div class="card" id="circuit-breaker-card">
+  <div class="card-header">
+    <h3>熔断器状态</h3>
+    <span class="refresh-hint">每 30 秒自动刷新</span>
+  </div>
+  <div id="circuit-breaker-body">
+    <p class="text-muted loading-text">加载中...</p>
+  </div>
+</div>
+
+<style>
+  .refresh-hint {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+  }
+  .loading-text {
+    padding: var(--space-4);
+    text-align: center;
+  }
+  .breaker-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+  }
+  .breaker-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-md);
+    background: var(--surface-muted);
+  }
+  .breaker-name {
+    font-weight: 500;
+    font-size: var(--text-sm);
+  }
+  .breaker-state {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: 2px var(--space-2);
+    border-radius: var(--radius-sm);
+    font-size: var(--text-xs);
+    font-weight: 600;
+  }
+  .state-closed {
+    background: var(--success-bg);
+    color: var(--success);
+  }
+  .state-open {
+    background: var(--danger-bg);
+    color: var(--danger);
+  }
+  .state-half_open {
+    background: var(--warning-bg);
+    color: var(--warning);
+  }
+  .breaker-detail {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    margin-top: var(--space-1);
+  }
+  .error-text {
+    color: var(--danger);
+    padding: var(--space-4);
+    text-align: center;
+  }
+</style>
+
+<script>
+  import { getCircuitBreakerStatus, getCircuitStateLabel } from '@/lib/apis/health';
+  import type { CircuitBreakerStatus } from '@/lib/apis/health';
+
+  /** HTML 转义（含引号，可安全用于属性上下文），防止接口返回内容注入 XSS */
+  function escapeHtml(s: string): string {
+    return String(s ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  async function loadCircuitBreakerStatus() {
+    const body = document.getElementById('circuit-breaker-body');
+    if (!body) return;
+
+    try {
+      const resp = await getCircuitBreakerStatus();
+      const breakers: CircuitBreakerStatus[] = Object.values(resp.breakers);
+
+      if (breakers.length === 0) {
+        body.innerHTML = '<p class="text-muted loading-text">暂无熔断器注册</p>';
+        return;
+      }
+
+      const stateClassMap: Record<string, string> = {
+        closed: 'state-closed',
+        open: 'state-open',
+        half_open: 'state-half_open',
+      };
+
+      const items = breakers.map((b: CircuitBreakerStatus) => {
+        const label = getCircuitStateLabel(b.state);
+        const stateClass = stateClassMap[b.state] || 'state-closed';
+        const detail = b.state === 'open'
+          ? `失败 ${b.failure_count}/${b.failure_threshold} 次`
+          : b.state === 'half_open'
+            ? `探测 ${b.half_open_calls}/${b.half_open_max_calls}`
+            : `阈值 ${b.failure_threshold}`;
+
+        return `
+          <div class="breaker-item">
+            <div>
+              <div class="breaker-name">${escapeHtml(b.name)}</div>
+              <div class="breaker-detail">${detail}</div>
+            </div>
+            <span class="breaker-state ${stateClass}">${label}</span>
+          </div>
+        `;
+      }).join('');
+
+      body.innerHTML = `<div class="breaker-list">${items}</div>`;
+    } catch (err) {
+      body.innerHTML = `<p class="error-text">状态加载失败: ${escapeHtml((err as Error).message || '未知错误')}</p>`;
+    }
+  }
+
+  // 首次加载
+  loadCircuitBreakerStatus();
+
+  // 每 30 秒刷新；页面切走/卸载时清理定时器，避免后台泄漏与重复刷新
+  const refreshTimer = setInterval(loadCircuitBreakerStatus, 30000);
+  const stopRefresh = () => clearInterval(refreshTimer);
+  document.addEventListener('astro:before-swap', stopRefresh, { once: true });
+  window.addEventListener('pagehide', stopRefresh, { once: true });
+</script>

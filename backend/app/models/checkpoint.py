@@ -10,7 +10,6 @@ Agent Checkpoint 模型 — 单一职责：LangGraph Agent Loop 状态持久化�
 
 from __future__ import annotations
 
-import uuid
 from datetime import datetime
 
 from sqlalchemy import DateTime, Integer, String, text
