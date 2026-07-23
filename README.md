@@ -48,7 +48,7 @@
 | **ASR** | OpenAI Whisper API / Faster-Whisper (私有) | 语音转写，视频 RAG |
 | **TTS** | edge-tts（Microsoft Edge 在线 TTS） | AI 对话语音播报，6 种中英文音色，无需 API Key |
 | **可观测性** | LangFuse v2 | 全链路追踪（think/retrieve/generate）+ 真实 Token 用量 + request_id 关联 |
-| **跨模态检索** | jina-clip-v2（Jina AI） | 文本+图片统一向量空间，text-to-image 跨模态检索 |
+| **跨模态检索** | jina-clip-v2（Jina AI） | 独立索引隔离设计：文本向量与图片向量分别存储在不同 OpenSearch 索引，避免维度/向量空间冲突；text-to-image 跨模态检索 |
 | **视频处理** | ffmpeg | 音轨提取 + 关键帧抽取 |
 | **文档解析** | Docling (IBM Granite-Docling-258M) + pymupdf + python-pptx + python-docx + openpyxl + pandas | Docling 统一解析 PDF/DOCX/PPTX/XLSX/HTML/图片/音频 → HTML（`<h1>`~`<h6>` 标题 + `<table>` 表格 + `<ul><li>` 列表），降级到原有解析器；图片上传 MinIO + 小图过滤 + VLM 描述；XLSX 双引擎降级（openpyxl → pandas）+ 列宽对齐 |
 | **数据库迁移** | Alembic + asyncpg + aiosqlite | 异步迁移引擎，启动时自动 `alembic upgrade head`，36 张表（含智能测试平台 6 张表 + 知识回流层 3 张表） |
@@ -125,7 +125,7 @@ EnterpriseKnowledge/
 │   ├── config/
 │   │   └── models.json               # P2 模型配置文件（7 个模型 × 4 种部署模式，Git 管理）
 │   ├── tasks/                        # Celery 异步任务
-│   ├── tests/                        # 测试（1200 项）
+│   ├── tests/                        # 测试（2024 项）
 │   ├── celery_app.py                 # Celery 入口
 │   └── requirements.txt
 ├── collab-service/                   # Yjs 协作服务（Node.js + TypeScript）
@@ -1981,12 +1981,21 @@ LangFuse v2 全链路追踪，覆盖 Agent Loop 五节点 + HTTP request_id 关�
 
 ### P2: 原生跨模态向量检索
 
-修复两个已有 bug 并实现 jina-clip-v2 跨模态向量检索。
+修复两个已有 bug 并实现 jina-clip-v2 跨模态向量检索（独立索引隔离架构）。
 
 - **Bug 1 修复 — 全文索引字段名不匹配**：写入方使用 `content` / `title_path`，查询方原查询 `chunk_text` / `title` 导致 BM25 静默失效；已对齐为 `content` / `title_path`，并补充 `kb_id` 字段写入与过滤
 - **Bug 2 修复 — SaaS embedding 维度不匹配**：`VectorStoreBase.dimension` 从硬编码 1024 改为动态从 Embedder 获取；SaaS 模式 OpenAI 3072 维自动适配，私有部署 TEI 1024 维不受影响
-- **跨模态检索**：`MultimodalEmbeddingProvider`（jina-clip-v2）支持文本+图片统一向量空间；`CrossModalService` 将文档图片直接向量化入库（`content_type="image"`）；检索器自动使用 MultimodalEmbedder 生成查询向量，实现 text-to-image 跨模态检索
-- **配置**：`CROSS_MODAL_ENABLED`（总开关）/ `JINA_API_KEY` / `JINA_CLIP_MODEL` / `JINA_CLIP_DIM`
+- **跨模态检索（独立索引隔离）**：`MultimodalEmbeddingProvider`（jina-clip-v2, 1024 维）支持文本+图片向量生成；文本查询使用文本 Embedder（与文档索引一致），跨模态图片检索使用独立索引 `ekb_cross_modal` + `dimension_override=1024`，两路结果合并去重；`CrossModalService` 将文档图片向量化入库（`content_type="image"`）
+- **配置**：`CROSS_MODAL_ENABLED`（总开关）/ `JINA_API_KEY` / `JINA_CLIP_MODEL` / `JINA_CLIP_DIM` / `OPENSEARCH_CROSS_MODAL_INDEX`
+
+### 安全与稳定性加固（C1-C6）
+
+全面代码审查后修复的 6 个 Critical 级问题：
+
+- **C1/C2 跨模态向量空间隔离**：文本查询回退为文本 Embedder（不再切换到多模态），跨模态检索使用独立 `_cross_modal_search()` + 独立索引 + `dimension_override`，避免 SaaS 3072 维 vs jina-clip-v2 1024 维冲突
+- **C3 Celery 任务 session 工厂**：6 个任务文件（`index_tasks` / `scheduled_tasks` / `notification_tasks` / `intelligence_tasks` / `compounding_tasks` / `testing_tasks`）的 `async_session_factory` 全部替换为 `task_db_session()`（NullPool），修复跨事件循环连接崩溃
+- **C5 kb_id 回退修复**：`_build_opensearch_index` 中 `kb_id` 为 None 时不再回退为 `doc_id`，避免知识库过滤失效
+- **C6 租户隔离加固**：`_get_current_tenant` 按 `user.tenant_id` 过滤；用户列表/存储统计按租户过滤；`_get_tenant_settings` 接受 `user` 参数；SaaS 模式默认关闭开放注册（`REGISTRATION_ENABLED=false`）
 
 ---
 
@@ -1995,7 +2004,7 @@ LangFuse v2 全链路追踪，覆盖 Agent Loop 五节点 + HTTP request_id 关�
 ```bash
 cd backend
 
-# 运行全部测试（1969 项）
+# 运行全部测试（2024 项）
 python -m pytest --tb=short -q
 
 # 运行特定模块测试
@@ -2056,8 +2065,8 @@ python -m pytest tests/test_cross_modal.py -v                  # P2 跨模态检
 | 稳定性加固回归（`test_security_bugfixes.py` / `test_api_service_security_fixes.py` / `test_provider_circuit_breaker.py` / `test_health_check.py` / `test_beat_lock.py`） | 145 | P0-P3 修复回归：SSE 韧性、熔断器契约、任务锁、越权/IDOR、上传闸门、异步 redis、健康检查并发与超时、脱敏门控、**P2 全文索引字段名对齐 + kb_id 过滤** |
 | `test_request_context.py` | 4 | P0 HTTP request_id contextvar（set/get/reset/嵌套） |
 | `test_tts_service.py` | 7 | P1 TTS 语音合成（edge-tts 空文本/禁用/截断/合成/音色列表） |
-| `test_cross_modal.py` | 17 | P2 跨模态检索（JinaCLIPEmbedder 文本+图片向量化、CrossModalService 入库、降级逻辑、维度一致性） |
-| **合计** | **1990** | **1955 passed + 6 skipped + 29 项既有环境基线（真实 PG 外键/数据残留、DashScope key、celery mock 污染、事件循环冲突），零新增失败** |
+| `test_cross_modal.py` | 22 | P2 跨模态检索（JinaCLIPEmbedder 文本+图片向量化、CrossModalService 入库、降级逻辑、维度一致性、C1/C2 独立索引隔离验证） |
+| **合计** | **2030** | **2024 passed + 6 skipped，零失败（含 27 项预存 DB 外键/事件循环/mock 污染问题已全部修复）** |
 
 ---
 
