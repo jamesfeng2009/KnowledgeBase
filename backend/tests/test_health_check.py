@@ -16,10 +16,25 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+# Mock celery 模块（仅当 celery 未安装时才 mock celery_app）
+try:
+    import celery  # noqa: F401
+except ImportError:
+    mock_celery = MagicMock()
+    mock_celery.Celery = MagicMock
+    sys.modules["celery"] = mock_celery
+    mock_celery_app = MagicMock()
+    mock_celery_app.celery_app = MagicMock()
+    sys.modules["celery_app"] = mock_celery_app
+else:
+    # celery 已安装 — 清除其他测试文件可能注入的 mock，使用真实 celery_app
+    sys.modules.pop("celery_app", None)
 
 from app.llm.registry import ProviderMeta, get_all_provider_entries
 from app.services.health_check import (
@@ -743,6 +758,23 @@ class TestHealthCheckConfig:
 
 class TestBeatSchedule:
     """Celery Beat 调度配置测试。"""
+
+    def setup_method(self):
+        """每个测试前恢复真实 celery 和 celery_app，清除其他测试注入的 mock。"""
+        import importlib
+
+        sys.modules.pop("celery_app", None)
+        # 检查 celery 是否被 mock 替换（真实模块的 __file__ 是 str）
+        celery_mod = sys.modules.get("celery")
+        if celery_mod is not None and not isinstance(
+            getattr(celery_mod, "__file__", None), str
+        ):
+            # 清除所有 celery.* 子模块，强制重新导入真实包
+            for key in list(sys.modules.keys()):
+                if key == "celery" or key.startswith("celery."):
+                    del sys.modules[key]
+            importlib.import_module("celery")
+        importlib.import_module("celery.schedules")
 
     def test_beat_schedule_has_health_check(self):
         """Beat 调度包含健康检查任务。"""

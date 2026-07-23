@@ -14,10 +14,12 @@ from __future__ import annotations
 import os
 import uuid
 
+import httpx
 import pytest
 import pytest_asyncio
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
+from httpx import ASGITransport
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -147,6 +149,8 @@ async def db_session():
     """创建 PostgreSQL 数据库用于测试。"""
     engine = create_async_engine(os.environ["DATABASE_URL"], echo=False)
     async with engine.begin() as conn:
+        # 先 drop 再 create — 清理前次测试残留数据，保证隔离
+        await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
     async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     session = async_session()
@@ -390,7 +394,7 @@ class TestRequireModule:
 
     def _create_test_app(
         self, db_session: AsyncSession, tenant: Tenant | None
-    ) -> tuple[TestClient, FastAPI]:
+    ) -> FastAPI:
         """创建测试 FastAPI 应用。
 
         覆盖 get_db_session 和 get_current_user 依赖，
@@ -398,15 +402,16 @@ class TestRequireModule:
         """
         app = FastAPI()
 
-        # 模拟用户
+        # 模拟用户 — 持久化到 DB 以满足外键约束
         mock_user = User(
-            email="test@test.com",
+            email=f"test-{uuid.uuid4().hex[:8]}@test.com",
             hashed_password="fake",
             name="测试用户",
             role="admin",
             is_active=True,
         )
         mock_user.id = uuid.uuid4()
+        db_session.add(mock_user)
 
         # 如果有租户，预置到数据库
         if tenant is not None:
@@ -437,13 +442,15 @@ class TestRequireModule:
         ):
             return {"ok": True, "module": "doc_intelligence"}
 
-        client = TestClient(app)
-        return client, app
+        return app
 
     async def test_basic_module_always_passes(self, db_session):
         """基础模块永远通过门控（即使无租户）。"""
-        client, app = self._create_test_app(db_session, None)
-        response = client.get("/test-basic")
+        app = self._create_test_app(db_session, None)
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/test-basic")
         assert response.status_code == 200
         assert response.json()["ok"] is True
 
@@ -451,8 +458,11 @@ class TestRequireModule:
         self, db_session
     ):
         """无租户时可选模块被拦截（403）。"""
-        client, app = self._create_test_app(db_session, None)
-        response = client.get("/test-optional")
+        app = self._create_test_app(db_session, None)
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/test-optional")
         assert response.status_code == 403
         assert "doc_intelligence" in response.json()["detail"]
 
@@ -460,16 +470,22 @@ class TestRequireModule:
         self, db_session, tenant_free
     ):
         """free 套餐不含 doc_intelligence → 403。"""
-        client, app = self._create_test_app(db_session, tenant_free)
-        response = client.get("/test-optional")
+        app = self._create_test_app(db_session, tenant_free)
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/test-optional")
         assert response.status_code == 403
 
     async def test_optional_module_allowed_pro_plan(
         self, db_session, tenant_pro
     ):
         """pro 套餐包含 doc_intelligence → 200。"""
-        client, app = self._create_test_app(db_session, tenant_pro)
-        response = client.get("/test-optional")
+        app = self._create_test_app(db_session, tenant_pro)
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/test-optional")
         assert response.status_code == 200
         assert response.json()["module"] == "doc_intelligence"
 
@@ -480,11 +496,12 @@ class TestRequireModule:
 
         doc_intelligence 应被拦截，但此处测试 require_module 的 settings 读取。
         """
-        # tenant_enterprise_with_settings 的 settings 只配了 knowledge_base + multimodal
-        # doc_intelligence 未在 settings 中
-        client, app = self._create_test_app(
+        app = self._create_test_app(
             db_session, tenant_enterprise_with_settings
         )
-        response = client.get("/test-optional")
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/test-optional")
         # doc_intelligence 未在 settings 的 enabled_modules 中 → 403
         assert response.status_code == 403

@@ -26,21 +26,24 @@ import uuid
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 import pytest_asyncio
 from fastapi import Depends, FastAPI, Request
 from fastapi.testclient import TestClient
+from httpx import ASGITransport
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 # ------------------------------------------------------------------
-# Mock celery（测试环境可能未安装）
+# Mock celery（仅当 celery 未安装时才 mock celery_app）
 # ------------------------------------------------------------------
-if "celery" not in sys.modules:
+try:
+    import celery  # noqa: F401
+except ImportError:
     mock_celery = MagicMock()
     mock_celery.Celery = MagicMock
     sys.modules["celery"] = mock_celery
-if "celery_app" not in sys.modules:
     mock_celery_app = MagicMock()
     mock_celery_app.celery_app = MagicMock()
     sys.modules["celery_app"] = mock_celery_app
@@ -102,6 +105,8 @@ async def db_session():
     """
     engine = create_async_engine(os.environ["DATABASE_URL"], echo=False)
     async with engine.begin() as conn:
+        # 先 drop 再 create — 清理前次测试残留数据，保证隔离
+        await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
     session_factory = async_sessionmaker(
         engine, class_=AsyncSession, expire_on_commit=False
@@ -300,19 +305,20 @@ class TestRequireModule:
         pro 套餐包含 doc_intelligence → 200 通过。
         """
         app = self._create_test_app(db_session, tenant_id=pro_tenant.id)
-        client = TestClient(app)
-
-        response = client.get("/test-optional")
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/test-optional")
         assert response.status_code == 200
         assert response.json()["module"] == "doc_intelligence"
 
     async def test_require_module_no_tenant_no_error(self, db_session) -> None:
         """无 tenant_id 时不报错（单租户兜底）— 基础模块通过。"""
         app = self._create_test_app(db_session, tenant_id=None)
-        client = TestClient(app)
-
-        # 基础模块永远通过，不因缺少 tenant_id 报错
-        response = client.get("/test-basic")
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/test-basic")
         assert response.status_code == 200
         assert response.json()["ok"] is True
 
@@ -321,9 +327,10 @@ class TestRequireModule:
     ) -> None:
         """无 tenant_id 时可选模块被拦截（403），但不报 500 错误。"""
         app = self._create_test_app(db_session, tenant_id=None)
-        client = TestClient(app)
-
-        response = client.get("/test-optional")
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/test-optional")
         assert response.status_code == 403  # 门控拦截，非服务器错误
 
 
@@ -434,11 +441,18 @@ class TestBaseRepositoryTenantFilter:
 
     async def test_create_auto_injects_tenant_id(self, db_session) -> None:
         """create 方法自动写入 tenant_id。"""
-        tenant_id = uuid.uuid4()
+        # 创建真实 User 和 Tenant 以满足外键约束
+        user = User(email="fk-test1@test.com", hashed_password="x", name="U1", role="viewer")
+        db_session.add(user)
+        tenant = Tenant(name="测试租户", plan="free", max_users=10, max_storage=1024)
+        db_session.add(tenant)
+        await db_session.flush()
+
+        tenant_id = tenant.id
         repo = BaseRepository(QaQuestion, db_session, tenant_id=tenant_id)
 
         question = await repo.create(
-            user_id=uuid.uuid4(),
+            user_id=user.id,
             title="测试问题",
             content="测试内容",
         )
@@ -449,12 +463,19 @@ class TestBaseRepositoryTenantFilter:
         self, db_session
     ) -> None:
         """create 方法不覆盖显式传入的 tenant_id。"""
-        repo_tenant = uuid.uuid4()
-        explicit_tenant = uuid.uuid4()
+        user = User(email="fk-test2@test.com", hashed_password="x", name="U2", role="viewer")
+        db_session.add(user)
+        tenant_repo = Tenant(name="租户A", plan="free", max_users=10, max_storage=1024)
+        tenant_explicit = Tenant(name="租户B", plan="pro", max_users=50, max_storage=2048)
+        db_session.add_all([tenant_repo, tenant_explicit])
+        await db_session.flush()
+
+        repo_tenant = tenant_repo.id
+        explicit_tenant = tenant_explicit.id
         repo = BaseRepository(QaQuestion, db_session, tenant_id=repo_tenant)
 
         question = await repo.create(
-            user_id=uuid.uuid4(),
+            user_id=user.id,
             title="显式租户问题",
             content="测试内容",
             tenant_id=explicit_tenant,
@@ -464,27 +485,35 @@ class TestBaseRepositoryTenantFilter:
 
     async def test_get_all_filters_by_tenant(self, db_session) -> None:
         """get_all 只返回当前租户的记录。"""
-        tenant_a = uuid.uuid4()
-        tenant_b = uuid.uuid4()
+        # 创建真实 User 和 Tenant 以满足外键约束
+        user = User(email="fk-getall@test.com", hashed_password="x", name="U", role="viewer")
+        db_session.add(user)
+        tenant_a = Tenant(name="租户A", plan="free", max_users=10, max_storage=1024)
+        tenant_b = Tenant(name="租户B", plan="pro", max_users=50, max_storage=2048)
+        db_session.add_all([tenant_a, tenant_b])
+        await db_session.flush()
+
+        tenant_a_id = tenant_a.id
+        tenant_b_id = tenant_b.id
 
         # 直接创建记录（绕过 repo.create），设置不同的 tenant_id
         for i in range(3):
             db_session.add(QaQuestion(
-                user_id=uuid.uuid4(),
+                user_id=user.id,
                 title=f"Tenant A - Q{i}",
                 content="content",
-                tenant_id=tenant_a,
+                tenant_id=tenant_a_id,
             ))
         for i in range(2):
             db_session.add(QaQuestion(
-                user_id=uuid.uuid4(),
+                user_id=user.id,
                 title=f"Tenant B - Q{i}",
                 content="content",
-                tenant_id=tenant_b,
+                tenant_id=tenant_b_id,
             ))
         # 一条无 tenant_id 的记录（历史数据 / 单租户兜底）
         db_session.add(QaQuestion(
-            user_id=uuid.uuid4(),
+            user_id=user.id,
             title="No tenant",
             content="content",
             tenant_id=None,
@@ -492,18 +521,18 @@ class TestBaseRepositoryTenantFilter:
         await db_session.flush()
 
         # Tenant A 的 repo 只能看到 A 的 3 条记录
-        repo_a = BaseRepository(QaQuestion, db_session, tenant_id=tenant_a)
+        repo_a = BaseRepository(QaQuestion, db_session, tenant_id=tenant_a_id)
         results_a = await repo_a.get_all()
         assert len(results_a) == 3
         for r in results_a:
-            assert r.tenant_id == tenant_a
+            assert r.tenant_id == tenant_a_id
 
         # Tenant B 的 repo 只能看到 B 的 2 条记录
-        repo_b = BaseRepository(QaQuestion, db_session, tenant_id=tenant_b)
+        repo_b = BaseRepository(QaQuestion, db_session, tenant_id=tenant_b_id)
         results_b = await repo_b.get_all()
         assert len(results_b) == 2
         for r in results_b:
-            assert r.tenant_id == tenant_b
+            assert r.tenant_id == tenant_b_id
 
         # 无 tenant_id 的 repo 能看到全部 6 条记录（单租户兜底）
         repo_none = BaseRepository(QaQuestion, db_session, tenant_id=None)
@@ -512,29 +541,36 @@ class TestBaseRepositoryTenantFilter:
 
     async def test_count_filters_by_tenant(self, db_session) -> None:
         """count 方法按租户过滤统计。"""
-        tenant_a = uuid.uuid4()
-        tenant_b = uuid.uuid4()
+        user = User(email="fk-count@test.com", hashed_password="x", name="U", role="viewer")
+        db_session.add(user)
+        tenant_a = Tenant(name="计数A", plan="free", max_users=10, max_storage=1024)
+        tenant_b = Tenant(name="计数B", plan="pro", max_users=50, max_storage=2048)
+        db_session.add_all([tenant_a, tenant_b])
+        await db_session.flush()
+
+        tenant_a_id = tenant_a.id
+        tenant_b_id = tenant_b.id
 
         for _ in range(4):
             db_session.add(QaQuestion(
-                user_id=uuid.uuid4(),
+                user_id=user.id,
                 title="A",
                 content="c",
-                tenant_id=tenant_a,
+                tenant_id=tenant_a_id,
             ))
         for _ in range(1):
             db_session.add(QaQuestion(
-                user_id=uuid.uuid4(),
+                user_id=user.id,
                 title="B",
                 content="c",
-                tenant_id=tenant_b,
+                tenant_id=tenant_b_id,
             ))
         await db_session.flush()
 
-        repo_a = BaseRepository(QaQuestion, db_session, tenant_id=tenant_a)
+        repo_a = BaseRepository(QaQuestion, db_session, tenant_id=tenant_a_id)
         assert await repo_a.count() == 4
 
-        repo_b = BaseRepository(QaQuestion, db_session, tenant_id=tenant_b)
+        repo_b = BaseRepository(QaQuestion, db_session, tenant_id=tenant_b_id)
         assert await repo_b.count() == 1
 
         repo_none = BaseRepository(QaQuestion, db_session, tenant_id=None)

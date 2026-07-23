@@ -26,6 +26,8 @@ async def db_session():
     """创建 PostgreSQL 数据库用于测试。"""
     engine = create_async_engine(os.environ["DATABASE_URL"], echo=False)
     async with engine.begin() as conn:
+        # 先 drop 再 create — 清理前次测试残留数据，保证隔离
+        await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
     async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     session = async_session()
@@ -116,9 +118,11 @@ class TestAnalyticsMetrics:
 
     async def test_knowledge_coverage_with_data(self, db_session):
         """有数据时的覆盖率计算。"""
-        # 创建知识库和文档（SQLite 不强制外键，用 uuid4 占位）
-        owner = uuid.uuid4()
-        kb = KnowledgeBase(name="测试KB", owner_id=owner)
+        # 创建用户和知识库（PostgreSQL 强制外键，需先建 User）
+        owner = User(email="owner1@test.com", hashed_password="fake", name="owner", role="viewer")
+        db_session.add(owner)
+        await db_session.flush()
+        kb = KnowledgeBase(name="测试KB", owner_id=owner.id)
         db_session.add(kb)
         await db_session.flush()
 
@@ -128,7 +132,7 @@ class TestAnalyticsMetrics:
             content_html="<p>测试</p>",
             doc_type="md",
             category="技术文档",
-            owner_id=owner,
+            owner_id=owner.id,
         )
         doc2 = Document(
             kb_id=kb.id,
@@ -136,7 +140,7 @@ class TestAnalyticsMetrics:
             content_html="<p>测试</p>",
             doc_type="md",
             category="会议纪要",
-            owner_id=owner,
+            owner_id=owner.id,
         )
         db_session.add_all([doc1, doc2])
         await db_session.flush()
@@ -182,8 +186,10 @@ class TestAnalyticsMetrics:
 
     async def test_freshness_from_pg_with_fresh_docs(self, db_session):
         """PG 降级 — 新文档不算过期。"""
-        owner = uuid.uuid4()
-        kb = KnowledgeBase(name="测试KB", owner_id=owner)
+        owner = User(email="owner2@test.com", hashed_password="fake", name="owner", role="viewer")
+        db_session.add(owner)
+        await db_session.flush()
+        kb = KnowledgeBase(name="测试KB", owner_id=owner.id)
         db_session.add(kb)
         await db_session.flush()
 
@@ -193,7 +199,7 @@ class TestAnalyticsMetrics:
             content_html="<p>新</p>",
             doc_type="md",
             category="技术",
-            owner_id=owner,
+            owner_id=owner.id,
         )
         db_session.add(doc)
         await db_session.flush()
@@ -212,8 +218,10 @@ class TestAnalyticsMetrics:
 
         from app.services.analytics_service import FRESHNESS_EXPIRE_DAYS
 
-        owner = uuid.uuid4()
-        kb = KnowledgeBase(name="测试KB", owner_id=owner)
+        owner = User(email="owner3@test.com", hashed_password="fake", name="owner", role="viewer")
+        db_session.add(owner)
+        await db_session.flush()
+        kb = KnowledgeBase(name="测试KB", owner_id=owner.id)
         db_session.add(kb)
         await db_session.flush()
 
@@ -225,7 +233,7 @@ class TestAnalyticsMetrics:
             content_html="<p>旧</p>",
             doc_type="md",
             category="技术",
-            owner_id=owner,
+            owner_id=owner.id,
         )
         db_session.add(doc)
         await db_session.flush()
@@ -268,8 +276,10 @@ class TestAnalyticsMetrics:
         await db_session.flush()
 
         # 创建文档
-        owner = uuid.uuid4()
-        kb = KnowledgeBase(name="KB", owner_id=owner)
+        owner = User(email="owner4@test.com", hashed_password="fake", name="owner", role="viewer")
+        db_session.add(owner)
+        await db_session.flush()
+        kb = KnowledgeBase(name="KB", owner_id=owner.id)
         db_session.add(kb)
         await db_session.flush()
         doc = Document(
@@ -278,7 +288,7 @@ class TestAnalyticsMetrics:
             content_html="<p>x</p>",
             doc_type="md",
             category="技术",
-            owner_id=owner,
+            owner_id=owner.id,
         )
         db_session.add(doc)
         await db_session.flush()
@@ -311,8 +321,10 @@ class TestAnalyticsMetrics:
         db_session.add(tenant)
         await db_session.flush()
 
-        owner = uuid.uuid4()
-        kb = KnowledgeBase(name="KB", owner_id=owner)
+        owner = User(email="owner5@test.com", hashed_password="fake", name="owner", role="viewer")
+        db_session.add(owner)
+        await db_session.flush()
+        kb = KnowledgeBase(name="KB", owner_id=owner.id)
         db_session.add(kb)
         await db_session.flush()
         doc = Document(
@@ -321,7 +333,7 @@ class TestAnalyticsMetrics:
             content_html="<p>x</p>",
             doc_type="md",
             category="技术",
-            owner_id=owner,
+            owner_id=owner.id,
         )
         db_session.add(doc)
         await db_session.flush()

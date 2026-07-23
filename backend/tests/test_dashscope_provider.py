@@ -15,13 +15,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-# Mock celery 模块（测试环境未安装 celery）
-if "celery" not in sys.modules:
+# Mock celery 模块（仅当 celery 未安装时才 mock celery_app）
+try:
+    import celery  # noqa: F401
+except ImportError:
     mock_celery = MagicMock()
     mock_celery.Celery = MagicMock
     sys.modules["celery"] = mock_celery
-
-if "celery_app" not in sys.modules:
     mock_celery_app = MagicMock()
     mock_celery_app.celery_app = MagicMock()
     sys.modules["celery_app"] = mock_celery_app
@@ -38,7 +38,8 @@ class TestDashScopeConfig:
     def test_dashscope_api_key_default(self) -> None:
         from app.config import Settings
 
-        settings = Settings()
+        # _env_file=None 排除 .env 文件干扰，只测试默认值
+        settings = Settings(_env_file=None)
         assert hasattr(settings, "DASHSCOPE_API_KEY")
         assert settings.DASHSCOPE_API_KEY == ""
 

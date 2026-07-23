@@ -21,10 +21,12 @@ import sys
 import uuid
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 import pytest_asyncio
 from fastapi import Depends, FastAPI, Request
 from fastapi.testclient import TestClient
+from httpx import ASGITransport
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 # ------------------------------------------------------------------
@@ -70,6 +72,8 @@ async def db_session():
     """创建 PostgreSQL 数据库会话（自动建表）。"""
     engine = create_async_engine(os.environ["DATABASE_URL"], echo=False)
     async with engine.begin() as conn:
+        # 先 drop 再 create — 清理前次测试残留数据，保证隔离
+        await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
     session_factory = async_sessionmaker(
         engine, class_=AsyncSession, expire_on_commit=False
@@ -97,17 +101,21 @@ async def tenant_b(db_session):
     return t
 
 
-def _make_mock_user(tenant_id=None) -> User:
-    """创建 mock 用户。"""
+def _make_mock_user(tenant_id=None, db_session=None) -> User:
+    """创建 mock 用户 — 可选持久化到数据库以满足外键约束。"""
+    import uuid as _uuid
+    _uid = _uuid.uuid4()
     user = User(
-        email="test@test.com",
+        email=f"test-{_uid}@test.com",
         hashed_password="fake",
         name="测试用户",
         role="admin",
         is_active=True,
         tenant_id=tenant_id,
     )
-    user.id = uuid.uuid4()
+    user.id = _uid
+    if db_session is not None:
+        db_session.add(user)
     return user
 
 
@@ -325,8 +333,9 @@ class TestEndToEndTenantIsolation:
         self, db_session, tenant_a, tenant_b
     ) -> None:
         """知识库隔离：租户 A 创建的知识库，租户 B 看不到。"""
-        user_a = _make_mock_user(tenant_a.id)
-        user_b = _make_mock_user(tenant_b.id)
+        user_a = _make_mock_user(tenant_a.id, db_session)
+        user_b = _make_mock_user(tenant_b.id, db_session)
+        await db_session.flush()
 
         # 租户 A 的 Service 创建 2 个知识库（Service.create_kb → repo.create 自动注入 tenant_id）
         svc_a = KnowledgeService(db_session, user_a, tenant_id=tenant_a.id)
@@ -358,12 +367,14 @@ class TestEndToEndTenantIsolation:
     ) -> None:
         """问答隔离：租户 A 创建的问题，租户 B 看不到。"""
         # 先创建知识库（QaService 需要 kb_id）
-        user_a = _make_mock_user(tenant_a.id)
+        user_a = _make_mock_user(tenant_a.id, db_session)
+        await db_session.flush()
         svc_a = KnowledgeService(db_session, user_a, tenant_id=tenant_a.id)
         kb_a = await svc_a.create_kb(name="A-KB", description="A")
         await db_session.commit()
 
-        user_b = _make_mock_user(tenant_b.id)
+        user_b = _make_mock_user(tenant_b.id, db_session)
+        await db_session.flush()
         svc_b = KnowledgeService(db_session, user_b, tenant_id=tenant_b.id)
         kb_b = await svc_b.create_kb(name="B-KB", description="B")
         await db_session.commit()
@@ -397,7 +408,8 @@ class TestEndToEndTenantIsolation:
 
     async def test_tenant_none_sees_all_data(self, db_session, tenant_a) -> None:
         """tenant_id=None 时能看到所有数据（单租户兜底）。"""
-        user_a = _make_mock_user(tenant_a.id)
+        user_a = _make_mock_user(tenant_a.id, db_session)
+        await db_session.flush()
         svc_a = KnowledgeService(db_session, user_a, tenant_id=tenant_a.id)
         await svc_a.create_kb(name="A-KB", description="A")
         await db_session.commit()
@@ -413,7 +425,8 @@ class TestEndToEndTenantIsolation:
         self, db_session, tenant_a, tenant_b
     ) -> None:
         """跨租户按 ID 查询 — Repository 层返回 None。"""
-        user_a = _make_mock_user(tenant_a.id)
+        user_a = _make_mock_user(tenant_a.id, db_session)
+        await db_session.flush()
         svc_a = KnowledgeService(db_session, user_a, tenant_id=tenant_a.id)
         kb = await svc_a.create_kb(name="A-KB", description="A")
         await db_session.commit()
@@ -433,13 +446,15 @@ class TestEndToEndTenantIsolation:
         Service.get_kb 调用 Repository.get_by_id（租户过滤后返回 None），
         然后 Service 抛出 ValueError（知识库不存在）。
         """
-        user_a = _make_mock_user(tenant_a.id)
+        user_a = _make_mock_user(tenant_a.id, db_session)
+        await db_session.flush()
         svc_a = KnowledgeService(db_session, user_a, tenant_id=tenant_a.id)
         kb = await svc_a.create_kb(name="A-KB", description="A")
         await db_session.commit()
 
         # 租户 B 的 Service 尝试获取租户 A 的知识库
-        user_b = _make_mock_user(tenant_b.id)
+        user_b = _make_mock_user(tenant_b.id, db_session)
+        await db_session.flush()
         svc_b = KnowledgeService(db_session, user_b, tenant_id=tenant_b.id)
         with pytest.raises(ValueError, match="不存在"):
             await svc_b.get_kb(kb.id)
@@ -474,7 +489,8 @@ class TestAPITenantInjection:
                 request.state.tenant_id = tid
                 return await call_next(request)
 
-        mock_user = _make_mock_user(tenant_id)
+        # 持久化 mock user 到 DB 以满足外键约束
+        mock_user = _make_mock_user(tenant_id, db_session)
         mock_user.role = "admin"
 
         async def override_db():
@@ -496,7 +512,8 @@ class TestAPITenantInjection:
         captured_tenant_ids: list = []
 
         # 创建真实的知识库数据
-        user = _make_mock_user(tenant_a.id)
+        user = _make_mock_user(tenant_a.id, db_session)
+        await db_session.flush()
         svc = KnowledgeService(db_session, user, tenant_id=tenant_a.id)
         await svc.create_kb(name="Test-KB", description="test")
         await db_session.commit()
@@ -514,9 +531,10 @@ class TestAPITenantInjection:
             from app.api.v1.knowledge import router as kb_router
 
             app.include_router(kb_router, prefix="/api/v1")
-            client = TestClient(app)
-
-            response = client.get("/api/v1/knowledge")
+            async with httpx.AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.get("/api/v1/knowledge")
 
         assert response.status_code == 200
         assert len(captured_tenant_ids) > 0
@@ -540,9 +558,10 @@ class TestAPITenantInjection:
             from app.api.v1.qa import router as qa_router
 
             app.include_router(qa_router, prefix="/api/v1")
-            client = TestClient(app)
-
-            response = client.get("/api/v1/qa/questions")
+            async with httpx.AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.get("/api/v1/qa/questions")
 
         assert response.status_code == 200
         assert len(captured_tenant_ids) > 0
@@ -568,9 +587,10 @@ class TestAPITenantInjection:
             from app.api.v1.analytics import router as analytics_router
 
             app.include_router(analytics_router, prefix="/api/v1")
-            client = TestClient(app)
-
-            response = client.get("/api/v1/analytics/dashboard")
+            async with httpx.AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.get("/api/v1/analytics/dashboard")
 
         assert response.status_code == 200
         assert len(captured_tenant_ids) > 0
@@ -594,9 +614,10 @@ class TestAPITenantInjection:
             from app.api.v1.knowledge import router as kb_router
 
             app.include_router(kb_router, prefix="/api/v1")
-            client = TestClient(app)
-
-            response = client.get("/api/v1/knowledge")
+            async with httpx.AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.get("/api/v1/knowledge")
 
         assert response.status_code == 200
         assert len(captured_tenant_ids) > 0
@@ -682,10 +703,14 @@ class TestMigrationTenantColumns:
         """外键约束正常工作 — 可写入有效 tenant_id。"""
         from app.models.knowledge import KnowledgeBase
 
+        # 创建真实 User 以满足 owner_id 外键约束
+        user = _make_mock_user(tenant_a.id, db_session)
+        await db_session.flush()
+
         kb = KnowledgeBase(
             name="FK测试",
             description="测试外键",
-            owner_id=uuid.uuid4(),
+            owner_id=user.id,
             visibility="private",
             tenant_id=tenant_a.id,
         )

@@ -25,6 +25,8 @@ async def db_session():
     """创建 PostgreSQL 数据库用于测试。"""
     engine = create_async_engine(os.environ["DATABASE_URL"], echo=False)
     async with engine.begin() as conn:
+        # 先 drop 再 create — 清理前次测试残留数据，保证隔离
+        await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
     async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     session = async_session()
@@ -54,9 +56,8 @@ async def sample_data(db_session):
     db_session.add_all([user1, user2])
     await db_session.flush()
 
-    # 创建知识库
-    owner = uuid.uuid4()  # KB owner 占位
-    kb = KnowledgeBase(name="测试KB", owner_id=owner)
+    # 创建知识库 — owner_id 必须指向已存在的 User，否则触发外键约束
+    kb = KnowledgeBase(name="测试KB", owner_id=user1.id)
     db_session.add(kb)
     await db_session.flush()
 

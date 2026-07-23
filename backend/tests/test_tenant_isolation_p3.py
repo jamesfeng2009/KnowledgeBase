@@ -43,6 +43,8 @@ async def db_session():
     """创建 PostgreSQL 数据库会话。"""
     engine = create_async_engine(os.environ["DATABASE_URL"], echo=False)
     async with engine.begin() as conn:
+        # 先 drop 再 create — 清理前次测试残留数据，保证隔离
+        await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
     session_factory = async_sessionmaker(
         engine, class_=AsyncSession, expire_on_commit=False
@@ -68,7 +70,7 @@ async def tenant_b(db_session):
     return t
 
 
-def _make_user(tenant_id=None) -> User:
+def _make_user(tenant_id=None, db_session=None) -> User:
     user = User(
         email=f"test-{uuid.uuid4().hex[:8]}@test.com",
         hashed_password="fake",
@@ -78,6 +80,8 @@ def _make_user(tenant_id=None) -> User:
         tenant_id=tenant_id,
     )
     user.id = uuid.uuid4()
+    if db_session is not None:
+        db_session.add(user)
     return user
 
 
@@ -97,8 +101,9 @@ class TestServiceQueryTenantFilter:
         self, db_session, tenant_a, tenant_b
     ) -> None:
         """KnowledgeService.list_kbs 现在正确过滤租户。"""
-        user_a = _make_user(tenant_a.id)
-        user_b = _make_user(tenant_b.id)
+        user_a = _make_user(tenant_a.id, db_session)
+        user_b = _make_user(tenant_b.id, db_session)
+        await db_session.flush()
 
         # 租户 A 创建 2 个知识库
         svc_a = KnowledgeService(db_session, user_a, tenant_id=tenant_a.id)
@@ -122,12 +127,14 @@ class TestServiceQueryTenantFilter:
         self, db_session, tenant_a, tenant_b
     ) -> None:
         """QaService.list_questions 现在正确过滤租户。"""
-        user_a = _make_user(tenant_a.id)
+        user_a = _make_user(tenant_a.id, db_session)
+        await db_session.flush()
         svc_a = KnowledgeService(db_session, user_a, tenant_id=tenant_a.id)
         kb_a = await svc_a.create_kb(name="A-KB", description="A")
         await db_session.commit()
 
-        user_b = _make_user(tenant_b.id)
+        user_b = _make_user(tenant_b.id, db_session)
+        await db_session.flush()
         svc_b = KnowledgeService(db_session, user_b, tenant_id=tenant_b.id)
         kb_b = await svc_b.create_kb(name="B-KB", description="B")
         await db_session.commit()
@@ -161,8 +168,9 @@ class TestServiceQueryTenantFilter:
         """FeedbackService.list_feedback 现在正确过滤租户。"""
         from app.models.feedback import Feedback
 
-        user_a = _make_user(tenant_a.id)
-        user_b = _make_user(tenant_b.id)
+        user_a = _make_user(tenant_a.id, db_session)
+        user_b = _make_user(tenant_b.id, db_session)
+        await db_session.flush()
 
         # 直接创建反馈数据（绕过 Service 的 create 方法）
         for i in range(3):
@@ -196,14 +204,16 @@ class TestServiceQueryTenantFilter:
 
     async def test_tenant_none_list_all(self, db_session, tenant_a) -> None:
         """tenant_id=None 时 admin 用户能看到所有数据（单租户兜底）。"""
-        user_a = _make_user(tenant_a.id)
+        user_a = _make_user(tenant_a.id, db_session)
         user_a.role = "admin"
+        await db_session.flush()
         svc_a = KnowledgeService(db_session, user_a, tenant_id=tenant_a.id)
         await svc_a.create_kb(name="A-KB", description="A")
         await db_session.commit()
 
-        user_none = _make_user()
+        user_none = _make_user(db_session=db_session)
         user_none.role = "admin"
+        await db_session.flush()
         svc_none = KnowledgeService(db_session, user_none, tenant_id=None)
         result = await svc_none.list_kbs(page=1, size=20)
         assert result.total >= 1

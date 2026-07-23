@@ -27,6 +27,8 @@ async def db_session():
     """创建 PostgreSQL 数据库用于测试。"""
     engine = create_async_engine(os.environ["DATABASE_URL"], echo=False)
     async with engine.begin() as conn:
+        # 先 drop 再 create — 清理前次测试残留数据，保证隔离
+        await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
     async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     session = async_session()
@@ -40,8 +42,6 @@ async def db_session():
 @pytest_asyncio.fixture
 async def sample_data(db_session):
     """创建测试数据：用户、知识库、文档、评论。"""
-    owner = uuid.uuid4()
-
     user1 = User(
         email="user1@test.com",
         hashed_password="fake_hash",
@@ -57,7 +57,8 @@ async def sample_data(db_session):
     db_session.add_all([user1, admin1])
     await db_session.flush()
 
-    kb = KnowledgeBase(name="测试KB", owner_id=owner)
+    # 用已持久化的 admin1 作为 owner，避免外键违规
+    kb = KnowledgeBase(name="测试KB", owner_id=admin1.id)
     db_session.add(kb)
     await db_session.flush()
 
@@ -66,7 +67,7 @@ async def sample_data(db_session):
         title="微服务架构指南",
         content_html="<p>微服务详解</p>",
         doc_type="md",
-        owner_id=owner,
+        owner_id=admin1.id,
         view_count=100,
     )
     doc2 = Document(
@@ -74,7 +75,7 @@ async def sample_data(db_session):
         title="微服务部署最佳实践",
         content_html="<p>Docker 部署</p>",
         doc_type="md",
-        owner_id=owner,
+        owner_id=admin1.id,
         view_count=50,
     )
     db_session.add_all([doc1, doc2])
