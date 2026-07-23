@@ -26,7 +26,9 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from app.rag.chunker import Chunk
 
-# 向量维度 — BGE-M3 输出 1024 维，所有后端共享此配置
+# 默认向量维度 — BGE-M3 输出 1024 维（私有部署模式）。
+# SaaS 模式（OpenAI text-embedding-3-large）输出 3072 维，
+# 实际维度由 dimension 属性动态从 Embedder 获取（P2-Step2 修复）。
 _DEFAULT_DIMENSION: int = 1024
 
 
@@ -133,5 +135,18 @@ class VectorStoreBase(ABC):
 
     @property
     def dimension(self) -> int:
-        """向量维度（子类可覆盖）。"""
+        """向量维度 — P2-Step2: 动态从当前 Embedder 获取，解决 SaaS 模式维度不匹配。
+
+        SaaS 模式 OpenAI text-embedding-3-large 输出 3072 维，
+        私有部署 BGE-M3 via TEI 输出 1024 维。
+        旧代码硬编码 1024 导致 SaaS 模式 upsert 时维度不匹配静默失败。
+        """
+        try:
+            from app.llm.embedder import get_embedder
+
+            embedder = get_embedder()
+            if embedder.dim > 0:
+                return embedder.dim
+        except Exception:
+            pass
         return _DEFAULT_DIMENSION

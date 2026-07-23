@@ -65,15 +65,33 @@ class HybridRetriever:
         self._opensearch_available: bool | None = None
         # 故障后的下次重试探测时间（monotonic）— 失败不粘性禁用，允许自动恢复
         self._opensearch_retry_at: float = 0.0
+        # P2-Step3: 跨模态 Embedder（懒初始化）
+        self._multimodal_embedder: Any | None = None
 
     # ------------------------------------------------------------------
     # 懒初始化
     # ------------------------------------------------------------------
 
     async def _get_embedder(self) -> EmbeddingProvider | None:
-        """懒初始化 Embedder — 失败则返回 None。"""
+        """懒初始化 Embedder — 失败则返回 None。
+
+        P2-Step3: 当跨模态检索启用时，优先使用 MultimodalEmbedder
+        （jina-clip-v2），使查询向量与图片向量在同一空间。
+        """
         if self._embedder is not None:
             return self._embedder
+        # P2-Step3: 尝试跨模态 Embedder（文本+图片统一空间）
+        try:
+            from app.llm.multimodal_embedder import get_multimodal_embedder
+
+            mm_embedder = get_multimodal_embedder()
+            if mm_embedder is not None:
+                self._embedder = mm_embedder
+                log.info("retriever.embedder.multimodal_active")
+                return self._embedder
+        except Exception as exc:
+            log.debug("retriever.embedder.multimodal_unavailable", error=str(exc))
+        # 降级到普通文本 Embedder
         try:
             self._embedder = get_embedder()
         except Exception as exc:
@@ -188,13 +206,15 @@ class HybridRetriever:
             log.info("retriever.opensearch.retry_probe")
 
         url = f"{settings.OPENSEARCH_URL}/{settings.OPENSEARCH_INDEX}/_search"
+        # P2-Step1: 修复字段名不匹配 — 写入方使用 content / title_path，
+        # 查询方必须使用相同字段名，否则 BM25 查询不存在的字段导致全文检索静默失效。
         query_clause: dict[str, Any] = {
             "bool": {
                 "must": [
                     {
                         "multi_match": {
                             "query": query,
-                            "fields": ["chunk_text", "title^2"],
+                            "fields": ["content", "title_path^2"],
                         }
                     }
                 ],
@@ -206,7 +226,7 @@ class HybridRetriever:
         payload: dict[str, Any] = {
             "size": top_k,
             "query": query_clause,
-            "_source": ["doc_id", "chunk_text", "kb_id", "title"],
+            "_source": ["doc_id", "chunk_id", "content", "title_path", "kb_id", "content_type"],
         }
 
         try:
@@ -227,7 +247,10 @@ class HybridRetriever:
 
     @staticmethod
     def _parse_opensearch_results(data: Any, top_k: int) -> list[dict[str, Any]]:
-        """解析 OpenSearch 返回结果为统一格式。"""
+        """解析 OpenSearch 返回结果为统一格式。
+
+        P2-Step1: 字段名与写入方对齐 — content / title_path / chunk_id。
+        """
         results: list[dict[str, Any]] = []
         hits: Any = {}
         if isinstance(data, dict):
@@ -239,11 +262,11 @@ class HybridRetriever:
                 {
                     "doc_id": str(source.get("doc_id") or hit.get("_id") or ""),
                     "chunk_id": str(source.get("chunk_id") or hit.get("_id") or uuid.uuid4()),
-                    "content": str(source.get("chunk_text") or source.get("content") or ""),
+                    "content": str(source.get("content") or source.get("chunk_text") or ""),
                     "score": score,
                     "source": "fulltext",
                     "kb_id": str(source.get("kb_id") or "") or None,
-                    "title": source.get("title"),
+                    "title": source.get("title_path") or source.get("title"),
                 }
             )
             if len(results) >= top_k:

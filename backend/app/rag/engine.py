@@ -43,6 +43,7 @@ from app.rag.context_budget import ContextBudgetManager
 from app.rag.context_dedup import CrossTurnDeduplicator
 from app.rag.generator import Generator
 from app.rag.tool_guard import DangerousToolGuard
+from app.utils.request_context import get_request_id
 from app.rag.reranker import RerankerBase
 from app.rag.retriever import HybridRetriever
 from app.utils.logger import get_logger
@@ -221,6 +222,8 @@ class AgenticRAGEngine:
                 self._quality_guard = None
         # 检索重试计数（每次 answer 调用时重置）
         self._retrieval_retry_count: int = 0
+        # P0-Stage2: 用量累加器 — 累积单次 answer() 内所有 LLM 调用的 token 用量
+        self._accumulated_usage: dict[str, Any] = {"input_tokens": 0, "output_tokens": 0, "model": ""}
 
         # P2-B: 查询重写器 — 检索前优化用户查询
         # 传入时直接使用，未传入时尝试从工厂获取（可能返回 None）
@@ -333,6 +336,8 @@ class AgenticRAGEngine:
         }
         # 重置检索重试计数
         self._retrieval_retry_count = 0
+        # P0-Stage2: 重置用量累加器
+        self._accumulated_usage = {"input_tokens": 0, "output_tokens": 0, "model": ""}
 
         # P1-Opt3: 每次新对话重置去重器（清空上一轮对话的已见列表）
         self._dedup.reset()
@@ -340,11 +345,16 @@ class AgenticRAGEngine:
         self._budget.reset()
 
         # 2.5 初始化 LangFuse 追踪
+        # P0-Stage3: 关联 HTTP request_id，使 LangFuse 追踪可按请求 ID 搜索
+        _http_request_id = get_request_id()
         self._trace_ctx = TraceContext(
             trace_name="rag_agent_loop",
             session_id=session_id,
             user_id=user_id,
-            metadata={"query": query[:200]},
+            metadata={
+                "query": query[:200],
+                "http_request_id": _http_request_id,
+            },
         )
         self._trace_ctx.start()
 
@@ -386,6 +396,7 @@ class AgenticRAGEngine:
 
         # 4. 流式生成答案（plain str token，_to_sse_stream 自动包装为 data:）
         answer_parts: list[str] = []
+        _gen_t0 = time.perf_counter()
         async for token in self.generator.generate(
             query=state["query"],
             retrieved_docs=state["retrieved_docs"],
@@ -394,6 +405,38 @@ class AgenticRAGEngine:
         ):
             answer_parts.append(token)
             yield token
+        # 记录 generate 节点 Span（trace_node 装饰器无法作用于内联流式调用）
+        if self._trace_ctx is not None:
+            self._trace_ctx.span(
+                name=f"generate_iter{state['iteration']}",
+                input_data={"query": state["query"][:200], "doc_count": len(state["retrieved_docs"])},
+                output_data={"answer_preview": "".join(answer_parts)[:200]},
+                metadata={
+                    "latency_ms": round((time.perf_counter() - _gen_t0) * 1000, 2),
+                    "token_count": len("".join(answer_parts)) // 4,
+                },
+            )
+
+        # P0-Stage2: 累加 generate 用量到引擎用量记录
+        _gen_usage = getattr(self.generator, "last_usage", None)
+        if _gen_usage:
+            self._accumulated_usage["input_tokens"] += _gen_usage.get("input_tokens", 0)
+            self._accumulated_usage["output_tokens"] += _gen_usage.get("output_tokens", 0)
+            if _gen_usage.get("model"):
+                self._accumulated_usage["model"] = _gen_usage["model"]
+
+        # P0-Stage2: 写入 UsageRecord（真实 token 用量 + 真实耗时）
+        if db is not None and user_uuid is not None:
+            try:
+                await self._write_usage_record(
+                    db=db,
+                    user_uuid=user_uuid,
+                    tenant_id=tenant_id,
+                    session_id=session_id,
+                    gen_latency_ms=round((time.perf_counter() - _gen_t0) * 1000, 2),
+                )
+            except Exception as exc:
+                log.warning("engine.usage_record_failed", error=str(exc))
 
         # 5. 反思（非流式，返回结构化评测结果）
         answer = "".join(answer_parts)
@@ -446,9 +489,13 @@ class AgenticRAGEngine:
         # 9. 结束 Trace（含质量评分上报）
         if self._trace_ctx is not None:
             budget_stats = self._budget.get_stats()
+            _real_total_tokens = (
+                self._accumulated_usage["input_tokens"]
+                + self._accumulated_usage["output_tokens"]
+            )
             trace_metadata = {
                 "iterations": state["iteration"],
-                "total_tokens": len(answer) // 4,  # 粗估
+                "total_tokens": _real_total_tokens if _real_total_tokens > 0 else len(answer) // 4,
                 "retrieved_docs": len(state["retrieved_docs"]),
                 "tool_results": len(state["tool_results"]),
                 "budget_compress_count": budget_stats["compress_count"],
@@ -471,15 +518,126 @@ class AgenticRAGEngine:
             )
 
         # 10. yield done 事件（结束信号 + 统计摘要）
+        _done_total_tokens = (
+            self._accumulated_usage["input_tokens"]
+            + self._accumulated_usage["output_tokens"]
+        )
         yield SSEEvent(
             data={
                 "message_id": session_id,
-                "token_count": len(answer) // 4,
+                "token_count": _done_total_tokens if _done_total_tokens > 0 else len(answer) // 4,
                 "iterations": state["iteration"],
                 "retrieved_docs": len(state["retrieved_docs"]),
                 "tool_calls": len(state["tool_results"]),
             },
             event=SSEEventType.DONE,
+        )
+
+    # ------------------------------------------------------------------
+    # P0-Stage2: 用量记录 — 真实 token 用量 + 成本估算 + 持久化
+    # ------------------------------------------------------------------
+
+    # 模型定价表（USD per 1M tokens）— 用于成本估算，可按需更新
+    _MODEL_PRICING: dict[str, tuple[float, float]] = {
+        "claude-sonnet": (3.0, 15.0),
+        "claude-opus": (15.0, 75.0),
+        "claude-haiku": (0.25, 1.25),
+        "qwen": (0.0, 0.0),       # 免费额度或自托管
+        "llama": (0.0, 0.0),       # 自托管
+        "gpt-4o": (2.5, 10.0),
+        "text-embedding": (0.02, 0.0),
+    }
+
+    @classmethod
+    def _estimate_cost_cents(
+        cls, model: str, input_tokens: int, output_tokens: int
+    ) -> int:
+        """根据模型定价估算成本（单位：分）。
+
+        Args:
+            model: 模型名称（如 claude-sonnet-4-6-20260217）。
+            input_tokens: 输入 token 数。
+            output_tokens: 输出 token 数。
+
+        Returns:
+            成本（分），自托管模型返回 0。
+        """
+        if not model or input_tokens + output_tokens == 0:
+            return 0
+        # 按前缀匹配定价
+        for prefix, (in_price, out_price) in cls._MODEL_PRICING.items():
+            if model.lower().startswith(prefix):
+                cost_usd = (
+                    input_tokens / 1_000_000 * in_price
+                    + output_tokens / 1_000_000 * out_price
+                )
+                return int(cost_usd * 100)  # 转为分
+        return 0  # 未知模型不计费
+
+    async def _write_usage_record(
+        self,
+        db: Any,
+        user_uuid: uuid.UUID,
+        tenant_id: str | None,
+        session_id: str,
+        gen_latency_ms: float,
+    ) -> None:
+        """将累积的 token 用量写入 UsageRecord 表。
+
+        P0-Stage2: 替代 reports.py 中硬编码的估算值，
+        使使用量报表和成本报表基于真实数据。
+
+        Args:
+            db: 异步数据库会话。
+            user_uuid: 用户 UUID。
+            tenant_id: 租户 ID（字符串形式）。
+            session_id: 会话 ID（作为 request_id 关联追踪）。
+            gen_latency_ms: 生成阶段耗时（毫秒）。
+        """
+        from app.models.billing import UsageRecord
+
+        usage = self._accumulated_usage
+        total_tokens = usage["input_tokens"] + usage["output_tokens"]
+        if total_tokens == 0:
+            return  # 无用量数据则不写入
+
+        model = usage.get("model", "")
+        cost_cents = self._estimate_cost_cents(
+            model, usage["input_tokens"], usage["output_tokens"]
+        )
+
+        # 解析 tenant_id
+        tenant_uuid: uuid.UUID | None = None
+        if tenant_id:
+            try:
+                tenant_uuid = uuid.UUID(tenant_id)
+            except (ValueError, TypeError):
+                pass
+
+        # P0-Stage3: 优先使用 HTTP request_id 关联追踪，回退到 session_id
+        _http_request_id = get_request_id()
+        record = UsageRecord(
+            tenant_id=tenant_uuid,
+            user_id=user_uuid,
+            model=model,
+            input_tokens=usage["input_tokens"],
+            output_tokens=usage["output_tokens"],
+            cost_cents=cost_cents,
+            request_type="chat",
+            duration_ms=int(gen_latency_ms),
+            success=True,
+            request_id=_http_request_id or session_id,
+        )
+        db.add(record)
+        await db.commit()
+        log.info(
+            "engine.usage_recorded",
+            model=model,
+            input_tokens=usage["input_tokens"],
+            output_tokens=usage["output_tokens"],
+            cost_cents=cost_cents,
+            duration_ms=int(gen_latency_ms),
+            session_id=session_id,
         )
 
     # ------------------------------------------------------------------
@@ -910,6 +1068,13 @@ class AgenticRAGEngine:
         try:
             text = ""
             async for chunk in self.llm.chat(messages, stream=False):
+                # P0-Stage2: 捕获 usage dict 累加到引擎用量记录
+                if isinstance(chunk, dict) and chunk.get("type") == "usage":
+                    self._accumulated_usage["input_tokens"] += chunk.get("input_tokens", 0)
+                    self._accumulated_usage["output_tokens"] += chunk.get("output_tokens", 0)
+                    if chunk.get("model"):
+                        self._accumulated_usage["model"] = chunk["model"]
+                    continue
                 if isinstance(chunk, str):
                     text += chunk
             decision = self._parse_decision(text)

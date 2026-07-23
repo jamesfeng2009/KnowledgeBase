@@ -51,6 +51,8 @@ class Generator:
     ) -> None:
         self.llm = llm
         self.citation_extractor = citation_extractor or CitationExtractor()
+        # P0-Stage2: 最近一次 generate 的真实 token 用量（由 LLM Provider yield）
+        self.last_usage: dict[str, Any] | None = None
 
     async def generate(
         self,
@@ -87,8 +89,15 @@ class Generator:
             tool_count=len(tool_results),
         )
 
+        # P0-Stage2: 重置用量记录
+        self.last_usage = None
+
         try:
             async for chunk in self.llm.chat(messages, stream=True, max_tokens=_MAX_TOKENS):
+                # P0-Stage2: 捕获 usage dict（由 Provider 在流末尾 yield）
+                if isinstance(chunk, dict) and chunk.get("type") == "usage":
+                    self.last_usage = chunk
+                    continue
                 if isinstance(chunk, str) and chunk:
                     yield chunk
         except Exception as exc:

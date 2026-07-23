@@ -1,0 +1,591 @@
+---
+/**
+ * 可观测性页面 — P0-Stage4
+ *
+ * 展示 LLM 调用链路的真实用量、耗时、成本和成功率数据。
+ * 数据源：UsageRecord 表（P0-Stage2 起写入真实 token 用量和耗时）。
+ *
+ * 功能：
+ * 1. 聚合统计卡片（总请求、总 token、总成本、平均耗时、成功率）
+ * 2. 按模型分组的用量表
+ * 3. 最近调用记录表（分页、筛选）
+ */
+import DefaultLayout from '@/layouts/DefaultLayout.astro';
+
+const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '可观测性' }];
+---
+
+<DefaultLayout title="可观测性" breadcrumb={breadcrumb}>
+  <div class="observability-page">
+    <!-- 页头 -->
+    <div class="obs-header">
+      <h1 class="page-title">可观测性</h1>
+      <div class="header-actions">
+        <select id="days-select" class="days-select">
+          <option value="1">最近 1 天</option>
+          <option value="7" selected>最近 7 天</option>
+          <option value="30">最近 30 天</option>
+          <option value="90">最近 90 天</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- 统计卡片 -->
+    <div class="stats-grid" id="stats-grid">
+      <div class="card stat-card">
+        <div class="stat-label">总请求数</div>
+        <div class="stat-value" id="stat-total-requests">--</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-label">总 Token 用量</div>
+        <div class="stat-value" id="stat-total-tokens">--</div>
+        <div class="stat-sub" id="stat-tokens-detail">输入 -- / 输出 --</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-label">总成本</div>
+        <div class="stat-value" id="stat-total-cost">--</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-label">平均耗时</div>
+        <div class="stat-value" id="stat-avg-duration">--</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-label">成功率</div>
+        <div class="stat-value" id="stat-success-rate">--</div>
+      </div>
+    </div>
+
+    <!-- 按模型分组 -->
+    <div class="card">
+      <div class="card-header">
+        <h3>模型用量分布</h3>
+      </div>
+      <div id="model-table-body">
+        <div class="skeleton-line"></div>
+        <div class="skeleton-line"></div>
+        <div class="skeleton-line"></div>
+      </div>
+    </div>
+
+    <!-- 最近调用记录 -->
+    <div class="card">
+      <div class="card-header">
+        <h3>最近调用记录</h3>
+        <div class="filter-bar">
+          <input type="text" id="model-filter" placeholder="按模型筛选..." class="filter-input" />
+          <select id="success-filter" class="filter-select">
+            <option value="">全部状态</option>
+            <option value="true">成功</option>
+            <option value="false">失败</option>
+          </select>
+          <button id="refresh-btn" class="btn-refresh">刷新</button>
+        </div>
+      </div>
+      <div id="recent-table-body">
+        <div class="skeleton-line"></div>
+        <div class="skeleton-line"></div>
+        <div class="skeleton-line"></div>
+        <div class="skeleton-line"></div>
+        <div class="skeleton-line"></div>
+      </div>
+      <div class="pagination" id="pagination"></div>
+    </div>
+  </div>
+</DefaultLayout>
+
+<style>
+  .observability-page {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .obs-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .page-title {
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin: 0;
+  }
+
+  .days-select {
+    padding: 6px 12px;
+    border: 1px solid var(--border-color, #e2e8f0);
+    border-radius: 6px;
+    background: var(--bg-secondary, #f8fafc);
+    color: var(--text-primary, #1e293b);
+    font-size: 0.875rem;
+    cursor: pointer;
+  }
+
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+  }
+
+  .stat-card {
+    padding: 16px;
+    text-align: center;
+  }
+
+  .stat-label {
+    font-size: 0.8rem;
+    color: var(--text-secondary, #64748b);
+    margin-bottom: 8px;
+  }
+
+  .stat-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--text-primary, #1e293b);
+  }
+
+  .stat-sub {
+    font-size: 0.75rem;
+    color: var(--text-secondary, #64748b);
+    margin-top: 4px;
+  }
+
+  .card {
+    background: var(--bg-primary, #fff);
+    border: 1px solid var(--border-color, #e2e8f0);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  .card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-color, #e2e8f0);
+  }
+
+  .card-header h3 {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 600;
+  }
+
+  .filter-bar {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .filter-input,
+  .filter-select {
+    padding: 4px 8px;
+    border: 1px solid var(--border-color, #e2e8f0);
+    border-radius: 4px;
+    background: var(--bg-secondary, #f8fafc);
+    color: var(--text-primary, #1e293b);
+    font-size: 0.8rem;
+  }
+
+  .btn-refresh {
+    padding: 4px 12px;
+    border: 1px solid var(--border-color, #e2e8f0);
+    border-radius: 4px;
+    background: var(--bg-tertiary, #f1f5f9);
+    color: var(--text-primary, #1e293b);
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+
+  .btn-refresh:hover {
+    background: var(--bg-hover, #e2e8f0);
+  }
+
+  /* 表格样式 */
+  .obs-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+  }
+
+  .obs-table th {
+    padding: 8px 12px;
+    text-align: left;
+    font-weight: 600;
+    color: var(--text-secondary, #64748b);
+    border-bottom: 1px solid var(--border-color, #e2e8f0);
+    white-space: nowrap;
+  }
+
+  .obs-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-color, #e2e8f0);
+    color: var(--text-primary, #1e293b);
+  }
+
+  .obs-table tr:hover {
+    background: var(--bg-hover, #f8fafc);
+  }
+
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 0.75rem;
+    font-weight: 500;
+  }
+
+  .badge-success {
+    background: rgba(34, 197, 94, 0.15);
+    color: rgb(22, 163, 74);
+  }
+
+  .badge-fail {
+    background: rgba(239, 68, 68, 0.15);
+    color: rgb(220, 38, 38);
+  }
+
+  .req-id {
+    font-family: monospace;
+    font-size: 0.75rem;
+    color: var(--text-secondary, #64748b);
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .pagination {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+    padding: 12px;
+  }
+
+  .pagination button {
+    padding: 4px 12px;
+    border: 1px solid var(--border-color, #e2e8f0);
+    border-radius: 4px;
+    background: var(--bg-primary, #fff);
+    color: var(--text-primary, #1e293b);
+    cursor: pointer;
+    font-size: 0.8rem;
+  }
+
+  .pagination button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .pagination button.active {
+    background: var(--accent-color, #3b82f6);
+    color: #fff;
+    border-color: var(--accent-color, #3b82f6);
+  }
+
+  /* 骨架屏 */
+  .skeleton-line {
+    height: 36px;
+    margin: 8px 16px;
+    border-radius: 4px;
+    background: linear-gradient(
+      90deg,
+      var(--bg-secondary, #f1f5f9) 25%,
+      var(--bg-tertiary, #e2e8f0) 50%,
+      var(--bg-secondary, #f1f5f9) 75%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+  }
+
+  @keyframes shimmer {
+    0% {
+      background-position: 200% 0;
+    }
+    100% {
+      background-position: -200% 0;
+    }
+  }
+
+  .empty-state,
+  .error-state {
+    padding: 32px;
+    text-align: center;
+    color: var(--text-secondary, #64748b);
+  }
+
+  .error-state {
+    color: rgb(220, 38, 38);
+  }
+
+  .retry-btn {
+    margin-top: 8px;
+    padding: 6px 16px;
+    border: 1px solid var(--border-color, #e2e8f0);
+    border-radius: 4px;
+    background: var(--bg-primary, #fff);
+    cursor: pointer;
+  }
+</style>
+
+<script>
+  import { getRecentUsage, getObservabilityStats } from '@/lib/apis/observability';
+  import type { ObservabilityStats, RecentUsageResponse } from '@/lib/apis/observability';
+
+  // --- 工具函数 ---
+  function escapeHtml(s: string): string {
+    const div = document.createElement('div');
+    div.textContent = s;
+    return div.innerHTML;
+  }
+
+  function formatNum(n: number): string {
+    if (n >= 1_000_000) return (n / 1_000_000).toFixed(2) + 'M';
+    if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
+    return String(n);
+  }
+
+  function formatCost(cents: number): string {
+    return '$' + (cents / 100).toFixed(2);
+  }
+
+  function formatDuration(ms: number): string {
+    if (ms >= 1000) return (ms / 1000).toFixed(2) + 's';
+    return ms + 'ms';
+  }
+
+  function formatTime(iso: string): string {
+    try {
+      const d = new Date(iso);
+      return d.toLocaleString('zh-CN', {
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      });
+    } catch {
+      return iso;
+    }
+  }
+
+  function showSkeleton(container: HTMLElement, count = 3) {
+    container.innerHTML = Array(count)
+      .fill(0)
+      .map(() => '<div class="skeleton-line"></div>')
+      .join('');
+  }
+
+  function showError(container: HTMLElement, msg: string, retryFn?: () => void) {
+    container.innerHTML = `<div class="error-state">加载失败: ${escapeHtml(msg)}${
+      retryFn ? '<br><button class="retry-btn">重试</button></div>' : '</div>'
+    }`;
+    if (retryFn) {
+      container.querySelector('.retry-btn')?.addEventListener('click', retryFn);
+    }
+  }
+
+  function showEmpty(container: HTMLElement, msg = '暂无数据') {
+    container.innerHTML = `<div class="empty-state">${escapeHtml(msg)}</div>`;
+  }
+
+  // --- 统计数据加载 ---
+  let currentDays = 7;
+
+  async function loadStats() {
+    try {
+      const stats: ObservabilityStats = await getObservabilityStats(currentDays);
+
+      document.getElementById('stat-total-requests')!.textContent = formatNum(
+        stats.total_requests,
+      );
+      document.getElementById('stat-total-tokens')!.textContent = formatNum(
+        stats.total_input_tokens + stats.total_output_tokens,
+      );
+      document.getElementById('stat-tokens-detail')!.textContent =
+        `输入 ${formatNum(stats.total_input_tokens)} / 输出 ${formatNum(stats.total_output_tokens)}`;
+      document.getElementById('stat-total-cost')!.textContent = formatCost(
+        stats.total_cost_cents,
+      );
+      document.getElementById('stat-avg-duration')!.textContent = formatDuration(
+        stats.avg_duration_ms,
+      );
+      document.getElementById('stat-success-rate')!.textContent =
+        stats.success_rate + '%';
+
+      // 渲染模型表格
+      const modelBody = document.getElementById('model-table-body')!;
+      if (stats.by_model.length === 0) {
+        showEmpty(modelBody, '暂无模型用量数据');
+      } else {
+        modelBody.innerHTML = `
+          <table class="obs-table">
+            <thead>
+              <tr>
+                <th>模型</th>
+                <th>请求数</th>
+                <th>Token 总量</th>
+                <th>成本</th>
+                <th>平均耗时</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${stats.by_model
+                .map(
+                  (m) => `
+                <tr>
+                  <td>${escapeHtml(m.model)}</td>
+                  <td>${m.count}</td>
+                  <td>${formatNum(m.tokens)}</td>
+                  <td>${formatCost(m.cost_cents)}</td>
+                  <td>${formatDuration(m.avg_duration_ms)}</td>
+                </tr>
+              `,
+                )
+                .join('')}
+            </tbody>
+          </table>
+        `;
+      }
+    } catch (err: any) {
+      console.error('Failed to load stats:', err);
+      const modelBody = document.getElementById('model-table-body')!;
+      showError(modelBody, err.message || '加载统计失败', loadStats);
+    }
+  }
+
+  // --- 最近记录加载 ---
+  let currentPage = 1;
+  let currentPageSize = 20;
+
+  async function loadRecent() {
+    const container = document.getElementById('recent-table-body')!;
+    showSkeleton(container, 5);
+
+    const modelFilter = (
+      document.getElementById('model-filter') as HTMLInputElement
+    )?.value;
+    const successFilter = (
+      document.getElementById('success-filter') as HTMLSelectElement
+    )?.value;
+
+    try {
+      const data: RecentUsageResponse = await getRecentUsage(
+        currentPage,
+        currentPageSize,
+        modelFilter || undefined,
+        successFilter ? successFilter === 'true' : undefined,
+      );
+
+      if (data.items.length === 0) {
+        showEmpty(container, '暂无调用记录');
+      } else {
+        container.innerHTML = `
+          <table class="obs-table">
+            <thead>
+              <tr>
+                <th>时间</th>
+                <th>模型</th>
+                <th>输入 Token</th>
+                <th>输出 Token</th>
+                <th>成本</th>
+                <th>耗时</th>
+                <th>状态</th>
+                <th>Request ID</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${data.items
+                .map(
+                  (r) => `
+                <tr>
+                  <td>${formatTime(r.created_at)}</td>
+                  <td>${escapeHtml(r.model)}</td>
+                  <td>${r.input_tokens}</td>
+                  <td>${r.output_tokens}</td>
+                  <td>${formatCost(r.cost_cents)}</td>
+                  <td>${formatDuration(r.duration_ms)}</td>
+                  <td><span class="badge ${
+                    r.success ? 'badge-success' : 'badge-fail'
+                  }">${r.success ? '成功' : '失败'}</span></td>
+                  <td class="req-id" title="${escapeHtml(r.request_id || '')}">${escapeHtml(
+                    r.request_id || '-',
+                  )}</td>
+                </tr>
+              `,
+                )
+                .join('')}
+            </tbody>
+          </table>
+        `;
+      }
+
+      // 渲染分页
+      renderPagination(data.total, data.page, data.page_size);
+    } catch (err: any) {
+      console.error('Failed to load recent:', err);
+      showError(container, err.message || '加载记录失败', loadRecent);
+    }
+  }
+
+  function renderPagination(total: number, page: number, pageSize: number) {
+    const container = document.getElementById('pagination')!;
+    const totalPages = Math.ceil(total / pageSize);
+    if (totalPages <= 1) {
+      container.innerHTML = `<span style="color: var(--text-secondary)">共 ${total} 条</span>`;
+      return;
+    }
+
+    let html = '';
+    html += `<button ${page <= 1 ? 'disabled' : ''} data-page="${page - 1}">上一页</button>`;
+    for (let i = 1; i <= Math.min(totalPages, 10); i++) {
+      html += `<button class="${i === page ? 'active' : ''}" data-page="${i}">${i}</button>`;
+    }
+    if (totalPages > 10) {
+      html += `<span style="color: var(--text-secondary)">... 共 ${totalPages} 页</span>`;
+    }
+    html += `<button ${page >= totalPages ? 'disabled' : ''} data-page="${page + 1}">下一页</button>`;
+    container.innerHTML = html;
+
+    container.querySelectorAll('button[data-page]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const p = parseInt(btn.getAttribute('data-page') || '1');
+        if (p !== currentPage && p >= 1) {
+          currentPage = p;
+          loadRecent();
+        }
+      });
+    });
+  }
+
+  // --- 事件绑定 ---
+  document.getElementById('days-select')?.addEventListener('change', (e) => {
+    currentDays = parseInt((e.target as HTMLSelectElement).value);
+    loadStats();
+  });
+
+  let filterTimer: ReturnType<typeof setTimeout>;
+  document.getElementById('model-filter')?.addEventListener('input', () => {
+    clearTimeout(filterTimer);
+    filterTimer = setTimeout(() => {
+      currentPage = 1;
+      loadRecent();
+    }, 300);
+  });
+
+  document.getElementById('success-filter')?.addEventListener('change', () => {
+    currentPage = 1;
+    loadRecent();
+  });
+
+  document.getElementById('refresh-btn')?.addEventListener('click', () => {
+    loadStats();
+    loadRecent();
+  });
+
+  // --- 初始化 ---
+  loadStats();
+  loadRecent();
+</script>

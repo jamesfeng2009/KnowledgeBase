@@ -82,6 +82,7 @@ const navConfig = [
       { label: '用户管理', route: '/admin/users', icon: 'users' },
       { label: '标签管理', route: '/admin/tags', icon: 'tags' },
       { label: '报表', route: '/admin/reports', icon: 'reports' },
+      { label: '可观测性', route: '/admin/observability', icon: 'observability' },
       { label: '反馈管理', route: '/admin/feedback', icon: 'feedback' },
     ],
   },
@@ -167,6 +168,7 @@ const currentPath = Astro.url.pathname;
                       {item.icon === 'users' && '👥'}
                       {item.icon === 'tags' && '🏷️'}
                       {item.icon === 'reports' && '📈'}
+                      {item.icon === 'observability' && '🔬'}
                       {item.icon === 'feedback' && '📢'}
                       {item.icon === 'onboarding' && '👋'}
                       {item.icon === 'it' && '🛠️'}

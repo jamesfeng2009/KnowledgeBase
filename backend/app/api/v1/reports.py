@@ -36,10 +36,17 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["报表"])
 
-# 响应时间估算基准（无实际 P50 数据时使用近似值）
-_AVG_RESPONSE_TIME_ESTIMATE = 1.5
-# 平均质量分估算基准
+# 响应时间估算基准（无实际数据时的回退值）
+_AVG_RESPONSE_TIME_FALLBACK = 1.5
+# 平均质量分估算基准（质量分尚未持久化到 UsageRecord，暂用估算）
 _AVG_QUALITY_SCORE_ESTIMATE = 75.0
+
+
+def _ms_to_seconds(ms: float | int | None) -> float:
+    """毫秒转秒，None/0 时回退到估算基准值。"""
+    if ms and float(ms) > 0:
+        return round(float(ms) / 1000.0, 2)
+    return _AVG_RESPONSE_TIME_FALLBACK
 
 
 def _require_admin(user: User) -> None:
@@ -104,7 +111,7 @@ async def get_usage_report(
             period=item["period"],
             total_queries=item["total_queries"],
             unique_users=item["unique_users"],
-            avg_response_time=_AVG_RESPONSE_TIME_ESTIMATE,
+            avg_response_time=_ms_to_seconds(item.get("avg_duration_ms")),
             total_tokens=item["total_tokens"],
             cost=float(item["total_cost_cents"]) / 100.0,
         )
@@ -115,7 +122,7 @@ async def get_usage_report(
         period=f"{start_date} ~ {end_date}",
         total_queries=summary_raw["total_queries"],
         unique_users=summary_raw["unique_users"],
-        avg_response_time=_AVG_RESPONSE_TIME_ESTIMATE,
+        avg_response_time=_ms_to_seconds(summary_raw.get("avg_duration_ms")),
         total_tokens=summary_raw["total_tokens"],
         cost=float(summary_raw["total_cost_cents"]) / 100.0,
     )

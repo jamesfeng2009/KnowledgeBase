@@ -26,6 +26,7 @@ from app.api.v1.knowledge_compounding import router as compounding_router
 from app.api.v1.models import router as models_router
 from app.api.v1.multimodal import router as multimodal_router
 from app.api.v1.notifications import router as notifications_router
+from app.api.v1.observability import router as observability_router
 from app.api.v1.qa import router as qa_router
 from app.api.v1.reports import router as reports_router
 from app.api.v1.search import router as search_router
@@ -33,6 +34,7 @@ from app.api.v1.settings import router as settings_router
 from app.api.v1.stats import router as stats_router
 from app.api.v1.tenants import router as tenants_router
 from app.api.v1.testing import router as testing_router
+from app.api.v1.tts import router as tts_router
 from app.api.v1.users import router as users_router
 
 api_router = APIRouter(prefix="/api/v1")
@@ -64,3 +66,5 @@ api_router.include_router(approvals_router)
 api_router.include_router(models_router)
 api_router.include_router(testing_router)
 api_router.include_router(compounding_router)
+api_router.include_router(observability_router)
+api_router.include_router(tts_router)

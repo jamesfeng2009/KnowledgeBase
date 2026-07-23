@@ -86,6 +86,22 @@ def _get_langfuse_client() -> Any:
     return _langfuse_client
 
 
+def flush_langfuse() -> None:
+    """Flush 所有待发送的 LangFuse 事件到服务端。
+
+    在应用关闭时调用，确保追踪数据不丢失。
+    LangFuse 不可用时静默跳过。
+    """
+    client = _get_langfuse_client()
+    if client is None:
+        return
+    try:
+        client.flush()
+        logger.info("langfuse.flushed")
+    except Exception as exc:
+        logger.warning("langfuse.flush_error", error=str(exc))
+
+
 class TraceContext:
     """单次问答请求的 Trace 上下文。
 

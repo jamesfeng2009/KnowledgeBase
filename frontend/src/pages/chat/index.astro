@@ -105,6 +105,7 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
 
     <script>
       import { renderMarkdownStream } from '@/lib/markdown';
+      import { synthesizeText } from '@/lib/apis/tts';
 
       const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
       const TOKEN_KEY = 'ekb_access_token';
@@ -385,17 +386,21 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
         // P0-6: AI 消息增加状态区（thinking/retrieve 进度）和工具调用区（ToolCallCard）
         const statusArea = isAI ? '<div class="chat-message-status"></div>' : '';
         const toolsArea = isAI ? '<div class="chat-message-tools"></div>' : '';
+        // P1: AI 消息增加 TTS 语音播放按钮（仅非流式时显示）
+        const ttsArea = isAI && !streaming ? '<div class="chat-message-actions"><button class="tts-btn" data-bound="0" title="语音播放">🔊</button></div>' : '';
         msgEl.innerHTML = `
           <div class="chat-message-avatar">${role === 'user' ? '我' : 'AI'}</div>
           <div class="chat-message-body">
             ${statusArea}
             ${toolsArea}
             <div class="${contentClass}">${contentHtml}${streaming ? '<span class="chat-cursor"></span>' : ''}</div>
+            ${ttsArea}
           </div>`;
-        // 对历史 AI 消息绑定代码复制按钮和引用点击事件
+        // 对历史 AI 消息绑定代码复制按钮、引用点击事件和 TTS 按钮
         if (isAI && content) {
           bindCodeCopyButtons(msgEl);
           bindCitationClicks(msgEl);
+          bindTTSButton(msgEl);
         }
         messagesEl.appendChild(msgEl);
         messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -560,9 +565,11 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
           cancelStreamRender();
           const cursor = aiEl.querySelector('.chat-cursor');
           cursor?.remove();
-          // 流式结束后绑定代码复制按钮和引用点击事件
+          // 流式结束后绑定代码复制按钮、引用点击事件和 TTS 按钮
           bindCodeCopyButtons(aiEl);
           bindCitationClicks(aiEl);
+          // P1: 流式完成后添加 TTS 按钮到 AI 消息
+          appendTTSButton(aiEl);
           isStreaming = false;
           streamAbortController = null;
           sendBtn.disabled = false;
@@ -1053,6 +1060,90 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
       }
 
       /**
+       * P1: 为 AI 消息绑定 TTS 语音播放按钮
+       * 点击后调用 TTS API 合成音频并播放，再次点击停止。
+       */
+      function bindTTSButton(scope: ParentNode) {
+        const btn = scope.querySelector('.tts-btn') as HTMLElement | null;
+        if (!btn || btn.dataset.bound === '1') return;
+        btn.dataset.bound = '1';
+
+        let audio: HTMLAudioElement | null = null;
+        let blobUrl: string | null = null;
+
+        btn.addEventListener('click', async () => {
+          // 正在播放 → 停止
+          if (audio && !audio.paused) {
+            audio.pause();
+            btn.textContent = '🔊';
+            btn.title = '语音播放';
+            return;
+          }
+
+          // 获取 AI 消息纯文本
+          const contentEl = scope.querySelector('.chat-message-content-ai .markdown-body') ||
+            scope.querySelector('.chat-message-content-ai');
+          const text = contentEl?.textContent?.trim() || '';
+          if (!text) {
+            alert('消息内容为空，无法合成语音');
+            return;
+          }
+
+          // 合成中
+          btn.textContent = '⏳';
+          btn.title = '合成中...';
+          btn.disabled = true;
+
+          try {
+            // 清理上一次的 blob URL
+            if (blobUrl) {
+              URL.revokeObjectURL(blobUrl);
+              blobUrl = null;
+            }
+
+            blobUrl = await synthesizeText(text);
+            audio = new Audio(blobUrl);
+            audio.onended = () => {
+              btn.textContent = '🔊';
+              btn.title = '语音播放';
+            };
+            audio.onerror = () => {
+              btn.textContent = '🔊';
+              btn.title = '语音播放';
+              alert('音频播放失败');
+            };
+            await audio.play();
+            btn.textContent = '⏸';
+            btn.title = '停止播放';
+          } catch (err) {
+            btn.textContent = '🔊';
+            btn.title = '语音播放';
+            alert(err instanceof Error ? err.message : 'TTS 合成失败');
+          } finally {
+            btn.disabled = false;
+          }
+        });
+      }
+
+      /**
+       * P1: 流式完成后为 AI 消息追加 TTS 按钮
+       * 流式消息在 renderMessage 时 streaming=true，不含 TTS 按钮；
+       * 流式结束后调用此方法动态添加按钮并绑定事件。
+       */
+      function appendTTSButton(scope: ParentNode) {
+        // 已有 TTS 按钮则跳过
+        if (scope.querySelector('.tts-btn')) return;
+        const body = scope.querySelector('.chat-message-body');
+        if (!body) return;
+
+        const actionsArea = document.createElement('div');
+        actionsArea.className = 'chat-message-actions';
+        actionsArea.innerHTML = '<button class="tts-btn" data-bound="0" title="语音播放">🔊</button>';
+        body.appendChild(actionsArea);
+        bindTTSButton(scope);
+      }
+
+      /**
        * 为引用标注 [1] [2] 绑定点击事件
        * 点击后滚动到右侧引用面板对应卡片并高亮
        */
@@ -1349,6 +1440,29 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
       /* AI 消息内容：覆盖 pre-wrap，交由 Markdown 自行控制换行 */
       .chat-message-content-ai {
         white-space: normal;
+      }
+      /* P1: TTS 语音播放按钮 */
+      .chat-message-actions {
+        display: flex;
+        gap: 8px;
+        margin-top: 8px;
+      }
+      .tts-btn {
+        background: var(--bg-secondary, #f1f5f9);
+        border: 1px solid var(--border-color, #e2e8f0);
+        border-radius: 6px;
+        padding: 4px 10px;
+        font-size: 0.85rem;
+        cursor: pointer;
+        transition: background 0.2s, opacity 0.2s;
+        line-height: 1.4;
+      }
+      .tts-btn:hover:not(:disabled) {
+        background: var(--bg-tertiary, #e2e8f0);
+      }
+      .tts-btn:disabled {
+        opacity: 0.6;
+        cursor: wait;
       }
       .chat-cursor {
         display: inline-block;

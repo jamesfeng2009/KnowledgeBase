@@ -241,6 +241,20 @@ class Settings(BaseSettings):
     LANGFUSE_SECRET_KEY: str = ""
     LANGFUSE_HOST: str = "https://cloud.langfuse.com"
 
+    # === TTS 语音合成 ===
+    TTS_VOICE: str = "zh-CN-XiaoxiaoNeural"  # 默认女声；男声 zh-CN-YunxiNeural
+    TTS_RATE: str = "+0%"  # 语速调节：-50% 慢 ~ +50% 快
+    TTS_VOLUME: str = "+0%"  # 音量调节：-50% ~ +50%
+    TTS_ENABLED: bool = True  # TTS 总开关
+
+    # === P2 跨模态向量检索（jina-clip-v2）===
+    # 启用后文档中的图片直接向量化入库（无需仅依赖 VLM 文本描述），
+    # 用户可用文本查询检索到图片内容（text-to-image cross-modal retrieval）。
+    CROSS_MODAL_ENABLED: bool = False
+    JINA_API_KEY: str = ""  # Jina AI API Key（jina-clip-v2 免费额度）
+    JINA_CLIP_MODEL: str = "jina-clip-v2"
+    JINA_CLIP_DIM: int = 1024  # jina-clip-v2 输出维度
+
     # === P1-A 优雅关闭 ===
     SHUTDOWN_TIMEOUT: int = 30  # 优雅关闭超时（秒），uvicorn --timeout-graceful-shutdown
     SHUTDOWN_GRACE_PERIOD_CORE: int = 30  # core-engine Docker stop_grace_period

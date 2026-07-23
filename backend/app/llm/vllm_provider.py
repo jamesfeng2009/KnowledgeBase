@@ -142,11 +142,17 @@ class VLLMProvider(LLMProvider):
 
             if stream:
                 api_kwargs["stream"] = True
+                # P0-Stage2: 请求流式 usage（最后一个 chunk 携带汇总用量）
+                api_kwargs["stream_options"] = {"include_usage": True}
                 response = await self.client.chat.completions.create(**api_kwargs)
 
                 # tool_calls 在流中以增量分片到达，需按 index 缓冲装配。
                 tool_buffers: dict[int, dict[str, Any]] = {}
+                _stream_usage = None
                 async for chunk in response:
+                    # 最后一个 chunk 可能 choices 为空但携带 usage 汇总
+                    if chunk.usage:
+                        _stream_usage = chunk.usage
                     if not chunk.choices:
                         continue
                     delta = chunk.choices[0].delta
@@ -173,6 +179,15 @@ class VLLMProvider(LLMProvider):
                     buf["input"] = _parse_json_object(buf["input"])
                     yield buf
 
+                # P0-Stage2: 提取真实 token 用量供 UsageRecord 记录
+                if _stream_usage:
+                    yield {
+                        "type": "usage",
+                        "input_tokens": getattr(_stream_usage, "prompt_tokens", 0) or 0,
+                        "output_tokens": getattr(_stream_usage, "completion_tokens", 0) or 0,
+                        "model": api_kwargs.get("model", ""),
+                    }
+
             else:
                 resp = await self.client.chat.completions.create(**api_kwargs)
                 message = resp.choices[0].message
@@ -189,6 +204,14 @@ class VLLMProvider(LLMProvider):
                             name=tc.function.name if tc.function else "",
                             input=_parse_json_object(arguments),
                         )
+                # P0-Stage2: 提取真实 token 用量供 UsageRecord 记录
+                if resp.usage:
+                    yield {
+                        "type": "usage",
+                        "input_tokens": getattr(resp.usage, "prompt_tokens", 0) or 0,
+                        "output_tokens": getattr(resp.usage, "completion_tokens", 0) or 0,
+                        "model": api_kwargs.get("model", ""),
+                    }
 
             # 调用成功 — 记录到熔断器
             elapsed_ms = round((time.monotonic() - t0) * 1000, 2)

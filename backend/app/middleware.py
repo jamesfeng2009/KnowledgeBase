@@ -14,6 +14,7 @@ Redis 不可用时自动降级为内存令牌桶，保证限流功能始终可�
 from __future__ import annotations
 
 import time
+import uuid
 from uuid import UUID
 
 import structlog
@@ -24,6 +25,7 @@ from starlette.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.utils.crypto import decode_access_token
 from app.utils.logger import get_logger
+from app.utils.request_context import set_request_id, reset_request_id
 
 log = get_logger(__name__)
 
@@ -289,14 +291,22 @@ def setup_middleware(app: FastAPI) -> None:
                 burst=settings.RATE_LIMIT_BURST,
             )
 
-    # --- 请求日志 + 限流 + 租户上下文中间件 ---
+    # --- 请求日志 + 限流 + 租户上下文 + request_id 中间件 ---
     @app.middleware("http")
     async def log_rate_limit_tenant_context(request: Request, call_next):
-        """记录每个 HTTP 请求 + 按客户端限流 + 注入租户上下文。
+        """记录每个 HTTP 请求 + 按客户端限流 + 注入租户上下文 + 生成 request_id。
 
         租户上下文通过 structlog.contextvars 绑定到当前请求的整个生命周期，
         确保所有日志条目（包括 Service 层日志）都自动携带 tenant_id。
+
+        P0-Stage3: 生成 request_id 并绑定到 contextvars，使引擎、服务层、
+        LangFuse 追踪和 UsageRecord 均可关联同一请求。
         """
+
+        # --- P0-Stage3: 生成 request_id ---
+        request_id = request.headers.get("x-request-id") or uuid.uuid4().hex
+        request.state.request_id = request_id
+        _rid_token = set_request_id(request_id)
 
         # --- 租户上下文注入（在限流之前，确保所有请求都有租户上下文） ---
         tenant_id: UUID | None = None
@@ -316,10 +326,11 @@ def setup_middleware(app: FastAPI) -> None:
 
         request.state.tenant_id = tenant_id
 
-        # 将 tenant_id 绑定到 structlog 上下文变量，
-        # 使当前请求内所有日志条目自动携带 tenant_id
+        # 将 tenant_id 和 request_id 绑定到 structlog 上下文变量，
+        # 使当前请求内所有日志条目自动携带 tenant_id 和 request_id
         structlog.contextvars.bind_contextvars(
             tenant_id=str(tenant_id) if tenant_id else None,
+            request_id=request_id,
         )
 
         try:
@@ -354,6 +365,9 @@ def setup_middleware(app: FastAPI) -> None:
             response = await call_next(request)
             duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
 
+            # P0-Stage3: 响应头回传 request_id，供客户端/前端关联追踪
+            response.headers["X-Request-ID"] = request_id
+
             log.info(
                 "http.request",
                 method=request.method,
@@ -365,3 +379,5 @@ def setup_middleware(app: FastAPI) -> None:
         finally:
             # 清理 structlog 上下文变量，避免跨请求泄漏
             structlog.contextvars.clear_contextvars()
+            # P0-Stage3: 恢复 request_id contextvar
+            reset_request_id(_rid_token)

@@ -789,9 +789,23 @@ async def _build_index_async(
         emb = []
         warnings.append(f"向量化失败（已降级为空向量）: {str(exc)[:200]}")
 
+    # P2-Step1: 查询文档所属 kb_id，写入索引供检索端按知识库过滤
+    kb_id: str | None = None
+    try:
+        from app.database import task_db_session
+        from app.repositories.knowledge_repository import DocumentRepository
+
+        async with task_db_session() as session:
+            repo = DocumentRepository(session)
+            doc = await repo.get_by_id(uuid.UUID(doc_id))
+            if doc and doc.kb_id:
+                kb_id = str(doc.kb_id)
+    except Exception as exc:
+        logger.debug("document.kb_id_lookup_failed", doc_id=doc_id, error=str(exc)[:200])
+
     _update_parse_progress(doc_id, stage="indexing", message="正在构建全文索引和向量索引")
     try:
-        await _build_indexes(doc_id, chunk_objects, chunks, emb)
+        await _build_indexes(doc_id, chunk_objects, chunks, emb, kb_id=kb_id)
     except Exception as exc:
         logger.warning("document.index_failed", doc_id=doc_id, error=str(exc))
         warnings.append(f"索引构建失败: {str(exc)[:200]}")
@@ -1102,7 +1116,7 @@ async def _process_document_async(doc_id: str) -> dict[str, Any]:
                 doc_id, stage="indexing", message="正在构建全文索引和向量索引"
             )
             try:
-                await _build_indexes(doc_id, chunk_objects, chunks, emb)
+                await _build_indexes(doc_id, chunk_objects, chunks, emb, kb_id=str(doc.kb_id) if doc.kb_id else None)
             except Exception as exc:
                 logger.warning("document.index_failed", doc_id=doc_id, error=str(exc))
                 warnings.append(f"索引构建失败: {str(exc)[:200]}")
@@ -2031,6 +2045,8 @@ async def _build_indexes(
     chunk_objects: list[Chunk],
     chunks: list[str],
     embeddings: list[list[float]],
+    kb_id: str | None = None,
+    images: list[tuple[bytes, str]] | None = None,
 ) -> None:
     """构建全文索引和向量索引 — 延迟导入。
 
@@ -2041,18 +2057,28 @@ async def _build_indexes(
         chunk_objects: Chunk 对象列表（含元数据）。
         chunks: 文本块内容列表（chunk_objects 中提取的 .content）。
         embeddings: 向量嵌入列表。
+        kb_id: 文档所属知识库 ID — 写入索引供检索端按知识库过滤。
+        images: P2-Step3 图片数据列表 [(二进制, VLM描述), ...] —
+            CROSS_MODAL_ENABLED 时向量化入库，实现跨模态检索。
     """
     # 构建全文索引（OpenSearch）— 传入 Chunk 元数据
     try:
-        await _build_opensearch_index(doc_id, chunk_objects)
+        await _build_opensearch_index(doc_id, chunk_objects, kb_id=kb_id)
     except Exception as exc:
         logger.warning("opensearch.index_failed", doc_id=doc_id, error=str(exc))
 
     # 构建向量索引（通过 VectorStoreBase 适配器，默认 OpenSearch k-NN，可选 Milvus）
     try:
-        await _build_vector_index(doc_id, chunk_objects, embeddings)
+        await _build_vector_index(doc_id, chunk_objects, embeddings, kb_id=kb_id)
     except Exception as exc:
         logger.warning("vector.index_failed", doc_id=doc_id, error=str(exc))
+
+    # P2-Step3: 跨模态图片向量索引（CROSS_MODAL_ENABLED 时生效）
+    if images:
+        try:
+            await _build_cross_modal_index(doc_id, kb_id=kb_id, images=images)
+        except Exception as exc:
+            logger.warning("cross_modal.index_failed", doc_id=doc_id, error=str(exc))
 
 
 async def _build_knowledge_graph(
@@ -2130,11 +2156,15 @@ async def _build_knowledge_graph(
     return len(triples)
 
 
-async def _build_opensearch_index(doc_id: str, chunk_objects: list[Chunk]) -> None:
+async def _build_opensearch_index(
+    doc_id: str, chunk_objects: list[Chunk], kb_id: str | None = None
+) -> None:
     """构建 OpenSearch 全文索引 — 延迟导入。
 
     存储 Chunk 元数据（title_path、content_type、chunk_strategy）以支持
     检索时按内容类型过滤和标题路径展示。
+
+    P2-Step1: 写入 kb_id 字段，与检索端 kb_id 过滤对齐。
 
     库未安装或服务不可用时优雅降级。
     """
@@ -2158,6 +2188,7 @@ async def _build_opensearch_index(doc_id: str, chunk_objects: list[Chunk]) -> No
                             "parent_id": {"type": "keyword"},
                             "content": {"type": "text", "analyzer": "standard"},
                             "title_path": {"type": "text", "analyzer": "keyword"},
+                            "kb_id": {"type": "keyword"},
                             "content_type": {"type": "keyword"},
                             "chunk_strategy": {"type": "keyword"},
                             "token_count": {"type": "integer"},
@@ -2176,20 +2207,18 @@ async def _build_opensearch_index(doc_id: str, chunk_objects: list[Chunk]) -> No
                 ndjson_lines.append(
                     json.dumps({"index": {"_index": index_name, "_id": chunk.id}})
                 )
-                ndjson_lines.append(
-                    json.dumps(
-                        {
-                            "doc_id": doc_id,
-                            "chunk_id": chunk.id,
-                            "parent_id": chunk.parent_id,
-                            "content": chunk.content,
-                            "title_path": chunk.title_path,
-                            "content_type": chunk.content_type,
-                            "chunk_strategy": chunk.chunk_strategy,
-                            "token_count": chunk.token_count,
-                        }
-                    )
-                )
+                doc_body: dict[str, Any] = {
+                    "doc_id": doc_id,
+                    "chunk_id": chunk.id,
+                    "parent_id": chunk.parent_id,
+                    "content": chunk.content,
+                    "title_path": chunk.title_path,
+                    "kb_id": kb_id or doc_id,  # P2-Step1: 写入 kb_id 供检索端过滤
+                    "content_type": chunk.content_type,
+                    "chunk_strategy": chunk.chunk_strategy,
+                    "token_count": chunk.token_count,
+                }
+                ndjson_lines.append(json.dumps(doc_body, ensure_ascii=False))
             response = await client.bulk(body="\n".join(ndjson_lines) + "\n")
             if response.get("errors"):
                 failed = sum(
@@ -2216,6 +2245,7 @@ async def _build_vector_index(
     doc_id: str,
     chunk_objects: list[Chunk],
     embeddings: list[list[float]],
+    kb_id: str | None = None,
 ) -> int:
     """构建向量索引 — 通过 VectorStoreBase 适配器写入向量数据。
 
@@ -2229,6 +2259,7 @@ async def _build_vector_index(
         doc_id: 文档 ID。
         chunk_objects: Chunk 对象列表（含元数据）。
         embeddings: 向量嵌入列表。
+        kb_id: 文档所属知识库 ID — 写入向量库供检索端按知识库过滤。
 
     Returns:
         成功写入的向量数量。
@@ -2241,7 +2272,7 @@ async def _build_vector_index(
         from app.rag.vector_store import get_vector_store
 
         store = get_vector_store()
-        count = await store.upsert(doc_id, chunk_objects, embeddings)
+        count = await store.upsert(doc_id, chunk_objects, embeddings, kb_id=kb_id)
         logger.info(
             "vector.indexed",
             doc_id=doc_id,
@@ -2252,6 +2283,41 @@ async def _build_vector_index(
     except Exception as exc:
         logger.warning("vector.index_error", doc_id=doc_id, error=str(exc))
         raise
+
+
+async def _build_cross_modal_index(
+    doc_id: str,
+    kb_id: str | None = None,
+    images: list[tuple[bytes, str]] | None = None,
+) -> int:
+    """P2-Step3: 构建跨模态图片向量索引 — 将图片直接向量化入库。
+
+    当 CROSS_MODAL_ENABLED=True 且文档包含图片时，使用 jina-clip-v2
+    将图片嵌入到与文本相同的向量空间，实现文本→图片跨模态检索。
+
+    Args:
+        doc_id: 文档 ID。
+        kb_id: 文档所属知识库 ID。
+        images: 图片数据列表 [(图片二进制, VLM描述), ...]。
+
+    Returns:
+        成功写入的图片向量数量。
+    """
+    if not images:
+        return 0
+
+    try:
+        from app.services.cross_modal_service import CrossModalService
+
+        service = CrossModalService()
+        if not service.is_enabled():
+            return 0
+        count = await service.embed_and_store_images(doc_id, kb_id, images)
+        logger.info("cross_modal.indexed", doc_id=doc_id, image_count=count)
+        return count
+    except Exception as exc:
+        logger.warning("cross_modal.index_failed", doc_id=doc_id, error=str(exc))
+        return 0
 
 
 async def _build_milvus_index(

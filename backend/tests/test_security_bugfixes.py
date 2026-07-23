@@ -294,6 +294,69 @@ class TestBug3OpenSearchRetriever:
         assert payload["query"]["bool"]["filter"] == [{"terms": {"kb_id": ["kb-1", "kb-2"]}}]
 
     @pytest.mark.asyncio
+    async def test_fulltext_query_fields_match_write_side(self) -> None:
+        """P2-Step1: BM25 查询字段名必须与写入方一致（content / title_path）。
+
+        写入方 _build_opensearch_index 写入 content 和 title_path 字段，
+        查询方 multi_match 必须使用相同字段名，否则 BM25 全文检索静默失效。
+        """
+        retriever, calls, _ = _make_retriever()
+        await retriever._fulltext_search("报销流程", None, 5)
+
+        payload = calls[0]["json"]
+        multi_match = payload["query"]["bool"]["must"][0]["multi_match"]
+        fields = multi_match["fields"]
+
+        # 查询字段必须包含 content（写入方字段名）
+        assert "content" in fields, f"查询字段 {fields} 缺少 content（写入方字段名）"
+        # 查询字段必须包含 title_path（写入方字段名），不能是旧名 title
+        assert any("title_path" in f for f in fields), f"查询字段 {fields} 缺少 title_path"
+        # 不能使用旧字段名 chunk_text
+        assert not any("chunk_text" in f for f in fields), f"查询字段 {fields} 不应包含 chunk_text"
+
+    @pytest.mark.asyncio
+    async def test_fulltext_source_includes_write_side_fields(self) -> None:
+        """P2-Step1: _source 字段列表必须与写入方字段对齐。"""
+        retriever, calls, _ = _make_retriever()
+        await retriever._fulltext_search("报销流程", None, 5)
+
+        payload = calls[0]["json"]
+        source_fields = payload["_source"]
+
+        assert "content" in source_fields, "_source 缺少 content"
+        assert "title_path" in source_fields, "_source 缺少 title_path"
+        assert "chunk_id" in source_fields, "_source 缺少 chunk_id"
+        assert "kb_id" in source_fields, "_source 缺少 kb_id"
+
+    @pytest.mark.asyncio
+    async def test_fulltext_result_parses_content_and_title_path(self) -> None:
+        """P2-Step1: 结果解析必须从 content / title_path 字段读取。"""
+        hits = {
+            "hits": {
+                "hits": [
+                    {
+                        "_id": "chunk-1",
+                        "_score": 2.0,
+                        "_source": {
+                            "doc_id": "doc-1",
+                            "chunk_id": "chunk-1",
+                            "content": "报销流程详细说明",
+                            "kb_id": "kb-1",
+                            "title_path": "财务制度 > 报销",
+                        },
+                    }
+                ]
+            }
+        }
+        retriever, _, _ = _make_retriever(_MockResp(json_data=hits))
+        results = await retriever._fulltext_search("报销", None, 5)
+
+        assert len(results) == 1
+        assert results[0]["content"] == "报销流程详细说明"
+        assert results[0]["title"] == "财务制度 > 报销"
+        assert results[0]["chunk_id"] == "chunk-1"
+
+    @pytest.mark.asyncio
     async def test_failure_enters_retry_window_and_skips_calls(self) -> None:
         """故障后进入重试窗口：窗口内快速失败，不再发请求（避免拖垮检索）。"""
         retriever, calls, state = _make_retriever()
@@ -318,9 +381,10 @@ class TestBug3OpenSearchRetriever:
                         "_score": 1.5,
                         "_source": {
                             "doc_id": "doc-1",
-                            "chunk_text": "报销流程内容",
+                            "chunk_id": "chunk-1",
+                            "content": "报销流程内容",
                             "kb_id": "kb-1",
-                            "title": "报销制度",
+                            "title_path": "报销制度",
                         },
                     }
                 ]

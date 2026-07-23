@@ -193,12 +193,32 @@ class TestVectorStoreBase:
         assert result["title"] is None
 
     def test_default_dimension(self) -> None:
-        """默认向量维度为 1024。"""
-        # 通过子类实例检查
+        """P2-Step2: 向量维度动态从 Embedder 获取，而非硬编码 1024。"""
+        from unittest.mock import patch, MagicMock
+
         store = OpenSearchVectorStore(
             http_client=_make_mock_http()
         )
-        assert store.dimension == 1024
+        # Mock embedder 返回 1024 维（TEI/BGE-M3 场景）
+        mock_embedder = MagicMock()
+        mock_embedder.dim = 1024
+        with patch("app.llm.embedder.get_embedder", return_value=mock_embedder):
+            assert store.dimension == 1024
+
+        # Mock embedder 返回 3072 维（SaaS/OpenAI 场景）
+        mock_embedder.dim = 3072
+        with patch("app.llm.embedder.get_embedder", return_value=mock_embedder):
+            assert store.dimension == 3072
+
+    def test_dimension_fallback_on_embedder_error(self) -> None:
+        """P2-Step2: Embedder 不可用时降级为默认维度 1024。"""
+        from unittest.mock import patch
+
+        store = OpenSearchVectorStore(
+            http_client=_make_mock_http()
+        )
+        with patch("app.llm.embedder.get_embedder", side_effect=Exception("no embedder")):
+            assert store.dimension == 1024
 
 
 # ======================================================================
@@ -770,8 +790,9 @@ class TestRetrieverWithVectorStore:
                             "_source": {
                                 "doc_id": "doc-002",
                                 "chunk_id": "chunk-1",
-                                "chunk_text": "全文内容",
+                                "content": "全文内容",
                                 "kb_id": "kb-001",
+                                "title_path": "标题",
                             },
                         }
                     ]
@@ -838,7 +859,7 @@ class TestDocumentTasksVectorIndex:
             count = await _build_vector_index("doc-001", chunks, embeddings)
 
         assert count == 2
-        mock_store.upsert.assert_called_once_with("doc-001", chunks, embeddings)
+        mock_store.upsert.assert_called_once_with("doc-001", chunks, embeddings, kb_id=None)
 
     @pytest.mark.asyncio
     async def test_build_vector_index_returns_zero_for_empty_embeddings(self) -> None:
@@ -893,5 +914,5 @@ class TestDocumentTasksVectorIndex:
             return_value=2,
         ) as mock_vec:
             await _build_indexes("doc-001", chunks, chunks_text, embeddings)
-            mock_os.assert_called_once_with("doc-001", chunks)
-            mock_vec.assert_called_once_with("doc-001", chunks, embeddings)
+            mock_os.assert_called_once_with("doc-001", chunks, kb_id=None)
+            mock_vec.assert_called_once_with("doc-001", chunks, embeddings, kb_id=None)

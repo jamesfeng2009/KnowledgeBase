@@ -24,6 +24,7 @@
 - [智能测试平台](#智能测试平台)
 - [离线评测系统](#离线评测系统)
 - [部署指南](#部署指南)
+- [能力增强（P0-P2）](#能力增强p0-p2)
 - [测试](#测试)
 
 ---
@@ -45,6 +46,9 @@
 | **对象存储** | MinIO | 文档附件 + 多模态资源 |
 | **VLM** | Anthropic Claude Vision / vLLM (Pixtral) | SaaS / 私有双部署模式 |
 | **ASR** | OpenAI Whisper API / Faster-Whisper (私有) | 语音转写，视频 RAG |
+| **TTS** | edge-tts（Microsoft Edge 在线 TTS） | AI 对话语音播报，6 种中英文音色，无需 API Key |
+| **可观测性** | LangFuse v2 | 全链路追踪（think/retrieve/generate）+ 真实 Token 用量 + request_id 关联 |
+| **跨模态检索** | jina-clip-v2（Jina AI） | 文本+图片统一向量空间，text-to-image 跨模态检索 |
 | **视频处理** | ffmpeg | 音轨提取 + 关键帧抽取 |
 | **文档解析** | Docling (IBM Granite-Docling-258M) + pymupdf + python-pptx + python-docx + openpyxl + pandas | Docling 统一解析 PDF/DOCX/PPTX/XLSX/HTML/图片/音频 → HTML（`<h1>`~`<h6>` 标题 + `<table>` 表格 + `<ul><li>` 列表），降级到原有解析器；图片上传 MinIO + 小图过滤 + VLM 描述；XLSX 双引擎降级（openpyxl → pandas）+ 列宽对齐 |
 | **数据库迁移** | Alembic + asyncpg + aiosqlite | 异步迁移引擎，启动时自动 `alembic upgrade head`，36 张表（含智能测试平台 6 张表 + 知识回流层 3 张表） |
@@ -78,8 +82,8 @@ EnterpriseKnowledge/
 │   │   ├── mcp/                      # MCP 工具协议
 │   │   ├── memory/                   # 四级记忆引擎
 │   │   ├── models/                   # SQLAlchemy ORM 模型
-│   │   ├── observability/            # LangFuse 追踪 + LLM Judge
-│   │   ├── rag/                      # Agentic RAG 引擎（含 vector_store 适配层）
+│   │   ├── observability/            # LangFuse 追踪 + LLM Judge + request_id 关联
+│   │   ├── rag/                      # Agentic RAG 引擎（含 vector_store 适配层 + 跨模态检索）
 │   │   │   ├── engine.py             # Agent Loop（含 Find Skills 按需加载）
 │   │   │   ├── skill_registry.py     # Skill 注册表（轻量索引 + 按需加载）
 │   │   │   ├── skill_finder.py       # Find Skills 匹配引擎（中英文分词 + 多维评分）
@@ -1955,6 +1959,37 @@ python -c "from app.utils.migration import stamp_head; stamp_head()"
 
 ---
 
+## 能力增强（P0-P2）
+
+### P0: LangFuse 全链路可观测性
+
+LangFuse v2 全链路追踪，覆盖 Agent Loop 五节点 + HTTP request_id 关联 + 真实 Token 用量采集。
+
+- **追踪激活**：`@trace_node` 装饰器自动记录 think/retrieve/tool_call/generate/reflect 节点；`flush_langfuse()` 在应用关闭时确保数据不丢失
+- **真实 Token 用量**：Provider 层（Anthropic/VLLM/DashScope）yield `{"type": "usage", ...}` 用量字典 → Generator 捕获 → Engine 累加 → `UsageRecord` 写入 DB；报表从 DB 读取真实 `avg_duration_ms`，不再使用硬编码估计值
+- **request_id 关联**：中间件生成 `X-Request-ID` → contextvar 传播 → LangFuse trace metadata + UsageRecord.request_id，实现 HTTP 请求→LLM 调用→用量记录三级关联
+- **前端面板**：治理后台「可观测性」页面展示用量统计（按模型/日期聚合）、最近调用记录（含 request_id、token 数、耗时、费用）
+- **配置**：`LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_HOST`，未配置时静默降级
+
+### P1: TTS 语音输出
+
+基于 edge-tts 的 AI 对话语音播报，支持 6 种中英文音色，无需 API Key。
+
+- **后端**：`tts_service.py` 封装 edge-tts `Communicate.stream()`；`/tts/synthesize` POST 接口返回 audio/mpeg 流；`/tts/voices` 获取音色列表
+- **前端**：每条 AI 回复附带 TTS 按钮，点击播放/暂停；支持流式回复完成后动态追加按钮
+- **配置**：`TTS_ENABLED`（总开关）/ `TTS_VOICE`（默认音色）/ `TTS_RATE`（语速）/ `TTS_VOLUME`（音量）
+
+### P2: 原生跨模态向量检索
+
+修复两个已有 bug 并实现 jina-clip-v2 跨模态向量检索。
+
+- **Bug 1 修复 — 全文索引字段名不匹配**：写入方使用 `content` / `title_path`，查询方原查询 `chunk_text` / `title` 导致 BM25 静默失效；已对齐为 `content` / `title_path`，并补充 `kb_id` 字段写入与过滤
+- **Bug 2 修复 — SaaS embedding 维度不匹配**：`VectorStoreBase.dimension` 从硬编码 1024 改为动态从 Embedder 获取；SaaS 模式 OpenAI 3072 维自动适配，私有部署 TEI 1024 维不受影响
+- **跨模态检索**：`MultimodalEmbeddingProvider`（jina-clip-v2）支持文本+图片统一向量空间；`CrossModalService` 将文档图片直接向量化入库（`content_type="image"`）；检索器自动使用 MultimodalEmbedder 生成查询向量，实现 text-to-image 跨模态检索
+- **配置**：`CROSS_MODAL_ENABLED`（总开关）/ `JINA_API_KEY` / `JINA_CLIP_MODEL` / `JINA_CLIP_DIM`
+
+---
+
 ## 测试
 
 ```bash
@@ -1987,6 +2022,9 @@ python -m pytest tests/test_security_bugfixes.py -v            # P0 安全与稳
 python -m pytest tests/test_api_service_security_fixes.py -v   # P2 API/服务层回归（上传闸门/异步redis/脱敏/SSE连接释放）
 python -m pytest tests/test_provider_circuit_breaker.py -v     # Provider 熔断器契约（失败开路/快速拒绝/恢复闭合）
 python -m pytest tests/test_health_check.py -v                 # Provider 健康检查（并发检查/超时隔离/Redis 缓存）
+python -m pytest tests/test_request_context.py -v              # P0 HTTP request_id contextvar
+python -m pytest tests/test_tts_service.py -v                  # P1 TTS 语音合成（edge-tts）
+python -m pytest tests/test_cross_modal.py -v                  # P2 跨模态检索（jina-clip-v2 文本+图片向量化）
 ```
 
 ### 测试覆盖
@@ -2015,8 +2053,11 @@ python -m pytest tests/test_health_check.py -v                 # Provider 健康
 | `test_testing_platform.py` | 64 | 智能测试平台：6 张表 ORM 模型、10 个枚举、5 个服务（需求提取/用例生成/评审/管理/编排）、28 个 API 端点、3 个 Celery 任务、JSON 解析 |
 | `test_knowledge_compounding.py` | 47 | 知识回流层：3 张表 ORM 模型、Pydantic Schema、KnowledgeCompoundingService（5 步闭环：收集/提取/沉淀/冲突检测/复用注入）、JSON 解析、Celery 任务、API 路由注册 |
 | 其他测试 | 454 | API 端点、服务层、模型层、记忆引擎、连接器、通知、图谱、多模态、租户门控、P0/P1/P2 适配器等 |
-| 稳定性加固回归（`test_security_bugfixes.py` / `test_api_service_security_fixes.py` / `test_provider_circuit_breaker.py` / `test_health_check.py` / `test_beat_lock.py`） | 145 | P0-P3 修复回归：SSE 韧性、熔断器契约、任务锁、越权/IDOR、上传闸门、异步 redis、健康检查并发与超时、脱敏门控 |
-| **合计** | **1969** | **1908 passed + 6 skipped + 55 项既有环境基线（真实 PG 外键/数据残留、DashScope key、celery mock 污染），零新增失败** |
+| 稳定性加固回归（`test_security_bugfixes.py` / `test_api_service_security_fixes.py` / `test_provider_circuit_breaker.py` / `test_health_check.py` / `test_beat_lock.py`） | 145 | P0-P3 修复回归：SSE 韧性、熔断器契约、任务锁、越权/IDOR、上传闸门、异步 redis、健康检查并发与超时、脱敏门控、**P2 全文索引字段名对齐 + kb_id 过滤** |
+| `test_request_context.py` | 4 | P0 HTTP request_id contextvar（set/get/reset/嵌套） |
+| `test_tts_service.py` | 7 | P1 TTS 语音合成（edge-tts 空文本/禁用/截断/合成/音色列表） |
+| `test_cross_modal.py` | 17 | P2 跨模态检索（JinaCLIPEmbedder 文本+图片向量化、CrossModalService 入库、降级逻辑、维度一致性） |
+| **合计** | **1990** | **1955 passed + 6 skipped + 29 项既有环境基线（真实 PG 外键/数据残留、DashScope key、celery mock 污染、事件循环冲突），零新增失败** |
 
 ---
 

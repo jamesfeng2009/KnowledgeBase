@@ -218,12 +218,16 @@ class TestDashScopeProvider:
             async for chunk in provider.chat(messages, tools=tools, stream=False):
                 results.append(chunk)
 
-            # 应该 yield 一个 ToolUse dict
-            tool_use = [r for r in results if isinstance(r, dict)]
+            # 应该 yield 一个 ToolUse dict（usage dict 不计入）
+            tool_use = [r for r in results if isinstance(r, dict) and r.get("type") == "tool_use"]
             assert len(tool_use) == 1
             assert tool_use[0]["type"] == "tool_use"
             assert tool_use[0]["name"] == "knowledge_search"
             assert tool_use[0]["input"]["query"] == "Python"
+
+            # P0-Stage2: 非流式模式也应 yield usage dict
+            usage = [r for r in results if isinstance(r, dict) and r.get("type") == "usage"]
+            assert len(usage) == 1
 
 
 # ======================================================================

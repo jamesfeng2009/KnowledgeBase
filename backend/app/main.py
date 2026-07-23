@@ -108,6 +108,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # === 优雅关闭：按优先级逆序清理所有资源 ===
     log.info("app.shutting_down", app_name=settings.APP_NAME)
+
+    # LangFuse flush — 确保追踪数据不丢失（在资源清理之前）
+    try:
+        from app.observability.langfuse_tracer import flush_langfuse
+
+        flush_langfuse()
+    except Exception as exc:
+        log.warning("app.langfuse_flush_failed", error=str(exc))
+
     try:
         await asyncio.wait_for(
             resource_manager.cleanup(timeout=settings.SHUTDOWN_TIMEOUT),

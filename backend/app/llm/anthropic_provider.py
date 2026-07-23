@@ -192,6 +192,15 @@ class AnthropicProvider(LLMProvider):
                                 name=block.name,
                                 input=dict(block.input) if block.input else {},
                             )
+                    # P0-Stage2: 提取真实 token 用量供 UsageRecord 记录
+                    _usage = getattr(final_message, "usage", None)
+                    if _usage:
+                        yield {
+                            "type": "usage",
+                            "input_tokens": getattr(_usage, "input_tokens", 0) or 0,
+                            "output_tokens": getattr(_usage, "output_tokens", 0) or 0,
+                            "model": api_kwargs.get("model", ""),
+                        }
             else:
                 resp = await self.client.messages.create(**api_kwargs)
                 for block in resp.content:
@@ -204,6 +213,15 @@ class AnthropicProvider(LLMProvider):
                             name=block.name,
                             input=dict(block.input) if block.input else {},
                         )
+                # P0-Stage2: 提取真实 token 用量供 UsageRecord 记录
+                _usage = getattr(resp, "usage", None)
+                if _usage:
+                    yield {
+                        "type": "usage",
+                        "input_tokens": getattr(_usage, "input_tokens", 0) or 0,
+                        "output_tokens": getattr(_usage, "output_tokens", 0) or 0,
+                        "model": api_kwargs.get("model", ""),
+                    }
 
             # 调用成功 — 记录到熔断器
             elapsed_ms = round((time.monotonic() - t0) * 1000, 2)

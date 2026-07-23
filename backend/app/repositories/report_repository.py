@@ -70,6 +70,8 @@ class ReportRepository:
                     UsageRecord.input_tokens + UsageRecord.output_tokens
                 ).label("total_tokens"),
                 func.sum(UsageRecord.cost_cents).label("total_cost_cents"),
+                # P0-Stage2: 真实平均响应时间（替代 reports.py 硬编码 1.5s）
+                func.avg(UsageRecord.duration_ms).label("avg_duration_ms"),
             )
             .where(
                 UsageRecord.created_at >= start_date,
@@ -86,12 +88,14 @@ class ReportRepository:
                 "unique_users": 0,
                 "total_tokens": 0,
                 "total_cost_cents": 0,
+                "avg_duration_ms": 0,
             }
         return {
             "total_queries": int(row.total_queries or 0),
             "unique_users": int(row.unique_users or 0),
             "total_tokens": int(row.total_tokens or 0),
             "total_cost_cents": int(row.total_cost_cents or 0),
+            "avg_duration_ms": round(float(row.avg_duration_ms or 0), 2),
         }
 
     async def get_query_logs(
@@ -132,6 +136,8 @@ class ReportRepository:
                     UsageRecord.input_tokens + UsageRecord.output_tokens
                 ).label("total_tokens"),
                 func.sum(UsageRecord.cost_cents).label("total_cost_cents"),
+                # P0-Stage2: 真实平均响应时间
+                func.avg(UsageRecord.duration_ms).label("avg_duration_ms"),
             )
             .where(
                 UsageRecord.created_at >= start_date,
@@ -150,6 +156,7 @@ class ReportRepository:
                 "unique_users": int(row.unique_users or 0),
                 "total_tokens": int(row.total_tokens or 0),
                 "total_cost_cents": int(row.total_cost_cents or 0),
+                "avg_duration_ms": round(float(row.avg_duration_ms or 0), 2),
             }
             for row in rows
         ]
