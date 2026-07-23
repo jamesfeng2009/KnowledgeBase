@@ -1805,20 +1805,20 @@ flowchart LR
 
 ```mermaid
 flowchart TB
-    DATASET[评测数据集<br/>JSONL 格式<br/>query + expected_doc_ids] --> RUNNER[EvalRunner]
-    RUNNER --> RETRIEVE[调用 engine._retrieve<br/>获取检索结果]
-    RETRIEVE --> METRICS[检索指标计算<br/>Recall@5 / MRR / NDCG@5]
+    DATASET["评测数据集<br/>JSONL 格式<br/>query + expected_doc_ids"] --> RUNNER[EvalRunner]
+    RUNNER --> RETRIEVE["调用 engine._retrieve<br/>获取检索结果"]
+    RETRIEVE --> METRICS["检索指标计算<br/>Recall@5 / MRR / NDCG@5"]
     METRICS --> GEN{with_generation?}
-    GEN -->|是| ANSWER[调用 engine.answer<br/>获取生成答案]
-    ANSWER --> JUDGE[LLMJudgeService<br/>citation/completeness/faithfulness]
+    GEN -->|是| ANSWER["调用 engine.answer<br/>获取生成答案"]
+    ANSWER --> JUDGE["LLMJudgeService<br/>citation/completeness/faithfulness"]
     GEN -->|否| SKIP[跳过生成评测]
-    JUDGE --> AGGREGATE[聚合结果<br/>EvalRunResult]
+    JUDGE --> AGGREGATE["聚合结果<br/>EvalRunResult"]
     SKIP --> AGGREGATE
     AGGREGATE --> REPO{有基线?}
-    REPO -->|是| COMPARE[对比基线<br/>delta + 回归检测]
+    REPO -->|是| COMPARE["对比基线<br/>delta + 回归检测"]
     REPO -->|否| SAVE[保存为基线]
-    COMPARE -->|回归| EXIT[exit code 1<br/>CI 阻断]
-    COMPARE -->|无回归| EXIT_OK[exit code 0]
+    COMPARE -->|回归| EXIT["exit code 1<br/>CI 阻断"]
+    COMPARE -->|无回归| EXIT_OK["exit code 0"]
     SAVE --> EXIT_OK
 ```
 
