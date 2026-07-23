@@ -216,6 +216,16 @@ class Settings(BaseSettings):
     RAG_RETRIEVAL_MAX_RETRIES: int = 1
     # 生成质量守卫 — faithfulness 低于阈值时标记低置信度
     RAG_FAITHFULNESS_THRESHOLD: float = 3.0
+    # P2: 动态匹配阈值 — 基于查询频率自适应调节
+    # 高频查询（热门问题）阈值上浮（更严格筛选，减少噪声）；
+    # 低频查询（冷门问题）阈值下浮（更宽松，避免漏召回）。
+    RAG_DYNAMIC_THRESHOLD_ENABLED: bool = True
+    RAG_THRESHOLD_FREQ_HOT_COUNT: int = 10  # 频次 >= 此值视为高频查询
+    RAG_THRESHOLD_HOT_BOOST: float = 0.1  # 高频查询阈值上浮幅度
+    RAG_THRESHOLD_COLD_DROP: float = 0.05  # 低频查询阈值下浮幅度
+    RAG_THRESHOLD_FREQ_TTL: int = 86400  # 频次统计窗口（秒，默认 24h）
+    RAG_THRESHOLD_MIN: float = 0.1  # 动态阈值下限
+    RAG_THRESHOLD_MAX: float = 0.6  # 动态阈值上限
 
     # === P4 实时对话智能 ===
     # P4-A: 漂移检测
@@ -395,6 +405,8 @@ class Settings(BaseSettings):
         "CONTEXT_SELECTOR_MAX_TOKENS",
         "CONVERSATION_SUMMARIZER_MAX_TOKENS",
         "CONVERSATION_SUMMARIZER_RETAINED_TOKENS",
+        "RAG_THRESHOLD_FREQ_HOT_COUNT",
+        "RAG_THRESHOLD_FREQ_TTL",
     )
     @classmethod
     def validate_positive_int(cls, v: int) -> int:
@@ -410,6 +422,8 @@ class Settings(BaseSettings):
         "RETRY_BACKOFF_MAX",
         "RETRY_JITTER",
         "CIRCUIT_BREAKER_RECOVERY_TIMEOUT",
+        "RAG_THRESHOLD_HOT_BOOST",
+        "RAG_THRESHOLD_COLD_DROP",
     )
     @classmethod
     def validate_positive_float(cls, v: float) -> float:
@@ -439,6 +453,8 @@ class Settings(BaseSettings):
         "VIDEO_KEYFRAME_SCENE_THRESHOLD",
         "INTENT_ROUTER_CONFIDENCE_THRESHOLD",
         "GRAPH_SEARCH_SCORE",
+        "RAG_THRESHOLD_MIN",
+        "RAG_THRESHOLD_MAX",
     )
     @classmethod
     def validate_float_0_1(cls, v: float) -> float:

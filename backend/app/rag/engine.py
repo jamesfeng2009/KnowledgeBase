@@ -192,6 +192,7 @@ class AgenticRAGEngine:
         tool_guard: DangerousToolGuard | None = None,
         quality_guard: Any = None,
         query_rewriter: Any = None,
+        faq_matcher: Any = None,
     ) -> None:
         self.llm = llm
         self.mcp = mcp_client
@@ -201,6 +202,16 @@ class AgenticRAGEngine:
         self.cache = cache
         self.permission_filter = permission_filter
         self.max_iterations = max_iterations
+        # FAQ 快捷匹配器 — 缓存未命中后、向量检索前的零 LLM 快捷路径
+        # 未注入时尝试自动初始化，失败则禁用（降级到完整 RAG 链路）
+        self._faq_matcher = faq_matcher
+        if self._faq_matcher is None:
+            try:
+                from app.rag.faq_matcher import FAQMatcher
+                self._faq_matcher = FAQMatcher()
+            except Exception as exc:
+                log.warning("engine.faq_matcher_init_failed", error=str(exc))
+                self._faq_matcher = None
         # LangGraph 断点保存器（可选）— 传入 PostgresSaver 实例后，
         # build_graph() 会将其编译进状态图，支持中断恢复。
         self._checkpointer = checkpointer
@@ -325,6 +336,29 @@ class AgenticRAGEngine:
                     return
             except Exception as exc:
                 log.warning("engine.cache.get_error", error=str(exc))
+
+        # 1.5 FAQ 快捷匹配 — 缓存未命中后，尝试 BM25 精准匹配 faq chunk
+        # 命中时直接返回答案，跳过 Agent Loop（零 LLM 调用）
+        if self._faq_matcher is not None:
+            try:
+                faq_result = await self._faq_matcher.match(query, kb_ids=kb_ids)
+                if faq_result.matched:
+                    log.info(
+                        "engine.faq.hit",
+                        session_id=session_id,
+                        score=faq_result.score,
+                        chunk_id=faq_result.chunk_id,
+                    )
+                    # 写入缓存（与完整答案共享缓存层）
+                    if self.cache is not None:
+                        try:
+                            await self.cache.set(query, faq_result.answer, tenant_id=tenant_id)
+                        except Exception:
+                            pass
+                    yield faq_result.answer
+                    return
+            except Exception as exc:
+                log.warning("engine.faq.match_error", error=str(exc))
 
         # 2. 初始化状态
         state: AgentState = {
@@ -492,7 +526,12 @@ class AgenticRAGEngine:
         # 8. 回写缓存（key 含 tenant_id，跨租户互不可见）
         if self.cache is not None and answer:
             try:
-                await self.cache.set(query, answer, tenant_id=tenant_id)
+                # P1: 提取引用文档 ID，用于文档更新时主动失效缓存
+                doc_ids = list({
+                    str(d.get("doc_id")) for d in state.get("retrieved_docs", [])
+                    if d.get("doc_id")
+                }) or None
+                await self.cache.set(query, answer, tenant_id=tenant_id, doc_ids=doc_ids)
             except Exception as exc:
                 log.warning("engine.cache.set_error", error=str(exc))
 
@@ -1201,8 +1240,28 @@ class AgenticRAGEngine:
 
                 # 质量守卫：检查重排分数均值，低质量时扩展 top_k 重排
                 if self._quality_guard is not None:
+                    # P2: 动态匹配阈值 — 记录查询频次（仅首次迭代，避免多轮重复计数）
+                    if state.get("iteration", 1) == 1:
+                        try:
+                            await self._quality_guard.record_query_frequency(
+                                original_query
+                            )
+                        except Exception:
+                            pass
+                    # P2: 获取频率自适应动态阈值（不可用时回退静态阈值）
+                    _dyn_threshold: float | None = None
+                    try:
+                        _dyn_threshold = (
+                            await self._quality_guard.get_dynamic_threshold(
+                                original_query
+                            )
+                        )
+                    except Exception:
+                        _dyn_threshold = None
+
                     check_result = self._quality_guard.check_retrieval_quality(
-                        state["retrieved_docs"]
+                        state["retrieved_docs"],
+                        threshold_override=_dyn_threshold,
                     )
                     if self._quality_guard.should_retry_retrieval(
                         check_result, self._retrieval_retry_count

@@ -56,6 +56,8 @@ class QualityGuard:
 
     def __init__(self) -> None:
         self._judge_service: Any = None  # 延迟初始化 LLMJudgeService
+        # P2: 基于查询频率的动态阈值调节器（懒初始化）
+        self._freq_threshold: Any = None
 
     @property
     def _settings(self) -> Any:
@@ -74,6 +76,7 @@ class QualityGuard:
     def check_retrieval_quality(
         self,
         reranked_docs: list[dict[str, Any]],
+        threshold_override: float | None = None,
     ) -> RetrievalQualityResult:
         """检查重排分数均值，判断是否需要扩展重排。
 
@@ -82,6 +85,8 @@ class QualityGuard:
 
         Args:
             reranked_docs: 重排后的文档列表，每个 doc 含 "score" 字段。
+            threshold_override: 动态阈值（P2 频率自适应）。传入时优先使用，
+                否则回退到静态配置 RAG_RETRIEVAL_SCORE_THRESHOLD。
 
         Returns:
             RetrievalQualityResult 检查结果。
@@ -103,8 +108,10 @@ class QualityGuard:
             )
 
         mean_score = sum(scores) / len(scores)
-        threshold = getattr(
-            self._settings, "RAG_RETRIEVAL_SCORE_THRESHOLD", 0.3
+        threshold = (
+            threshold_override
+            if threshold_override is not None
+            else getattr(self._settings, "RAG_RETRIEVAL_SCORE_THRESHOLD", 0.3)
         )
 
         result = RetrievalQualityResult(
@@ -163,6 +170,55 @@ class QualityGuard:
         base = getattr(self._settings, "RAG_RERANK_TOP_K", 5)
         expand = getattr(self._settings, "RAG_RETRIEVAL_EXPAND_TOP_K", 10)
         return base + expand
+
+    # ------------------------------------------------------------------
+    # P2: 动态匹配阈值 — 基于查询频率自适应调节
+    # ------------------------------------------------------------------
+
+    def _get_freq_threshold(self) -> Any | None:
+        """懒初始化 FrequencyBasedThreshold — 不可用时返回 None。"""
+        if self._freq_threshold is not None:
+            return self._freq_threshold
+        try:
+            from app.rag.frequency_threshold import FrequencyBasedThreshold
+
+            self._freq_threshold = FrequencyBasedThreshold()
+            return self._freq_threshold
+        except Exception as exc:
+            log.warning("quality_guard.freq_threshold_init_error", error=str(exc))
+            return None
+
+    async def record_query_frequency(self, query: str) -> None:
+        """记录一次查询频次（用于动态阈值计算）。
+
+        优雅降级：FrequencyBasedThreshold 不可用或 Redis 异常时静默跳过，
+        不影响检索主流程。应在每次用户查询的首次检索迭代调用。
+        """
+        fbt = self._get_freq_threshold()
+        if fbt is None:
+            return
+        try:
+            await fbt.record_query(query)
+        except Exception as exc:
+            log.debug("quality_guard.record_freq_error", error=str(exc))
+
+    async def get_dynamic_threshold(self, query: str) -> float | None:
+        """获取查询的动态匹配阈值。
+
+        Returns:
+            动态阈值（float）；动态阈值关闭或不可用时返回 None，
+            调用方应回退到静态阈值。
+        """
+        fbt = self._get_freq_threshold()
+        if fbt is None:
+            return None
+        try:
+            if not fbt.enabled:
+                return None
+            return await fbt.get_threshold(query)
+        except Exception as exc:
+            log.debug("quality_guard.dynamic_threshold_error", error=str(exc))
+            return None
 
     # ------------------------------------------------------------------
     # 生成质量守卫 — 复用 LLMJudgeService

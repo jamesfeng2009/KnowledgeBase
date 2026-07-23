@@ -282,6 +282,8 @@ class KnowledgeService:
             updated = await self.doc_repo.update(doc_id, **update_fields)
             if updated is None:
                 raise ValueError(f"文档 {doc_id} 不存在")
+            # P1: 文档更新后主动失效关联的 Token 缓存，避免返回过期答案
+            await self._invalidate_cache_for_doc(str(doc_id))
             return updated
         return doc
 
@@ -346,3 +348,28 @@ class KnowledgeService:
         stmt = apply_tenant_filter(stmt, Document, self._tenant_id)
         stmt = stmt.order_by(Document.created_at.desc())
         return await paginate(stmt, params, self.db)
+
+    # ------------------------------------------------------------------
+    # P1: 缓存主动失效
+    # ------------------------------------------------------------------
+
+    async def _invalidate_cache_for_doc(self, doc_id: str) -> None:
+        """文档更新/删除后失效关联的 Token 缓存。
+
+        优雅降级：缓存服务不可用时仅记录日志，不影响文档操作。
+        """
+        try:
+            from app.rag.cache import TokenCache
+
+            cache = TokenCache()
+            count = await cache.invalidate_by_doc_id(doc_id)
+            if count > 0:
+                from app.utils.logger import get_logger
+                get_logger(__name__).info(
+                    "knowledge.cache_invalidated",
+                    doc_id=doc_id,
+                    count=count,
+                )
+        except Exception:
+            # 缓存失效失败不影响文档操作本身
+            pass

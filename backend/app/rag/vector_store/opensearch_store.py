@@ -259,6 +259,11 @@ class OpenSearchVectorStore(VectorStoreBase):
             pass
 
         # 创建索引
+        # P1-T4: 中文分词优化 — content 字段使用 ik_max_word 分词器（需安装 IK 插件），
+        # search_analyzer 使用 ik_smart 保证查询时正确分词。
+        # 未安装 IK 插件时可通过 OPENSEARCH_CONTENT_ANALYZER 配置回退到 standard。
+        _analyzer = getattr(settings, "OPENSEARCH_CONTENT_ANALYZER", "ik_max_word")
+        _search_analyzer = getattr(settings, "OPENSEARCH_SEARCH_ANALYZER", "ik_smart")
         index_body: dict[str, Any] = {
             "settings": {
                 "index": {
@@ -270,7 +275,11 @@ class OpenSearchVectorStore(VectorStoreBase):
                 "properties": {
                     "doc_id": {"type": "keyword"},
                     "chunk_id": {"type": "keyword"},
-                    "content": {"type": "text", "analyzer": "standard"},
+                    "content": {
+                        "type": "text",
+                        "analyzer": _analyzer,
+                        "search_analyzer": _search_analyzer,
+                    },
                     "embedding": {
                         "type": "knn_vector",
                         "dimension": self.dimension,
@@ -282,7 +291,11 @@ class OpenSearchVectorStore(VectorStoreBase):
                         },
                     },
                     "kb_id": {"type": "keyword"},
-                    "title_path": {"type": "text", "analyzer": "keyword"},
+                    "title_path": {
+                        "type": "text",
+                        "analyzer": _analyzer,
+                        "search_analyzer": _search_analyzer,
+                    },
                     "content_type": {"type": "keyword"},
                     "chunk_strategy": {"type": "keyword"},
                 }

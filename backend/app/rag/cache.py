@@ -53,6 +53,8 @@ class _L2Entry:
     embedding: list[float]
     expire_at: float
     tenant_id: str | None = None
+    # P1 主动失效：记录此缓存条目关联的 doc_id 列表
+    doc_ids: list[str] | None = None
 
 
 class TokenCache:
@@ -151,16 +153,24 @@ class TokenCache:
         # L3: 由 Provider 处理，本层不命中
         return None
 
-    async def set(self, query: str, answer: str, tenant_id: str | None = None) -> None:
+    async def set(
+        self,
+        query: str,
+        answer: str,
+        tenant_id: str | None = None,
+        doc_ids: list[str] | None = None,
+    ) -> None:
         """写入缓存 — 同时写入 L1（精确）与 L2（语义）。
 
         Args:
             query: 用户查询文本。
             answer: 生成的答案。
             tenant_id: 租户 ID（安全隔离）— 与 get 传入值一致才可命中。
+            doc_ids: 答案引用的文档 ID 列表（主动失效用）— 文档更新时
+                     据此清除受影响缓存条目，避免返回过期答案。
         """
-        await self._l1_set(query, answer, ttl=_L1_TTL, tenant_id=tenant_id)
-        await self._l2_set(query, answer, tenant_id)
+        await self._l1_set(query, answer, ttl=_L1_TTL, tenant_id=tenant_id, doc_ids=doc_ids)
+        await self._l2_set(query, answer, tenant_id, doc_ids)
 
     # ------------------------------------------------------------------
     # L1: Redis 精确缓存
@@ -190,14 +200,26 @@ class TokenCache:
         answer: str,
         ttl: int,
         tenant_id: str | None = None,
+        doc_ids: list[str] | None = None,
     ) -> None:
-        """写入 Redis 精确缓存，失败仅记录日志。"""
+        """写入 Redis 精确缓存，失败仅记录日志。
+
+        P1 主动失效：同时写入 doc_id → cache_key 反向索引（Redis SET），
+        文档更新时通过 invalidate_by_doc_id 批量删除关联缓存。
+        """
         redis = await self._get_redis()
         if redis is None:
             return
         try:
             key = f"cache:l1:{self._hash(query, tenant_id)}"
             await redis.set(key, answer, ex=ttl)
+            # 写入 doc_id 反向索引
+            if doc_ids:
+                for doc_id in doc_ids:
+                    index_key = f"cache:docidx:{doc_id}"
+                    await redis.sadd(index_key, key)
+                    # 反向索引与缓存 key 同步过期，避免残留
+                    await redis.expire(index_key, ttl)
         except Exception as exc:
             log.warning("cache.l1.set_error", error=str(exc))
 
@@ -240,7 +262,13 @@ class TokenCache:
             return best_answer
         return None
 
-    async def _l2_set(self, query: str, answer: str, tenant_id: str | None = None) -> None:
+    async def _l2_set(
+        self,
+        query: str,
+        answer: str,
+        tenant_id: str | None = None,
+        doc_ids: list[str] | None = None,
+    ) -> None:
         """写入内存语义缓存 — 存储 query 的 embedding 与所属租户供后续相似度匹配。"""
         embedder = await self._get_embedder()
         if embedder is None:
@@ -258,6 +286,7 @@ class TokenCache:
             embedding=query_vec,
             expire_at=time.time() + _L2_TTL,
             tenant_id=tenant_id,
+            doc_ids=doc_ids,
         )
         self._l2_store.move_to_end(key)
         # 有界 LRU：超容逐出最久未使用条目（队首）
@@ -270,6 +299,63 @@ class TokenCache:
         expired = [k for k, v in self._l2_store.items() if v.expire_at < now]
         for k in expired:
             self._l2_store.pop(k, None)
+
+    # ------------------------------------------------------------------
+    # P1: 主动失效 — 文档更新/删除时清除受影响缓存
+    # ------------------------------------------------------------------
+
+    async def invalidate_by_doc_id(self, doc_id: str) -> int:
+        """根据文档 ID 主动失效关联的缓存条目。
+
+        文档更新或删除时调用，清除所有引用了该文档的 L1(Redis) 和 L2(内存) 缓存，
+        避免用户拿到过期答案。
+
+        Args:
+            doc_id: 被更新/删除的文档 ID。
+
+        Returns:
+            被清除的缓存条目数（L1 + L2 合计）。
+        """
+        invalidated = 0
+
+        # L1: 通过 Redis 反向索引查找并删除关联缓存 key
+        redis = await self._get_redis()
+        if redis is not None:
+            try:
+                index_key = f"cache:docidx:{doc_id}"
+                cache_keys = await redis.smembers(index_key)
+                if cache_keys:
+                    for key in cache_keys:
+                        await redis.delete(key)
+                        invalidated += 1
+                    # 清除反向索引本身
+                    await redis.delete(index_key)
+                    log.info(
+                        "cache.invalidated",
+                        level="L1",
+                        doc_id=doc_id,
+                        count=len(cache_keys),
+                    )
+            except Exception as exc:
+                log.warning("cache.invalidate.l1_error", doc_id=doc_id, error=str(exc))
+
+        # L2: 遍历内存缓存，删除 doc_ids 包含该 doc_id 的条目
+        keys_to_remove = [
+            key for key, entry in self._l2_store.items()
+            if entry.doc_ids and doc_id in entry.doc_ids
+        ]
+        for key in keys_to_remove:
+            self._l2_store.pop(key, None)
+            invalidated += 1
+        if keys_to_remove:
+            log.info(
+                "cache.invalidated",
+                level="L2",
+                doc_id=doc_id,
+                count=len(keys_to_remove),
+            )
+
+        return invalidated
 
     async def close(self) -> None:
         """关闭 Redis 连接 — 应用关闭时调用。"""

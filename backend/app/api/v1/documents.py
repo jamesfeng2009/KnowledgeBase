@@ -902,6 +902,13 @@ async def delete_document(
 
     doc_repo = DocumentRepository(db)
     await doc_repo.soft_delete(doc_id)
+    # P1: 文档删除后主动失效关联的 Token 缓存
+    try:
+        from app.rag.cache import TokenCache
+        cache = TokenCache()
+        await cache.invalidate_by_doc_id(str(doc_id))
+    except Exception:
+        pass
     return ApiResponse(code=0, message="success")
 
 
