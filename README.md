@@ -25,6 +25,10 @@
 - [离线评测系统](#离线评测系统)
 - [部署指南](#部署指南)
 - [能力增强（P0-P2）](#能力增强p0-p2)
+- [P1: 意图路由（IntentRouter）](#p1-意图路由intentrouter)
+- [P2: 实体注册表（EntityRegistry）](#p2-实体注册表entityregistry)
+- [P3: 上下文工程（Context Engineering）](#p3-上下文工程context-engineering)
+- [P4: 实时对话智能（Realtime Conversation Intelligence）](#p4-实时对话智能realtime-conversation-intelligence)
 - [测试](#测试)
 
 ---
@@ -74,6 +78,17 @@ EnterpriseKnowledge/
 │   │   ├── api/openapi/v1/           # 开放接口（6 类能力，API Key 认证）
 │   │   ├── agents/                   # 多 Agent 协作（CrewAI）
 │   │   ├── connectors/               # 企业连接器（OA/ERP/CRM/Mail）
+│   │   ├── context/                  # 对话上下文工程（P3-P4）
+│   │   │   ├── focus_tracker.py         # P3-A: 焦点追踪（TopicTracker + ConversationFocus + 焦点历史栈）
+│   │   │   ├── coreference_resolver.py  # P3-A: 指代消解（规则 + LLM + 历史注入 + 焦点栈）
+│   │   │   ├── context_selector.py      # P3-B: 上下文选择器（语义相似度 + 时间衰减 + 去重）
+│   │   │   ├── conversation_summarizer.py # P3-C: 对话摘要（分层压缩 + 关键信息保留）
+│   │   │   ├── context_budget.py        # P3-E: 上下文预算管理（Token 上限保护）
+│   │   │   ├── drift_detector.py        # P4-A: 漂移检测（三级策略：规则→Embedding→置信度衰减）
+│   │   │   ├── contradiction_detector.py # P4-B: 矛盾检测（用户陈述/回答-知识库/文档间三场景）
+│   │   │   ├── preference_drift_detector.py # P4-F: 偏好偏移检测（纯规则零 Token）
+│   │   │   ├── retrieval_matcher.py     # P4-D: 检索匹配检测（embedding 相似度）
+│   │   │   └── repetition_detector.py   # P4-G: 重复提问检测（cosine > 0.85，复用 embedding）
 │   │   ├── core/                     # 模块注册表 + 权限
 │   │   ├── llm/                      # LLM Provider 抽象层（Anthropic / DashScope / vLLM）
 │   │   │   ├── dashscope_provider.py # 通义千问 Provider（saas_dashscope 模式，OpenAI 兼容）
@@ -125,7 +140,7 @@ EnterpriseKnowledge/
 │   ├── config/
 │   │   └── models.json               # P2 模型配置文件（7 个模型 × 4 种部署模式，Git 管理）
 │   ├── tasks/                        # Celery 异步任务
-│   ├── tests/                        # 测试（2024 项）
+│   ├── tests/                        # 测试（2245 项）
 │   ├── celery_app.py                 # Celery 入口
 │   └── requirements.txt
 ├── collab-service/                   # Yjs 协作服务（Node.js + TypeScript）
@@ -1267,6 +1282,12 @@ sequenceDiagram
 | `sources` | 生成完成 | 引用来源列表 | 生成后 |
 | `quality` | 反思完成 | `citation_accuracy`、`completeness`、`total_score` | 反思 |
 | `done` | 全流程结束 | `token_count`、`iterations` | 结束 |
+| `context_resolved` | 指代消解完成 | `original_query`、`resolved_query`、`focus` | P3-A 上下文 |
+| `drift_detected` | 话题漂移检测 | `is_drift`、`drift_score`、`detection_method`、`action` | P4-A 对话智能 |
+| `contradiction_detected` | 矛盾检测 | `contradiction_type`、`description`、`severity`、`action` | P4-B 对话智能 |
+| `retrieval_mismatch` | 检索不匹配 | `is_match`、`match_score`、`action` | P4-D 对话智能 |
+| `preference_changed` | 偏好偏移 | `preference_type`、`new_value` | P4-F 对话智能 |
+| `repetition_detected` | 重复提问 | `similarity_score`、`previous_query`、`repetition_count`、`action` | P4-G 对话智能 |
 
 **实现要点**：
 - `app/utils/sse.py`：`SSEEventType` 枚举 + `sse_response()` 封装 + `_to_sse_stream()` 去重 done 事件
@@ -1999,12 +2020,165 @@ LangFuse v2 全链路追踪，覆盖 Agent Loop 五节点 + HTTP request_id 关�
 
 ---
 
+## P1: 意图路由（IntentRouter）
+
+规则 + LLM 混合意图识别引擎，在 Agent Loop 之前完成意图判断，支持快捷路径短路（无需检索直接回答）。
+
+- **规则优先**：关键词 + 正则匹配 7 种意图（greeting / simple_qa / chitchat / complaint / clarification / follow_up / off_topic），零 Token 开销
+- **LLM 兜底**：规则无法判定时调用 LLM（max_tokens=50），输出结构化 JSON 意图分类
+- **快捷路径短路**：greeting / chitchat / off_topic 等意图直接返回预设回答，跳过 Agent Loop，首 token < 100ms
+- **集成点**：`chat_service.prepare_chat()` 中在焦点追踪之前执行，结果传入 `PreparedChat.intent_info`
+- **优雅降级**：LLM 不可用时回退到纯规则，不阻断对话
+- **设计文档**：`docs/P1_P2_Intent_Entity_Design.md`
+
+---
+
+## P2: 实体注册表（EntityRegistry）
+
+实体识别 + 查询扩展 + 本体谓词推理，让 RAG 引擎"理解"用户查询中的领域实体。
+
+- **实体识别**：规则匹配 + LLM 提取双策略，支持自定义实体词典
+- **查询扩展**：`expand_query()` 将实体别名、同义词、上位词注入查询，提升召回率
+- **本体谓词**：支持 `is_a` / `part_of` / `related_to` 三种关系推理，自动发现隐含关联实体
+- **集成点**：`chat_service.prepare_chat()` 中在意图路由之后执行，扩展后的查询传入 CoreferenceResolver 和引擎
+- **设计文档**：`docs/P1_P2_Intent_Entity_Design.md`
+
+---
+
+## P3: 上下文工程（Context Engineering）
+
+六组件全量实现，系统化管理多轮对话的上下文窗口，确保 LLM 在长对话中不丢失关键信息。
+
+### P3-A: 焦点追踪 + 指代消解
+
+- **TopicTracker**：从对话历史中提取当前焦点（topic / entity / intent），规则优先 → LLM 兜底 → 继承上次焦点
+- **ConversationFocus**：焦点数据结构，含 `to_context_str()` 和 `to_dict()` 序列化
+- **CoreferenceResolver**：检测省略句 → 规则补全（零 Token）→ LLM 补全（1 次轻量调用），P4-C 增强后注入对话历史 + 焦点栈
+- **焦点历史栈**（P4-C 增强）：`TopicTracker` 保留最近 5 个焦点，`get_focus_history(n)` 供指代消解回溯
+
+### P3-B: 上下文选择器
+
+- **ContextSelector**：从全量历史中选择最相关的上下文片段，语义相似度（embedding）+ 时间衰减 + 去重
+- 懒加载 Embedder，不可用时回退到最近 N 条消息
+
+### P3-C: 对话摘要
+
+- **ConversationSummarizer**：分层压缩策略，保留关键信息（实体、数字、决策），LLM 生成摘要
+- 旧消息 → 摘要替代，新消息 → 原文保留，Token 预算可控
+
+### P3-E: 上下文预算 + Scratchpad
+
+- **ContextBudgetManager**：三段式压缩（system prompt → 历史摘要 → 当前对话），确保不超 LLM Token 上限
+- **Scratchpad**：`AgentState.scratchpad` 累积每轮推理笔记，`_think()` 注入最近 300 字高密度信息
+
+### P3-F: LLM 事实提取
+
+- **MemoryManager 事实提取**：LLM 从对话中提取持久化事实（用户偏好、项目决策、关键信息），写入 Mem0
+- 与 P4-F 偏好偏移检测联动：提取的偏好用于 `current_preferences` 参数，避免重复检测
+
+---
+
+## P4: 实时对话智能（Realtime Conversation Intelligence）
+
+7 种实时检测器 + 混合执行模型，让 AI 对话具备"感知力" — 话题漂移、矛盾、偏好变化、重复提问等场景实时检测。
+
+### 执行模型
+
+```
+prepare_chat（同步关键路径）                    stream_chat（异步非关键路径）
+┌─────────────────────────────┐              ┌──────────────────────────────┐
+│ DriftDetector       ~50ms   │              │ asyncio.create_task(          │
+│ PreferenceDriftDetector ~0ms│              │   ContradictionDetector      │
+│ RepetitionDetector  ~100ms  │              │ )  ← 后台运行，不阻塞首 token │
+│ CoreferenceResolver ~400ms  │              │   完成后 push SSE 事件        │
+└─────────────────────────────┘              └──────────────────────────────┘
+         ↓ 首 token ≈ 500-700ms                       ↓ 延迟到达
+```
+
+### P4-A: 漂移检测（DriftDetector）
+
+三级策略，逐级递进，零到轻量 Token 开销：
+
+1. **规则检查**（零 Token）：话题关键词域比较，topic/entity 不在 query 中 → 可能漂移
+2. **Embedding 检查**（零 LLM Token）：cosine(query, focus) < 0.4 = 漂移，0.4-0.6 = 可能漂移
+3. **置信度衰减**（零 Token）：连续 3 轮低置信度（< 0.4）→ 漂移
+
+漂移时 `reset_focus()` 清空焦点栈，重新提取。检测结果通过 SSE `drift_detected` 事件推送前端。
+
+### P4-B: 矛盾检测（ContradictionDetector）
+
+三种检测场景，共同实体预筛省 Token：
+
+1. **用户陈述矛盾**（prepare_chat 后台）：当前陈述 vs 历史陈述，共同时体预筛 → 1 次 LLM 调用
+2. **回答-知识库矛盾**（_reflect 阶段）：AI 回答 vs 检索文档，`check_answer_consistency()`
+3. **文档间矛盾**（_retrieve 后）：检索结果两两比对，最多前 5 篇避免 O(n²) 爆炸
+
+LLM 不可用时全部优雅降级为无矛盾。结果通过 SSE `contradiction_detected` 事件推送。
+
+### P4-C: 指代消解增强
+
+P3-A CoreferenceResolver 的增强版：
+
+- **焦点历史栈注入**：`resolve()` 接收 `focus_stack` 参数，LLM prompt 包含最近 3 个焦点（轮0/轮1/轮2）
+- **对话历史注入**：`resolve()` 接收 `history` 参数，LLM prompt 包含最近 6 条对话原文
+- **向后兼容**：不传新参数时行为与 P3 一致
+
+### P4-D: 检索匹配检测（RetrievalMatcher）
+
+检索完成后检测结果是否与查询匹配：
+
+- 对 query 和每篇 doc 的 title+snippet 做 embedding，计算 cosine 相似度
+- top-1 相似度 < 0.3 → 不匹配，建议 `expand_retrieval`
+- Embedder 不可用时跳过（视为匹配），不阻断对话
+
+### P4-E: 焦点注入引擎
+
+AgentState 新增 `conversation_focus` 和 `drift_info` 字段，`_think()` 动态上下文注入：
+
+- 有焦点时：注入"当前对话焦点：主题=X, 实体=Y, 意图=Z"
+- 有漂移时：注入"注意：用户可能切换了话题，请关注当前问题的独立完整性"
+- `answer()` 方法签名新增 `conversation_focus` / `drift_info` 参数
+
+### P4-F: 偏好偏移检测（PreferenceDriftDetector）
+
+纯规则，零 LLM Token，零延迟：
+
+- 扫描 6 类偏好关键词：`concise`（简单点/太长了）、`detailed`（详细点/展开）、`en`（用英文）、`zh`（用中文）、`no_code`（不要代码）、`with_code`（给代码）
+- 检测到偏好变化 → `get_system_prompt_modifier()` 生成风格指令 → 追加到 `memory_context`
+- 支持已有偏好去重（`current_preferences` 参数）
+
+### P4-G: 重复提问检测（RepetitionDetector）
+
+复用 Embedding，零额外 LLM 成本：
+
+- cosine(current_query, last_query) > 0.85 → 重复
+- 连续重复 >= 2 次 → `action="expand_retrieval"`（上轮回答未满足需求，扩大检索范围）
+- 支持 `current_embedding` 参数复用 DriftDetector 已计算的向量
+
+### 集成架构
+
+`chat_service.py` 中的集成点：
+
+| 阶段 | 检测器 | 执行方式 | SSE 事件 |
+|------|--------|----------|----------|
+| `prepare_chat` | DriftDetector | 同步 | `drift_detected` |
+| `prepare_chat` | PreferenceDriftDetector | 同步 | `preference_changed` |
+| `prepare_chat` | RepetitionDetector | 同步 | `repetition_detected` |
+| `prepare_chat` | CoreferenceResolver（增强） | 同步 | `context_resolved` |
+| `stream_chat` | ContradictionDetector（用户陈述） | `asyncio.create_task` 后台 | `contradiction_detected` |
+| `stream_chat` | 偏好指令注入 memory_context | 同步 | — |
+| `stream_chat` | focus + drift 传入 engine.answer() | 同步 | — |
+
+- **设计文档**：`docs/P4_Realtime_Conversation_Intelligence_Design.md`
+
+---
+
 ## 测试
 
 ```bash
 cd backend
 
-# 运行全部测试（2024 项）
+# 运行全部测试（2245 项）
 python -m pytest --tb=short -q
 
 # 运行特定模块测试
@@ -2034,6 +2208,22 @@ python -m pytest tests/test_health_check.py -v                 # Provider 健康
 python -m pytest tests/test_request_context.py -v              # P0 HTTP request_id contextvar
 python -m pytest tests/test_tts_service.py -v                  # P1 TTS 语音合成（edge-tts）
 python -m pytest tests/test_cross_modal.py -v                  # P2 跨模态检索（jina-clip-v2 文本+图片向量化）
+python -m pytest tests/test_intent_router.py -v               # P1 意图路由（规则+LLM 混合意图识别）
+python -m pytest tests/test_entity_registry.py -v             # P2 实体注册表（实体识别+查询扩展+本体谓词）
+python -m pytest tests/test_focus_tracker.py -v               # P3-A 焦点追踪（TopicTracker + ConversationFocus）
+python -m pytest tests/test_focus_tracker_enhanced.py -v      # P4-C 焦点历史栈增强
+python -m pytest tests/test_context_selector.py -v            # P3-B 上下文选择器（语义相似度+时间衰减）
+python -m pytest tests/test_conversation_summarizer.py -v     # P3-C 对话摘要（分层压缩）
+python -m pytest tests/test_scratchpad.py -v                  # P3-E Scratchpad 草稿本
+python -m pytest tests/test_fact_extraction.py -v             # P3-F LLM 事实提取
+python -m pytest tests/test_drift_detector.py -v              # P4-A 漂移检测（三级策略）
+python -m pytest tests/test_contradiction_detector.py -v      # P4-B 矛盾检测（三场景）
+python -m pytest tests/test_preference_drift_detector.py -v   # P4-F 偏好偏移检测（纯规则）
+python -m pytest tests/test_retrieval_matcher.py -v           # P4-D 检索匹配检测
+python -m pytest tests/test_repetition_detector.py -v         # P4-G 重复提问检测
+python -m pytest tests/test_coreference_enhanced.py -v        # P4-C 指代消解增强（历史+焦点栈注入）
+python -m pytest tests/test_engine_focus_injection.py -v      # P4-E 焦点注入引擎
+python -m pytest tests/test_p4_integration.py -v              # P4 集成测试（chat_service 集成）
 ```
 
 ### 测试覆盖
@@ -2066,7 +2256,23 @@ python -m pytest tests/test_cross_modal.py -v                  # P2 跨模态检
 | `test_request_context.py` | 4 | P0 HTTP request_id contextvar（set/get/reset/嵌套） |
 | `test_tts_service.py` | 7 | P1 TTS 语音合成（edge-tts 空文本/禁用/截断/合成/音色列表） |
 | `test_cross_modal.py` | 22 | P2 跨模态检索（JinaCLIPEmbedder 文本+图片向量化、CrossModalService 入库、降级逻辑、维度一致性、C1/C2 独立索引隔离验证） |
-| **合计** | **2030** | **2024 passed + 6 skipped，零失败（含 27 项预存 DB 外键/事件循环/mock 污染问题已全部修复）** |
+| `test_intent_router.py` | 59 | P1 意图路由（规则匹配 7 种意图、LLM 兜底、快捷路径短路、优雅降级、集成测试） |
+| `test_entity_registry.py` | 51 | P2 实体注册表（实体识别、查询扩展、本体谓词推理、EntityRegistry 集成） |
+| `test_focus_tracker.py` | 27 | P3-A 焦点追踪（TopicTracker 规则+LLM 提取、ConversationFocus 序列化、置信度继承） |
+| `test_focus_tracker_enhanced.py` | 9 | P4-C 焦点历史栈（栈大小限制、get_focus_history、reset_focus、多轮累积） |
+| `test_context_selector.py` | 10 | P3-B 上下文选择器（语义相似度+时间衰减+去重、懒加载 Embedder） |
+| `test_conversation_summarizer.py` | 8 | P3-C 对话摘要（分层压缩、关键信息保留、LLM 降级） |
+| `test_scratchpad.py` | 5 | P3-E Scratchpad（草稿本累积、_think 注入、Token 截断） |
+| `test_fact_extraction.py` | 8 | P3-F LLM 事实提取（偏好/决策/关键信息提取、Mem0 写入、降级） |
+| `test_drift_detector.py` | 14 | P4-A 漂移检测（三级策略：规则/Embedding/置信度衰减、优雅降级） |
+| `test_contradiction_detector.py` | 19 | P4-B 矛盾检测（用户陈述/回答-知识库/文档间三场景、共同实体预筛、LLM JSON 解析） |
+| `test_preference_drift_detector.py` | 16 | P4-F 偏好偏移检测（6 类偏好关键词、已有偏好去重、system prompt 修饰） |
+| `test_retrieval_matcher.py` | 11 | P4-D 检索匹配检测（top-1 相似度、多文档、text 字段兼容、降级） |
+| `test_repetition_detector.py` | 12 | P4-G 重复提问检测（cosine > 0.85、连续重复计数、current_embedding 复用） |
+| `test_coreference_enhanced.py` | 11 | P4-C 指代消解增强（历史注入、焦点栈注入、截断、规则回退） |
+| `test_engine_focus_injection.py` | 9 | P4-E 焦点注入引擎（AgentState 新字段、_think 动态注入、漂移警告） |
+| `test_p4_integration.py` | 9 | P4 集成测试（PreparedChat P4 字段、SSE 事件类型、检测器协作、后台任务） |
+| **合计** | **2245** | **2239 passed + 6 skipped，零失败（含 27 项预存 DB 外键/事件循环/mock 污染问题已全部修复）** |
 
 ---
 
