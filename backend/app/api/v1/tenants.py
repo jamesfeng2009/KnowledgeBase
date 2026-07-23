@@ -41,8 +41,8 @@ async def _get_current_tenant(
 ) -> Tenant:
     """获取当前用户所属租户。
 
-    私有部署模式下通常只有单个租户，取第一条；
-    SaaS 模式下通过用户关联确定（此处简化为取第一条活跃租户）。
+    C6 fix: SaaS 模式按 user.tenant_id 过滤，避免跨租户数据泄漏；
+    私有部署 user.tenant_id 为 None 时取第一条活跃租户（兼容单租户）。
 
     Args:
         db: 异步数据库会话。
@@ -54,7 +54,11 @@ async def _get_current_tenant(
     Raises:
         HTTPException(404): 找不到租户。
     """
-    stmt = select(Tenant).where(Tenant.deleted_at.is_(None)).limit(1)
+    stmt = select(Tenant).where(Tenant.deleted_at.is_(None))
+    # C6 fix: SaaS 模式按用户 tenant_id 过滤
+    if user.tenant_id is not None:
+        stmt = stmt.where(Tenant.id == user.tenant_id)
+    stmt = stmt.limit(1)
     result = await db.execute(stmt)
     tenant = result.scalars().first()
     if tenant is None:
@@ -134,17 +138,22 @@ async def get_tenant_usage(
     """获取用量统计（当前用户数、已用存储等）。"""
     tenant = await _get_current_tenant(db, user)
 
-    # 当前用户数
+    # 当前用户数 — C6 fix: 按租户过滤
     user_count_stmt = select(func.count(User.id)).where(
         User.deleted_at.is_(None),
         User.is_active.is_(True),
     )
+    if user.tenant_id is not None:
+        user_count_stmt = user_count_stmt.where(User.tenant_id == user.tenant_id)
     current_users = await db.scalar(user_count_stmt) or 0
 
     # 已用存储：统计所有文档 content_text 字段长度之和（近似估算）
+    # C6 fix: 按租户过滤
     storage_stmt = select(
         func.coalesce(func.sum(func.length(Document.content_text)), 0)
     ).where(Document.deleted_at.is_(None))
+    if user.tenant_id is not None:
+        storage_stmt = storage_stmt.where(Document.tenant_id == user.tenant_id)
     used_storage = await db.scalar(storage_stmt) or 0
 
     # 文件存储（如有 file_path 则计入）
@@ -152,6 +161,8 @@ async def get_tenant_usage(
         Document.deleted_at.is_(None),
         Document.file_path.is_not(None),
     )
+    if user.tenant_id is not None:
+        file_count_stmt = file_count_stmt.where(Document.tenant_id == user.tenant_id)
     file_count = await db.scalar(file_count_stmt) or 0
     # 每个文件预估平均 500KB
     used_storage += int(file_count) * 500 * 1024

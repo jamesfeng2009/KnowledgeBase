@@ -41,13 +41,13 @@ async def _extract_requirements(
     tenant_id: str | None = None,
 ) -> dict:
     """异步执行需求提取 — 调用 RequirementAnalysisService。"""
-    from app.database import async_session_factory
+    from app.database import task_db_session
     from app.llm.factory import get_llm_provider
     from app.services.testing import RequirementAnalysisService
 
     tid = uuid.UUID(tenant_id) if tenant_id else None
 
-    async with async_session_factory() as db:
+    async with task_db_session() as db:
         try:
             llm = get_llm_provider()
         except Exception as exc:
@@ -102,13 +102,13 @@ async def _generate_test_cases(
     tenant_id: str | None = None,
 ) -> dict:
     """异步执行用例生成 — 调用 TestCaseGenerationService。"""
-    from app.database import async_session_factory
+    from app.database import task_db_session
     from app.llm.factory import get_llm_provider
     from app.services.testing import TestCaseGenerationService
 
     tid = uuid.UUID(tenant_id) if tenant_id else None
 
-    async with async_session_factory() as db:
+    async with task_db_session() as db:
         try:
             llm = get_llm_provider()
         except Exception as exc:
@@ -160,13 +160,13 @@ async def _orchestrate_test_plan(
     tenant_id: str | None = None,
 ) -> dict:
     """异步执行计划编排 — 调用 TestOrchestrationService。"""
-    from app.database import async_session_factory
+    from app.database import task_db_session
     from app.llm.factory import get_llm_provider
     from app.services.testing import TestOrchestrationService
 
     tid = uuid.UUID(tenant_id) if tenant_id else None
 
-    async with async_session_factory() as db:
+    async with task_db_session() as db:
         try:
             llm = get_llm_provider()
         except Exception as exc:

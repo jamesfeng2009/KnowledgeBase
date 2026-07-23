@@ -59,6 +59,10 @@ class Settings(BaseSettings):
     # 否则检索端查询不存在的索引会导致 BM25 被静默禁用。
     OPENSEARCH_INDEX: str = "ekb_documents"
 
+    # C1/C2 fix: 跨模态图片向量使用独立索引，避免与文本向量维度冲突
+    # SaaS 文本向量 3072 维 vs jina-clip-v2 图片向量 1024 维
+    OPENSEARCH_CROSS_MODAL_INDEX: str = "ekb_cross_modal"
+
     # === 向量存储后端 ===
     # os_knn: OpenSearch k-NN（默认，< 500 万向量场景）
     # milvus: Milvus 向量引擎（可选，> 500 万向量场景）
@@ -80,6 +84,9 @@ class Settings(BaseSettings):
     DEPLOY_MODE: Literal[
         "saas", "saas_dashscope", "private_overseas", "private_domestic"
     ] = "saas"
+
+    # C6 fix: SaaS 模式默认关闭开放注册，需管理员邀请或审批
+    REGISTRATION_ENABLED: bool = False
 
     # === SaaS 模式 API Keys ===
     ANTHROPIC_API_KEY: str = ""

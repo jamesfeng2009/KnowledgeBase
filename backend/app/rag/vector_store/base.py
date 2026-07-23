@@ -140,7 +140,13 @@ class VectorStoreBase(ABC):
         SaaS 模式 OpenAI text-embedding-3-large 输出 3072 维，
         私有部署 BGE-M3 via TEI 输出 1024 维。
         旧代码硬编码 1024 导致 SaaS 模式 upsert 时维度不匹配静默失败。
+
+        C1/C2 fix: 支持跨模态索引的维度覆盖 — 跨模态索引固定使用
+        jina-clip-v2 的 1024 维，与文本 Embedder 的维度无关。
         """
+        # C1/C2 fix: 跨模态索引维度覆盖
+        if getattr(self, "_dimension_override", None) is not None:
+            return self._dimension_override
         try:
             from app.llm.embedder import get_embedder
 

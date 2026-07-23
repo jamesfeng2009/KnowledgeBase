@@ -31,9 +31,22 @@ async def register(
     接收邮箱、密码、姓名，经 AuthService 完成密码哈希与用户创建后，
     返回不含密码哈希的 UserResponse。
 
+    C6 fix: SaaS 模式默认关闭开放注册（REGISTRATION_ENABLED=False），
+    私有部署可通过环境变量 REGISTRATION_ENABLED=true 开启。
+
     业务异常：
+    - 注册已关闭 → 403 Forbidden
     - 邮箱已被注册 → 409 Conflict
     """
+    from app.config import get_settings
+
+    settings = get_settings()
+    if not settings.REGISTRATION_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="注册功能未开放，请联系管理员创建账号",
+        )
+
     service = AuthService(db)
     try:
         user = await service.register(body.email, body.password, body.name)

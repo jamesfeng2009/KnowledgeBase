@@ -70,6 +70,7 @@ class OpenSearchVectorStore(VectorStoreBase):
         self,
         http_client: httpx.AsyncClient | None = None,
         index_name: str = _KNN_INDEX,
+        dimension_override: int | None = None,
     ) -> None:
         from app.utils.retry import build_retry_http_client
 
@@ -79,6 +80,8 @@ class OpenSearchVectorStore(VectorStoreBase):
         self._index_name: str = index_name
         self._available: bool | None = None
         self._index_ready: bool = False
+        # C1/C2 fix: 跨模态索引维度覆盖（jina-clip-v2 = 1024，与文本 Embedder 无关）
+        self._dimension_override: int | None = dimension_override
 
     # ------------------------------------------------------------------
     # search

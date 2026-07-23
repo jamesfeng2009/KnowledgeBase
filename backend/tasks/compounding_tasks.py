@@ -40,13 +40,13 @@ async def _extract_knowledge(
     tenant_id: str | None = None,
 ) -> dict:
     """异步执行知识提取 — 调用 KnowledgeCompoundingService。"""
-    from app.database import async_session_factory
+    from app.database import task_db_session
     from app.llm.factory import get_llm_provider
     from app.services.knowledge_compounding import KnowledgeCompoundingService
 
     tid = uuid.UUID(tenant_id) if tenant_id else None
 
-    async with async_session_factory() as db:
+    async with task_db_session() as db:
         try:
             llm = get_llm_provider()
         except Exception as exc:
@@ -84,13 +84,13 @@ async def _detect_conflicts(
     asset_id: str, tenant_id: str | None = None
 ) -> dict:
     """异步执行冲突检测 — 调用 KnowledgeCompoundingService。"""
-    from app.database import async_session_factory
+    from app.database import task_db_session
     from app.llm.factory import get_llm_provider
     from app.services.knowledge_compounding import KnowledgeCompoundingService
 
     tid = uuid.UUID(tenant_id) if tenant_id else None
 
-    async with async_session_factory() as db:
+    async with task_db_session() as db:
         try:
             llm = get_llm_provider()
         except Exception as exc:
@@ -132,13 +132,13 @@ async def _inject_for_reuse(
     tenant_id: str | None = None,
 ) -> dict:
     """异步执行复用注入 — 调用 KnowledgeCompoundingService。"""
-    from app.database import async_session_factory
+    from app.database import task_db_session
     from app.llm.factory import get_llm_provider
     from app.services.knowledge_compounding import KnowledgeCompoundingService
 
     tid = uuid.UUID(tenant_id) if tenant_id else None
 
-    async with async_session_factory() as db:
+    async with task_db_session() as db:
         try:
             llm = get_llm_provider()
         except Exception as exc:

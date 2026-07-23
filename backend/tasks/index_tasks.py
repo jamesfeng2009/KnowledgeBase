@@ -143,13 +143,13 @@ async def _build_search_index_async(
     P1-B 增量更新：检查文档 content_hash 是否与上次索引时一致，
     一致则跳过重新索引（幂等性保证）。
     """
-    from app.database import async_session_factory
+    from app.database import task_db_session
     from app.repositories.knowledge_repository import DocumentRepository
 
     doc_uuid = uuid.UUID(doc_id)
     tid = uuid.UUID(tenant_id) if tenant_id else None
 
-    async with async_session_factory() as session:
+    async with task_db_session() as session:
         repo = DocumentRepository(session, tenant_id=tid)
         doc = await repo.get_by_id(doc_uuid)
         if doc is None:
@@ -238,13 +238,13 @@ async def _build_vector_index_async(
     doc_id: str, tenant_id: str | None = None
 ) -> dict[str, Any]:
     """异步构建 Milvus 向量索引。"""
-    from app.database import async_session_factory
+    from app.database import task_db_session
     from app.repositories.knowledge_repository import DocumentRepository
 
     doc_uuid = uuid.UUID(doc_id)
     tid = uuid.UUID(tenant_id) if tenant_id else None
 
-    async with async_session_factory() as session:
+    async with task_db_session() as session:
         repo = DocumentRepository(session, tenant_id=tid)
         doc = await repo.get_by_id(doc_uuid)
         if doc is None:
@@ -365,13 +365,13 @@ async def _rebuild_kb_index_async(
     kb_id: str, tenant_id: str | None = None
 ) -> dict[str, Any]:
     """异步重建知识库索引 — 删除旧索引后重新构建全部文档索引。"""
-    from app.database import async_session_factory
+    from app.database import task_db_session
     from app.repositories.knowledge_repository import DocumentRepository
 
     kb_uuid = uuid.UUID(kb_id)
     tid = uuid.UUID(tenant_id) if tenant_id else None
 
-    async with async_session_factory() as session:
+    async with task_db_session() as session:
         repo = DocumentRepository(session, tenant_id=tid)
         docs = await repo.get_by_kb(kb_uuid)
         published_docs = [d for d in docs if d.status == "published"]

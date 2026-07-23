@@ -43,9 +43,14 @@ class CrossModalService:
     """
 
     def __init__(self) -> None:
-        from app.rag.vector_store import get_vector_store
+        # C1/C2 fix: 跨模态图片向量使用独立索引 + jina-clip-v2 维度覆盖，
+        # 避免与文本向量索引（SaaS 3072 维）冲突导致 upsert 失败
+        from app.rag.vector_store.opensearch_store import OpenSearchVectorStore
 
-        self._vector_store = get_vector_store()
+        self._vector_store = OpenSearchVectorStore(
+            index_name=settings.OPENSEARCH_CROSS_MODAL_INDEX,
+            dimension_override=settings.JINA_CLIP_DIM,
+        )
         self._mm_embedder: Any | None = None
 
     def _get_mm_embedder(self) -> Any | None:

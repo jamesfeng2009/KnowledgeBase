@@ -73,25 +73,14 @@ class HybridRetriever:
     # ------------------------------------------------------------------
 
     async def _get_embedder(self) -> EmbeddingProvider | None:
-        """懒初始化 Embedder — 失败则返回 None。
+        """懒初始化文本 Embedder — 用于文本查询向量生成。
 
-        P2-Step3: 当跨模态检索启用时，优先使用 MultimodalEmbedder
-        （jina-clip-v2），使查询向量与图片向量在同一空间。
+        C1/C2 fix: 文本查询必须使用与文档索引相同的文本 Embedder，
+        不能切换到多模态 Embedder（jina-clip-v2 维度/向量空间不匹配）。
+        跨模态图片检索由独立的 _cross_modal_search() 方法处理。
         """
         if self._embedder is not None:
             return self._embedder
-        # P2-Step3: 尝试跨模态 Embedder（文本+图片统一空间）
-        try:
-            from app.llm.multimodal_embedder import get_multimodal_embedder
-
-            mm_embedder = get_multimodal_embedder()
-            if mm_embedder is not None:
-                self._embedder = mm_embedder
-                log.info("retriever.embedder.multimodal_active")
-                return self._embedder
-        except Exception as exc:
-            log.debug("retriever.embedder.multimodal_unavailable", error=str(exc))
-        # 降级到普通文本 Embedder
         try:
             self._embedder = get_embedder()
         except Exception as exc:
@@ -141,12 +130,18 @@ class HybridRetriever:
         vector_results = await self._vector_search(query, kb_ids, top_k)
         fulltext_results = await self._fulltext_search(query, kb_ids, top_k)
 
-        merged = self._merge_and_dedupe(vector_results, fulltext_results, top_k)
+        # C1/C2 fix: 跨模态检索使用独立索引 + 独立 Embedder，与文本检索隔离
+        cross_modal_results = await self._cross_modal_search(query, kb_ids, top_k)
+
+        merged = self._merge_and_dedupe(
+            vector_results + cross_modal_results, fulltext_results, top_k
+        )
         log.info(
             "retriever.search",
             query_len=len(query),
             vector_count=len(vector_results),
             fulltext_count=len(fulltext_results),
+            cross_modal_count=len(cross_modal_results),
             merged_count=len(merged),
         )
         return merged
@@ -182,6 +177,62 @@ class HybridRetriever:
             return await store.search(query_vec, kb_ids=kb_ids, top_k=top_k)
         except Exception as exc:
             log.warning("retriever.vector.search_failed", error=str(exc))
+            return []
+
+    # ------------------------------------------------------------------
+    # 跨模态检索（独立索引 + jina-clip-v2 Embedder）
+    # ------------------------------------------------------------------
+
+    async def _cross_modal_search(
+        self,
+        query: str,
+        kb_ids: list[str] | None,
+        top_k: int,
+    ) -> list[dict[str, Any]]:
+        """跨模态检索 — 使用 jina-clip-v2 搜索独立图片向量索引。
+
+        C1/C2 fix: 跨模态检索使用独立的索引（ekb_cross_modal）和独立的
+        多模态 Embedder（jina-clip-v2, 1024 维），与文本向量检索完全隔离，
+        避免维度/向量空间冲突。功能未启用时返回空列表。
+        """
+        # 懒初始化跨模态 Embedder
+        if self._multimodal_embedder is None:
+            try:
+                from app.llm.multimodal_embedder import get_multimodal_embedder
+
+                self._multimodal_embedder = get_multimodal_embedder()
+            except Exception:
+                return []
+        if self._multimodal_embedder is None:
+            return []
+
+        # 生成查询向量（jina-clip-v2 文本嵌入）
+        try:
+            query_vec = (await self._multimodal_embedder.embed([query]))[0]
+        except Exception as exc:
+            log.warning("retriever.cross_modal.embed_error", error=str(exc))
+            return []
+
+        # 使用独立的跨模态向量存储
+        try:
+            from app.rag.vector_store.opensearch_store import OpenSearchVectorStore
+
+            cm_store = OpenSearchVectorStore(
+                index_name=settings.OPENSEARCH_CROSS_MODAL_INDEX,
+                dimension_override=settings.JINA_CLIP_DIM,
+            )
+            try:
+                results = await cm_store.search(
+                    query_vec, kb_ids=kb_ids, top_k=top_k
+                )
+            finally:
+                await cm_store.close()
+            # 标记来源为 cross_modal（区别于文本向量检索）
+            for r in results:
+                r["source"] = "cross_modal"
+            return results
+        except Exception as exc:
+            log.warning("retriever.cross_modal.search_failed", error=str(exc))
             return []
 
     # ------------------------------------------------------------------

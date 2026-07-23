@@ -29,13 +29,13 @@ async def _process_intelligence(
     doc_id: str, tenant_id: str | None = None
 ) -> dict:
     """异步执行文档智能处理。"""
-    from app.database import async_session_factory
+    from app.database import task_db_session
     from app.llm.factory import get_llm_provider
     from app.services.doc_intelligence_service import DocIntelligenceService
 
     tid = uuid.UUID(tenant_id) if tenant_id else None
 
-    async with async_session_factory() as db:
+    async with task_db_session() as db:
         try:
             llm = get_llm_provider()
         except Exception as exc:

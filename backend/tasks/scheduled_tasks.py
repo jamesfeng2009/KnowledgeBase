@@ -162,11 +162,11 @@ async def _detect_gaps_async() -> dict[str, Any]:
     """异步检测知识缺口。"""
     from sqlalchemy import select
 
-    from app.database import async_session_factory
+    from app.database import task_db_session
     from app.models.billing import Tenant
     from app.services.gap_detector_service import GapDetectorService
 
-    async with async_session_factory() as session:
+    async with task_db_session() as session:
         # 按租户迭代：逐租户创建带 tenant_id 的 GapDetectorService，确保多租户隔离
         tenants_result = await session.execute(
             select(Tenant).where(Tenant.deleted_at.is_(None))
@@ -194,7 +194,7 @@ async def _detect_gaps_async() -> dict[str, Any]:
 
 async def _check_expiration_async() -> dict[str, Any]:
     """异步检查知识过期预警 — 调用 Graphiti 时间线。"""
-    from app.database import async_session_factory
+    from app.database import task_db_session
     from app.models.billing import Tenant
     from app.models.memory import KnowledgeEntity
     from app.utils.tenant import apply_tenant_filter
@@ -204,7 +204,7 @@ async def _check_expiration_async() -> dict[str, Any]:
     now = datetime.now(timezone.utc)
     threshold = now + timedelta(days=7)
 
-    async with async_session_factory() as session:
+    async with task_db_session() as session:
         # 按租户迭代：逐租户查询即将过期的知识实体，确保多租户隔离
         tenants_result = await session.execute(
             select(Tenant).where(Tenant.deleted_at.is_(None))
@@ -245,7 +245,7 @@ async def _check_expiration_async() -> dict[str, Any]:
 
 async def _cleanup_expired_facts_async() -> dict[str, Any]:
     """异步清理过期的记忆事实。"""
-    from app.database import async_session_factory
+    from app.database import task_db_session
     from app.models.billing import Tenant
     from app.models.memory import MemoryFact
     from app.utils.tenant import apply_tenant_filter
@@ -254,7 +254,7 @@ async def _cleanup_expired_facts_async() -> dict[str, Any]:
 
     now = datetime.now(timezone.utc)
 
-    async with async_session_factory() as session:
+    async with task_db_session() as session:
         # 按租户迭代：逐租户查询并清理过期的记忆事实，确保多租户隔离
         tenants_result = await session.execute(
             select(Tenant).where(Tenant.deleted_at.is_(None))
@@ -288,11 +288,11 @@ async def _generate_quality_report_async() -> dict[str, Any]:
     """异步生成知识质量报告。"""
     from sqlalchemy import select
 
-    from app.database import async_session_factory
+    from app.database import task_db_session
     from app.models.billing import Tenant
     from app.services.quality_service import QualityService
 
-    async with async_session_factory() as session:
+    async with task_db_session() as session:
         # 按租户迭代：逐租户创建带 tenant_id 的 QualityService，确保多租户隔离
         tenants_result = await session.execute(
             select(Tenant).where(Tenant.deleted_at.is_(None))

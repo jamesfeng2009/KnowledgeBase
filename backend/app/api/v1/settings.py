@@ -74,11 +74,17 @@ def _mask_api_key(key: str | None) -> str | None:
     return f"{key[:4]}****{key[-4:]}"
 
 
-async def _get_tenant_settings(db: AsyncSession) -> tuple[Tenant, dict[str, Any]]:
+async def _get_tenant_settings(
+    db: AsyncSession, user: User | None = None
+) -> tuple[Tenant | None, dict[str, Any]]:
     """获取租户及其 settings 字段。
+
+    C6 fix: SaaS 模式按 user.tenant_id 过滤，避免跨租户配置泄漏；
+    私有部署 user 为 None 或 tenant_id 为 None 时取第一条（兼容单租户）。
 
     Args:
         db: 异步数据库会话。
+        user: 当前用户（可选，私有部署可为 None）。
 
     Returns:
         元组 (Tenant 实例, settings dict)。
@@ -86,7 +92,11 @@ async def _get_tenant_settings(db: AsyncSession) -> tuple[Tenant, dict[str, Any]
     Raises:
         HTTPException(404): 找不到租户。
     """
-    stmt = select(Tenant).where(Tenant.deleted_at.is_(None)).limit(1)
+    stmt = select(Tenant).where(Tenant.deleted_at.is_(None))
+    # C6 fix: SaaS 模式按用户 tenant_id 过滤
+    if user is not None and user.tenant_id is not None:
+        stmt = stmt.where(Tenant.id == user.tenant_id)
+    stmt = stmt.limit(1)
     result = await db.execute(stmt)
     tenant = result.scalars().first()
     if tenant is None:
@@ -106,7 +116,7 @@ async def get_llm_config(
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse[LLMConfig]:
     """获取 LLM 配置（API 密钥掩码显示）。"""
-    tenant, settings = await _get_tenant_settings(db)
+    tenant, settings = await _get_tenant_settings(db, user)
     llm_raw = settings.get(_LLM_CONFIG_KEY, _DEFAULT_LLM_CONFIG)
 
     return ApiResponse(
@@ -135,7 +145,7 @@ async def update_llm_config(
     """
     _require_admin(user)
 
-    tenant, settings = await _get_tenant_settings(db)
+    tenant, settings = await _get_tenant_settings(db, user)
     if tenant is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -181,7 +191,7 @@ async def get_system_config(
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse[SystemConfig]:
     """获取系统配置。"""
-    tenant, settings = await _get_tenant_settings(db)
+    tenant, settings = await _get_tenant_settings(db, user)
     sys_raw = settings.get(_SYSTEM_CONFIG_KEY, _DEFAULT_SYSTEM_CONFIG)
 
     return ApiResponse(
@@ -207,7 +217,7 @@ async def update_system_config(
     """更新系统配置（仅 admin 权限）。"""
     _require_admin(user)
 
-    tenant, settings = await _get_tenant_settings(db)
+    tenant, settings = await _get_tenant_settings(db, user)
     if tenant is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

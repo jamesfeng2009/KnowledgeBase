@@ -182,6 +182,8 @@ class TestCrossModalService:
         with patch("app.services.cross_modal_service.settings") as mock_settings:
             mock_settings.CROSS_MODAL_ENABLED = False
             mock_settings.JINA_API_KEY = ""
+            mock_settings.OPENSEARCH_CROSS_MODAL_INDEX = "ekb_cross_modal"
+            mock_settings.JINA_CLIP_DIM = 1024
             service = CrossModalService()
             assert service.is_enabled() is False
 
@@ -190,6 +192,8 @@ class TestCrossModalService:
         with patch("app.services.cross_modal_service.settings") as mock_settings:
             mock_settings.CROSS_MODAL_ENABLED = True
             mock_settings.JINA_API_KEY = "test-key"
+            mock_settings.OPENSEARCH_CROSS_MODAL_INDEX = "ekb_cross_modal"
+            mock_settings.JINA_CLIP_DIM = 1024
             service = CrossModalService()
             assert service.is_enabled() is True
 
@@ -282,3 +286,73 @@ class TestCrossModalService:
         call_args = mock_store.upsert.call_args
         chunks = call_args[0][1]
         assert chunks[0].content == "[图片内容]"
+
+
+# ------------------------------------------------------------------
+# C1/C2 修复验证测试
+# ------------------------------------------------------------------
+
+
+class TestC1C2CrossModalIsolation:
+    """C1/C2 fix: 验证文本检索与跨模态检索隔离。
+
+    核心保证：
+    1. 文本查询使用文本 Embedder（非多模态 Embedder）
+    2. 跨模态图片向量写入独立索引（非文本索引）
+    3. dimension_override 正确覆盖维度
+    """
+
+    def test_dimension_override(self) -> None:
+        """OpenSearchVectorStore dimension_override 覆盖维度。"""
+        from app.rag.vector_store.opensearch_store import OpenSearchVectorStore
+
+        store = OpenSearchVectorStore(dimension_override=1024)
+        assert store.dimension == 1024
+
+    def test_dimension_override_none_uses_text_embedder(self) -> None:
+        """无 dimension_override 时回退到文本 Embedder 维度。"""
+        from app.rag.vector_store.opensearch_store import OpenSearchVectorStore
+
+        store = OpenSearchVectorStore()
+        # dimension 应从文本 Embedder 动态获取（或回退到默认 1024）
+        assert store.dimension > 0
+
+    def test_cross_modal_service_uses_separate_index(self) -> None:
+        """CrossModalService 使用独立索引名。"""
+        with patch("app.services.cross_modal_service.settings") as mock_settings:
+            mock_settings.OPENSEARCH_CROSS_MODAL_INDEX = "ekb_cross_modal"
+            mock_settings.JINA_CLIP_DIM = 1024
+            service = CrossModalService()
+            assert service._vector_store._index_name == "ekb_cross_modal"
+            assert service._vector_store._dimension_override == 1024
+
+    @pytest.mark.asyncio
+    async def test_retriever_uses_text_embedder_not_multimodal(self) -> None:
+        """retriever._get_embedder 返回文本 Embedder，非多模态 Embedder。"""
+        from app.rag.retriever import HybridRetriever
+
+        retriever = HybridRetriever()
+
+        # Mock get_embedder 返回文本 Embedder
+        mock_text_embedder = MagicMock()
+        mock_text_embedder.dim = 3072
+        with patch(
+            "app.rag.retriever.get_embedder", return_value=mock_text_embedder
+        ):
+            embedder = await retriever._get_embedder()
+            assert embedder is mock_text_embedder
+            assert embedder.dim == 3072
+
+    @pytest.mark.asyncio
+    async def test_cross_modal_search_returns_empty_when_disabled(self) -> None:
+        """跨模态未启用时 _cross_modal_search 返回空列表。"""
+        from app.rag.retriever import HybridRetriever
+
+        retriever = HybridRetriever()
+        # get_multimodal_embedder 返回 None（功能未启用）
+        with patch(
+            "app.llm.multimodal_embedder.get_multimodal_embedder",
+            return_value=None,
+        ):
+            results = await retriever._cross_modal_search("test", None, 10)
+            assert results == []

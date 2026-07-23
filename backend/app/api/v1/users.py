@@ -58,10 +58,16 @@ async def list_users(
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse[PageResponse[UserResponse]]:
-    """分页查询用户列表（支持关键词、角色、部门过滤）。"""
+    """分页查询用户列表（支持关键词、角色、部门过滤）。
+
+    C6 fix: SaaS 模式按当前用户 tenant_id 过滤，避免跨租户用户信息泄漏。
+    """
     params = PaginationParams(page=page, size=size)
 
     stmt = select(User).where(User.deleted_at.is_(None))
+    # C6 fix: 按当前用户 tenant_id 过滤
+    if user.tenant_id is not None:
+        stmt = stmt.where(User.tenant_id == user.tenant_id)
     if keyword:
         pattern = f"%{keyword}%"
         stmt = stmt.where(

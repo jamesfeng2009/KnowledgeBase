@@ -2213,7 +2213,7 @@ async def _build_opensearch_index(
                     "parent_id": chunk.parent_id,
                     "content": chunk.content,
                     "title_path": chunk.title_path,
-                    "kb_id": kb_id or doc_id,  # P2-Step1: 写入 kb_id 供检索端过滤
+                    "kb_id": kb_id or getattr(chunk, "kb_id", None) or "",  # C5 fix: 不回退 doc_id，避免知识库过滤失效
                     "content_type": chunk.content_type,
                     "chunk_strategy": chunk.chunk_strategy,
                     "token_count": chunk.token_count,
