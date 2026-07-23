@@ -16,6 +16,7 @@ MemoryManager / AgenticRAGEngine，新增 Agent 类型只需在 _SYSTEM_PROMPTS
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
@@ -54,6 +55,18 @@ class PreparedChat:
     memory_context: str
     resolved_model_id: str
     default_model_id: str
+    # P3-A: 原始查询（指代消解前的用户输入，供前端展示）
+    original_query: str = ""
+    # P3-A: 对话焦点（供 SSE 事件推送）
+    conversation_focus: dict[str, Any] | None = None
+    # P4-A: 漂移检测结果
+    drift_info: dict[str, Any] | None = None
+    # P4-F: 偏好偏移检测结果
+    preference_overrides: dict[str, Any] | None = None
+    # P4-G: 重复提问检测结果
+    repetition_info: dict[str, Any] | None = None
+    # P4-B: 后台矛盾检测任务引用（stream_chat 中检查完成状态）
+    contradiction_task: asyncio.Task | None = None
 
 # Agent 类型 → 系统提示词映射。
 # 开闭原则落点：新增 Agent 类型只需在此字典追加一项，chat 方法无需改动。
@@ -114,6 +127,13 @@ class ChatService:
         self.llm: LLMProvider = get_llm_provider()
         self.memory: MemoryManager = MemoryManager(db)
 
+        # P1 IntentRouter — 懒初始化，失败不阻断现有功能
+        self._intent_router = None
+        self._shortcut_handler = None
+        # P3-A: 焦点追踪器 + 指代消解器 — 懒初始化
+        self._topic_tracker = None
+        self._coreference_resolver = None
+
     # ------------------------------------------------------------------
     # 核心对话
     # ------------------------------------------------------------------
@@ -169,9 +189,106 @@ class ChatService:
             recent_messages=[{"role": "user", "content": query}],
         )
 
+        # P3-A: 焦点追踪 + 指代消解 — 在构建 memory_context 之前执行
+        # P4: 漂移检测 + 偏好偏移 + 重复提问 — 在焦点追踪之后执行
+        resolved_query = query
+        conversation_focus = None
+        drift_info = None
+        preference_overrides = None
+        repetition_info = None
+        try:
+            from app.config import get_settings
+
+            _settings = get_settings()
+            if _settings.CONTEXT_FOCUS_TRACKING_ENABLED:
+                # 从 DB 加载最近 N 轮历史（用于焦点追踪）
+                _focus_window = _settings.CONTEXT_FOCUS_HISTORY_WINDOW
+                focus_history = await self.msg_repo.get_by_conversation(
+                    conversation_id, limit=_focus_window
+                )
+                history_dicts = [
+                    {"role": msg.role, "content": msg.content}
+                    for msg in focus_history
+                ]
+
+                topic_tracker = self._get_topic_tracker()
+                if topic_tracker:
+                    from app.context.focus_tracker import ConversationFocus
+
+                    focus = await topic_tracker.extract_focus(history_dicts)
+                    if focus:
+                        conversation_focus = focus.to_dict()
+
+                    # P4-A: 漂移检测 — 焦点提取后、指代消解前
+                    if focus and getattr(_settings, "DRIFT_DETECTION_ENABLED", True):
+                        drift_detector = self._get_drift_detector()
+                        if drift_detector:
+                            drift_result = await drift_detector.check(
+                                query, focus, history_dicts,
+                            )
+                            if drift_result.is_drift and drift_result.action == "reset_focus":
+                                # 漂移！重置焦点，重新提取
+                                topic_tracker.reset_focus()
+                                focus = await topic_tracker.extract_focus(history_dicts)
+                                if focus:
+                                    conversation_focus = focus.to_dict()
+                                logger.info(
+                                    "chat.drift_detected",
+                                    drift_score=drift_result.drift_score,
+                                    method=drift_result.detection_method,
+                                )
+                            drift_info = drift_result.to_dict()
+
+                    # 指代消解 — P4-C 增强：注入历史 + 焦点栈
+                    if focus and _settings.COREFERENCE_RESOLUTION_ENABLED:
+                        resolver = self._get_coreference_resolver()
+                        if resolver:
+                            focus_stack = topic_tracker.get_focus_history(n=3)
+                            resolved_query = await resolver.resolve(
+                                query, focus,
+                                history=history_dicts,
+                                focus_stack=focus_stack,
+                            )
+
+                    if resolved_query != query:
+                        logger.info(
+                            "chat.query_resolved",
+                            original=query[:100],
+                            resolved=resolved_query[:100],
+                        )
+
+                    # P4-F: 偏好偏移检测 — 纯规则，零 Token，零延迟
+                    if getattr(_settings, "PREFERENCE_DRIFT_ENABLED", True):
+                        pref_detector = self._get_preference_drift_detector()
+                        if pref_detector:
+                            pref_result = pref_detector.detect(query)
+                            if pref_result.has_preference_change:
+                                preference_overrides = pref_result.to_dict()
+                                logger.info(
+                                    "chat.preference_changed",
+                                    preference_type=pref_result.preference_type,
+                                    new_value=pref_result.new_value,
+                                )
+
+                    # P4-G: 重复提问检测 — 复用 embedding
+                    if getattr(_settings, "REPETITION_DETECTION_ENABLED", True):
+                        rep_detector = self._get_repetition_detector()
+                        if rep_detector:
+                            rep_result = await rep_detector.check(query, history_dicts)
+                            if rep_result.is_repetition:
+                                repetition_info = rep_result.to_dict()
+                                logger.info(
+                                    "chat.repetition_detected",
+                                    similarity=round(rep_result.similarity_score, 3),
+                                    count=rep_result.repetition_count,
+                                )
+        except Exception as exc:
+            logger.warning("chat.focus_tracking_failed", error=str(exc))
+            resolved_query = query  # 优雅降级
+
         # 4. 构建引擎 memory_context（系统提示词 + 记忆 + 对话历史）
         memory_context = await self._build_engine_memory_context(
-            conversation_id, agent_type, memory_ctx
+            conversation_id, agent_type, memory_ctx, resolved_query=resolved_query
         )
 
         # 5. 解析会话级模型选择（两级优先级：session > system default）
@@ -186,13 +303,18 @@ class ChatService:
         default_model_id = default_model["id"] if default_model else ""
 
         return PreparedChat(
-            query=query,
+            query=resolved_query,
             conversation_id=conversation_id,
             agent_type=agent_type,
             tenant_id=tenant_id,
             memory_context=memory_context,
             resolved_model_id=resolved_model_id,
             default_model_id=default_model_id,
+            original_query=query,
+            conversation_focus=conversation_focus,
+            drift_info=drift_info,
+            preference_overrides=preference_overrides,
+            repetition_info=repetition_info,
         )
 
     async def stream_chat(
@@ -228,43 +350,195 @@ class ChatService:
             event=SSEEventType.META,
         )
 
-        # 6. 调用 Agentic RAG 引擎，透传所有 SSE 事件和 token
-        # P1-4: 传入 db / user_uuid 以支持危险工具审批记录持久化
-        # P2-5: 如果会话选择了非默认模型，使用该模型的引擎
-        if resolved_model_id and resolved_model_id != default_model_id:
-            try:
-                engine = get_rag_engine_by_model(resolved_model_id)
-            except ValueError:
-                # 模型配置无效 — 回退到默认引擎
-                engine = get_rag_engine()
-        else:
-            engine = get_rag_engine()
-        full_response_parts: list[str] = []
-        try:
-            async for chunk in engine.answer(
-                query=query,
-                user_id=str(self.user.id),
-                session_id=str(conversation_id),
-                memory_context=prepared.memory_context,
-                tenant_id=prepared.tenant_id,
-                db=self.db,
-                user_uuid=self.user.id,
-            ):
-                if isinstance(chunk, str):
-                    full_response_parts.append(chunk)
-                yield chunk
-        except PermissionError as exc:
-            # 权限异常 → SSE error 事件（前端可友好展示，而非断流）
-            logger.info(
-                "chat.stream_permission_denied",
-                error=str(exc),
-                conversation_id=str(conversation_id),
-            )
+        # P3-A: 推送上下文消解结果（如果查询被改写）
+        if prepared.original_query and prepared.original_query != prepared.query:
             yield SSEEvent(
-                data={"type": "error", "message": str(exc)},
-                event=SSEEventType.ERROR,
+                data={
+                    "original_query": prepared.original_query,
+                    "resolved_query": prepared.query,
+                    "focus": prepared.conversation_focus,
+                },
+                event=SSEEventType.CONTEXT_RESOLVED,
             )
-            return
+
+        # P4-A: 推送漂移检测结果
+        if prepared.drift_info and prepared.drift_info.get("is_drift"):
+            yield SSEEvent(
+                data=prepared.drift_info,
+                event=SSEEventType.DRIFT_DETECTED,
+            )
+
+        # P4-F: 推送偏好偏移结果
+        if prepared.preference_overrides:
+            yield SSEEvent(
+                data=prepared.preference_overrides,
+                event=SSEEventType.PREFERENCE_CHANGED,
+            )
+
+        # P4-G: 推送重复提问检测结果
+        if prepared.repetition_info and prepared.repetition_info.get("is_repetition"):
+            yield SSEEvent(
+                data=prepared.repetition_info,
+                event=SSEEventType.REPETITION_DETECTED,
+            )
+
+        # P4-F: 偏好偏移 → 注入 system prompt 风格指令
+        memory_context = prepared.memory_context
+        if prepared.preference_overrides:
+            from app.context.preference_drift_detector import PreferenceDriftDetector
+
+            pref_detector = PreferenceDriftDetector()
+            from app.context.preference_drift_detector import PreferenceDriftResult
+
+            pref_result = PreferenceDriftResult(
+                has_preference_change=True,
+                preference_type=prepared.preference_overrides.get("preference_type", ""),
+                new_value=prepared.preference_overrides.get("new_value", ""),
+            )
+            modifier = pref_detector.get_system_prompt_modifier(pref_result)
+            if modifier:
+                memory_context = memory_context + "\n\n" + modifier
+
+        full_response_parts: list[str] = []
+
+        # P1: IntentRouter 稳态/敏态分离 — 简单查询走快捷路径，复杂查询走 Agent Loop
+        shortcut_taken = False
+        try:
+            from app.config import get_settings
+
+            settings = get_settings()
+            if settings.INTENT_ROUTER_ENABLED and settings.INTENT_SHORTCUT_ENABLED:
+                intent_router = self._get_intent_router()
+                intent_result = await intent_router.route(
+                    query=query,
+                    memory_context=prepared.memory_context,
+                    agent_type=agent_type,
+                )
+
+                # 推送意图识别结果事件
+                yield SSEEvent(
+                    data={
+                        "intent": intent_result.intent.value,
+                        "confidence": intent_result.confidence,
+                        "shortcut": intent_result.use_shortcut,
+                    },
+                    event=SSEEventType.INTENT,
+                )
+
+                if intent_result.use_shortcut:
+                    # 快捷路径 — 确定性检索 + 1 次 LLM 生成
+                    shortcut_handler = self._get_shortcut_handler()
+                    async for chunk in shortcut_handler.handle(
+                        intent=intent_result,
+                        query=query,
+                        user=self.user,
+                        db=self.db,
+                        tenant_id=self._tenant_id,
+                        memory_context=prepared.memory_context,
+                    ):
+                        if isinstance(chunk, str):
+                            full_response_parts.append(chunk)
+                        yield chunk
+                    shortcut_taken = True
+        except Exception as exc:
+            logger.warning("chat.intent_router_failed", error=str(exc))
+            # IntentRouter 失败 → 回退到 Agent Loop（不阻断）
+
+        if not shortcut_taken:
+            # 6. 调用 Agentic RAG 引擎，透传所有 SSE 事件和 token
+            # P1-4: 传入 db / user_uuid 以支持危险工具审批记录持久化
+            # P2-5: 如果会话选择了非默认模型，使用该模型的引擎
+            if resolved_model_id and resolved_model_id != default_model_id:
+                try:
+                    engine = get_rag_engine_by_model(resolved_model_id)
+                except ValueError:
+                    # 模型配置无效 — 回退到默认引擎
+                    engine = get_rag_engine()
+            else:
+                engine = get_rag_engine()
+
+            # P4-B: 后台启动用户陈述矛盾检测（不阻塞首 token）
+            contra_task = None
+            try:
+                from app.config import get_settings
+
+                contra_settings = get_settings()
+                if getattr(contra_settings, "CONTRADICTION_DETECTION_ENABLED", True) and \
+                   getattr(contra_settings, "CONTRADICTION_CHECK_USER_STATEMENTS", True):
+                    contra_detector = self._get_contradiction_detector()
+                    if contra_detector:
+                        # 加载历史用于矛盾检测
+                        contra_history = await self.msg_repo.get_by_conversation(
+                            conversation_id, limit=12
+                        )
+                        contra_history_dicts = [
+                            {"role": msg.role, "content": msg.content}
+                            for msg in contra_history
+                        ]
+                        contra_task = asyncio.create_task(
+                            contra_detector.check_user_contradiction(
+                                query, contra_history_dicts,
+                            )
+                        )
+            except Exception as exc:
+                logger.warning("chat.contradiction_task_init_failed", error=str(exc))
+
+            contra_pushed = False
+            try:
+                async for chunk in engine.answer(
+                    query=query,
+                    user_id=str(self.user.id),
+                    session_id=str(conversation_id),
+                    memory_context=memory_context,
+                    tenant_id=prepared.tenant_id,
+                    db=self.db,
+                    user_uuid=self.user.id,
+                    # P4-E: 传入对话焦点和漂移信息
+                    conversation_focus=prepared.conversation_focus,
+                    drift_info=prepared.drift_info,
+                ):
+                    # P4-B: 在 token 流中检查后台矛盾检测是否完成
+                    if contra_task and not contra_pushed and contra_task.done():
+                        try:
+                            contra_result = contra_task.result()
+                            if contra_result.has_contradiction:
+                                yield SSEEvent(
+                                    data=contra_result.to_dict(),
+                                    event=SSEEventType.CONTRADICTION_DETECTED,
+                                )
+                        except Exception:
+                            pass  # 优雅降级
+                        contra_pushed = True
+
+                    if isinstance(chunk, str):
+                        full_response_parts.append(chunk)
+                    yield chunk
+            except PermissionError as exc:
+                # 权限异常 → SSE error 事件（前端可友好展示，而非断流）
+                logger.info(
+                    "chat.stream_permission_denied",
+                    error=str(exc),
+                    conversation_id=str(conversation_id),
+                )
+                yield SSEEvent(
+                    data={"type": "error", "message": str(exc)},
+                    event=SSEEventType.ERROR,
+                )
+                return
+
+            # P4-B: 引擎流结束后，检查矛盾检测是否已完成且尚未推送
+            if contra_task and not contra_pushed:
+                try:
+                    await asyncio.wait_for(contra_task, timeout=2.0)
+                    if contra_task.done():
+                        contra_result = contra_task.result()
+                        if contra_result.has_contradiction:
+                            yield SSEEvent(
+                                data=contra_result.to_dict(),
+                                event=SSEEventType.CONTRADICTION_DETECTED,
+                            )
+                except Exception:
+                    pass  # 超时或异常 — 优雅降级
 
         # 7-8. 流式结束后的持久化 — 短事务，写完即释放连接回池
         await self._persist_assistant_result(
@@ -445,23 +719,124 @@ class ChatService:
     # 内部工具
     # ------------------------------------------------------------------
 
+    def _get_intent_router(self):
+        """懒初始化 IntentRouter — 失败返回 None，不影响现有功能。"""
+        if self._intent_router is None:
+            try:
+                from app.intent.router import IntentRouter
+
+                self._intent_router = IntentRouter(llm_provider=self.llm)
+            except Exception as exc:
+                logger.warning("chat.intent_router_init_failed", error=str(exc))
+                return None
+        return self._intent_router
+
+    def _get_shortcut_handler(self):
+        """懒初始化 ShortcutHandler。"""
+        if self._shortcut_handler is None:
+            try:
+                from app.intent.shortcut_handler import ShortcutHandler
+
+                self._shortcut_handler = ShortcutHandler()
+            except Exception as exc:
+                logger.warning("chat.shortcut_handler_init_failed", error=str(exc))
+                return None
+        return self._shortcut_handler
+
+    def _get_topic_tracker(self):
+        """懒初始化 TopicTracker — P3-A 焦点追踪。"""
+        if self._topic_tracker is None:
+            try:
+                from app.context.focus_tracker import TopicTracker
+
+                self._topic_tracker = TopicTracker(llm=self.llm)
+            except Exception as exc:
+                logger.warning("chat.topic_tracker_init_failed", error=str(exc))
+                return None
+        return self._topic_tracker
+
+    def _get_coreference_resolver(self):
+        """懒初始化 CoreferenceResolver — P3-A 指代消解。"""
+        if self._coreference_resolver is None:
+            try:
+                from app.context.coreference_resolver import CoreferenceResolver
+
+                self._coreference_resolver = CoreferenceResolver(llm=self.llm)
+            except Exception as exc:
+                logger.warning("chat.coreference_resolver_init_failed", error=str(exc))
+                return None
+        return self._coreference_resolver
+
+    def _get_drift_detector(self):
+        """懒初始化 DriftDetector — P4-A 漂移检测。"""
+        if not hasattr(self, "_drift_detector") or self._drift_detector is None:
+            self._drift_detector = None
+            try:
+                from app.context.drift_detector import DriftDetector
+
+                self._drift_detector = DriftDetector()
+            except Exception as exc:
+                logger.warning("chat.drift_detector_init_failed", error=str(exc))
+        return self._drift_detector
+
+    def _get_contradiction_detector(self):
+        """懒初始化 ContradictionDetector — P4-B 矛盾检测。"""
+        if not hasattr(self, "_contradiction_detector") or self._contradiction_detector is None:
+            self._contradiction_detector = None
+            try:
+                from app.context.contradiction_detector import ContradictionDetector
+
+                self._contradiction_detector = ContradictionDetector(llm=self.llm)
+            except Exception as exc:
+                logger.warning("chat.contradiction_detector_init_failed", error=str(exc))
+        return self._contradiction_detector
+
+    def _get_preference_drift_detector(self):
+        """懒初始化 PreferenceDriftDetector — P4-F 偏好偏移检测。"""
+        if not hasattr(self, "_preference_drift_detector") or self._preference_drift_detector is None:
+            self._preference_drift_detector = None
+            try:
+                from app.context.preference_drift_detector import PreferenceDriftDetector
+
+                self._preference_drift_detector = PreferenceDriftDetector()
+            except Exception as exc:
+                logger.warning("chat.preference_drift_detector_init_failed", error=str(exc))
+        return self._preference_drift_detector
+
+    def _get_repetition_detector(self):
+        """懒初始化 RepetitionDetector — P4-G 重复提问检测。"""
+        if not hasattr(self, "_repetition_detector") or self._repetition_detector is None:
+            self._repetition_detector = None
+            try:
+                from app.context.repetition_detector import RepetitionDetector
+
+                self._repetition_detector = RepetitionDetector()
+            except Exception as exc:
+                logger.warning("chat.repetition_detector_init_failed", error=str(exc))
+        return self._repetition_detector
+
     async def _build_engine_memory_context(
         self,
         conversation_id: UUID,
         agent_type: str,
         memory_ctx: MemoryContext | None = None,
+        resolved_query: str = "",
     ) -> str:
         """构建传给 AgenticRAGEngine.answer() 的 memory_context 字符串。
 
         P0-4：将系统提示词 + 记忆上下文 + 对话历史合并为一个字符串，
         传入引擎的 generate 阶段作为上下文补充。
 
-        结构：[系统提示词] + [记忆片段（偏好 + 短期窗口）] + [对话历史]
+        P3-B：对话历史使用语义选择器筛选，不再全量注入。
+        P3-C：超过阈值时旧历史压缩为摘要。
+
+        结构：[系统提示词] + [记忆片段（偏好 + 短期窗口）] + [摘要(可选)] + [对话历史]
 
         Args:
             conversation_id: 对话 ID。
             agent_type: Agent 类型，用于选择系统提示词。
             memory_ctx: 记忆上下文（四级记忆合并），为 None 时不注入。
+            resolved_query: P3-A 消解后的查询（用于 P3-B 语义选择）。
 
         Returns:
             memory_context 字符串。
@@ -485,11 +860,37 @@ class ChatService:
                 conversation_id, limit=_HISTORY_WINDOW
             )
             if history:
-                history_lines: list[str] = []
-                for msg in history[:-1]:  # 排除最后一条（刚保存的当前用户消息）
-                    role_label = "用户" if msg.role == "user" else "助手"
-                    history_lines.append(f"[{role_label}] {msg.content}")
-                if history_lines:
-                    parts.append("对话历史：\n" + "\n".join(history_lines))
+                history_dicts = [
+                    {"role": msg.role, "content": msg.content}
+                    for msg in history[:-1]  # 排除最后一条（刚保存的当前用户消息）
+                ]
+
+                # P3-B: 语义上下文选择
+                try:
+                    from app.config import get_settings
+
+                    _settings = get_settings()
+                    if _settings.CONTEXT_SELECTOR_ENABLED and resolved_query:
+                        from app.context.context_selector import ContextSelector
+
+                        selector = ContextSelector(
+                            max_tokens=_settings.CONTEXT_SELECTOR_MAX_TOKENS,
+                        )
+                        history_dicts = await selector.select(
+                            resolved_query,
+                            history_dicts,
+                            top_k=_settings.CONTEXT_SELECTOR_TOP_K,
+                        )
+                except Exception as exc:
+                    logger.warning("chat.context_selector_failed", error=str(exc))
+                    # 降级：使用原始历史
+
+                if history_dicts:
+                    history_lines: list[str] = []
+                    for msg_dict in history_dicts:
+                        role_label = "用户" if msg_dict.get("role") == "user" else "助手"
+                        history_lines.append(f"[{role_label}] {msg_dict.get('content', '')}")
+                    if history_lines:
+                        parts.append("对话历史：\n" + "\n".join(history_lines))
 
         return "\n\n".join(parts)

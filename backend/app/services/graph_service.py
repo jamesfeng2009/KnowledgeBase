@@ -296,6 +296,8 @@ class GraphService:
 
         这是 Neo4j 相对 PostgreSQL 的核心优势 — 多跳遍历。
 
+        P2-T4: 增加 tenant_id 过滤，补齐图谱层租户隔离。
+
         Args:
             node_label: 起始节点标签。
             node_id: 起始节点 ID。
@@ -313,14 +315,23 @@ class GraphService:
                 rel_filter = "|".join(f"r:{t}" for t in rel_types)
                 rel_filter = f":{rel_filter}"
 
+            # P2-T4: 租户隔离过滤
+            tenant_filter = ""
+            query_params: dict[str, Any] = {"node_id": node_id}
+            if self._tenant_id:
+                tenant_filter = "AND n.tenant_id = $tenant_id"
+                query_params["tenant_id"] = str(self._tenant_id)
+
             query = (
-                f"MATCH (n:{node_label} {{id: $node_id}})"
+                f"MATCH (n:{node_label} {{id: $node_id}}) "
+                f"WHERE n.tenant_id IS NULL {tenant_filter} "
                 f"-[r{rel_filter}*1..{max_depth}]->(m) "
+                f"WHERE m.tenant_id IS NULL {tenant_filter} "
                 f"RETURN DISTINCT m, length(r) as depth "
                 f"ORDER BY depth LIMIT 50"
             )
             async with self._driver.session(database=settings.NEO4J_DATABASE) as session:
-                result = await session.run(query, node_id=node_id)
+                result = await session.run(query, **query_params)
                 records = await result.data()
             return [{"node": r["m"], "depth": r["depth"]} for r in records]
         except Exception as e:
@@ -746,47 +757,10 @@ class GraphService:
             return []
 
         # === 批量写入图谱 ===
-        nodes: list[dict[str, Any]] = []
-        relationships: list[dict[str, Any]] = []
-
-        for subject, predicate, obj in all_triples:
-            # Concept 节点
-            nodes.append({
-                "label": "Concept",
-                "id": subject,
-                "name": subject,
-                "entity_type": "concept",
-            })
-            nodes.append({
-                "label": "Concept",
-                "id": obj,
-                "name": obj,
-                "entity_type": "concept",
-            })
-            # 概念间关系
-            rel_type = predicate.upper().replace(" ", "_")
-            relationships.append({
-                "from_label": "Concept",
-                "from_id": subject,
-                "to_label": "Concept",
-                "to_id": obj,
-                "type": rel_type,
-            })
-            # 文档 → 概念
-            relationships.append({
-                "from_label": "Document",
-                "from_id": doc_id,
-                "to_label": "Concept",
-                "to_id": subject,
-                "type": "MENTIONS",
-            })
-            relationships.append({
-                "from_label": "Document",
-                "from_id": doc_id,
-                "to_label": "Concept",
-                "to_id": obj,
-                "type": "MENTIONS",
-            })
+        # P2-T3: 使用 EntityRegistry 归一化实体类型和关系类型
+        nodes, relationships = self._build_normalized_graph_data(
+            all_triples, doc_id
+        )
 
         # 批量导入（比逐条快 10-50x）
         await self.batch_import_graph(nodes, relationships)
@@ -858,44 +832,10 @@ class GraphService:
             return []
 
         # 批量写入图谱（复用 extract_triples_from_text 的写入逻辑）
-        nodes: list[dict[str, Any]] = []
-        relationships: list[dict[str, Any]] = []
-
-        for subject, predicate, obj in all_triples:
-            nodes.append({
-                "label": "Concept",
-                "id": subject,
-                "name": subject,
-                "entity_type": "concept",
-            })
-            nodes.append({
-                "label": "Concept",
-                "id": obj,
-                "name": obj,
-                "entity_type": "concept",
-            })
-            rel_type = predicate.upper().replace(" ", "_")
-            relationships.append({
-                "from_label": "Concept",
-                "from_id": subject,
-                "to_label": "Concept",
-                "to_id": obj,
-                "type": rel_type,
-            })
-            relationships.append({
-                "from_label": "Document",
-                "from_id": doc_id,
-                "to_label": "Concept",
-                "to_id": subject,
-                "type": "MENTIONS",
-            })
-            relationships.append({
-                "from_label": "Document",
-                "from_id": doc_id,
-                "to_label": "Concept",
-                "to_id": obj,
-                "type": "MENTIONS",
-            })
+        # P2-T3: 使用 EntityRegistry 归一化实体类型和关系类型
+        nodes, relationships = self._build_normalized_graph_data(
+            all_triples, doc_id
+        )
 
         await self.batch_import_graph(nodes, relationships)
 
@@ -1009,6 +949,221 @@ class GraphService:
         except Exception as e:
             logger.error("graph.triples.llm_error", error=str(e))
             return []
+
+    # ------------------------------------------------------------------
+    # P2-T3: 三元组归一化 — EntityRegistry 集成
+    # ------------------------------------------------------------------
+
+    def _build_normalized_graph_data(
+        self,
+        triples: list[tuple[str, str, str]],
+        doc_id: str,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """构建归一化后的图谱数据 — 使用标准实体类型和关系类型。
+
+        P2-T3: 替代原有硬编码 Concept label + 中文谓词的逻辑。
+        通过 EntityRegistry.normalize_triple() 将：
+        - 实体名归一化（"合约" → "contract"）
+        - 实体类型分类（Concept / Policy / Product / Person / Department）
+        - 谓词映射（"属于" → BELONGS_TO）
+        - 节点属性增加 tenant_id（补齐图谱层租户隔离）
+
+        Args:
+            triples: 原始三元组列表 [(subject, predicate, object), ...]。
+            doc_id: 文档 ID（用于 Document → Entity MENTIONS 关系）。
+
+        Returns:
+            (nodes, relationships) 归一化后的节点和关系列表。
+        """
+        try:
+            from app.ontology.entity_registry import EntityRegistry
+        except ImportError:
+            # EntityRegistry 不可用 → 降级到原有逻辑（硬编码 Concept）
+            return self._build_legacy_graph_data(triples, doc_id)
+
+        nodes: list[dict[str, Any]] = []
+        relationships: list[dict[str, Any]] = []
+        tenant_id_str = str(self._tenant_id) if self._tenant_id else None
+
+        for subject, predicate, obj in triples:
+            # 归一化三元组
+            normalized = EntityRegistry.normalize_triple(subject, predicate, obj)
+
+            s_label = normalized.subject_type.value
+            o_label = normalized.object_type.value
+            s_id = normalized.subject_canonical
+            o_id = normalized.object_canonical
+            rel_type = normalized.predicate_standard.value
+
+            # 实体节点（带 tenant_id 补齐租户隔离）
+            s_node = {
+                "label": s_label,
+                "id": s_id,
+                "name": s_id,
+                "entity_type": s_label.lower(),
+            }
+            o_node = {
+                "label": o_label,
+                "id": o_id,
+                "name": o_id,
+                "entity_type": o_label.lower(),
+            }
+            if tenant_id_str:
+                s_node["tenant_id"] = tenant_id_str
+                o_node["tenant_id"] = tenant_id_str
+            nodes.append(s_node)
+            nodes.append(o_node)
+
+            # 实体间关系（标准英文关系类型）
+            relationships.append({
+                "from_label": s_label,
+                "from_id": s_id,
+                "to_label": o_label,
+                "to_id": o_id,
+                "type": rel_type,
+            })
+            # 文档 → 实体 MENTIONS 关系
+            relationships.append({
+                "from_label": "Document",
+                "from_id": doc_id,
+                "to_label": s_label,
+                "to_id": s_id,
+                "type": "MENTIONS",
+            })
+            relationships.append({
+                "from_label": "Document",
+                "from_id": doc_id,
+                "to_label": o_label,
+                "to_id": o_id,
+                "type": "MENTIONS",
+            })
+
+        return nodes, relationships
+
+    def _build_legacy_graph_data(
+        self,
+        triples: list[tuple[str, str, str]],
+        doc_id: str,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """降级构建 — EntityRegistry 不可用时使用原有逻辑。"""
+        nodes: list[dict[str, Any]] = []
+        relationships: list[dict[str, Any]] = []
+        for subject, predicate, obj in triples:
+            nodes.append({
+                "label": "Concept",
+                "id": subject,
+                "name": subject,
+                "entity_type": "concept",
+            })
+            nodes.append({
+                "label": "Concept",
+                "id": obj,
+                "name": obj,
+                "entity_type": "concept",
+            })
+            rel_type = predicate.upper().replace(" ", "_")
+            relationships.append({
+                "from_label": "Concept",
+                "from_id": subject,
+                "to_label": "Concept",
+                "to_id": obj,
+                "type": rel_type,
+            })
+            relationships.append({
+                "from_label": "Document",
+                "from_id": doc_id,
+                "to_label": "Concept",
+                "to_id": subject,
+                "type": "MENTIONS",
+            })
+            relationships.append({
+                "from_label": "Document",
+                "from_id": doc_id,
+                "to_label": "Concept",
+                "to_id": obj,
+                "type": "MENTIONS",
+            })
+        return nodes, relationships
+
+    # ------------------------------------------------------------------
+    # P2-T5: 图谱召回 — 通过实体名查找关联文档
+    # ------------------------------------------------------------------
+
+    async def find_related_documents_by_entity(
+        self,
+        entity_names: list[str],
+        max_depth: int = 2,
+        max_results: int = 10,
+    ) -> list[dict[str, Any]]:
+        """通过实体名查找关联文档 — 图谱召回专用。
+
+        P2-T5: HybridRetriever._graph_search() 调用此方法，
+        通过实体名在图谱中多跳遍历，找到关联的 Document 节点。
+
+        Args:
+            entity_names: 实体名列表（已归一化的 canonical_name）。
+            max_depth: 最大遍历深度（默认 2 跳）。
+            max_results: 最大返回结果数。
+
+        Returns:
+            关联文档列表 [{"doc_id": ..., "title": ...}, ...]。
+        """
+        if not await self._ensure_connected() or not entity_names:
+            return []
+
+        results: list[dict[str, Any]] = []
+        seen_doc_ids: set[str] = set()
+
+        # 构建租户过滤条件
+        tenant_filter = ""
+        query_params: dict[str, Any] = {
+            "entity_names": entity_names,
+            "max_depth": max_depth,
+            "max_results": max_results,
+        }
+        if self._tenant_id:
+            tenant_filter = "AND m.tenant_id = $tenant_id"
+            query_params["tenant_id"] = str(self._tenant_id)
+
+        for entity_name in entity_names:
+            if len(results) >= max_results:
+                break
+            try:
+                # 查找实体节点 → 多跳遍历 → 关联 Document 节点
+                query = (
+                    "MATCH (n {name: $entity_name}) "
+                    f"WHERE n.tenant_id IS NULL {tenant_filter} "
+                    f"MATCH (n)-[r*1..{max_depth}]->(m:Document) "
+                    f"WHERE m.tenant_id IS NULL {tenant_filter} "
+                    "RETURN DISTINCT m.id as doc_id, m.title as title "
+                    "LIMIT $limit"
+                )
+                async with self._driver.session(database=settings.NEO4J_DATABASE) as session:
+                    result = await session.run(
+                        query,
+                        entity_name=entity_name,
+                        limit=max_results - len(results),
+                        **({"tenant_id": str(self._tenant_id)} if self._tenant_id else {}),
+                    )
+                    records = await result.data()
+
+                for record in records:
+                    doc_id = record.get("doc_id", "")
+                    if doc_id and doc_id not in seen_doc_ids:
+                        seen_doc_ids.add(doc_id)
+                        results.append({
+                            "doc_id": doc_id,
+                            "title": record.get("title", ""),
+                        })
+            except Exception as exc:
+                logger.warning(
+                    "graph.find_related_docs_by_entity_error",
+                    entity=entity_name,
+                    error=str(exc),
+                )
+                continue
+
+        return results[:max_results]
 
     # ------------------------------------------------------------------
     # 批量导入 — 文档入库时批量建图（UNWIND 高效写入）

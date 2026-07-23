@@ -105,6 +105,9 @@ class HybridRetriever:
     ) -> list[dict[str, Any]]:
         """多路检索知识库，返回合并去重后的候选文档列表。
 
+        P2-T5: 新增图谱召回第四路 — 通过 EntityRegistry 实体识别 + Neo4j 多跳遍历。
+        P2-T6: 检索前用 EntityRegistry 做同义词扩展，增强 BM25 召回。
+
         Args:
             query: 用户查询文本。
             kb_ids: 可选，限定检索的知识库 ID 列表。
@@ -118,7 +121,7 @@ class HybridRetriever:
                     "chunk_id": str,
                     "content": str,
                     "score": float,
-                    "source": "vector" | "fulltext",
+                    "source": "vector" | "fulltext" | "cross_modal" | "graph",
                     "kb_id": str | None,
                     "title": str | None,
                 }
@@ -126,15 +129,37 @@ class HybridRetriever:
         if not query.strip():
             return []
 
-        # 并发执行两路检索（任一失败返回空列表，不影响另一路）
+        # P2-T6: 实体识别 + 同义词扩展（零 LLM，增强 BM25 召回）
+        expanded_query = query
+        graph_entity_names: list[str] = []
+        try:
+            from app.config import get_settings as _get_settings
+
+            _settings = _get_settings()
+            if _settings.ENTITY_REGISTRY_ENABLED:
+                from app.ontology.entity_registry import EntityRegistry
+
+                expanded_terms, graph_entity_names = EntityRegistry.expand_query(query)
+                if expanded_terms:
+                    # 扩展查询用于 BM25 全文检索（OR 语义）
+                    expanded_query = f"{query} {' '.join(expanded_terms)}"
+        except Exception as exc:
+            log.debug("retriever.entity_expand_failed", error=str(exc))
+
+        # 并发执行多路检索（任一失败返回空列表，不影响其他路）
         vector_results = await self._vector_search(query, kb_ids, top_k)
-        fulltext_results = await self._fulltext_search(query, kb_ids, top_k)
+        fulltext_results = await self._fulltext_search(expanded_query, kb_ids, top_k)
 
         # C1/C2 fix: 跨模态检索使用独立索引 + 独立 Embedder，与文本检索隔离
         cross_modal_results = await self._cross_modal_search(query, kb_ids, top_k)
 
+        # P2-T5: 图谱召回（第四路）
+        graph_results = await self._graph_search(graph_entity_names, kb_ids, top_k)
+
         merged = self._merge_and_dedupe(
-            vector_results + cross_modal_results, fulltext_results, top_k
+            vector_results + cross_modal_results + graph_results,
+            fulltext_results,
+            top_k,
         )
         log.info(
             "retriever.search",
@@ -142,6 +167,7 @@ class HybridRetriever:
             vector_count=len(vector_results),
             fulltext_count=len(fulltext_results),
             cross_modal_count=len(cross_modal_results),
+            graph_count=len(graph_results),
             merged_count=len(merged),
         )
         return merged
@@ -322,6 +348,85 @@ class HybridRetriever:
             )
             if len(results) >= top_k:
                 break
+        return results
+
+    # ------------------------------------------------------------------
+    # P2-T5: 图谱召回 — 第四路
+    # ------------------------------------------------------------------
+
+    async def _graph_search(
+        self,
+        entity_names: list[str],
+        kb_ids: list[str] | None,
+        top_k: int,
+    ) -> list[dict[str, Any]]:
+        """图谱召回 — 通过实体关系找到关联文档。
+
+        P2-T5: 作为 HybridRetriever 的第四路召回。
+        流程：EntityRegistry 识别的实体 → Neo4j 多跳遍历 → 关联 Document 召回。
+
+        优雅降级：Neo4j 不可用或无实体时返回空列表，不影响其他路。
+
+        Args:
+            entity_names: EntityRegistry.expand_query() 返回的实体 canonical_name 列表。
+            kb_ids: 可选的知识库 ID 过滤。
+            top_k: 最大返回结果数。
+
+        Returns:
+            候选文档列表，source="graph"。
+        """
+        if not entity_names:
+            return []
+
+        try:
+            from app.config import get_settings
+
+            settings = get_settings()
+            if not settings.GRAPH_SEARCH_ENABLED:
+                return []
+        except Exception:
+            return []
+
+        try:
+            from app.services.graph_service import GraphService
+
+            graph = GraphService()
+            related_docs = await graph.find_related_documents_by_entity(
+                entity_names=entity_names,
+                max_depth=settings.GRAPH_SEARCH_MAX_DEPTH,
+                max_results=settings.GRAPH_SEARCH_MAX_RESULTS,
+            )
+        except Exception as exc:
+            log.debug("retriever.graph_search_error", error=str(exc))
+            return []
+
+        if not related_docs:
+            return []
+
+        # 转换为统一的候选文档格式
+        results: list[dict[str, Any]] = []
+        for doc in related_docs:
+            doc_id = doc.get("doc_id", "")
+            if not doc_id:
+                continue
+            # kb_ids 过滤
+            if kb_ids:
+                # 图谱召回的文档可能不在指定 KB 中，跳过
+                # 注意：related_docs 不含 kb_id 信息，此处保守不过滤
+                pass
+
+            results.append({
+                "doc_id": doc_id,
+                "chunk_id": f"graph_{doc_id}",  # 图谱召回无 chunk 级别，用 doc_id 标识
+                "content": doc.get("title", ""),  # 图谱召回无内容，用标题占位
+                "score": settings.GRAPH_SEARCH_SCORE,  # 固定分，合并时由去重逻辑处理
+                "source": "graph",
+                "kb_id": None,
+                "title": doc.get("title", ""),
+            })
+            if len(results) >= top_k:
+                break
+
         return results
 
     # ------------------------------------------------------------------

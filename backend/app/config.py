@@ -217,6 +217,28 @@ class Settings(BaseSettings):
     # 生成质量守卫 — faithfulness 低于阈值时标记低置信度
     RAG_FAITHFULNESS_THRESHOLD: float = 3.0
 
+    # === P4 实时对话智能 ===
+    # P4-A: 漂移检测
+    DRIFT_DETECTION_ENABLED: bool = True
+    DRIFT_SIMILARITY_THRESHOLD: float = 0.4  # cosine < 0.4 = 漂移
+    DRIFT_POSSIBLE_THRESHOLD: float = 0.6  # 0.4-0.6 = 可能漂移
+    # P4-B: 矛盾检测
+    CONTRADICTION_DETECTION_ENABLED: bool = True
+    CONTRADICTION_CHECK_USER_STATEMENTS: bool = True
+    CONTRADICTION_CHECK_ANSWER_CONSISTENCY: bool = True
+    CONTRADICTION_CHECK_DOC_CONTRADICTION: bool = False
+    # P4-C: 指代消解增强
+    COREFERENCE_INJECT_HISTORY: bool = True
+    COREFERENCE_FOCUS_STACK_SIZE: int = 5
+    # P4-D: 检索匹配检测
+    RETRIEVAL_MATCH_CHECK_ENABLED: bool = True
+    RETRIEVAL_MATCH_THRESHOLD: float = 0.3
+    # P4-F: 偏好偏移检测
+    PREFERENCE_DRIFT_ENABLED: bool = True
+    # P4-G: 重复提问检测
+    REPETITION_DETECTION_ENABLED: bool = True
+    REPETITION_SIMILARITY_THRESHOLD: float = 0.85
+
     # === 离线评测 ===
     # 评测数据集目录（JSONL 格式）
     EVAL_DATASET_DIR: str = "./eval_datasets"
@@ -304,6 +326,32 @@ class Settings(BaseSettings):
     # === P3 缓存容量上限 ===
     CACHE_L2_MAX_SIZE: int = 1000  # L2 语义缓存（进程内存）最大条目数，超容逐出最旧（LRU）
 
+    # === P1 IntentRouter 稳态/敏态分离 ===
+    INTENT_ROUTER_ENABLED: bool = True          # IntentRouter 总开关
+    INTENT_ROUTER_LLM_FALLBACK: bool = True     # 规则未命中时是否调 LLM 解析意图
+    INTENT_ROUTER_CONFIDENCE_THRESHOLD: float = 0.7  # LLM 意图置信度阈值
+    INTENT_SHORTCUT_ENABLED: bool = True        # 是否启用快捷路径（False=全部走 Agent Loop）
+
+    # === P2 EntityRegistry 企业本体 ===
+    ENTITY_REGISTRY_ENABLED: bool = True        # EntityRegistry 总开关
+    GRAPH_SEARCH_ENABLED: bool = True           # 图谱召回开关（HybridRetriever 第四路）
+    GRAPH_SEARCH_MAX_DEPTH: int = 2             # 图谱遍历最大跳数
+    GRAPH_SEARCH_MAX_RESULTS: int = 10          # 图谱召回最大结果数
+    GRAPH_SEARCH_SCORE: float = 0.5             # 图谱召回固定分（合并时的权重）
+
+    # === P3 上下文工程 ===
+    CONTEXT_FOCUS_TRACKING_ENABLED: bool = True       # P3-A 焦点追踪总开关
+    CONTEXT_FOCUS_HISTORY_WINDOW: int = 12            # 焦点追踪加载的历史消息数
+    COREFERENCE_RESOLUTION_ENABLED: bool = True       # P3-A 指代消解开关
+    CONTEXT_SELECTOR_ENABLED: bool = True             # P3-B 语义选择器开关
+    CONTEXT_SELECTOR_TOP_K: int = 5                   # 语义选择器最多选中消息数
+    CONTEXT_SELECTOR_MAX_TOKENS: int = 800            # 语义选择器 token 预算
+    CONVERSATION_SUMMARIZER_ENABLED: bool = True      # P3-C 滚动摘要开关
+    CONVERSATION_SUMMARIZER_MAX_TOKENS: int = 600     # 摘要触发阈值
+    CONVERSATION_SUMMARIZER_RETAINED_TOKENS: int = 200  # 摘要后保留的近期 token
+    SCRATCHPAD_ENABLED: bool = True                   # P3-E Scratchpad 开关
+    LLM_FACT_EXTRACTION_ENABLED: bool = True          # P3-F LLM 事实提取开关
+
     # ================================================================
     # Pydantic V2 校验器 — 结构性校验硬失败，运营性校验发 warning
     # ================================================================
@@ -340,6 +388,13 @@ class Settings(BaseSettings):
         "CIRCUIT_BREAKER_FAILURE_THRESHOLD",
         "CIRCUIT_BREAKER_HALF_OPEN_MAX_CALLS",
         "TASK_LOCK_TTL",
+        "GRAPH_SEARCH_MAX_DEPTH",
+        "GRAPH_SEARCH_MAX_RESULTS",
+        "CONTEXT_FOCUS_HISTORY_WINDOW",
+        "CONTEXT_SELECTOR_TOP_K",
+        "CONTEXT_SELECTOR_MAX_TOKENS",
+        "CONVERSATION_SUMMARIZER_MAX_TOKENS",
+        "CONVERSATION_SUMMARIZER_RETAINED_TOKENS",
     )
     @classmethod
     def validate_positive_int(cls, v: int) -> int:
@@ -382,6 +437,8 @@ class Settings(BaseSettings):
         "RAG_RETRIEVAL_SCORE_THRESHOLD",
         "EVAL_REGRESSION_THRESHOLD",
         "VIDEO_KEYFRAME_SCENE_THRESHOLD",
+        "INTENT_ROUTER_CONFIDENCE_THRESHOLD",
+        "GRAPH_SEARCH_SCORE",
     )
     @classmethod
     def validate_float_0_1(cls, v: float) -> float:

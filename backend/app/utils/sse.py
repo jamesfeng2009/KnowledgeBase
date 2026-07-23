@@ -38,6 +38,20 @@ class SSEEventType:
 
     # 会话元数据
     META = "meta"
+    # 意图识别结果（P1 IntentRouter）
+    INTENT = "intent"
+    # 上下文工程结果（P3 焦点追踪 + 指代消解）
+    CONTEXT_RESOLVED = "context_resolved"
+    # P4-A: 话题漂移检测
+    DRIFT_DETECTED = "drift_detected"
+    # P4-B: 矛盾检测
+    CONTRADICTION_DETECTED = "contradiction_detected"
+    # P4-D: 检索匹配检测
+    RETRIEVAL_MISMATCH = "retrieval_mismatch"
+    # P4-F: 偏好偏移检测
+    PREFERENCE_CHANGED = "preference_changed"
+    # P4-G: 重复提问检测
+    REPETITION_DETECTED = "repetition_detected"
     # 思考过程（Agent Loop think 阶段）
     THINKING = "thinking"
     # 查询重写（P2-B）

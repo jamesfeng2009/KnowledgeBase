@@ -99,18 +99,26 @@ class ContextBudgetManager:
             return False
         return self.estimate_tokens(messages) > self._max_tokens
 
-    def compress(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def compress(
+        self,
+        messages: list[dict[str, Any]],
+        scratchpad: str = "",
+    ) -> list[dict[str, Any]]:
         """压缩消息列表 — 三段式策略。
 
         保留前 2 条（system + query）和最后 keep_recent 条，
         中间消息压缩为单条摘要消息。
 
+        P3-E: Scratchpad 作为高密度信息追加到摘要末尾（截断到 200 字），
+        保证推理轨迹在压缩后仍可被 LLM 参考。
+
         压缩后的消息结构::
 
-            [system, query, "[系统] 早期上下文摘要：...", recent_msg1, recent_msg2]
+            [system, query, "[系统] 早期上下文摘要：...；推理轨迹:...", recent_msg1, recent_msg2]
 
         Args:
             messages: 原始消息列表。
+            scratchpad: P3-E Scratchpad 内容（可选）。
 
         Returns:
             压缩后的消息列表（可能比原始列表短）。
@@ -131,6 +139,12 @@ class ContextBudgetManager:
             compressed = self._compress_single_message(msg.get("content", ""))
             if compressed:
                 summary_parts.append(compressed)
+
+        # P3-E: Scratchpad 作为高密度信息追加到摘要
+        if scratchpad:
+            # 保留 Scratchpad 最后 200 字（最新的推理笔记）
+            recent_sp = scratchpad[-200:] if len(scratchpad) > 200 else scratchpad
+            summary_parts.append(f"推理轨迹:{recent_sp}")
 
         if not summary_parts:
             # 中间消息无有效内容，直接拼接 head + tail

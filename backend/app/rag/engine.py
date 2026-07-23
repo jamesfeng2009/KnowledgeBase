@@ -139,6 +139,12 @@ class AgentState(TypedDict, total=False):
     memory_context: str
     # 多租户预留 — 当前不实施隔离逻辑，仅预留字段供未来扩展。
     tenant_id: str | None
+    # P3-E: Scratchpad 草稿本 — 累积每轮推理笔记，压缩时优先保留
+    scratchpad: str
+    # P4-E: 对话焦点传入引擎（来自 TopicTracker / DriftDetector）
+    conversation_focus: dict[str, Any] | None
+    # P4-E: 漂移检测结果（来自 DriftDetector）
+    drift_info: dict[str, Any] | None
     # --- LangGraph 专用字段（纯 Python 路径不使用）---
     # think 节点产出的路由信号：retrieve / tool_call / generate。
     _decision: str
@@ -273,6 +279,8 @@ class AgenticRAGEngine:
         tenant_id: str | None = None,
         db: Any = None,
         user_uuid: uuid.UUID | None = None,
+        conversation_focus: dict[str, Any] | None = None,
+        drift_info: dict[str, Any] | None = None,
     ) -> AsyncIterator[SSEEvent | str]:
         """Agentic RAG 主入口 — 返回 SSE 事件流供前端实时消费。
 
@@ -333,6 +341,8 @@ class AgenticRAGEngine:
             "kb_ids": kb_ids,
             "memory_context": memory_context,
             "tenant_id": tenant_id,
+            "conversation_focus": conversation_focus,
+            "drift_info": drift_info,
         }
         # 重置检索重试计数
         self._retrieval_retry_count = 0
@@ -956,7 +966,10 @@ class AgenticRAGEngine:
             # think：LLM 决策下一步（读取 state["messages"] 稳定前缀 + 增量结果）
             # P2-Opt6: think 前检查上下文预算，超限时压缩早期消息
             if self._budget.should_compress(state["messages"]):
-                state["messages"] = self._budget.compress(state["messages"])
+                state["messages"] = self._budget.compress(
+                    state["messages"],
+                    scratchpad=state.get("scratchpad", ""),
+                )
 
             decision = await self._think(state)
 
@@ -988,6 +1001,9 @@ class AgenticRAGEngine:
                         "content": f"[系统] 已检索到 {len(state['retrieved_docs'])} 篇文档",
                     }
                 )
+                # P3-E: Scratchpad 追加推理笔记
+                _sp = state.get("scratchpad", "")
+                state["scratchpad"] = _sp + f"\n[轮{state['iteration']}] retrieve: 检索到 {len(state['retrieved_docs'])} 篇文档"
                 continue
             if decision == "tool_call":
                 # P0-3: yield tool_call_start/end 事件
@@ -1013,6 +1029,10 @@ class AgenticRAGEngine:
                             "content": f"[系统] 工具结果：{deduped}",
                         }
                     )
+                    # P3-E: Scratchpad 追加工具调用笔记
+                    _sp = state.get("scratchpad", "")
+                    _note = deduped[:80] if isinstance(deduped, str) else ""
+                    state["scratchpad"] = _sp + f"\n[轮{state['iteration']}] tool_call: {tool_name} → {_note}"
                 continue
             # decision == "generate" 或其他 → 退出循环进入生成
             log.info(
@@ -1058,6 +1078,29 @@ class AgenticRAGEngine:
             dynamic_parts.append(f"已有文档 {len(state['retrieved_docs'])} 篇")
         if state["tool_results"]:
             dynamic_parts.append(f"工具结果 {len(state['tool_results'])} 条")
+
+        # P3-E: 注入 Scratchpad 推理笔记（高密度信息，帮助 LLM 理解上下文）
+        scratchpad = state.get("scratchpad", "")
+        if scratchpad:
+            # 截断到最近 300 字，避免 Scratchpad 自身膨胀
+            recent_scratchpad = scratchpad[-300:] if len(scratchpad) > 300 else scratchpad
+            dynamic_parts.append(f"\n推理笔记：\n{recent_scratchpad}")
+
+        # P4-E: 注入对话焦点 — 让 LLM 感知当前话题和实体
+        focus = state.get("conversation_focus")
+        if focus:
+            dynamic_parts.append(
+                f"当前对话焦点：主题={focus.get('topic', '')}, "
+                f"实体={focus.get('entity', '')}, 意图={focus.get('intent', '')}"
+            )
+
+        # P4-E: 漂移警告 — 用户可能切换了话题
+        drift = state.get("drift_info")
+        if drift and drift.get("is_drift"):
+            dynamic_parts.append(
+                "注意：用户可能切换了话题，请关注当前问题的独立完整性。"
+            )
+
         dynamic_parts.append("请决定下一步。")
         dynamic_context = "，".join(dynamic_parts)
 

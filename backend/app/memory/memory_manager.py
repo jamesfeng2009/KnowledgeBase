@@ -15,6 +15,7 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.llm.factory import get_llm_provider
 from app.memory.checkpoint import CheckpointManager
 from app.memory.graphiti_manager import GraphitiManager
 from app.memory.mem0_manager import Mem0Manager
@@ -218,11 +219,97 @@ class MemoryManager:
         user_id: uuid.UUID,
         messages: list[dict],
     ) -> list[str]:
-        """从对话中提取值得记住的事实（简化版）。
+        """从对话中提取值得记住的事实。
 
-        生产环境应使用 LLM 提取，这里实现关键词启发式提取。
+        P3-F: 优先使用 LLM 提取（更准确），失败时降级为关键词启发式。
+        LLM 提取通过配置项 LLM_FACT_EXTRACTION_ENABLED 控制。
         """
-        extracted = []
+        # P3-F: 尝试 LLM 提取
+        try:
+            from app.config import get_settings
+
+            _settings = get_settings()
+            if _settings.LLM_FACT_EXTRACTION_ENABLED:
+                return await self._llm_extract_facts(user_id, messages)
+        except Exception as exc:
+            logger.warning("llm_fact_extraction_skipped", error=str(exc))
+
+        # 降级：关键词启发式提取
+        return await self._keyword_extract_facts(user_id, messages)
+
+    async def _llm_extract_facts(
+        self,
+        user_id: uuid.UUID,
+        messages: list[dict],
+    ) -> list[str]:
+        """P3-F: LLM 驱动的事实提取。"""
+        # 构建对话文本（最近 10 条消息）
+        conversation = "\n".join(
+            f"{m.get('role', 'user')}: {m.get('content', '')[:200]}"
+            for m in messages[-10:]
+        )
+        if len(conversation) < 50:
+            return []  # 对话太短不提取
+
+        prompt = (
+            "分析以下对话，提取值得长期记住的用户偏好和事实。\n"
+            "只提取明确的偏好和事实，不要推测。\n"
+            "输出格式：每行一个事实，格式为 category|content\n"
+            "category 可选：preference（用户偏好）/ fact（事实信息）\n"
+            "如果没有值得提取的内容，输出 NONE。\n\n"
+            f"对话内容：\n{conversation}\n\n"
+            "提取结果："
+        )
+
+        try:
+            llm = get_llm_provider()
+            messages_for_llm: list = [{"role": "user", "content": prompt}]
+            chunks: list[str] = []
+            async for chunk in llm.chat(messages_for_llm, stream=True, max_tokens=200):
+                if isinstance(chunk, str):
+                    chunks.append(chunk)
+            result_text = "".join(chunks).strip()
+
+            if not result_text or result_text.upper() == "NONE":
+                return []
+
+            extracted: list[str] = []
+            for line in result_text.split("\n"):
+                line = line.strip()
+                if "|" not in line:
+                    continue
+                category, content = line.split("|", 1)
+                category = category.strip().lower()
+                content = content.strip()
+                if category in ("preference", "fact") and content:
+                    await self.mem0.add_fact(
+                        user_id=user_id,
+                        fact_text=content,
+                        category=category,
+                    )
+                    extracted.append(content)
+
+            if extracted:
+                logger.info(
+                    "facts_extracted_llm",
+                    user_id=str(user_id),
+                    count=len(extracted),
+                )
+
+            return extracted
+
+        except Exception as exc:
+            logger.warning("fact_extraction_llm_failed", error=str(exc))
+            # 降级为关键词启发式
+            return await self._keyword_extract_facts(user_id, messages)
+
+    async def _keyword_extract_facts(
+        self,
+        user_id: uuid.UUID,
+        messages: list[dict],
+    ) -> list[str]:
+        """关键词启发式事实提取（降级策略）。"""
+        extracted: list[str] = []
 
         for msg in messages:
             content = msg.get("content", "").lower()
