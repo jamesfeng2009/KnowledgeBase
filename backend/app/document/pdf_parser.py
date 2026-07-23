@@ -1,11 +1,16 @@
-"""
-PDF 文档解析器 — 单一职责：将 PDF 解析为增强文本（文本 + HTML 表格 + 图片描述/URL）。
+"""PDF 文档解析器 — 单一职责：将 PDF 解析为增强文本（文本 + HTML 表格 + 图片描述/URL）。
 
 四阶段能力：
     Phase 1: 表格提取 — pymupdf page.find_tables() → HTML <table> 标签；
     Phase 2: 图片提取 — 小图过滤 + 格式校验 + 上传 MinIO 保留 URL（对齐图片流程）；
     Phase 3: 图片描述 — VLM.understand() → [图片描述: ...]（可与 Phase 2 共存）；
     Phase 4: 扫描页 OCR — get_text() 返回空时，页面渲染为图片 → VLM OCR。
+
+版式分层（Phase 0，借鉴 pdfminer 二次开发思路）：
+    文本提取前，先用 get_text("dict") 拿 block 坐标，
+    经 layout_analyzer 重建阅读顺序（栏检测 + 通栏处理），
+    解决复杂多栏版式的乱序问题。性能不变（C 层提取 + Python 排序）。
+    开关 PDF_LAYOUT_ANALYSIS_ENABLED，异常时自动降级为 get_text()。
 
 图片处理模式（由配置开关控制）：
     - PDF_IMAGE_UPLOAD_ENABLED=True: 上传 MinIO 保留 URL → kind="image_url"
@@ -15,9 +20,10 @@ PDF 文档解析器 — 单一职责：将 PDF 解析为增强文本（文本 + 
 
 遵循优雅降级：
     - pymupdf 未安装 / find_tables 不可用 → 退化为 page.get_text() 纯文本；
+    - 版式分析异常 → 退化为 page.get_text()（保内容不保顺序）；
     - VLM 不可用 → 跳过图片描述和扫描页 OCR，只保留文本和表格；
     - MinIO 不可用 → 跳过图片上传，降级为 VLM 文本描述；
-    - 配置开关可单独关闭表格提取、图片提取或扫描页 OCR。
+    - 配置开关可单独关闭表格提取、图片提取、扫描页 OCR 或版式分析。
 """
 
 from __future__ import annotations
@@ -85,6 +91,9 @@ class PDFParser(DocumentParser):
         scan_ocr_max_pages = self._int(getattr(settings, "PDF_SCAN_OCR_MAX_PAGES", 20), 20)
         image_upload_enabled = self._bool(getattr(settings, "PDF_IMAGE_UPLOAD_ENABLED", False), False)
         image_min_size = self._int(getattr(settings, "PDF_IMAGE_MIN_SIZE", 50), 50)
+        layout_analysis_enabled = self._bool(
+            getattr(settings, "PDF_LAYOUT_ANALYSIS_ENABLED", True), True
+        )
 
         sections: list[ParsedSection] = []
         image_count = 0
@@ -94,8 +103,8 @@ class PDFParser(DocumentParser):
             for page_num in range(len(doc)):
                 page = doc[page_num]
 
-                # 1. 提取文本
-                text = page.get_text().strip()
+                # 1. 提取文本（Phase 0: 版式分层重建阅读顺序，异常降级为 get_text）
+                text = self._extract_text_ordered(page, layout_analysis_enabled)
                 if text:
                     sections.append(
                         ParsedSection(kind="text", content=text, page=page_num)
@@ -152,6 +161,35 @@ class PDFParser(DocumentParser):
             sections,
             page_separator=page_separator,
         )
+
+    def _extract_text_ordered(self, page: Any, layout_analysis_enabled: bool) -> str:
+        """提取页面文本，优先经版式分析层重建阅读顺序。
+
+        版式分析（layout_analyzer）基于 get_text("dict") 的 block 坐标做
+        栏检测与阅读顺序排序，解决多栏版式乱序；任何异常或结果为空
+        均降级为 page.get_text()，保证内容不丢（仅可能不保顺序）。
+
+        Args:
+            page: pymupdf Page 对象。
+            layout_analysis_enabled: 是否启用版式分析（配置开关）。
+
+        Returns:
+            页面纯文本（已 strip）。
+        """
+        if layout_analysis_enabled:
+            try:
+                from app.document.layout_analyzer import extract_page_text_ordered
+
+                ordered = extract_page_text_ordered(
+                    page.get_text("dict"),
+                    float(page.rect.width),
+                )
+                if ordered.strip():
+                    return ordered.strip()
+            except Exception as exc:
+                # 版式分析失败不致命 —— 降级为纯文本提取
+                log.debug("pdf.layout_fallback", error=str(exc))
+        return page.get_text().strip()
 
     def _extract_tables(self, page: Any, page_num: int) -> list[ParsedSection]:
         """从 PDF 页面提取表格，转为 HTML <table> 标签。
