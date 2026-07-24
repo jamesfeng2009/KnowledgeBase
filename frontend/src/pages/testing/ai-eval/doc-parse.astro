@@ -1,0 +1,653 @@
+---
+/**
+ * 文档解析评测页面
+ * 功能：创建数据集 → 添加用例（标注标准答案 + 解析结果或关联文档）→ 执行评测 → 查看四维度指标
+ * 数据来源：/api/v1/testing/ai-eval/doc-parse/*
+ * 指标说明（参考 test.md 第六部分）：文本相似度 / CER + 表格准确率 + 公式准确率 + 版面还原度
+ */
+import DefaultLayout from '@/layouts/DefaultLayout.astro';
+
+const breadcrumb = [
+  { label: '测试平台', href: '/testing' },
+  { label: 'AI 评测', href: '/testing/ai-eval/doc-parse' },
+  { label: '文档解析评测' },
+];
+---
+
+<DefaultLayout title="文档解析评测" breadcrumb={breadcrumb}>
+  <div class="doc-parse-eval">
+    <!-- 页头 -->
+    <div class="page-header">
+      <div>
+        <h1 class="page-title">文档解析评测</h1>
+        <p class="page-desc">评测文档解析质量（文本相似度 / 表格 / 公式 / 版面四维度），对比人工标注标准答案，支持 Docling 端到端解析</p>
+      </div>
+      <button class="btn btn-primary btn-sm" id="create-dataset-btn" type="button">＋ 创建评测数据集</button>
+    </div>
+
+    <!-- 统计卡片 -->
+    <div class="grid grid-cols-5" style="margin-bottom: var(--space-5);">
+      <div class="card stat-card">
+        <div class="stat-card-header"><span class="text-muted stat-label">评测数据集</span></div>
+        <div class="stat-card-value" id="stat-datasets">--</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-card-header"><span class="text-muted stat-label">评测用例数</span></div>
+        <div class="stat-card-value" id="stat-cases">--</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-card-header"><span class="text-muted stat-label">平均文本相似度</span></div>
+        <div class="stat-card-value" style="color: var(--primary);" id="stat-text-sim">--</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-card-header"><span class="text-muted stat-label">平均 CER</span></div>
+        <div class="stat-card-value" style="color: var(--warning);" id="stat-cer">--</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-card-header"><span class="text-muted stat-label">综合得分</span></div>
+        <div class="stat-card-value" style="color: var(--success);" id="stat-overall">--</div>
+      </div>
+    </div>
+
+    <!-- 数据集列表 -->
+    <div class="card">
+      <div class="card-header"><h3>评测数据集列表</h3></div>
+      <div style="overflow-x: auto;">
+        <table class="data-table" id="dataset-table">
+          <thead>
+            <tr>
+              <th>数据集名称</th>
+              <th>状态</th>
+              <th>用例数</th>
+              <th>文本相似度</th>
+              <th>CER</th>
+              <th>表格</th>
+              <th>公式</th>
+              <th>版面</th>
+              <th>创建时间</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="dataset-tbody">
+            <tr><td colspan="10" class="text-center text-muted">加载中...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 数据集详情弹窗 -->
+    <div class="modal-overlay" id="detail-modal" style="display:none;">
+      <div class="modal" style="max-width: 1100px;">
+        <div class="modal-header">
+          <h3 id="detail-modal-title">数据集详情</h3>
+          <button class="modal-close" id="detail-modal-close" type="button">&times;</button>
+        </div>
+        <div class="modal-body" style="max-height: 78vh; overflow-y: auto;">
+          <div id="detail-modal-content"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 创建数据集弹窗 -->
+    <div class="modal-overlay" id="create-modal" style="display:none;">
+      <div class="modal">
+        <div class="modal-header">
+          <h3>创建解析评测数据集</h3>
+          <button class="modal-close" id="create-modal-close" type="button">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">数据集名称</label>
+            <input type="text" id="dataset-name" class="form-input" placeholder="例如：PDF 解析质量基线评测" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">描述（可选）</label>
+            <textarea id="dataset-desc" class="form-input" rows="2" placeholder="评测目的说明"></textarea>
+          </div>
+          <div class="alert alert-info" style="margin-top: var(--space-4);">
+            创建后可添加用例：每条用例需提供人工标注的标准答案文本（ground truth），以及解析结果文本或关联文档（Docling 端到端模式）。
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline btn-sm" id="create-cancel" type="button">取消</button>
+          <button class="btn btn-primary btn-sm" id="create-confirm" type="button">创建</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</DefaultLayout>
+
+<script>
+  const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
+
+  function getToken(): string {
+    return localStorage.getItem('ekb_access_token') || '';
+  }
+
+  async function api<T = any>(path: string, options: RequestInit = {}): Promise<T> {
+    const res = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${getToken()}`,
+        ...options.headers,
+      },
+    });
+    const data = await res.json();
+    if (!res.ok || data.code !== 0) {
+      throw new Error(data.message || data.detail || `HTTP ${res.status}`);
+    }
+    return data;
+  }
+
+  const docTypeMap: Record<string, string> = {
+    pdf: 'PDF', docx: 'Word', pptx: 'PPT', xlsx: 'Excel',
+    html: 'HTML', image: '图片', md: 'Markdown', txt: 'TXT',
+  };
+  const difficultyMap: Record<string, string> = { easy: '简单', medium: '中等', hard: '困难' };
+  const statusMap: Record<string, { label: string; color: string }> = {
+    created: { label: '待评测', color: 'var(--text-muted)' },
+    running: { label: '评测中', color: 'var(--warning)' },
+    completed: { label: '已完成', color: 'var(--success)' },
+    failed: { label: '失败', color: 'var(--danger)' },
+  };
+
+  function fmtPct(v: any): string {
+    const n = Number(v);
+    return isNaN(n) ? '--' : (n * 100).toFixed(1) + '%';
+  }
+  function escapeHtml(s: unknown): string {
+    return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  let currentDataset: any = null;
+  // 缓存文档列表（供 Docling 端到端模式选择 document_id）
+  let documentOptions: any[] = [];
+
+  // ====================================================================
+  // 加载统计
+  // ====================================================================
+  async function loadStats() {
+    try {
+      const res = await api<any>('/api/v1/testing/ai-eval/doc-parse/stats');
+      const d = res.data;
+      document.getElementById('stat-datasets')!.textContent = d.total_datasets;
+      document.getElementById('stat-cases')!.textContent = d.total_cases;
+      document.getElementById('stat-text-sim')!.textContent = fmtPct(d.avg_text_similarity);
+      document.getElementById('stat-cer')!.textContent = fmtPct(d.avg_cer);
+      document.getElementById('stat-overall')!.textContent = fmtPct(d.avg_overall_score);
+    } catch (e) {
+      console.error('加载统计失败:', e);
+    }
+  }
+
+  // ====================================================================
+  // 加载数据集列表
+  // ====================================================================
+  async function loadDatasets() {
+    try {
+      const res = await api<any>('/api/v1/testing/ai-eval/doc-parse/datasets?page=1&size=50');
+      const datasets = res.data.items || [];
+      const tbody = document.getElementById('dataset-tbody')!;
+
+      if (datasets.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="10" class="text-center text-muted">暂无评测数据集，点击右上角创建</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = datasets.map((ds: any) => {
+        const st = statusMap[ds.status] || { label: ds.status, color: '' };
+        const m = ds.metrics || {};
+        const done = ds.status === 'completed';
+        const time = ds.created_at ? new Date(ds.created_at).toLocaleString('zh-CN') : '--';
+        return `
+          <tr>
+            <td>${escapeHtml(ds.name)}</td>
+            <td><span style="color: ${st.color}; font-weight: 500;">${st.label}</span></td>
+            <td>${ds.total_cases}</td>
+            <td style="color: var(--primary); font-weight: 500;">${done ? fmtPct(m.text_similarity) : '--'}</td>
+            <td style="color: var(--warning);">${done ? fmtPct(m.cer) : '--'}</td>
+            <td>${done ? fmtPct(m.table_score) : '--'}</td>
+            <td>${done ? fmtPct(m.formula_score) : '--'}</td>
+            <td>${done ? fmtPct(m.layout_score) : '--'}</td>
+            <td style="font-size: var(--text-sm); color: var(--text-muted);">${time}</td>
+            <td>
+              <button class="btn btn-outline btn-sm" onclick="viewDetail('${ds.id}')">管理</button>
+              <button class="btn btn-outline btn-sm" onclick="runDataset('${ds.id}')" ${ds.status === 'running' ? 'disabled' : ''}>执行</button>
+              <button class="btn btn-outline btn-sm" onclick="deleteDataset('${ds.id}')" style="color: var(--danger);">删除</button>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    } catch (e) {
+      document.getElementById('dataset-tbody')!.innerHTML =
+        '<tr><td colspan="10" class="text-center text-muted">加载失败</td></tr>';
+    }
+  }
+
+  // ====================================================================
+  // 创建数据集
+  // ====================================================================
+  function showCreateModal() {
+    document.getElementById('create-modal')!.style.display = 'flex';
+  }
+
+  async function confirmCreate() {
+    const name = (document.getElementById('dataset-name') as HTMLInputElement).value.trim();
+    if (!name) { alert('请输入数据集名称'); return; }
+    const desc = (document.getElementById('dataset-desc') as HTMLTextAreaElement).value.trim();
+
+    try {
+      await api('/api/v1/testing/ai-eval/doc-parse/datasets', {
+        method: 'POST',
+        body: JSON.stringify({ name, description: desc }),
+      });
+      document.getElementById('create-modal')!.style.display = 'none';
+      (document.getElementById('dataset-name') as HTMLInputElement).value = '';
+      (document.getElementById('dataset-desc') as HTMLTextAreaElement).value = '';
+      await loadDatasets();
+      await loadStats();
+      alert('评测数据集创建成功');
+    } catch (e: any) {
+      alert('创建失败: ' + e.message);
+    }
+  }
+
+  // ====================================================================
+  // 数据集详情 / 用例管理
+  // ====================================================================
+  window.viewDetail = async function(datasetId: string) {
+    try {
+      const [dsRes, cRes] = await Promise.all([
+        api<any>(`/api/v1/testing/ai-eval/doc-parse/datasets/${datasetId}`),
+        api<any>(`/api/v1/testing/ai-eval/doc-parse/datasets/${datasetId}/cases`),
+      ]);
+      currentDataset = dsRes.data;
+      const cases: any[] = cRes.data || [];
+
+      // 预加载文档列表（供 Docling 端到端模式选择）
+      await loadDocumentOptions();
+
+      renderDetail(currentDataset, cases);
+      document.getElementById('detail-modal')!.style.display = 'flex';
+    } catch (e: any) {
+      alert('加载数据集详情失败: ' + e.message);
+    }
+  };
+
+  async function loadDocumentOptions() {
+    documentOptions = [];
+    try {
+      const res = await api<any>('/api/v1/documents?page=1&size=200');
+      documentOptions = res.data.items || [];
+    } catch (e) { /* ignore */ }
+  }
+
+  function renderDetail(ds: any, cases: any[]) {
+    const m = ds.metrics || {};
+    const st = statusMap[ds.status] || { label: ds.status, color: '' };
+    const metricsHtml = ds.status === 'completed' ? `
+      <div style="display: grid; grid-template-columns: repeat(6, 1fr); gap: var(--space-2); margin-bottom: var(--space-4);">
+        ${[
+          ['文本相似度', fmtPct(m.text_similarity), 'var(--primary)'],
+          ['CER', fmtPct(m.cer), 'var(--warning)'],
+          ['表格准确率', fmtPct(m.table_score), 'var(--success)'],
+          ['公式准确率', fmtPct(m.formula_score), 'var(--success)'],
+          ['版面还原度', fmtPct(m.layout_score), 'var(--success)'],
+          ['综合得分', fmtPct(m.overall_score), 'var(--primary)'],
+        ].map(([k, v, c]) => `
+          <div style="padding: var(--space-3); border: 1px solid var(--border); border-radius: 8px; text-align: center;">
+            <div style="font-size: var(--text-xs); color: var(--text-muted);">${k}</div>
+            <div style="font-size: var(--text-lg); font-weight: 600; color: ${c}; margin-top: var(--space-1);">${v}</div>
+          </div>
+        `).join('')}
+      </div>
+    ` : `<div class="alert alert-info" style="margin-bottom: var(--space-4);">数据集尚未评测，请添加用例后点击「执行评测」</div>`;
+
+    const caseRows = cases.map((c: any, i: number) => {
+      const mode = c.document_id ? '<span style="color: var(--primary);">Docling</span>' : '<span style="color: var(--success);">直接</span>';
+      return `
+        <tr>
+          <td>${i + 1}</td>
+          <td style="max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtml(c.title)}">${escapeHtml(c.title)}</td>
+          <td><span style="padding: 2px 8px; border-radius: 4px; background: var(--bg-secondary); font-size: var(--text-xs);">${docTypeMap[c.doc_type] || c.doc_type}</span></td>
+          <td><span style="font-size: var(--text-xs); color: var(--text-muted);">${difficultyMap[c.difficulty] || c.difficulty}</span></td>
+          <td>${mode}</td>
+          <td>
+            <button class="btn btn-outline btn-sm" onclick="deleteCase('${c.id}')">删</button>
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+    document.getElementById('detail-modal-title')!.textContent = `${ds.name}（${st.label}）`;
+    document.getElementById('detail-modal-content')!.innerHTML = `
+      ${metricsHtml}
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--space-3);">
+        <h4 style="margin: 0;">解析用例（${cases.length}）</h4>
+        <div style="display: flex; gap: var(--space-2);">
+          <button class="btn btn-outline btn-sm" onclick="showAddCase('${ds.id}')">＋ 添加用例</button>
+          <button class="btn btn-primary btn-sm" onclick="runDataset('${ds.id}')">执行评测</button>
+        </div>
+      </div>
+      <div style="overflow-x: auto;">
+        <table class="data-table">
+          <thead>
+            <tr><th>#</th><th>用例标题</th><th>类型</th><th>难度</th><th>评测模式</th><th>操作</th></tr>
+          </thead>
+          <tbody>
+            ${cases.length === 0 ? '<tr><td colspan="6" class="text-center text-muted">暂无用例，点击右上角添加</td></tr>' : caseRows}
+          </tbody>
+        </table>
+      </div>
+      ${ds.status === 'completed' ? `<div style="margin-top: var(--space-4);"><button class="btn btn-outline btn-sm" onclick="viewResults('${ds.id}')">查看解析结果详情</button></div>` : ''}
+    `;
+  }
+
+  // ====================================================================
+  // 添加用例
+  // ====================================================================
+  window.showAddCase = function(datasetId: string) {
+    const docOptions = documentOptions.map((d: any) => `<option value="${d.id}">${escapeHtml(d.title)}</option>`).join('');
+    const html = `
+      <div style="border: 1px solid var(--border); border-radius: 8px; padding: var(--space-4); margin-bottom: var(--space-4); background: var(--bg-secondary);">
+        <h4 style="margin-top: 0;">添加解析用例</h4>
+        <div class="form-group">
+          <label class="form-label">用例标题</label>
+          <input type="text" id="new-case-title" class="form-input" placeholder="例如：财报第一页" />
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3);">
+          <div class="form-group">
+            <label class="form-label">文档类型</label>
+            <select id="new-case-doctype" class="form-input">
+              ${Object.entries(docTypeMap).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">难度</label>
+            <select id="new-case-diff" class="form-input">
+              <option value="easy">简单</option>
+              <option value="medium" selected>中等</option>
+              <option value="hard">困难</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">人工标注标准答案文本（ground truth，必填）</label>
+          <textarea id="new-case-expected" class="form-input" rows="4" placeholder="人工录入的文档标准文本，用于与解析结果对比"></textarea>
+          <div class="text-muted" style="font-size: var(--text-xs); margin-top: var(--space-1);">test.md 强调测试数据须人工标注且与算法隔离</div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">评测模式</label>
+          <select id="new-case-mode" class="form-input" onchange="toggleCaseMode()">
+            <option value="direct">直接提供模式：录入解析结果文本</option>
+            <option value="docling">Docling 端到端模式：选择关联文档，执行时用 Docling 解析</option>
+          </select>
+        </div>
+        <div class="form-group" id="direct-mode-group">
+          <label class="form-label">解析结果文本（直接提供模式）</label>
+          <textarea id="new-case-parsed" class="form-input" rows="4" placeholder="待评测的解析结果文本（可粘贴其他解析器的输出）"></textarea>
+        </div>
+        <div class="form-group" id="docling-mode-group" style="display:none;">
+          <label class="form-label">关联文档（Docling 端到端模式）</label>
+          <select id="new-case-doc" class="form-input">
+            ${docOptions || '<option value="" disabled>暂无文档，请先上传文档</option>'}
+          </select>
+          <div class="text-muted" style="font-size: var(--text-xs); margin-top: var(--space-1);">执行评测时将下载该文档并用 Docling 解析后对比标注</div>
+        </div>
+        <div style="display: flex; gap: var(--space-2); justify-content: flex-end;">
+          <button class="btn btn-outline btn-sm" onclick="refreshDetail(currentDataset.id)">取消</button>
+          <button class="btn btn-primary btn-sm" onclick="submitAddCase('${datasetId}')">添加</button>
+        </div>
+      </div>
+    `;
+    renderDetailKeepCases(datasetId, html);
+  };
+
+  window.toggleCaseMode = function() {
+    const mode = (document.getElementById('new-case-mode') as HTMLSelectElement).value;
+    document.getElementById('direct-mode-group')!.style.display = mode === 'direct' ? '' : 'none';
+    document.getElementById('docling-mode-group')!.style.display = mode === 'docling' ? '' : 'none';
+  };
+
+  function renderDetailKeepCases(datasetId: string, prependHtml: string) {
+    api<any>(`/api/v1/testing/ai-eval/doc-parse/datasets/${datasetId}/cases`).then((res) => {
+      const cases = res.data || [];
+      renderDetail(currentDataset, cases);
+      const content = document.getElementById('detail-modal-content')!;
+      content.insertAdjacentHTML('afterbegin', prependHtml);
+    }).catch(() => alert('加载用例失败'));
+  }
+
+  window.submitAddCase = async function(datasetId: string) {
+    const title = (document.getElementById('new-case-title') as HTMLInputElement).value.trim();
+    if (!title) { alert('请输入用例标题'); return; }
+    const expected_text = (document.getElementById('new-case-expected') as HTMLTextAreaElement).value.trim();
+    if (!expected_text) { alert('请输入人工标注标准答案文本'); return; }
+    const doc_type = (document.getElementById('new-case-doctype') as HTMLSelectElement).value;
+    const difficulty = (document.getElementById('new-case-diff') as HTMLSelectElement).value;
+    const mode = (document.getElementById('new-case-mode') as HTMLSelectElement).value;
+
+    const payload: any = { title, doc_type, difficulty, expected_text };
+    if (mode === 'direct') {
+      const parsed_text = (document.getElementById('new-case-parsed') as HTMLTextAreaElement).value.trim();
+      if (!parsed_text) { alert('直接提供模式下请录入解析结果文本'); return; }
+      payload.parsed_text = parsed_text;
+    } else {
+      const document_id = (document.getElementById('new-case-doc') as HTMLSelectElement).value;
+      if (!document_id) { alert('Docling 模式下请选择关联文档'); return; }
+      payload.document_id = document_id;
+    }
+
+    try {
+      await api(`/api/v1/testing/ai-eval/doc-parse/datasets/${datasetId}/cases`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+      alert('用例已添加');
+      await refreshDetail(datasetId);
+    } catch (e: any) {
+      alert('添加失败: ' + e.message);
+    }
+  };
+
+  window.deleteCase = async function(caseId: string) {
+    if (!confirm('确认删除该用例？')) return;
+    try {
+      await api(`/api/v1/testing/ai-eval/doc-parse/cases/${caseId}`, { method: 'DELETE' });
+      await refreshDetail(currentDataset.id);
+    } catch (e: any) {
+      alert('删除失败: ' + e.message);
+    }
+  };
+
+  // ====================================================================
+  // 执行评测
+  // ====================================================================
+  window.runDataset = async function(datasetId: string) {
+    if (!confirm('确认执行解析评测？将对每条用例计算四维度指标，Docling 模式可能需要较长时间。')) return;
+    const btn = event?.target as HTMLButtonElement;
+    if (btn) { btn.disabled = true; btn.textContent = '评测中...'; }
+    try {
+      const res = await api<any>('/api/v1/testing/ai-eval/doc-parse/run', {
+        method: 'POST',
+        body: JSON.stringify({ dataset_id: datasetId }),
+      });
+      alert(res.message || '评测完成');
+      await loadDatasets();
+      await loadStats();
+      if (currentDataset && currentDataset.id === datasetId && document.getElementById('detail-modal')!.style.display === 'flex') {
+        await refreshDetail(datasetId);
+      }
+    } catch (e: any) {
+      alert('执行失败: ' + e.message);
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '执行'; }
+    }
+  };
+
+  // ====================================================================
+  // 查看解析结果详情
+  // ====================================================================
+  window.viewResults = async function(datasetId: string) {
+    try {
+      const res = await api<any>(`/api/v1/testing/ai-eval/doc-parse/datasets/${datasetId}/results`);
+      const results: any[] = res.data || [];
+      const html = results.map((r: any, i: number) => {
+        const m = r.metrics || {};
+        const tbl = m.table || {};
+        const fml = m.formula || {};
+        const lyt = m.layout || {};
+        return `
+          <div style="border: 1px solid var(--border); border-radius: 8px; padding: var(--space-3); margin-bottom: var(--space-3);">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: var(--space-2);">
+              <div><span style="color: var(--text-muted); font-size: var(--text-sm);">#${i+1}</span>
+                <strong style="margin-left: var(--space-2);">${escapeHtml(r.title)}</strong>
+                <span style="margin-left: var(--space-2); padding: 2px 8px; border-radius: 4px; background: var(--bg-secondary); font-size: var(--text-xs);">${docTypeMap[r.doc_type] || r.doc_type}</span>
+                ${r.used_docling ? '<span style="margin-left: var(--space-1); padding: 2px 8px; border-radius: 4px; background: var(--primary); color: white; font-size: var(--text-xs);">Docling</span>' : ''}
+              </div>
+              <span style="color: var(--primary); font-weight: 600;">综合 ${fmtPct(m.overall_score)}</span>
+            </div>
+            <div style="display:flex; gap: var(--space-3); font-size: var(--text-sm); margin-bottom: var(--space-2); flex-wrap: wrap;">
+              <span>文本相似度: <strong style="color: var(--primary);">${fmtPct(m.text_similarity)}</strong></span>
+              <span>CER: <strong style="color: var(--warning);">${fmtPct(m.cer)}</strong></span>
+              <span>表格: <strong>${fmtPct(tbl.overall_score)}</strong></span>
+              <span>公式: <strong>${fmtPct(fml.overall_score)}</strong></span>
+              <span>版面: <strong>${fmtPct(lyt.overall_score)}</strong></span>
+              <span>耗时: ${r.parse_time_ms}ms</span>
+            </div>
+            <details style="margin-top: var(--space-2);">
+              <summary style="cursor: pointer; font-size: var(--text-sm); color: var(--text-muted);">查看文本对比</summary>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2); margin-top: var(--space-2);">
+                <div>
+                  <div style="font-size: var(--text-xs); color: var(--text-muted); margin-bottom: var(--space-1);">标准答案（标注）</div>
+                  <div style="padding: var(--space-2); background: var(--bg-secondary); border-radius: 4px; font-size: var(--text-xs); max-height: 160px; overflow-y: auto; white-space: pre-wrap;">${escapeHtml(r.expected_text)}</div>
+                </div>
+                <div>
+                  <div style="font-size: var(--text-xs); color: var(--text-muted); margin-bottom: var(--space-1);">解析结果</div>
+                  <div style="padding: var(--space-2); background: var(--bg-tertiary, var(--bg-secondary)); border-radius: 4px; font-size: var(--text-xs); max-height: 160px; overflow-y: auto; white-space: pre-wrap;">${escapeHtml(r.parsed_text || '(空)')}</div>
+                </div>
+              </div>
+            </details>
+            ${r.error_message ? `<div style="margin-top: var(--space-2); color: var(--danger); font-size: var(--text-sm);">错误: ${escapeHtml(r.error_message)}</div>` : ''}
+          </div>
+        `;
+      }).join('');
+      const content = document.getElementById('detail-modal-content')!;
+      content.insertAdjacentHTML('afterbegin', `
+        <div style="border: 1px solid var(--border); border-radius: 8px; padding: var(--space-4); margin-bottom: var(--space-4);">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: var(--space-3);">
+            <h4 style="margin:0;">解析结果详情</h4>
+            <button class="btn btn-outline btn-sm" onclick="refreshDetail(currentDataset.id)">收起</button>
+          </div>
+          ${html || '<p class="text-muted">暂无结果</p>'}
+        </div>
+      `);
+    } catch (e: any) {
+      alert('加载结果失败: ' + e.message);
+    }
+  };
+
+  async function refreshDetail(datasetId: string) {
+    try {
+      const [dsRes, cRes] = await Promise.all([
+        api<any>(`/api/v1/testing/ai-eval/doc-parse/datasets/${datasetId}`),
+        api<any>(`/api/v1/testing/ai-eval/doc-parse/datasets/${datasetId}/cases`),
+      ]);
+      currentDataset = dsRes.data;
+      renderDetail(currentDataset, cRes.data || []);
+    } catch (e: any) {
+      alert('刷新失败: ' + e.message);
+    }
+  }
+
+  // ====================================================================
+  // 删除数据集
+  // ====================================================================
+  window.deleteDataset = async function(datasetId: string) {
+    if (!confirm('确认删除该数据集？相关用例和结果将一并删除。')) return;
+    try {
+      await api(`/api/v1/testing/ai-eval/doc-parse/datasets/${datasetId}`, { method: 'DELETE' });
+      await loadDatasets();
+      await loadStats();
+    } catch (e: any) {
+      alert('删除失败: ' + e.message);
+    }
+  };
+
+  // ====================================================================
+  // 事件绑定
+  // ====================================================================
+  document.getElementById('create-dataset-btn')!.addEventListener('click', showCreateModal);
+  document.getElementById('create-confirm')!.addEventListener('click', confirmCreate);
+  ['create-cancel', 'create-modal-close'].forEach(id =>
+    document.getElementById(id)!.addEventListener('click', () => {
+      document.getElementById('create-modal')!.style.display = 'none';
+    })
+  );
+  document.getElementById('detail-modal-close')!.addEventListener('click', () => {
+    document.getElementById('detail-modal')!.style.display = 'none';
+  });
+
+  // 初始加载
+  loadStats();
+  loadDatasets();
+</script>
+
+<style>
+  .doc-parse-eval .page-desc {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    margin-top: var(--space-1);
+  }
+
+  .modal-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+
+  .modal {
+    background: var(--bg-primary);
+    border-radius: 12px;
+    width: 90%;
+    max-width: 500px;
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-4);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .modal-body {
+    padding: var(--space-4);
+    overflow-y: auto;
+  }
+
+  .modal-footer {
+    padding: var(--space-4);
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-2);
+  }
+
+  .modal-close {
+    background: none;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    color: var(--text-muted);
+    line-height: 1;
+  }
+</style>

@@ -36,6 +36,20 @@ from app.models.testing import (
     TestReview,
     TestCase,
 )
+from app.models.ai_eval import (
+    DocParseCase,
+    DocParseDataset,
+    DocParseResult,
+    InjectionTestCase,
+    InjectionTestResult,
+    InjectionTestSuite,
+    JudgeCase,
+    JudgeDataset,
+    JudgeResult,
+    RagEvalDataset,
+    RagEvalQuery,
+    RagEvalResult,
+)
 
 __all__ = [
     "Base",
@@ -83,6 +97,19 @@ __all__ = [
     "TestReview",
     "TestPlan",
     "TestExecution",
+    # AI 评测（Prompt Injection + RAG 检索 + 文档解析 + AI Judge）
+    "InjectionTestSuite",
+    "InjectionTestCase",
+    "InjectionTestResult",
+    "RagEvalDataset",
+    "RagEvalQuery",
+    "RagEvalResult",
+    "DocParseDataset",
+    "DocParseCase",
+    "DocParseResult",
+    "JudgeDataset",
+    "JudgeCase",
+    "JudgeResult",
     # 知识回流层
     "KnowledgeAsset",
     "CompoundingTask",

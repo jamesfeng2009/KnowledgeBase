@@ -1,0 +1,542 @@
+---
+/**
+ * Prompt Injection 防御测试页面
+ * 功能：创建测试套件 → 执行测试 → 查看结果
+ * 数据来源：/api/v1/testing/ai-eval/injection/*
+ */
+import DefaultLayout from '@/layouts/DefaultLayout.astro';
+
+const breadcrumb = [
+  { label: '测试平台', href: '/testing' },
+  { label: 'AI 评测', href: '/testing/ai-eval/injection' },
+  { label: 'Prompt Injection 防御' },
+];
+---
+
+<DefaultLayout title="Prompt Injection 防御测试" breadcrumb={breadcrumb}>
+  <div class="injection-eval">
+    <!-- 页头 -->
+    <div class="page-header">
+      <div>
+        <h1 class="page-title">Prompt Injection 防御测试</h1>
+        <p class="page-desc">自动化测试 AI 系统对 8 类提示词注入攻击的防御能力</p>
+      </div>
+      <div style="display:flex; gap: var(--space-3);">
+        <button class="btn btn-outline btn-sm" id="view-presets-btn" type="button">查看攻击用例库</button>
+        <button class="btn btn-primary btn-sm" id="create-suite-btn" type="button">＋ 创建测试套件</button>
+      </div>
+    </div>
+
+    <!-- 统计卡片 -->
+    <div class="grid grid-cols-5" style="margin-bottom: var(--space-5);">
+      <div class="card stat-card">
+        <div class="stat-card-header"><span class="text-muted stat-label">测试套件</span></div>
+        <div class="stat-card-value" id="stat-suites">--</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-card-header"><span class="text-muted stat-label">执行用例数</span></div>
+        <div class="stat-card-value" id="stat-executed">--</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-card-header"><span class="text-muted stat-label">完美防御</span></div>
+        <div class="stat-card-value" style="color: var(--success);" id="stat-passed">--</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-card-header"><span class="text-muted stat-label">防御失败</span></div>
+        <div class="stat-card-value" style="color: var(--danger);" id="stat-failed">--</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-card-header"><span class="text-muted stat-label">防御得分</span></div>
+        <div class="stat-card-value" style="color: var(--primary);" id="stat-score">--</div>
+      </div>
+    </div>
+
+    <!-- 按攻击类型统计 -->
+    <div class="card" style="margin-bottom: var(--space-5);" id="type-stats-card" >
+      <div class="card-header"><h3>按攻击类型防御统计</h3></div>
+      <div id="type-stats-body" style="padding: var(--space-4);">
+        <p class="text-muted">暂无数据，请先创建并执行测试套件</p>
+      </div>
+    </div>
+
+    <!-- 套件列表 -->
+    <div class="card">
+      <div class="card-header">
+        <h3>测试套件列表</h3>
+      </div>
+      <div style="overflow-x: auto;">
+        <table class="data-table" id="suite-table">
+          <thead>
+            <tr>
+              <th>套件名称</th>
+              <th>状态</th>
+              <th>用例数</th>
+              <th>通过</th>
+              <th>部分</th>
+              <th>失败</th>
+              <th>耗时</th>
+              <th>创建时间</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="suite-tbody">
+            <tr><td colspan="9" class="text-center text-muted">加载中...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 结果详情弹窗 -->
+    <div class="modal-overlay" id="result-modal" style="display:none;">
+      <div class="modal" style="max-width: 900px;">
+        <div class="modal-header">
+          <h3 id="result-modal-title">测试结果详情</h3>
+          <button class="modal-close" id="result-modal-close" type="button">&times;</button>
+        </div>
+        <div class="modal-body" style="max-height: 70vh; overflow-y: auto;">
+          <div id="result-modal-content"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 创建套件弹窗 -->
+    <div class="modal-overlay" id="create-modal" style="display:none;">
+      <div class="modal">
+        <div class="modal-header">
+          <h3>创建测试套件</h3>
+          <button class="modal-close" id="create-modal-close" type="button">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">套件名称</label>
+            <input type="text" id="suite-name" class="form-input" placeholder="例如：首次安全防御测试" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">描述（可选）</label>
+            <textarea id="suite-desc" class="form-input" rows="2" placeholder="测试目的说明"></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label">测试目标</label>
+            <select id="suite-mode" class="form-input">
+              <option value="system_prompt">系统提示词防御（仅测 LLM 防御能力）</option>
+              <option value="full_rag">完整 RAG 链路（含知识库上下文）</option>
+            </select>
+          </div>
+          <div class="alert alert-info" style="margin-top: var(--space-4);">
+            创建后将自动导入 24 条预置攻击用例（8 类攻击 × 3 条/类）
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline btn-sm" id="create-cancel" type="button">取消</button>
+          <button class="btn btn-primary btn-sm" id="create-confirm" type="button">创建</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 预置用例库弹窗 -->
+    <div class="modal-overlay" id="preset-modal" style="display:none;">
+      <div class="modal" style="max-width: 800px;">
+        <div class="modal-header">
+          <h3>预置攻击用例库</h3>
+          <button class="modal-close" id="preset-modal-close" type="button">&times;</button>
+        </div>
+        <div class="modal-body" style="max-height: 70vh; overflow-y: auto;">
+          <div id="preset-modal-content"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</DefaultLayout>
+
+<script>
+  const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
+
+  // 从 localStorage 获取 token
+  function getToken(): string {
+    return localStorage.getItem('ekb_access_token') || '';
+  }
+
+  async function api<T = any>(path: string, options: RequestInit = {}): Promise<T> {
+    const res = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${getToken()}`,
+        ...options.headers,
+      },
+    });
+    const data = await res.json();
+    if (!res.ok || data.code !== 0) {
+      throw new Error(data.message || data.detail || `HTTP ${res.status}`);
+    }
+    return data;
+  }
+
+  // ====================================================================
+  // 加载统计
+  // ====================================================================
+  async function loadStats() {
+    try {
+      const res = await api<any>('/api/v1/testing/ai-eval/injection/stats');
+      const d = res.data;
+      document.getElementById('stat-suites')!.textContent = d.total_suites;
+      document.getElementById('stat-executed')!.textContent = d.total_executed;
+      document.getElementById('stat-passed')!.textContent = d.total_passed;
+      document.getElementById('stat-failed')!.textContent = d.total_failed;
+      document.getElementById('stat-score')!.textContent = d.defense_score + '分';
+
+      // 按攻击类型统计
+      const typeBody = document.getElementById('type-stats-body')!;
+      const types = d.by_attack_type || {};
+      const typeNames: Record<string, string> = {
+        basic_jailbreak: '基础越狱',
+        role_playing: '角色扮演',
+        system_override: '系统提示覆盖',
+        context_poisoning: '上下文污染',
+        multi_turn: '多轮对话',
+        encoding_obfuscation: '编码混淆',
+        indirect_injection: '间接注入',
+        combined: '组合攻击',
+      };
+      if (Object.keys(types).length === 0) {
+        typeBody.innerHTML = '<p class="text-muted">暂无数据，请先创建并执行测试套件</p>';
+      } else {
+        typeBody.innerHTML = `
+          <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-3);">
+            ${Object.entries(types).map(([type, stats]: [string, any]) => {
+              const total = stats.total || 0;
+              const passed = stats.passed || 0;
+              const failed = stats.failed || 0;
+              const partial = stats.partial || 0;
+              const passRate = total > 0 ? Math.round((passed / total) * 100) : 0;
+              return `
+                <div style="padding: var(--space-3); border: 1px solid var(--border); border-radius: 8px;">
+                  <div style="font-weight: 600; margin-bottom: var(--space-2);">${typeNames[type] || type}</div>
+                  <div style="font-size: var(--text-sm); color: var(--text-muted);">用例: ${total}</div>
+                  <div style="display: flex; gap: var(--space-2); margin-top: var(--space-2);">
+                    <span style="color: var(--success);">✓${passed}</span>
+                    <span style="color: var(--warning);">≈${partial}</span>
+                    <span style="color: var(--danger);">✗${failed}</span>
+                  </div>
+                  <div style="margin-top: var(--space-2); height: 4px; background: var(--border); border-radius: 2px; overflow: hidden;">
+                    <div style="width: ${passRate}%; height: 100%; background: var(--success);"></div>
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        `;
+      }
+    } catch (e) {
+      console.error('加载统计失败:', e);
+    }
+  }
+
+  // ====================================================================
+  // 加载套件列表
+  // ====================================================================
+  async function loadSuites() {
+    try {
+      const res = await api<any>('/api/v1/testing/ai-eval/injection/suites?page=1&size=50');
+      const suites = res.data.items || [];
+      const tbody = document.getElementById('suite-tbody')!;
+
+      if (suites.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted">暂无测试套件，点击右上角创建</td></tr>';
+        return;
+      }
+
+      const statusMap: Record<string, { label: string; color: string }> = {
+        created: { label: '待执行', color: 'var(--text-muted)' },
+        running: { label: '执行中', color: 'var(--warning)' },
+        completed: { label: '已完成', color: 'var(--success)' },
+        failed: { label: '失败', color: 'var(--danger)' },
+      };
+
+      tbody.innerHTML = suites.map((s: any) => {
+        const st = statusMap[s.status] || { label: s.status, color: '' };
+        const time = s.created_at ? new Date(s.created_at).toLocaleString('zh-CN') : '--';
+        return `
+          <tr>
+            <td>${s.name}</td>
+            <td><span style="color: ${st.color}; font-weight: 500;">${st.label}</span></td>
+            <td>${s.total_cases}</td>
+            <td style="color: var(--success);">${s.passed_count}</td>
+            <td style="color: var(--warning);">${s.partial_count}</td>
+            <td style="color: var(--danger);">${s.failed_count}</td>
+            <td>${s.duration_seconds}s</td>
+            <td style="font-size: var(--text-sm); color: var(--text-muted);">${time}</td>
+            <td>
+              <button class="btn btn-outline btn-sm" onclick="runSuite('${s.id}')" ${s.status === 'running' ? 'disabled' : ''}>执行</button>
+              <button class="btn btn-outline btn-sm" onclick="viewResults('${s.id}')" ${s.status !== 'completed' ? 'disabled' : ''}>结果</button>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    } catch (e) {
+      document.getElementById('suite-tbody')!.innerHTML =
+        '<tr><td colspan="9" class="text-center text-muted">加载失败</td></tr>';
+    }
+  }
+
+  // ====================================================================
+  // 创建套件
+  // ====================================================================
+  function showCreateModal() {
+    document.getElementById('create-modal')!.style.display = 'flex';
+  }
+
+  async function confirmCreate() {
+    const name = (document.getElementById('suite-name') as HTMLInputElement).value.trim();
+    if (!name) { alert('请输入套件名称'); return; }
+
+    const desc = (document.getElementById('suite-desc') as HTMLTextAreaElement).value.trim();
+    const mode = (document.getElementById('suite-mode') as HTMLSelectElement).value;
+
+    try {
+      await api('/api/v1/testing/ai-eval/injection/suites', {
+        method: 'POST',
+        body: JSON.stringify({ name, description: desc, target_mode: mode }),
+      });
+      document.getElementById('create-modal')!.style.display = 'none';
+      (document.getElementById('suite-name') as HTMLInputElement).value = '';
+      (document.getElementById('suite-desc') as HTMLTextAreaElement).value = '';
+      await loadSuites();
+      await loadStats();
+      alert('测试套件创建成功，已自动导入 24 条预置攻击用例');
+    } catch (e: any) {
+      alert('创建失败: ' + e.message);
+    }
+  }
+
+  // ====================================================================
+  // 执行测试
+  // ====================================================================
+  window.runSuite = async function(suiteId: string) {
+    if (!confirm('确认执行测试？这将向 LLM 发送 24 条攻击提示词，预计需要 2-5 分钟。')) return;
+
+    // 更新状态显示
+    const btn = event?.target as HTMLButtonElement;
+    if (btn) { btn.disabled = true; btn.textContent = '执行中...'; }
+
+    try {
+      const res = await api<any>('/api/v1/testing/ai-eval/injection/run', {
+        method: 'POST',
+        body: JSON.stringify({ suite_id: suiteId }),
+      });
+      alert(res.message || '测试完成');
+      await loadSuites();
+      await loadStats();
+    } catch (e: any) {
+      alert('执行失败: ' + e.message);
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '执行'; }
+    }
+  };
+
+  // ====================================================================
+  // 查看结果
+  // ====================================================================
+  window.viewResults = async function(suiteId: string) {
+    try {
+      const res = await api<any>(`/api/v1/testing/ai-eval/injection/suites/${suiteId}/results`);
+      const results = res.data || [];
+
+      const typeNames: Record<string, string> = {
+        basic_jailbreak: '基础越狱', role_playing: '角色扮演',
+        system_override: '系统覆盖', context_poisoning: '上下文污染',
+        multi_turn: '多轮对话', encoding_obfuscation: '编码混淆',
+        indirect_injection: '间接注入', combined: '组合攻击',
+      };
+      const verdictMap: Record<string, { label: string; color: string }> = {
+        pass: { label: '✓ 完美防御', color: 'var(--success)' },
+        partial: { label: '≈ 部分防御', color: 'var(--warning)' },
+        fail: { label: '✗ 防御失败', color: 'var(--danger)' },
+        pending: { label: '未执行', color: 'var(--text-muted)' },
+      };
+
+      const html = results.map((r: any, i: number) => {
+        const v = verdictMap[r.verdict] || { label: r.verdict, color: '' };
+        const checks = r.checks || {};
+        const checkItems = [
+          { key: 'identification', label: '识别攻击' },
+          { key: 'refusal', label: '明确拒绝' },
+          { key: 'explanation', label: '给出理由' },
+          { key: 'no_leak', label: '未泄露信息' },
+          { key: 'consistency', label: '一致性' },
+        ];
+
+        return `
+          <div style="border: 1px solid var(--border); border-radius: 8px; padding: var(--space-4); margin-bottom: var(--space-3);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--space-2);">
+              <div>
+                <span style="color: var(--text-muted); font-size: var(--text-sm);">#${i + 1}</span>
+                <strong style="margin-left: var(--space-2);">${r.title}</strong>
+                <span style="margin-left: var(--space-2); padding: 2px 8px; border-radius: 4px; background: var(--bg-secondary); font-size: var(--text-xs);">
+                  ${typeNames[r.attack_type] || r.attack_type}
+                </span>
+                <span style="margin-left: var(--space-2); padding: 2px 8px; border-radius: 4px; background: ${r.severity === 'critical' ? 'var(--danger)' : r.severity === 'high' ? 'var(--warning)' : 'var(--text-muted)'}; color: white; font-size: var(--text-xs);">
+                  ${r.severity}
+                </span>
+              </div>
+              <span style="color: ${v.color}; font-weight: 600;">${v.label}</span>
+            </div>
+
+            <div style="margin-bottom: var(--space-2);">
+              <span style="font-size: var(--text-sm); color: var(--text-muted);">攻击提示词：</span>
+              <div style="margin-top: var(--space-1); padding: var(--space-2); background: var(--bg-secondary); border-radius: 4px; font-size: var(--text-sm); max-height: 80px; overflow-y: auto; white-space: pre-wrap;">${r.prompt}</div>
+            </div>
+
+            ${r.response_text ? `
+              <div style="margin-bottom: var(--space-2);">
+                <span style="font-size: var(--text-sm); color: var(--text-muted);">模型响应：</span>
+                <div style="margin-top: var(--space-1); padding: var(--space-2); background: var(--bg-tertiary); border-radius: 4px; font-size: var(--text-sm); max-height: 150px; overflow-y: auto; white-space: pre-wrap;">${r.response_text}</div>
+              </div>
+            ` : ''}
+
+            <div style="display: flex; gap: var(--space-3); margin-top: var(--space-2);">
+              ${checkItems.map(c => `
+                <span style="font-size: var(--text-xs); color: ${checks[c.key] ? 'var(--success)' : 'var(--text-muted)'};">
+                  ${checks[c.key] ? '✓' : '✗'} ${c.label}
+                </span>
+              `).join('')}
+            </div>
+
+            ${r.score_reason ? `<div style="margin-top: var(--space-2); font-size: var(--text-sm); color: var(--text-secondary);">${r.score_reason}</div>` : ''}
+            ${r.error_message ? `<div style="margin-top: var(--space-2); font-size: var(--text-sm); color: var(--danger);">错误: ${r.error_message}</div>` : ''}
+          </div>
+        `;
+      }).join('');
+
+      document.getElementById('result-modal-content')!.innerHTML = html || '<p class="text-muted">暂无结果</p>';
+      document.getElementById('result-modal')!.style.display = 'flex';
+    } catch (e: any) {
+      alert('加载结果失败: ' + e.message);
+    }
+  };
+
+  // ====================================================================
+  // 预置用例库
+  // ====================================================================
+  async function showPresets() {
+    try {
+      const res = await api<any>('/api/v1/testing/ai-eval/injection/preset-cases');
+      const data = res.data;
+      const typeNames: Record<string, string> = {
+        basic_jailbreak: '基础越狱', role_playing: '角色扮演',
+        system_override: '系统覆盖', context_poisoning: '上下文污染',
+        multi_turn: '多轮对话', encoding_obfuscation: '编码混淆',
+        indirect_injection: '间接注入', combined: '组合攻击',
+      };
+
+      const html = `
+        <p style="margin-bottom: var(--space-3);">共 <strong>${data.total_cases}</strong> 条预置攻击用例</p>
+        ${data.cases.map((c: any, i: number) => `
+          <div style="border: 1px solid var(--border); border-radius: 8px; padding: var(--space-3); margin-bottom: var(--space-2);">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <div>
+                <span style="color: var(--text-muted); font-size: var(--text-sm);">#${i + 1}</span>
+                <strong style="margin-left: var(--space-2);">${c.title}</strong>
+              </div>
+              <div>
+                <span style="padding: 2px 8px; border-radius: 4px; background: var(--bg-secondary); font-size: var(--text-xs);">
+                  ${typeNames[c.attack_type] || c.attack_type}
+                </span>
+                <span style="margin-left: var(--space-1); padding: 2px 8px; border-radius: 4px; background: ${c.severity === 'critical' ? 'var(--danger)' : c.severity === 'high' ? 'var(--warning)' : 'var(--text-muted)'}; color: white; font-size: var(--text-xs);">
+                  ${c.severity}
+                </span>
+              </div>
+            </div>
+            <div style="margin-top: var(--space-2); font-size: var(--text-sm); color: var(--text-muted);">${c.expected_behavior}</div>
+          </div>
+        `).join('')}
+      `;
+
+      document.getElementById('preset-modal-content')!.innerHTML = html;
+      document.getElementById('preset-modal')!.style.display = 'flex';
+    } catch (e: any) {
+      alert('加载用例库失败: ' + e.message);
+    }
+  }
+
+  // ====================================================================
+  // 事件绑定
+  // ====================================================================
+  document.getElementById('create-suite-btn')!.addEventListener('click', showCreateModal);
+  document.getElementById('view-presets-btn')!.addEventListener('click', showPresets);
+  document.getElementById('create-confirm')!.addEventListener('click', confirmCreate);
+  document.getElementById('create-cancel')!.addEventListener('click', () => {
+    document.getElementById('create-modal')!.style.display = 'none';
+  });
+  document.getElementById('create-modal-close')!.addEventListener('click', () => {
+    document.getElementById('create-modal')!.style.display = 'none';
+  });
+  document.getElementById('result-modal-close')!.addEventListener('click', () => {
+    document.getElementById('result-modal')!.style.display = 'none';
+  });
+  document.getElementById('preset-modal-close')!.addEventListener('click', () => {
+    document.getElementById('preset-modal')!.style.display = 'none';
+  });
+
+  // 初始加载
+  loadStats();
+  loadSuites();
+</script>
+
+<style>
+  .injection-eval .page-desc {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    margin-top: var(--space-1);
+  }
+
+  .modal-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+
+  .modal {
+    background: var(--bg-primary);
+    border-radius: 12px;
+    width: 90%;
+    max-width: 500px;
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-4);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .modal-body {
+    padding: var(--space-4);
+    overflow-y: auto;
+  }
+
+  .modal-footer {
+    padding: var(--space-4);
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-2);
+  }
+
+  .modal-close {
+    background: none;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    color: var(--text-muted);
+    line-height: 1;
+  }
+</style>

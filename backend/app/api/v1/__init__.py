@@ -8,6 +8,7 @@ API v1 路由聚合 — 单一职责：将所有业务子 router 挂载到统一
 from fastapi import APIRouter
 
 from app.api.v1.agents import router as agents_router
+from app.api.v1.ai_eval import router as ai_eval_router
 from app.api.v1.analytics import router as analytics_router
 from app.api.v1.apikeys import router as apikeys_router
 from app.api.v1.approvals import router as approvals_router
@@ -65,6 +66,7 @@ api_router.include_router(stats_router)
 api_router.include_router(approvals_router)
 api_router.include_router(models_router)
 api_router.include_router(testing_router)
+api_router.include_router(ai_eval_router)
 api_router.include_router(compounding_router)
 api_router.include_router(observability_router)
 api_router.include_router(tts_router)

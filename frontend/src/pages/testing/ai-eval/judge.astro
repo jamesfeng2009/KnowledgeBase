@@ -1,0 +1,703 @@
+---
+/**
+ * AI Judge 自动评测页面
+ * 功能：创建数据集（选维度）→ 添加/批量导入用例（问题+参考答案+模型答案）→ 执行 LLM 裁判 → 查看多维评分
+ * 数据来源：/api/v1/testing/ai-eval/judge/*
+ * 指标说明（参考 test.md 第七部分）：用 LLM 作为裁判，对模型输出做多维评分（准确性/完整性/相关性/清晰度/安全性）
+ */
+import DefaultLayout from '@/layouts/DefaultLayout.astro';
+
+const breadcrumb = [
+  { label: '测试平台', href: '/testing' },
+  { label: 'AI 评测', href: '/testing/ai-eval/judge' },
+  { label: 'AI Judge 自动评测' },
+];
+---
+
+<DefaultLayout title="AI Judge 自动评测" breadcrumb={breadcrumb}>
+  <div class="judge-eval">
+    <!-- 页头 -->
+    <div class="page-header">
+      <div>
+        <h1 class="page-title">AI Judge 自动评测</h1>
+        <p class="page-desc">用 LLM 作为裁判对模型答案做多维评分（准确性/完整性/相关性/清晰度/安全性），支持批量回归评测</p>
+      </div>
+      <button class="btn btn-primary btn-sm" id="create-dataset-btn" type="button">＋ 创建评测数据集</button>
+    </div>
+
+    <!-- 统计卡片 -->
+    <div class="grid grid-cols-5" style="margin-bottom: var(--space-5);">
+      <div class="card stat-card">
+        <div class="stat-card-header"><span class="text-muted stat-label">评测数据集</span></div>
+        <div class="stat-card-value" id="stat-datasets">--</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-card-header"><span class="text-muted stat-label">评测用例数</span></div>
+        <div class="stat-card-value" id="stat-cases">--</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-card-header"><span class="text-muted stat-label">已评分用例</span></div>
+        <div class="stat-card-value" id="stat-executed">--</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-card-header"><span class="text-muted stat-label">平均综合分</span></div>
+        <div class="stat-card-value" style="color: var(--primary);" id="stat-overall">--</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-card-header"><span class="text-muted stat-label">维度评分</span></div>
+        <div class="stat-card-value" style="font-size: var(--text-sm); color: var(--success);" id="stat-dimensions">--</div>
+      </div>
+    </div>
+
+    <!-- 数据集列表 -->
+    <div class="card">
+      <div class="card-header"><h3>评测数据集列表</h3></div>
+      <div style="overflow-x: auto;">
+        <table class="data-table" id="dataset-table">
+          <thead>
+            <tr>
+              <th>数据集名称</th>
+              <th>裁判模型</th>
+              <th>状态</th>
+              <th>用例数</th>
+              <th>综合分</th>
+              <th>维度</th>
+              <th>创建时间</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="dataset-tbody">
+            <tr><td colspan="8" class="text-center text-muted">加载中...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 数据集详情弹窗 -->
+    <div class="modal-overlay" id="detail-modal" style="display:none;">
+      <div class="modal" style="max-width: 1100px;">
+        <div class="modal-header">
+          <h3 id="detail-modal-title">数据集详情</h3>
+          <button class="modal-close" id="detail-modal-close" type="button">&times;</button>
+        </div>
+        <div class="modal-body" style="max-height: 78vh; overflow-y: auto;">
+          <div id="detail-modal-content"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 创建数据集弹窗 -->
+    <div class="modal-overlay" id="create-modal" style="display:none;">
+      <div class="modal">
+        <div class="modal-header">
+          <h3>创建 Judge 评测数据集</h3>
+          <button class="modal-close" id="create-modal-close" type="button">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">数据集名称</label>
+            <input type="text" id="dataset-name" class="form-input" placeholder="例如：Q&A 模型回归评测 v2" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">描述（可选）</label>
+            <textarea id="dataset-desc" class="form-input" rows="2" placeholder="评测目的说明"></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label">评分维度（可多选，默认全选）</label>
+            <div id="dimension-checkboxes" style="display: flex; flex-wrap: wrap; gap: var(--space-3); padding: var(--space-2);">
+              <span class="text-muted">加载中...</span>
+            </div>
+            <div class="text-muted" style="font-size: var(--text-xs); margin-top: var(--space-1);">每维度 0-100 分，综合分为各维度均值</div>
+          </div>
+          <div class="alert alert-info" style="margin-top: var(--space-4);">
+            创建后可添加或批量导入用例（问题 + 参考答案 + 模型答案），执行后由 LLM 裁判逐条评分。
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline btn-sm" id="create-cancel" type="button">取消</button>
+          <button class="btn btn-primary btn-sm" id="create-confirm" type="button">创建</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</DefaultLayout>
+
+<script>
+  const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
+
+  function getToken(): string {
+    return localStorage.getItem('ekb_access_token') || '';
+  }
+
+  async function api<T = any>(path: string, options: RequestInit = {}): Promise<T> {
+    const res = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${getToken()}`,
+        ...options.headers,
+      },
+    });
+    const data = await res.json();
+    if (!res.ok || data.code !== 0) {
+      throw new Error(data.message || data.detail || `HTTP ${res.status}`);
+    }
+    return data;
+  }
+
+  const categoryMap: Record<string, string> = {
+    instruction: '指令遵循', qa: '知识问答', reasoning: '逻辑推理',
+    code: '代码生成', roleplay: '角色扮演', safety: '安全合规', creative: '创意写作',
+  };
+  const statusMap: Record<string, { label: string; color: string }> = {
+    created: { label: '待评测', color: 'var(--text-muted)' },
+    running: { label: '评测中', color: 'var(--warning)' },
+    completed: { label: '已完成', color: 'var(--success)' },
+    failed: { label: '失败', color: 'var(--danger)' },
+  };
+
+  // 维度信息（从后端加载，默认值兜底）
+  let dimensionNames: Record<string, string> = {
+    accuracy: '准确性', completeness: '完整性', relevance: '相关性',
+    clarity: '表达清晰度', safety: '安全性',
+  };
+  let defaultDimensions: string[] = ['accuracy', 'completeness', 'relevance', 'clarity', 'safety'];
+
+  function fmtScore(v: any): string {
+    const n = Number(v);
+    return isNaN(n) ? '--' : n.toFixed(1);
+  }
+  function escapeHtml(s: unknown): string {
+    return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  let currentDataset: any = null;
+
+  // ====================================================================
+  // 加载维度信息
+  // ====================================================================
+  async function loadDimensions() {
+    try {
+      const res = await api<any>('/api/v1/testing/ai-eval/judge/dimensions');
+      defaultDimensions = res.data.default_dimensions || defaultDimensions;
+      dimensionNames = res.data.dimension_names || dimensionNames;
+    } catch (e) { /* 使用默认值兜底 */ }
+  }
+
+  function renderDimensionCheckboxes(selected?: string[]) {
+    const sel = selected || defaultDimensions;
+    const container = document.getElementById('dimension-checkboxes')!;
+    container.innerHTML = defaultDimensions.map((d) => `
+      <label style="display: flex; align-items: center; gap: var(--space-1); cursor: pointer;">
+        <input type="checkbox" value="${d}" ${sel.includes(d) ? 'checked' : ''} />
+        <span style="font-size: var(--text-sm);">${dimensionNames[d] || d}</span>
+      </label>
+    `).join('');
+  }
+
+  // ====================================================================
+  // 加载统计
+  // ====================================================================
+  async function loadStats() {
+    try {
+      const res = await api<any>('/api/v1/testing/ai-eval/judge/stats');
+      const d = res.data;
+      document.getElementById('stat-datasets')!.textContent = d.total_datasets;
+      document.getElementById('stat-cases')!.textContent = d.total_cases;
+      document.getElementById('stat-executed')!.textContent = d.total_executed;
+      document.getElementById('stat-overall')!.textContent = fmtScore(d.avg_overall);
+      const dims = d.dimension_averages || {};
+      const dimStr = Object.entries(dims).map(([k, v]) => `${dimensionNames[k] || k}: ${fmtScore(v)}`).join(' / ');
+      document.getElementById('stat-dimensions')!.textContent = dimStr || '--';
+    } catch (e) {
+      console.error('加载统计失败:', e);
+    }
+  }
+
+  // ====================================================================
+  // 加载数据集列表
+  // ====================================================================
+  async function loadDatasets() {
+    try {
+      const res = await api<any>('/api/v1/testing/ai-eval/judge/datasets?page=1&size=50');
+      const datasets = res.data.items || [];
+      const tbody = document.getElementById('dataset-tbody')!;
+
+      if (datasets.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">暂无评测数据集，点击右上角创建</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = datasets.map((ds: any) => {
+        const st = statusMap[ds.status] || { label: ds.status, color: '' };
+        const m = ds.metrics || {};
+        const done = ds.status === 'completed';
+        const dims = ds.dimensions || [];
+        const dimCount = dims.length;
+        const time = ds.created_at ? new Date(ds.created_at).toLocaleString('zh-CN') : '--';
+        return `
+          <tr>
+            <td>${escapeHtml(ds.name)}</td>
+            <td style="font-size: var(--text-sm); color: var(--text-muted);">${escapeHtml(ds.judge_model || 'default')}</td>
+            <td><span style="color: ${st.color}; font-weight: 500;">${st.label}</span></td>
+            <td>${ds.total_cases}</td>
+            <td style="color: var(--primary); font-weight: 500;">${done ? fmtScore(m.overall) : '--'}</td>
+            <td style="font-size: var(--text-xs); color: var(--text-muted);">${dimCount} 维</td>
+            <td style="font-size: var(--text-sm); color: var(--text-muted);">${time}</td>
+            <td>
+              <button class="btn btn-outline btn-sm" onclick="viewDetail('${ds.id}')">管理</button>
+              <button class="btn btn-outline btn-sm" onclick="runDataset('${ds.id}')" ${ds.status === 'running' ? 'disabled' : ''}>执行</button>
+              <button class="btn btn-outline btn-sm" onclick="deleteDataset('${ds.id}')" style="color: var(--danger);">删除</button>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    } catch (e) {
+      document.getElementById('dataset-tbody')!.innerHTML =
+        '<tr><td colspan="8" class="text-center text-muted">加载失败</td></tr>';
+    }
+  }
+
+  // ====================================================================
+  // 创建数据集
+  // ====================================================================
+  function showCreateModal() {
+    renderDimensionCheckboxes();
+    document.getElementById('create-modal')!.style.display = 'flex';
+  }
+
+  async function confirmCreate() {
+    const name = (document.getElementById('dataset-name') as HTMLInputElement).value.trim();
+    if (!name) { alert('请输入数据集名称'); return; }
+    const desc = (document.getElementById('dataset-desc') as HTMLTextAreaElement).value.trim();
+    const checked = Array.from(document.querySelectorAll('#dimension-checkboxes input[type=checkbox]:checked'))
+      .map((el: HTMLInputElement) => el.value);
+    const dimensions = checked.length > 0 ? checked : defaultDimensions;
+
+    try {
+      await api('/api/v1/testing/ai-eval/judge/datasets', {
+        method: 'POST',
+        body: JSON.stringify({ name, description: desc, dimensions }),
+      });
+      document.getElementById('create-modal')!.style.display = 'none';
+      (document.getElementById('dataset-name') as HTMLInputElement).value = '';
+      (document.getElementById('dataset-desc') as HTMLTextAreaElement).value = '';
+      await loadDatasets();
+      await loadStats();
+      alert('Judge 评测数据集创建成功');
+    } catch (e: any) {
+      alert('创建失败: ' + e.message);
+    }
+  }
+
+  // ====================================================================
+  // 数据集详情 / 用例管理
+  // ====================================================================
+  window.viewDetail = async function(datasetId: string) {
+    try {
+      const [dsRes, cRes] = await Promise.all([
+        api<any>(`/api/v1/testing/ai-eval/judge/datasets/${datasetId}`),
+        api<any>(`/api/v1/testing/ai-eval/judge/datasets/${datasetId}/cases`),
+      ]);
+      currentDataset = dsRes.data;
+      renderDetail(currentDataset, cRes.data || []);
+      document.getElementById('detail-modal')!.style.display = 'flex';
+    } catch (e: any) {
+      alert('加载数据集详情失败: ' + e.message);
+    }
+  };
+
+  function renderDetail(ds: any, cases: any[]) {
+    const m = ds.metrics || {};
+    const st = statusMap[ds.status] || { label: ds.status, color: '' };
+    const dims = ds.dimensions || defaultDimensions;
+    const metricsHtml = ds.status === 'completed' ? `
+      <div style="display: grid; grid-template-columns: repeat(${Math.min(dims.length + 1, 6)}); gap: var(--space-2); margin-bottom: var(--space-4); grid-auto-flow: column;">
+        <div style="padding: var(--space-3); border: 1px solid var(--border); border-radius: 8px; text-align: center; background: var(--bg-secondary);">
+          <div style="font-size: var(--text-xs); color: var(--text-muted);">综合分</div>
+          <div style="font-size: var(--text-lg); font-weight: 600; color: var(--primary); margin-top: var(--space-1);">${fmtScore(m.overall)}</div>
+        </div>
+        ${dims.map((d: string) => `
+          <div style="padding: var(--space-3); border: 1px solid var(--border); border-radius: 8px; text-align: center;">
+            <div style="font-size: var(--text-xs); color: var(--text-muted);">${dimensionNames[d] || d}</div>
+            <div style="font-size: var(--text-lg); font-weight: 600; color: var(--success); margin-top: var(--space-1);">${fmtScore(m[d])}</div>
+          </div>
+        `).join('')}
+      </div>
+    ` : `<div class="alert alert-info" style="margin-bottom: var(--space-4);">数据集尚未评测，请添加用例后点击「执行评测」</div>`;
+
+    const caseRows = cases.map((c: any, i: number) => {
+      return `
+        <tr>
+          <td>${i + 1}</td>
+          <td style="max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtml(c.question)}">${escapeHtml(c.question)}</td>
+          <td><span style="padding: 2px 8px; border-radius: 4px; background: var(--bg-secondary); font-size: var(--text-xs);">${categoryMap[c.category] || c.category}</span></td>
+          <td style="font-size: var(--text-xs); color: var(--text-muted);">${c.source === 'preset' ? '预置' : '自定义'}</td>
+          <td>
+            <button class="btn btn-outline btn-sm" onclick="deleteCase('${c.id}')">删</button>
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+    document.getElementById('detail-modal-title')!.textContent = `${ds.name}（${st.label}）`;
+    document.getElementById('detail-modal-content')!.innerHTML = `
+      ${metricsHtml}
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--space-3);">
+        <h4 style="margin: 0;">裁判用例（${cases.length}）</h4>
+        <div style="display: flex; gap: var(--space-2);">
+          <button class="btn btn-outline btn-sm" onclick="showBatchAdd('${ds.id}')">批量导入</button>
+          <button class="btn btn-outline btn-sm" onclick="showAddCase('${ds.id}')">＋ 添加用例</button>
+          <button class="btn btn-primary btn-sm" onclick="runDataset('${ds.id}')">执行评测</button>
+        </div>
+      </div>
+      <div style="overflow-x: auto;">
+        <table class="data-table">
+          <thead>
+            <tr><th>#</th><th>问题</th><th>类别</th><th>来源</th><th>操作</th></tr>
+          </thead>
+          <tbody>
+            ${cases.length === 0 ? '<tr><td colspan="5" class="text-center text-muted">暂无用例，点击右上角添加或批量导入</td></tr>' : caseRows}
+          </tbody>
+        </table>
+      </div>
+      ${ds.status === 'completed' ? `<div style="margin-top: var(--space-4);"><button class="btn btn-outline btn-sm" onclick="viewResults('${ds.id}')">查看裁判评分详情</button></div>` : ''}
+    `;
+  }
+
+  // ====================================================================
+  // 添加用例（单条）
+  // ====================================================================
+  window.showAddCase = function(datasetId: string) {
+    const html = `
+      <div style="border: 1px solid var(--border); border-radius: 8px; padding: var(--space-4); margin-bottom: var(--space-4); background: var(--bg-secondary);">
+        <h4 style="margin-top: 0;">添加裁判用例</h4>
+        <div class="form-group">
+          <label class="form-label">问题 / 指令</label>
+          <textarea id="new-case-question" class="form-input" rows="2" placeholder="例如：请解释什么是 RAG？"></textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label">参考答案（标准答案）</label>
+          <textarea id="new-case-reference" class="form-input" rows="3" placeholder="人工录入的标准答案，供裁判对比"></textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label">待评测的模型答案</label>
+          <textarea id="new-case-model" class="form-input" rows="3" placeholder="待评测模型生成的答案"></textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label">场景类别</label>
+          <select id="new-case-category" class="form-input">
+            ${Object.entries(categoryMap).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}
+          </select>
+        </div>
+        <div style="display: flex; gap: var(--space-2); justify-content: flex-end;">
+          <button class="btn btn-outline btn-sm" onclick="refreshDetail(currentDataset.id)">取消</button>
+          <button class="btn btn-primary btn-sm" onclick="submitAddCase('${datasetId}')">添加</button>
+        </div>
+      </div>
+    `;
+    renderDetailKeepCases(datasetId, html);
+  };
+
+  window.submitAddCase = async function(datasetId: string) {
+    const question = (document.getElementById('new-case-question') as HTMLTextAreaElement).value.trim();
+    if (!question) { alert('请输入问题'); return; }
+    const reference_answer = (document.getElementById('new-case-reference') as HTMLTextAreaElement).value.trim();
+    if (!reference_answer) { alert('请输入参考答案'); return; }
+    const model_answer = (document.getElementById('new-case-model') as HTMLTextAreaElement).value.trim();
+    if (!model_answer) { alert('请输入待评测的模型答案'); return; }
+    const category = (document.getElementById('new-case-category') as HTMLSelectElement).value;
+
+    try {
+      await api(`/api/v1/testing/ai-eval/judge/datasets/${datasetId}/cases`, {
+        method: 'POST',
+        body: JSON.stringify({ question, reference_answer, model_answer, category }),
+      });
+      alert('用例已添加');
+      await refreshDetail(datasetId);
+    } catch (e: any) {
+      alert('添加失败: ' + e.message);
+    }
+  };
+
+  // ====================================================================
+  // 批量导入用例（JSON 文本）
+  // ====================================================================
+  window.showBatchAdd = function(datasetId: string) {
+    const html = `
+      <div style="border: 1px solid var(--border); border-radius: 8px; padding: var(--space-4); margin-bottom: var(--space-4); background: var(--bg-secondary);">
+        <h4 style="margin-top: 0;">批量导入用例（回归测试集）</h4>
+        <div class="form-group">
+          <label class="form-label">粘贴 JSON 数组（每项含 question / reference_answer / model_answer / category?）</label>
+          <textarea id="batch-cases-json" class="form-input" rows="10" style="font-family: monospace; font-size: var(--text-xs);" placeholder='[
+  {
+    "question": "请解释什么是 RAG？",
+    "reference_answer": "RAG 是检索增强生成...",
+    "model_answer": "RAG 指结合检索的生成方法...",
+    "category": "qa"
+  }
+]'></textarea>
+        </div>
+        <div class="alert alert-info" style="font-size: var(--text-sm);">
+          适用于回归评测：一次导入多条用例，执行后可对比模型版本间的评分变化。
+        </div>
+        <div style="display: flex; gap: var(--space-2); justify-content: flex-end;">
+          <button class="btn btn-outline btn-sm" onclick="refreshDetail(currentDataset.id)">取消</button>
+          <button class="btn btn-primary btn-sm" onclick="submitBatchAdd('${datasetId}')">批量导入</button>
+        </div>
+      </div>
+    `;
+    renderDetailKeepCases(datasetId, html);
+  };
+
+  window.submitBatchAdd = async function(datasetId: string) {
+    const raw = (document.getElementById('batch-cases-json') as HTMLTextAreaElement).value.trim();
+    if (!raw) { alert('请粘贴 JSON 用例数据'); return; }
+    let cases: any[];
+    try {
+      cases = JSON.parse(raw);
+      if (!Array.isArray(cases) || cases.length === 0) {
+        alert('JSON 必须是非空数组');
+        return;
+      }
+    } catch (e: any) {
+      alert('JSON 格式错误: ' + e.message);
+      return;
+    }
+    // 校验必填字段
+    for (let i = 0; i < cases.length; i++) {
+      const c = cases[i];
+      if (!c.question || !c.reference_answer || !c.model_answer) {
+        alert(`第 ${i + 1} 条缺少必填字段（question/reference_answer/model_answer）`);
+        return;
+      }
+    }
+
+    try {
+      const res = await api<any>(`/api/v1/testing/ai-eval/judge/datasets/${datasetId}/cases/batch`, {
+        method: 'POST',
+        body: JSON.stringify({ cases }),
+      });
+      alert(res.message || '批量导入成功');
+      await refreshDetail(datasetId);
+    } catch (e: any) {
+      alert('批量导入失败: ' + e.message);
+    }
+  };
+
+  function renderDetailKeepCases(datasetId: string, prependHtml: string) {
+    api<any>(`/api/v1/testing/ai-eval/judge/datasets/${datasetId}/cases`).then((res) => {
+      renderDetail(currentDataset, res.data || []);
+      const content = document.getElementById('detail-modal-content')!;
+      content.insertAdjacentHTML('afterbegin', prependHtml);
+    }).catch(() => alert('加载用例失败'));
+  }
+
+  window.deleteCase = async function(caseId: string) {
+    if (!confirm('确认删除该用例？')) return;
+    try {
+      await api(`/api/v1/testing/ai-eval/judge/cases/${caseId}`, { method: 'DELETE' });
+      await refreshDetail(currentDataset.id);
+    } catch (e: any) {
+      alert('删除失败: ' + e.message);
+    }
+  };
+
+  // ====================================================================
+  // 执行评测
+  // ====================================================================
+  window.runDataset = async function(datasetId: string) {
+    if (!confirm('确认执行裁判评测？将对每条用例调用 LLM 裁判评分，可能需要较长时间。')) return;
+    const btn = event?.target as HTMLButtonElement;
+    if (btn) { btn.disabled = true; btn.textContent = '评测中...'; }
+    try {
+      const res = await api<any>('/api/v1/testing/ai-eval/judge/run', {
+        method: 'POST',
+        body: JSON.stringify({ dataset_id: datasetId }),
+      });
+      alert(res.message || '评测完成');
+      await loadDatasets();
+      await loadStats();
+      if (currentDataset && currentDataset.id === datasetId && document.getElementById('detail-modal')!.style.display === 'flex') {
+        await refreshDetail(datasetId);
+      }
+    } catch (e: any) {
+      alert('执行失败: ' + e.message);
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '执行'; }
+    }
+  };
+
+  // ====================================================================
+  // 查看裁判评分详情
+  // ====================================================================
+  window.viewResults = async function(datasetId: string) {
+    try {
+      const res = await api<any>(`/api/v1/testing/ai-eval/judge/datasets/${datasetId}/results`);
+      const results: any[] = res.data || [];
+      const dims = currentDataset?.dimensions || defaultDimensions;
+      const html = results.map((r: any, i: number) => {
+        const scores = r.scores || {};
+        const scoreBars = dims.map((d: string) => {
+          const v = Number(scores[d] || 0);
+          const color = v >= 80 ? 'var(--success)' : v >= 60 ? 'var(--warning)' : 'var(--danger)';
+          return `
+            <div style="display:flex; align-items:center; gap: var(--space-2); margin-bottom: var(--space-1);">
+              <span style="font-size: var(--text-xs); color: var(--text-muted); width: 80px;">${dimensionNames[d] || d}</span>
+              <div style="flex: 1; height: 6px; background: var(--border); border-radius: 3px; overflow: hidden;">
+                <div style="width: ${v}%; height: 100%; background: ${color};"></div>
+              </div>
+              <span style="font-size: var(--text-xs); font-weight: 600; color: ${color}; width: 30px; text-align: right;">${v}</span>
+            </div>
+          `;
+        }).join('');
+        return `
+          <div style="border: 1px solid var(--border); border-radius: 8px; padding: var(--space-3); margin-bottom: var(--space-3);">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: var(--space-2);">
+              <div><span style="color: var(--text-muted); font-size: var(--text-sm);">#${i+1}</span>
+                <span style="margin-left: var(--space-2); padding: 2px 8px; border-radius: 4px; background: var(--bg-secondary); font-size: var(--text-xs);">${categoryMap[r.category] || r.category}</span>
+              </div>
+              <span style="color: var(--primary); font-weight: 600;">综合 ${fmtScore(r.overall_score)}</span>
+            </div>
+            <div style="margin-bottom: var(--space-2);">
+              <span style="font-size: var(--text-xs); color: var(--text-muted);">问题：</span>
+              <span style="font-size: var(--text-sm);">${escapeHtml(r.question)}</span>
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2); margin-bottom: var(--space-2);">
+              <div>
+                <div style="font-size: var(--text-xs); color: var(--text-muted); margin-bottom: var(--space-1);">参考答案</div>
+                <div style="padding: var(--space-2); background: var(--bg-secondary); border-radius: 4px; font-size: var(--text-xs); max-height: 100px; overflow-y: auto; white-space: pre-wrap;">${escapeHtml(r.reference_answer)}</div>
+              </div>
+              <div>
+                <div style="font-size: var(--text-xs); color: var(--text-muted); margin-bottom: var(--space-1);">模型答案</div>
+                <div style="padding: var(--space-2); background: var(--bg-tertiary, var(--bg-secondary)); border-radius: 4px; font-size: var(--text-xs); max-height: 100px; overflow-y: auto; white-space: pre-wrap;">${escapeHtml(r.model_answer)}</div>
+              </div>
+            </div>
+            <div style="margin-top: var(--space-2);">${scoreBars}</div>
+            ${r.reasoning ? `<div style="margin-top: var(--space-2); padding: var(--space-2); background: var(--bg-secondary); border-radius: 4px; font-size: var(--text-xs); color: var(--text-secondary);"><strong>裁判评语：</strong>${escapeHtml(r.reasoning)}</div>` : ''}
+            <div style="margin-top: var(--space-1); font-size: var(--text-xs); color: var(--text-muted);">裁判模型: ${escapeHtml(r.judge_model || '--')} · 耗时: ${r.response_time_ms}ms</div>
+            ${r.error_message ? `<div style="margin-top: var(--space-2); color: var(--danger); font-size: var(--text-sm);">错误: ${escapeHtml(r.error_message)}</div>` : ''}
+          </div>
+        `;
+      }).join('');
+      const content = document.getElementById('detail-modal-content')!;
+      content.insertAdjacentHTML('afterbegin', `
+        <div style="border: 1px solid var(--border); border-radius: 8px; padding: var(--space-4); margin-bottom: var(--space-4);">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: var(--space-3);">
+            <h4 style="margin:0;">裁判评分详情</h4>
+            <button class="btn btn-outline btn-sm" onclick="refreshDetail(currentDataset.id)">收起</button>
+          </div>
+          ${html || '<p class="text-muted">暂无结果</p>'}
+        </div>
+      `);
+    } catch (e: any) {
+      alert('加载结果失败: ' + e.message);
+    }
+  };
+
+  async function refreshDetail(datasetId: string) {
+    try {
+      const [dsRes, cRes] = await Promise.all([
+        api<any>(`/api/v1/testing/ai-eval/judge/datasets/${datasetId}`),
+        api<any>(`/api/v1/testing/ai-eval/judge/datasets/${datasetId}/cases`),
+      ]);
+      currentDataset = dsRes.data;
+      renderDetail(currentDataset, cRes.data || []);
+    } catch (e: any) {
+      alert('刷新失败: ' + e.message);
+    }
+  }
+
+  // ====================================================================
+  // 删除数据集
+  // ====================================================================
+  window.deleteDataset = async function(datasetId: string) {
+    if (!confirm('确认删除该数据集？相关用例和结果将一并删除。')) return;
+    try {
+      await api(`/api/v1/testing/ai-eval/judge/datasets/${datasetId}`, { method: 'DELETE' });
+      await loadDatasets();
+      await loadStats();
+    } catch (e: any) {
+      alert('删除失败: ' + e.message);
+    }
+  };
+
+  // ====================================================================
+  // 事件绑定
+  // ====================================================================
+  document.getElementById('create-dataset-btn')!.addEventListener('click', showCreateModal);
+  document.getElementById('create-confirm')!.addEventListener('click', confirmCreate);
+  ['create-cancel', 'create-modal-close'].forEach(id =>
+    document.getElementById(id)!.addEventListener('click', () => {
+      document.getElementById('create-modal')!.style.display = 'none';
+    })
+  );
+  document.getElementById('detail-modal-close')!.addEventListener('click', () => {
+    document.getElementById('detail-modal')!.style.display = 'none';
+  });
+
+  // 初始加载
+  (async () => {
+    await loadDimensions();
+    await loadStats();
+    await loadDatasets();
+  })();
+</script>
+
+<style>
+  .judge-eval .page-desc {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    margin-top: var(--space-1);
+  }
+
+  .modal-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+
+  .modal {
+    background: var(--bg-primary);
+    border-radius: 12px;
+    width: 90%;
+    max-width: 500px;
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-4);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .modal-body {
+    padding: var(--space-4);
+    overflow-y: auto;
+  }
+
+  .modal-footer {
+    padding: var(--space-4);
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-2);
+  }
+
+  .modal-close {
+    background: none;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    color: var(--text-muted);
+    line-height: 1;
+  }
+</style>

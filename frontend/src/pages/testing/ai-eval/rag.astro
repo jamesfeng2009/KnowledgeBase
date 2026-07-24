@@ -1,0 +1,784 @@
+---
+/**
+ * RAG 检索质量评测页面
+ * 功能：创建数据集 → 添加查询并标注相关文档 → 执行检索 → 查看 Recall@K / MRR / NDCG / MAP
+ * 数据来源：/api/v1/testing/ai-eval/rag/*
+ * 指标说明（参考 test.md）：Recall@K 为 RAG 主指标，MRR/NDCG/MAP 综合评估召回与排序。
+ */
+import DefaultLayout from '@/layouts/DefaultLayout.astro';
+
+const breadcrumb = [
+  { label: '测试平台', href: '/testing' },
+  { label: 'AI 评测', href: '/testing/ai-eval/rag' },
+  { label: 'RAG 检索质量评测' },
+];
+---
+
+<DefaultLayout title="RAG 检索质量评测" breadcrumb={breadcrumb}>
+  <div class="rag-eval">
+    <!-- 页头 -->
+    <div class="page-header">
+      <div>
+        <h1 class="page-title">RAG 检索质量评测</h1>
+        <p class="page-desc">评测知识库检索的召回质量（Recall@K / MRR / NDCG / MAP），基于人工标注的相关文档计算</p>
+      </div>
+      <div style="display:flex; gap: var(--space-3);">
+        <button class="btn btn-outline btn-sm" id="view-presets-btn" type="button">查看预置查询库</button>
+        <button class="btn btn-primary btn-sm" id="create-dataset-btn" type="button">＋ 创建评测数据集</button>
+      </div>
+    </div>
+
+    <!-- 统计卡片 -->
+    <div class="grid grid-cols-5" style="margin-bottom: var(--space-5);">
+      <div class="card stat-card">
+        <div class="stat-card-header"><span class="text-muted stat-label">评测数据集</span></div>
+        <div class="stat-card-value" id="stat-datasets">--</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-card-header"><span class="text-muted stat-label">评测查询数</span></div>
+        <div class="stat-card-value" id="stat-queries">--</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-card-header"><span class="text-muted stat-label">平均 Recall@5</span></div>
+        <div class="stat-card-value" style="color: var(--primary);" id="stat-recall">--</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-card-header"><span class="text-muted stat-label">平均 MRR</span></div>
+        <div class="stat-card-value" style="color: var(--success);" id="stat-mrr">--</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-card-header"><span class="text-muted stat-label">平均 MAP</span></div>
+        <div class="stat-card-value" style="color: var(--warning);" id="stat-map">--</div>
+      </div>
+    </div>
+
+    <!-- 数据集列表 -->
+    <div class="card">
+      <div class="card-header"><h3>评测数据集列表</h3></div>
+      <div style="overflow-x: auto;">
+        <table class="data-table" id="dataset-table">
+          <thead>
+            <tr>
+              <th>数据集名称</th>
+              <th>知识库</th>
+              <th>状态</th>
+              <th>查询数</th>
+              <th>命中</th>
+              <th>Recall@5</th>
+              <th>MRR</th>
+              <th>创建时间</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="dataset-tbody">
+            <tr><td colspan="9" class="text-center text-muted">加载中...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 数据集详情弹窗 -->
+    <div class="modal-overlay" id="detail-modal" style="display:none;">
+      <div class="modal" style="max-width: 1100px;">
+        <div class="modal-header">
+          <h3 id="detail-modal-title">数据集详情</h3>
+          <button class="modal-close" id="detail-modal-close" type="button">&times;</button>
+        </div>
+        <div class="modal-body" style="max-height: 75vh; overflow-y: auto;">
+          <div id="detail-modal-content"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 创建数据集弹窗 -->
+    <div class="modal-overlay" id="create-modal" style="display:none;">
+      <div class="modal">
+        <div class="modal-header">
+          <h3>创建评测数据集</h3>
+          <button class="modal-close" id="create-modal-close" type="button">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">数据集名称</label>
+            <input type="text" id="dataset-name" class="form-input" placeholder="例如：报销流程检索评测" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">描述（可选）</label>
+            <textarea id="dataset-desc" class="form-input" rows="2" placeholder="评测目的说明"></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label">检索范围：知识库（可多选）</label>
+            <select id="dataset-kb" class="form-input" multiple style="height: 120px;">
+              <option value="">加载中...</option>
+            </select>
+            <div class="text-muted" style="font-size: var(--text-xs); margin-top: var(--space-1);">不选则检索全部可见知识库</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">检索 Top-K</label>
+            <input type="number" id="dataset-topk" class="form-input" value="5" min="1" max="50" />
+          </div>
+          <div class="alert alert-info" style="margin-top: var(--space-4);">
+            创建后可导入 12 条预置查询模板（6 类检索场景），或手动添加查询并标注相关文档。
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline btn-sm" id="create-cancel" type="button">取消</button>
+          <button class="btn btn-primary btn-sm" id="create-confirm" type="button">创建</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 预置查询库弹窗 -->
+    <div class="modal-overlay" id="preset-modal" style="display:none;">
+      <div class="modal" style="max-width: 800px;">
+        <div class="modal-header">
+          <h3>预置查询模板库</h3>
+          <button class="modal-close" id="preset-modal-close" type="button">&times;</button>
+        </div>
+        <div class="modal-body" style="max-height: 70vh; overflow-y: auto;">
+          <div id="preset-modal-content"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</DefaultLayout>
+
+<script>
+  const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
+
+  function getToken(): string {
+    return localStorage.getItem('ekb_access_token') || '';
+  }
+
+  async function api<T = any>(path: string, options: RequestInit = {}): Promise<T> {
+    const res = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${getToken()}`,
+        ...options.headers,
+      },
+    });
+    const data = await res.json();
+    if (!res.ok || data.code !== 0) {
+      throw new Error(data.message || data.detail || `HTTP ${res.status}`);
+    }
+    return data;
+  }
+
+  const queryTypeNames: Record<string, string> = {
+    exact_match: '精确匹配', semantic: '语义相似', synonym: '同义词',
+    cross_lingual: '跨语言', fuzzy: '模糊口语', multi_constraint: '多约束',
+  };
+  const difficultyMap: Record<string, string> = { easy: '简单', medium: '中等', hard: '困难' };
+  const statusMap: Record<string, { label: string; color: string }> = {
+    created: { label: '待评测', color: 'var(--text-muted)' },
+    running: { label: '评测中', color: 'var(--warning)' },
+    completed: { label: '已完成', color: 'var(--success)' },
+    failed: { label: '失败', color: 'var(--danger)' },
+  };
+
+  function fmtPct(v: any): string {
+    const n = Number(v);
+    return isNaN(n) ? '--' : (n * 100).toFixed(1) + '%';
+  }
+  function fmtNum(v: any, d = 3): string {
+    const n = Number(v);
+    return isNaN(n) ? '--' : n.toFixed(d);
+  }
+  function escapeHtml(s: unknown): string {
+    return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // 当前数据集详情状态
+  let currentDataset: any = null;
+  let currentKbDocs: any[] = []; // 当前数据集关联知识库的文档列表
+
+  // ====================================================================
+  // 加载统计
+  // ====================================================================
+  async function loadStats() {
+    try {
+      const res = await api<any>('/api/v1/testing/ai-eval/rag/stats');
+      const d = res.data;
+      document.getElementById('stat-datasets')!.textContent = d.total_datasets;
+      document.getElementById('stat-queries')!.textContent = d.total_queries;
+      document.getElementById('stat-recall')!.textContent = fmtPct(d.avg_recall_at_5);
+      document.getElementById('stat-mrr')!.textContent = fmtNum(d.avg_mrr);
+      document.getElementById('stat-map')!.textContent = fmtNum(d.avg_map);
+    } catch (e) {
+      console.error('加载统计失败:', e);
+    }
+  }
+
+  // ====================================================================
+  // 加载数据集列表
+  // ====================================================================
+  async function loadDatasets() {
+    try {
+      const res = await api<any>('/api/v1/testing/ai-eval/rag/datasets?page=1&size=50');
+      const datasets = res.data.items || [];
+      const tbody = document.getElementById('dataset-tbody')!;
+
+      if (datasets.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted">暂无评测数据集，点击右上角创建</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = datasets.map((ds: any) => {
+        const st = statusMap[ds.status] || { label: ds.status, color: '' };
+        const m = ds.metrics || {};
+        const kbCount = (ds.kb_ids || []).length;
+        const time = ds.created_at ? new Date(ds.created_at).toLocaleString('zh-CN') : '--';
+        return `
+          <tr>
+            <td>${escapeHtml(ds.name)}</td>
+            <td>${kbCount > 0 ? kbCount + ' 个' : '<span class="text-muted">全部</span>'}</td>
+            <td><span style="color: ${st.color}; font-weight: 500;">${st.label}</span></td>
+            <td>${ds.total_queries}</td>
+            <td style="color: var(--success);">${ds.hit_count}</td>
+            <td style="color: var(--primary); font-weight: 500;">${ds.status === 'completed' ? fmtPct(m.recall_at_5) : '--'}</td>
+            <td>${ds.status === 'completed' ? fmtNum(m.mrr) : '--'}</td>
+            <td style="font-size: var(--text-sm); color: var(--text-muted);">${time}</td>
+            <td>
+              <button class="btn btn-outline btn-sm" onclick="viewDetail('${ds.id}')">管理</button>
+              <button class="btn btn-outline btn-sm" onclick="runDataset('${ds.id}')" ${ds.status === 'running' ? 'disabled' : ''}>执行</button>
+              <button class="btn btn-outline btn-sm" onclick="deleteDataset('${ds.id}')" style="color: var(--danger);">删除</button>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    } catch (e) {
+      document.getElementById('dataset-tbody')!.innerHTML =
+        '<tr><td colspan="9" class="text-center text-muted">加载失败</td></tr>';
+    }
+  }
+
+  // ====================================================================
+  // 创建数据集
+  // ====================================================================
+  async function loadKnowledgeBases() {
+    const sel = document.getElementById('dataset-kb') as HTMLSelectElement;
+    try {
+      const res = await api<any>('/api/v1/knowledge?page=1&size=100');
+      const kbs = res.data.items || [];
+      sel.innerHTML = kbs.length === 0
+        ? '<option value="" disabled>暂无知识库</option>'
+        : kbs.map((kb: any) => `<option value="${kb.id}">${escapeHtml(kb.name)}</option>`).join('');
+    } catch (e: any) {
+      sel.innerHTML = '<option value="" disabled>加载失败</option>';
+    }
+  }
+
+  function showCreateModal() {
+    document.getElementById('create-modal')!.style.display = 'flex';
+    loadKnowledgeBases();
+  }
+
+  async function confirmCreate() {
+    const name = (document.getElementById('dataset-name') as HTMLInputElement).value.trim();
+    if (!name) { alert('请输入数据集名称'); return; }
+    const desc = (document.getElementById('dataset-desc') as HTMLTextAreaElement).value.trim();
+    const sel = document.getElementById('dataset-kb') as HTMLSelectElement;
+    const kb_ids = Array.from(sel.selectedOptions).map(o => o.value).filter(Boolean);
+    const top_k = parseInt((document.getElementById('dataset-topk') as HTMLInputElement).value) || 5;
+
+    try {
+      await api('/api/v1/testing/ai-eval/rag/datasets', {
+        method: 'POST',
+        body: JSON.stringify({ name, description: desc, kb_ids: kb_ids.length ? kb_ids : null, top_k }),
+      });
+      document.getElementById('create-modal')!.style.display = 'none';
+      (document.getElementById('dataset-name') as HTMLInputElement).value = '';
+      (document.getElementById('dataset-desc') as HTMLTextAreaElement).value = '';
+      await loadDatasets();
+      await loadStats();
+      alert('评测数据集创建成功');
+    } catch (e: any) {
+      alert('创建失败: ' + e.message);
+    }
+  }
+
+  // ====================================================================
+  // 数据集详情 / 查询管理
+  // ====================================================================
+  window.viewDetail = async function(datasetId: string) {
+    try {
+      // 并行加载：数据集详情 + 查询列表 + 结果
+      const [dsRes, qRes] = await Promise.all([
+        api<any>(`/api/v1/testing/ai-eval/rag/datasets/${datasetId}`),
+        api<any>(`/api/v1/testing/ai-eval/rag/datasets/${datasetId}/queries`),
+      ]);
+      currentDataset = dsRes.data;
+      const queries: any[] = qRes.data || [];
+
+      // 加载关联知识库的文档（供标注选择）
+      await loadKbDocs(currentDataset.kb_ids);
+
+      renderDetail(currentDataset, queries);
+      document.getElementById('detail-modal')!.style.display = 'flex';
+    } catch (e: any) {
+      alert('加载数据集详情失败: ' + e.message);
+    }
+  };
+
+  async function loadKbDocs(kbIds: string[] | null) {
+    currentKbDocs = [];
+    if (!kbIds || kbIds.length === 0) {
+      // 未限定知识库，加载全部可见文档
+      try {
+        const res = await api<any>('/api/v1/documents?page=1&size=200');
+        currentKbDocs = res.data.items || [];
+      } catch (e) { /* ignore */ }
+      return;
+    }
+    // 加载各知识库的文档
+    for (const kbId of kbIds) {
+      try {
+        const res = await api<any>(`/api/v1/documents?kb_id=${kbId}&page=1&size=200`);
+        currentKbDocs = currentKbDocs.concat(res.data.items || []);
+      } catch (e) { /* ignore */ }
+    }
+  }
+
+  function renderDetail(ds: any, queries: any[]) {
+    const m = ds.metrics || {};
+    const st = statusMap[ds.status] || { label: ds.status, color: '' };
+    const metricsHtml = ds.status === 'completed' ? `
+      <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: var(--space-2); margin-bottom: var(--space-4);">
+        ${[
+          ['Recall@1', fmtPct(m.recall_at_1)], ['Recall@3', fmtPct(m.recall_at_3)],
+          ['Recall@5', fmtPct(m.recall_at_5)], ['MRR', fmtNum(m.mrr)],
+          ['NDCG@5', fmtNum(m.ndcg_at_5)],
+        ].map(([k, v]) => `
+          <div style="padding: var(--space-3); border: 1px solid var(--border); border-radius: 8px; text-align: center;">
+            <div style="font-size: var(--text-xs); color: var(--text-muted);">${k}</div>
+            <div style="font-size: var(--text-lg); font-weight: 600; color: var(--primary); margin-top: var(--space-1);">${v}</div>
+          </div>
+        `).join('')}
+      </div>
+      <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-2); margin-bottom: var(--space-4);">
+        ${[
+          ['Precision@5', fmtPct(m.precision_at_5)], ['MAP', fmtNum(m.map)], ['命中率', fmtPct(m.hit_rate)],
+        ].map(([k, v]) => `
+          <div style="padding: var(--space-3); border: 1px solid var(--border); border-radius: 8px; text-align: center;">
+            <div style="font-size: var(--text-xs); color: var(--text-muted);">${k}</div>
+            <div style="font-size: var(--text-lg); font-weight: 600; color: var(--success); margin-top: var(--space-1);">${v}</div>
+          </div>
+        `).join('')}
+      </div>
+    ` : `<div class="alert alert-info" style="margin-bottom: var(--space-4);">数据集尚未评测，请添加查询并标注相关文档后点击「执行评测」</div>`;
+
+    const queryRows = queries.map((q: any, i: number) => {
+      const gt = q.ground_truth_doc_ids || [];
+      const labeled = gt.length > 0;
+      return `
+        <tr>
+          <td>${i + 1}</td>
+          <td style="max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtml(q.query)}">${escapeHtml(q.query)}</td>
+          <td><span style="padding: 2px 8px; border-radius: 4px; background: var(--bg-secondary); font-size: var(--text-xs);">${queryTypeNames[q.query_type] || q.query_type}</span></td>
+          <td><span style="font-size: var(--text-xs); color: var(--text-muted);">${difficultyMap[q.difficulty] || q.difficulty}</span></td>
+          <td style="font-size: var(--text-sm);">${labeled ? `<span style="color: var(--success);">✓ ${gt.length} 篇</span>` : '<span style="color: var(--danger);">未标注</span>'}</td>
+          <td style="font-size: var(--text-xs); color: var(--text-muted);">${q.source === 'preset' ? '预置' : '自定义'}</td>
+          <td>
+            ${labeled ? `<button class="btn btn-outline btn-sm" onclick="annotateQuery('${q.id}', ${escapeHtml(JSON.stringify(gt))})">改标注</button>` : `<button class="btn btn-primary btn-sm" onclick="annotateQuery('${q.id}', [])">去标注</button>`}
+            <button class="btn btn-outline btn-sm" onclick="deleteQuery('${q.id}')" style="color: var(--danger);">删</button>
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+    document.getElementById('detail-modal-title')!.textContent = `${ds.name}（${st.label}）`;
+    document.getElementById('detail-modal-content')!.innerHTML = `
+      ${metricsHtml}
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--space-3);">
+        <h4 style="margin: 0;">评测查询（${queries.length}）</h4>
+        <div style="display: flex; gap: var(--space-2);">
+          <button class="btn btn-outline btn-sm" onclick="importPreset('${ds.id}')">导入预置查询</button>
+          <button class="btn btn-outline btn-sm" onclick="showAddQuery('${ds.id}')">＋ 添加查询</button>
+          <button class="btn btn-primary btn-sm" onclick="runDataset('${ds.id}')">执行评测</button>
+        </div>
+      </div>
+      <div style="overflow-x: auto;">
+        <table class="data-table">
+          <thead>
+            <tr><th>#</th><th>查询文本</th><th>类型</th><th>难度</th><th>标注</th><th>来源</th><th>操作</th></tr>
+          </thead>
+          <tbody>
+            ${queries.length === 0 ? '<tr><td colspan="7" class="text-center text-muted">暂无查询，点击右上角添加或导入预置</td></tr>' : queryRows}
+          </tbody>
+        </table>
+      </div>
+      ${ds.status === 'completed' ? `<div style="margin-top: var(--space-4);"><button class="btn btn-outline btn-sm" onclick="viewResults('${ds.id}')">查看检索结果详情</button></div>` : ''}
+    `;
+  }
+
+  // ====================================================================
+  // 添加查询
+  // ====================================================================
+  window.showAddQuery = function(datasetId: string) {
+    const docOptions = currentKbDocs.map((d: any) => `<option value="${d.id}">${escapeHtml(d.title)}</option>`).join('');
+    const html = `
+      <div style="border: 1px solid var(--border); border-radius: 8px; padding: var(--space-4); margin-bottom: var(--space-4); background: var(--bg-secondary);">
+        <h4 style="margin-top: 0;">添加评测查询</h4>
+        <div class="form-group">
+          <label class="form-label">查询文本</label>
+          <input type="text" id="new-query-text" class="form-input" placeholder="例如：公司的报销流程是什么？" />
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3);">
+          <div class="form-group">
+            <label class="form-label">查询类型</label>
+            <select id="new-query-type" class="form-input">
+              ${Object.entries(queryTypeNames).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">难度</label>
+            <select id="new-query-diff" class="form-input">
+              <option value="easy">简单</option>
+              <option value="medium" selected>中等</option>
+              <option value="hard">困难</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">相关文档（ground truth，必选，可多选）</label>
+          <select id="new-query-docs" class="form-input" multiple style="height: 160px;">
+            ${docOptions || '<option value="" disabled>该知识库暂无文档</option>'}
+          </select>
+          <div class="text-muted" style="font-size: var(--text-xs); margin-top: var(--space-1);">人工标注：选择该查询应该检索到的文档（test.md 强调须人工标注防过拟合）</div>
+        </div>
+        <div style="display: flex; gap: var(--space-2); justify-content: flex-end;">
+          <button class="btn btn-outline btn-sm" onclick="renderDetail(currentDataset, currentDataset._queries || [])">取消</button>
+          <button class="btn btn-primary btn-sm" onclick="submitAddQuery('${datasetId}')">添加</button>
+        </div>
+      </div>
+    `;
+    // 保留当前查询列表以便取消时恢复
+    renderDetailKeepQueries(datasetId, html);
+  };
+
+  function renderDetailKeepQueries(datasetId: string, prependHtml: string) {
+    // 重新拉取查询列表后渲染（保证一致性）
+    api<any>(`/api/v1/testing/ai-eval/rag/datasets/${datasetId}/queries`).then((res) => {
+      const queries = res.data || [];
+      if (currentDataset) currentDataset._queries = queries;
+      renderDetail(currentDataset, queries);
+      // 在详情顶部插入添加查询表单
+      const content = document.getElementById('detail-modal-content')!;
+      content.insertAdjacentHTML('afterbegin', prependHtml);
+    }).catch(() => alert('加载查询失败'));
+  }
+
+  window.submitAddQuery = async function(datasetId: string) {
+    const query = (document.getElementById('new-query-text') as HTMLInputElement).value.trim();
+    if (!query) { alert('请输入查询文本'); return; }
+    const query_type = (document.getElementById('new-query-type') as HTMLSelectElement).value;
+    const difficulty = (document.getElementById('new-query-diff') as HTMLSelectElement).value;
+    const sel = document.getElementById('new-query-docs') as HTMLSelectElement;
+    const doc_ids = Array.from(sel.selectedOptions).map(o => o.value).filter(Boolean);
+    if (doc_ids.length === 0) { alert('请至少选择一个相关文档作为标注'); return; }
+
+    try {
+      await api(`/api/v1/testing/ai-eval/rag/datasets/${datasetId}/queries`, {
+        method: 'POST',
+        body: JSON.stringify({ query, query_type, difficulty, ground_truth_doc_ids: doc_ids }),
+      });
+      alert('查询已添加');
+      await refreshDetail(datasetId);
+    } catch (e: any) {
+      alert('添加失败: ' + e.message);
+    }
+  };
+
+  // ====================================================================
+  // 标注查询（修改 ground truth）
+  // ====================================================================
+  window.annotateQuery = function(queryId: string, currentGt: string[]) {
+    const docOptions = currentKbDocs.map((d: any) =>
+      `<option value="${d.id}" ${currentGt.includes(d.id) ? 'selected' : ''}>${escapeHtml(d.title)}</option>`
+    ).join('');
+    const html = `
+      <div style="border: 1px solid var(--border); border-radius: 8px; padding: var(--space-4); margin-bottom: var(--space-4); background: var(--bg-secondary);">
+        <h4 style="margin-top: 0;">标注相关文档</h4>
+        <div class="form-group">
+          <label class="form-label">相关文档（ground truth，可多选）</label>
+          <select id="annotate-docs" class="form-input" multiple style="height: 200px;">
+            ${docOptions || '<option value="" disabled>该知识库暂无文档</option>'}
+          </select>
+        </div>
+        <div style="display: flex; gap: var(--space-2); justify-content: flex-end;">
+          <button class="btn btn-outline btn-sm" onclick="refreshDetail(currentDataset.id)">取消</button>
+          <button class="btn btn-primary btn-sm" onclick="deleteAndReaddQuery('${queryId}')">暂不支持直接改标注，请删除后重建</button>
+        </div>
+        <div class="alert alert-info" style="margin-top: var(--space-3); font-size: var(--text-sm);">
+          提示：当前版本标注修改需删除查询后重新添加。点击上方按钮将删除该查询，请重新添加。
+        </div>
+      </div>
+    `;
+    const content = document.getElementById('detail-modal-content')!;
+    content.insertAdjacentHTML('afterbegin', html);
+  };
+
+  window.deleteAndReaddQuery = async function(queryId: string) {
+    if (!confirm('确认删除该查询以便重新标注？')) return;
+    try {
+      await api(`/api/v1/testing/ai-eval/rag/queries/${queryId}`, { method: 'DELETE' });
+      alert('已删除，请重新添加查询并标注');
+      await refreshDetail(currentDataset.id);
+    } catch (e: any) {
+      alert('删除失败: ' + e.message);
+    }
+  };
+
+  window.deleteQuery = async function(queryId: string) {
+    if (!confirm('确认删除该查询？')) return;
+    try {
+      await api(`/api/v1/testing/ai-eval/rag/queries/${queryId}`, { method: 'DELETE' });
+      await refreshDetail(currentDataset.id);
+    } catch (e: any) {
+      alert('删除失败: ' + e.message);
+    }
+  };
+
+  // ====================================================================
+  // 导入预置查询
+  // ====================================================================
+  window.importPreset = async function(datasetId: string) {
+    if (!confirm('确认导入 12 条预置查询模板？导入后需手动标注相关文档才能评测。')) return;
+    try {
+      const res = await api<any>(`/api/v1/testing/ai-eval/rag/datasets/${datasetId}/queries/import-preset`, { method: 'POST' });
+      alert(res.message || '导入成功');
+      await refreshDetail(datasetId);
+    } catch (e: any) {
+      alert('导入失败: ' + e.message);
+    }
+  };
+
+  // ====================================================================
+  // 执行评测
+  // ====================================================================
+  window.runDataset = async function(datasetId: string) {
+    if (!confirm('确认执行检索评测？将对每条已标注查询调用检索器，可能需要数秒。')) return;
+    const btn = event?.target as HTMLButtonElement;
+    if (btn) { btn.disabled = true; btn.textContent = '评测中...'; }
+    try {
+      const res = await api<any>('/api/v1/testing/ai-eval/rag/run', {
+        method: 'POST',
+        body: JSON.stringify({ dataset_id: datasetId }),
+      });
+      alert(res.message || '评测完成');
+      await loadDatasets();
+      await loadStats();
+      // 若详情弹窗打开则刷新
+      if (currentDataset && currentDataset.id === datasetId && document.getElementById('detail-modal')!.style.display === 'flex') {
+        await refreshDetail(datasetId);
+      }
+    } catch (e: any) {
+      alert('执行失败: ' + e.message);
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '执行'; }
+    }
+  };
+
+  // ====================================================================
+  // 查看检索结果详情
+  // ====================================================================
+  window.viewResults = async function(datasetId: string) {
+    try {
+      const res = await api<any>(`/api/v1/testing/ai-eval/rag/datasets/${datasetId}/results`);
+      const results: any[] = res.data || [];
+      const html = results.map((r: any, i: number) => {
+        const m = r.metrics || {};
+        const retrieved = r.retrieved || [];
+        const gt = r.ground_truth_doc_ids || [];
+        const hit = m.hit;
+        const retrievedHtml = retrieved.map((rv: any) => {
+          const isRel = gt.includes(rv.doc_id);
+          return `<div style="display:flex; justify-content:space-between; padding: 4px 8px; border-bottom: 1px solid var(--border-light); ${isRel ? 'background: var(--success-bg, rgba(0,200,0,0.05));' : ''}">
+            <span style="font-size: var(--text-xs);"><span style="color: var(--text-muted);">#${rv.rank}</span> ${escapeHtml(rv.title || rv.doc_id)} ${isRel ? '<span style="color: var(--success);">✓ 命中</span>' : ''}</span>
+            <span style="font-size: var(--text-xs); color: var(--text-muted);">${rv.source} · ${rv.score.toFixed(3)}</span>
+          </div>`;
+        }).join('');
+        return `
+          <div style="border: 1px solid var(--border); border-radius: 8px; padding: var(--space-3); margin-bottom: var(--space-3);">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: var(--space-2);">
+              <div><span style="color: var(--text-muted); font-size: var(--text-sm);">#${i+1}</span> <strong style="margin-left: var(--space-2);">${escapeHtml(r.query)}</strong>
+                <span style="margin-left: var(--space-2); padding: 2px 8px; border-radius: 4px; background: var(--bg-secondary); font-size: var(--text-xs);">${queryTypeNames[r.query_type] || r.query_type}</span>
+              </div>
+              <span style="color: ${hit ? 'var(--success)' : 'var(--danger)'}; font-weight: 600;">${hit ? '✓ 命中' : '✗ 未命中'}</span>
+            </div>
+            <div style="display:flex; gap: var(--space-3); font-size: var(--text-sm); margin-bottom: var(--space-2); flex-wrap: wrap;">
+              <span>Recall@5: <strong style="color: var(--primary);">${fmtPct(m.recall_at_5)}</strong></span>
+              <span>MRR: <strong>${fmtNum(m.mrr)}</strong></span>
+              <span>NDCG@5: <strong>${fmtNum(m.ndcg_at_5)}</strong></span>
+              <span>MAP: <strong>${fmtNum(m.map)}</strong></span>
+              <span>耗时: ${r.response_time_ms}ms</span>
+              <span>标注文档: ${gt.length} 篇</span>
+            </div>
+            <div style="font-size: var(--text-xs); color: var(--text-muted); margin-bottom: var(--space-1);">检索结果（${retrieved.length} 篇）：</div>
+            <div style="border: 1px solid var(--border-light); border-radius: 4px;">
+              ${retrievedHtml || '<div style="padding: 8px; color: var(--text-muted); font-size: var(--text-xs);">无检索结果</div>'}
+            </div>
+            ${r.error_message ? `<div style="margin-top: var(--space-2); color: var(--danger); font-size: var(--text-sm);">错误: ${escapeHtml(r.error_message)}</div>` : ''}
+          </div>
+        `;
+      }).join('');
+      const content = document.getElementById('detail-modal-content')!;
+      content.insertAdjacentHTML('afterbegin', `
+        <div style="border: 1px solid var(--border); border-radius: 8px; padding: var(--space-4); margin-bottom: var(--space-4);">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: var(--space-3);">
+            <h4 style="margin:0;">检索结果详情</h4>
+            <button class="btn btn-outline btn-sm" onclick="refreshDetail(currentDataset.id)">收起</button>
+          </div>
+          ${html || '<p class="text-muted">暂无结果</p>'}
+        </div>
+      `);
+    } catch (e: any) {
+      alert('加载结果失败: ' + e.message);
+    }
+  };
+
+  async function refreshDetail(datasetId: string) {
+    try {
+      const [dsRes, qRes] = await Promise.all([
+        api<any>(`/api/v1/testing/ai-eval/rag/datasets/${datasetId}`),
+        api<any>(`/api/v1/testing/ai-eval/rag/datasets/${datasetId}/queries`),
+      ]);
+      currentDataset = dsRes.data;
+      currentDataset._queries = qRes.data || [];
+      renderDetail(currentDataset, currentDataset._queries);
+    } catch (e: any) {
+      alert('刷新失败: ' + e.message);
+    }
+  }
+
+  // ====================================================================
+  // 删除数据集
+  // ====================================================================
+  window.deleteDataset = async function(datasetId: string) {
+    if (!confirm('确认删除该数据集？相关查询和结果将一并删除。')) return;
+    try {
+      await api(`/api/v1/testing/ai-eval/rag/datasets/${datasetId}`, { method: 'DELETE' });
+      await loadDatasets();
+      await loadStats();
+    } catch (e: any) {
+      alert('删除失败: ' + e.message);
+    }
+  };
+
+  // ====================================================================
+  // 预置查询库
+  // ====================================================================
+  async function showPresets() {
+    try {
+      const res = await api<any>('/api/v1/testing/ai-eval/rag/preset-queries');
+      const data = res.data;
+      const typeNames = data.type_names || queryTypeNames;
+      const html = `
+        <p style="margin-bottom: var(--space-3);">共 <strong>${data.total_queries}</strong> 条预置查询模板（6 类检索场景）</p>
+        ${data.queries.map((q: any, i: number) => `
+          <div style="border: 1px solid var(--border); border-radius: 8px; padding: var(--space-3); margin-bottom: var(--space-2);">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <div><span style="color: var(--text-muted); font-size: var(--text-sm);">#${i+1}</span>
+                <strong style="margin-left: var(--space-2);">${escapeHtml(q.query)}</strong>
+              </div>
+              <div>
+                <span style="padding: 2px 8px; border-radius: 4px; background: var(--bg-secondary); font-size: var(--text-xs);">${typeNames[q.query_type] || q.query_type}</span>
+                <span style="margin-left: var(--space-1); padding: 2px 8px; border-radius: 4px; background: ${q.difficulty === 'hard' ? 'var(--danger)' : q.difficulty === 'medium' ? 'var(--warning)' : 'var(--success)'}; color: white; font-size: var(--text-xs);">${difficultyMap[q.difficulty] || q.difficulty}</span>
+              </div>
+            </div>
+            <div style="margin-top: var(--space-2); font-size: var(--text-sm); color: var(--text-muted);">${escapeHtml(q.description)}</div>
+          </div>
+        `).join('')}
+        <div class="alert alert-info" style="margin-top: var(--space-3);">
+          预置模板不含 ground truth（文档 ID 为用户私有），导入后须手动标注相关文档。
+        </div>
+      `;
+      document.getElementById('preset-modal-content')!.innerHTML = html;
+      document.getElementById('preset-modal')!.style.display = 'flex';
+    } catch (e: any) {
+      alert('加载预置查询失败: ' + e.message);
+    }
+  }
+
+  // ====================================================================
+  // 事件绑定
+  // ====================================================================
+  document.getElementById('create-dataset-btn')!.addEventListener('click', showCreateModal);
+  document.getElementById('view-presets-btn')!.addEventListener('click', showPresets);
+  document.getElementById('create-confirm')!.addEventListener('click', confirmCreate);
+  ['create-cancel', 'create-modal-close'].forEach(id =>
+    document.getElementById(id)!.addEventListener('click', () => {
+      document.getElementById('create-modal')!.style.display = 'none';
+    })
+  );
+  document.getElementById('detail-modal-close')!.addEventListener('click', () => {
+    document.getElementById('detail-modal')!.style.display = 'none';
+  });
+  document.getElementById('preset-modal-close')!.addEventListener('click', () => {
+    document.getElementById('preset-modal')!.style.display = 'none';
+  });
+
+  // 初始加载
+  loadStats();
+  loadDatasets();
+</script>
+
+<style>
+  .rag-eval .page-desc {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    margin-top: var(--space-1);
+  }
+
+  .modal-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+
+  .modal {
+    background: var(--bg-primary);
+    border-radius: 12px;
+    width: 90%;
+    max-width: 500px;
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-4);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .modal-body {
+    padding: var(--space-4);
+    overflow-y: auto;
+  }
+
+  .modal-footer {
+    padding: var(--space-4);
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-2);
+  }
+
+  .modal-close {
+    background: none;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    color: var(--text-muted);
+    line-height: 1;
+  }
+</style>

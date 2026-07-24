@@ -49,6 +49,29 @@ const breadcrumb = [{ label: '测试平台', href: '/testing' }, { label: '项�
       <button class="btn btn-outline btn-sm" id="stats-retry" type="button">重试</button>
     </div>
 
+    <!-- AI 评测模块入口 -->
+    <div class="card" style="margin-bottom: var(--space-5);">
+      <div class="card-header"><h3>AI 评测模块</h3></div>
+      <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--space-4); padding: var(--space-4);">
+        <a class="ai-eval-entry" href="/testing/ai-eval/injection">
+          <div class="ai-eval-entry-title">Prompt Injection 防御测试</div>
+          <div class="ai-eval-entry-desc">自动化测试 AI 系统对 8 类提示词注入攻击的防御能力（基础越狱、角色扮演、系统覆盖等）</div>
+        </a>
+        <a class="ai-eval-entry" href="/testing/ai-eval/rag">
+          <div class="ai-eval-entry-title">RAG 检索质量评测</div>
+          <div class="ai-eval-entry-desc">评测知识库检索的召回质量，计算 Recall@K / MRR / NDCG / MAP 指标，基于人工标注的相关文档</div>
+        </a>
+        <a class="ai-eval-entry" href="/testing/ai-eval/doc-parse">
+          <div class="ai-eval-entry-title">文档解析评测</div>
+          <div class="ai-eval-entry-desc">评测文档解析质量（文本相似度 / 表格 / 公式 / 版面四维度），对比人工标注标准答案，支持 Docling 端到端解析</div>
+        </a>
+        <a class="ai-eval-entry" href="/testing/ai-eval/judge">
+          <div class="ai-eval-entry-title">AI Judge 自动评测</div>
+          <div class="ai-eval-entry-desc">用 LLM 作为裁判对模型答案做多维评分（准确性/完整性/相关性/清晰度/安全性），支持批量回归评测</div>
+        </a>
+      </div>
+    </div>
+
     <!-- 项目列表 -->
     <div class="card">
       <div class="card-header"><h3>项目列表</h3></div>
@@ -104,6 +127,32 @@ const breadcrumb = [{ label: '测试平台', href: '/testing' }, { label: '项�
     display: flex;
     flex-direction: column;
     gap: var(--space-2);
+  }
+  .testing-projects .ai-eval-entry {
+    display: block;
+    padding: var(--space-4);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    text-decoration: none;
+    color: inherit;
+    transition: all var(--transition-fast);
+    background: var(--surface);
+  }
+  .testing-projects .ai-eval-entry:hover {
+    border-color: var(--primary);
+    box-shadow: var(--shadow-md, 0 4px 12px rgba(0,0,0,0.08));
+    transform: translateY(-2px);
+  }
+  .testing-projects .ai-eval-entry-title {
+    font-weight: 600;
+    font-size: var(--text-base);
+    color: var(--primary);
+    margin-bottom: var(--space-2);
+  }
+  .testing-projects .ai-eval-entry-desc {
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    line-height: 1.5;
   }
   .testing-projects .stat-card-header {
     display: flex;

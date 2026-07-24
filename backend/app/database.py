@@ -109,11 +109,12 @@ async def get_db_session(request: Request) -> AsyncGenerator[AsyncSession, None]
     """
     async with async_session_factory() as session:
         # 注入租户上下文到 PostgreSQL session（供 RLS 策略使用）
+        # 注意：asyncpg 不支持 SET LOCAL 的参数化绑定（$1 语法在 SET 中无效），
+        # tenant_id 已由中间件从 JWT 解析为 UUID，可安全拼接。
         tenant_id = getattr(request.state, "tenant_id", None)
         if tenant_id is not None:
             await session.execute(
-                text("SET LOCAL app.tenant_id = :tid"),
-                {"tid": str(tenant_id)},
+                text(f"SET LOCAL app.tenant_id = '{tenant_id}'")
             )
         try:
             yield session
