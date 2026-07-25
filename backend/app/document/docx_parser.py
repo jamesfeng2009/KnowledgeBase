@@ -613,3 +613,47 @@ class DOCXParser(DocumentParser):
         except Exception as exc:
             log.warning("docx.vlm_error", error=str(exc))
             return ""
+
+    async def extract_raw_images(self, file_path: str) -> list[tuple[bytes, str]]:
+        """提取 DOCX 中所有图片的原始二进制数据（不做 VLM 处理）。
+
+        用于跨模态索引和 VLM 描述增强 — 返回原始图片字节，
+        由调用方决定如何处理（向量化或 VLM 描述）。
+
+        Args:
+            file_path: DOCX 文件路径。
+
+        Returns:
+            [(图片二进制数据, MIME类型), ...] 列表。
+        """
+        try:
+            from docx import Document as DocxDocument
+        except ImportError:
+            return []
+
+        try:
+            docx_doc = DocxDocument(file_path)
+        except Exception as exc:
+            log.warning("docx.open_failed_for_images", file_path=file_path, error=str(exc))
+            return []
+
+        images: list[tuple[bytes, str]] = []
+        seen_rids: set[str] = set()
+
+        for rid, rel in docx_doc.part.rels.items():
+            if "image" not in rel.reltype.lower():
+                continue
+            if rid in seen_rids:
+                continue
+            seen_rids.add(rid)
+
+            try:
+                blob = rel.target_part.blob
+                content_type = rel.target_part.content_type or "image/png"
+                if blob and len(blob) > 0:
+                    images.append((blob, content_type))
+            except Exception as exc:
+                log.debug("docx.raw_image_part_failed", rid=rid, error=str(exc))
+
+        log.info("docx.raw_images_extracted", file_path=file_path, count=len(images))
+        return images

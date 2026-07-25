@@ -693,3 +693,63 @@ class PPTXParser(DocumentParser):
         except Exception as exc:
             log.warning("pptx.vlm_error", error=str(exc))
             return ""
+
+    async def extract_raw_images(self, file_path: str) -> list[tuple[bytes, str]]:
+        """提取 PPTX 中所有图片的原始二进制数据（不做 VLM 处理）。
+
+        用于跨模态索引和 VLM 描述增强 — 返回原始图片字节，
+        由调用方决定如何处理（向量化或 VLM 描述）。
+
+        Args:
+            file_path: PPTX 文件路径。
+
+        Returns:
+            [(图片二进制数据, MIME类型), ...] 列表。
+        """
+        try:
+            from pptx import Presentation
+            from pptx.enum.shapes import MSO_SHAPE_TYPE
+        except ImportError:
+            return []
+
+        try:
+            prs = Presentation(file_path)
+        except Exception as exc:
+            log.warning("pptx.open_failed_for_images", file_path=file_path, error=str(exc))
+            return []
+
+        images: list[tuple[bytes, str]] = []
+
+        for slide in prs.slides:
+            image_shapes: list[Any] = []
+            for shape in slide.shapes:
+                self._collect_image_shapes(shape, image_shapes, 999, depth=0)
+
+            for shape in image_shapes:
+                try:
+                    img_bytes = shape.image.blob
+                    if not img_bytes:
+                        continue
+                    ext = "png"
+                    try:
+                        ext = shape.image.ext
+                    except Exception:
+                        pass
+                    std_ext = ext.lower().lstrip(".")
+                    mime_map = {
+                        "png": "image/png",
+                        "jpg": "image/jpeg",
+                        "jpeg": "image/jpeg",
+                        "gif": "image/gif",
+                        "bmp": "image/bmp",
+                        "webp": "image/webp",
+                        "tiff": "image/tiff",
+                        "tif": "image/tiff",
+                    }
+                    mime = mime_map.get(std_ext, f"image/{std_ext}")
+                    images.append((img_bytes, mime))
+                except Exception as exc:
+                    log.debug("pptx.raw_image_failed", error=str(exc))
+
+        log.info("pptx.raw_images_extracted", file_path=file_path, count=len(images))
+        return images

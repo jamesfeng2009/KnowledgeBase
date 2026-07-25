@@ -679,7 +679,7 @@ class TestDocumentTasksParserIntegration:
         mock_parser.parse = AsyncMock(return_value="<h2>标题</h2>内容")
 
         with patch("app.document.get_parser", return_value=mock_parser):
-            result = await _parse_document(mock_doc)
+            result, _ = await _parse_document(mock_doc)
 
         assert "<h2>标题</h2>" in result
 
@@ -1015,7 +1015,7 @@ class TestDocumentTasksDOCXIntegration:
         mock_parser.parse = AsyncMock(return_value="DOCX增强内容")
 
         with patch("app.document.get_parser", return_value=mock_parser):
-            result = await _parse_document(mock_doc)
+            result, _ = await _parse_document(mock_doc)
 
         assert result == "DOCX增强内容"
 
@@ -1434,7 +1434,7 @@ class TestDocumentTasksXLSXIntegration:
         mock_parser.parse = AsyncMock(return_value="<h2>Sheet1</h2>\n<table>data</table>")
 
         with patch("app.document.get_parser", return_value=mock_parser):
-            result = await _parse_document(mock_doc)
+            result, _ = await _parse_document(mock_doc)
 
         assert "<h2>Sheet1</h2>" in result
 
@@ -1451,7 +1451,7 @@ class TestDocumentTasksXLSXIntegration:
         mock_parser.parse = AsyncMock(return_value="XLS内容")
 
         with patch("app.document.get_parser", return_value=mock_parser):
-            result = await _parse_document(mock_doc)
+            result, _ = await _parse_document(mock_doc)
 
         assert result == "XLS内容"
 
@@ -1678,7 +1678,7 @@ class TestDocumentTasksAudioIntegration:
             mock_settings.return_value.AUDIO_ASR_ENABLED = True
             mock_parse_audio.return_value = "转写文本"
 
-            result = await _parse_document(mock_doc)
+            result, _ = await _parse_document(mock_doc)
 
         assert result == "转写文本"
         mock_parse_audio.assert_called_once()
@@ -1699,7 +1699,7 @@ class TestDocumentTasksAudioIntegration:
             mock_settings.return_value.AUDIO_ASR_ENABLED = True
             mock_parse_audio.return_value = "WAV转写"
 
-            result = await _parse_document(mock_doc)
+            result, _ = await _parse_document(mock_doc)
 
         assert result == "WAV转写"
 
@@ -1776,7 +1776,7 @@ class TestLegacyFormatFallback:
         mock_doc.file_path = "/fake/old.doc"
         mock_doc.id = "test-id"
 
-        result = await _parse_document(mock_doc)
+        result, _ = await _parse_document(mock_doc)
 
         assert ".doc" in result
         assert "请将文件另存为 .docx" in result
@@ -1792,7 +1792,7 @@ class TestLegacyFormatFallback:
         mock_doc.file_path = "/fake/old.ppt"
         mock_doc.id = "test-id"
 
-        result = await _parse_document(mock_doc)
+        result, _ = await _parse_document(mock_doc)
 
         assert ".ppt" in result
         assert "请将文件另存为 .pptx" in result
@@ -2479,7 +2479,7 @@ class TestDocumentTasksDoclingIntegration:
 
         with patch("app.document.factory.get_parser_with_fallback",
                     return_value=(mock_parser, "docling")):
-            result = await _parse_document(mock_doc)
+            result, _ = await _parse_document(mock_doc)
 
         assert result == "<h1>HTML 内容</h1>"
 
@@ -2505,7 +2505,7 @@ class TestDocumentTasksDoclingIntegration:
         with patch("app.document.factory.get_parser_with_fallback",
                     return_value=(mock_docling_parser, "docling")), \
              patch("app.document.get_parser", return_value=mock_legacy_parser):
-            result = await _parse_document(mock_doc)
+            result, _ = await _parse_document(mock_doc)
 
         assert result == "Legacy PDF 内容"
 
@@ -2527,7 +2527,7 @@ class TestDocumentTasksDoclingIntegration:
         with patch("app.document.factory.get_parser_with_fallback",
                     return_value=(None, "none")), \
              patch("app.document.get_parser", return_value=mock_parser):
-            result = await _parse_document(mock_doc)
+            result, _ = await _parse_document(mock_doc)
 
         assert result == "PDF 内容"
 
@@ -2544,7 +2544,7 @@ class TestDocumentTasksDoclingIntegration:
 
         with patch("tasks.document_tasks._parse_video", new_callable=AsyncMock) as mock_video:
             mock_video.return_value = "视频转写文本"
-            result = await _parse_document(mock_doc)
+            result, _ = await _parse_document(mock_doc)
 
         assert result == "视频转写文本"
         mock_video.assert_called_once()
@@ -2560,7 +2560,7 @@ class TestDocumentTasksDoclingIntegration:
         mock_doc.file_path = "/fake/old.doc"
         mock_doc.id = "test-id"
 
-        result = await _parse_document(mock_doc)
+        result, _ = await _parse_document(mock_doc)
 
         assert ".doc" in result
         assert "请将文件另存为 .docx" in result

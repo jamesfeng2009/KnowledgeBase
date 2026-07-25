@@ -247,7 +247,7 @@ class HybridRetriever:
 
             cm_store = OpenSearchVectorStore(
                 index_name=settings.OPENSEARCH_CROSS_MODAL_INDEX,
-                dimension_override=settings.JINA_CLIP_DIM,
+                dimension_override=settings.CROSS_MODAL_DIM,
             )
             try:
                 results = await cm_store.search(

@@ -43,13 +43,14 @@ class CrossModalService:
     """
 
     def __init__(self) -> None:
-        # C1/C2 fix: 跨模态图片向量使用独立索引 + jina-clip-v2 维度覆盖，
+        # C1/C2 fix: 跨模态图片向量使用独立索引 + 维度覆盖，
         # 避免与文本向量索引（SaaS 3072 维）冲突导致 upsert 失败
+        # P2: 维度根据 DEPLOY_MODE 自动选择 — Jina 1024 / DashScope 1536
         from app.rag.vector_store.opensearch_store import OpenSearchVectorStore
 
         self._vector_store = OpenSearchVectorStore(
             index_name=settings.OPENSEARCH_CROSS_MODAL_INDEX,
-            dimension_override=settings.JINA_CLIP_DIM,
+            dimension_override=settings.CROSS_MODAL_DIM,
         )
         self._mm_embedder: Any | None = None
 
@@ -130,5 +131,12 @@ class CrossModalService:
         return count
 
     def is_enabled(self) -> bool:
-        """跨模态检索是否启用。"""
-        return bool(settings.CROSS_MODAL_ENABLED and settings.JINA_API_KEY)
+        """跨模态检索是否启用 — 根据 DEPLOY_MODE 检查对应 API Key。"""
+        if not settings.CROSS_MODAL_ENABLED:
+            return False
+        # P2: 根据 DEPLOY_MODE 检查对应模式的 API Key
+        if settings.DEPLOY_MODE in ("saas", "private_overseas"):
+            return bool(settings.JINA_API_KEY)
+        elif settings.DEPLOY_MODE in ("saas_dashscope", "private_domestic"):
+            return bool(settings.DASHSCOPE_API_KEY)
+        return False

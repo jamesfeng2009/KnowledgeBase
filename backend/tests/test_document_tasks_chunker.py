@@ -668,7 +668,7 @@ class TestParallelPipelineAndGraphBuild:
         async def capture_index(doc_id, chunk_objects, chunks, embeddings, **kwargs):
             index_chunks.extend(chunk_objects)
 
-        async def capture_graph(doc_id, chunk_objects, doc):
+        async def capture_graph(doc_id, chunk_objects, doc, **kwargs):
             graph_chunks.extend(chunk_objects)
 
         with patch("app.database.async_session_factory", return_value=mock_session_cm), \

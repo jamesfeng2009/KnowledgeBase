@@ -64,6 +64,7 @@ class GraphService:
     - Product: 产品节点
     - Department: 部门节点
     - Person: 人员节点
+    - Image: 图片节点（P3：跨模态图片，含 description, doc_id）
 
     关系类型（type）：
     - REFERENCES: 引用（文档A引用文档B）
@@ -74,6 +75,7 @@ class GraphService:
     - HYPERNYM: 上位词（概念A是概念B的上位词）
     - AUTHORED_BY: 作者
     - APPROVED_BY: 审批人
+    - CONTAINS: 包含（文档包含图片，P3）
     """
 
     #: 推荐缓存 TTL（秒）— 5 分钟，平衡新鲜度与命中率。
@@ -1416,6 +1418,115 @@ class GraphService:
                 })
 
         return await self.batch_import_graph(nodes, relationships)
+
+    # ------------------------------------------------------------------
+    # P3: 图片节点管理
+    # ------------------------------------------------------------------
+
+    async def add_image_nodes(
+        self,
+        doc_id: str,
+        images: list[tuple[bytes, str]],
+    ) -> int:
+        """P3: 批量创建图片节点并关联到文档。
+
+        为文档中的每张图片创建 Image 节点（含 VLM 描述），
+        并建立 Document → Image 的 CONTAINS 关系。
+        图片节点支持图谱可视化中展示文档包含的图片资源。
+
+        优雅降级：Neo4j 不可用时返回 0，不影响主流程。
+
+        Args:
+            doc_id: 文档 ID。
+            images: 图片数据列表 [(图片二进制, VLM描述), ...]。
+
+        Returns:
+            成功创建的图片节点数量。
+        """
+        if not images:
+            return 0
+
+        import hashlib
+
+        nodes: list[dict[str, Any]] = []
+        relationships: list[dict[str, Any]] = []
+        tenant_id_str = str(self._tenant_id) if self._tenant_id else None
+
+        for img_bytes, desc in images:
+            # 用图片内容的 SHA256 前 16 位作为唯一 ID，避免重复
+            img_hash = hashlib.sha256(img_bytes).hexdigest()[:16]
+            img_id = f"img:{doc_id}:{img_hash}"
+
+            node: dict[str, Any] = {
+                "label": "Image",
+                "id": img_id,
+                "doc_id": doc_id,
+                "description": desc or "[图片内容]",
+                "content_type": "image",
+                "size_bytes": len(img_bytes),
+            }
+            if tenant_id_str:
+                node["tenant_id"] = tenant_id_str
+            nodes.append(node)
+
+            relationships.append({
+                "from_label": "Document",
+                "from_id": doc_id,
+                "to_label": "Image",
+                "to_id": img_id,
+                "type": "CONTAINS",
+            })
+
+        try:
+            result = await self.batch_import_graph(nodes, relationships)
+            created = result.get("nodes_created", 0)
+            logger.info(
+                "graph.image_nodes_added",
+                doc_id=doc_id,
+                image_count=created,
+            )
+            return created
+        except Exception as exc:
+            logger.warning("graph.image_nodes_failed", doc_id=doc_id, error=str(exc))
+            return 0
+
+    async def get_document_images(
+        self,
+        doc_id: str,
+    ) -> list[dict[str, Any]]:
+        """P3: 查询文档包含的所有图片节点。
+
+        通过 Document → Image 的 CONTAINS 关系查找。
+
+        Args:
+            doc_id: 文档 ID。
+
+        Returns:
+            图片节点列表 [{"id", "description", "size_bytes"}, ...]。
+        """
+        if not await self._ensure_connected():
+            return []
+        try:
+            query = (
+                "MATCH (d:Document {id: $doc_id})-[:CONTAINS]->(img:Image) "
+                "RETURN img.id as id, img.description as description, "
+                "img.size_bytes as size_bytes "
+                "ORDER BY img.id"
+            )
+            async with self._driver.session(database=settings.NEO4J_DATABASE) as session:
+                result = await session.run(query, doc_id=doc_id)
+                records = await result.data()
+            return [
+                {
+                    "id": r["id"],
+                    "description": r.get("description", ""),
+                    "size_bytes": r.get("size_bytes", 0),
+                }
+                for r in records
+            ]
+        except Exception as e:
+            logger.error("graph.get_images_error", doc_id=doc_id, error=str(e))
+            return []
 
     # ------------------------------------------------------------------
     # 统计

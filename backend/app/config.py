@@ -286,13 +286,26 @@ class Settings(BaseSettings):
     TTS_VOLUME: str = "+0%"  # 音量调节：-50% ~ +50%
     TTS_ENABLED: bool = True  # TTS 总开关
 
-    # === P2 跨模态向量检索（jina-clip-v2）===
+    # === P2 跨模态向量检索 ===
     # 启用后文档中的图片直接向量化入库（无需仅依赖 VLM 文本描述），
     # 用户可用文本查询检索到图片内容（text-to-image cross-modal retrieval）。
+    # 支持两种后端：
+    #   - jina-clip-v2（海外，1024 维，批量 API）
+    #   - DashScope tongyi-embedding-vision-flash（国内，1024 维，Flash 高性价比）
+    # 根据 DEPLOY_MODE 自动选择：saas/private_overseas → Jina，saas_dashscope/private_domestic → DashScope
     CROSS_MODAL_ENABLED: bool = False
     JINA_API_KEY: str = ""  # Jina AI API Key（jina-clip-v2 免费额度）
     JINA_CLIP_MODEL: str = "jina-clip-v2"
     JINA_CLIP_DIM: int = 1024  # jina-clip-v2 输出维度
+    # DashScope 通义多模态向量 Flash — 国内部署模式使用
+    # P2: 从 multimodal-embedding-one-peace-v1 (1536维) 切换到 tongyi-embedding-vision-flash (1024维)
+    # Flash 版本性价比更高，1024 维与 Jina 一致便于跨部署模式兼容
+    DASHSCOPE_MULTIMODAL_MODEL: str = "tongyi-embedding-vision-flash"
+    DASHSCOPE_MULTIMODAL_DIM: int = 1024  # tongyi-embedding-vision-flash 输出维度
+    # 跨模态向量维度 — 根据 DEPLOY_MODE 自动选择
+    # saas/private_overseas → JINA_CLIP_DIM (1024)
+    # saas_dashscope/private_domestic → DASHSCOPE_MULTIMODAL_DIM (1536)
+    CROSS_MODAL_DIM: int = 1024  # 默认 Jina 维度，DashScope 模式设为 1536
 
     # === P1-A 优雅关闭 ===
     SHUTDOWN_TIMEOUT: int = 30  # 优雅关闭超时（秒），uvicorn --timeout-graceful-shutdown
@@ -492,6 +505,12 @@ class Settings(BaseSettings):
                 "(ANTHROPIC_API_KEY / OPENAI_API_KEY / COHERE_API_KEY)",
                 stacklevel=2,
             )
+        # P2: 跨模态向量维度自动匹配部署模式
+        if self.CROSS_MODAL_ENABLED:
+            if self.DEPLOY_MODE in ("saas_dashscope", "private_domestic"):
+                self.CROSS_MODAL_DIM = self.DASHSCOPE_MULTIMODAL_DIM
+            else:
+                self.CROSS_MODAL_DIM = self.JINA_CLIP_DIM
         return self
 
     @model_validator(mode="after")

@@ -161,6 +161,7 @@ class TestGetMultimodalEmbedder:
         with patch("app.llm.multimodal_embedder.settings") as mock_settings:
             mock_settings.CROSS_MODAL_ENABLED = True
             mock_settings.JINA_API_KEY = "test-key"
+            mock_settings.DASHSCOPE_API_KEY = ""
             mock_settings.DEPLOY_MODE = "saas"
             mock_settings.JINA_CLIP_MODEL = "jina-clip-v2"
             mock_settings.JINA_CLIP_DIM = 1024
@@ -183,7 +184,7 @@ class TestCrossModalService:
             mock_settings.CROSS_MODAL_ENABLED = False
             mock_settings.JINA_API_KEY = ""
             mock_settings.OPENSEARCH_CROSS_MODAL_INDEX = "ekb_cross_modal"
-            mock_settings.JINA_CLIP_DIM = 1024
+            mock_settings.CROSS_MODAL_DIM = 1024
             service = CrossModalService()
             assert service.is_enabled() is False
 
@@ -192,8 +193,10 @@ class TestCrossModalService:
         with patch("app.services.cross_modal_service.settings") as mock_settings:
             mock_settings.CROSS_MODAL_ENABLED = True
             mock_settings.JINA_API_KEY = "test-key"
+            mock_settings.DASHSCOPE_API_KEY = ""
+            mock_settings.DEPLOY_MODE = "saas"
             mock_settings.OPENSEARCH_CROSS_MODAL_INDEX = "ekb_cross_modal"
-            mock_settings.JINA_CLIP_DIM = 1024
+            mock_settings.CROSS_MODAL_DIM = 1024
             service = CrossModalService()
             assert service.is_enabled() is True
 
@@ -321,7 +324,7 @@ class TestC1C2CrossModalIsolation:
         """CrossModalService 使用独立索引名。"""
         with patch("app.services.cross_modal_service.settings") as mock_settings:
             mock_settings.OPENSEARCH_CROSS_MODAL_INDEX = "ekb_cross_modal"
-            mock_settings.JINA_CLIP_DIM = 1024
+            mock_settings.CROSS_MODAL_DIM = 1024
             service = CrossModalService()
             assert service._vector_store._index_name == "ekb_cross_modal"
             assert service._vector_store._dimension_override == 1024

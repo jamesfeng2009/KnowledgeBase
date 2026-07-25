@@ -711,8 +711,9 @@ async def _parse_and_chunk_async(doc_id: str) -> dict[str, Any]:
         # 1. 解析文档内容
         _update_parse_progress(doc_id, stage="parsing", message="正在解析文档内容")
         parse_failed = False
+        extracted_images: list[tuple[bytes, str]] = []
         try:
-            parsed_text = await _parse_document(doc)
+            parsed_text, extracted_images = await _parse_document(doc)
         except Exception as exc:
             logger.warning("document.parse_failed", doc_id=doc_id, error=str(exc))
             parsed_text = doc.content_text or ""
@@ -803,9 +804,28 @@ async def _build_index_async(
     except Exception as exc:
         logger.debug("document.kb_id_lookup_failed", doc_id=doc_id, error=str(exc)[:200])
 
+    # P2-Step3: 提取图片用于跨模态索引（chord 模式下 images 无法通过参数传递，
+    # 此处从文档文件重新提取）
+    extracted_images: list[tuple[bytes, str]] = []
+    try:
+        from app.database import task_db_session
+        from app.repositories.knowledge_repository import DocumentRepository
+
+        async with task_db_session() as session:
+            repo = DocumentRepository(session)
+            doc = await repo.get_by_id(uuid.UUID(doc_id))
+            if doc is not None:
+                doc_type = doc.doc_type or "md"
+                extracted_images = await _extract_images_for_cross_modal(doc, doc_type)
+    except Exception as exc:
+        logger.debug("document.cross_modal_extract_skipped", doc_id=doc_id, error=str(exc)[:200])
+
     _update_parse_progress(doc_id, stage="indexing", message="正在构建全文索引和向量索引")
     try:
-        await _build_indexes(doc_id, chunk_objects, chunks, emb, kb_id=kb_id)
+        await _build_indexes(
+            doc_id, chunk_objects, chunks, emb, kb_id=kb_id,
+            images=extracted_images if extracted_images else None,
+        )
     except Exception as exc:
         logger.warning("document.index_failed", doc_id=doc_id, error=str(exc))
         warnings.append(f"索引构建失败: {str(exc)[:200]}")
@@ -827,8 +847,20 @@ async def _build_graph_async(doc_id: str, chunk_objects: list[Chunk]) -> dict[st
             return {"doc_id": doc_id, "status": "done", "graph_warnings": warnings}
         # 后续操作使用租户感知的仓储，确保多租户数据隔离
         repo = DocumentRepository(session, tenant_id=doc.tenant_id)
+
+        # P3: chord 模式下重新提取图片用于图谱 Image 节点
+        graph_images: list[tuple[bytes, str]] = []
         try:
-            await _build_knowledge_graph(doc_id, chunk_objects, doc)
+            doc_type = doc.doc_type or "md"
+            graph_images = await _extract_images_for_cross_modal(doc, doc_type)
+        except Exception as exc:
+            logger.debug("document.graph_images_extract_skipped", doc_id=doc_id, error=str(exc)[:200])
+
+        try:
+            await _build_knowledge_graph(
+                doc_id, chunk_objects, doc,
+                images=graph_images if graph_images else None,
+            )
         except Exception as exc:
             logger.warning("document.graph_build_failed", doc_id=doc_id, error=str(exc))
             warnings.append(f"知识图谱构建失败: {str(exc)[:200]}")
@@ -1040,8 +1072,9 @@ async def _process_document_async(doc_id: str) -> dict[str, Any]:
             doc_id, stage="parsing", message="正在解析文档内容"
         )
         parse_failed = False
+        extracted_images: list[tuple[bytes, str]] = []
         try:
-            parsed_text = await _parse_document(doc)
+            parsed_text, extracted_images = await _parse_document(doc)
         except Exception as exc:
             logger.warning("document.parse_failed", doc_id=doc_id, error=str(exc))
             parsed_text = doc.content_text or ""
@@ -1116,7 +1149,11 @@ async def _process_document_async(doc_id: str) -> dict[str, Any]:
                 doc_id, stage="indexing", message="正在构建全文索引和向量索引"
             )
             try:
-                await _build_indexes(doc_id, chunk_objects, chunks, emb, kb_id=str(doc.kb_id) if doc.kb_id else None)
+                await _build_indexes(
+                    doc_id, chunk_objects, chunks, emb,
+                    kb_id=str(doc.kb_id) if doc.kb_id else None,
+                    images=extracted_images if extracted_images else None,
+                )
             except Exception as exc:
                 logger.warning("document.index_failed", doc_id=doc_id, error=str(exc))
                 warnings.append(f"索引构建失败: {str(exc)[:200]}")
@@ -1125,7 +1162,10 @@ async def _process_document_async(doc_id: str) -> dict[str, Any]:
         async def _pipeline_graph() -> None:
             """支线 B：知识图谱构建（计算复用 chunk_objects）。"""
             try:
-                await _build_knowledge_graph(doc_id, chunk_objects, doc)
+                await _build_knowledge_graph(
+                    doc_id, chunk_objects, doc,
+                    images=extracted_images if extracted_images else None,
+                )
             except Exception as exc:
                 logger.warning(
                     "document.graph_build_failed",
@@ -1233,7 +1273,7 @@ async def _process_document_async(doc_id: str) -> dict[str, Any]:
         }
 
 
-async def _parse_document(doc: Any) -> str:
+async def _parse_document(doc: Any) -> tuple[str, list[tuple[bytes, str]]]:
     """解析文档内容 — 优先 Docling 统一解析，降级到原有专用解析器。
 
     解析优先级：
@@ -1242,47 +1282,139 @@ async def _parse_document(doc: Any) -> str:
         3. 旧格式兜底提示（.doc/.ppt）
         4. 视频专用管线（ffmpeg→ASR + 关键帧 VLM，Docling 不支持视频）
 
+    P2-Step3: 同时返回文档中提取的图片二进制数据 + VLM 描述，
+    供跨模态索引（_build_cross_modal_index）向量化入库。
+
     Args:
         doc: Document ORM 实例。
 
     Returns:
-        解析后的纯文本内容。
+        (解析后的纯文本内容, 图片数据列表 [(二进制, VLM描述), ...])
     """
-    # 如果已有纯文本内容，直接返回
+    # 如果已有纯文本内容，直接返回（无图片数据）
     if doc.content_text:
-        return doc.content_text
+        return doc.content_text, []
 
     doc_type = doc.doc_type or "md"
 
     # 视频不走 Docling（Docling 不支持视频），直接走专用管线
     if doc_type in _VIDEO_TYPES:
-        return await _parse_video(doc)
+        text = await _parse_video(doc)
+        return text, []
 
     # .doc/.ppt 旧格式 — Docling 也无法解析，返回降级提示
     if doc_type in ("doc", "ppt"):
-        return _legacy_format_fallback(doc, doc_type)
+        return _legacy_format_fallback(doc, doc_type), []
 
     # 1. 优先尝试 Docling 统一解析
     docling_result = await _try_docling_parse(doc, doc_type)
     if docling_result is not None:
-        return docling_result
+        # Docling 解析成功 — 尝试提取图片用于跨模态索引
+        images = await _extract_images_for_cross_modal(doc, doc_type)
+        return docling_result, images
 
     # 2. 降级到原有专用解析器
     if doc_type == "pdf":
-        return await _parse_pdf(doc)
+        text = await _parse_pdf(doc)
     elif doc_type == "docx":
-        return await _parse_docx(doc)
+        text = await _parse_docx(doc)
     elif doc_type in ("xlsx", "xls"):
-        return await _parse_xlsx(doc)
+        text = await _parse_xlsx(doc)
     elif doc_type == "html":
-        return _parse_html(doc)
+        text = _parse_html(doc)
     elif doc_type == "pptx":
-        return await _parse_pptx(doc)
+        text = await _parse_pptx(doc)
     elif doc_type in _AUDIO_TYPES:
-        return await _parse_audio(doc)
+        text = await _parse_audio(doc)
     else:
         # Markdown 或纯文本，直接返回
-        return doc.content_html or doc.content_text or ""
+        text = doc.content_html or doc.content_text or ""
+
+    # 非视频/音频文档提取图片用于跨模态索引
+    images = await _extract_images_for_cross_modal(doc, doc_type)
+    return text, images
+
+
+async def _extract_images_for_cross_modal(
+    doc: Any, doc_type: str
+) -> list[tuple[bytes, str]]:
+    """从文档中提取图片二进制 + VLM 描述，供跨模态向量化入库。
+
+    P2-Step3: 文档解析阶段图片已被 VLM 转为文本描述内联进正文，
+    但图片二进制数据被丢弃。本函数重新提取图片二进制 + VLM 描述，
+    传递给 _build_cross_modal_index 进行 jina-clip-v2 向量化。
+
+    优雅降级：任何异常返回空列表，不影响主文档处理流程。
+
+    Args:
+        doc: Document ORM 实例。
+        doc_type: 文档类型。
+
+    Returns:
+        图片数据列表 [(图片二进制, VLM描述), ...]。
+    """
+    if not doc.file_path:
+        return []
+
+    # 跨模态检索未启用时不提取图片（节省资源）
+    try:
+        from app.config import get_settings
+
+        if not get_settings().CROSS_MODAL_ENABLED:
+            return []
+    except Exception:
+        return []
+
+    images: list[tuple[bytes, str]] = []
+
+    try:
+        if doc_type == "pdf":
+            from app.document.docling_parser import DoclingParser
+
+            parser = DoclingParser()
+            result = await parser._parse_raw(doc.file_path)
+            if result is not None:
+                pictures = DoclingParser._extract_pictures(result)
+                for pic in pictures:
+                    images.append((pic["data"], ""))
+        elif doc_type in ("docx", "pptx"):
+            # DOCX/PPTX: 使用解析器的图片提取能力
+            from app.document.factory import get_parser_with_fallback
+
+            parser, parser_type = get_parser_with_fallback(doc_type)
+            if parser is not None and hasattr(parser, "extract_raw_images"):
+                images = await parser.extract_raw_images(doc.file_path)
+    except Exception as exc:
+        logger.debug("document.cross_modal_extract_failed", doc_id=str(getattr(doc, "id", "")), error=str(exc)[:200])
+
+    # 对没有描述的图片批量生成 VLM 描述
+    if images:
+        try:
+            from app.vlm.provider import get_vision_provider
+
+            vlm = get_vision_provider()
+            enhanced: list[tuple[bytes, str]] = []
+            for img_bytes, desc in images:
+                if desc:
+                    enhanced.append((img_bytes, desc))
+                    continue
+                try:
+                    desc = await vlm.understand(
+                        image=img_bytes,
+                        prompt="请用一句话描述这张图片的内容，重点关注图表、数据和关键信息。",
+                    )
+                    enhanced.append((img_bytes, desc or "[图片内容]"))
+                except Exception:
+                    enhanced.append((img_bytes, "[图片内容]"))
+            images = enhanced
+        except ImportError:
+            # VLM 不可用，使用占位描述
+            images = [(b, d or "[图片内容]") for b, d in images]
+        except Exception as exc:
+            logger.debug("document.cross_modal_vlm_failed", error=str(exc)[:200])
+            images = [(b, d or "[图片内容]") for b, d in images]
+
+    return images
 
 
 async def _try_docling_parse(doc: Any, doc_type: str) -> str | None:
@@ -2085,12 +2217,15 @@ async def _build_knowledge_graph(
     doc_id: str,
     chunk_objects: list[Chunk],
     doc: Any,
+    images: list[tuple[bytes, str]] | None = None,
 ) -> int:
     """构建知识图谱 — 从 chunk_objects 提取三元组并写入 Neo4j。
 
     方向二：计算复用 — 直接使用文档处理流水线已分块的 chunk_objects，
     避免重复分块计算。GraphService.extract_triples_from_chunks 从同一批
     chunks 抽取三元组，与 _build_indexes 共享分块结果。
+
+    P3: 同时创建 Image 图片节点，建立 Document → Image 的 CONTAINS 关系。
 
     降级策略：
         - Neo4j 不可用：GraphService 内部降级到 PostgreSQL 全文检索
@@ -2101,6 +2236,7 @@ async def _build_knowledge_graph(
         doc_id: 文档 ID。
         chunk_objects: Chunk 对象列表（计算复用）。
         doc: Document ORM 实例（用于获取 tenant_id 等元数据）。
+        images: P3 图片数据列表 [(二进制, VLM描述), ...] — 创建 Image 节点。
 
     Returns:
         提取的三元组数量。
@@ -2146,6 +2282,19 @@ async def _build_knowledge_graph(
             doc_id=doc_id,
             error=str(exc),
         )
+
+    # P3: 创建图片节点 — 将文档中的图片作为 Image 节点写入图谱
+    if images:
+        try:
+            img_count = await service.add_image_nodes(doc_id, images)
+            if img_count > 0:
+                logger.info("document.graph_images_added", doc_id=doc_id, count=img_count)
+        except Exception as exc:
+            logger.debug(
+                "document.graph_images_failed",
+                doc_id=doc_id,
+                error=str(exc)[:200],
+            )
 
     logger.info(
         "document.graph_built",

@@ -131,6 +131,29 @@ class DoclingParser(DocumentParser):
             log.warning("docling.parse_failed", file_path=file_path, error=str(exc))
             return ""
 
+    async def _parse_raw(self, file_path: str) -> Any | None:
+        """解析文档并返回原始 Docling result 对象（含图片数据）。
+
+        与 parse() 不同，本方法返回 Docling ConversionResult 原始对象，
+        供 _extract_pictures() 提取图片二进制数据。
+
+        Args:
+            file_path: 文档文件路径。
+
+        Returns:
+            Docling ConversionResult 对象，或 None（不可用/失败）。
+        """
+        converter = self._get_converter()
+        if converter is None:
+            return None
+
+        try:
+            result = converter.convert(file_path)
+            return result
+        except Exception as exc:
+            log.warning("docling.parse_raw_failed", file_path=file_path, error=str(exc))
+            return None
+
     async def _enhance_with_vlm(self, html: str, result: Any) -> str:
         """VLM 图片描述增强 — 在 HTML 中注入图片描述。
 
