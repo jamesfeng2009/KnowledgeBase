@@ -24,7 +24,8 @@ OpenSearch k-NN 向量存储实现 — 默认后端。
                 "kb_id":           {"type": "keyword"},
                 "title_path":      {"type": "text", "analyzer": "keyword"},
                 "content_type":    {"type": "keyword"},
-                "chunk_strategy":  {"type": "keyword"}
+                "chunk_strategy":  {"type": "keyword"},
+                "parent_id":       {"type": "keyword"}
             }
         }
     }
@@ -134,6 +135,7 @@ class OpenSearchVectorStore(VectorStoreBase):
                 "title_path",
                 "content_type",
                 "chunk_strategy",
+                "parent_id",
             ],
         }
 
@@ -168,6 +170,7 @@ class OpenSearchVectorStore(VectorStoreBase):
                     score=score,
                     kb_id=str(source.get("kb_id") or "") or None,
                     title=source.get("title_path") or None,
+                    parent_id=source.get("parent_id") or None,
                 )
             )
             if len(results) >= top_k:
@@ -222,6 +225,7 @@ class OpenSearchVectorStore(VectorStoreBase):
                 "title_path": chunk.title_path,
                 "content_type": chunk.content_type,
                 "chunk_strategy": chunk.chunk_strategy,
+                "parent_id": chunk.parent_id,
             }
             lines.append(json.dumps(action, ensure_ascii=False))
             lines.append(json.dumps(doc_body, ensure_ascii=False))
@@ -305,6 +309,7 @@ class OpenSearchVectorStore(VectorStoreBase):
                     },
                     "content_type": {"type": "keyword"},
                     "chunk_strategy": {"type": "keyword"},
+                    "parent_id": {"type": "keyword"},
                 }
             },
         }
@@ -345,6 +350,54 @@ class OpenSearchVectorStore(VectorStoreBase):
             if self._available is not False:
                 log.warning("vector_store.os_knn.delete_failed", error=str(exc))
             self._available = False
+
+    # ------------------------------------------------------------------
+    # fetch_by_ids — 父子回溯基础
+    # ------------------------------------------------------------------
+
+    async def fetch_by_ids(
+        self, chunk_ids: list[str]
+    ) -> dict[str, dict[str, Any]]:
+        """按 chunk_id 批量获取文档元数据（不含向量）。
+
+        父子索引回溯核心：检索命中子块后，按 ``parent_id`` 批量获取
+        父块原文，实现「小块检索 → 大块返回」的上下文扩充。
+
+        使用 OpenSearch ``_mget`` API 按 ``_id`` 批量获取，效率高于
+        逐条查询。``_id`` 与 ``chunk_id`` 一致（upsert 时 ``_id=chunk.id``）。
+        """
+        if not chunk_ids:
+            return {}
+
+        settings = get_settings()
+        url = f"{settings.OPENSEARCH_URL}/{self._index_name}/_mget"
+        payload: dict[str, Any] = {"ids": chunk_ids}
+
+        try:
+            resp = await self._http.post(url, json=payload)
+            resp.raise_for_status()
+        except Exception as exc:
+            log.warning("vector_store.os_knn.fetch_by_ids_failed", error=str(exc))
+            return {}
+
+        data: Any = resp.json()
+        result: dict[str, dict[str, Any]] = {}
+        docs: list[Any] = data.get("docs", []) if isinstance(data, dict) else []
+        for doc in docs:
+            if not isinstance(doc, dict) or not doc.get("found"):
+                continue
+            source: Any = doc.get("_source", {})
+            cid = str(source.get("chunk_id") or doc.get("_id") or "")
+            if not cid:
+                continue
+            result[cid] = {
+                "content": str(source.get("content") or ""),
+                "title_path": str(source.get("title_path") or ""),
+                "doc_id": str(source.get("doc_id") or ""),
+                "content_type": str(source.get("content_type") or ""),
+                "chunk_strategy": str(source.get("chunk_strategy") or ""),
+            }
+        return result
 
     # ------------------------------------------------------------------
     # health_check

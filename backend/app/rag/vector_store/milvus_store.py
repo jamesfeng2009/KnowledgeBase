@@ -56,7 +56,8 @@ class MilvusVectorStore(VectorStoreBase):
 
     通过 REST API 操作 Milvus，避免 pymilvus 导入期连接。
     Collection 需在外部预先创建（schema 包含 doc_id / chunk_id /
-    content / embedding / kb_id / title_path / content_type / chunk_strategy）。
+    content / embedding / kb_id / title_path / content_type /
+    chunk_strategy / parent_id）。
     """
 
     def __init__(
@@ -111,6 +112,7 @@ class MilvusVectorStore(VectorStoreBase):
                 "title_path",
                 "content_type",
                 "chunk_strategy",
+                "parent_id",
             ],
         }
         if kb_ids:
@@ -153,6 +155,7 @@ class MilvusVectorStore(VectorStoreBase):
                     score=score,
                     kb_id=str(row.get("kb_id") or "") or None,
                     title=row.get("title_path") or None,
+                    parent_id=row.get("parent_id") or None,
                 )
             )
             if len(results) >= top_k:
@@ -198,6 +201,7 @@ class MilvusVectorStore(VectorStoreBase):
                     "title_path": chunk.title_path,
                     "content_type": chunk.content_type,
                     "chunk_strategy": chunk.chunk_strategy,
+                    "parent_id": chunk.parent_id or "",
                 }
             )
 
@@ -246,6 +250,79 @@ class MilvusVectorStore(VectorStoreBase):
             if self._available is not False:
                 log.warning("vector_store.milvus.delete_failed", error=str(exc))
             self._available = False
+
+    # ------------------------------------------------------------------
+    # fetch_by_ids — 父子回溯基础
+    # ------------------------------------------------------------------
+
+    async def fetch_by_ids(
+        self, chunk_ids: list[str]
+    ) -> dict[str, dict[str, Any]]:
+        """按 chunk_id 批量获取文档元数据（不含向量）。
+
+        父子索引回溯核心：检索命中子块后，按 ``parent_id`` 批量获取
+        父块原文，实现「小块检索 → 大块返回」的上下文扩充。
+
+        使用 Milvus ``query`` API 按 ``chunk_id`` 过滤批量获取。
+        """
+        if not chunk_ids:
+            return {}
+
+        # 白名单校验所有 chunk_id（防注入）
+        safe_ids: list[str] = []
+        for cid in chunk_ids:
+            try:
+                safe_ids.append(_safe_filter_value(cid))
+            except ValueError:
+                log.warning("vector_store.milvus.fetch_by_ids_skip_invalid", chunk_id=cid)
+
+        if not safe_ids:
+            return {}
+
+        url = f"{self._base_url()}/v2/vectordb/entities/query"
+        filter_expr = 'chunk_id in ["' + '", "'.join(safe_ids) + '"]'
+        payload: dict[str, Any] = {
+            "collectionName": self._collection,
+            "filter": filter_expr,
+            "outputFields": [
+                "chunk_id",
+                "content",
+                "title_path",
+                "doc_id",
+                "content_type",
+                "chunk_strategy",
+            ],
+        }
+
+        try:
+            resp = await self._http.post(url, json=payload)
+            resp.raise_for_status()
+        except Exception as exc:
+            log.warning("vector_store.milvus.fetch_by_ids_failed", error=str(exc))
+            return {}
+
+        data: Any = resp.json()
+        result: dict[str, dict[str, Any]] = {}
+        rows: list[Any] = []
+        if isinstance(data, dict):
+            rows = data.get("data", []) or []
+        elif isinstance(data, list):
+            rows = data
+
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            cid = str(row.get("chunk_id") or "")
+            if not cid:
+                continue
+            result[cid] = {
+                "content": str(row.get("content") or ""),
+                "title_path": str(row.get("title_path") or ""),
+                "doc_id": str(row.get("doc_id") or ""),
+                "content_type": str(row.get("content_type") or ""),
+                "chunk_strategy": str(row.get("chunk_strategy") or ""),
+            }
+        return result
 
     # ------------------------------------------------------------------
     # health_check

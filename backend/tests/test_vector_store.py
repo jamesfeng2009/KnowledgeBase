@@ -172,6 +172,7 @@ class TestVectorStoreBase:
             score=0.95,
             kb_id="kb-001",
             title="标题路径",
+            parent_id="parent-chunk-0",
         )
         assert result["doc_id"] == "doc-001"
         assert result["chunk_id"] == "chunk-0"
@@ -180,6 +181,7 @@ class TestVectorStoreBase:
         assert result["source"] == "vector"
         assert result["kb_id"] == "kb-001"
         assert result["title"] == "标题路径"
+        assert result["parent_id"] == "parent-chunk-0"
 
     def test_format_result_with_none_values(self) -> None:
         """_format_result 处理 None 值。"""
@@ -191,6 +193,7 @@ class TestVectorStoreBase:
         )
         assert result["kb_id"] is None
         assert result["title"] is None
+        assert result["parent_id"] is None
 
     def test_default_dimension(self) -> None:
         """P2-Step2: 向量维度动态从 Embedder 获取，而非硬编码 1024。"""
@@ -401,6 +404,100 @@ class TestOpenSearchVectorStore:
         assert result is False
         assert store._available is False
 
+    # ------------------------------------------------------------------
+    # fetch_by_ids — 父子回溯
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_fetch_by_ids_returns_parent_chunks(self) -> None:
+        """fetch_by_ids 按 chunk_id 批量获取父块原文。"""
+        mget_response = MockResponse(
+            json_data={
+                "docs": [
+                    {
+                        "_id": "parent-0",
+                        "found": True,
+                        "_source": {
+                            "chunk_id": "parent-0",
+                            "content": "这是父块的完整内容",
+                            "title_path": "标题 > 子标题",
+                            "doc_id": "doc-001",
+                            "content_type": "tutorial",
+                            "chunk_strategy": "structural",
+                        },
+                    },
+                    {
+                        "_id": "parent-1",
+                        "found": True,
+                        "_source": {
+                            "chunk_id": "parent-1",
+                            "content": "第二个父块内容",
+                            "title_path": "标题2",
+                            "doc_id": "doc-002",
+                            "content_type": "article",
+                            "chunk_strategy": "semantic",
+                        },
+                    },
+                ]
+            }
+        )
+        client = _make_mock_http(post_return=mget_response)
+        store = OpenSearchVectorStore(http_client=client)
+
+        result = await store.fetch_by_ids(["parent-0", "parent-1"])
+
+        assert len(result) == 2
+        assert result["parent-0"]["content"] == "这是父块的完整内容"
+        assert result["parent-0"]["title_path"] == "标题 > 子标题"
+        assert result["parent-1"]["content"] == "第二个父块内容"
+
+    @pytest.mark.asyncio
+    async def test_fetch_by_ids_empty_list_returns_empty(self) -> None:
+        """空 chunk_ids 列表返回空字典。"""
+        store = OpenSearchVectorStore(http_client=_make_mock_http())
+        result = await store.fetch_by_ids([])
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_fetch_by_ids_skips_not_found(self) -> None:
+        """不存在的 chunk_id 不出现在返回值中。"""
+        mget_response = MockResponse(
+            json_data={
+                "docs": [
+                    {
+                        "_id": "parent-0",
+                        "found": True,
+                        "_source": {
+                            "chunk_id": "parent-0",
+                            "content": "存在的内容",
+                            "title_path": "",
+                        },
+                    },
+                    {
+                        "_id": "parent-1",
+                        "found": False,
+                    },
+                ]
+            }
+        )
+        client = _make_mock_http(post_return=mget_response)
+        store = OpenSearchVectorStore(http_client=client)
+
+        result = await store.fetch_by_ids(["parent-0", "parent-1"])
+        assert len(result) == 1
+        assert "parent-0" in result
+        assert "parent-1" not in result
+
+    @pytest.mark.asyncio
+    async def test_fetch_by_ids_returns_empty_on_error(self) -> None:
+        """请求失败时返回空字典（优雅降级）。"""
+        error_response = MockResponse(status_code=500)
+        client = _make_mock_http(post_return=error_response)
+        store = OpenSearchVectorStore(http_client=client)
+
+        result = await store.fetch_by_ids(["parent-0"])
+        assert result == {}
+
 
 # ======================================================================
 # MilvusVectorStore 测试
@@ -572,6 +669,53 @@ class TestMilvusVectorStore:
 
         result = await store.health_check()
         assert result is False
+
+    # ------------------------------------------------------------------
+    # fetch_by_ids — 父子回溯
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_fetch_by_ids_returns_parent_chunks(self) -> None:
+        """fetch_by_ids 按 chunk_id 批量获取父块原文。"""
+        query_response = MockResponse(
+            json_data={
+                "data": [
+                    {
+                        "chunk_id": "parent-0",
+                        "content": "Milvus 父块完整内容",
+                        "title_path": "标题 > 子标题",
+                        "doc_id": "doc-001",
+                        "content_type": "tutorial",
+                        "chunk_strategy": "structural",
+                    },
+                ]
+            }
+        )
+        client = _make_mock_http(post_return=query_response)
+        store = MilvusVectorStore(http_client=client)
+
+        result = await store.fetch_by_ids(["parent-0"])
+
+        assert len(result) == 1
+        assert result["parent-0"]["content"] == "Milvus 父块完整内容"
+        assert result["parent-0"]["title_path"] == "标题 > 子标题"
+
+    @pytest.mark.asyncio
+    async def test_fetch_by_ids_empty_list_returns_empty(self) -> None:
+        """空 chunk_ids 列表返回空字典。"""
+        store = MilvusVectorStore(http_client=_make_mock_http())
+        result = await store.fetch_by_ids([])
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_fetch_by_ids_returns_empty_on_error(self) -> None:
+        """请求失败时返回空字典（优雅降级）。"""
+        error_response = MockResponse(status_code=500)
+        client = _make_mock_http(post_return=error_response)
+        store = MilvusVectorStore(http_client=client)
+
+        result = await store.fetch_by_ids(["parent-0"])
+        assert result == {}
 
 
 # ======================================================================
@@ -832,6 +976,222 @@ class TestRetrieverWithVectorStore:
         results = await retriever.search("", top_k=10)
         assert results == []
         mock_store.search.assert_not_called()
+
+    # ------------------------------------------------------------------
+    # 父子回溯 _expand_to_parents
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_expand_to_parents_replaces_child_with_parent(self) -> None:
+        """父子回溯：子块内容被替换为父块原文。"""
+        from app.rag.retriever import HybridRetriever
+
+        mock_store = MagicMock(spec=VectorStoreBase)
+        # 向量检索返回子块（有 parent_id）
+        mock_store.search = AsyncMock(
+            return_value=[
+                {
+                    "doc_id": "doc-001",
+                    "chunk_id": "child-0",
+                    "content": "子块片段内容",
+                    "score": 0.95,
+                    "source": "vector",
+                    "kb_id": "kb-001",
+                    "title": "标题 > 子标题",
+                    "parent_id": "parent-0",
+                }
+            ]
+        )
+        # fetch_by_ids 返回父块原文
+        mock_store.fetch_by_ids = AsyncMock(
+            return_value={
+                "parent-0": {
+                    "content": "这是父块的完整章节内容，比子块更长更完整",
+                    "title_path": "标题 > 子标题",
+                    "doc_id": "doc-001",
+                    "content_type": "tutorial",
+                    "chunk_strategy": "structural",
+                }
+            }
+        )
+
+        mock_embedder = MagicMock()
+        mock_embedder.embed = AsyncMock(return_value=[[0.1] * 1024])
+
+        mock_http = MagicMock()
+        mock_http.aclose = AsyncMock()
+        mock_http.post = AsyncMock(
+            return_value=MockResponse(json_data={"hits": {"hits": []}})
+        )
+
+        retriever = HybridRetriever(
+            embedder=mock_embedder,
+            http_client=mock_http,
+            vector_store=mock_store,
+        )
+
+        results = await retriever.search("测试查询", top_k=10)
+
+        assert len(results) == 1
+        # 内容应被替换为父块原文
+        assert results[0]["content"] == "这是父块的完整章节内容，比子块更长更完整"
+        assert results[0]["expanded_from_child"] is True
+        # fetch_by_ids 应被调用
+        mock_store.fetch_by_ids.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_expand_to_parents_dedupes_same_parent(self) -> None:
+        """同一父块的多个子块去重，只保留最高分。"""
+        from app.rag.retriever import HybridRetriever
+
+        mock_store = MagicMock(spec=VectorStoreBase)
+        # 两个子块指向同一父块
+        mock_store.search = AsyncMock(
+            return_value=[
+                {
+                    "doc_id": "doc-001",
+                    "chunk_id": "child-0",
+                    "content": "子块0片段",
+                    "score": 0.90,
+                    "source": "vector",
+                    "kb_id": None,
+                    "title": None,
+                    "parent_id": "parent-0",
+                },
+                {
+                    "doc_id": "doc-001",
+                    "chunk_id": "child-1",
+                    "content": "子块1片段",
+                    "score": 0.95,
+                    "source": "vector",
+                    "kb_id": None,
+                    "title": None,
+                    "parent_id": "parent-0",
+                },
+            ]
+        )
+        mock_store.fetch_by_ids = AsyncMock(
+            return_value={
+                "parent-0": {
+                    "content": "父块完整内容",
+                    "title_path": "标题",
+                    "doc_id": "doc-001",
+                    "content_type": "",
+                    "chunk_strategy": "",
+                }
+            }
+        )
+
+        mock_embedder = MagicMock()
+        mock_embedder.embed = AsyncMock(return_value=[[0.1] * 1024])
+
+        mock_http = MagicMock()
+        mock_http.aclose = AsyncMock()
+        mock_http.post = AsyncMock(
+            return_value=MockResponse(json_data={"hits": {"hits": []}})
+        )
+
+        retriever = HybridRetriever(
+            embedder=mock_embedder,
+            http_client=mock_http,
+            vector_store=mock_store,
+        )
+
+        results = await retriever.search("测试", top_k=10)
+
+        # 去重后只剩 1 个结果（同一父块）
+        assert len(results) == 1
+        assert results[0]["content"] == "父块完整内容"
+        # 保留最高分（0.95）
+        assert results[0]["score"] == 0.95
+
+    @pytest.mark.asyncio
+    async def test_expand_to_parents_no_parent_id_returns_as_is(self) -> None:
+        """无 parent_id 的结果直接返回（固定长度块场景）。"""
+        from app.rag.retriever import HybridRetriever
+
+        mock_store = MagicMock(spec=VectorStoreBase)
+        mock_store.search = AsyncMock(
+            return_value=[
+                {
+                    "doc_id": "doc-001",
+                    "chunk_id": "chunk-0",
+                    "content": "固定长度块内容",
+                    "score": 0.9,
+                    "source": "vector",
+                    "kb_id": None,
+                    "title": None,
+                    "parent_id": None,
+                }
+            ]
+        )
+        mock_store.fetch_by_ids = AsyncMock(return_value={})
+
+        mock_embedder = MagicMock()
+        mock_embedder.embed = AsyncMock(return_value=[[0.1] * 1024])
+
+        mock_http = MagicMock()
+        mock_http.aclose = AsyncMock()
+        mock_http.post = AsyncMock(
+            return_value=MockResponse(json_data={"hits": {"hits": []}})
+        )
+
+        retriever = HybridRetriever(
+            embedder=mock_embedder,
+            http_client=mock_http,
+            vector_store=mock_store,
+        )
+
+        results = await retriever.search("测试", top_k=10)
+
+        assert len(results) == 1
+        assert results[0]["content"] == "固定长度块内容"
+        # fetch_by_ids 不应被调用（无 parent_id）
+        mock_store.fetch_by_ids.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_expand_to_parents_fallback_on_fetch_error(self) -> None:
+        """fetch_by_ids 失败时保留子块原内容（优雅降级）。"""
+        from app.rag.retriever import HybridRetriever
+
+        mock_store = MagicMock(spec=VectorStoreBase)
+        mock_store.search = AsyncMock(
+            return_value=[
+                {
+                    "doc_id": "doc-001",
+                    "chunk_id": "child-0",
+                    "content": "子块原内容",
+                    "score": 0.9,
+                    "source": "vector",
+                    "kb_id": None,
+                    "title": None,
+                    "parent_id": "parent-0",
+                }
+            ]
+        )
+        # fetch_by_ids 抛异常
+        mock_store.fetch_by_ids = AsyncMock(side_effect=Exception("connection refused"))
+
+        mock_embedder = MagicMock()
+        mock_embedder.embed = AsyncMock(return_value=[[0.1] * 1024])
+
+        mock_http = MagicMock()
+        mock_http.aclose = AsyncMock()
+        mock_http.post = AsyncMock(
+            return_value=MockResponse(json_data={"hits": {"hits": []}})
+        )
+
+        retriever = HybridRetriever(
+            embedder=mock_embedder,
+            http_client=mock_http,
+            vector_store=mock_store,
+        )
+
+        results = await retriever.search("测试", top_k=10)
+
+        # 降级：保留子块原内容
+        assert len(results) == 1
+        assert results[0]["content"] == "子块原内容"
 
 
 # ======================================================================

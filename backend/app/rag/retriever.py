@@ -161,6 +161,8 @@ class HybridRetriever:
             fulltext_results,
             top_k,
         )
+        # 父子回溯：将子块内容替换为父块原文，实现「小块检索 → 大块返回」
+        merged = await self._expand_to_parents(merged)
         log.info(
             "retriever.search",
             query_len=len(query),
@@ -303,7 +305,7 @@ class HybridRetriever:
         payload: dict[str, Any] = {
             "size": top_k,
             "query": query_clause,
-            "_source": ["doc_id", "chunk_id", "content", "title_path", "kb_id", "content_type"],
+            "_source": ["doc_id", "chunk_id", "content", "title_path", "kb_id", "content_type", "parent_id"],
         }
 
         try:
@@ -344,6 +346,7 @@ class HybridRetriever:
                     "source": "fulltext",
                     "kb_id": str(source.get("kb_id") or "") or None,
                     "title": source.get("title_path") or source.get("title"),
+                    "parent_id": source.get("parent_id") or None,
                 }
             )
             if len(results) >= top_k:
@@ -460,6 +463,95 @@ class HybridRetriever:
         # 按 score 降序排列
         ranked = sorted(merged.values(), key=lambda d: d["score"], reverse=True)
         return ranked[:top_k]
+
+    # ------------------------------------------------------------------
+    # 父子回溯 — 小块检索 → 大块返回
+    # ------------------------------------------------------------------
+
+    async def _expand_to_parents(
+        self,
+        results: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """父子回溯 — 将子块内容替换为父块原文，并按父块去重。
+
+        核心思路（Small-to-Big Retrieval）：
+            1. 向量检索命中的是 256-token 的子块（精确匹配）；
+            2. 通过 ``parent_id`` 回溯到父块（整章/整节原文）；
+            3. 用父块原文替换子块内容，为 LLM 提供完整上下文；
+            4. 同一父块的多个子块去重，只保留最高分的一条。
+
+        去重 key 设计：
+            - 有 ``parent_id`` 的子块 → key = parent_id
+            - 无 ``parent_id`` 的父块 → key = chunk_id
+            这样父块直接命中和子块回溯命中同一父块时自然去重。
+
+        优雅降级：``fetch_by_ids`` 失败时保留子块原内容，不影响检索。
+        """
+        if not results:
+            return results
+
+        # 收集所有 parent_id（去重、过滤空值）
+        parent_ids: set[str] = {
+            doc["parent_id"]
+            for doc in results
+            if doc.get("parent_id")
+        }
+
+        if not parent_ids:
+            # 无父子关系，直接返回（固定长度块或未启用父子索引）
+            return results
+
+        # 批量获取父块原文
+        parents: dict[str, dict[str, Any]] = {}
+        try:
+            store = self._get_vector_store()
+            parents = await store.fetch_by_ids(list(parent_ids))
+        except Exception as exc:
+            log.warning("retriever.parent_backtrack_failed", error=str(exc))
+            # 降级：保留子块原内容返回
+            return results
+
+        if not parents:
+            log.debug("retriever.parent_backtrack_empty", parent_count=len(parent_ids))
+            return results
+
+        # 扩展 + 去重
+        # context_key: parent_id（子块）或 chunk_id（父块/无父子关系块）
+        expanded: dict[str, dict[str, Any]] = {}
+        backtrack_count = 0
+        for doc in results:
+            pid = doc.get("parent_id")
+            context_key = pid if pid else doc.get("chunk_id")
+            if not context_key:
+                continue
+
+            doc = dict(doc)  # 浅拷贝，避免修改原列表
+
+            if pid and pid in parents:
+                # 用父块原文替换子块内容（保留子块的 score 和 source）
+                parent = parents[pid]
+                doc["content"] = parent.get("content", doc["content"])
+                if parent.get("title_path"):
+                    doc["title"] = parent["title_path"]
+                doc["expanded_from_child"] = True
+                backtrack_count += 1
+
+            # 去重：相同 context_key 保留最高分
+            existing = expanded.get(context_key)
+            if existing is None or doc["score"] > existing["score"]:
+                expanded[context_key] = doc
+
+        ranked = sorted(expanded.values(), key=lambda d: d["score"], reverse=True)
+
+        log.info(
+            "retriever.parent_backtrack",
+            input_count=len(results),
+            parent_ids=len(parent_ids),
+            parents_found=len(parents),
+            backtrack_count=backtrack_count,
+            output_count=len(ranked),
+        )
+        return ranked
 
     async def close(self) -> None:
         """关闭 HTTP 客户端。"""

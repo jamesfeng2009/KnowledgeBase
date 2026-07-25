@@ -15,6 +15,7 @@
         "source": "vector",       # 固定为 "vector"
         "kb_id": str | None,
         "title": str | None,      # title_path
+        "parent_id": str | None,  # 父块 ID（父子索引回溯用）
     }
 """
 
@@ -100,6 +101,24 @@ class VectorStoreBase(ABC):
         """
         ...
 
+    @abstractmethod
+    async def fetch_by_ids(
+        self, chunk_ids: list[str]
+    ) -> dict[str, dict[str, Any]]:
+        """按 chunk_id 批量获取文档元数据（不含向量）。
+
+        父子索引回溯核心：检索命中子块后，按 ``parent_id`` 批量获取
+        父块原文，实现「小块检索 → 大块返回」的上下文扩充。
+
+        Args:
+            chunk_ids: 需要获取的 chunk_id 列表。
+
+        Returns:
+            ``{chunk_id: {content, title_path, ...}}`` 映射表。
+            不存在的 chunk_id 不出现在返回值中。
+        """
+        ...
+
     # ------------------------------------------------------------------
     # 公共工具方法
     # ------------------------------------------------------------------
@@ -121,6 +140,7 @@ class VectorStoreBase(ABC):
         score: float,
         kb_id: str | None = None,
         title: str | None = None,
+        parent_id: str | None = None,
     ) -> dict[str, Any]:
         """格式化搜索结果为统一字典格式。"""
         return {
@@ -131,6 +151,7 @@ class VectorStoreBase(ABC):
             "source": "vector",
             "kb_id": kb_id,
             "title": title,
+            "parent_id": parent_id,
         }
 
     @property
