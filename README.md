@@ -1356,73 +1356,73 @@ Celery 异步任务驱动文档处理流水线，从文档上传到索引构建�
 
 ```mermaid
 flowchart LR
-    UPLOAD[文档上传] --> SIZE_CHECK{P0 文件大小校验<br/>MAX_UPLOAD_SIZE_MB=50}
-    SIZE_CHECK -->|超限| REJECT413[返回 413<br/>Payload Too Large]
-    SIZE_CHECK -->|通过| SAVE_MINIO[保存至 MinIO<br/>创建 Document 记录]
-    SAVE_MINIO --> TRIGGER{P0 Celery 触发<br/>process_document.delay}
-    TRIGGER -->|触发成功| CELERY[Celery Task<br/>process_document<br/>max_retries=3]
-    TRIGGER -->|触发失败| LOG_WARN[记录警告日志<br/>文档停留 draft 状态<br/>不影响文件入库]
-    LOG_WARN --> DRAFT_END[待手动重试]
-    CELERY --> PROG_QUEUE[进度: queued<br/>写入 Redis]
+    UPLOAD[文档上传] --> SIZE_CHECK{"P0 文件大小校验<br/>MAX_UPLOAD_SIZE_MB=50"}
+    SIZE_CHECK -->|超限| REJECT413["返回 413<br/>Payload Too Large"]
+    SIZE_CHECK -->|通过| SAVE_MINIO["保存至 MinIO<br/>创建 Document 记录"]
+    SAVE_MINIO --> TRIGGER{"P0 Celery 触发<br/>process_document.delay"}
+    TRIGGER -->|触发成功| CELERY["Celery Task<br/>process_document<br/>max_retries=3"]
+    TRIGGER -->|触发失败| LOG_WARN["记录警告日志<br/>文档停留 draft 状态<br/>不影响文件入库"]
+    LOG_WARN --> DRAFT_END["待手动重试"]
+    CELERY --> PROG_QUEUE["进度: queued<br/>写入 Redis"]
 
-    CELERY --> PARSE[1. 文档解析<br/>延迟导入第三方库]
-    PARSE --> PROG_PARSE[进度: parsing<br/>写入 Redis]
-    PARSE -->|PDF| PYMUPDF[pymupdf 文本<br/>+ find_tables → HTML<br/>+ 图片上传 MinIO / 小图过滤<br/>+ VLM 描述]
-    PARSE -->|PPTX| PPTX[python-pptx 文本<br/>+ 表格 → HTML<br/>+ 内嵌图片 VLM]
+    CELERY --> PARSE["1. 文档解析<br/>延迟导入第三方库"]
+    PARSE --> PROG_PARSE["进度: parsing<br/>写入 Redis"]
+    PARSE -->|PDF| PYMUPDF["pymupdf 文本<br/>+ find_tables → HTML<br/>+ 图片上传 MinIO / 小图过滤<br/>+ VLM 描述"]
+    PARSE -->|PPTX| PPTX["python-pptx 文本<br/>+ 表格 → HTML<br/>+ 内嵌图片 VLM"]
     PARSE -->|PDF / DOCX / PPTX<br/>XLSX / HTML / 图片 / 音频| DOCLING["Docling 统一解析<br/>Granite-Docling-258M<br/>版面分析 + 表格 + 公式 + OCR<br/>→ HTML（&lt;h1&gt;~&lt;h6&gt;/&lt;table&gt;/&lt;ul&gt;）"]
-    PARSE -->|Docling 不可用| PYMUPDF[pymupdf<br/>表格 → HTML<br/>图片上传 + VLM 描述<br/>小图过滤 + 扫描页 OCR]
-    PARSE -->|Docling 不可用| PPTX[python-pptx<br/>GROUP 递归表格/图表/图片<br/>图片上传 + VLM 描述<br/>小图过滤 + 列宽对齐<br/>演讲者备注]
-    PARSE -->|Docling 不可用| DOCX[python-docx<br/>标题层级 h1~h6<br/>列表结构 ul/li<br/>表格 → HTML<br/>图片上传 + VLM 描述<br/>分页检测 + 页眉页脚]
-    PARSE -->|Docling 不可用| XLSX[openpyxl + pandas 降级<br/>每 sheet → HTML 表格<br/>列宽对齐]
-    PARSE -->|HTML| REGEX[正则去标签]
-    PARSE -->|MD/TXT| DIRECT[直接返回]
-    PARSE -->|视频| VIDEO[ffmpeg 提取音轨<br/>→ ASR 转写<br/>→ 关键帧 VLM 描述]
-    PARSE -->|音频| AUDIO[ffmpeg 转 WAV<br/>→ ASR 转写<br/>复用视频分块管线]
+    PARSE -->|Docling 不可用| PYMUPDF["pymupdf<br/>表格 → HTML<br/>图片上传 + VLM 描述<br/>小图过滤 + 扫描页 OCR"]
+    PARSE -->|Docling 不可用| PPTX["python-pptx<br/>GROUP 递归表格/图表/图片<br/>图片上传 + VLM 描述<br/>小图过滤 + 列宽对齐<br/>演讲者备注"]
+    PARSE -->|Docling 不可用| DOCX["python-docx<br/>标题层级 h1~h6<br/>列表结构 ul/li<br/>表格 → HTML<br/>图片上传 + VLM 描述<br/>分页检测 + 页眉页脚"]
+    PARSE -->|Docling 不可用| XLSX["openpyxl + pandas 降级<br/>每 sheet → HTML 表格<br/>列宽对齐"]
+    PARSE -->|HTML| REGEX["正则去标签"]
+    PARSE -->|MD/TXT| DIRECT["直接返回"]
+    PARSE -->|视频| VIDEO["ffmpeg 提取音轨<br/>→ ASR 转写<br/>→ 关键帧 VLM 描述"]
+    PARSE -->|音频| AUDIO["ffmpeg 转 WAV<br/>→ ASR 转写<br/>复用视频分块管线"]
 
-    DOCLING --> CHUNK[2. 四级语义分块<br/>SemanticChunker]
+    DOCLING --> CHUNK["2. 四级语义分块<br/>SemanticChunker"]
     PYMUPDF & PPTX & DOCX & XLSX & REGEX & DIRECT --> CHUNK
-    VIDEO & AUDIO --> VCHUNK[2v. 视频/音频语义分块<br/>chunk_video_transcript<br/>时间窗口合并 + 关键帧对齐]
+    VIDEO & AUDIO --> VCHUNK["2v. 视频/音频语义分块<br/>chunk_video_transcript<br/>时间窗口合并 + 关键帧对齐"]
 
-    CHUNK --> PROG_CHUNK[进度: chunking<br/>写入 Redis]
-    PROG_CHUNK --> QA_CHECK{content_type<br/>路由}
+    CHUNK --> PROG_CHUNK["进度: chunking<br/>写入 Redis"]
+    PROG_CHUNK --> QA_CHECK{"content_type<br/>路由"}
     QA_CHECK -->|faq| QA_SPLIT["Q&amp;A 对分块"]
-    QA_CHECK -->|其他| STRUCT[结构化/语义/兜底]
+    QA_CHECK -->|其他| STRUCT["结构化/语义/兜底"]
 
-    QA_SPLIT & STRUCT & VCHUNK --> PARALLEL{chord 编排<br/>group() 并行}
+    QA_SPLIT & STRUCT & VCHUNK --> PARALLEL{"chord 编排<br/>group() 并行"}
 
-    PARALLEL -->|支线 A<br/>indexing 队列| EMBED[3. 向量化<br/>EmbeddingProvider]
-    EMBED --> PROG_EMBED[进度: embedding<br/>写入 Redis]
+    PARALLEL -->|支线 A<br/>indexing 队列| EMBED["3. 向量化<br/>EmbeddingProvider"]
+    EMBED --> PROG_EMBED["进度: embedding<br/>写入 Redis"]
 
-    PROG_EMBED --> INDEX[4. 索引构建]
-    INDEX --> PROG_INDEX[进度: indexing<br/>写入 Redis]
-    INDEX --> OS_INDEX[OpenSearch 全文索引<br/>含 Chunk 元数据<br/>title_path/content_type/strategy]
-    INDEX --> VEC_INDEX[向量索引<br/>VectorStoreBase 适配器<br/>os_knn 默认 / milvus 可选]
+    PROG_EMBED --> INDEX["4. 索引构建"]
+    INDEX --> PROG_INDEX["进度: indexing<br/>写入 Redis"]
+    INDEX --> OS_INDEX["OpenSearch 全文索引<br/>含 Chunk 元数据<br/>title_path/content_type/strategy"]
+    INDEX --> VEC_INDEX["向量索引<br/>VectorStoreBase 适配器<br/>os_knn 默认 / milvus 可选"]
 
-    PARALLEL -->|支线 B<br/>documents 队列<br/>knowledge_graph 模块| GRAPH[3b. 知识图谱构建<br/>计算复用 chunk_objects]
-    GRAPH --> TRIPLES[GraphService.extract_triples_from_chunks<br/>规则提取 + LLM 兜底]
-    TRIPLES --> NEO4j[Neo4j 批量写入<br/>Document → Concept MENTIONS]
+    PARALLEL -->|支线 B<br/>documents 队列<br/>knowledge_graph 模块| GRAPH["3b. 知识图谱构建<br/>计算复用 chunk_objects"]
+    GRAPH --> TRIPLES["GraphService.extract_triples_from_chunks<br/>规则提取 + LLM 兜底"]
+    TRIPLES --> NEO4j["Neo4j 批量写入<br/>Document → Concept MENTIONS"]
 
-    OS_INDEX & VEC_INDEX & NEO4j --> CLASSIFY{密级路由}
-    CLASSIFY -->|confidential/secret| REVIEW[5a. 待审核<br/>pending_review]
-    CLASSIFY -->|public/internal| PUBLISH[5b. 直接发布<br/>published]
+    OS_INDEX & VEC_INDEX & NEO4j --> CLASSIFY{"密级路由"}
+    CLASSIFY -->|confidential/secret| REVIEW["5a. 待审核<br/>pending_review"]
+    CLASSIFY -->|public/internal| PUBLISH["5b. 直接发布<br/>published"]
 
-    REVIEW --> AUDIT_SUBMIT[提交审核<br/>AuditFlow 创建]
-    AUDIT_SUBMIT --> AUDIT_WAIT[等待人工审核]
-    AUDIT_WAIT -->|approve| PUBLISH_AFTER[审核通过<br/>pending_review → published]
-    AUDIT_WAIT -->|reject| REJECTED[保持 pending_review<br/>记录驳回意见]
+    REVIEW --> AUDIT_SUBMIT["提交审核<br/>AuditFlow 创建"]
+    AUDIT_SUBMIT --> AUDIT_WAIT["等待人工审核"]
+    AUDIT_WAIT -->|approve| PUBLISH_AFTER["审核通过<br/>pending_review → published"]
+    AUDIT_WAIT -->|reject| REJECTED["保持 pending_review<br/>记录驳回意见"]
 
-    PUBLISH & PUBLISH_AFTER & REJECTED --> PROG_PUBLISH[进度: publishing<br/>写入 Redis]
-    PROG_PUBLISH --> INTEL[6. 链式触发<br/>文档智能处理<br/>摘要/标签/分类/行动项]
-    INTEL --> PROG_DONE[进度: done<br/>写入 Redis]
-    PROG_DONE --> SUMMARY[P1 解析摘要响应<br/>GET /documents/{doc_id}/summary<br/>preview/structure/warnings<br/>pages/char_count/parse_status]
+    PUBLISH & PUBLISH_AFTER & REJECTED --> PROG_PUBLISH["进度: publishing<br/>写入 Redis"]
+    PROG_PUBLISH --> INTEL["6. 链式触发<br/>文档智能处理<br/>摘要/标签/分类/行动项"]
+    INTEL --> PROG_DONE["进度: done<br/>写入 Redis"]
+    PROG_DONE --> SUMMARY["P1 解析摘要响应<br/>GET /documents/{doc_id}/summary<br/>preview/structure/warnings<br/>pages/char_count/parse_status"]
 
     %% P1 实时进度反馈通道
-    PROG_QUEUE & PROG_PARSE & PROG_CHUNK & PROG_EMBED & PROG_INDEX & PROG_PUBLISH & PROG_DONE -.->|Redis TTL 30min| REDIS_PROGRESS[(Redis<br/>ekb:parse_progress:{doc_id})]
-    REDIS_PROGRESS -.->|前端轮询| PROGRESS_API[GET /documents/{doc_id}/progress<br/>stage/current/total/message]
-    PROGRESS_API -.->|stage=unknown 降级| FRONTEND[前端 upload.astro<br/>真实进度 → 阶段指示器<br/>unknown → 估算进度]
+    PROG_QUEUE & PROG_PARSE & PROG_CHUNK & PROG_EMBED & PROG_INDEX & PROG_PUBLISH & PROG_DONE -.->|Redis TTL 30min| REDIS_PROGRESS[("Redis<br/>ekb:parse_progress:{doc_id}")]
+    REDIS_PROGRESS -.->|前端轮询| PROGRESS_API["GET /documents/{doc_id}/progress<br/>stage/current/total/message"]
+    PROGRESS_API -.->|stage=unknown 降级| FRONTEND["前端 upload.astro<br/>真实进度 → 阶段指示器<br/>unknown → 估算进度"]
 
     %% 失败路径
-    CELERY -.->|异常| PROG_FAILED[进度: failed<br/>写入 Redis + 记录错误]
+    CELERY -.->|异常| PROG_FAILED["进度: failed<br/>写入 Redis + 记录错误"]
 ```
 
 ### 设计要点
