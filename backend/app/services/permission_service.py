@@ -114,6 +114,45 @@ class PermissionService:
         member_result = await self.db.execute(member_stmt)
         return member_result.scalars().first() is not None
 
+    async def check_write(self, kb_id: UUID) -> bool:
+        """检查当前用户对指定知识库是否具有写权限（上传/编辑/删除文档）。
+
+        与 ``check_function``（读权限）的区别：
+        - 全局 admin、知识库 owner 直接放行；
+        - 成员要求 ``KbMember.role in ("admin", "editor")`` ——
+          viewer（只读成员）不得写入，否则角色权限模型失效。
+
+        Args:
+            kb_id: 知识库 ID。
+
+        Returns:
+            True 表示可写，False 表示无写权限或知识库不存在。
+        """
+        if self.user.role == "admin":
+            return True
+
+        kb_stmt = select(KnowledgeBase).where(
+            KnowledgeBase.id == kb_id,
+            KnowledgeBase.deleted_at.is_(None),
+        )
+        kb_stmt = apply_tenant_filter(kb_stmt, KnowledgeBase, self._tenant_id)
+        kb_result = await self.db.execute(kb_stmt)
+        kb = kb_result.scalars().first()
+        if kb is None:
+            return False
+
+        if kb.owner_id == self.user.id:
+            return True
+
+        member_stmt = select(KbMember).where(
+            KbMember.kb_id == kb_id,
+            KbMember.user_id == self.user.id,
+            KbMember.role.in_(("admin", "editor")),
+        )
+        member_stmt = apply_tenant_filter(member_stmt, KbMember, self._tenant_id)
+        member_result = await self.db.execute(member_stmt)
+        return member_result.scalars().first() is not None
+
     # ------------------------------------------------------------------
     # 文档过滤
     # ------------------------------------------------------------------

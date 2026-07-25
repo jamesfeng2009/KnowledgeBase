@@ -149,11 +149,22 @@ class ShortcutHandler:
         # 2. 确定性重排（零 LLM）
         reranker = self._get_reranker()
         try:
-            reranked = await reranker.rerank(
+            rerank_results = await reranker.rerank(
                 query=query,
                 documents=candidates,
                 top_k=_SHORTCUT_RERANK_TOP_K,
             )
+            # 重排契约返回 {index, score, content}（见 RerankerBase），
+            # 必须按 index 映射回候选文档，否则 doc_id/title 等元数据丢失。
+            reranked = []
+            for item in rerank_results:
+                idx = item.get("index")
+                if isinstance(idx, int) and 0 <= idx < len(candidates):
+                    doc = dict(candidates[idx])
+                    doc["score"] = item.get("score", doc.get("score", 0.0))
+                    reranked.append(doc)
+            if not reranked:
+                reranked = candidates[:_SHORTCUT_RERANK_TOP_K]
         except Exception as exc:
             log.warning("shortcut.rerank_failed", error=str(exc))
             reranked = candidates[:_SHORTCUT_RERANK_TOP_K]

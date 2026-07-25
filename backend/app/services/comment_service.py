@@ -17,6 +17,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.comment import DocumentComment
 from app.models.user import User
 from app.repositories.comment_repository import DocumentCommentRepository
+from app.repositories.knowledge_repository import DocumentRepository
+from app.services.permission_service import PermissionService
 
 
 class CommentService:
@@ -42,6 +44,26 @@ class CommentService:
         self.comment_repo: DocumentCommentRepository = DocumentCommentRepository(
             db, tenant_id=tenant_id
         )
+        self.doc_repo: DocumentRepository = DocumentRepository(
+            db, tenant_id=tenant_id
+        )
+        self.permission: PermissionService = PermissionService(
+            db, user, tenant_id=tenant_id
+        )
+
+    async def _check_doc_access(self, doc_id: UUID) -> None:
+        """校验当前用户对文档所属知识库的访问权限（与文档读取对齐）。
+
+        评论承载文档的讨论内容 —— 无校验时，同租户用户猜出机密知识库
+        文档的 UUID 即可读取敏感讨论或发表垃圾评论（越权读写）。
+        """
+        doc = await self.doc_repo.get_by_id(doc_id)
+        if doc is None:
+            raise ValueError(f"文档 {doc_id} 不存在")
+        if not await self.permission.check_function(doc.kb_id):
+            raise PermissionError("无权访问该文档")
+        if doc.classification not in self.permission.allowed_classifications():
+            raise PermissionError("密级不足，无权访问该文档")
 
     # ------------------------------------------------------------------
     # 评论操作
@@ -65,7 +87,12 @@ class CommentService:
 
         Returns:
             创建后的 DocumentComment 实例。
+
+        Raises:
+            ValueError: 文档不存在。
+            PermissionError: 无权访问该文档所属知识库或密级不足。
         """
+        await self._check_doc_access(doc_id)
         return await self.comment_repo.create(
             doc_id=doc_id,
             user_id=self.user.id,
@@ -84,7 +111,12 @@ class CommentService:
 
         Returns:
             顶层 DocumentComment 列表。
+
+        Raises:
+            ValueError: 文档不存在。
+            PermissionError: 无权访问该文档所属知识库或密级不足。
         """
+        await self._check_doc_access(doc_id)
         return await self.comment_repo.get_by_doc(doc_id)
 
     async def resolve_comment(self, comment_id: UUID) -> DocumentComment:

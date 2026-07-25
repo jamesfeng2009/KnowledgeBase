@@ -143,11 +143,16 @@ class TokenCache:
             return cached
 
         # L2: 内存语义缓存
-        cached = await self._l2_get(query, tenant_id)
-        if cached is not None:
+        l2_hit = await self._l2_get(query, tenant_id)
+        if l2_hit is not None:
+            cached, hit_doc_ids = l2_hit
             log.debug("cache.hit", level="L2", query_hash=self._hash(query, tenant_id)[:12])
-            # 回填 L1 加速后续精确命中
-            await self._l1_set(query, cached, ttl=_L1_TTL, tenant_id=tenant_id)
+            # 回填 L1 加速后续精确命中 — 必须带上 doc_ids 写入反向索引，
+            # 否则回填的 key 不受 invalidate_by_doc_id 主动失效管理，
+            # 文档更新后陈旧答案仍会在 L1 中服务至 TTL 过期。
+            await self._l1_set(
+                query, cached, ttl=_L1_TTL, tenant_id=tenant_id, doc_ids=hit_doc_ids
+            )
             return cached
 
         # L3: 由 Provider 处理，本层不命中
@@ -227,10 +232,16 @@ class TokenCache:
     # L2: 内存语义缓存
     # ------------------------------------------------------------------
 
-    async def _l2_get(self, query: str, tenant_id: str | None = None) -> str | None:
+    async def _l2_get(
+        self, query: str, tenant_id: str | None = None
+    ) -> tuple[str, list[str] | None] | None:
         """从内存语义缓存查询 — embedding 余弦相似度 > 阈值即命中。
 
         仅匹配同一 tenant_id 的条目，避免跨租户语义命中导致的答案泄漏。
+
+        Returns:
+            命中返回 (answer, doc_ids) 二元组（doc_ids 供回填 L1 时
+            写入主动失效反向索引），未命中返回 None。
         """
         embedder = await self._get_embedder()
         if embedder is None:
@@ -245,6 +256,7 @@ class TokenCache:
         best_score: float = 0.0
         best_key: str | None = None
         best_answer: str | None = None
+        best_doc_ids: list[str] | None = None
         for key, entry in self._l2_store.items():
             if entry.expire_at < now:
                 continue
@@ -255,11 +267,13 @@ class TokenCache:
                 best_score = score
                 best_key = key
                 best_answer = entry.answer
+                best_doc_ids = entry.doc_ids
         if best_score >= _L2_SIMILARITY_THRESHOLD:
             if best_key is not None:
                 # LRU：命中条目标记为最近使用
                 self._l2_store.move_to_end(best_key)
-            return best_answer
+            if best_answer is not None:
+                return best_answer, best_doc_ids
         return None
 
     async def _l2_set(

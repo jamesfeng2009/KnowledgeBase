@@ -225,9 +225,17 @@ class TestNotificationService:
         )
         notif_id = notifications[0]["id"]
 
-        # 标记已读
-        success = await service.mark_as_read(notif_id)
+        # 标记已读（需传入通知归属用户 ID —— 所有权校验防 IDOR）
+        success = await service.mark_as_read(
+            notif_id, user_id=str(sample_data["user1"].id)
+        )
         assert success is True
+
+        # 越权场景：他人用户 ID 不得标记成功
+        success_other = await service.mark_as_read(
+            notif_id, user_id=str(sample_data["admin1"].id)
+        )
+        assert success_other is False
 
         # 验证已读状态
         unread = await service.get_user_notifications(
@@ -236,10 +244,12 @@ class TestNotificationService:
         )
         assert len(unread) == 0
 
-    async def test_mark_as_read_invalid_id(self, db_session):
+    async def test_mark_as_read_invalid_id(self, db_session, sample_data):
         """无效通知 ID 应返回 False。"""
         service = NotificationService(db_session)
-        success = await service.mark_as_read("invalid-uuid")
+        success = await service.mark_as_read(
+            "invalid-uuid", user_id=str(sample_data["user1"].id)
+        )
         assert success is False
 
     async def test_mark_all_read(self, db_session, sample_data):

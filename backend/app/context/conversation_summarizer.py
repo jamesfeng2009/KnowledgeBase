@@ -108,7 +108,7 @@ class ConversationSummarizer:
             if self._llm:
                 # 合并旧摘要 + 新旧消息
                 history_text = "\n".join(
-                    f"{m.get('role', 'user')}: {m.get('content', '')[:200]}"
+                    f"{m.get('role', 'user')}: {(m.get('content') or '')[:200]}"
                     for m in old_messages
                 )
                 prompt_input = ""
@@ -129,10 +129,15 @@ class ConversationSummarizer:
                     )
         except Exception as exc:
             log.warning("conversation_summarizer.llm_failed", error=str(exc))
-            # 降级：用旧摘要 + 截断旧消息的第一条
+            # 降级：用旧摘要 + 最近 N 条旧消息（保留最新上下文，
+            # 而非首条 —— 首条是最旧消息，保留它会静默丢失近期事实）。
             if old_messages:
-                first_msg = old_messages[0]
-                summary = f"{existing_summary}\n{first_msg.get('role', 'user')}: {first_msg.get('content', '')[:100]}"
+                fallback_lines = [
+                    f"{m.get('role', 'user')}: {(m.get('content') or '')[:100]}"
+                    for m in old_messages[-3:]
+                ]
+                parts = [p for p in (existing_summary, *fallback_lines) if p]
+                summary = "\n".join(parts)
 
         return summary, recent_messages
 

@@ -109,7 +109,10 @@ async def invoke_tool(
     )
 
     try:
-        result_str = await client.call_tool(tool_name, body.arguments)
+        # 透传 API Key 绑定的租户 ID — 工具内查询按租户过滤
+        result_str = await client.call_tool(
+            tool_name, body.arguments, tenant_id=api_key_info.get("tenant_id")
+        )
     except Exception as exc:
         logger.error("openapi.mcp.invoke_error", tool=tool_name, error=str(exc))
         raise HTTPException(

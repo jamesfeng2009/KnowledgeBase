@@ -332,15 +332,18 @@ class SemanticChunker:
             sub_chunks = self._semantic_split(chunks[0].content, doc_id)
             if self._is_valid(sub_chunks):
                 # 保留原始时间戳在 title_path
+                # 注意：chunks 此时只有 1 个元素，sub_chunks 可能有多个，
+                # 不能用 chunks[i] 逐个赋值（越界 IndexError），需整体重建列表。
                 ts_label = chunks[0].title_path
-                for i, sc in enumerate(sub_chunks):
-                    chunks[i] = replace(
+                chunks = [
+                    replace(
                         sc,
                         title_path=f"{ts_label} (part {i+1})",
                         content_type="video",
                         chunk_strategy="video_semantic",
                     )
-                chunks = chunks[:len(sub_chunks)]
+                    for i, sc in enumerate(sub_chunks)
+                ]
 
         log.info(
             "chunker.video",

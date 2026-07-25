@@ -109,7 +109,7 @@ def _extract_audio_stage(doc_id: str) -> str | None:
         import tempfile
 
         from app.config import get_settings
-        from app.utils.minio_client import download_file
+        from app.utils.minio_client import download_file_to_path
 
         settings = get_settings()
 
@@ -130,24 +130,24 @@ def _extract_audio_stage(doc_id: str) -> str | None:
             log.warning("video_multipart.no_file_path", doc_id=doc_id)
             return None
 
-        # 从 MinIO 下载视频到临时文件
+        # 从 MinIO 流式下载视频到临时文件（分块写盘，不整载入内存）。
+        # GB 级视频若经 download_file() 整载内存会直接导致 worker OOM。
         # file_path 格式: minio://bucket/object_name
-        if doc.file_path.startswith("minio://"):
-            parts = doc.file_path[8:].split("/", 1)
-            bucket, object_name = parts[0], parts[1]
-            video_data = asyncio.run(download_file(bucket, object_name))
-        else:
-            # 本地文件
-            local_path = doc.file_path.replace("local://", "")
-            with open(local_path, "rb") as f:
-                video_data = f.read()
-
-        # 保存到临时文件
         tmp_video = tempfile.NamedTemporaryFile(
             suffix=".mp4", delete=False, prefix="ekb_video_"
         )
-        tmp_video.write(video_data)
         tmp_video.close()
+        if doc.file_path.startswith("minio://"):
+            parts = doc.file_path[8:].split("/", 1)
+            bucket, object_name = parts[0], parts[1]
+            asyncio.run(download_file_to_path(bucket, object_name, tmp_video.name))
+        else:
+            # 本地文件 — 流式拷贝（shutil.copyfileobj 分块，不整读）
+            import shutil
+
+            local_path = doc.file_path.replace("local://", "")
+            with open(local_path, "rb") as src, open(tmp_video.name, "wb") as dst:
+                shutil.copyfileobj(src, dst)
 
         # ffmpeg 提取音轨
         from app.video import get_video_processor
@@ -325,19 +325,19 @@ def keyframe_task(doc_id: str) -> dict[str, Any]:
         if not doc or not doc.file_path:
             return {"doc_id": doc_id, "keyframes": []}
 
-        # 下载视频到临时文件（关键帧提取需要本地文件）
+        # 流式下载视频到临时文件（关键帧提取需要本地文件；
+        # 分块写盘避免 GB 级视频整载内存导致 worker OOM）
         import tempfile
 
-        from app.utils.minio_client import download_file
+        from app.utils.minio_client import download_file_to_path
 
         if doc.file_path.startswith("minio://"):
             parts = doc.file_path[8:].split("/", 1)
-            video_data = asyncio.run(download_file(parts[0], parts[1]))
             tmp_video = tempfile.NamedTemporaryFile(
                 suffix=".mp4", delete=False, prefix="ekb_kf_"
             )
-            tmp_video.write(video_data)
             tmp_video.close()
+            asyncio.run(download_file_to_path(parts[0], parts[1], tmp_video.name))
             video_path = tmp_video.name
         else:
             video_path = doc.file_path.replace("local://", "")

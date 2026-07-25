@@ -141,7 +141,7 @@ class KnowledgeBaseCrew:
             logger.info("crew.task_decomposed", query=query[:50], sub_tasks=len(sub_tasks))
 
             # 2. 构建 CrewAI Agent 和 Task
-            agents = self._build_crew_agents()
+            agents = await self._build_crew_agents()
             tasks = self._build_crew_tasks(sub_tasks, agents)
 
             # 3. 创建 Crew 并执行
@@ -152,7 +152,14 @@ class KnowledgeBaseCrew:
                 verbose=True,
             )
 
-            result = crew.kickoff(inputs={"user_query": query, "user_id": user_id})
+            # kickoff 是同步阻塞调用，放到线程池执行，
+            # 避免长时间阻塞 FastAPI 事件循环。
+            import asyncio
+
+            result = await asyncio.to_thread(
+                crew.kickoff,
+                inputs={"user_query": query, "user_id": user_id},
+            )
             logger.info("crew.execution_complete", result_length=len(str(result)))
             return str(result)
 
@@ -207,7 +214,7 @@ class KnowledgeBaseCrew:
             logger.error("crew.decompose_error", error=str(e))
             return []
 
-    def _build_crew_agents(self) -> dict[str, Any]:
+    async def _build_crew_agents(self) -> dict[str, Any]:
         """构建 CrewAI Agent 角色实例。
 
         Returns:
@@ -218,11 +225,10 @@ class KnowledgeBaseCrew:
 
         # 延迟导入工具
         from app.agents.mcp_tools import get_mcp_tools_for_crewai
-        import asyncio
 
-        # 获取 MCP 工具（同步等待）
-        loop = asyncio.get_event_loop()
-        tools = loop.run_until_complete(get_mcp_tools_for_crewai(self.mcp))
+        # 获取 MCP 工具（异步等待 — 本方法在异步上下文中调用，
+        # 不能用 run_until_complete，运行中的循环调用它会抛 RuntimeError）
+        tools = await get_mcp_tools_for_crewai(self.mcp)
 
         qa_agent = CrewAgent(
             role="知识库问答专家",

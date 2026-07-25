@@ -55,12 +55,8 @@ async def get_unread_count(
     """获取未读通知数量。所有登录用户可查看。"""
     tenant_id = getattr(request.state, "tenant_id", None)
     service = NotificationService(db, tenant_id=tenant_id)
-    notifications = await service.get_user_notifications(
-        user_id=str(user.id),
-        unread_only=True,
-        limit=100,
-    )
-    return ApiResponse(code=0, data={"count": len(notifications)}, message="success")
+    count = await service.count_unread(user_id=str(user.id))
+    return ApiResponse(code=0, data={"count": count}, message="success")
 
 
 @router.get("/stream")
@@ -93,7 +89,7 @@ async def mark_read(
     """标记单条通知为已读。"""
     tenant_id = getattr(request.state, "tenant_id", None)
     service = NotificationService(db, tenant_id=tenant_id)
-    success = await service.mark_as_read(notification_id)
+    success = await service.mark_as_read(notification_id, user_id=str(user.id))
     if not success:
         return ApiResponse(code=404, data=None, message="通知不存在")
     await db.commit()

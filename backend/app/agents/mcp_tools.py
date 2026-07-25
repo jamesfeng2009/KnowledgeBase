@@ -45,15 +45,22 @@ class MCPToolWrapper(CrewBaseTool):
         self._mcp_client = mcp_client
 
     def _run(self, **kwargs: Any) -> str:
-        """CrewAI 同步调用入口（内部转异步）。"""
-        import asyncio
+        """CrewAI 同步调用入口（内部转异步）。
 
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # 如果已在异步上下文中，创建 task
-            future = asyncio.ensure_future(self._arun(**kwargs))
-            return loop.run_until_complete(future)
-        return loop.run_until_complete(self._arun(**kwargs))
+        注意：不能对运行中的事件循环调用 run_until_complete（RuntimeError）。
+        已处于异步上下文时，改为在独立线程的新事件循环中执行并同步等待。
+        """
+        import asyncio
+        import concurrent.futures
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            # 无运行中的事件循环 — 直接同步驱动
+            return asyncio.run(self._arun(**kwargs))
+        # 已在异步上下文中 — 在独立线程的新事件循环中执行，避免阻塞当前循环
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(asyncio.run, self._arun(**kwargs)).result()
 
     async def _arun(self, **kwargs: Any) -> str:
         """CrewAI 异步调用入口。"""

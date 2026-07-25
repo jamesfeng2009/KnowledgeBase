@@ -163,6 +163,7 @@ class RequirementAnalysisService:
                 source_text=item.get("source_text"),
                 source="ai_extract",
                 status="analyzed",
+                tenant_id=self._tenant_id,  # RLS WITH CHECK 要求写入行携带当前租户 ID
             )
             self.db.add(requirement)
             await self.db.flush()

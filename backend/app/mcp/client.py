@@ -77,17 +77,24 @@ class MCPClient:
         """
         return self._server.get_skill_index()
 
-    async def call_tool(self, tool_name: str, arguments: dict) -> str:
+    async def call_tool(
+        self,
+        tool_name: str,
+        arguments: dict,
+        *,
+        tenant_id: str | None = None,
+    ) -> str:
         """调用指定工具。
 
         Args:
             tool_name: 工具名称。
             arguments: 工具入参字典。
+            tenant_id: 请求级租户 ID（透传 Server 做租户过滤）。
 
         Returns:
             工具执行结果（JSON 序列化字符串）。
         """
-        return await self._server.call_tool(tool_name, arguments)
+        return await self._server.call_tool(tool_name, arguments, tenant_id=tenant_id)
 
     async def call_tool_from_llm(self, tool_use: ToolUse) -> str:
         """从 LLM 返回的 ``ToolUse`` 直接调用工具。

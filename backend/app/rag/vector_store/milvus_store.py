@@ -18,6 +18,7 @@ Milvus 向量存储实现 — 可选后端。
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -36,6 +37,18 @@ log = get_logger(__name__)
 _MILVUS_COLLECTION: str = "document_chunks"
 # 请求超时（秒）
 _TIMEOUT: float = 10.0
+
+# Milvus filter 表达式值白名单 — kb_id / doc_id 均为 UUID 或内部标识符，
+# 只允许字母数字、连字符、下划线。filter 是字符串拼接（REST API 不支持参数化），
+# 白名单校验可防止双引号闭合注入（如 `a"] or doc_id != ""` 恒真表达式导致越权检索）。
+_FILTER_VALUE_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def _safe_filter_value(value: str) -> str:
+    """校验 Milvus filter 表达式中的字符串值，非法值抛 ValueError。"""
+    if not value or not _FILTER_VALUE_RE.match(value):
+        raise ValueError(f"非法 Milvus filter 值: {value!r}")
+    return value
 
 
 class MilvusVectorStore(VectorStoreBase):
@@ -101,7 +114,9 @@ class MilvusVectorStore(VectorStoreBase):
             ],
         }
         if kb_ids:
-            payload["filter"] = 'kb_id in ["' + '", "'.join(kb_ids) + '"]'
+            payload["filter"] = 'kb_id in ["' + '", "'.join(
+                _safe_filter_value(kb_id) for kb_id in kb_ids
+            ) + '"]'
 
         log.info("vector_store.milvus.search_start", top_k=top_k, has_kb_filter=bool(kb_ids))
         resp = await self._http.post(url, json=payload)
@@ -219,7 +234,7 @@ class MilvusVectorStore(VectorStoreBase):
         url = f"{self._base_url()}/v2/vectordb/entities/delete"
         payload: dict[str, Any] = {
             "collectionName": self._collection,
-            "filter": f'doc_id == "{doc_id}"',
+            "filter": f'doc_id == "{_safe_filter_value(doc_id)}"',
         }
 
         try:

@@ -168,6 +168,7 @@ class TestCaseGenerationService:
                 status="draft",
                 tags=item.get("tags", []),
                 created_by="ai_generate",
+                tenant_id=self._tenant_id,  # RLS WITH CHECK 要求写入行携带当前租户 ID
                 context_doc_ids=context_doc_ids,
                 case_no=case_no,
             )

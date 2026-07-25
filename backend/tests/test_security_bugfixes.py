@@ -425,6 +425,8 @@ def _make_service(
     svc.doc_repo.get_by_id = AsyncMock(return_value=doc)
     perm = MagicMock()
     perm.check_function = AsyncMock(return_value=True)
+    # update_document 走写权限校验（check_write），与读权限 check_function 区分
+    perm.check_write = AsyncMock(return_value=True)
     perm.allowed_classifications = MagicMock(return_value=allowed)
     svc.permission = perm
     return svc
@@ -544,7 +546,8 @@ class TestBug5KbWriteAccess:
     async def test_no_write_permission_raises_403(self) -> None:
         """负向：对目标知识库无写权限 → 403。"""
         with patch("app.services.permission_service.PermissionService") as mock_cls:
-            mock_cls.return_value.check_function = AsyncMock(return_value=False)
+            # 实现走 check_write（写权限），非 check_function（读权限）
+            mock_cls.return_value.check_write = AsyncMock(return_value=False)
             with pytest.raises(HTTPException) as exc_info:
                 await _check_kb_write_access(AsyncMock(), _make_user(), uuid4(), None)
             assert exc_info.value.status_code == 403
@@ -553,7 +556,7 @@ class TestBug5KbWriteAccess:
     async def test_write_permission_passes(self) -> None:
         """正向：有写权限 → 放行。"""
         with patch("app.services.permission_service.PermissionService") as mock_cls:
-            mock_cls.return_value.check_function = AsyncMock(return_value=True)
+            mock_cls.return_value.check_write = AsyncMock(return_value=True)
             await _check_kb_write_access(AsyncMock(), _make_user(), uuid4(), None)
 
 

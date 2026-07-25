@@ -48,8 +48,10 @@ def detect_knowledge_gaps() -> dict[str, Any]:
         )
         return result
     except Exception as exc:
+        # 必须重抛：返回 failed dict 会让 Celery 判定任务成功，
+        # autoretry 失效、监控无告警，当日检测静默跳过。
         logger.error("scheduled.detect_gaps_failed", error=str(exc))
-        return {"status": "failed", "error": str(exc)}
+        raise
 
 
 @celery_app.task(name="tasks.scheduled_tasks.check_expiration")
@@ -73,7 +75,7 @@ def check_expiration() -> dict[str, Any]:
         return result
     except Exception as exc:
         logger.error("scheduled.check_expiration_failed", error=str(exc))
-        return {"status": "failed", "error": str(exc)}
+        raise
 
 
 @celery_app.task(name="tasks.scheduled_tasks.cleanup_expired_facts")
@@ -98,7 +100,7 @@ def cleanup_expired_facts() -> dict[str, Any]:
         return result
     except Exception as exc:
         logger.error("scheduled.cleanup_facts_failed", error=str(exc))
-        return {"status": "failed", "error": str(exc)}
+        raise
 
 
 @celery_app.task(name="tasks.scheduled_tasks.generate_quality_report")
@@ -124,7 +126,7 @@ def generate_quality_report() -> dict[str, Any]:
         return result
     except Exception as exc:
         logger.error("scheduled.quality_report_failed", error=str(exc))
-        return {"status": "failed", "error": str(exc)}
+        raise
 
 
 @celery_app.task(name="tasks.scheduled_tasks.cleanup_orphan_multipart_uploads")
@@ -151,7 +153,7 @@ def cleanup_orphan_multipart_uploads() -> dict[str, Any]:
         return result
     except Exception as exc:
         logger.error("scheduled.cleanup_multipart_failed", error=str(exc))
-        return {"status": "failed", "error": str(exc)}
+        raise
 
 
 # ------------------------------------------------------------------

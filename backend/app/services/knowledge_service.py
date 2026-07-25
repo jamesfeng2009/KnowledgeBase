@@ -221,7 +221,7 @@ class KnowledgeService:
         Raises:
             PermissionError: 当前用户无权向该知识库上传文档。
         """
-        if not await self.permission.check_function(kb_id):
+        if not await self.permission.check_write(kb_id):
             raise PermissionError("无权向该知识库上传文档")
 
         return await self.doc_repo.create(
@@ -262,7 +262,7 @@ class KnowledgeService:
         doc = await self.doc_repo.get_by_id(doc_id)
         if doc is None:
             raise ValueError(f"文档 {doc_id} 不存在")
-        if not await self.permission.check_function(doc.kb_id):
+        if not await self.permission.check_write(doc.kb_id):
             raise PermissionError("无权编辑该文档")
         # 密级校验（安全）：与 list_documents 保持一致 — 密级超过用户
         # clearance_level 的文档禁止修改，防止越权篡改。

@@ -193,10 +193,13 @@ class OpenSearchVectorStore(VectorStoreBase):
         if not embeddings or not chunks:
             return 0
 
-        # 确保索引存在
+        # 确保索引存在 — 仅在建索引成功时置位 _index_ready。
+        # 失败时保持 False，下次 upsert 重试建索引；否则 _available 经
+        # health_check 恢复后会跳过 _ensure_index，直接向不存在的索引 bulk
+        # 写入 —— auto_create_index 会建出无 knn_vector 映射的索引，
+        # 导致 k-NN 检索永久静默失败。
         if not self._index_ready:
-            await self._ensure_index()
-            self._index_ready = True
+            self._index_ready = await self._ensure_index()
 
         if self._available is False:
             return 0
@@ -245,8 +248,12 @@ class OpenSearchVectorStore(VectorStoreBase):
             self._available = False
             return 0
 
-    async def _ensure_index(self) -> None:
-        """确保 k-NN 索引存在，不存在则创建。"""
+    async def _ensure_index(self) -> bool:
+        """确保 k-NN 索引存在，不存在则创建。
+
+        Returns:
+            索引可用（已存在或创建成功）返回 True，失败返回 False。
+        """
         settings = get_settings()
         url = f"{settings.OPENSEARCH_URL}/{self._index_name}"
 
@@ -254,7 +261,7 @@ class OpenSearchVectorStore(VectorStoreBase):
             resp = await self._http.head(url)
             if resp.status_code == 200:
                 self._available = True
-                return
+                return True
         except Exception:
             pass
 
@@ -307,9 +314,11 @@ class OpenSearchVectorStore(VectorStoreBase):
             resp.raise_for_status()
             self._available = True
             log.info("vector_store.os_knn.index_created", index=self._index_name)
+            return True
         except Exception as exc:
             log.warning("vector_store.os_knn.index_create_failed", error=str(exc))
             self._available = False
+            return False
 
     # ------------------------------------------------------------------
     # delete

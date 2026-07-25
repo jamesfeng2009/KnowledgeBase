@@ -123,6 +123,12 @@ class MessageRepository(BaseRepository[Message]):
             content: 消息文本内容。
             **extra_fields: 可选字段（如 sources、token_count、model_used）。
         """
+        # 多租户修复：本方法直接构造 Message（绕过 BaseRepository.create 的
+        # tenant_id 自动注入），必须显式补 tenant_id —— 否则写入行 tenant_id=NULL，
+        # 而读取侧 get_by_conversation 按 tenant_id 过滤，多租户模式下消息
+        # 写入后立刻读不出来（聊天历史/多轮上下文为空），RLS 下同样不可见。
+        if self._tenant_id is not None:
+            extra_fields.setdefault("tenant_id", self._tenant_id)
         message = Message(
             conversation_id=conv_id,
             role=role,

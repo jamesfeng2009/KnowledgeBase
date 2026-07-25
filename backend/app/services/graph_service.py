@@ -15,6 +15,7 @@
 """
 from __future__ import annotations
 
+import re
 from typing import Any
 from uuid import UUID
 
@@ -24,6 +25,21 @@ from app.utils.tenant import apply_tenant_filter
 
 logger = get_logger(__name__)
 settings = get_settings()
+
+#: Cypher 标识符（标签/关系类型）合法形式 — 防止 f-string 拼接导致的 Cypher 注入。
+#: Neo4j 标签/关系类型无法参数化，只能白名单式校验后拼接。
+_CYPHER_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _validate_cypher_ident(value: str, kind: str = "label") -> str:
+    """校验 Cypher 标识符（节点标签/关系类型），非法值抛 ValueError。
+
+    Cypher 不支持标签/关系类型参数化，本项目以 f-string 拼接，必须严格校验，
+    防止 ``label`` 等用户可控参数注入任意 Cypher 片段。
+    """
+    if not value or not _CYPHER_IDENT_RE.match(value):
+        raise ValueError(f"非法 Cypher {kind}: {value!r}")
+    return value
 
 # 延迟导入 neo4j
 try:
@@ -173,6 +189,7 @@ class GraphService:
         if not await self._ensure_connected():
             return None
         try:
+            label = _validate_cypher_ident(label)
             query = f"CREATE (n:{label} $props) RETURN n"
             async with self._driver.session(database=settings.NEO4J_DATABASE) as session:
                 result = await session.run(query, props=properties)
@@ -190,6 +207,7 @@ class GraphService:
         if not await self._ensure_connected():
             return None
         try:
+            label = _validate_cypher_ident(label)
             query = f"MATCH (n:{label} {{id: $node_id}}) RETURN n"
             async with self._driver.session(database=settings.NEO4J_DATABASE) as session:
                 result = await session.run(query, node_id=node_id)
@@ -206,6 +224,7 @@ class GraphService:
         if not await self._ensure_connected():
             return False
         try:
+            label = _validate_cypher_ident(label)
             query = f"MATCH (n:{label} {{id: $node_id}}) DETACH DELETE n"
             async with self._driver.session(database=settings.NEO4J_DATABASE) as session:
                 await session.run(query, node_id=node_id)
@@ -243,6 +262,9 @@ class GraphService:
         if not await self._ensure_connected():
             return False
         try:
+            from_label = _validate_cypher_ident(from_label)
+            to_label = _validate_cypher_ident(to_label)
+            rel_type = _validate_cypher_ident(rel_type, "relationship type")
             query = (
                 f"MATCH (a:{from_label} {{id: $from_id}}), "
                 f"(b:{to_label} {{id: $to_id}}) "
@@ -269,6 +291,9 @@ class GraphService:
         if not await self._ensure_connected():
             return False
         try:
+            from_label = _validate_cypher_ident(from_label)
+            to_label = _validate_cypher_ident(to_label)
+            rel_type = _validate_cypher_ident(rel_type, "relationship type")
             query = (
                 f"MATCH (a:{from_label} {{id: $from_id}})"
                 f"-[r:{rel_type}]->"
@@ -310,23 +335,29 @@ class GraphService:
         if not await self._ensure_connected():
             return []
         try:
+            # 防注入：标签与关系类型校验（Cypher 无法参数化标识符）
+            node_label = _validate_cypher_ident(node_label)
             rel_filter = ""
             if rel_types:
-                rel_filter = "|".join(f"r:{t}" for t in rel_types)
-                rel_filter = f":{rel_filter}"
+                rel_filter = ":" + "|".join(
+                    _validate_cypher_ident(t, "relationship type") for t in rel_types
+                )
+            # 防注入：深度强制为有限整数
+            max_depth = max(1, min(int(max_depth), 10))
 
-            # P2-T4: 租户隔离过滤
-            tenant_filter = ""
+            # P2-T4: 租户隔离过滤 — 全局节点（tenant_id IS NULL）对所有租户可见，
+            # 租户节点仅本租户可见。起始节点与目标节点需分别过滤。
             query_params: dict[str, Any] = {"node_id": node_id}
+            n_tenant_cond = "n.tenant_id IS NULL"
+            m_tenant_cond = "m.tenant_id IS NULL"
             if self._tenant_id:
-                tenant_filter = "AND n.tenant_id = $tenant_id"
+                n_tenant_cond = "(n.tenant_id IS NULL OR n.tenant_id = $tenant_id)"
+                m_tenant_cond = "(m.tenant_id IS NULL OR m.tenant_id = $tenant_id)"
                 query_params["tenant_id"] = str(self._tenant_id)
 
             query = (
-                f"MATCH (n:{node_label} {{id: $node_id}}) "
-                f"WHERE n.tenant_id IS NULL {tenant_filter} "
-                f"-[r{rel_filter}*1..{max_depth}]->(m) "
-                f"WHERE m.tenant_id IS NULL {tenant_filter} "
+                f"MATCH (n:{node_label} {{id: $node_id}})-[r{rel_filter}*1..{max_depth}]->(m) "
+                f"WHERE {n_tenant_cond} AND {m_tenant_cond} "
                 f"RETURN DISTINCT m, length(r) as depth "
                 f"ORDER BY depth LIMIT 50"
             )
@@ -561,6 +592,8 @@ class GraphService:
         if not await self._ensure_connected():
             return None
         try:
+            from_label = _validate_cypher_ident(from_label)
+            to_label = _validate_cypher_ident(to_label)
             query = (
                 f"MATCH p = shortestPath("
                 f"(a:{from_label} {{id: $from_id}})-[*..5]->"
@@ -606,6 +639,8 @@ class GraphService:
         if not await self._ensure_connected():
             return {"nodes": [], "edges": []}
         try:
+            if node_label:
+                node_label = _validate_cypher_ident(node_label)
             if node_id and node_label:
                 # 以指定节点为中心，获取 2 跳子图
                 query = (
@@ -1106,7 +1141,8 @@ class GraphService:
             max_results: 最大返回结果数。
 
         Returns:
-            关联文档列表 [{"doc_id": ..., "title": ...}, ...]。
+            关联文档列表 [{"doc_id": ..., "title": ..., "kb_id": ...}, ...]。
+            kb_id 供召回侧按知识库权限过滤（可能为 None，表示节点未挂 kb）。
         """
         if not await self._ensure_connected() or not entity_names:
             return []
@@ -1114,16 +1150,15 @@ class GraphService:
         results: list[dict[str, Any]] = []
         seen_doc_ids: set[str] = set()
 
-        # 构建租户过滤条件
-        tenant_filter = ""
-        query_params: dict[str, Any] = {
-            "entity_names": entity_names,
-            "max_depth": max_depth,
-            "max_results": max_results,
-        }
+        # 构建租户过滤条件 — 全局节点（tenant_id IS NULL）对所有租户可见，
+        # 租户节点仅本租户可见。n 与 m 需分别过滤（不能复用同一条件串）。
+        n_tenant_cond = "n.tenant_id IS NULL"
+        m_tenant_cond = "m.tenant_id IS NULL"
         if self._tenant_id:
-            tenant_filter = "AND m.tenant_id = $tenant_id"
-            query_params["tenant_id"] = str(self._tenant_id)
+            n_tenant_cond = "(n.tenant_id IS NULL OR n.tenant_id = $tenant_id)"
+            m_tenant_cond = "(m.tenant_id IS NULL OR m.tenant_id = $tenant_id)"
+        # 防注入：深度强制为有限整数
+        max_depth = max(1, min(int(max_depth), 10))
 
         for entity_name in entity_names:
             if len(results) >= max_results:
@@ -1132,10 +1167,10 @@ class GraphService:
                 # 查找实体节点 → 多跳遍历 → 关联 Document 节点
                 query = (
                     "MATCH (n {name: $entity_name}) "
-                    f"WHERE n.tenant_id IS NULL {tenant_filter} "
+                    f"WHERE {n_tenant_cond} "
                     f"MATCH (n)-[r*1..{max_depth}]->(m:Document) "
-                    f"WHERE m.tenant_id IS NULL {tenant_filter} "
-                    "RETURN DISTINCT m.id as doc_id, m.title as title "
+                    f"WHERE {m_tenant_cond} "
+                    "RETURN DISTINCT m.id as doc_id, m.title as title, m.kb_id as kb_id "
                     "LIMIT $limit"
                 )
                 async with self._driver.session(database=settings.NEO4J_DATABASE) as session:
@@ -1154,6 +1189,7 @@ class GraphService:
                         results.append({
                             "doc_id": doc_id,
                             "title": record.get("title", ""),
+                            "kb_id": record.get("kb_id"),
                         })
             except Exception as exc:
                 logger.warning(
@@ -1218,6 +1254,12 @@ class GraphService:
                 )
 
             for label, props_list in label_groups.items():
+                # 防注入：标签校验（LLM 提取的标签可能含非法字符）
+                try:
+                    label = _validate_cypher_ident(label)
+                except ValueError as exc:
+                    logger.error("graph.batch_import_invalid_label", error=str(exc))
+                    continue
                 # 分批写入
                 for i in range(0, len(props_list), batch_size):
                     batch = props_list[i : i + batch_size]
@@ -1254,6 +1296,15 @@ class GraphService:
                 if len(parts) != 3:
                     continue
                 from_label, to_label, rel_type = parts
+
+                # 防注入：标签与关系类型校验
+                try:
+                    from_label = _validate_cypher_ident(from_label)
+                    to_label = _validate_cypher_ident(to_label)
+                    rel_type = _validate_cypher_ident(rel_type, "relationship type")
+                except ValueError as exc:
+                    logger.error("graph.batch_import_invalid_rel", error=str(exc))
+                    continue
 
                 # 分批写入
                 for i in range(0, len(rel_list), batch_size):

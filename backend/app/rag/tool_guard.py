@@ -16,6 +16,7 @@ MCP 工具调用守卫 — 单一职责：在工具执行前拦截危险操作�
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from enum import Enum
 from typing import Any
 
@@ -119,6 +120,9 @@ class DangerousToolGuard:
         guard.confirm_session_tool("sess-1", "document_create")
     """
 
+    #: 会话确认缓存上限 — 超出后按 LRU 逐出最久未使用会话。
+    _MAX_SESSIONS: int = 10_000
+
     def __init__(
         self,
         dangerous_tools: dict[str, dict[str, Any]] | None = None,
@@ -134,8 +138,10 @@ class DangerousToolGuard:
             dangerous_tools if dangerous_tools is not None else _DEFAULT_DANGEROUS_TOOLS
         )
         self._safe: set[str] = safe_tools if safe_tools is not None else _SAFE_TOOLS
-        # P1: 会话级确认缓存 — session_id → set[tool_name]
-        self._session_confirmed: dict[str, set[str]] = {}
+        # P1: 会话级确认缓存 — session_id → set[tool_name]。
+        # P2 修复：改为有界 LRU（OrderedDict + 容量逐出）—— 引擎实例全局
+        # 单例复用，无界 dict 会随一次性会话数无限增长（内存泄漏）。
+        self._session_confirmed: OrderedDict[str, set[str]] = OrderedDict()
 
     def check(
         self,
@@ -168,6 +174,8 @@ class DangerousToolGuard:
             sessions_to_check.add(session_id)
         for sid in sessions_to_check:
             if tool_name in self._session_confirmed.get(sid, set()):
+                # LRU：命中会话标记为最近使用
+                self._session_confirmed.move_to_end(sid)
                 return GuardResult(
                     action=GuardAction.ALLOW,
                     tool_name=tool_name,
@@ -213,8 +221,13 @@ class DangerousToolGuard:
             tool_name: 工具名称。
         """
         if session_id not in self._session_confirmed:
+            # 容量逐出：超过上限时逐出最久未使用的会话确认记录
+            while len(self._session_confirmed) >= self._MAX_SESSIONS:
+                evicted_sid, _ = self._session_confirmed.popitem(last=False)
+                log.info("tool_guard.session_evicted", session_id=evicted_sid)
             self._session_confirmed[session_id] = set()
         self._session_confirmed[session_id].add(tool_name)
+        self._session_confirmed.move_to_end(session_id)
         log.info(
             "tool_guard.session_confirmed",
             tool=tool_name,

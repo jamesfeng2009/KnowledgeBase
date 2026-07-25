@@ -154,6 +154,23 @@ class ActionAgent(BaseAgent):
         Returns:
             工单创建结果格式化后的上下文文本，失败时返回 None。
         """
+        # 防重复副作用：Agent Loop 的 reflect 重试会重新执行 execute()，
+        # 若本轮已成功创建过工单，直接复用已记录的结果 —— 否则一次
+        # "帮我报修电脑"会因重试创建 2~5 张重复工单。
+        for tr in state.get("tool_results", []):
+            if tr.get("tool") == "create_it_ticket":
+                prev = tr.get("result", {})
+                logger.info(
+                    "action_agent.it_ticket_reuse",
+                    ticket_id=prev.get("ticket_id", "未知"),
+                )
+                return (
+                    f"IT 工单已创建：\n"
+                    f"  工单号: {prev.get('ticket_id', '未知')}\n"
+                    f"  优先级: {prev.get('priority', 'normal')}\n"
+                    f"  状态: {prev.get('status', 'open')}\n"
+                    f"请记录工单号以便后续查询进度。"
+                )
         try:
             # 从查询中提取标题（取前 30 字符）
             title = query[:30] if len(query) > 30 else query

@@ -12,6 +12,7 @@ MCP Server — 单一职责：暴露知识库工具给 AI Agent。
 
 from __future__ import annotations
 
+import contextvars
 import json
 import uuid
 from collections.abc import Callable
@@ -27,8 +28,27 @@ from app.repositories.knowledge_repository import (
     KnowledgeBaseRepository,
 )
 from app.utils.logger import get_logger
+from app.utils.tenant import apply_tenant_filter
 
 log = get_logger(__name__)
+
+# 请求级租户上下文 — Server 为全局单例（随 RAG 引擎复用），租户 ID 不能
+# 存实例属性（并发请求互相覆盖），用 ContextVar 按请求任务隔离。
+# 由 call_tool(tenant_id=...) 设置，工具方法内读取并追加租户过滤；
+# 未设置时不过滤（兼容脚本/单租户场景）。
+_tenant_ctx: contextvars.ContextVar[uuid.UUID | None] = contextvars.ContextVar(
+    "mcp_request_tenant_id", default=None
+)
+
+
+def _current_tenant() -> uuid.UUID | None:
+    """读取当前请求上下文的租户 ID（未设置返回 None）。"""
+    return _tenant_ctx.get()
+
+
+#: knowledge_search 单工具结果上限 — LLM 传入泛词（如"系统"）时
+#: 无界结果集会撑爆上下文窗口，截断并标注 truncated 让 Agent 自行改写查询。
+_SEARCH_RESULT_LIMIT: int = 20
 
 
 def mcp_tool(
@@ -197,7 +217,13 @@ class KnowledgeBaseMCPServer:
             for name, entry in self._tool_registry.items()
         ]
 
-    async def call_tool(self, tool_name: str, arguments: dict) -> str:
+    async def call_tool(
+        self,
+        tool_name: str,
+        arguments: dict,
+        *,
+        tenant_id: str | uuid.UUID | None = None,
+    ) -> str:
         """调用指定工具并返回结果（JSON 字符串）。
 
         所有运行时异常（数据库错误、参数错误等）被捕获并转为
@@ -207,6 +233,9 @@ class KnowledgeBaseMCPServer:
         Args:
             tool_name: 工具名称。
             arguments: 工具入参字典（由 LLM 的 tool_use.input 提供）。
+            tenant_id: 请求级租户 ID（由调用方从请求上下文传入，
+                **不信任** LLM 在 arguments 中自封的租户标识）。
+                设置期间工具内查询追加租户过滤，调用结束后自动复位。
 
         Returns:
             工具执行结果或错误信息（JSON 序列化字符串）。
@@ -228,6 +257,17 @@ class KnowledgeBaseMCPServer:
 
         handler: Callable[..., Any] = entry["handler"]
         log.info("mcp.tool_call", tool=tool_name, arguments=arguments)
+
+        # 解析并设置请求级租户上下文（非法 ID 视为未设置，走不过滤兜底）
+        tenant_uuid: uuid.UUID | None = None
+        if tenant_id is not None:
+            try:
+                tenant_uuid = (
+                    tenant_id if isinstance(tenant_id, uuid.UUID) else uuid.UUID(str(tenant_id))
+                )
+            except (ValueError, TypeError):
+                log.warning("mcp.invalid_tenant_id", tenant_id=str(tenant_id))
+        token = _tenant_ctx.set(tenant_uuid)
         try:
             return await handler(**arguments)
         except Exception as exc:
@@ -236,6 +276,8 @@ class KnowledgeBaseMCPServer:
                 {"error": str(exc), "tool": tool_name},
                 ensure_ascii=False,
             )
+        finally:
+            _tenant_ctx.reset(token)
 
     # ------------------------------------------------------------------
     # 内部工具方法 — 每个方法独立，新增工具只需添加新方法
@@ -282,9 +324,14 @@ class KnowledgeBaseMCPServer:
                 ),
             )
             .order_by(Document.created_at.desc())
+            # 无界结果集会被 LLM 泛词撑爆（全表命中拼 JSON 进上下文）
+            .limit(_SEARCH_RESULT_LIMIT)
         )
         if kb_id is not None:
             stmt = stmt.where(Document.kb_id == uuid.UUID(kb_id))
+        # 租户隔离 — MCP Server 裸建会话无 RLS GUC 注入（fail-open），
+        # 必须在应用层过滤，否则跨租户文档全文泄漏。
+        stmt = apply_tenant_filter(stmt, Document, _current_tenant())
 
         async with self._db_factory() as session:
             try:
@@ -303,7 +350,11 @@ class KnowledgeBaseMCPServer:
                 ]
                 await session.commit()
                 return json.dumps(
-                    {"results": results, "count": len(results)},
+                    {
+                        "results": results,
+                        "count": len(results),
+                        "truncated": len(results) >= _SEARCH_RESULT_LIMIT,
+                    },
                     ensure_ascii=False,
                 )
             except Exception:
@@ -331,7 +382,9 @@ class KnowledgeBaseMCPServer:
         """获取文档详情 — 通过 DocumentRepository 查询单条记录。"""
         async with self._db_factory() as session:
             try:
-                repo = DocumentRepository(session)
+                # 租户隔离 — 仓储层自动过滤（跨租户文档按"不存在"返回，
+                # 避免泄漏文档存在性）
+                repo = DocumentRepository(session, tenant_id=_current_tenant())
                 doc = await repo.get_by_id(uuid.UUID(doc_id))
                 if doc is None:
                     await session.commit()
@@ -385,7 +438,10 @@ class KnowledgeBaseMCPServer:
         """创建文档 — 以知识库所有者作为文档所有者，状态默认为 draft。"""
         async with self._db_factory() as session:
             try:
-                kb_repo = KnowledgeBaseRepository(session)
+                # 租户隔离 — KB 校验与文档创建均限定在当前租户内：
+                # 跨租户 KB 按"不存在"拒绝，新文档自动注入 tenant_id。
+                tenant = _current_tenant()
+                kb_repo = KnowledgeBaseRepository(session, tenant_id=tenant)
                 kb = await kb_repo.get_by_id(uuid.UUID(kb_id))
                 if kb is None:
                     await session.commit()
@@ -394,7 +450,7 @@ class KnowledgeBaseMCPServer:
                         ensure_ascii=False,
                     )
 
-                doc_repo = DocumentRepository(session)
+                doc_repo = DocumentRepository(session, tenant_id=tenant)
                 doc = await doc_repo.create(
                     kb_id=uuid.UUID(kb_id),
                     title=title,

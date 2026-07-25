@@ -33,6 +33,19 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["API 密钥管理"])
 
 
+def _require_admin(user: User) -> None:
+    """要求管理员角色（admin/kb_admin）。
+
+    API 密钥是租户级集成凭证 —— 无角色校验时，viewer 可自建全 scope
+    密钥经 openapi 旁路密级体系、查看/停用他人密钥，必须限制为管理员。
+    """
+    if user.role not in ("admin", "kb_admin"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="仅管理员可管理 API 密钥",
+        )
+
+
 @router.get("/apikeys", response_model=ApiResponse[list[ApiKeyResponse]])
 async def list_api_keys(
     request: Request,
@@ -40,6 +53,7 @@ async def list_api_keys(
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse[list[ApiKeyResponse]]:
     """获取 API 密钥列表（不含明文密钥）。"""
+    _require_admin(user)
     tenant_id = getattr(request.state, "tenant_id", None)
     service = ApiKeyService(db, tenant_id=tenant_id)
     keys = await service.list_keys()
@@ -77,6 +91,7 @@ async def create_api_key(
 
     创建后请妥善保存密钥，后续无法再次获取明文。
     """
+    _require_admin(user)
     tenant_id = getattr(request.state, "tenant_id", None)
     service = ApiKeyService(db, tenant_id=tenant_id)
     api_key, plaintext = await service.create_key(
@@ -107,6 +122,7 @@ async def revoke_api_key(
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse:
     """停用 API 密钥（软停用，不物理删除）。"""
+    _require_admin(user)
     tenant_id = getattr(request.state, "tenant_id", None)
     service = ApiKeyService(db, tenant_id=tenant_id)
     result = await service.revoke_key(key_id)

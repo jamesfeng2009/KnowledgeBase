@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 import uuid
 from typing import Any
 
@@ -117,27 +118,30 @@ async def subscribe_stream(
     logger.info("notification_hub.subscribed", channel=channel, user_id=str(user_id))
 
     try:
+        # 心跳基于空闲时间戳：get_message 内部 1 秒超时即返回 None，
+        # 外层 wait_for(HEARTBEAT_INTERVAL) 永远等不到 TimeoutError，
+        # 导致心跳分支不可达、空闲连接被反代 idle 超时静默断开。
+        # 改为记录上次产出时间，空闲超过 HEARTBEAT_INTERVAL 即补心跳。
+        last_yield = time.monotonic()
         while True:
-            # 尝试非阻塞读取，配合心跳定时器
-            try:
-                message = await asyncio.wait_for(
-                    pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0),
-                    timeout=HEARTBEAT_INTERVAL,
-                )
-            except asyncio.TimeoutError:
-                # 发送心跳保活
-                yield ": heartbeat\n\n"
-                continue
+            message = await pubsub.get_message(
+                ignore_subscribe_messages=True, timeout=1.0
+            )
 
             if message is None:
-                # 无消息，短暂让出控制权
-                await asyncio.sleep(0.1)
+                # 无消息 — 空闲超时则发送心跳保活，否则短暂让出控制权
+                if time.monotonic() - last_yield >= HEARTBEAT_INTERVAL:
+                    yield ": heartbeat\n\n"
+                    last_yield = time.monotonic()
+                else:
+                    await asyncio.sleep(0.1)
                 continue
 
             if message.get("type") == "message":
                 data = message.get("data", "")
                 # data 已是 JSON 字符串，直接转发
                 yield f"data: {data}\n\n"
+                last_yield = time.monotonic()
     except asyncio.CancelledError:
         logger.info("notification_hub.cancelled", channel=channel)
     except Exception as exc:

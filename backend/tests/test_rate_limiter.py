@@ -133,7 +133,9 @@ class TestGetClientId:
     """客户端标识提取测试。"""
 
     def test_api_key_priority(self) -> None:
-        """X-API-Key 优先作为客户端标识。"""
+        """X-API-Key 优先作为客户端标识（哈希形式，不明文入桶）。"""
+        import hashlib
+
         from app.middleware import _get_client_id
 
         mock_request = MagicMock()
@@ -142,10 +144,13 @@ class TestGetClientId:
         mock_request.client.host = "127.0.0.1"
 
         client_id = _get_client_id(mock_request)
-        assert client_id == "key:test-key-12345"
+        expected = hashlib.sha256(b"test-key-12345").hexdigest()[:16]
+        assert client_id == f"key:{expected}"
 
     def test_authorization_header(self) -> None:
-        """Authorization 头作为回退。"""
+        """Authorization 头作为回退（对完整凭证取哈希，避免 JWT 同前缀撞桶）。"""
+        import hashlib
+
         from app.middleware import _get_client_id
 
         mock_request = MagicMock()
@@ -154,7 +159,11 @@ class TestGetClientId:
         mock_request.client.host = "127.0.0.1"
 
         client_id = _get_client_id(mock_request)
-        assert client_id.startswith("key:Bearer")
+        expected = hashlib.sha256(b"Bearer token123").hexdigest()[:16]
+        assert client_id == f"key:{expected}"
+        # 不同用户凭证必须落入不同限流桶
+        mock_request.headers = {"authorization": "Bearer token456"}
+        assert _get_client_id(mock_request) != client_id
 
     def test_ip_fallback(self) -> None:
         """无 API Key 时回退到 IP。"""

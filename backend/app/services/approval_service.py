@@ -122,9 +122,15 @@ class ApprovalService:
         """
         approval = await self._get_and_validate(approval_id, user)
 
+        # 状态护栏下沉到 UPDATE WHERE 子句 —— validate→update 非原子，
+        # 双击/重试/并发标签页下两个请求可同时通过校验，护栏确保只有
+        # 一个请求真正落库（防 TOCTOU 竞态导致重复批准）。
         stmt = (
             update(ToolApproval)
-            .where(ToolApproval.id == approval_id)
+            .where(
+                ToolApproval.id == approval_id,
+                ToolApproval.status == "pending",
+            )
         )
         stmt = apply_tenant_filter(stmt, ToolApproval, self._tenant_id)
         stmt = stmt.values(
@@ -132,7 +138,9 @@ class ApprovalService:
             resolved_at=datetime.now(timezone.utc),
             resolved_by=user.id,
         )
-        await self.db.execute(stmt)
+        result = await self.db.execute(stmt)
+        if result.rowcount == 0:
+            raise ValueError("审批已被处理，请刷新后查看最新状态")
         await self.db.flush()
 
         # 会话级缓存 — 标记该工具为已确认
@@ -168,9 +176,13 @@ class ApprovalService:
         """
         approval = await self._get_and_validate(approval_id, user)
 
+        # 同 approve：UPDATE 带 pending 护栏，防并发重复处理
         stmt = (
             update(ToolApproval)
-            .where(ToolApproval.id == approval_id)
+            .where(
+                ToolApproval.id == approval_id,
+                ToolApproval.status == "pending",
+            )
         )
         stmt = apply_tenant_filter(stmt, ToolApproval, self._tenant_id)
         stmt = stmt.values(
@@ -178,7 +190,9 @@ class ApprovalService:
             resolved_at=datetime.now(timezone.utc),
             resolved_by=user.id,
         )
-        await self.db.execute(stmt)
+        result = await self.db.execute(stmt)
+        if result.rowcount == 0:
+            raise ValueError("审批已被处理，请刷新后查看最新状态")
         await self.db.flush()
 
         log.info(

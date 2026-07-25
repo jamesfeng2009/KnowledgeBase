@@ -133,8 +133,10 @@ try:
             logger.info("notification.daily_digest_task_done", result=result)
             return result
         except Exception as exc:
+            # 重抛让 Celery 标记失败（autoretry/监控告警生效），
+            # 返回 failed dict 会被 Celery 视为成功，静默跳过当日推送。
             logger.error("notification.daily_digest_task_failed", error=str(exc))
-            return {"status": "failed", "error": str(exc)}
+            raise
 
     @celery_app.task(name="tasks.notification_tasks.daily_gap_alert")
     def daily_gap_alert() -> dict:
@@ -150,7 +152,7 @@ try:
             return result
         except Exception as exc:
             logger.error("notification.gap_alert_task_failed", error=str(exc))
-            return {"status": "failed", "error": str(exc)}
+            raise
 
 except ImportError:
     logger.warning("notification.celery_not_available")

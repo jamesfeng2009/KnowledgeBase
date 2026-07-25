@@ -405,15 +405,16 @@ class HybridRetriever:
 
         # 转换为统一的候选文档格式
         results: list[dict[str, Any]] = []
+        kb_id_set = set(kb_ids) if kb_ids else None
         for doc in related_docs:
             doc_id = doc.get("doc_id", "")
             if not doc_id:
                 continue
-            # kb_ids 过滤
-            if kb_ids:
-                # 图谱召回的文档可能不在指定 KB 中，跳过
-                # 注意：related_docs 不含 kb_id 信息，此处保守不过滤
-                pass
+            # kb_ids 权限过滤：图谱节点现携带 kb_id（find_related_documents_by_entity
+            # 已返回），限定了知识库范围时，跳过不在授权列表中的文档，
+            # 防止其他知识库的文档标题泄漏进生成上下文。
+            if kb_id_set is not None and doc.get("kb_id") not in kb_id_set:
+                continue
 
             results.append({
                 "doc_id": doc_id,
@@ -421,7 +422,7 @@ class HybridRetriever:
                 "content": doc.get("title", ""),  # 图谱召回无内容，用标题占位
                 "score": settings.GRAPH_SEARCH_SCORE,  # 固定分，合并时由去重逻辑处理
                 "source": "graph",
-                "kb_id": None,
+                "kb_id": doc.get("kb_id"),
                 "title": doc.get("title", ""),
             })
             if len(results) >= top_k:

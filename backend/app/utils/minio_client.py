@@ -183,6 +183,29 @@ async def download_file(bucket: str, object_name: str) -> bytes:
     return await asyncio.to_thread(_download)
 
 
+async def download_file_to_path(bucket: str, object_name: str, dest_path: str) -> None:
+    """从 S3 兼容存储流式下载文件到本地路径（分块写盘，不整载入内存）。
+
+    GB 级大文件（如视频）必须使用本接口 —— ``download_file`` 会将完整
+    字节载入内存，worker 直接 OOM。boto3 原生 download_file 内部
+    分块传输，内存占用恒定（约数 MB 缓冲）。
+
+    Args:
+        bucket: bucket 名称。
+        object_name: 对象存储路径。
+        dest_path: 本地目标文件路径。
+
+    Raises:
+        ImportError: ``boto3`` 包未安装。
+        Exception: 下载失败。
+    """
+    def _download() -> None:
+        client = _get_client()
+        client.download_file(Bucket=bucket, Key=object_name, Filename=dest_path)
+
+    await asyncio.to_thread(_download)
+
+
 async def delete_file(bucket: str, object_name: str) -> None:
     """从 S3 兼容存储删除文件。
 

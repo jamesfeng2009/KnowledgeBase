@@ -61,7 +61,10 @@ class LLMIntentParser:
             return None
 
         try:
-            response = await self._llm.chat(
+            # LLMProvider.chat 是异步生成器（见 app/llm/base.py 调用约定），
+            # 必须用 async for 消费，await 会抛 TypeError。
+            chunks: list[str] = []
+            async for chunk in self._llm.chat(
                 messages=[
                     {"role": "system", "content": _SYSTEM_PROMPT},
                     {
@@ -70,9 +73,11 @@ class LLMIntentParser:
                     },
                 ],
                 max_tokens=100,
-            )
+            ):
+                if isinstance(chunk, str):
+                    chunks.append(chunk)
             # 解析 JSON 响应
-            content = response.content if hasattr(response, "content") else str(response)
+            content = "".join(chunks).strip()
             data = json.loads(content)
 
             intent_str = data.get("intent", "complex_query")

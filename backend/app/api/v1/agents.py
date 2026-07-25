@@ -203,6 +203,7 @@ async def create_agent(
         description=body.description,
         config=body.config,
         is_enabled=True,
+        tenant_id=user.tenant_id,  # RLS WITH CHECK 要求写入行携带当前租户 ID
     )
     db.add(agent)
     await db.flush()

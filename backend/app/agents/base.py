@@ -240,33 +240,18 @@ class BaseAgent(ABC):
     async def think(self, state: AgentState) -> str:
         """LLM 决策下一步行动。
 
-        默认实现：使用当前消息列表调用 LLM（非流式），获取决策指令。
-        子类可覆盖此方法实现更复杂的决策逻辑（如基于检索结果判断是否需要工具调用）。
+        默认实现为零成本 no-op：run() 主循环不消费本方法返回值，
+        且内置子类（QA/Action/Workflow）均未覆盖 —— 原实现每轮迭代
+        白调一次 LLM（max_tokens=100，最多 5 次/请求），纯属成本浪费。
+        子类需要 LLM 决策时应覆盖本方法并将 decision 接入 execute 分支。
 
         Args:
             state: 当前 Agent 状态。
 
         Returns:
-            LLM 输出的决策指令文本（如 "retrieve" / "tool_call" / "generate"）。
+            决策指令文本（默认 "generate"）。
         """
-        try:
-            decision = ""
-            async for chunk in self.llm.chat(
-                state["messages"],
-                stream=False,
-                max_tokens=100,
-            ):
-                if isinstance(chunk, str):
-                    decision += chunk
-            logger.debug(
-                "agent.think_decision",
-                decision=decision[:100],
-                iteration=state.get("iteration", 0),
-            )
-            return decision
-        except Exception as exc:
-            logger.warning("agent.think_fallback", error=str(exc))
-            return "generate"
+        return "generate"
 
     async def reflect(self, state: AgentState) -> bool:
         """自我反思，返回是否需要重试。

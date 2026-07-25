@@ -344,8 +344,14 @@ class RagEvalService:
         # 累加各指标用于求均值
         metric_sums: dict[str, float] = {}
 
-        queries = await self.list_queries(dataset_id)
-        retriever = HybridRetriever()
+        try:
+            queries = await self.list_queries(dataset_id)
+            retriever = HybridRetriever()
+        except Exception:
+            # 前置步骤失败时恢复状态，否则数据集永久卡在 "running"
+            dataset.status = "failed"
+            await self.db.flush()
+            raise
         # 显式取出 kb_ids 传入 _execute_query，避免在 async 上下文
         # 访问 query.dataset 触发懒加载（MissingGreenletError）
         kb_ids = dataset.kb_ids
@@ -574,10 +580,15 @@ class RagEvalService:
             .where(RagEvalDataset.deleted_at.is_(None))
         ) or 0
 
-        # 已执行结果数
+        # 已执行结果数 — 排除软删除数据集，与 total_datasets/total_queries 口径一致
         total_executed = await self.db.scalar(
             select(func.count())
             .select_from(RagEvalResult)
+            .join(
+                RagEvalDataset,
+                RagEvalDataset.id == RagEvalResult.dataset_id,
+            )
+            .where(RagEvalDataset.deleted_at.is_(None))
         ) or 0
 
         # 聚合各已执行数据集的指标（加权平均）

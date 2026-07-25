@@ -97,9 +97,13 @@ class CrossTurnDeduplicator:
         """
         summary = result_content[:_SUMMARY_MAX_CHARS]
 
-        # 检查是否有内容高度重叠的已有结果
+        # 检查是否有内容高度重叠的已有结果。
+        # 注意：必须用截断后的 summary 与 ref.summary 比较 —— 若用完整
+        # result_content 与截断摘要做 Jaccard 词集相似度，截断摘要是全文
+        # 词集的子集，相似度 ≈ |摘要词| / |全文词|，全文较长时即使内容
+        # 完全相同也低于阈值，导致长结果跨轮去重失效、重复注入 messages。
         for ref in self._seen_results:
-            if self._is_similar(result_content, ref.summary):
+            if self._is_similar(summary, ref.summary):
                 log.info(
                     "dedup.replaced",
                     turn=turn,

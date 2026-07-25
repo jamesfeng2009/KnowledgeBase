@@ -29,6 +29,7 @@ Agentic RAG 主引擎 — 单一职责：编排 think → retrieve/tool_call →
 
 from __future__ import annotations
 
+import contextvars
 import json
 import time
 import uuid
@@ -64,6 +65,26 @@ except ImportError:
     PostgresSaver = None  # type: ignore[assignment, misc]
 
 log = get_logger(__name__)
+
+# P0 并发修复：引擎实例是进程级单例（factory.get_rag_engine 全局复用），
+# 请求级状态（token 用量/检索重试计数/去重器/预算管理器/LangFuse 追踪上下文）
+# 若保存在实例属性上，并发请求会互相覆盖 —— 用量串账、重试计数错乱、追踪串扰。
+# 改用 ContextVar 隔离：每个请求任务拥有独立的状态副本。
+_usage_ctx: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
+    "rag_usage", default=None
+)
+_retry_count_ctx: contextvars.ContextVar[int] = contextvars.ContextVar(
+    "rag_retry_count", default=0
+)
+_trace_ctx_var: contextvars.ContextVar[Any] = contextvars.ContextVar(
+    "rag_trace_ctx", default=None
+)
+_dedup_ctx: contextvars.ContextVar[Any] = contextvars.ContextVar(
+    "rag_dedup", default=None
+)
+_budget_ctx: contextvars.ContextVar[Any] = contextvars.ContextVar(
+    "rag_budget", default=None
+)
 
 # 默认最大迭代次数
 _DEFAULT_MAX_ITERATIONS: int = 5
@@ -217,12 +238,9 @@ class AgenticRAGEngine:
         self._checkpointer = checkpointer
         # 编译后的状态图缓存（首次 build_graph 后复用）。
         self._compiled_graph: Any = None
-        # LangFuse 追踪上下文（每次 answer 调用时重置）
-        self._trace_ctx: TraceContext | None = None
-        # P1-Opt3: 跨轮工具结果去重器 — 检测重复结果并用指针引用替代
-        self._dedup = CrossTurnDeduplicator()
-        # P2-Opt6: 上下文预算管理器 — think 上下文超预算时压缩早期消息
-        self._budget = ContextBudgetManager()
+        # LangFuse 追踪上下文 / 去重器 / 预算管理器 / 重试计数 / 用量累加器
+        # 均为请求级状态 — 不在此处赋值，由下方 ContextVar 属性按请求上下文
+        # 惰性创建，避免单例引擎在并发请求间互相污染（P0 并发修复）。
         # MCP 工具调用守卫 — 危险工具拦截器（HITL 门禁）
         # 默认实例化内置配置，也可通过构造注入自定义配置或 Mock
         self._tool_guard: DangerousToolGuard = tool_guard or DangerousToolGuard()
@@ -237,11 +255,6 @@ class AgenticRAGEngine:
                 self._quality_guard = QualityGuard()
             except Exception:
                 self._quality_guard = None
-        # 检索重试计数（每次 answer 调用时重置）
-        self._retrieval_retry_count: int = 0
-        # P0-Stage2: 用量累加器 — 累积单次 answer() 内所有 LLM 调用的 token 用量
-        self._accumulated_usage: dict[str, Any] = {"input_tokens": 0, "output_tokens": 0, "model": ""}
-
         # P2-B: 查询重写器 — 检索前优化用户查询
         # 传入时直接使用，未传入时尝试从工厂获取（可能返回 None）
         self._query_rewriter = query_rewriter
@@ -275,6 +288,70 @@ class AgenticRAGEngine:
             log.warning("engine.skill_finder_init_failed", error=str(exc))
             self._skill_finder = None
             self._skill_registry = None
+
+    # ------------------------------------------------------------------
+    # 请求级状态（ContextVar 隔离，并发安全）
+    #
+    # 引擎单例被所有请求共享，以下状态必须在请求上下文间隔离：
+    # 每个请求任务首次访问时惰性创建独立实例，互不可见。
+    # ------------------------------------------------------------------
+
+    @property
+    def _accumulated_usage(self) -> dict[str, Any]:
+        """P0-Stage2: 用量累加器 — 累积单次 answer() 内所有 LLM 调用的 token 用量。"""
+        usage = _usage_ctx.get()
+        if usage is None:
+            usage = {"input_tokens": 0, "output_tokens": 0, "model": ""}
+            _usage_ctx.set(usage)
+        return usage
+
+    @_accumulated_usage.setter
+    def _accumulated_usage(self, value: dict[str, Any]) -> None:
+        _usage_ctx.set(value)
+
+    @property
+    def _retrieval_retry_count(self) -> int:
+        """检索重试计数（每次 answer 调用时重置）。"""
+        return _retry_count_ctx.get()
+
+    @_retrieval_retry_count.setter
+    def _retrieval_retry_count(self, value: int) -> None:
+        _retry_count_ctx.set(value)
+
+    @property
+    def _trace_ctx(self) -> TraceContext | None:
+        """LangFuse 追踪上下文（每次 answer 调用时重置）。"""
+        return _trace_ctx_var.get()
+
+    @_trace_ctx.setter
+    def _trace_ctx(self, value: TraceContext | None) -> None:
+        _trace_ctx_var.set(value)
+
+    @property
+    def _dedup(self) -> CrossTurnDeduplicator:
+        """P1-Opt3: 跨轮工具结果去重器 — 检测重复结果并用指针引用替代。"""
+        inst = _dedup_ctx.get()
+        if inst is None:
+            inst = CrossTurnDeduplicator()
+            _dedup_ctx.set(inst)
+        return inst
+
+    @_dedup.setter
+    def _dedup(self, value: CrossTurnDeduplicator) -> None:
+        _dedup_ctx.set(value)
+
+    @property
+    def _budget(self) -> ContextBudgetManager:
+        """P2-Opt6: 上下文预算管理器 — think 上下文超预算时压缩早期消息。"""
+        inst = _budget_ctx.get()
+        if inst is None:
+            inst = ContextBudgetManager()
+            _budget_ctx.set(inst)
+        return inst
+
+    @_budget.setter
+    def _budget(self, value: ContextBudgetManager) -> None:
+        _budget_ctx.set(value)
 
     # ------------------------------------------------------------------
     # 对外入口
@@ -1605,7 +1682,11 @@ class AgenticRAGEngine:
             guard=guard_result.action.value,
         )
         try:
-            result = await self.mcp.call_tool(tool_name, tool_input)
+            # 透传请求级租户 ID — MCP Server 按租户过滤工具内查询，
+            # 不信任 LLM 在 tool_input 中自封的租户标识（防跨租户泄漏）
+            result = await self.mcp.call_tool(
+                tool_name, tool_input, tenant_id=state.get("tenant_id")
+            )
             state["tool_results"].append(
                 {
                     "tool": tool_name,

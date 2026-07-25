@@ -13,6 +13,7 @@ Redis 不可用时自动降级为内存令牌桶，保证限流功能始终可�
 
 from __future__ import annotations
 
+import hashlib
 import time
 import uuid
 from uuid import UUID
@@ -224,10 +225,17 @@ def get_rate_limiter() -> RateLimiter | RedisRateLimiter | None:
 
 
 def _get_client_id(request: Request) -> str:
-    """提取客户端标识 — 优先 API Key，回退到 IP。"""
+    """提取客户端标识 — 优先 API Key / 用户令牌，回退到 IP。
+
+    注意：不能直接取 authorization 头前缀 —— JWT 的前 32 字符是固定的
+    "Bearer eyJhbGciOiJIUzI1NiIs..."（header base64 相同），会导致所有
+    登录用户共享同一个限流桶（一人超限全员 429）。对完整凭证取哈希，
+    既区分不同用户/密钥，又避免明文凭证进入内存索引与日志。
+    """
     api_key = request.headers.get("x-api-key") or request.headers.get("authorization")
     if api_key:
-        return f"key:{api_key[:32]}"  # 截断防止过长 key 撑爆内存
+        digest = hashlib.sha256(api_key.encode()).hexdigest()[:16]
+        return f"key:{digest}"
 
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded:

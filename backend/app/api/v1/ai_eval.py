@@ -149,7 +149,7 @@ async def list_suites(
             total=total or 0,
             page=page,
             size=size,
-            pages=(total or 0 + size - 1) // size,
+            pages=((total or 0) + size - 1) // size,
         ),
     )
 

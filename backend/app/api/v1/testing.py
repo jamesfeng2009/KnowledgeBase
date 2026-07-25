@@ -128,6 +128,7 @@ async def create_project(
         prd_doc_ids=body.prd_doc_ids,
         tech_doc_ids=body.tech_doc_ids,
         api_doc_ids=body.api_doc_ids,
+        tenant_id=user.tenant_id,  # RLS WITH CHECK 要求写入行携带当前租户 ID
     )
     db.add(project)
     await db.flush()

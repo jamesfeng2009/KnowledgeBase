@@ -47,7 +47,8 @@ class RuleMatcher:
             IntentType.RAG_SEARCH,
             [
                 re.compile(
-                    r"(搜索|查找|查一下|搜一下|查询|找一下|帮我查|检索)(.+)",
+                    # 长词优先：避免 "搜索一下XX" 被 "搜索" 截断留下 "一下XX"
+                    r"(搜索一下|搜一下|查找一下|查一下|找一下|帮我查|搜索|查找|查询|检索)(.+)",
                     re.IGNORECASE,
                 ),
                 re.compile(
@@ -110,8 +111,16 @@ class RuleMatcher:
                 if match:
                     # 提取参数（如搜索关键词）
                     parameters: dict[str, str] = {}
-                    if intent == IntentType.RAG_SEARCH and match.lastindex and match.lastindex >= 2:
-                        parameters["search_query"] = match.group(match.lastindex).strip()
+                    if intent == IntentType.RAG_SEARCH:
+                        candidate = ""
+                        if match.lastindex and match.lastindex >= 2:
+                            candidate = match.group(match.lastindex).strip()
+                        # 单捕获组模式（".*(是什么|怎么...)"）无组 2 可取；
+                        # 双捕获组但组 2 为 "是"/"有" 等单字虚词时同样无意义。
+                        # 两种情形都回退为整条查询，避免用虚词做检索词。
+                        parameters["search_query"] = (
+                            candidate if len(candidate) > 1 else query_stripped
+                        )
                     elif intent == IntentType.GET_DOCUMENT and match.lastindex and match.lastindex >= 2:
                         parameters["document_ref"] = match.group(match.lastindex).strip()
 

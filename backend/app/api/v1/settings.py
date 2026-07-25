@@ -68,9 +68,15 @@ def _require_admin(user: User) -> None:
 
 
 def _mask_api_key(key: str | None) -> str | None:
-    """掩码 API 密钥（仅保留前 4 位和后 4 位）。"""
-    if not key or len(key) < 12:
+    """掩码 API 密钥（仅保留前 4 位和后 4 位）。
+
+    短密钥（<12 位，私有部署接内网网关常见）原样返回等于明文泄漏，
+    统一返回固定掩码；空值保持原样以便前端区分"未配置"。
+    """
+    if not key:
         return key
+    if len(key) < 12:
+        return "****"
     return f"{key[:4]}****{key[-4:]}"
 
 

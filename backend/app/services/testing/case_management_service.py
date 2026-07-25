@@ -173,6 +173,8 @@ class TestCaseManagementService:
             project_id=project_id,
             case_no=case_no,
             created_by="manual",
+            # RLS WITH CHECK 要求写入行携带当前租户 ID（kwargs 显式传入时优先）
+            tenant_id=kwargs.pop("tenant_id", self._tenant_id),
             **kwargs,
         )
         self.db.add(case)

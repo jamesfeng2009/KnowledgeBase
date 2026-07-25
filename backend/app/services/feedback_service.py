@@ -52,6 +52,15 @@ class FeedbackService:
         self._tenant_id = tenant_id
         self._repo = FeedbackRepository(db, tenant_id=tenant_id)
 
+    def _require_admin(self) -> None:
+        """要求当前用户具备管理员角色（admin/kb_admin）。
+
+        反馈的"官方回复"与状态流转属于处置操作 —— 无角色校验时
+        任意用户可伪造官方回复、关闭他人反馈，污染反馈闭环。
+        """
+        if self._user.role not in ("admin", "kb_admin"):
+            raise PermissionError("仅管理员可处理用户反馈")
+
     async def create_feedback(
         self,
         type: str,
@@ -124,7 +133,9 @@ class FeedbackService:
 
         Raises:
             ValueError: 反馈不存在。
+            PermissionError: 非管理员用户。
         """
+        self._require_admin()
         feedback = await self._repo.get_by_id(feedback_id)
         if feedback is None:
             raise ValueError(f"反馈不存在: {feedback_id}")
@@ -157,7 +168,9 @@ class FeedbackService:
 
         Raises:
             ValueError: 反馈不存在。
+            PermissionError: 非管理员用户。
         """
+        self._require_admin()
         feedback = await self._repo.get_by_id(feedback_id)
         if feedback is None:
             raise ValueError(f"反馈不存在: {feedback_id}")

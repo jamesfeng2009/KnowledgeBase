@@ -10,6 +10,7 @@ FastAPI 应用入口 — 单一职责：创建应用实例、注册中间件与�
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -47,9 +48,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         try:
             from app.utils.migration import run_migrations
 
-            # 迁移在同步线程中执行（alembic 内部使用同步 SQLAlchemy）
-            import asyncio
-
+            # 迁移在同步线程中执行（alembic 内部使用同步 SQLAlchemy）。
+            # 注意：import asyncio 必须在模块顶部 —— 若留在本分支内，
+            # AUTO_MIGRATE=False 时 shutdown 阶段的 asyncio.wait_for /
+            # asyncio.TimeoutError 会抛 UnboundLocalError，资源清理全部跳过。
             result = await asyncio.to_thread(run_migrations, "head")
             log.info("app.migration_done", result=result)
         except Exception as exc:
@@ -197,12 +199,16 @@ async def health_check() -> ApiResponse:
     )
 
 
-@app.get("/health/db", response_model=ApiResponse, tags=["系统"])
-async def health_check_db() -> ApiResponse:
+@app.get("/health/db", tags=["系统"])
+async def health_check_db() -> JSONResponse:
     """数据库健康检查 — 触 DB 连接，用于就绪探针。
 
     docker-compose 的 core-engine healthcheck 使用此端点，
     确保表已创建且 DB 连接正常后，才让 frontend 依赖启动。
+
+    注意：DB 故障时必须返回非 2xx 的 HTTP 状态码（503），否则
+    `curl -f` / Docker healthcheck / K8s 探针会误判为就绪，
+    流量继续打到无 DB 的实例。
     """
     from sqlalchemy import text
 
@@ -211,18 +217,20 @@ async def health_check_db() -> ApiResponse:
     try:
         async with async_session_factory() as session:
             await session.execute(text("SELECT 1"))
-        return ApiResponse(
+        payload = ApiResponse(
             code=0,
             data={"status": "ok", "database": "connected"},
             message="success",
         )
+        return JSONResponse(status_code=200, content=payload.model_dump())
     except Exception as exc:
         log.error("health.db_failed", error=str(exc))
-        return ApiResponse(
-            code=500,
+        payload = ApiResponse(
+            code=503,
             data={"status": "error", "database": str(exc)},
             message="database connection failed",
         )
+        return JSONResponse(status_code=503, content=payload.model_dump())
 
 
 @app.get("/health/circuit-breakers", response_model=ApiResponse, tags=["系统"])

@@ -345,47 +345,59 @@ class JudgeService:
         start_time = time.time()
         executed = 0
         dimension_sums: dict[str, float] = {d: 0.0 for d in dimensions}
+        # 按维度分别计数 —— 裁判解析失败的用例 scores={} 不参与累加，
+        # 若仍计入分母会系统性拉低维度均值（口径稀释）。
+        dimension_counts: dict[str, int] = {d: 0 for d in dimensions}
         overall_sum = 0.0
 
-        cases = await self.list_cases(dataset_id)
-        provider = get_llm_provider()
+        try:
+            cases = await self.list_cases(dataset_id)
+            provider = get_llm_provider()
 
-        log.info(
-            "judge_dataset_started",
-            dataset_id=str(dataset_id),
-            total_cases=len(cases),
-            dimensions=dimensions,
-        )
+            log.info(
+                "judge_dataset_started",
+                dataset_id=str(dataset_id),
+                total_cases=len(cases),
+                dimensions=dimensions,
+            )
 
-        for case in cases:
-            try:
-                result_data = await self._execute_case(
-                    dataset_id=dataset_id,
-                    case=case,
-                    provider=provider,
-                    dimensions=dimensions,
-                )
-                executed += 1
-                overall_sum += result_data["overall"]
-                for d in dimensions:
-                    if d in result_data["scores"]:
-                        dimension_sums[d] += result_data["scores"][d]
-            except Exception as exc:
-                log.error("judge_case_error", case_id=str(case.id), error=str(exc))
-                self.db.add(JudgeResult(
-                    case_id=case.id,
-                    dataset_id=dataset_id,
-                    scores={},
-                    overall_score=0,
-                    error_message=str(exc),
-                    executed_at=datetime.now(timezone.utc),
-                ))
+            for case in cases:
+                try:
+                    result_data = await self._execute_case(
+                        dataset_id=dataset_id,
+                        case=case,
+                        provider=provider,
+                        dimensions=dimensions,
+                    )
+                    executed += 1
+                    overall_sum += result_data["overall"]
+                    for d in dimensions:
+                        if d in result_data["scores"]:
+                            dimension_sums[d] += result_data["scores"][d]
+                            dimension_counts[d] += 1
+                except Exception as exc:
+                    log.error("judge_case_error", case_id=str(case.id), error=str(exc))
+                    self.db.add(JudgeResult(
+                        case_id=case.id,
+                        dataset_id=dataset_id,
+                        scores={},
+                        overall_score=0,
+                        error_message=str(exc),
+                        executed_at=datetime.now(timezone.utc),
+                    ))
+        except Exception:
+            # list_cases / get_llm_provider 等前置步骤失败时恢复状态，
+            # 否则数据集永久卡在 "running"，无法再触发评测。
+            dataset.status = "failed"
+            await self.db.flush()
+            raise
 
         # 聚合评分
         agg_metrics: dict[str, float] = {}
         if executed > 0:
             for d in dimensions:
-                agg_metrics[d] = round(dimension_sums[d] / executed, 2)
+                if dimension_counts[d] > 0:
+                    agg_metrics[d] = round(dimension_sums[d] / dimension_counts[d], 2)
             agg_metrics["overall"] = round(overall_sum / executed, 2)
 
         elapsed = int(time.time() - start_time)
@@ -532,8 +544,12 @@ class JudgeService:
             .where(JudgeDataset.deleted_at.is_(None))
         ) or 0
 
+        # 排除软删除数据集下的结果，保持与 total_datasets/total_cases 口径一致
         total_executed = await self.db.scalar(
-            select(func.count()).select_from(JudgeResult)
+            select(func.count())
+            .select_from(JudgeResult)
+            .join(JudgeDataset, JudgeDataset.id == JudgeResult.dataset_id)
+            .where(JudgeDataset.deleted_at.is_(None))
         ) or 0
 
         # 聚合已执行数据集
@@ -545,12 +561,26 @@ class JudgeService:
             )
         )
         completed = list(ds_result.scalars().all())
+
+        # 每个数据集的实际执行条数 —— metrics 的均值分子只含执行成功用例，
+        # 权重若用 total_cases（含失败/未执行）会与分子口径错配。
+        exec_result = await self.db.execute(
+            select(JudgeResult.dataset_id, func.count())
+            .where(JudgeResult.error_message.is_(None))
+            .group_by(JudgeResult.dataset_id)
+        )
+        exec_counts: dict[uuid.UUID, int] = {
+            row[0]: int(row[1]) for row in exec_result.all()
+        }
+
         overall_sum = 0.0
         weight = 0
         dimension_sums: dict[str, float] = {}
         for ds in completed:
             m = ds.metrics or {}
-            w = ds.total_cases or 0
+            w = exec_counts.get(ds.id, 0)
+            if w == 0:
+                continue
             weight += w
             if "overall" in m:
                 overall_sum += float(m["overall"]) * w

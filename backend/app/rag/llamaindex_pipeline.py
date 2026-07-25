@@ -380,9 +380,18 @@ class _LlamaIndexEmbedAdapter:
 
     def _get_text_embedding(self, text: str) -> list[float]:
         import asyncio
-        return asyncio.get_event_loop().run_until_complete(
-            self._embedder.embed([text])
-        )[0]
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            # 无运行中的事件循环 — 直接同步驱动
+            return asyncio.run(self._embedder.embed([text]))[0]
+        # 已有运行中的事件循环 — run_until_complete 会抛 RuntimeError，
+        # 改为在独立线程的新事件循环中执行并同步等待。
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(asyncio.run, self._embedder.embed([text])).result()[0]
 
     def _get_query_embedding(self, query: str) -> list[float]:
         return self._get_text_embedding(query)

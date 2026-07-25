@@ -149,7 +149,7 @@ async def _check_kb_write_access(
     from app.services.permission_service import PermissionService
 
     permission = PermissionService(db, user, tenant_id=tenant_id)
-    if not await permission.check_function(kb_id):
+    if not await permission.check_write(kb_id):
         raise HTTPException(status_code=403, detail="无权向该知识库上传文档")
 
 

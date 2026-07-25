@@ -148,6 +148,7 @@ class TestOrchestrationService:
             execution_strategy=execution_strategy,
             status="draft",
             created_by=user_id,
+            tenant_id=self._tenant_id,  # RLS WITH CHECK 要求写入行携带当前租户 ID
         )
         self.db.add(plan)
         await self.db.flush()

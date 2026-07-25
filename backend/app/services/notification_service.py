@@ -16,7 +16,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import and_, desc, select
+from sqlalchemy import and_, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.comment import DocumentComment
@@ -268,21 +268,55 @@ class NotificationService:
             for n in result.scalars().all()
         ]
 
-    async def mark_as_read(self, notification_id: str) -> bool:
+    async def count_unread(self, user_id: str) -> int:
+        """统计用户未读通知数量（SQL COUNT，不受列表 limit 截断影响）。
+
+        Args:
+            user_id: 用户 ID 字符串。
+
+        Returns:
+            未读通知总数。
+        """
+        try:
+            user_uid = uuid.UUID(user_id)
+        except (ValueError, TypeError):
+            return 0
+
+        stmt = select(func.count(Notification.id)).where(
+            and_(
+                Notification.user_id == user_uid,
+                Notification.is_read.is_(False),
+            )
+        )
+        stmt = apply_tenant_filter(stmt, Notification, self._tenant_id)
+        result = await self.db.execute(stmt)
+        return int(result.scalar() or 0)
+
+    async def mark_as_read(self, notification_id: str, user_id: str) -> bool:
         """标记通知为已读。
+
+        必须按当前用户过滤 —— 仅按通知 ID + 租户过滤时，同租户用户
+        可持他人通知 ID 越权标记（IDOR），造成他人通知静默丢失。
 
         Args:
             notification_id: 通知 ID 字符串。
+            user_id: 当前用户 ID 字符串（所有权校验）。
 
         Returns:
             是否成功。
         """
         try:
             notif_uid = uuid.UUID(notification_id)
+            user_uid = uuid.UUID(user_id)
         except (ValueError, TypeError):
             return False
 
-        stmt = select(Notification).where(Notification.id == notif_uid)
+        stmt = select(Notification).where(
+            and_(
+                Notification.id == notif_uid,
+                Notification.user_id == user_uid,
+            )
+        )
         stmt = apply_tenant_filter(stmt, Notification, self._tenant_id)
         result = await self.db.execute(stmt)
         notification = result.scalars().first()
@@ -421,6 +455,7 @@ class NotificationService:
             content=content,
             doc_id=doc_id,
             is_read=False,
+            tenant_id=self._tenant_id,  # RLS WITH CHECK 要求写入行携带当前租户 ID
         )
         self.db.add(notification)
         await self.db.flush()
