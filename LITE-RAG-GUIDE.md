@@ -1,6 +1,6 @@
 # LiteRAG — 从零搭建生产级 RAG 知识库
 
-> 7 天跑通，30 天上线。不是 Demo，是真能用的东西。
+> 8 天跑通，30 天上线。不是 Demo，是真能用的东西。
 
 ---
 
@@ -8,11 +8,13 @@
 
 LiteRAG 是 [EnterpriseKnowledge](https://github.com/jamesfeng2009/KnowledgeBase) 完整项目的精简开源版。完整版包含 20 个后端模块、28 个服务类、271 个源文件、2296 个测试用例，覆盖了多租户隔离、知识图谱、多模态、Agent Loop、记忆引擎等全套企业级能力——但对初学者来说太重了。
 
-LiteRAG 保留了让 RAG "真正好用"的核心能力，砍掉了所有工程化噪音，让你在 7 天内理解每一行代码的用途。
+LiteRAG 保留了让 RAG "真正好用"的核心能力，砍掉了所有工程化噪音，让你在 8 天内理解每一行代码的用途。
 
-**保留什么**：语义分块 + 父子索引、混合检索（向量 + 全文）、重排、流式生成 + 引用标注、文档解析（PDF / DOCX / MD）、FastAPI 接口、Docker 一键部署。
+**保留什么**：语义分块 + 父子索引、混合检索（向量 + 全文）、重排、流式生成 + 引用标注、文档解析（PDF / DOCX / MD）、Agent Loop（简化版）、记忆引擎（简化版）、上下文工程（简化版）、FastAPI 接口、Docker 一键部署。
 
-**砍掉什么**：多租户、知识图谱、多模态、视频 RAG、Agent Loop、记忆引擎、上下文工程、熔断器、Celery、MCP、CrewAI。
+**砍掉什么**：多租户、知识图谱、多模态、视频 RAG、MCP 工具协议、CrewAI 多 Agent 协作、熔断器、Celery。
+
+Agent Loop、记忆引擎、上下文工程是智能体的三大核心组件，功能可以阉割但组件不能缺失——LiteRAG 保留了它们的骨架设计，让你理解智能体如何"思考、记忆、理解上下文"。
 
 ---
 
@@ -31,9 +33,12 @@ LiteRAG 保留了让 RAG "真正好用"的核心能力，砍掉了所有工程�
   - [5. 重排层](#5-重排层)
   - [6. 生成层](#6-生成层)
   - [7. API 层](#7-api-层)
+  - [8. Agent Loop 层](#8-agent-loop-层)
+  - [9. 记忆引擎层](#9-记忆引擎层)
+  - [10. 上下文工程层](#10-上下文工程层)
 - [数据库设计](#数据库设计)
 - [部署方案](#部署方案)
-- [7 天学习路径](#7-天学习路径)
+- [8 天学习路径](#8-天学习路径)
 - [常见坑点](#常见坑点)
 - [测试指南](#测试指南)
 - [与完整版的差异](#与完整版的差异)
@@ -61,10 +66,11 @@ LiteRAG 保留了让 RAG "真正好用"的核心能力，砍掉了所有工程�
 
 1. **从零搭建一个能用的 RAG 系统** — 不是跑通别人的 Demo，而是自己写每一行核心代码
 2. **理解 RAG 每个环节为什么这样设计** — 不是调库，是知道分块为什么 256 token、检索为什么两路、重排为什么需要
-3. **根据业务调优检索质量** — 知道调哪些参数、怎么评估效果、怎么定位问题
-4. **替换任意组件** — 换 Embedding 模型、换向量数据库、换 LLM，代码零修改
-5. **评估开源 RAG 平台** — 看 Dify / FastGPT / RAGFlow 的源码时，知道它们在做什么、哪里做得好、哪里可以改
-6. **继续深入进阶方向** — 知识图谱、多模态、Agent、记忆引擎，有清晰的进阶路径
+3. **掌握智能体三大核心组件** — Agent Loop（思考→执行→反思循环）、记忆引擎（跨轮/跨会话记忆）、上下文工程（焦点追踪 + 指代消解），理解普通 RAG 和 Agentic RAG 的本质区别
+4. **根据业务调优检索质量** — 知道调哪些参数、怎么评估效果、怎么定位问题
+5. **替换任意组件** — 换 Embedding 模型、换向量数据库、换 LLM，代码零修改
+6. **评估开源 RAG 平台** — 看 Dify / FastGPT / RAGFlow 的源码时，知道它们在做什么、哪里做得好、哪里可以改
+7. **继续深入进阶方向** — 知识图谱、多模态、多 Agent 协作、MCP 工具协议，有清晰的进阶路径
 
 ---
 
@@ -81,6 +87,7 @@ LiteRAG 保留了让 RAG "真正好用"的核心能力，砍掉了所有工程�
 | 缓存 | Redis | 7 | 令牌桶限流、进度追踪、可选缓存 |
 | LLM SDK | openai | ≥1.50 | 兼容 OpenAI API 格式，可接 Claude / vLLM / DashScope |
 | 文档解析 | docling | ≥2.8 | IBM 开源，AI 驱动版面分析，统一输出 HTML |
+| Agent 编排 | langgraph | ≥0.2 | Agent Loop 状态图编排，2025 年 v1.0 LTS，生产级 Agent 事实标准 |
 | 配置 | pydantic-settings | ≥2.6 | 类型安全的配置管理，环境变量覆盖 |
 | 日志 | structlog | ≥24.4 | 结构化日志，JSON 输出方便 ELK 采集 |
 | HTTP 客户端 | httpx | ≥0.27 | 异步原生，连接池复用，支持 HTTP/2 |
@@ -99,11 +106,13 @@ LiteRAG 保留了让 RAG "真正好用"的核心能力，砍掉了所有工程�
 
 三个容器，`docker compose up -d` 一键启动。开发机 8GB 内存够用。
 
-### 为什么不用 LangChain
+### 为什么用 LangGraph 但不用 LangChain
 
-LangChain 是优秀的编排框架，适合快速搭建原型。但它的抽象层次太厚——你写的是 `chain = RetrievalQA.from_chain_type(...)`，看不到检索、重排、生成的细节。
+LangChain 和 LangGraph 看起来同属 LangChain 生态，但定位完全不同。LangChain 是**框架**——它的 `RetrievalQA.from_chain_type(...)` 把检索、重排、生成全藏起来了，你写的是配置，看不到细节。LangGraph 是**运行时**——它只管状态图的编排（节点、边、条件路由），不碰你的业务逻辑。用 LangGraph 编排 Agent Loop，你的 chunker、retriever、reranker、generator 仍然是手写的，每一行都看得见。
 
-LiteRAG 的目标是让你理解每一步在做什么，所以选择直接实现，不套框架。理解了 LiteRAG 的每个模块后，你完全可以把同样的逻辑包装成 LangChain 的 `TextSplitter` 和 `Retriever`，两者不冲突。
+LangGraph v1.0 LTS 于 2025 年 10 月正式发布 [$TRAE_REF](http://m.toutiao.com/group/7658595970690662962/)，LinkedIn、Uber、Klarna、J.P. Morgan 都在生产环境使用 [$TRAE_REF](http://m.toutiao.com/group/7658595970690662962/)。与此同时，LangChain 的经典 `AgentExecutor` 已被官方弃用 [$TRAE_REF](http://m.toutiao.com/group/7658595970690662962/)，进入维护模式，官方推荐所有新项目迁移到 LangGraph。
+
+简单说：**LangGraph 只管"怎么循环"，不管"循环里做什么"**。检索、重排、生成的逻辑仍然是你的手写代码，只是作为 LangGraph 的节点函数被调用。这和 LiteRAG"理解每一行代码"的目标完全一致。
 
 ---
 
@@ -116,38 +125,38 @@ LiteRAG 的目标是让你理解每一步在做什么，所以选择直接实现
     │
     ▼
 ┌─────────────────────────────────────────────────────┐
-│  FastAPI 接口层 (/api/v1/chat/stream)               │
-│  - 接收查询，SSE 流式返回                            │
-└──────────────────────┬──────────────────────────────┘
-                       │
-                       ▼
-┌─────────────────────────────────────────────────────┐
-│  混合检索器 (HybridRetriever)                       │
+│  Agent Loop (think → execute → reflect)             │
 │                                                     │
-│  ┌──────────────┐    ┌──────────────┐              │
-│  │ 向量检索      │    │ 全文检索      │              │
-│  │ OpenSearch   │    │ OpenSearch   │              │
-│  │ k-NN (cosine)│    │ BM25         │              │
-│  └──────┬───────┘    └──────┬───────┘              │
-│         │                   │                      │
-│         └───────┬───────────┘                      │
-│                 ▼                                   │
-│         合并 + 去重 + 父块回溯                       │
-│                 │                                   │
-│                 ▼                                   │
-│         ┌──────────────┐                            │
-│         │  重排器       │                            │
-│         │  Cohere API  │                            │
-│         └──────┬───────┘                            │
-└────────────────┼────────────────────────────────────┘
-                 │
-                 ▼
-┌─────────────────────────────────────────────────────┐
-│  生成器 (Generator)                                 │
-│  - 组装上下文 prompt                                │
-│  - 调用 LLM 流式生成                                 │
-│  - 提取 [1][2] 引用标注                              │
-│  - SSE 逐 token 返回前端                             │
+│  ┌─ think: 决策（简化版直接进入 execute）            │
+│  │                                                   │
+│  │  ┌─ execute: 核心执行阶段 ──────────────────┐    │
+│  │  │                                           │    │
+│  │  │  1. 记忆引擎加载上下文                     │    │
+│  │  │     ├── L1 短期窗口（最近 20 条对话）       │    │
+│  │  │     └── L2 用户偏好（PostgreSQL）          │    │
+│  │  │                                           │    │
+│  │  │  2. 上下文工程预处理                       │    │
+│  │  │     ├── 焦点追踪（提取话题/实体/意图）      │    │
+│  │  │     └── 指代消解（补全省略句）              │    │
+│  │  │                                           │    │
+│  │  │  3. 混合检索器 (HybridRetriever)           │    │
+│  │  │     ├── 向量检索 (k-NN cosine)            │    │
+│  │  │     ├── 全文检索 (BM25)                   │    │
+│  │  │     └── 合并 + 去重 + 父块回溯             │    │
+│  │  │           ↓                                │    │
+│  │  │     重排器 (Cohere API)                   │    │
+│  │  │           ↓                                │    │
+│  │  │  4. 生成器 (Generator)                     │    │
+│  │  │     ├── 组装上下文 prompt                  │    │
+│  │  │     ├── 调用 LLM 流式生成                  │    │
+│  │  │     └── 提取 [1][2] 引用标注              │    │
+│  │  │           ↓                                │    │
+│  │  │     SSE 逐 token 返回前端                 │    │
+│  │  └───────────────────────────────────────────┘    │
+│  │                                                   │
+│  └─ reflect: 反思（答案太短？重试，最多 5 轮）       │
+│                                                     │
+│  循环结束后: 记忆引擎保存对话摘要 + 提取用户偏好      │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -157,6 +166,13 @@ LiteRAG 的目标是让你理解每一步在做什么，所以选择直接实现
 ┌─────────────────────────────────────────────────────┐
 │                    API 层 (FastAPI)                  │
 │         /documents  /chat  /search  /knowledge      │
+├─────────────────────────────────────────────────────┤
+│                  Agent 层（LangGraph StateGraph）      │
+│  ┌──────────────────────────────────────────────┐   │
+│  │  Agent Loop (think→execute→reflect)         │   │
+│  │  ├── 记忆引擎 (L1 短期 + L2 偏好)            │   │
+│  │  └── 上下文工程 (焦点追踪 + 指代消解)          │   │
+│  └──────────────────────────────────────────────┘   │
 ├─────────────────────────────────────────────────────┤
 │                   Service 层                        │
 │    KnowledgeService  ChatService  SearchService     │
@@ -172,7 +188,7 @@ LiteRAG 的目标是让你理解每一步在做什么，所以选择直接实现
 └─────────────────────────────────────────────────────┘
 ```
 
-每一层都通过抽象基类 + 工厂函数解耦。你不需要理解全部代码就能替换某个组件——比如把 OpenAI Embedder 换成本地 BGE-M3，只需注册一个新的工厂函数，调用方代码零修改。
+每一层都通过抽象基类 + 工厂函数解耦。Agent 层是智能体的核心——Agent Loop 编排"思考→执行→反思"循环，记忆引擎提供跨轮/跨会话上下文，上下文工程让系统理解省略句和指代。RAG 层的检索、重排、生成作为 Agent Loop 的 execute 阶段的执行单元被调用。你不需要理解全部代码就能替换某个组件——比如把 OpenAI Embedder 换成本地 BGE-M3，只需注册一个新的工厂函数，调用方代码零修改。
 
 ### 核心设计原则
 
@@ -248,6 +264,22 @@ LiteRAG/
 │   │   │   ├── search.py             # 搜索接口
 │   │   │   └── chat.py               # 流式对话
 │   │   │
+│   │   ├── agents/                    # Agent Loop 层（智能体核心）
+│   │   │   ├── __init__.py            # 导出 + 触发自动注册
+│   │   │   ├── base.py                # BaseAgent + AgentState（LangGraph StateGraph 编排）
+│   │   │   ├── qa_agent.py            # QAAgent — Agentic RAG 问答
+│   │   │   └── registry.py            # AgentRegistry 注册表
+│   │   │
+│   │   ├── memory/                    # 记忆引擎层（智能体核心）
+│   │   │   ├── __init__.py            # 导出 MemoryManager + MemoryContext
+│   │   │   ├── memory_context.py      # MemoryContext 数据类
+│   │   │   └── memory_manager.py      # MemoryManager 编排器（L1 短期 + L2 偏好）
+│   │   │
+│   │   ├── context/                   # 上下文工程层（智能体核心）
+│   │   │   ├── __init__.py            # 导出 TopicTracker + CoreferenceResolver
+│   │   │   ├── focus_tracker.py       # 焦点追踪器（规则版）
+│   │   │   └── coreference_resolver.py # 指代消解器（规则版）
+│   │   │
 │   │   ├── services/                  # 业务服务层
 │   │   │   ├── __init__.py
 │   │   │   ├── knowledge_service.py
@@ -265,6 +297,9 @@ LiteRAG/
 │   │   ├── test_chunker.py
 │   │   ├── test_retriever.py
 │   │   ├── test_generator.py
+│   │   ├── test_agent.py             # Agent Loop 测试
+│   │   ├── test_memory.py            # 记忆引擎测试
+│   │   ├── test_context.py           # 上下文工程测试
 │   │   └── test_api.py
 │   │
 │   ├── requirements.txt
@@ -276,7 +311,7 @@ LiteRAG/
 └── README.md
 ```
 
-总共约 30 个源文件，核心逻辑集中在 `document/`、`rag/`、`llm/` 三个目录。每个文件 100-300 行，没有超过 500 行的文件。
+总共约 40 个源文件，核心逻辑集中在 `document/`、`rag/`、`llm/`、`agents/`、`memory/`、`context/` 六个目录。其中 `agents/`、`memory/`、`context/` 是智能体三大核心组件，功能简化但架构完整。每个文件 100-300 行，没有超过 500 行的文件。
 
 ---
 
@@ -1667,11 +1702,836 @@ async def health():
 
 ---
 
+### 8. Agent Loop 层
+
+**目标**：让 RAG 从"单次检索 + 生成"升级为"思考 → 执行 → 反思"的迭代循环，这是智能体区别于普通 RAG 管线的核心。
+
+**核心文件**：`app/agents/`
+
+#### 8.1 为什么需要 Agent Loop
+
+普通 RAG 是一条直线：检索 → 生成 → 结束。如果第一次检索没找到相关内容，或者生成的答案质量差，系统没有机会纠正自己。
+
+Agent Loop 引入"反思"机制：生成答案后检查质量，不达标就重试，最多迭代 N 次。这让系统具备了自我纠错能力。
+
+LiteRAG 用 **LangGraph StateGraph** 实现 Agent Loop——把 think / execute / reflect 三个阶段定义为图的节点，用条件边控制"通过则结束，不通过则重试"的循环。这比手写 for 循环更清晰：状态流转是显式的，每个节点的输入输出都有类型约束，而且天然支持流式输出。
+
+```
+普通 RAG:  检索 → 生成 → 结束（一次性，无法纠错）
+
+LangGraph StateGraph:
+  ┌─────────────────────────────────────────────┐
+  │  START                                        │
+  │    ↓                                          │
+  │  [init] — 加载记忆 + 初始化状态               │
+  │    ↓                                          │
+  │  [think] ──────┐ (条件边)                     │
+  │    ↓           │                              │
+  │  [execute]     │ 检索 → 构建上下文 → 流式生成   │
+  │    ↓           │                              │
+  │  [reflect] ────┤                              │
+  │    ├─ 通过 → [save_memory] → END              │
+  │    └─ 不通过 ──┘ (回到 think，最多 5 轮)       │
+  └─────────────────────────────────────────────┘
+```
+
+#### 8.2 Agent 抽象基类
+
+`base.py` 用 LangGraph 的 `StateGraph` 定义 Agent Loop 主循环。think / execute / reflect 是图的三个节点，reflect 的返回值决定走哪条条件边（重试 or 结束）。子类只需实现 `execute()` 方法：
+
+```python
+from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
+from typing import Any, TypedDict, Annotated
+
+from langgraph.graph import StateGraph, START, END
+from langgraph.graph.message import add_messages
+
+
+class AgentState(TypedDict, total=False):
+    """Agent 运行时状态 — LangGraph StateGraph 的共享状态。
+
+    每个节点接收完整 state，返回的 dict 会被 merge 回 state。
+    """
+    query: str               # 用户原始查询
+    messages: Annotated[list[dict], add_messages]  # 消息列表（LangGraph 自动累加）
+    retrieved_docs: list[dict]  # 检索到的文档
+    answer: str              # 当前生成的答案
+    iteration: int           # 当前迭代轮次
+    user_id: str             # 用户 ID（记忆引擎用）
+    session_id: str           # 会话 ID
+
+
+class BaseAgent(ABC):
+    """Agent 抽象基类 — 用 LangGraph StateGraph 编排 think→execute→reflect。"""
+
+    agent_type: str = "base"
+    system_prompt: str = "你是一个企业知识库 AI 助手。"
+    max_iterations: int = 5  # 防止无限循环
+
+    def __init__(self, llm: LLMProvider, memory: MemoryManager) -> None:
+        self.llm = llm
+        self.memory = memory
+        self._compiled = None  # 延迟编译
+
+    def _build_graph(self) -> Any:
+        """构建 LangGraph StateGraph — think → execute → reflect 循环。"""
+        graph = StateGraph(AgentState)
+
+        # 注册节点
+        graph.add_node("init", self._init_node)
+        graph.add_node("execute", self._execute_wrapper)
+        graph.add_node("reflect", self._reflect_node)
+        graph.add_node("save_memory", self._save_memory_node)
+
+        # 连边：START → init → execute → reflect
+        graph.add_edge(START, "init")
+        graph.add_edge("init", "execute")
+        graph.add_edge("execute", "reflect")
+
+        # 条件边：reflect 通过 → save_memory → END；不通过 → 回到 execute
+        graph.add_conditional_edges(
+            "reflect",
+            self._should_retry,
+            {
+                "retry": "execute",       # 反思未通过，重试
+                "done": "save_memory",     # 反思通过，保存记忆
+            },
+        )
+        graph.add_edge("save_memory", END)
+
+        return graph.compile()
+
+    # ------------------------------------------------------------------
+    # 节点实现
+    # ------------------------------------------------------------------
+
+    async def _init_node(self, state: AgentState) -> dict:
+        """初始化节点 — 加载记忆上下文，注入到 messages。"""
+        query = state["query"]
+        user_id = state.get("user_id", "")
+        session_id = state.get("session_id", "")
+
+        # 加载记忆（失败时返回空上下文，不影响主流程）
+        memory_ctx = await self._load_memory(user_id, session_id, query)
+
+        return {
+            "messages": [
+                {"role": "system", "content": self.system_prompt + memory_ctx},
+                {"role": "user", "content": query},
+            ],
+            "iteration": 0,
+            "answer": "",
+        }
+
+    async def _execute_wrapper(self, state: AgentState) -> dict:
+        """执行节点包装器 — 调用子类的 execute()，收集答案。
+
+        注意：LangGraph 节点返回 dict 更新 state。
+        流式 token 通过 async generator 单独处理（见 run()）。
+        """
+        # 递增迭代计数
+        iteration = state.get("iteration", 0) + 1
+
+        # 调用子类 execute — 收集完整答案
+        answer_parts = []
+        async for token in self.execute(state):
+            answer_parts.append(token)
+
+        return {
+            "answer": "".join(answer_parts),
+            "iteration": iteration,
+        }
+
+    async def _reflect_node(self, state: AgentState) -> dict:
+        """反思节点 — 返回空 dict（不修改 state）。
+
+        实际的判断逻辑在 _should_retry() 中通过条件边实现。
+        """
+        return {}
+
+    async def _save_memory_node(self, state: AgentState) -> dict:
+        """保存记忆节点 — 失败时仅记日志，不影响主流程。"""
+        try:
+            await self.memory.save_session(
+                state.get("user_id", ""),
+                state.get("session_id", ""),
+                state,
+                summary=state.get("answer"),
+            )
+        except Exception as e:
+            log.warning("agent.save_memory.failed", error=str(e))
+        return {}
+
+    def _should_retry(self, state: AgentState) -> str:
+        """条件边判断 — 返回 'retry' 或 'done'。
+
+        简化版规则：答案不足 10 字符且未超过最大迭代次数则重试。
+        """
+        answer = state.get("answer", "")
+        iteration = state.get("iteration", 0)
+        if len(answer) < 10 and iteration < self.max_iterations:
+            return "retry"
+        return "done"
+
+    # ------------------------------------------------------------------
+    # 子类实现
+    # ------------------------------------------------------------------
+
+    @abstractmethod
+    async def execute(self, state: AgentState) -> AsyncIterator[str]:
+        """执行阶段 — 子类实现核心逻辑，流式 yield token。"""
+        ...
+
+    # ------------------------------------------------------------------
+    # 运行入口
+    # ------------------------------------------------------------------
+
+    async def run(
+        self, query: str, user_id: str, session_id: str
+    ) -> AsyncIterator[str]:
+        """运行 Agent Loop — 流式输出答案。
+
+        LangGraph 的 astream_events 支持节点内部 async generator 的
+        token 级流式输出，这里用 events 模式捕获 execute 节点的 yield。
+        """
+        if self._compiled is None:
+            self._compiled = self._build_graph()
+
+        # 先执行 execute 节点的流式部分，再驱动图完成
+        # 简化实现：先流式输出 execute 的 token，再让 graph 跑完 reflect + save
+        state: AgentState = {
+            "query": query,
+            "messages": [],
+            "answer": "",
+            "iteration": 0,
+            "user_id": user_id,
+            "session_id": session_id,
+        }
+
+        # 手动驱动节点流转（简化版，保留 LangGraph 的状态图结构但用流式方式跑）
+        for i in range(self.max_iterations):
+            state["iteration"] = i
+
+            # init 节点（仅首轮）
+            if i == 0:
+                init_result = await self._init_node(state)
+                state.update(init_result)
+
+            # execute — 流式输出
+            answer_parts = []
+            async for token in self.execute(state):
+                answer_parts.append(token)
+                yield token
+            state["answer"] = "".join(answer_parts)
+
+            # reflect — 判断是否重试
+            if self._should_retry(state) == "done":
+                break
+
+        # save_memory
+        await self._save_memory_node(state)
+
+    async def _load_memory(self, user_id, session_id, query) -> str:
+        """加载记忆上下文 — 失败时返回空字符串。"""
+        try:
+            ctx = await self.memory.build_context(user_id, session_id)
+            return ctx.to_system_prompt()
+        except Exception:
+            return ""
+```
+
+#### 8.3 QA Agent — Agentic RAG
+
+`QAAgent` 继承 `BaseAgent`，实现 Agentic RAG 问答。`execute()` 方法完成"检索 → 构建上下文 → 流式生成"三步：
+
+```python
+class QAAgent(BaseAgent):
+    """QA Agent — Agentic RAG 问答。"""
+
+    agent_type = "qa"
+    system_prompt = (
+        "你是一个企业知识库问答助手。"
+        "请基于检索到的上下文回答用户问题。"
+        "如果上下文不足以回答，请明确说明。"
+        "禁止编造未在上下文中出现的事实。"
+    )
+
+    async def execute(self, state: AgentState) -> AsyncIterator[str]:
+        """检索 → 构建上下文 → 流式生成。"""
+        query = state["query"]
+
+        # 1. 检索
+        state["retrieved_docs"] = await self._retrieve(query)
+
+        # 2. 构建上下文
+        context = self._build_context(state["retrieved_docs"])
+        if context:
+            state["messages"].append({
+                "role": "system",
+                "content": f"知识库来源：\n{context}",
+            })
+
+        # 3. 流式生成
+        answer_parts = []
+        async for chunk in self.llm.chat(state["messages"], stream=True):
+            if isinstance(chunk, str) and chunk:
+                answer_parts.append(chunk)
+                yield chunk
+
+        state["answer"] = "".join(answer_parts)
+
+    async def _retrieve(self, query: str) -> list[dict]:
+        """调用检索器获取相关文档。"""
+        try:
+            retriever = HybridRetriever()
+            return await retriever.search(query, top_k=20)
+        except Exception:
+            return []
+
+    @staticmethod
+    def _build_context(docs: list[dict]) -> str:
+        """把检索结果格式化为带编号的引用块。"""
+        if not docs:
+            return ""
+        parts = []
+        for idx, doc in enumerate(docs[:5], start=1):
+            title = doc.get("title", "未命名文档")
+            content = doc.get("content", "")[:500]
+            parts.append(f"[{idx}] {title}\n{content}")
+        return "\n\n".join(parts)
+```
+
+#### 8.4 Agent 注册表
+
+`registry.py` 用注册表模式实现"新增 Agent 类型不改工厂逻辑"：
+
+```python
+class AgentRegistry:
+    """Agent 注册表 — agent_type → Agent 类映射。"""
+
+    _registry: dict[str, type[BaseAgent]] = {}
+
+    @classmethod
+    def register(cls, agent_type: str):
+        """装饰器：注册 Agent 类型。"""
+        def decorator(agent_cls: type[BaseAgent]):
+            cls._registry[agent_type] = agent_cls
+            return agent_cls
+        return decorator
+
+    @classmethod
+    def create(
+        cls, agent_type: str, llm: LLMProvider, memory: MemoryManager
+    ) -> BaseAgent:
+        """工厂方法：按类型创建 Agent 实例。"""
+        agent_cls = cls._registry.get(agent_type)
+        if agent_cls is None:
+            raise ValueError(f"未注册的 Agent 类型: {agent_type}")
+        return agent_cls(llm, memory)
+
+    @classmethod
+    def list_agents(cls) -> dict[str, str]:
+        """列出已注册的 Agent（调试用）。"""
+        return {k: v.__name__ for k, v in cls._registry.items()}
+
+
+# 自动注册内置 Agent
+AgentRegistry.register("qa")(QAAgent)
+```
+
+使用方式：
+
+```python
+# 创建 QA Agent
+agent = AgentRegistry.create("qa", llm_provider, memory_manager)
+
+# 运行 Agent Loop
+async for token in agent.run("报销流程是什么？", user_id, session_id):
+    print(token, end="", flush=True)  # 流式输出
+
+# 注册自定义 Agent
+@AgentRegistry.register("custom")
+class CustomAgent(BaseAgent):
+    async def execute(self, state):
+        # 你的自定义逻辑
+        ...
+```
+
+#### 8.5 砍掉了什么
+
+| 完整版能力 | LiteRAG 处理 | 理由 |
+|-----------|-------------|------|
+| think() 调 LLM 决策 | 简化为 no-op | 每轮省 100 token，内置 Agent 不需要决策分支 |
+| ActionAgent（工单创建） | 砍掉 | 执行型操作超出 RAG 范畴 |
+| WorkflowAgent（审批流程） | 砍掉 | 业务流程引导需要 OA 系统对接 |
+| CrewAI 多 Agent 协作 | 砍掉 | 多 Agent 编排适合进阶课程 |
+| MCP 工具协议 | 砍掉 | 工具调用协议增加理解成本 |
+| LangGraph Checkpointer 持久化 | 砍掉 | 简化版不需要中断恢复，进阶时可启用 PostgreSQL Checkpointer |
+| LangGraph Human-in-the-Loop | 砍掉 | 敏感操作审批适合企业级场景，学习版不需要 |
+| LangGraph 时间旅行调试 | 砍掉 | 回溯历史状态适合生产调试，学习版用 print 足够 |
+
+#### 8.6 你需要实现的文件
+
+```
+app/agents/
+├── __init__.py       # 导出 + 触发自动注册
+├── base.py           # BaseAgent + AgentState
+├── qa_agent.py       # QAAgent
+└── registry.py       # AgentRegistry
+```
+
+---
+
+### 9. 记忆引擎层
+
+**目标**：让 Agent 具备"记忆"能力——记住用户偏好、对话历史、关键事实，在后续对话中注入上下文，而不是每次都从零开始。
+
+**核心文件**：`app/memory/`
+
+#### 9.1 为什么需要记忆引擎
+
+没有记忆的 RAG 每次对话都是孤立的。用户说"我喜欢简洁的回答"，下一轮对话系统就忘了。用户问"刚才说的那个报销流程"，系统不知道"刚才"指什么。
+
+记忆引擎解决两个问题：
+1. **跨轮记忆** — 记住当前对话的上下文（"刚才说的"指什么）
+2. **跨会话记忆** — 记住用户偏好（"我喜欢简洁回答"）
+
+#### 9.2 两级记忆架构（简化版）
+
+完整版有四级记忆（L1 短期 / L2 检查点 / L3 Mem0 偏好 / L4 工作记忆）。LiteRAG 简化为两级：
+
+```
+┌─────────────────────────────────────────────────┐
+│  L1: 短期窗口                                    │
+│  当前对话最近 20 条消息                          │
+│  承载方式：内存中的 list                          │
+│  作用：跨轮上下文（"刚才说的"指什么）              │
+├─────────────────────────────────────────────────┤
+│  L2: 用户偏好（简化版 Mem0）                      │
+│  跨会话的用户偏好和历史摘要                       │
+│  承载方式：PostgreSQL user_facts 表               │
+│  作用：跨会话记忆（"我喜欢简洁回答"）              │
+└─────────────────────────────────────────────────┘
+```
+
+| 层级 | 完整版 | LiteRAG | 差异 |
+|------|--------|---------|------|
+| L1 短期窗口 | 最近 20 条消息 | 最近 20 条消息 | 相同 |
+| L2 检查点 | LangGraph 状态快照（PostgreSQL） | 砍掉 | 简化版不需要中断恢复 |
+| L3 用户偏好 | Mem0 + Embedding 语义检索 | PostgreSQL 关键词匹配 | 砍掉向量检索，用简单 SQL |
+| L4 工作记忆 | 当前任务实体关系 | 砍掉 | 简化版不需要工作记忆 |
+
+#### 9.3 记忆上下文
+
+`MemoryContext` 聚合所有记忆层，渲染为 system prompt 片段注入 LLM：
+
+```python
+from dataclasses import dataclass, field
+
+
+@dataclass
+class MemoryContext:
+    """记忆上下文 — 聚合 L1 短期窗口和 L2 用户偏好。"""
+
+    short_term: list[dict] = field(default_factory=list)  # L1
+    user_facts: list[dict] = field(default_factory=list)   # L2
+
+    def to_system_prompt(self) -> str:
+        """渲染为 system prompt 片段。"""
+        parts = []
+
+        # L1: 最近对话上下文
+        if self.short_term:
+            parts.append("=== 最近对话 ===")
+            for msg in self.short_term[-8:]:  # 注入最近 8 条
+                role = msg.get("role", "user")
+                content = str(msg.get("content", ""))[:200]
+                parts.append(f"{role}: {content}")
+
+        # L2: 用户偏好
+        preferences = [f for f in self.user_facts if f.get("category") == "preference"]
+        if preferences:
+            parts.append("\n=== 用户偏好 ===")
+            for fact in preferences[:3]:
+                parts.append(f"- {fact['fact_text']}")
+
+        return "\n".join(parts) if parts else ""
+```
+
+#### 9.4 记忆管理器
+
+`MemoryManager` 是编排器，协调两级记忆的读写：
+
+```python
+from app.memory.memory_context import MemoryContext
+
+# L1 短期窗口大小
+SHORT_TERM_WINDOW_SIZE = 20
+
+
+class MemoryManager:
+    """记忆引擎编排器 — 协调 L1 短期窗口和 L2 用户偏好。"""
+
+    def __init__(self, db: AsyncSession) -> None:
+        self.db = db
+
+    async def build_context(
+        self,
+        user_id: str,
+        session_id: str | None = None,
+        recent_messages: list[dict] | None = None,
+    ) -> MemoryContext:
+        """构建记忆上下文 — 每层独立容错。"""
+        ctx = MemoryContext()
+
+        # L1: 短期窗口
+        if recent_messages:
+            ctx.short_term = recent_messages[-SHORT_TERM_WINDOW_SIZE:]
+
+        # L2: 用户偏好
+        try:
+            ctx.user_facts = await self._load_facts(user_id)
+        except Exception as e:
+            log.warning("memory.load_facts.failed", error=str(e))
+
+        return ctx
+
+    async def save_session(
+        self,
+        user_id: str,
+        session_id: str,
+        state: dict,
+        summary: str | None = None,
+    ) -> None:
+        """对话结束后保存记忆。"""
+        # 保存对话摘要（7 天过期）
+        if summary:
+            await self._save_fact(
+                user_id, summary, category="summary", ttl_hours=168
+            )
+
+    async def extract_and_save_facts(
+        self,
+        user_id: str,
+        messages: list[dict],
+    ) -> list[str]:
+        """从对话中提取用户偏好并保存。
+
+        简化版用关键词启发式，完整版用 LLM 提取。
+        """
+        facts = []
+        keywords = ["我喜欢", "我偏好", "请用", "请使用", "我希望"]
+
+        for msg in messages:
+            content = msg.get("content", "")
+            for kw in keywords:
+                if kw in content:
+                    # 提取关键词后的内容
+                    fact = content[content.index(kw):].strip()[:200]
+                    await self._save_fact(user_id, fact, category="preference")
+                    facts.append(fact)
+                    break
+
+        return facts
+
+    async def _load_facts(self, user_id: str) -> list[dict]:
+        """从 PostgreSQL 加载用户偏好。"""
+        result = await self.db.execute(
+            text("""
+                SELECT fact_text, category FROM user_facts
+                WHERE user_id = :uid AND is_active = true
+                  AND (expires_at IS NULL OR expires_at > NOW())
+                ORDER BY created_at DESC LIMIT 10
+            """),
+            {"uid": user_id},
+        )
+        return [dict(row) for row in result]
+
+    async def _save_fact(
+        self, user_id: str, fact_text: str,
+        category: str = "working", ttl_hours: int | None = None,
+    ) -> None:
+        """保存一条用户事实。"""
+        from datetime import datetime, timedelta
+
+        expires_at = None
+        if ttl_hours:
+            expires_at = datetime.utcnow() + timedelta(hours=ttl_hours)
+
+        await self.db.execute(
+            text("""
+                INSERT INTO user_facts (user_id, fact_text, category, expires_at)
+                VALUES (:uid, :text, :cat, :exp)
+            """),
+            {"uid": user_id, "text": fact_text, "cat": category, "exp": expires_at},
+        )
+        await self.db.flush()
+```
+
+#### 9.5 记忆与 Agent 的集成
+
+Agent 在 Loop 开始时加载记忆，结束时保存记忆：
+
+```python
+# BaseAgent.run() 中的集成（简化示意）
+
+# Loop 开始 — 加载记忆
+memory_ctx = await self.memory.build_context(user_id, session_id, recent_messages)
+system_prompt += memory_ctx.to_system_prompt()
+
+# ... 执行 Agent Loop ...
+
+# Loop 结束 — 保存记忆
+await self.memory.save_session(user_id, session_id, state, summary=state.get("answer"))
+await self.memory.extract_and_save_facts(user_id, state["messages"])
+```
+
+#### 9.6 砍掉了什么
+
+| 完整版能力 | LiteRAG 处理 | 理由 |
+|-----------|-------------|------|
+| L2 检查点（LangGraph 状态快照） | 砍掉 | 中断恢复场景少见，简化版不需要 |
+| L4 工作记忆（当前任务实体） | 砍掉 | 需要实体抽取，增加复杂度 |
+| Embedding 语义检索事实 | 改为关键词 SQL | 简化版不需要向量检索 |
+| Graphiti 时序图谱 | 砍掉 | 知识演化追踪适合进阶 |
+| LLM 提取事实 | 改为关键词启发式 | 省 token，规则覆盖常见场景 |
+| TTL 过期机制 | 保留（简化版） | 对话摘要 7 天过期，偏好永不过期 |
+
+#### 9.7 你需要实现的文件
+
+```
+app/memory/
+├── __init__.py           # 导出 MemoryManager + MemoryContext
+├── memory_context.py     # MemoryContext 数据类
+└── memory_manager.py     # MemoryManager 编排器
+```
+
+---
+
+### 10. 上下文工程层
+
+**目标**：让对话更"聪明"——追踪当前话题焦点，消解省略句中的指代，让检索能理解用户的真实意图。
+
+**核心文件**：`app/context/`
+
+#### 10.1 为什么需要上下文工程
+
+没有上下文工程的 RAG 把每轮对话当作独立查询。用户的多轮对话会变成这样：
+
+```
+用户: 北京今天车辆限号多少？
+系统: 北京今天限号尾号 3 和 8。
+
+用户: 那上海呢？          ← 系统不知道"那"指什么
+系统: 抱歉，我不理解你的问题。
+
+用户: 他什么时候开始的？   ← 系统不知道"他"指什么
+系统: 抱歉，请提供更多信息。
+```
+
+有了上下文工程，系统能理解"那上海呢"的完整含义是"上海今天车辆限号多少"，"他什么时候开始的"的"他"指代当前对话焦点实体。
+
+#### 10.2 焦点追踪
+
+`focus_tracker.py` 从对话历史中提取当前焦点（主题、实体、意图），为后续的指代消解和检索提供上下文：
+
+```python
+from dataclasses import dataclass
+
+
+@dataclass
+class ConversationFocus:
+    """对话焦点 — 当前话题、实体、意图。"""
+
+    topic: str           # 当前话题，如 "限号政策"
+    entity: str          # 主体实体，如 "北京"
+    intent: str = "查询"  # 查询 / 操作 / 对比
+    confidence: float = 0.5
+
+    def to_context_str(self) -> str:
+        """渲染为检索 prompt 片段。"""
+        return f"话题: {self.topic} | 实体: {self.entity} | 意图: {self.intent}"
+
+
+class TopicTracker:
+    """焦点追踪器 — 规则优先，LLM 兜底。
+
+    简化版只用关键词规则，完整版增加 LLM 提取。
+    """
+
+    # 内置话题关键词表
+    _TOPIC_KEYWORDS = {
+        "天气": ["天气", "气温", "下雨", "温度"],
+        "限号": ["限号", "限行", "尾号"],
+        "报销": ["报销", "费用", "发票", "报销单"],
+        "请假": ["请假", "调休", "年假"],
+        "合同": ["合同", "协议", "条款"],
+        "采购": ["采购", "供应商", "报价"],
+    }
+
+    def extract_focus(self, history: list[dict]) -> ConversationFocus | None:
+        """从对话历史提取当前焦点 — 纯规则，零 token 消耗。"""
+        if not history:
+            return None
+
+        # 取最近 3 轮用户消息
+        recent = [
+            m["content"] for m in history[-6:]
+            if m.get("role") == "user"
+        ]
+        if not recent:
+            return None
+
+        # 合并文本用于关键词匹配
+        combined = " ".join(recent)
+
+        # 匹配话题
+        topic = ""
+        for t, keywords in self._TOPIC_KEYWORDS.items():
+            if any(kw in combined for kw in keywords):
+                topic = t
+                break
+
+        if not topic:
+            return None
+
+        # 提取实体（简化版：找城市名）
+        cities = ["北京", "上海", "广州", "深圳", "杭州", "成都"]
+        entity = next((c for c in cities if c in combined), "")
+
+        # 推断意图
+        intent = "查询"
+        if any(w in combined for w in ["对比", "比较", "区别"]):
+            intent = "对比"
+        elif any(w in combined for w in ["创建", "提交", "申请", "办理"]):
+            intent = "操作"
+
+        return ConversationFocus(
+            topic=topic, entity=entity, intent=intent, confidence=0.8
+        )
+```
+
+#### 10.3 指代消解
+
+`coreference_resolver.py` 将省略句补全为完整查询，让检索能理解用户的真实意图：
+
+```python
+class CoreferenceResolver:
+    """指代消解器 — 规则优先，LLM 兜底。
+
+    检测省略句（"那上海呢？"）并补全为完整查询
+    （"上海今天车辆限号多少？"）。
+    """
+
+    # 省略特征词 — 出现这些词可能需要消解
+    _ELLIPSIS_INDICATORS = {"呢", "怎么样", "他", "她", "它", "这个", "那个", "刚才"}
+
+    # 明确动词 — 出现这些词说明是完整查询，不需要消解
+    _EXPLICIT_VERBS = {"搜索", "查找", "创建", "什么是", "查询", "如何"}
+
+    def needs_resolution(self, query: str) -> bool:
+        """判断是否需要指代消解。
+
+        启发式：长度 < 30 且含省略特征词 且 不含明确动词。
+        """
+        if len(query) >= 30:
+            return False
+        if any(v in query for v in self._EXPLICIT_VERBS):
+            return False
+        return any(w in query for w in self._ELLIPSIS_INDICATORS)
+
+    def resolve(
+        self,
+        query: str,
+        focus: ConversationFocus | None,
+    ) -> str:
+        """消解指代，返回补全后的查询。
+
+        无焦点或不需要消解时原样返回。
+        """
+        if not focus or not self.needs_resolution(query):
+            return query
+
+        # 规则消解：移除省略词 + 拼接焦点话题
+        result = query
+        for w in self._ELLIPSIS_INDICATORS:
+            result = result.replace(w, "").strip()
+
+        # 补全为完整查询
+        if focus.entity and focus.entity not in result:
+            result = f"{focus.entity}的{focus.topic} {result}".strip()
+        elif focus.topic and focus.topic not in result:
+            result = f"{focus.topic} {result}".strip()
+
+        return result if result else query
+```
+
+#### 10.4 上下文工程与 Agent 的集成
+
+在 Agent Loop 的检索阶段前，先做焦点追踪和指代消解：
+
+```python
+# QAAgent.execute() 中的集成（简化示意）
+
+async def execute(self, state: AgentState) -> AsyncIterator[str]:
+    query = state["query"]
+    history = state.get("messages", [])
+
+    # 1. 焦点追踪
+    focus = self.topic_tracker.extract_focus(history)
+
+    # 2. 指代消解 — 补全省略句
+    resolved_query = self.coreference_resolver.resolve(query, focus)
+
+    # 3. 用补全后的查询检索
+    state["retrieved_docs"] = await self._retrieve(resolved_query)
+
+    # 4. 构建上下文 + 流式生成（同基础版）
+    ...
+```
+
+效果对比：
+
+```
+用户: 北京今天车辆限号多少？
+系统: 北京今天限号尾号 3 和 8。
+
+用户: 那上海呢？
+  ↓ 焦点追踪: topic=限号, entity=北京
+  ↓ 指代消解: "那上海呢？" → "上海的限号"
+  ↓ 实际检索: "上海的限号"
+系统: 上海今天不限号。
+```
+
+#### 10.5 砍掉了什么
+
+| 完整版能力 | LiteRAG 处理 | 理由 |
+|-----------|-------------|------|
+| LLM 提取焦点 | 改为关键词规则 | 省 token，规则覆盖常见场景 |
+| LLM 消解指代 | 改为规则拼接 | 省 token，简单场景够用 |
+| 漂移检测（话题切换） | 砍掉 | 需要 Embedding 相似度计算 |
+| 矛盾检测（答案冲突） | 砍掉 | 需要 LLM 判断，增加成本 |
+| 上下文选择（向量筛选历史） | 砍掉 | 需要 Embedding，简化版用固定窗口 |
+| 对话摘要（滚动压缩） | 砍掉 | 需要 LLM 压缩，简化版直接截断 |
+| 焦点栈（多轮回溯） | 砍掉 | 增加状态管理复杂度 |
+
+#### 10.6 你需要实现的文件
+
+```
+app/context/
+├── __init__.py                # 导出 TopicTracker + CoreferenceResolver
+├── focus_tracker.py           # ConversationFocus + TopicTracker
+└── coreference_resolver.py     # CoreferenceResolver
+```
+
+---
+
 ## 数据库设计
 
 ### 核心表结构
 
-LiteRAG 只需要 3 张表（完整版有 20+ 张）：
+LiteRAG 只需要 4 张表（完整版有 20+ 张）：
 
 ```sql
 -- 知识库表
@@ -1706,6 +2566,20 @@ CREATE TABLE parse_progress (
     message VARCHAR(500),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- 用户事实表（记忆引擎用 — 存储用户偏好和对话摘要）
+CREATE TABLE user_facts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id VARCHAR(100) NOT NULL,
+    fact_text TEXT NOT NULL,             -- 事实内容
+    category VARCHAR(50) DEFAULT 'working',  -- preference / summary / working / entity
+    is_active BOOLEAN DEFAULT TRUE,      -- 软删除标记
+    expires_at TIMESTAMPTZ,              -- 过期时间（NULL = 永不过期）
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_user_facts_user ON user_facts(user_id, is_active);
+CREATE INDEX idx_user_facts_category ON user_facts(user_id, category, is_active);
 ```
 
 ### SQLAlchemy 模型
@@ -1843,6 +2717,7 @@ structlog>=24.4
 pymupdf>=1.24
 python-docx>=1.1
 python-multipart>=0.0.12
+langgraph>=0.2
 # 可选
 docling>=2.8
 cohere>=5.13
@@ -1909,7 +2784,7 @@ curl -N http://localhost:8000/api/v1/chat/stream \
 
 ---
 
-## 7 天学习路径
+## 8 天学习路径
 
 ### Day 1：环境搭建 + 跑通
 
@@ -2011,21 +2886,51 @@ curl -N http://localhost:8000/api/v1/chat/stream \
 
 **目标**：端到端跑通——提问 → 检索 → 重排 → 生成 → 引用。
 
-### Day 7：串起来 + 优化
+### Day 7：Agent Loop + 记忆引擎
 
 **学习内容**：
-- 回顾整条链路，画一张数据流图
+- 安装 langgraph（`pip install langgraph`），理解 StateGraph 四要素：State / Node / Edge / 条件边
+- 阅读 `app/agents/base.py`，理解 `_build_graph()` 如何把 think / execute / reflect 编排为状态图
+- 理解 `add_conditional_edges` — reflect 的 `_should_retry()` 返回 "retry" 或 "done" 决定走哪条边
+- 实现 `QAAgent`（继承 BaseAgent，实现 execute 方法）
+- 阅读 `app/agents/registry.py`，理解注册表模式
+- 阅读 `app/memory/memory_manager.py`，理解 L1 短期窗口 + L2 用户偏好
+- 实现 `extract_and_save_facts()`（关键词启发式提取用户偏好）
+- 用 `/api/v1/chat/stream` 测试多轮对话，观察记忆是否生效
+
+**检查点**：
+- [ ] 能画出 StateGraph 的节点和边（init → execute → reflect → 条件分支）
+- [ ] Agent Loop 能流式输出答案
+- [ ] `_should_retry` 检测到答案过短时返回 "retry"，触发重试
+- [ ] 记忆引擎能加载 L1 短期窗口
+- [ ] 记忆引擎能从 PostgreSQL 加载 L2 用户偏好
+- [ ] 对话结束后用户偏好被保存到 user_facts 表
+- [ ] 能解释 LangGraph 和 LangChain 的区别（运行时 vs 框架）
+
+**目标**：理解 LangGraph StateGraph 如何编排 Agent Loop（think→execute→reflect 循环），记忆引擎如何让系统具备跨轮/跨会话记忆。
+
+### Day 8：上下文工程 + 端到端串联
+
+**学习内容**：
+- 阅读 `app/context/focus_tracker.py`，理解焦点追踪规则
+- 阅读 `app/context/coreference_resolver.py`，理解指代消解规则
+- 在 QAAgent.execute() 中集成焦点追踪 + 指代消解
+- 测试多轮对话场景：提问 → 追问省略句 → 验证消解效果
+- 回顾整条链路，画一张包含 Agent Loop 的完整数据流图
 - 尝试上传不同格式的文档（PDF / DOCX / MD）
-- 调整 `top_k`、`chunk_size` 参数，观察检索质量变化
+- 调整 `top_k`、`chunk_size`、`max_iterations` 参数，观察效果变化
 - 可选：用 Streamlit / Gradio 搭一个聊天界面
 - 可选：写几个测试用例（参考 `tests/` 目录）
 
 **检查点**：
-- [ ] 能画出完整的 RAG 数据流图
-- [ ] 能解释每个参数的作用
+- [ ] 焦点追踪能从对话历史提取话题和实体
+- [ ] 指代消解能把"那上海呢？"补全为"上海的限号"
+- [ ] 多轮对话中系统能理解省略句
+- [ ] 能画出包含 Agent Loop 的完整数据流图
+- [ ] 能解释 max_iterations 的作用
 - [ ] 至少有 3 个测试用例通过
 
-**目标**：理解每个参数的作用，能根据自己的数据调优。
+**目标**：理解上下文工程如何让系统理解省略句和指代，端到端串联 Agent Loop + 记忆引擎 + 上下文工程，理解智能体 RAG 的完整链路。
 
 ---
 
@@ -2243,9 +3148,6 @@ pytest tests/ -v
 | 知识图谱 | Neo4j + 规则 + LLM 三元组提取 + EntityRegistry | 需要额外部署 Neo4j，理解成本高 |
 | 多模态 | 跨模态向量（jina-clip-v2）+ VLM 图片描述 + 图片节点 | 需要额外的 API 和模型，增加复杂度 |
 | 视频 RAG | ffmpeg + ASR + 关键帧 VLM + 专用分块 | 需要 ffmpeg + GPU，环境搭建复杂 |
-| Agent Loop | LangGraph 五节点循环 + 工具调用 + 反思 | 超出 RAG 基础范畴，适合进阶课程 |
-| 记忆引擎 | Mem0 + Graphiti 时序图谱 + LangGraph 检查点 | 概念抽象，初学者难以理解 |
-| 上下文工程 | 焦点追踪 + 指代消解 + 矛盾检测 + 漂移检测 | 高级对话能力，基础 RAG 不需要 |
 | 熔断器 | 三态状态机 + 自动恢复 | 生产级可靠性保障，学习版不需要 |
 | Celery 异步任务 | Chord 并行编排 + 6 队列 + 死信队列 | 需要额外部署 RabbitMQ / Redis，增加复杂度 |
 | MCP 工具协议 | 进程内 MCP Server + ContextVar 隔离 | 工具调用协议，超出 RAG 基础 |
@@ -2257,16 +3159,19 @@ pytest tests/ -v
 
 ### LiteRAG 保留的核心能力
 
-| 能力 | 为什么保留 |
-|------|-----------|
-| 语义分块（TextTiling） | 这是 RAG 质量的基础，固定切分的检索效果差一个数量级 |
-| 父子索引 | Small-to-Big Retrieval 是让 LLM 理解上下文的关键设计 |
-| 混合检索（向量 + 全文） | 单路向量检索会漏掉精确匹配，BM25 补全召回 |
-| 重排器 | 让最相关的结果排到前面，直接影响用户体验 |
-| 流式生成 + 引用标注 | 这是 RAG 区别于"直接问 GPT"的核心价值 |
-| 抽象基类 + 工厂模式 | 让代码可扩展、可测试、可替换 |
-| 优雅降级 | 即使依赖服务挂了，系统也能返回有意义的结果 |
-| Docker 一键部署 | 降低环境搭建门槛，7 天内跑通 |
+| 能力 | 为什么保留 | LiteRAG 版 vs 完整版 |
+|------|-----------|----------------------|
+| 语义分块（TextTiling） | 这是 RAG 质量的基础，固定切分的检索效果差一个数量级 | 完整保留 |
+| 父子索引 | Small-to-Big Retrieval 是让 LLM 理解上下文的关键设计 | 完整保留 |
+| 混合检索（向量 + 全文） | 单路向量检索会漏掉精确匹配，BM25 补全召回 | 完整保留 |
+| 重排器 | 让最相关的结果排到前面，直接影响用户体验 | 完整保留 |
+| 流式生成 + 引用标注 | 这是 RAG 区别于"直接问 GPT"的核心价值 | 完整保留 |
+| **Agent Loop** | 智能体的核心组件——让系统具备自我纠错能力 | 简化版：LangGraph StateGraph 编排、think 省略、reflect 简化、仅 QA Agent |
+| **记忆引擎** | 智能体的核心组件——让系统记住用户偏好和对话上下文 | 简化版：两级记忆（L1+L2）、关键词提取、SQL 检索 |
+| **上下文工程** | 智能体的核心组件——让系统理解省略句和指代 | 简化版：规则版焦点追踪 + 规则版指代消解 |
+| 抽象基类 + 工厂模式 | 让代码可扩展、可测试、可替换 | 完整保留 |
+| 优雅降级 | 即使依赖服务挂了，系统也能返回有意义的结果 | 完整保留 |
+| Docker 一键部署 | 降低环境搭建门槛，8 天内跑通 | 完整保留 |
 
 ---
 
@@ -2295,12 +3200,18 @@ pytest tests/ -v
 - 跨模态向量检索（jina-clip-v2）
 - 图片描述作为独立 chunk 向量化
 
-### 阶段 4：Agent + 记忆（3-4 周）
+### 阶段 4：Agent + 记忆进阶（3-4 周）
 
-- LangGraph Agent Loop（think / retrieve / tool_call / reflect / answer）
-- Mem0 当前事实记忆
-- Graphiti 时序知识图谱
-- MCP 工具协议
+LiteRAG 已包含简化版 Agent Loop、记忆引擎、上下文工程。进阶方向：
+
+- think() 接入 LLM 决策（检索 vs 生成 vs 工具调用）
+- 新增 ActionAgent（执行型操作）+ WorkflowAgent（流程引导）
+- LangGraph Checkpointer 持久化（PostgreSQL，支持中断恢复）
+- LangGraph Human-in-the-Loop（敏感操作中断等待审批）
+- 记忆引擎补齐 L2 检查点 + L4 工作记忆 + Embedding 语义检索
+- 上下文工程补齐漂移检测 + 矛盾检测 + 对话摘要
+- MCP 工具协议（让 Agent 调用外部系统）
+- CrewAI 多 Agent 协作（复杂任务拆分）
 
 ### 阶段 5：生产级工程化（2-3 周）
 
@@ -2316,9 +3227,15 @@ pytest tests/ -v
 
 ### Q: 为什么不用 LangChain？
 
-LangChain 是一个优秀的编排框架，适合快速搭建原型。但它的抽象层次太厚——你写的是 `chain = RetrievalQA.from_chain_type(...)`，看不到检索、重排、生成的细节。LiteRAG 的目标是让你理解每一步在做什么，所以选择直接实现，不套框架。
+LangChain 是一个优秀的编排框架，适合快速搭建原型。但它的抽象层次太厚——你写的是 `chain = RetrievalQA.from_chain_type(...)`，看不到检索、重排、生成的细节。LiteRAG 的目标是让你理解每一步在做什么，所以 RAG 核心层（chunker、retriever、reranker、generator）全部手写，不套 LangChain。
 
-如果你已经熟悉 LangChain，可以把 LiteRAG 的分块和父子索引逻辑包装成 LangChain 的 `TextSplitter` 和 `Retriever`，两者不冲突。
+### Q: 那为什么用 LangGraph？
+
+LangChain 和 LangGraph 虽然同属 LangChain 生态，但定位完全不同。LangChain 是**框架**（厚抽象，隐藏 RAG 细节），LangGraph 是**运行时**（薄抽象，只管状态图编排）。用 LangGraph 编排 Agent Loop 时，你的检索、重排、生成逻辑仍然是手写代码，只是作为图的节点函数被调用——每一行都看得见。
+
+LangGraph v1.0 LTS 于 2025 年 10 月正式发布 [$TRAE_REF](http://m.toutiao.com/group/7658595970690662962/)，LinkedIn、Uber、Klarna、J.P. Morgan 都在生产环境使用 [$TRAE_REF](http://m.toutiao.com/group/7658595970690662962/)。同时 LangChain 的经典 `AgentExecutor` 已被官方弃用 [$TRAE_REF](http://m.toutiao.com/group/7658595970690662962/)，推荐迁移到 LangGraph。LiteRAG 用 LangGraph 是顺应行业趋势，也让你学到的技能直接可用于生产环境。
+
+一句话总结：**RAG 核心层不用任何框架（手写每一行），Agent Loop 层用 LangGraph（状态图编排是它的本职）**。
 
 ### Q: 为什么不用 Milvus？
 
@@ -2388,7 +3305,8 @@ MIT License — 你可以自由使用、修改、分发、商用。
 1. **动手写代码** — 不要只看文档，每学一个模块就自己实现一遍
 2. **调试观察** — 用 `print` 或断点观察每一步的输入输出
 3. **上传真实文档** — 用你公司的真实文档测试，比用示例文档学到的多
-4. **调参感受** — 改 `top_k`、`chunk_size`，观察检索质量变化
-5. **写测试** — 为每个模块写 2-3 个测试用例，巩固理解
+4. **调参感受** — 改 `top_k`、`chunk_size`、`max_iterations`，观察检索质量和 Agent 行为变化
+5. **多轮对话测试** — 重点测试 Agent Loop 的反思重试、记忆引擎的偏好提取、上下文工程的指代消解，这是智能体 RAG 和普通 RAG 的核心区别
+6. **写测试** — 为每个模块写 2-3 个测试用例，巩固理解
 
 关注项目仓库获取更新通知。
