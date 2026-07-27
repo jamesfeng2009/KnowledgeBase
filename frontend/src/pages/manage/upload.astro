@@ -702,27 +702,20 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
       return;
     }
 
-    // 读取解析选项
-    const vlm = (document.getElementById('opt-vlm') as HTMLInputElement).checked;
-    const asr = (document.getElementById('opt-asr') as HTMLInputElement).checked;
-    const vectorize = (document.getElementById('opt-vectorize') as HTMLInputElement).checked;
-    const graph = (document.getElementById('opt-graph') as HTMLInputElement).checked;
+    // NOTE: 解析选项（opt-vlm/opt-asr/opt-vectorize/opt-graph）后端暂未接线，
+    // 后端无任何端点接收 enable_* 参数，待后端支持后再从此处读取发送。
 
     item.status = 'uploading';
     renderList();
 
     const formData = new FormData();
     formData.append('file', item.file);
-    formData.append('kb_id', kbId);
-    // 解析选项发送到后端
-    formData.append('enable_vlm', String(vlm));
-    formData.append('enable_asr', String(asr));
-    formData.append('enable_vectorize', String(vectorize));
-    formData.append('enable_graph', String(graph));
 
     try {
       const xhr = new XMLHttpRequest();
-      xhr.open('POST', `${API_BASE}/api/v1/knowledge/documents/upload`);
+      // 后端 /documents/upload 要求 kb_id/title 为 query 参数（与 multipart/init 一致）
+      const params = new URLSearchParams({ kb_id: kbId, title: item.file.name });
+      xhr.open('POST', `${API_BASE}/api/v1/documents/upload?${params.toString()}`);
       xhr.setRequestHeader('Authorization', `Bearer ${token}`);
 
       xhr.upload.onprogress = (e) => {

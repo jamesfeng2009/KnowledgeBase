@@ -281,7 +281,7 @@ class RagEvalDataset(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     )
 
 
-class RagEvalQuery(UUIDMixin, TimestampMixin, Base):
+class RagEvalQuery(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     """评测查询表 — 单条查询及其人工标注的相关文档（ground truth）。
 
     来源：preset（预置查询模板，无 ground_truth，需用户标注）/ custom（用户自定义）
@@ -432,7 +432,7 @@ class DocParseDataset(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     )
 
 
-class DocParseCase(UUIDMixin, TimestampMixin, Base):
+class DocParseCase(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     """文档解析用例表 — 单条文档的解析评测定义。
 
     两种评测模式：
@@ -584,7 +584,7 @@ class JudgeDataset(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     )
 
 
-class JudgeCase(UUIDMixin, TimestampMixin, Base):
+class JudgeCase(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     """AI Judge 用例表 — 单条问答的裁判评测定义。
 
     包含：问题 + 参考答案 + 待评测的模型答案。

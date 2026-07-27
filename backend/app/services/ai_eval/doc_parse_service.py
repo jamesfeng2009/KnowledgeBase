@@ -159,12 +159,12 @@ class DocParseService:
         return case
 
     async def delete_case(self, case_id: uuid.UUID) -> bool:
-        """删除一条用例。"""
+        """软删除一条用例（项目约束：不允许物理删除数据库数据）。"""
         case = await self.db.get(DocParseCase, case_id)
-        if case is None:
+        if case is None or case.deleted_at is not None:
             return False
         dataset_id = case.dataset_id
-        await self.db.delete(case)
+        case.deleted_at = datetime.now(timezone.utc)
         await self.db.flush()
         dataset = await self.get_dataset(dataset_id)
         if dataset:
@@ -172,16 +172,18 @@ class DocParseService:
                 select(func.count())
                 .select_from(DocParseCase)
                 .where(DocParseCase.dataset_id == dataset_id)
+                .where(DocParseCase.deleted_at.is_(None))
             )
             dataset.total_cases = count or 0
             await self.db.flush()
         return True
 
     async def list_cases(self, dataset_id: uuid.UUID) -> list[DocParseCase]:
-        """列出数据集下所有用例。"""
+        """列出数据集下所有用例（过滤已软删除）。"""
         result = await self.db.execute(
             select(DocParseCase)
             .where(DocParseCase.dataset_id == dataset_id)
+            .where(DocParseCase.deleted_at.is_(None))
             .order_by(DocParseCase.created_at)
         )
         return list(result.scalars().all())
@@ -208,45 +210,52 @@ class DocParseService:
         executed = 0
         metric_sums: dict[str, float] = {}
 
-        cases = await self.list_cases(dataset_id)
-        log.info(
-            "doc_parse_dataset_started",
-            dataset_id=str(dataset_id),
-            total_cases=len(cases),
-        )
+        try:
+            cases = await self.list_cases(dataset_id)
+            log.info(
+                "doc_parse_dataset_started",
+                dataset_id=str(dataset_id),
+                total_cases=len(cases),
+            )
 
-        for case in cases:
-            try:
-                metrics = await self._execute_case(dataset_id, case)
-                executed += 1
-                # 累加各维度得分
-                for key in ("text_similarity", "token_similarity"):
-                    if key in metrics:
-                        metric_sums[key] = metric_sums.get(key, 0.0) + float(metrics[key])
-                metric_sums["cer"] = metric_sums.get("cer", 0.0) + float(metrics.get("cer", 0.0))
-                metric_sums["table_score"] = metric_sums.get("table_score", 0.0) + float(
-                    metrics.get("table", {}).get("overall_score", 0.0)
-                )
-                metric_sums["formula_score"] = metric_sums.get("formula_score", 0.0) + float(
-                    metrics.get("formula", {}).get("overall_score", 0.0)
-                )
-                metric_sums["layout_score"] = metric_sums.get("layout_score", 0.0) + float(
-                    metrics.get("layout", {}).get("overall_score", 0.0)
-                )
-                metric_sums["overall_score"] = metric_sums.get("overall_score", 0.0) + float(
-                    metrics.get("overall_score", 0.0)
-                )
-            except Exception as exc:
-                log.error("doc_parse_case_error", case_id=str(case.id), error=str(exc))
-                self.db.add(DocParseResult(
-                    case_id=case.id,
-                    dataset_id=dataset_id,
-                    parsed_text=None,
-                    metrics={},
-                    overall_score=0,
-                    error_message=str(exc),
-                    executed_at=datetime.now(timezone.utc),
-                ))
+            for case in cases:
+                try:
+                    metrics = await self._execute_case(dataset_id, case)
+                    executed += 1
+                    # 累加各维度得分
+                    for key in ("text_similarity", "token_similarity"):
+                        if key in metrics:
+                            metric_sums[key] = metric_sums.get(key, 0.0) + float(metrics[key])
+                    metric_sums["cer"] = metric_sums.get("cer", 0.0) + float(metrics.get("cer", 0.0))
+                    metric_sums["table_score"] = metric_sums.get("table_score", 0.0) + float(
+                        metrics.get("table", {}).get("overall_score", 0.0)
+                    )
+                    metric_sums["formula_score"] = metric_sums.get("formula_score", 0.0) + float(
+                        metrics.get("formula", {}).get("overall_score", 0.0)
+                    )
+                    metric_sums["layout_score"] = metric_sums.get("layout_score", 0.0) + float(
+                        metrics.get("layout", {}).get("overall_score", 0.0)
+                    )
+                    metric_sums["overall_score"] = metric_sums.get("overall_score", 0.0) + float(
+                        metrics.get("overall_score", 0.0)
+                    )
+                except Exception as exc:
+                    log.error("doc_parse_case_error", case_id=str(case.id), error=str(exc))
+                    self.db.add(DocParseResult(
+                        case_id=case.id,
+                        dataset_id=dataset_id,
+                        parsed_text=None,
+                        metrics={},
+                        overall_score=0,
+                        error_message=str(exc),
+                        executed_at=datetime.now(timezone.utc),
+                    ))
+        except Exception:
+            # 任何未捕获异常（如 DB 中断）时落库 failed，
+            # 否则数据集永久卡在 "running"，无法再触发评测。
+            dataset.status = "failed"
+            await self.db.flush()
+            raise
 
         # 聚合指标（均值，CER 越低越好）
         agg_metrics: dict[str, float] = {}

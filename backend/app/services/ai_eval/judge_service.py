@@ -298,12 +298,12 @@ class JudgeService:
         return added
 
     async def delete_case(self, case_id: uuid.UUID) -> bool:
-        """删除一条用例。"""
+        """软删除一条用例（项目约束：不允许物理删除数据库数据）。"""
         case = await self.db.get(JudgeCase, case_id)
-        if case is None:
+        if case is None or case.deleted_at is not None:
             return False
         dataset_id = case.dataset_id
-        await self.db.delete(case)
+        case.deleted_at = datetime.now(timezone.utc)
         await self.db.flush()
         dataset = await self.get_dataset(dataset_id)
         if dataset:
@@ -311,16 +311,18 @@ class JudgeService:
                 select(func.count())
                 .select_from(JudgeCase)
                 .where(JudgeCase.dataset_id == dataset_id)
+                .where(JudgeCase.deleted_at.is_(None))
             )
             dataset.total_cases = count or 0
             await self.db.flush()
         return True
 
     async def list_cases(self, dataset_id: uuid.UUID) -> list[JudgeCase]:
-        """列出数据集下所有用例。"""
+        """列出数据集下所有用例（过滤已软删除）。"""
         result = await self.db.execute(
             select(JudgeCase)
             .where(JudgeCase.dataset_id == dataset_id)
+            .where(JudgeCase.deleted_at.is_(None))
             .order_by(JudgeCase.created_at)
         )
         return list(result.scalars().all())
@@ -392,18 +394,23 @@ class JudgeService:
             await self.db.flush()
             raise
 
-        # 聚合评分
-        agg_metrics: dict[str, float] = {}
-        if executed > 0:
-            for d in dimensions:
-                if dimension_counts[d] > 0:
-                    agg_metrics[d] = round(dimension_sums[d] / dimension_counts[d], 2)
-            agg_metrics["overall"] = round(overall_sum / executed, 2)
+        # 聚合评分（同样置于保护内：聚合/回填异常也不能让状态卡在 running）
+        try:
+            agg_metrics: dict[str, float] = {}
+            if executed > 0:
+                for d in dimensions:
+                    if dimension_counts[d] > 0:
+                        agg_metrics[d] = round(dimension_sums[d] / dimension_counts[d], 2)
+                agg_metrics["overall"] = round(overall_sum / executed, 2)
 
-        elapsed = int(time.time() - start_time)
-        dataset.status = "completed"
-        dataset.metrics = agg_metrics
-        dataset.duration_seconds = elapsed
+            elapsed = int(time.time() - start_time)
+            dataset.status = "completed"
+            dataset.metrics = agg_metrics
+            dataset.duration_seconds = elapsed
+        except Exception:
+            dataset.status = "failed"
+            await self.db.flush()
+            raise
 
         log.info(
             "judge_dataset_completed",

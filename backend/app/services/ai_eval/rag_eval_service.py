@@ -280,12 +280,12 @@ class RagEvalService:
         return queries
 
     async def delete_query(self, query_id: uuid.UUID) -> bool:
-        """删除一条评测查询（物理删除，连带结果）。"""
+        """软删除一条评测查询（项目约束：不允许物理删除数据库数据）。"""
         q = await self.db.get(RagEvalQuery, query_id)
-        if q is None:
+        if q is None or q.deleted_at is not None:
             return False
         dataset_id = q.dataset_id
-        await self.db.delete(q)
+        q.deleted_at = datetime.now(timezone.utc)
         await self.db.flush()
 
         # 更新数据集查询数
@@ -295,16 +295,18 @@ class RagEvalService:
                 select(func.count())
                 .select_from(RagEvalQuery)
                 .where(RagEvalQuery.dataset_id == dataset_id)
+                .where(RagEvalQuery.deleted_at.is_(None))
             )
             dataset.total_queries = count or 0
             await self.db.flush()
         return True
 
     async def list_queries(self, dataset_id: uuid.UUID) -> list[RagEvalQuery]:
-        """列出数据集下所有查询。"""
+        """列出数据集下所有查询（过滤已软删除）。"""
         result = await self.db.execute(
             select(RagEvalQuery)
             .where(RagEvalQuery.dataset_id == dataset_id)
+            .where(RagEvalQuery.deleted_at.is_(None))
             .order_by(RagEvalQuery.created_at)
         )
         return list(result.scalars().all())
@@ -402,17 +404,23 @@ class RagEvalService:
             await retriever.close()
 
         # 聚合指标（按已执行查询数求均值）
-        agg_metrics: dict[str, float] = {}
-        if executed > 0:
-            for key, total in metric_sums.items():
-                agg_metrics[key] = round(total / executed, 4)
-        agg_metrics["hit_rate"] = round(hit_count / executed, 4) if executed > 0 else 0.0
+        # 置于保护内：聚合/回填异常也不能让状态卡在 running
+        try:
+            agg_metrics: dict[str, float] = {}
+            if executed > 0:
+                for key, total in metric_sums.items():
+                    agg_metrics[key] = round(total / executed, 4)
+            agg_metrics["hit_rate"] = round(hit_count / executed, 4) if executed > 0 else 0.0
 
-        elapsed = int(time.time() - start_time)
-        dataset.status = "completed"
-        dataset.hit_count = hit_count
-        dataset.metrics = agg_metrics
-        dataset.duration_seconds = elapsed
+            elapsed = int(time.time() - start_time)
+            dataset.status = "completed"
+            dataset.hit_count = hit_count
+            dataset.metrics = agg_metrics
+            dataset.duration_seconds = elapsed
+        except Exception:
+            dataset.status = "failed"
+            await self.db.flush()
+            raise
 
         log.info(
             "rag_dataset_completed",
