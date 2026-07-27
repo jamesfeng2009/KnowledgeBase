@@ -30,6 +30,7 @@
 - [P3: 上下文工程（Context Engineering）](#p3-上下文工程context-engineering)
 - [P4: 实时对话智能（Realtime Conversation Intelligence）](#p4-实时对话智能realtime-conversation-intelligence)
 - [多 Agent 协作与记忆增强（P0-P2）](#多-agent-协作与记忆增强p0-p2)
+- [工具治理与选择优化（P0-P2）](#工具治理与选择优化p0-p2)
 - [测试](#测试)
 
 ---
@@ -2242,12 +2243,52 @@ flowchart LR
 
 ---
 
+## 工具治理与选择优化（P0-P2）
+
+针对工具选择精度差、全量塞入 token 浪费、漏检隐蔽化等问题，按优先级分三批完成。核心原则：**工具选择的瓶颈从来不是检索算法不够先进，而是工具本身的设计太粗糙。先把工具的"内功"练好，收益远大于折腾模型和检索。**
+
+### P0: 工具描述源头治理
+
+每个工具描述补齐三要素：明确核心功能、触发关键词埋点、负向边界约束。
+
+| 工具 | 正向描述 | 负向边界 | 新增 tags |
+|------|----------|----------|-----------|
+| `knowledge_search` | 搜索知识库返回文档列表 | 不适用于已知文档 ID 查询（用 `document_get`）；不适用于查审批状态（用 `query_oa_approval`） | 查找、了解 |
+| `document_get` | 获取文档详情 | 不适用于关键词搜索（用 `knowledge_search`）；不适用于创建文档（用 `document_create`） | 内容 |
+| `document_create` | 创建新文档 | 不适用于搜索已有文档；不适用于查看已有文档；不适用于修改/删除 | 编写、新增 |
+| `query_oa_approval` | 查询 OA 审批状态 | 不适用于搜索知识库文档；不适用于创建 IT 工单（用 `create_it_ticket`） | 进度、报销 |
+| `create_it_ticket` | 创建 IT 服务台工单 | 不适用于查询已有工单状态；不适用于查询 OA 审批进度；不适用于搜索文档 | 提单、支持 |
+
+### P1: CrewAI 路径工具分层注入
+
+| Agent 类型 | 允许的工具 | 设计原理 |
+|------------|-----------|----------|
+| QA Agent | `knowledge_search` / `document_get` / `query_oa_approval`（只读） | 只负责回答问题，不应有写操作权限 |
+| Workflow Agent | `knowledge_search` / `document_get` / `query_oa_approval`（只读） | 引导流程，不直接执行写操作 |
+| Action Agent | 全部工具（含 `document_create` / `create_it_ticket`） | 负责执行操作，可拿到写工具 |
+
+新增 `get_mcp_tools_for_agent_type()` 函数（`agents/mcp_tools.py`），按 Agent 类型筛选工具。`crew.py` 的 `_build_crew_agents()` 从全量塞入改为按类型分别加载，消除 QA Agent 误调用写操作工具的风险。
+
+### P2: 引擎「无匹配工具」强制选项
+
+`engine.py` 的 `_tool_call` 阶段，在 system prompt 中注入「无匹配工具」强制选项指令：
+
+```
+重要：如果以上候选工具都无法满足用户需求，
+请不要硬凑工具调用，直接回复原文并说明无可用工具。
+当前可用工具：knowledge_search, document_get, ...
+```
+
+这是发现检索漏检的核心机制 — 把隐性的"看不见"错误变成显性信号，让 LLM 在候选工具都不适用时显式声明而非硬凑一个错误调用。
+
+---
+
 ## 测试
 
 ```bash
 cd backend
 
-# 运行全部测试（2326 项）
+# 运行全部测试（2343 项）
 python -m pytest --tb=short -q
 
 # 运行特定模块测试
@@ -2299,6 +2340,7 @@ python -m pytest tests/test_mem0_semantic_search.py -v       # Mem0 语义检索
 python -m pytest tests/test_crew_structured_comm.py -v       # 多 Agent 结构化通信（原始需求透传 + JSON 输出）
 python -m pytest tests/test_key_decision_persistence.py -v   # 关键决策持久化（防中间遗忘）
 python -m pytest tests/test_reviewer_agent.py -v             # ReviewerAgent 对抗审查（高风险操作审批/拒绝/降级）
+python -m pytest tests/test_tool_governance.py -v            # 工具治理（描述负向边界 + Agent类型筛选 + 无匹配工具指令）
 ```
 
 ### 测试覆盖
@@ -2353,7 +2395,8 @@ python -m pytest tests/test_reviewer_agent.py -v             # ReviewerAgent 对
 | `test_crew_structured_comm.py` | 9 | 多 Agent 结构化通信（原始需求透传注入、JSON 输出指令、期望输出标记、空任务兜底、序列化降级） |
 | `test_key_decision_persistence.py` | 7 | 关键决策持久化（决策关键词检测、LLM 提取、NONE 跳过、LLM 不可用降级、异常降级、TTL 24h） |
 | `test_reviewer_agent.py` | 13 | ReviewerAgent 对抗审查（高风险工具判定、非高风险放行、LLM 不可用降级、审批/拒绝、异常降级、markdown JSON 解析、超长 query 截断） |
-| **合计** | **2326** | **2320 passed + 6 skipped，零新增失败（5 项预存失败：QualityGuard/upload 管线，87 项 DB 连接错误为环境基线）** |
+| `test_tool_governance.py` | 17 | 工具治理 P0-P2（描述负向边界约束、tags 口语化关键词、Agent 类型筛选 QA/Workflow/Action、未知类型安全默认、CrewAI 不可用降级、MCP 异常降级、无匹配工具指令构建） |
+| **合计** | **2343** | **2337 passed + 6 skipped，零新增失败（5 项预存失败：QualityGuard/upload 管线，87 项 DB 连接错误为环境基线）** |
 
 ---
 

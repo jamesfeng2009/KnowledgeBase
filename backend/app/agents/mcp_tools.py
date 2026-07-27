@@ -4,9 +4,17 @@
 1. 列出 MCP Server 暴露的所有工具
 2. 将 MCP 工具适配为 CrewAI BaseTool 接口
 3. 将 MCP 工具适配为 LLM function-calling 的 tools 格式
+4. P1: 按 Agent 类型筛选工具（QAAgent 只拿只读工具，ActionAgent 才拿写操作工具）
 
 遵循单一职责：只做工具适配，不做工具实现（工具实现在 mcp/server.py）。
 遵循开闭原则：新增 MCP 工具只需在 server.py 用 @mcp_tool 注册，本模块自动发现。
+
+P1 工具分层设计（常驻工具 vs 长尾工具）：
+    - 只读工具（knowledge_search / document_get / query_oa_approval）：
+      QA / Workflow / Action 三类 Agent 均可使用。
+    - 写操作工具（document_create / create_it_ticket）：
+      仅 Action Agent 可用，QA Agent 只读不写。
+    - 随工具增长，可进一步按 category 做细粒度分组。
 """
 from __future__ import annotations
 
@@ -25,6 +33,20 @@ try:
 except ImportError:
     CrewBaseTool = object  # 降级为 object 基类
     CREWAI_AVAILABLE = False
+
+# P1: 写操作工具集 — 仅 Action Agent 可用
+# 来源：tool_guard.py 的 _DEFAULT_DANGEROUS_TOOLS
+_WRITE_TOOLS: set[str] = {
+    "document_create",
+    "create_it_ticket",
+}
+
+# P1: 常驻只读工具 — 所有 Agent 类型均可使用
+_READ_ONLY_TOOLS: set[str] = {
+    "knowledge_search",
+    "document_get",
+    "query_oa_approval",
+}
 
 
 class MCPToolWrapper(CrewBaseTool):
@@ -78,6 +100,10 @@ async def get_mcp_tools_for_crewai(mcp_client: MCPClient) -> list[MCPToolWrapper
     通过 MCPClient.get_tools_for_llm() 获取工具定义（list[Tool]），
     每个 Tool 含 name / description / parameters 字段，包装为 MCPToolWrapper。
 
+    .. deprecated::
+        此函数全量加载所有工具。P1 改用 ``get_mcp_tools_for_agent_type``
+        按 Agent 类型筛选，避免 QA Agent 拿到写操作工具。
+
     Args:
         mcp_client: MCP 客户端实例。
 
@@ -103,6 +129,69 @@ async def get_mcp_tools_for_crewai(mcp_client: MCPClient) -> list[MCPToolWrapper
         return wrappers
     except Exception as e:
         logger.error("mcp_tools.load_error", error=str(e))
+        return []
+
+
+async def get_mcp_tools_for_agent_type(
+    mcp_client: MCPClient,
+    agent_type: str,
+) -> list[MCPToolWrapper]:
+    """按 Agent 类型筛选工具 — P1 工具分层注入。
+
+    设计原理：QA Agent 只负责回答问题，不应有写操作权限；
+    Action Agent 负责执行操作，可以拿到写工具。这避免了 LLM
+    在 QA 场景误调用 document_create / create_it_ticket 的问题。
+
+    分层规则::
+
+        agent_type="qa"       → 只读工具（排除写操作）
+        agent_type="workflow" → 只读工具 + 工作流查询（排除写操作）
+        agent_type="action"   → 全部工具（含写操作）
+        其他                   → 只读工具（安全默认）
+
+    Args:
+        mcp_client: MCP 客户端实例。
+        agent_type: Agent 类型标识（qa / workflow / action）。
+
+    Returns:
+        筛选后的 MCPToolWrapper 列表。
+    """
+    if not CREWAI_AVAILABLE:
+        logger.warning("mcp_tools.crewai_not_available")
+        return []
+
+    try:
+        tools_info = await mcp_client.get_tools_for_llm()
+
+        # Action Agent 拿全部工具
+        if agent_type == "action":
+            allowed_names = {t.get("name", "") for t in tools_info}
+        else:
+            # QA / Workflow / 未知类型 → 只读工具（排除写操作）
+            allowed_names = _READ_ONLY_TOOLS
+
+        wrappers = []
+        for tool_info in tools_info:
+            tool_name = tool_info.get("name", "")
+            if tool_name not in allowed_names:
+                continue
+            wrapper = MCPToolWrapper(
+                tool_name=tool_name,
+                tool_description=tool_info.get("description", ""),
+                mcp_client=mcp_client,
+            )
+            wrappers.append(wrapper)
+
+        logger.info(
+            "mcp_tools.filtered_for_agent",
+            agent_type=agent_type,
+            total=len(tools_info),
+            filtered=len(wrappers),
+            tools=[w.name for w in wrappers],
+        )
+        return wrappers
+    except Exception as e:
+        logger.error("mcp_tools.filter_error", error=str(e), agent_type=agent_type)
         return []
 
 

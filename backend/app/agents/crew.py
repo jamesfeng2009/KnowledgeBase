@@ -261,6 +261,11 @@ class KnowledgeBaseCrew:
     async def _build_crew_agents(self) -> dict[str, Any]:
         """构建 CrewAI Agent 角色实例。
 
+        P1: 按 Agent 类型筛选工具，避免 QA Agent 拿到写操作工具：
+            - QA Agent → 只读工具（knowledge_search / document_get / query_oa_approval）
+            - Workflow Agent → 只读工具
+            - Action Agent → 全部工具（含 document_create / create_it_ticket）
+
         Returns:
             {"qa": CrewAgent, "workflow": CrewAgent, "action": CrewAgent}
         """
@@ -268,18 +273,19 @@ class KnowledgeBaseCrew:
             return {}
 
         # 延迟导入工具
-        from app.agents.mcp_tools import get_mcp_tools_for_crewai
+        from app.agents.mcp_tools import get_mcp_tools_for_agent_type
 
-        # 获取 MCP 工具（异步等待 — 本方法在异步上下文中调用，
-        # 不能用 run_until_complete，运行中的循环调用它会抛 RuntimeError）
-        tools = await get_mcp_tools_for_crewai(self.mcp)
+        # P1: 按 Agent 类型分别加载工具（而非全量塞入）
+        qa_tools = await get_mcp_tools_for_agent_type(self.mcp, "qa")
+        workflow_tools = await get_mcp_tools_for_agent_type(self.mcp, "workflow")
+        action_tools = await get_mcp_tools_for_agent_type(self.mcp, "action")
 
         qa_agent = CrewAgent(
             role="知识库问答专家",
             goal="基于企业知识库准确回答用户问题，提供引用来源",
             backstory="你是企业知识库的问答专家，擅长检索和总结信息。",
             llm=self.llm,
-            tools=tools,
+            tools=qa_tools,
             verbose=True,
         )
         workflow_agent = CrewAgent(
@@ -287,7 +293,7 @@ class KnowledgeBaseCrew:
             goal="理解用户业务需求，引导完成企业流程",
             backstory="你是企业业务流程专家，了解所有审批流程和单据规则。",
             llm=self.llm,
-            tools=tools,
+            tools=workflow_tools,
             verbose=True,
         )
         action_agent = CrewAgent(
@@ -295,7 +301,7 @@ class KnowledgeBaseCrew:
             goal="将用户指令转化为具体操作，通过工具执行并返回结果",
             backstory="你是执行专家，擅长创建工单、配置系统、执行操作。",
             llm=self.llm,
-            tools=tools,
+            tools=action_tools,
             verbose=True,
         )
 

@@ -288,6 +288,10 @@ class KnowledgeBaseMCPServer:
         description=(
             "搜索企业知识库，返回匹配的文档列表。"
             "支持按关键词进行全文检索，可选限定搜索的知识库范围。"
+            "适用场景：用户想查找、搜索、了解某主题的相关文档。"
+            "不适用于：已知具体文档 ID 的查询（应改用 document_get 获取完整详情）；"
+            "查询 OA 审批状态（应改用 query_oa_approval）；"
+            "创建工单或文档（应改用对应写操作工具）。"
         ),
         parameters={
             "type": "object",
@@ -304,8 +308,13 @@ class KnowledgeBaseMCPServer:
             "required": ["query"],
         },
         category="search",
-        tags=["全文检索", "知识库", "搜索", "search", "文档"],
-        skill_description="在企业知识库中按关键词进行全文检索，返回匹配的文档列表。支持限定特定知识库范围。",
+        tags=["全文检索", "知识库", "搜索", "search", "文档", "查找", "了解"],
+        skill_description=(
+            "在企业知识库中按关键词进行全文检索，返回匹配的文档列表。"
+            "支持限定特定知识库范围。"
+            "负向边界：不要用于已知文档 ID 的精确查询（用 document_get），"
+            "不要用于查审批状态（用 query_oa_approval）。"
+        ),
     )
     async def _tool_knowledge_search(
         self,
@@ -363,7 +372,12 @@ class KnowledgeBaseMCPServer:
 
     @mcp_tool(
         name="document_get",
-        description="获取文档详情，包括标题、内容、状态、密级等信息。",
+        description=(
+            "获取文档详情，包括标题、内容、状态、密级等信息。"
+            "适用场景：用户已知文档 ID，需要查看文档的完整内容或元信息。"
+            "不适用于：按关键词搜索文档列表（应改用 knowledge_search）；"
+            "创建新文档（应改用 document_create）。"
+        ),
         parameters={
             "type": "object",
             "properties": {
@@ -375,8 +389,12 @@ class KnowledgeBaseMCPServer:
             "required": ["doc_id"],
         },
         category="document",
-        tags=["文档", "详情", "查看", "document", "get"],
-        skill_description="获取指定文档的详细信息，包括标题、内容、状态、密级等字段。需要提供文档 ID。",
+        tags=["文档", "详情", "查看", "document", "get", "内容"],
+        skill_description=(
+            "获取指定文档的详细信息，包括标题、内容、状态、密级等字段。需要提供文档 ID。"
+            "负向边界：不要用于关键词搜索（用 knowledge_search），"
+            "不要用于创建文档（用 document_create）。"
+        ),
     )
     async def _tool_document_get(self, doc_id: str) -> str:
         """获取文档详情 — 通过 DocumentRepository 查询单条记录。"""
@@ -412,7 +430,13 @@ class KnowledgeBaseMCPServer:
 
     @mcp_tool(
         name="document_create",
-        description="在指定知识库中创建新文档，文档初始状态为 draft。",
+        description=(
+            "在指定知识库中创建新文档，文档初始状态为 draft。"
+            "适用场景：用户想要创建、新建、编写文档。"
+            "不适用于：搜索已有文档（应改用 knowledge_search）；"
+            "查看已有文档内容（应改用 document_get）；"
+            "修改/删除已有文档（当前不支持，需人工操作）。"
+        ),
         parameters={
             "type": "object",
             "properties": {
@@ -426,8 +450,13 @@ class KnowledgeBaseMCPServer:
             "required": ["title", "content", "kb_id"],
         },
         category="document",
-        tags=["文档", "创建", "新建", "create", "写入", "draft"],
-        skill_description="在指定知识库中创建新文档，文档初始状态为 draft 草稿。需要提供标题、内容和目标知识库 ID。",
+        tags=["文档", "创建", "新建", "create", "写入", "draft", "编写", "新增"],
+        skill_description=(
+            "在指定知识库中创建新文档，文档初始状态为 draft 草稿。"
+            "需要提供标题、内容和目标知识库 ID。"
+            "负向边界：不要用于搜索文档（用 knowledge_search），"
+            "不要用于查看文档（用 document_get）。"
+        ),
     )
     async def _tool_document_create(
         self,
@@ -478,6 +507,9 @@ class KnowledgeBaseMCPServer:
             "查询 OA 系统审批状态。"
             "当前为 mock 实现，返回模拟审批流数据；"
             "接入真实 OA 系统后替换此方法体即可。"
+            "适用场景：用户想查询单据审批进度、审批到哪个节点。"
+            "不适用于：搜索知识库文档（应改用 knowledge_search）；"
+            "创建 IT 工单（应改用 create_it_ticket）。"
         ),
         parameters={
             "type": "object",
@@ -490,8 +522,13 @@ class KnowledgeBaseMCPServer:
             "required": ["bill_no"],
         },
         category="workflow",
-        tags=["OA", "审批", "流程", "查询", "approval", "单据"],
-        skill_description="查询 OA 系统的审批流程状态，包括当前审批节点、提交人、审批意见等信息。需要提供单据编号。",
+        tags=["OA", "审批", "流程", "查询", "approval", "单据", "进度", "报销"],
+        skill_description=(
+            "查询 OA 系统的审批流程状态，包括当前审批节点、提交人、审批意见等信息。"
+            "需要提供单据编号。"
+            "负向边界：不要用于搜索文档（用 knowledge_search），"
+            "不要用于创建工单（用 create_it_ticket）。"
+        ),
     )
     async def _tool_query_oa_approval(self, bill_no: str) -> str:
         """查询 OA 审批状态 — Mock 实现。
@@ -528,6 +565,10 @@ class KnowledgeBaseMCPServer:
             "创建 IT 服务台工单。"
             "当前为 mock 实现，返回模拟工单号；"
             "接入真实 IT 服务台后替换此方法体即可。"
+            "适用场景：用户想报修、提工单、寻求 IT 支持。"
+            "不适用于：查询已有工单状态（当前不支持查询）；"
+            "查询 OA 审批进度（应改用 query_oa_approval）；"
+            "搜索知识库文档（应改用 knowledge_search）。"
         ),
         parameters={
             "type": "object",
@@ -543,8 +584,13 @@ class KnowledgeBaseMCPServer:
             "required": ["title", "description"],
         },
         category="workflow",
-        tags=["IT", "工单", "创建", "ticket", "服务台", "报修"],
-        skill_description="创建 IT 服务台工单，支持设置优先级（low/normal/high/urgent）。需要提供工单标题和问题描述。",
+        tags=["IT", "工单", "创建", "ticket", "服务台", "报修", "提单", "支持"],
+        skill_description=(
+            "创建 IT 服务台工单，支持设置优先级（low/normal/high/urgent）。"
+            "需要提供工单标题和问题描述。"
+            "负向边界：不要用于查询审批进度（用 query_oa_approval），"
+            "不要用于搜索文档（用 knowledge_search）。"
+        ),
     )
     async def _tool_create_it_ticket(
         self,

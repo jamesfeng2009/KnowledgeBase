@@ -1472,12 +1472,21 @@ class AgenticRAGEngine:
             log.info("engine.tool_call.no_tools")
             return
 
+        # P2: 构建「无匹配工具」强制选项提示词
+        # 让 LLM 在所有候选工具都不适用时显式声明，而非硬凑一个工具调用。
+        # 这是发现检索漏检的核心机制，把隐性的"看不见"错误变成显性信号。
+        tool_names = [t.get("name", "") for t in tools if isinstance(t, dict)]
+        no_match_instruction = (
+            "根据用户问题选择合适的工具调用。如无需调用工具，直接回复原文。\n"
+            "重要：如果以上候选工具都无法满足用户需求，"
+            "请不要硬凑工具调用，直接回复原文并说明无可用工具。\n"
+            f"当前可用工具：{', '.join(tool_names) if tool_names else '无'}"
+        )
+
         messages: list[Message] = [
             {
                 "role": "system",
-                "content": (
-                    "根据用户问题选择合适的工具调用。如无需调用工具，直接回复原文。"
-                ),
+                "content": no_match_instruction,
             },
             {"role": "user", "content": state["query"]},
         ]
