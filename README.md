@@ -85,7 +85,8 @@ EnterpriseKnowledge/
 │   │   │   ├── conversation_summarizer.py # P3-C: 对话摘要（分层压缩 + 关键信息保留）
 │   │   │   ├── context_budget.py        # P3-E: 上下文预算管理（Token 上限保护）
 │   │   │   ├── drift_detector.py        # P4-A: 漂移检测（三级策略：规则→Embedding→置信度衰减）
-│   │   │   ├── contradiction_detector.py # P4-B: 矛盾检测（用户陈述/回答-知识库/文档间三场景）
+│   │   │   ├── contradiction_detector.py # P4-B: 矛盾检测（用户陈述/回答-知识库/文档间三场景 + check_answer_consistency 接线）
+│   │   │   ├── high_risk_detector.py   # 高风险信息核验（金额/日期/法律条款检测 + 来源一致性校验）
 │   │   │   ├── preference_drift_detector.py # P4-F: 偏好偏移检测（纯规则零 Token）
 │   │   │   ├── retrieval_matcher.py     # P4-D: 检索匹配检测（embedding 相似度）
 │   │   │   └── repetition_detector.py   # P4-G: 重复提问检测（cosine > 0.85，复用 embedding）
@@ -102,7 +103,7 @@ EnterpriseKnowledge/
 │   │   │   ├── engine.py             # Agent Loop（含 Find Skills 按需加载）
 │   │   │   ├── skill_registry.py     # Skill 注册表（轻量索引 + 按需加载）
 │   │   │   ├── skill_finder.py       # Find Skills 匹配引擎（中英文分词 + 多维评分）
-│   │   │   ├── tool_guard.py         # MCP 工具调用守卫（HITL 三态守卫 + P1 会话级控制）
+│   │   │   ├── tool_guard.py         # MCP 工具调用守卫（deny-by-default + HITL 三态守卫 + P1 会话级控制）
 │   │   │   └── ...                   # chunker / retriever / reranker / generator 等
 │   │   ├── repositories/             # 数据访问层
 │   │   ├── schemas/                  # Pydantic 数据模型
@@ -391,7 +392,7 @@ flowchart TD
 
 ### MCP 工具调用守卫（DangerousToolGuard）
 
-借鉴 DECO 数仓 Agent 的 beforeTool Hook 设计，在 Agent 调用 MCP 工具前增加代码级强制确认机制。**prompt 是软约束，不是安全边界** — 任何不可逆操作都必须有框架层兜底。
+借鉴 DECO 数仓 Agent 的 beforeTool Hook 设计，在 Agent 调用 MCP 工具前增加代码级强制确认机制。**prompt 是软约束，不是安全边界** — 任何不可逆操作都必须有框架层兜底。**未知工具默认阻断（deny-by-default）** — 未在安全/危险清单中注册的工具一律阻断，消除潜在风险。
 
 P1 升级：从内存级确认升级为**持久化审批恢复机制** — 审批记录入库（`tool_approvals` 表），支持服务重启恢复、AgentState JSONB 快照、会话级确认缓存。
 
@@ -416,7 +417,7 @@ flowchart TD
 |----------|------|----------|--------|
 | 只读工具 | `knowledge_search`、`document_get`、`query_oa_approval` | 直接放行 | — |
 | 写操作工具 | `document_create`、`create_it_ticket` | 需用户确认 | `create_it_ticket` 标记为不可逆 |
-| 未知工具 | 未注册的新工具 | 默认放行 + 记录警告 | — |
+| 未知工具 | 未注册的新工具 | **默认阻断（deny-by-default）** + 记录警告 | — |
 
 **P1 持久化审批恢复机制**：
 
@@ -442,7 +443,7 @@ flowchart TD
 
 ### RAG 质量守卫（QualityGuard）
 
-借鉴 CorrectiveRAG 思路，但不引入 RAGAS 全量评估（适合离线批量，不适合每次查询）。采用**双层自适应评估闭环**：
+借鉴 CorrectiveRAG 思路，但不引入 RAGAS 全量评估（适合离线批量，不适合每次查询）。采用**双层自适应评估闭环** + **幻觉防护四层拦截流水线**：
 
 ```mermaid
 flowchart TD
@@ -451,24 +452,44 @@ flowchart TD
     RGUARD -->|mean_score < 阈值| EXPAND[扩展 rerank top_k=15<br/>重试 1 次]
     EXPAND --> GEN
 
-    GEN --> GGUARD{② 生成质量守卫<br/>复用 LLMJudgeService}
-    GGUARD -->|faithfulness ≥ 阈值| NORMAL[正常返回]
-    GGUARD -->|faithfulness < 阈值| LOW[标记 low_confidence<br/>SSE 通知前端]
-    LOW --> TRACE[LangFuse 上报<br/>三维度评分]
+    GEN --> FAITH{② 忠实度拦截<br/>check_and_regenerate}
+    FAITH -->|faithfulness ≥ 阈值| CITE{③ 引用强制校验<br/>validate_citations}
+    FAITH -->|faithfulness < 阈值| REGEN[使用增强 prompt 重生成<br/>禁止编造 + 强制 [n] 引用]
+    REGEN --> CITE
 
-    NORMAL --> TRACE
+    CITE -->|有 [n] 引用标注| CONTRA{④ 矛盾检测<br/>check_answer_consistency}
+    CITE -->|无引用标注 + 有来源| CITE_FAIL[标记 citation_invalid<br/>SSE 通知前端]
+    CITE_FAIL --> CONTRA
+
+    CONTRA -->|无矛盾| RISK{⑤ 高风险信息核验<br/>verify_against_sources}
+    CONTRA -->|检测到矛盾<br/>action=block| CONTRA_BLOCK[标记 contradiction_blocked<br/>标记 low_confidence]
+    CONTRA_BLOCK --> RISK
+
+    RISK -->|全部核验通过| NORMAL[正常返回]
+    RISK -->|未核验比例 > 50%| RISK_BLOCK[标记 high_risk_blocked<br/>标记 low_confidence]
+    RISK -->|部分未核验| RISK_WARN[标记 high_risk_warning<br/>SSE 通知前端]
+    RISK_BLOCK --> NORMAL
+    RISK_WARN --> NORMAL
+
+    NORMAL --> TRACE[LangFuse 上报<br/>三维度评分 + 幻觉防护结果]
 ```
 
 | 守卫层 | 检查方式 | 阈值 | 触发动作 | 额外 LLM 调用 |
 |--------|----------|------|----------|--------------|
 | 检索层 | `mean(rerank_score)` 纯数学 | `RAG_RETRIEVAL_SCORE_THRESHOLD=0.3` | 扩展 `top_k` 重排 1 次 | 0 |
-| 生成层 | `LLMJudgeService.evaluate_single()` | `RAG_FAITHFULNESS_THRESHOLD=3.0` | 标记 `low_confidence` + SSE 通知 | 0（复用 reflect） |
+| 生成层 | `LLMJudgeService.evaluate_single()` | `RAG_FAITHFULNESS_THRESHOLD=3.0` | **重生成答案**（增强 prompt 禁止编造） | 1（重生成时） |
+| 引用校验 | `CitationExtractor.validate_citations()` 正则 | 有来源但无 [n] 标注 | 标记 `citation_invalid` + SSE 通知 | 0 |
+| 矛盾检测 | `ContradictionDetector.check_answer_consistency()` | LLM 判断 answer vs KB | `action=block` 时标记 `contradiction_blocked` | 1 |
+| 高风险核验 | `HighRiskDetector.verify_against_sources()` 规则匹配 | 未核验比例 > 50% | `action=block` 时标记 `high_risk_blocked` | 0 |
 
 **设计要点**：
 - **检索层零 LLM 调用**：仅对重排分数做均值计算，低于阈值时扩展 rerank top_k（不重新检索），重试上限 1 次
 - **生成层复用 Judge**：将原有 `_reflect()` 从内联简单 prompt 升级为调用 `LLMJudgeService`，LLM 调用次数不变
-- **不阻断用户查询**：低置信度只标记不拦截，通过 SSE `quality` 事件通知前端，避免流式输出后二次循环
-- **LangFuse 联动**：EvalResult 的三维度分数（citation_accuracy / completeness / faithfulness）上报到 trace metadata，支持质量监控面板
+- **忠实度拦截（check_and_regenerate）**：faithfulness 低于阈值时不再仅标记，而是使用增强 prompt（强调禁止编造 + 强制 [n] 引用标注）重生成答案，最多重生成 1 次，避免无限循环
+- **引用强制校验**：有检索来源但答案无 [n] 引用标注时标记 `citation_invalid`，供 SSE 事件和拦截使用；无来源时跳过（非 RAG 场景）
+- **矛盾检测接线**：`check_answer_consistency` 从"代码存在但未接线"升级为在 `_reflect` 中调用，检测到矛盾且 `action=block` 时标记 `contradiction_blocked` + `low_confidence`
+- **高风险信息二次核验**：检测答案中的金额/日期/法律条款，与来源文档核对一致性，未核验比例 > 50% 时标记 `high_risk_blocked`
+- **LangFuse 联动**：EvalResult 三维度分数 + 幻觉防护结果（citation/contradiction/high_risk）上报到 trace metadata
 - **降级链**：LLMJudgeService 不可用时降级为原有内联 prompt（`_reflect_inline`），守卫关闭时完全跳过
 
 ---
@@ -2178,7 +2199,7 @@ AgentState 新增 `conversation_focus` 和 `drift_info` 字段，`_think()` 动�
 ```bash
 cd backend
 
-# 运行全部测试（2245 项）
+# 运行全部测试（2283 项）
 python -m pytest --tb=short -q
 
 # 运行特定模块测试
@@ -2190,12 +2211,13 @@ python -m pytest tests/test_document_tasks_chunker.py -v  # 文档分块接入�
 python -m pytest tests/test_vector_store.py -v            # 向量存储适配器
 python -m pytest tests/test_audit_workflow.py -v          # 审核流程串联
 python -m pytest tests/test_graph_service.py -v           # 知识图谱（三元组抽取 + chunk 计算复用）
-python -m pytest tests/test_tool_guard.py -v              # MCP 工具调用守卫
+python -m pytest tests/test_tool_guard.py -v              # MCP 工具调用守卫（deny-by-default + 确认管理 + engine 集成）
+python -m pytest tests/test_citation_validation.py -v      # 引用强制校验（[n] 标注检测 + 来源映射 + 无引用拦截）
 python -m pytest tests/test_skill_finder.py -v            # Find Skills 渐进式技能加载
 python -m pytest tests/test_video_rag.py -v               # 视频 RAG（ASR + 关键帧 VLM 并发）
 python -m pytest tests/test_document_parser.py -v         # 文档解析（Docling 统一解析 + PDF/DOCX/XLSX 表格+图片上传+小图过滤+VLM+扫描页OCR + 标题层级+列表结构+分页检测+XLSX降级+列宽对齐 + 独立音频 ASR + 旧格式兜底）
 python -m pytest tests/test_migration.py -v               # Alembic 迁移 + Pydantic V2 配置校验（field_validator + model_validator + 迁移文件 + 端到端 SQLite）
-python -m pytest tests/test_quality_guard.py -v           # RAG 质量守卫（检索+生成双层评估）
+python -m pytest tests/test_quality_guard.py -v           # RAG 质量守卫（检索+生成双层评估 + 忠实度拦截重生成 + 幻觉防护集成）
 python -m pytest tests/test_rate_limiter.py -v            # API 限流（Redis-backed 令牌桶 + 内存降级 + Lua 原子化 + 客户端隔离 + FastAPI 集成）
 python -m pytest tests/test_beat_lock.py -v               # Celery Beat 单实例锁（Redis SETNX + 分布式预备）
 python -m pytest tests/test_eval.py -v                    # 离线评测（数据集+Recall/MRR/NDCG+回归基线+CLI）
@@ -2217,7 +2239,8 @@ python -m pytest tests/test_conversation_summarizer.py -v     # P3-C 对话摘�
 python -m pytest tests/test_scratchpad.py -v                  # P3-E Scratchpad 草稿本
 python -m pytest tests/test_fact_extraction.py -v             # P3-F LLM 事实提取
 python -m pytest tests/test_drift_detector.py -v              # P4-A 漂移检测（三级策略）
-python -m pytest tests/test_contradiction_detector.py -v      # P4-B 矛盾检测（三场景）
+python -m pytest tests/test_contradiction_detector.py -v      # P4-B 矛盾检测（三场景 + check_answer_consistency 接线）
+python -m pytest tests/test_high_risk_detector.py -v          # 高风险信息核验（金额/日期/法律条款检测 + 来源一致性校验）
 python -m pytest tests/test_preference_drift_detector.py -v   # P4-F 偏好偏移检测（纯规则）
 python -m pytest tests/test_retrieval_matcher.py -v           # P4-D 检索匹配检测
 python -m pytest tests/test_repetition_detector.py -v         # P4-G 重复提问检测
@@ -2237,10 +2260,12 @@ python -m pytest tests/test_p4_integration.py -v              # P4 集成测试�
 | `test_document_tasks_chunker.py` | 47 | SemanticChunker 接入、索引元数据、端到端策略验证 |
 | `test_vector_store.py` | 44 | VectorStoreBase 抽象、OpenSearch k-NN / Milvus 双后端、工厂、检索器集成 |
 | `test_audit_workflow.py` | 19 | 文档审核流程串联、密级路由、AuditService.approve 触发发布 |
-| `test_tool_guard.py` | 32 | DangerousToolGuard 守卫拦截、确认管理、engine 集成 |
+| `test_tool_guard.py` | 32 | DangerousToolGuard 守卫拦截、确认管理、**deny-by-default 未知工具阻断**、engine 集成 |
 | `test_video_rag.py` | 34 | ASR Provider 工厂、视频处理器、视频转写分块、document_tasks 集成、关键帧 VLM 并发 |
 | `test_document_parser.py` | 230 | Docling 统一解析、PDF 表格/图片上传/小图过滤/VLM/扫描页 OCR、PPTX GROUP 递归/图表数据/图片上传/小图过滤/列宽对齐/备注、DOCX 标题层级映射/列表结构/分页检测/图片上传/页眉页脚、XLSX 双引擎降级/列宽对齐、独立音频 ASR、旧格式兜底、factory 路由、document_tasks 集成、配置项 |
-| `test_quality_guard.py` | 33 | 检索质量检查、重试决策、生成质量评估、低置信度标记、engine 集成 |
+| `test_quality_guard.py` | 41 | 检索质量检查、重试决策、生成质量评估、低置信度标记、**忠实度拦截重生成（check_and_regenerate）**、**引用校验/矛盾检测/高风险核验集成**、engine 集成 |
+| `test_citation_validation.py` | 12 | 引用标注提取、[n] 编号映射、**无引用标注强制拦截（validate_citations）**、未映射编号告警、空来源跳过、结果序列化 |
+| `test_high_risk_detector.py` | 18 | 金额/日期/法律条款检测（正则匹配）、来源一致性核验、未核验比例阈值（>50% block / 部分 warn）、source_snippet 提取、结果序列化 |
 | `test_rate_limiter.py` | 22 | 令牌桶消费/补充、客户端隔离、API Key/IP 标识、429 响应、健康检查豁免 |
 | `test_eval.py` | 55 | 数据集加载、Recall@K/MRR/NDCG 计算、Runner 集成、回归检测、DB 持久化、CLI 退出码 |
 | `test_skill_finder.py` | 58 | SkillMetadata 匹配分数、SkillRegistry 加载/索引/按需加载、SkillFinder 中英文匹配/阈值/fallback/max_skills、分词器、config 配置项、Server/MCPClient/Engine 集成 |
@@ -2265,14 +2290,14 @@ python -m pytest tests/test_p4_integration.py -v              # P4 集成测试�
 | `test_scratchpad.py` | 5 | P3-E Scratchpad（草稿本累积、_think 注入、Token 截断） |
 | `test_fact_extraction.py` | 8 | P3-F LLM 事实提取（偏好/决策/关键信息提取、Mem0 写入、降级） |
 | `test_drift_detector.py` | 14 | P4-A 漂移检测（三级策略：规则/Embedding/置信度衰减、优雅降级） |
-| `test_contradiction_detector.py` | 19 | P4-B 矛盾检测（用户陈述/回答-知识库/文档间三场景、共同实体预筛、LLM JSON 解析） |
+| `test_contradiction_detector.py` | 19 | P4-B 矛盾检测（用户陈述/回答-知识库/文档间三场景、共同实体预筛、LLM JSON 解析、**check_answer_consistency 接线引擎**） |
 | `test_preference_drift_detector.py` | 16 | P4-F 偏好偏移检测（6 类偏好关键词、已有偏好去重、system prompt 修饰） |
 | `test_retrieval_matcher.py` | 11 | P4-D 检索匹配检测（top-1 相似度、多文档、text 字段兼容、降级） |
 | `test_repetition_detector.py` | 12 | P4-G 重复提问检测（cosine > 0.85、连续重复计数、current_embedding 复用） |
 | `test_coreference_enhanced.py` | 11 | P4-C 指代消解增强（历史注入、焦点栈注入、截断、规则回退） |
 | `test_engine_focus_injection.py` | 9 | P4-E 焦点注入引擎（AgentState 新字段、_think 动态注入、漂移警告） |
 | `test_p4_integration.py` | 9 | P4 集成测试（PreparedChat P4 字段、SSE 事件类型、检测器协作、后台任务） |
-| **合计** | **2245** | **2239 passed + 6 skipped，零失败（含 27 项预存 DB 外键/事件循环/mock 污染问题已全部修复）** |
+| **合计** | **2283** | **2277 passed + 6 skipped，零失败（含 27 项预存 DB 外键/事件循环/mock 污染问题已全部修复）** |
 
 ---
 

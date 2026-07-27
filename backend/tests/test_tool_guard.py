@@ -142,12 +142,13 @@ class TestDangerousToolGuardCheck:
         assert result.needs_confirmation is True
         assert result.irreversible is True
 
-    def test_unknown_tool_allowed_with_warning(self) -> None:
-        """未知工具默认放行。"""
+    def test_unknown_tool_blocked_by_default(self) -> None:
+        """未知工具默认阻断（deny-by-default）。"""
         guard = DangerousToolGuard()
         result = guard.check("some_new_tool", {})
-        assert result.allowed is True
-        assert "默认放行" in result.reason
+        assert result.blocked is True
+        assert result.action == GuardAction.BLOCK
+        assert "默认阻断" in result.reason
 
     def test_confirmed_tool_allowed(self) -> None:
         """已确认的危险工具放行。"""
@@ -219,12 +220,12 @@ class TestDangerousToolGuardConfig:
         result = guard.check("my_read_tool", {})
         assert result.allowed is True
 
-    def test_empty_dangerous_tools_allows_everything(self) -> None:
-        """空危险清单 — 所有工具放行（除显式安全工具外也是放行）。"""
+    def test_empty_dangerous_tools_blocks_unknown(self) -> None:
+        """空危险清单 — 未知工具被阻断（deny-by-default）。"""
         guard = DangerousToolGuard(dangerous_tools={})
         result = guard.check("document_create", {})
-        # 不在危险清单中 → 未知工具 → 放行
-        assert result.allowed is True
+        # 不在危险清单中 → 未知工具 → 阻断
+        assert result.blocked is True
 
     def test_get_dangerous_tools(self) -> None:
         """get_dangerous_tools 返回配置副本。"""
@@ -337,8 +338,8 @@ class TestEngineToolGuardIntegration:
         assert state["tool_results"][0]["tool"] == "document_create"
 
     @pytest.mark.asyncio
-    async def test_unknown_tool_executes_normally(self) -> None:
-        """未知工具默认放行。"""
+    async def test_unknown_tool_blocked_by_guard(self) -> None:
+        """未知工具默认被守卫阻断，不调用 MCP。"""
         engine = self._make_engine()
         mock_mcp = engine.mcp
         mock_mcp.call_tool = AsyncMock(return_value='{"ok": true}')
@@ -348,7 +349,12 @@ class TestEngineToolGuardIntegration:
 
         await _drain_tool_use(engine, state, tool_use)
 
-        mock_mcp.call_tool.assert_called_once_with("custom_tool", {}, tenant_id=None)
+        # MCP 不应被调用（未知工具被阻断）
+        mock_mcp.call_tool.assert_not_called()
+        # tool_results 中应有阻断信息
+        assert len(state["tool_results"]) == 1
+        result = json.loads(state["tool_results"][0]["result"])
+        assert "被安全守卫阻断" in result["error"]
 
     @pytest.mark.asyncio
     async def test_blocked_result_contains_irreversible_flag(self) -> None:

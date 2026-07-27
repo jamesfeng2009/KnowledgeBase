@@ -10,12 +10,12 @@ RAG 质量守卫 — 双层自适应评估闭环。
 
     生成层（复用已有 LLMJudgeService）：
         将现有 _reflect() 从内联简单 prompt 升级为调用 LLMJudgeService，
-        返回结构化 EvalResult。faithfulness 低于阈值时标记 low_confidence。
-        不新增 LLM 调用次数（原 reflect 就调一次 LLM）。
+        返回结构化 EvalResult。faithfulness 低于阈值时拦截并重生成答案
+        （check_and_regenerate），而非仅标记 low_confidence。
 
 设计要点：
     - 检索层重试上限 1 次，避免无限循环；
-    - 生成层只标记不拦截，避免流式输出后二次循环；
+    - 生成层低置信度时重生成（最多 1 次），避免无限循环；
     - 所有守卫可通过 RAG_QUALITY_GUARD_ENABLED 总开关关闭；
     - LLMJudgeService 不可用时降级为跳过。
 """
@@ -292,6 +292,127 @@ class QualityGuard:
             self._settings, "RAG_FAITHFULNESS_THRESHOLD", 3.0
         )
         return eval_result.hallucination_inverse < threshold
+
+    # ------------------------------------------------------------------
+    # 忠实度拦截 — 低置信度时重生成答案
+    # ------------------------------------------------------------------
+
+    async def check_and_regenerate(
+        self,
+        query: str,
+        answer: str,
+        contexts: list[str],
+        generator: Any = None,
+    ) -> tuple[str, Any | None]:
+        """检查生成质量，低置信度时重生成答案。
+
+        流程：
+            1. 调用 check_generation_quality 评估答案忠实度；
+            2. 如果 is_low_confidence 为 True 且 generator 可用：
+               - 使用增强 prompt（强调禁止编造）重新生成答案；
+               - 对新答案再次评估；
+               - 返回新答案和新评测结果；
+            3. 如果不可重生成（generator 不可用或守卫关闭）：
+               - 返回原答案和原评测结果。
+
+        Args:
+            query: 用户问题。
+            answer: 原始答案文本。
+            contexts: 引用文档内容列表。
+            generator: 答案生成器实例（需支持 async generate 方法），
+                       为 None 时跳过重生成。
+
+        Returns:
+            tuple[str, EvalResult | None]: (最终答案, 最终评测结果)。
+        """
+        # 原始评估
+        eval_result = await self.check_generation_quality(
+            query=query, answer=answer, contexts=contexts,
+        )
+
+        # 检查是否需要重生成
+        if not self.is_low_confidence(eval_result):
+            return answer, eval_result
+
+        log.warning(
+            "quality_guard.low_confidence_detected",
+            faithfulness=getattr(eval_result, "hallucination_inverse", None),
+            threshold=getattr(self._settings, "RAG_FAITHFULNESS_THRESHOLD", 3.0),
+            action="regenerating",
+        )
+
+        # 无法重生成时返回原答案
+        if generator is None:
+            log.warning("quality_guard.no_generator_skip_regen")
+            return answer, eval_result
+
+        # 重生成：使用增强 prompt 强调禁止编造
+        try:
+            new_answer = await self._regenerate_with_strict_prompt(
+                generator, query, contexts,
+            )
+            if not new_answer or not new_answer.strip():
+                log.warning("quality_guard.regen_empty_fallback")
+                return answer, eval_result
+
+            # 对新答案重新评估
+            new_eval = await self.check_generation_quality(
+                query=query, answer=new_answer, contexts=contexts,
+            )
+
+            log.info(
+                "quality_guard.regenerated",
+                original_faithfulness=getattr(eval_result, "hallucination_inverse", None),
+                new_faithfulness=getattr(new_eval, "hallucination_inverse", None) if new_eval else None,
+                improved=(
+                    new_eval is not None
+                    and getattr(new_eval, "hallucination_inverse", 0)
+                    > getattr(eval_result, "hallucination_inverse", 0)
+                ),
+            )
+            return new_answer, new_eval
+        except Exception as exc:
+            log.warning("quality_guard.regen_failed", error=str(exc))
+            return answer, eval_result
+
+    async def _regenerate_with_strict_prompt(
+        self,
+        generator: Any,
+        query: str,
+        contexts: list[str],
+    ) -> str:
+        """使用增强 prompt 重新生成答案。
+
+        增强 prompt 在原有基础上额外强调：
+            - 必须严格基于上下文回答，禁止编造信息；
+            - 必须使用 [n] 引用标注来源。
+        """
+        # 组装增强上下文
+        context_text = "\n---\n".join(
+            ctx[:1000] for ctx in contexts[:5] if ctx
+        )
+
+        strict_prompt = (
+            "你是企业知识库助手。请严格基于以下上下文回答用户问题。\n"
+            "重要规则：\n"
+            "1. 禁止编造未在上下文中出现的事实；\n"
+            "2. 如果上下文不足以完整回答，请明确说明哪些部分缺乏依据；\n"
+            "3. 在引用知识库内容时，必须使用 [n] 标注引用来源"
+            "（n 从 1 开始，对应下方来源编号）。\n\n"
+            f"=== 知识库来源 ===\n{context_text}"
+        )
+
+        # 调用生成器
+        answer_parts: list[str] = []
+        async for token in generator.generate(
+            query=query,
+            retrieved_docs=[],  # 已在 prompt 中注入上下文
+            tool_results=[],
+            memory_context=strict_prompt,
+        ):
+            answer_parts.append(token)
+
+        return "".join(answer_parts)
 
     def _get_judge_service(self) -> Any | None:
         """延迟获取 LLMJudgeService 实例。

@@ -474,12 +474,187 @@ class TestEngineRetrievalGuardIntegration:
         assert mock_reranker.rerank.call_count == 1
 
 
+# ======================================================================
+# 忠实度拦截测试 — check_and_regenerate
+# ======================================================================
+
+
+class TestCheckAndRegenerate:
+    """check_and_regenerate 方法测试。"""
+
+    @pytest.mark.asyncio
+    async def test_high_confidence_no_regen(self) -> None:
+        """高置信度时不重生成。"""
+        from app.rag.quality_guard import QualityGuard
+
+        guard = QualityGuard()
+
+        mock_eval = MagicMock()
+        mock_eval.hallucination_inverse = 4  # >= 3.0 threshold
+        mock_eval.error = None
+
+        mock_judge = MagicMock()
+        mock_judge.evaluate_single = AsyncMock(return_value=mock_eval)
+        guard._judge_service = mock_judge
+
+        original_answer = "原始答案"
+        final_answer, eval_result = await guard.check_and_regenerate(
+            query="test", answer=original_answer, contexts=["ctx"],
+            generator=MagicMock(),
+        )
+
+        assert final_answer == original_answer
+        assert eval_result is mock_eval
+
+    @pytest.mark.asyncio
+    async def test_low_confidence_regenerates(self) -> None:
+        """低置信度时重生成答案。"""
+        from app.rag.quality_guard import QualityGuard
+
+        guard = QualityGuard()
+
+        # 第一次评估：低分
+        mock_low_eval = MagicMock()
+        mock_low_eval.hallucination_inverse = 2  # < 3.0 threshold
+        mock_low_eval.error = None
+
+        # 第二次评估（重生成后）：高分
+        mock_high_eval = MagicMock()
+        mock_high_eval.hallucination_inverse = 4
+        mock_high_eval.error = None
+
+        mock_judge = MagicMock()
+        mock_judge.evaluate_single = AsyncMock(
+            side_effect=[mock_low_eval, mock_high_eval]
+        )
+        guard._judge_service = mock_judge
+
+        # Mock generator
+        mock_generator = MagicMock()
+
+        async def mock_generate(*args, **kwargs):
+            yield "重新生成的答案"
+
+        mock_generator.generate = mock_generate
+
+        original_answer = "原始低质量答案"
+        final_answer, eval_result = await guard.check_and_regenerate(
+            query="test", answer=original_answer, contexts=["ctx"],
+            generator=mock_generator,
+        )
+
+        assert final_answer == "重新生成的答案"
+        assert eval_result is mock_high_eval
+        assert mock_judge.evaluate_single.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_low_confidence_no_generator(self) -> None:
+        """低置信度但无 generator 时返回原答案。"""
+        from app.rag.quality_guard import QualityGuard
+
+        guard = QualityGuard()
+
+        mock_eval = MagicMock()
+        mock_eval.hallucination_inverse = 2  # low
+        mock_eval.error = None
+
+        mock_judge = MagicMock()
+        mock_judge.evaluate_single = AsyncMock(return_value=mock_eval)
+        guard._judge_service = mock_judge
+
+        original_answer = "原始答案"
+        final_answer, eval_result = await guard.check_and_regenerate(
+            query="test", answer=original_answer, contexts=["ctx"],
+            generator=None,  # no generator
+        )
+
+        assert final_answer == original_answer
+        assert eval_result is mock_eval
+
+    @pytest.mark.asyncio
+    async def test_regen_empty_fallback(self) -> None:
+        """重生成返回空字符串时回退到原答案。"""
+        from app.rag.quality_guard import QualityGuard
+
+        guard = QualityGuard()
+
+        mock_eval = MagicMock()
+        mock_eval.hallucination_inverse = 2  # low
+        mock_eval.error = None
+
+        mock_judge = MagicMock()
+        mock_judge.evaluate_single = AsyncMock(return_value=mock_eval)
+        guard._judge_service = mock_judge
+
+        mock_generator = MagicMock()
+
+        async def mock_generate_empty(*args, **kwargs):
+            yield ""  # empty
+
+        mock_generator.generate = mock_generate_empty
+
+        original_answer = "原始答案"
+        final_answer, eval_result = await guard.check_and_regenerate(
+            query="test", answer=original_answer, contexts=["ctx"],
+            generator=mock_generator,
+        )
+
+        assert final_answer == original_answer
+
+    @pytest.mark.asyncio
+    async def test_regen_exception_fallback(self) -> None:
+        """重生成抛异常时回退到原答案。"""
+        from app.rag.quality_guard import QualityGuard
+
+        guard = QualityGuard()
+
+        mock_eval = MagicMock()
+        mock_eval.hallucination_inverse = 2
+        mock_eval.error = None
+
+        mock_judge = MagicMock()
+        mock_judge.evaluate_single = AsyncMock(return_value=mock_eval)
+        guard._judge_service = mock_judge
+
+        mock_generator = MagicMock()
+        mock_generator.generate = MagicMock(side_effect=Exception("gen error"))
+
+        original_answer = "原始答案"
+        final_answer, eval_result = await guard.check_and_regenerate(
+            query="test", answer=original_answer, contexts=["ctx"],
+            generator=mock_generator,
+        )
+
+        assert final_answer == original_answer
+
+    @pytest.mark.asyncio
+    async def test_guard_disabled_no_regen(self) -> None:
+        """守卫关闭时不评估不重生成。"""
+        from app.rag.quality_guard import QualityGuard
+
+        guard = QualityGuard()
+        with patch("app.rag.quality_guard.get_settings") as mock_settings:
+            mock_settings.return_value.RAG_QUALITY_GUARD_ENABLED = False
+            mock_settings.return_value.RAG_FAITHFULNESS_THRESHOLD = 3.0
+            final_answer, eval_result = await guard.check_and_regenerate(
+                query="test", answer="answer", contexts=["ctx"],
+                generator=MagicMock(),
+            )
+            assert final_answer == "answer"
+            assert eval_result is None
+
+
+# ======================================================================
+# engine 集成测试
+# ======================================================================
+
+
 class TestEngineReflectUpgradeIntegration:
-    """engine _reflect 升级集成测试。"""
+    """engine _reflect 升级集成测试（含幻觉防护流水线）。"""
 
     @pytest.mark.asyncio
     async def test_reflect_uses_judge_service(self) -> None:
-        """_reflect 优先调用 LLMJudgeService。"""
+        """_reflect 调用 check_and_regenerate 进行忠实度评估。"""
         from app.rag.engine import AgenticRAGEngine
 
         mock_eval_result = MagicMock()
@@ -491,7 +666,9 @@ class TestEngineReflectUpgradeIntegration:
         mock_eval_result.error = None
 
         mock_guard = MagicMock()
-        mock_guard.check_generation_quality = AsyncMock(return_value=mock_eval_result)
+        mock_guard.check_and_regenerate = AsyncMock(
+            return_value=("测试答案", mock_eval_result)
+        )
         mock_guard.is_low_confidence = MagicMock(return_value=False)
 
         engine = AgenticRAGEngine(
@@ -514,7 +691,7 @@ class TestEngineReflectUpgradeIntegration:
         result = await engine._reflect(state)
 
         assert result is not None
-        mock_guard.check_generation_quality.assert_called_once()
+        mock_guard.check_and_regenerate.assert_called_once()
         assert state["eval_result"] is mock_eval_result
         assert state["low_confidence"] is False
 
@@ -528,7 +705,9 @@ class TestEngineReflectUpgradeIntegration:
         mock_eval_result.error = None
 
         mock_guard = MagicMock()
-        mock_guard.check_generation_quality = AsyncMock(return_value=mock_eval_result)
+        mock_guard.check_and_regenerate = AsyncMock(
+            return_value=("answer", mock_eval_result)
+        )
         mock_guard.is_low_confidence = MagicMock(return_value=True)
 
         engine = AgenticRAGEngine(
@@ -558,8 +737,6 @@ class TestEngineReflectUpgradeIntegration:
         from app.rag.engine import AgenticRAGEngine
 
         mock_llm = MagicMock()
-        # _reflect_inline 使用 async for chunk in self.llm.chat(...)
-        # 需要返回 async iterator
         async def mock_chat(*args, **kwargs):
             for chunk in ["satisfied"]:
                 yield chunk
@@ -602,3 +779,83 @@ class TestEngineReflectUpgradeIntegration:
         state = {"query": "test", "answer": "", "iteration": 1, "session_id": "s1"}
         result = await engine._reflect(state)
         assert result is None
+
+    @pytest.mark.asyncio
+    async def test_reflect_runs_hallucination_checks(self) -> None:
+        """_reflect 执行引用校验、矛盾检测和高风险核验。"""
+        from app.rag.engine import AgenticRAGEngine
+
+        mock_eval_result = MagicMock()
+        mock_eval_result.hallucination_inverse = 4
+        mock_eval_result.error = None
+
+        mock_guard = MagicMock()
+        mock_guard.check_and_regenerate = AsyncMock(
+            return_value=("答案[1]", mock_eval_result)
+        )
+        mock_guard.is_low_confidence = MagicMock(return_value=False)
+
+        mock_llm = MagicMock()
+
+        engine = AgenticRAGEngine(
+            llm=mock_llm,
+            mcp_client=MagicMock(),
+            retriever=MagicMock(),
+            reranker=MagicMock(),
+            generator=MagicMock(),
+            quality_guard=mock_guard,
+        )
+
+        state = {
+            "query": "合同金额是多少？",
+            "answer": "根据文档[1]，合同金额为 50000元",
+            "retrieved_docs": [{"content": "合同金额为 50000元", "doc_id": "1"}],
+            "iteration": 1,
+            "session_id": "s1",
+        }
+
+        await engine._reflect(state)
+
+        # 引用校验结果应存入 state
+        assert "citation_validation" in state
+        assert state["citation_validation"]["valid"] is True
+
+        # 高风险核验结果应存入 state
+        assert "high_risk_result" in state
+
+    @pytest.mark.asyncio
+    async def test_reflect_citation_invalid_marked(self) -> None:
+        """答案无引用标注时标记 citation_invalid。"""
+        from app.rag.engine import AgenticRAGEngine
+
+        mock_eval_result = MagicMock()
+        mock_eval_result.hallucination_inverse = 4
+        mock_eval_result.error = None
+
+        mock_guard = MagicMock()
+        mock_guard.check_and_regenerate = AsyncMock(
+            return_value=("无引用答案", mock_eval_result)
+        )
+        mock_guard.is_low_confidence = MagicMock(return_value=False)
+
+        engine = AgenticRAGEngine(
+            llm=MagicMock(),
+            mcp_client=MagicMock(),
+            retriever=MagicMock(),
+            reranker=MagicMock(),
+            generator=MagicMock(),
+            quality_guard=mock_guard,
+        )
+
+        state = {
+            "query": "产品功能是什么？",
+            "answer": "该产品支持批量导入功能。",  # 无 [n] 引用
+            "retrieved_docs": [{"content": "产品支持批量导入", "doc_id": "1"}],
+            "iteration": 1,
+            "session_id": "s1",
+        }
+
+        await engine._reflect(state)
+
+        assert state.get("citation_invalid") is True
+        assert state["citation_validation"]["valid"] is False

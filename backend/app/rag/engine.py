@@ -255,6 +255,20 @@ class AgenticRAGEngine:
                 self._quality_guard = QualityGuard()
             except Exception:
                 self._quality_guard = None
+        # 幻觉防护 — 矛盾检测器：检测答案与知识库文档的矛盾
+        self._contradiction_detector: Any = None
+        try:
+            from app.context.contradiction_detector import ContradictionDetector
+            self._contradiction_detector = ContradictionDetector(llm=llm)
+        except Exception as exc:
+            log.debug("engine.contradiction_detector_init_failed", error=str(exc))
+        # 幻觉防护 — 高风险信息检测器：金额/日期/法律条款二次核验
+        self._high_risk_detector: Any = None
+        try:
+            from app.context.high_risk_detector import HighRiskDetector
+            self._high_risk_detector = HighRiskDetector()
+        except Exception as exc:
+            log.debug("engine.high_risk_detector_init_failed", error=str(exc))
         # P2-B: 查询重写器 — 检索前优化用户查询
         # 传入时直接使用，未传入时尝试从工厂获取（可能返回 None）
         self._query_rewriter = query_rewriter
@@ -580,7 +594,7 @@ class AgenticRAGEngine:
                 event=SSEEventType.SOURCES,
             )
 
-        # 7. yield quality 事件（质量评分 + 低置信度标记）
+        # 7. yield quality 事件（质量评分 + 低置信度标记 + 幻觉防护结果）
         quality_data: dict[str, Any] = {
             "low_confidence": state.get("low_confidence", False),
         }
@@ -593,6 +607,21 @@ class AgenticRAGEngine:
                     "total_score": eval_result.total_score,
                 }
             )
+        # 幻觉防护结果上报
+        if state.get("answer_regenerated"):
+            quality_data["answer_regenerated"] = True
+        if state.get("citation_invalid"):
+            quality_data["citation_invalid"] = True
+        if state.get("contradiction_blocked"):
+            quality_data["contradiction_blocked"] = True
+        if state.get("high_risk_blocked"):
+            quality_data["high_risk_blocked"] = True
+        if state.get("contradiction_result"):
+            quality_data["contradiction"] = state["contradiction_result"]
+        if state.get("high_risk_result"):
+            quality_data["high_risk"] = state["high_risk_result"]
+        if state.get("citation_validation"):
+            quality_data["citation_check"] = state["citation_validation"]
         if state.get("low_confidence"):
             quality_data["message"] = "本次回答的置信度较低，建议核实关键信息"
         yield SSEEvent(
@@ -1675,6 +1704,32 @@ class AgenticRAGEngine:
             )
             return
 
+        # 未知工具被守卫阻断（deny-by-default）— 不执行，返回结构化错误
+        if guard_result.blocked:
+            log.warning(
+                "engine.tool_call.blocked_unknown",
+                tool=tool_name,
+                reason=guard_result.reason,
+            )
+            blocked_msg = json.dumps(
+                {
+                    "error": f"工具 {tool_name} 被安全守卫阻断：{guard_result.reason}",
+                    "tool": tool_name,
+                    "reason": guard_result.reason,
+                    "action_required": "该工具未在安全/危险清单中，请联系管理员注册",
+                },
+                ensure_ascii=False,
+            )
+            state["tool_results"].append(
+                {
+                    "tool": tool_name,
+                    "arguments": tool_input,
+                    "result": blocked_msg,
+                    "content": blocked_msg,
+                }
+            )
+            return
+
         log.info(
             "engine.tool_call.execute",
             tool=tool_name,
@@ -1749,46 +1804,189 @@ class AgenticRAGEngine:
 
     @trace_node("reflect")
     async def _reflect(self, state: AgentState) -> Any | None:
-        """自我反思 — 评估答案质量，返回结构化评测结果。
+        """自我反思 — 评估答案质量，执行幻觉防护多层拦截。
 
-        升级方案（Phase 3）：优先调用 LLMJudgeService.evaluate_single()，
-        返回结构化 EvalResult（citation/completeness/faithfulness 三维度评分）。
-        faithfulness 低于阈值时标记 low_confidence，供前端展示和 LangFuse 上报。
+        幻觉防护流水线（按执行顺序）：
+            1. 忠实度拦截：调用 QualityGuard.check_and_regenerate，
+               faithfulness 低于阈值时使用增强 prompt 重生成答案；
+            2. 引用强制校验：验证答案包含 [n] 引用标注（_check_citations）；
+            3. 矛盾检测：调用 ContradictionDetector.check_answer_consistency，
+               检测答案与知识库文档矛盾（_check_contradiction）；
+            4. 高风险核验：调用 HighRiskDetector.verify_against_sources，
+               核验金额/日期/法律条款一致性（_check_high_risk）。
 
         降级：LLMJudgeService 不可用时走原有内联 prompt（_reflect_inline），
         仅记录日志，不阻断流程。
-
-        P1-Opt4: 传答案摘要而非全文 — reflect 只需判断"是否需要补充检索"，
-        不需要逐字审查答案。但 LLMJudgeService 需要完整答案做 faithfulness 评估，
-        因此 Judge 路径传全文，inline 降级路径传摘要。
         """
         answer = state.get("answer", "")
         if not answer:
             return None
 
-        # 优先：调用 LLMJudgeService 结构化评测
+        retrieved_docs = state.get("retrieved_docs", [])
+        contexts = [
+            doc.get("content", "")
+            for doc in retrieved_docs
+            if doc.get("content")
+        ]
+
+        # 优先：调用 LLMJudgeService 结构化评测 + 忠实度拦截
         if self._quality_guard is not None:
-            contexts = [
-                doc.get("content", "")
-                for doc in state.get("retrieved_docs", [])
-                if doc.get("content")
-            ]
-            eval_result = await self._quality_guard.check_generation_quality(
+            # 忠实度拦截：低置信度时重生成而非仅标记
+            final_answer, eval_result = await self._quality_guard.check_and_regenerate(
                 query=state["query"],
                 answer=answer,
                 contexts=contexts,
+                generator=self.generator,
             )
+            # 如果答案被重生成，更新 state
+            if final_answer != answer:
+                log.info(
+                    "engine.reflect.answer_regenerated",
+                    original_len=len(answer),
+                    new_len=len(final_answer),
+                )
+                state["answer"] = final_answer
+                state["answer_regenerated"] = True
+                answer = final_answer
+
             if eval_result is not None:
-                # 标记低置信度
                 state["low_confidence"] = self._quality_guard.is_low_confidence(
                     eval_result
                 )
                 state["eval_result"] = eval_result
-                return eval_result
 
-        # 降级：LLMJudgeService 不可用时走原有内联 prompt
-        await self._reflect_inline(state)
-        return None
+        # --- 幻觉防护：引用强制校验 ---
+        self._check_citations(state, answer, retrieved_docs)
+
+        # --- 幻觉防护：矛盾检测（check_answer_consistency 接线）---
+        await self._check_contradiction(state, answer, retrieved_docs)
+
+        # --- 幻觉防护：高风险信息二次核验 ---
+        self._check_high_risk(state, answer, retrieved_docs)
+
+        # 如果质量守卫不可用，降级到内联反思
+        if self._quality_guard is None:
+            await self._reflect_inline(state)
+
+        return state.get("eval_result")
+
+    def _check_citations(
+        self,
+        state: AgentState,
+        answer: str,
+        retrieved_docs: list[dict[str, Any]],
+    ) -> None:
+        """引用强制校验 — 检查答案是否包含 [n] 引用标注。
+
+        无引用标注时标记 citation_invalid=True，供 SSE 事件和拦截使用。
+        """
+        if not retrieved_docs:
+            return  # 无检索文档时跳过（非 RAG 场景）
+
+        try:
+            from app.rag.citation import CitationExtractor
+            extractor = self._get_citation_extractor()
+            result = extractor.validate_citations(answer, retrieved_docs)
+            state["citation_validation"] = result.to_dict()
+            if not result.valid:
+                log.warning(
+                    "engine.citation_invalid",
+                    reason=result.reason,
+                    source_count=result.source_count,
+                )
+                state["citation_invalid"] = True
+        except Exception as exc:
+            log.warning("engine.citation_check_error", error=str(exc))
+
+    def _get_citation_extractor(self) -> Any:
+        """获取或创建 CitationExtractor 实例（懒初始化）。"""
+        if not hasattr(self, "_citation_extractor") or self._citation_extractor is None:
+            from app.rag.citation import CitationExtractor
+            self._citation_extractor = CitationExtractor()
+        return self._citation_extractor
+
+    async def _check_contradiction(
+        self,
+        state: AgentState,
+        answer: str,
+        retrieved_docs: list[dict[str, Any]],
+    ) -> None:
+        """矛盾检测 — 检测答案与知识库文档是否矛盾。
+
+        check_answer_consistency 接线：将 ContradictionDetector 接入主流程。
+        检测到矛盾且 action="block" 时标记 contradiction_blocked=True。
+        """
+        if self._contradiction_detector is None:
+            return
+
+        if not retrieved_docs or not answer:
+            return
+
+        try:
+            result = await self._contradiction_detector.check_answer_consistency(
+                answer=answer,
+                retrieved_docs=retrieved_docs,
+            )
+            state["contradiction_result"] = result.to_dict()
+            if result.has_contradiction and result.action == "block":
+                log.error(
+                    "engine.contradiction_blocked",
+                    description=result.description,
+                    severity=result.severity,
+                    sources=result.conflicting_sources,
+                )
+                state["contradiction_blocked"] = True
+                state["low_confidence"] = True
+            elif result.has_contradiction:
+                log.warning(
+                    "engine.contradiction_detected",
+                    description=result.description,
+                    action=result.action,
+                )
+        except Exception as exc:
+            log.warning("engine.contradiction_check_error", error=str(exc))
+
+    def _check_high_risk(
+        self,
+        state: AgentState,
+        answer: str,
+        retrieved_docs: list[dict[str, Any]],
+    ) -> None:
+        """高风险信息二次核验 — 金额/日期/法律条款一致性检查。
+
+        检测答案中的高风险信息，与来源文档核对一致性。
+        未核验比例过高时标记 high_risk_blocked=True。
+        """
+        if self._high_risk_detector is None:
+            return
+
+        if not answer:
+            return
+
+        try:
+            result = self._high_risk_detector.verify_against_sources(
+                answer=answer,
+                sources=retrieved_docs,
+            )
+            state["high_risk_result"] = result.to_dict()
+            if result.action == "block":
+                log.warning(
+                    "engine.high_risk_blocked",
+                    total=result.total_count,
+                    unverified=result.unverified_count,
+                    action=result.action,
+                )
+                state["high_risk_blocked"] = True
+                state["low_confidence"] = True
+            elif result.has_risk:
+                log.info(
+                    "engine.high_risk_warning",
+                    total=result.total_count,
+                    unverified=result.unverified_count,
+                    action=result.action,
+                )
+        except Exception as exc:
+            log.warning("engine.high_risk_check_error", error=str(exc))
 
     async def _reflect_inline(self, state: AgentState) -> None:
         """内联简单反思 — LLMJudgeService 不可用时的降级路径。

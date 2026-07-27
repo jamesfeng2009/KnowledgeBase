@@ -103,7 +103,7 @@ class DangerousToolGuard:
     在 Agent 调用 MCP 工具前检查工具是否危险：
         - 安全工具（只读）→ 直接放行；
         - 危险工具（写操作）→ 需要用户确认；
-        - 未知工具 → 默认放行（保持兼容），记录警告。
+        - 未知工具 → 默认阻断（deny-by-default），防止未授权工具执行。
 
     P1 更新：从全局内存 set 改为会话级控制（session_id → set[tool_name]），
     对话结束后自动清理。支持与 ApprovalService 联动：
@@ -201,16 +201,18 @@ class DangerousToolGuard:
                 irreversible=irreversible,
             )
 
-        # 未知工具 — 默认放行，记录警告
+        # 未知工具 — 默认阻断（deny-by-default）
+        # 安全原则：未在安全/危险清单中的工具无法评估风险，
+        # 默认阻断而非放行，防止 LLM 调用未授权工具造成安全漏洞。
         log.warning(
-            "tool_guard.unknown_tool",
+            "tool_guard.unknown_tool_blocked",
             tool=tool_name,
-            hint="未在安全/危险清单中，默认放行",
+            hint="未在安全/危险清单中，默认阻断",
         )
         return GuardResult(
-            action=GuardAction.ALLOW,
+            action=GuardAction.BLOCK,
             tool_name=tool_name,
-            reason="未知工具，默认放行",
+            reason="未知工具，默认阻断（deny-by-default）",
         )
 
     def confirm_session_tool(self, session_id: str, tool_name: str) -> None:
