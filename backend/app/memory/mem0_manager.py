@@ -8,6 +8,7 @@ Mem0 当前事实管理 — 单一职责：存储和检索跨会话的用户事�
 ORM 模型定义在 app.models.memory.MemoryFact，避免循环导入。
 """
 
+import math
 import uuid
 from datetime import datetime, timedelta
 
@@ -20,6 +21,21 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 settings = get_settings()
+
+
+def _cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
+    """计算两个向量的余弦相似度。
+
+    用于 Mem0 事实的语义检索 — 将 query 向量与已存储的 embedding 比较。
+    """
+    if not vec_a or not vec_b:
+        return 0.0
+    norm_a = math.sqrt(sum(x * x for x in vec_a))
+    norm_b = math.sqrt(sum(x * x for x in vec_b))
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    dot = sum(a * b for a, b in zip(vec_a, vec_b))
+    return dot / (norm_a * norm_b)
 
 
 # === 事实类别注册表（开闭原则：新增类别只需追加） ===
@@ -103,20 +119,29 @@ class Mem0Manager:
         query: str | None = None,
         category: str | None = None,
         limit: int = 10,
+        similarity_threshold: float = 0.3,
     ) -> list[MemoryFact]:
-        """检索用户事实。
+        """检索用户事实 — 支持向量语义检索 + 关键词降级。
+
+        检索策略（优先级降级）：
+            1. 语义检索：query 非空时，生成 query 向量，与已存储的 embedding
+               做余弦相似度排序，返回 top-k。仅取相似度 >= threshold 的事实。
+            2. 关键词降级：Embedder 不可用或事实无 embedding 时，回退到
+               关键词包含匹配。
+            3. 时间排序：query 为 None 时，按 created_at 降序返回最近事实。
 
         Args:
             user_id: 用户 ID
             query: 语义查询（为 None 则返回最近的事实）
             category: 类别过滤
             limit: 返回数量
+            similarity_threshold: 语义相似度阈值（低于此值不返回）
         """
         stmt = (
             select(MemoryFact)
             .where(MemoryFact.user_id == user_id, MemoryFact.is_active == True)
             .order_by(MemoryFact.created_at.desc())
-            .limit(limit)
+            .limit(limit * 3 if query else limit)  # 语义检索时多取候选再排序
         )
 
         # 过期的事实标记为无效
@@ -128,14 +153,52 @@ class Mem0Manager:
             stmt = stmt.where(MemoryFact.category == category)
 
         result = await self.db.execute(stmt)
-        facts = result.scalars().all()
+        db_facts = result.scalars().all()
 
-        # 如果有查询文本，做简单的关键词过滤（语义检索由向量数据库完成）
-        if query and facts:
-            query_lower = query.lower()
-            facts = [f for f in facts if query_lower in f.fact_text.lower()] or facts
+        if not query or not db_facts:
+            return db_facts
 
-        return facts
+        # --- 语义检索：使用 embedding 做余弦相似度排序 ---
+        query_vec = None
+        try:
+            embeddings = await self.embedder.embed([query])
+            query_vec = embeddings[0] if embeddings else None
+        except Exception as e:
+            logger.warning("search_query_embedding_failed", error=str(e))
+
+        if query_vec is not None:
+            # 计算每条事实的相似度
+            scored: list[tuple[float, MemoryFact]] = []
+            for fact in db_facts:
+                if fact.embedding:
+                    sim = _cosine_similarity(query_vec, fact.embedding)
+                    if sim >= similarity_threshold:
+                        scored.append((sim, fact))
+                else:
+                    # 无 embedding 的事实，用关键词匹配兜底
+                    if query.lower() in fact.fact_text.lower():
+                        scored.append((0.0, fact))
+
+            # 按相似度降序排序
+            scored.sort(key=lambda x: x[0], reverse=True)
+            semantic_results = [f for _, f in scored[:limit]]
+
+            if semantic_results:
+                logger.debug(
+                    "semantic_search_done",
+                    query=query[:50],
+                    candidates=len(semantic_results),
+                    top_score=scored[0][0] if scored else 0.0,
+                )
+                return semantic_results
+
+            # 语义检索无结果 → 降级到关键词匹配（在原始 DB 结果上）
+            logger.debug("semantic_search_no_match_fallback_keyword")
+
+        # --- 关键词降级（在原始 DB 结果上操作） ---
+        query_lower = query.lower()
+        keyword_matched = [f for f in db_facts if query_lower in f.fact_text.lower()]
+        return keyword_matched[:limit] if keyword_matched else db_facts[:limit]
 
     async def get_preference(self, user_id: uuid.UUID, key: str) -> str | None:
         """获取用户偏好（精确查询）。"""

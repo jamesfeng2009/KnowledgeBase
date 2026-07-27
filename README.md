@@ -29,6 +29,7 @@
 - [P2: 实体注册表（EntityRegistry）](#p2-实体注册表entityregistry)
 - [P3: 上下文工程（Context Engineering）](#p3-上下文工程context-engineering)
 - [P4: 实时对话智能（Realtime Conversation Intelligence）](#p4-实时对话智能realtime-conversation-intelligence)
+- [多 Agent 协作与记忆增强（P0-P2）](#多-agent-协作与记忆增强p0-p2)
 - [测试](#测试)
 
 ---
@@ -77,6 +78,10 @@ EnterpriseKnowledge/
 │   │   │   └── ...                   # chat / knowledge / documents / search 等
 │   │   ├── api/openapi/v1/           # 开放接口（6 类能力，API Key 认证）
 │   │   ├── agents/                   # 多 Agent 协作（CrewAI）
+│   │   │   ├── base.py                  # Agent Loop 基类（think→execute→reflect 循环）
+│   │   │   ├── crew.py                  # CrewAI 编排（结构化通信 + 原始需求透传）
+│   │   │   ├── reviewer_agent.py        # P2: 高风险操作对抗审查 Agent
+│   │   │   └── ...                      # qa / workflow / action agent 等
 │   │   ├── connectors/               # 企业连接器（OA/ERP/CRM/Mail）
 │   │   ├── context/                  # 对话上下文工程（P3-P4）
 │   │   │   ├── focus_tracker.py         # P3-A: 焦点追踪（TopicTracker + ConversationFocus + 焦点历史栈）
@@ -97,6 +102,9 @@ EnterpriseKnowledge/
 │   │   │   └── ...                   # anthropic / vllm / embedder / factory 等
 │   │   ├── mcp/                      # MCP 工具协议
 │   │   ├── memory/                   # 四级记忆引擎
+│   │   │   ├── memory_manager.py        # 四级记忆编排器（关键决策持久化 + LLM 事实提取）
+│   │   │   ├── mem0_manager.py          # L3 Mem0（cosine 语义检索 + Embedding 双索引 + TTL）
+│   │   │   └── ...                      # checkpoint / graphiti_manager 等
 │   │   ├── models/                   # SQLAlchemy ORM 模型
 │   │   ├── observability/            # LangFuse 追踪 + LLM Judge + request_id 关联
 │   │   ├── rag/                      # Agentic RAG 引擎（含 vector_store 适配层 + 跨模态检索）
@@ -2194,12 +2202,52 @@ AgentState 新增 `conversation_focus` 和 `drift_info` 字段，`_think()` 动�
 
 ---
 
+## 多 Agent 协作与记忆增强（P0-P2）
+
+针对多 Agent 通信损耗、记忆检索精度、关键决策遗忘、高风险操作缺审查等问题，按优先级分三批完成。
+
+### P0: 记忆检索精度与上下文压缩
+
+| 优化项 | 位置 | 说明 |
+|--------|------|------|
+| Mem0 语义检索 | `mem0_manager.py` `search_facts()` | 从关键词匹配升级为 cosine similarity 语义检索：生成 query 向量 → 与已存储 embedding 计算余弦相似度 → top-k 排序。阈值 `similarity_threshold=0.3`，无匹配时降级到关键词匹配，Embedder 不可用时降级到时间排序 |
+| ConversationSummarizer 接入 | `chat_service.py` `_build_engine_memory_context()` | 旧历史超阈值时自动压缩为摘要 + 保留近期原文，从 `memory_facts` 的 `summary` 类别读取已有摘要做增量压缩，失败时降级到原始历史 |
+
+### P1: 多 Agent 结构化通信
+
+| 优化项 | 位置 | 说明 |
+|--------|------|------|
+| 原始需求透传 | `crew.py` `_build_crew_tasks()` | 防传话游戏：每个子任务描述中注入 `original_query`（标注"不可修改，必须参考"），确保下游 Agent 拿到用户原始需求而非经过多次转述的版本 |
+| 结构化输出 | `crew.py` `_build_crew_tasks()` | 要求 Agent 以结构化 JSON 输出（`action_type` / `result_data` / `status`），而非自然语言总结，减少每次转述的信息漂移 |
+| 关键决策持久化 | `memory_manager.py` `extract_and_save_key_decisions()` | 防中间遗忘：启发式检测决策性关键词 → LLM 提取关键决策 → 持久化到 working memory（TTL 24h）→ 下一轮 `build_context` 自动注入到 prompt 的"当前任务上下文"段落 |
+
+### P2: 高风险操作对抗审查
+
+| 优化项 | 位置 | 说明 |
+|--------|------|------|
+| ReviewerAgent | `agents/reviewer_agent.py` | 独立于 ActionAgent 的安全审查 Agent，从权限合规/参数合理性/不可逆性/上下文一致性四个维度审查高风险操作（`create_it_ticket` / `document_create` / `document_delete` / `system_config_change`）。LLM 不可用时默认放行（不阻断业务），审查失败时默认放行 |
+
+```mermaid
+flowchart LR
+    USER[用户请求] --> ACTION[ActionAgent<br/>执行操作]
+    ACTION --> REVIEW{高风险工具?}
+    REVIEW -->|否| EXEC[直接执行]
+    REVIEW -->|是| REVIEWER[ReviewerAgent<br/>对抗审查]
+    REVIEWER --> APPROVED{approved?}
+    APPROVED -->|是| EXEC
+    APPROVED -->|否| BLOCK[阻断操作<br/>返回拒绝原因]
+```
+
+设计原理（来自 Q8 多 Agent 对抗设计）：「写代码」和「审查代码」需要的视角是对抗性的，合并在一个 Agent 里容易自己检查不出自己的问题。ReviewerAgent 独立于执行逻辑，提供安全/合规视角的二次核验。
+
+---
+
 ## 测试
 
 ```bash
 cd backend
 
-# 运行全部测试（2283 项）
+# 运行全部测试（2326 项）
 python -m pytest --tb=short -q
 
 # 运行特定模块测试
@@ -2247,6 +2295,10 @@ python -m pytest tests/test_repetition_detector.py -v         # P4-G 重复提�
 python -m pytest tests/test_coreference_enhanced.py -v        # P4-C 指代消解增强（历史+焦点栈注入）
 python -m pytest tests/test_engine_focus_injection.py -v      # P4-E 焦点注入引擎
 python -m pytest tests/test_p4_integration.py -v              # P4 集成测试（chat_service 集成）
+python -m pytest tests/test_mem0_semantic_search.py -v       # Mem0 语义检索（cosine similarity + 关键词降级）
+python -m pytest tests/test_crew_structured_comm.py -v       # 多 Agent 结构化通信（原始需求透传 + JSON 输出）
+python -m pytest tests/test_key_decision_persistence.py -v   # 关键决策持久化（防中间遗忘）
+python -m pytest tests/test_reviewer_agent.py -v             # ReviewerAgent 对抗审查（高风险操作审批/拒绝/降级）
 ```
 
 ### 测试覆盖
@@ -2297,7 +2349,11 @@ python -m pytest tests/test_p4_integration.py -v              # P4 集成测试�
 | `test_coreference_enhanced.py` | 11 | P4-C 指代消解增强（历史注入、焦点栈注入、截断、规则回退） |
 | `test_engine_focus_injection.py` | 9 | P4-E 焦点注入引擎（AgentState 新字段、_think 动态注入、漂移警告） |
 | `test_p4_integration.py` | 9 | P4 集成测试（PreparedChat P4 字段、SSE 事件类型、检测器协作、后台任务） |
-| **合计** | **2283** | **2277 passed + 6 skipped，零失败（含 27 项预存 DB 外键/事件循环/mock 污染问题已全部修复）** |
+| `test_mem0_semantic_search.py` | 14 | Mem0 语义检索（cosine similarity 向量排序、相似度阈值过滤、Embedder 不可用降级、关键词降级、无 embedding 兜底） |
+| `test_crew_structured_comm.py` | 9 | 多 Agent 结构化通信（原始需求透传注入、JSON 输出指令、期望输出标记、空任务兜底、序列化降级） |
+| `test_key_decision_persistence.py` | 7 | 关键决策持久化（决策关键词检测、LLM 提取、NONE 跳过、LLM 不可用降级、异常降级、TTL 24h） |
+| `test_reviewer_agent.py` | 13 | ReviewerAgent 对抗审查（高风险工具判定、非高风险放行、LLM 不可用降级、审批/拒绝、异常降级、markdown JSON 解析、超长 query 截断） |
+| **合计** | **2326** | **2320 passed + 6 skipped，零新增失败（5 项预存失败：QualityGuard/upload 管线，87 项 DB 连接错误为环境基线）** |
 
 ---
 

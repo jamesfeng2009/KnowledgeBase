@@ -578,7 +578,7 @@ class ChatService:
             model_used=resolved_model_id or None,
         )
 
-        # 8. 保存记忆（Checkpoint 快照 + 提取用户偏好）
+        # 8. 保存记忆（Checkpoint 快照 + 提取用户偏好 + 关键决策持久化）
         try:
             await self.memory.save_session(
                 user_id=self.user.id,
@@ -589,6 +589,13 @@ class ChatService:
             await self.memory.extract_and_save_facts(
                 self.user.id,
                 [{"role": "user", "content": query}],
+            )
+            # P1-2: 跨轮关键决策显式持久化到 working memory
+            # 防中间遗忘：关键决策不依赖模型从历史中"找回"
+            await self.memory.extract_and_save_key_decisions(
+                user_id=self.user.id,
+                query=query,
+                answer=assistant_content,
             )
         except Exception as e:
             logger.warning("memory_save_failed", error=str(e))
@@ -864,6 +871,40 @@ class ChatService:
                     {"role": msg.role, "content": msg.content}
                     for msg in history[:-1]  # 排除最后一条（刚保存的当前用户消息）
                 ]
+
+                # P3-C: 滚动摘要压缩 — 旧历史超阈值时压缩为摘要 + 保留近期原文
+                try:
+                    from app.config import get_settings
+
+                    _settings = get_settings()
+                    if _settings.CONVERSATION_SUMMARIZER_ENABLED and history_dicts:
+                        from app.context.conversation_summarizer import (
+                            ConversationSummarizer,
+                        )
+
+                        # 获取已有摘要（从 memory_facts 的 summary 类别检索）
+                        existing_summary = ""
+                        if memory_ctx and memory_ctx.user_facts:
+                            for fact in memory_ctx.user_facts[:5]:
+                                if fact.get("category") == "summary":
+                                    existing_summary = fact.get("fact_text", "")
+                                    break
+
+                        summarizer = ConversationSummarizer(
+                            llm=self.llm,
+                            max_tokens=_settings.CONVERSATION_SUMMARIZER_MAX_TOKENS,
+                            retained_tokens=_settings.CONVERSATION_SUMMARIZER_RETAINED_TOKENS,
+                        )
+                        summary, recent_msgs = await summarizer.summarize_if_needed(
+                            history_dicts, existing_summary=existing_summary,
+                        )
+                        # 摘要非空时注入，recent_msgs 替换 history_dicts
+                        if summary and summary != existing_summary:
+                            parts.append(f"对话摘要：\n{summary}")
+                        history_dicts = recent_msgs
+                except Exception as exc:
+                    logger.warning("chat.conversation_summarizer_failed", error=str(exc))
+                    # 降级：使用原始历史
 
                 # P3-B: 语义上下文选择
                 try:

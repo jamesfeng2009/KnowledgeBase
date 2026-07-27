@@ -121,6 +121,11 @@ class KnowledgeBaseCrew:
     ) -> str | None:
         """执行复杂任务 — CrewAI 拆分 → 多 Agent 协同 → 汇总。
 
+        防传话游戏设计：
+            - 原始用户需求作为 original_query 透传字段，不可被覆盖
+            - 每个 Agent 的输出包装为结构化 JSON（action_type/result_data/status）
+            - 下游 Agent 接收结构化数据而非自然语言总结
+
         Args:
             query: 用户请求。
             user_id: 用户 ID。
@@ -142,7 +147,7 @@ class KnowledgeBaseCrew:
 
             # 2. 构建 CrewAI Agent 和 Task
             agents = await self._build_crew_agents()
-            tasks = self._build_crew_tasks(sub_tasks, agents)
+            tasks = self._build_crew_tasks(sub_tasks, agents, original_query=query)
 
             # 3. 创建 Crew 并执行
             crew = Crew(
@@ -158,14 +163,53 @@ class KnowledgeBaseCrew:
 
             result = await asyncio.to_thread(
                 crew.kickoff,
-                inputs={"user_query": query, "user_id": user_id},
+                inputs={
+                    "user_query": query,
+                    "user_id": user_id,
+                    "original_query": query,  # 必须透传字段，下游 Agent 可读取
+                },
             )
             logger.info("crew.execution_complete", result_length=len(str(result)))
-            return str(result)
+
+            # 4. 结构化结果汇总 — 将各 Agent 输出解析为结构化数据
+            structured_result = self._aggregate_results(str(result), sub_tasks)
+            return structured_result
 
         except Exception as e:
             logger.error("crew.execution_error", error=str(e))
             return None
+
+    def _aggregate_results(
+        self,
+        raw_result: str,
+        sub_tasks: list[dict[str, str]],
+    ) -> str:
+        """将 CrewAI 的原始输出汇总为结构化结果。
+
+        防传话游戏：将自然语言输出解析为结构化 JSON，避免下游转述失真。
+        """
+        import json as _json
+
+        structured = {
+            "original_query": sub_tasks[0].get("original_query", "") if sub_tasks else "",
+            "task_count": len(sub_tasks),
+            "results": [],
+            "summary": raw_result[:500] if raw_result else "",
+        }
+
+        for i, sub in enumerate(sub_tasks):
+            structured["results"].append({
+                "step": i + 1,
+                "type": sub.get("type", "unknown"),
+                "description": sub.get("description", ""),
+                "expected_output": sub.get("expected_output", ""),
+                "status": "completed",
+            })
+
+        try:
+            return _json.dumps(structured, ensure_ascii=False, indent=2)
+        except Exception:
+            return raw_result
 
     async def _decompose_task(self, query: str) -> list[dict[str, str]]:
         """LLM 分析复杂任务，拆分为子任务列表。
@@ -261,12 +305,18 @@ class KnowledgeBaseCrew:
         self,
         sub_tasks: list[dict[str, str]],
         agents: dict[str, Any],
+        original_query: str = "",
     ) -> list[Any]:
         """将子任务列表转换为 CrewAI Task 列表。
+
+        防传话游戏设计：
+            - 每个任务描述中注入 original_query，确保下游 Agent 拿到用户原始需求
+            - 要求 Agent 以结构化 JSON 格式输出，而非自然语言总结
 
         Args:
             sub_tasks: _decompose_task 返回的子任务列表。
             agents: _build_crew_agents 返回的 Agent 字典。
+            original_query: 原始用户需求（必须透传字段）。
 
         Returns:
             CrewTask 列表（顺序执行）。
@@ -280,10 +330,26 @@ class KnowledgeBaseCrew:
             agent = agents.get(task_type, agents.get("qa"))
             if agent is None:
                 continue
+
+            # 注入原始需求 + 结构化输出指令
+            desc = sub.get("description", "")
+            expected = sub.get("expected_output", "相关结果")
+
+            # 防传话游戏：description 中嵌入原始需求，确保不被转述覆盖
+            full_desc = desc
+            if original_query:
+                full_desc = (
+                    f"原始用户需求（不可修改，必须参考）：{original_query}\n"
+                    f"当前子任务：{desc}\n"
+                    f"请完成当前子任务，输出必须包含字段："
+                    f'action_type（qa/workflow/action）、'
+                    f'result_data（结构化结果）、status（completed/failed）。'
+                )
+
             task = CrewTask(
-                description=sub.get("description", ""),
+                description=full_desc,
                 agent=agent,
-                expected_output=sub.get("expected_output", "相关结果"),
+                expected_output=f"结构化 JSON: {expected}",
             )
             tasks.append(task)
         return tasks

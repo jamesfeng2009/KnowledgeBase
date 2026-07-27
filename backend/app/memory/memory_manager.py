@@ -214,6 +214,86 @@ class MemoryManager:
 
         logger.info("session_memory_saved", session_id=session_id, user_id=str(user_id))
 
+    async def extract_and_save_key_decisions(
+        self,
+        user_id: uuid.UUID,
+        query: str,
+        answer: str,
+    ) -> str | None:
+        """从本轮对话中提取关键决策，持久化到 working memory。
+
+        防中间遗忘（lost in the middle）：关键决策不依赖模型从聊天记录中
+        "找回"，而是显式维护在 working memory 的状态对象中。下一轮对话
+        开始时，build_context 会自动注入到 prompt 的"当前任务上下文"段落。
+
+        触发条件（启发式）：
+            - 答案中包含确认性关键词（"确认"/"已选择"/"已设定"/"金额"/"日期"）
+            - 或用户查询中包含决策性关键词（"选择"/"决定"/"确认"/"设定"）
+
+        Args:
+            user_id: 用户 ID
+            query: 用户查询
+            answer: AI 回答
+
+        Returns:
+            保存的关键决策文本（未提取到则返回 None）
+        """
+        # 启发式判断是否包含关键决策
+        decision_keywords = [
+            "确认", "已选择", "已设定", "已配置", "金额", "日期",
+            "选择", "决定", "设定", "审批通过", "已批准",
+        ]
+        has_decision = any(kw in query or kw in answer for kw in decision_keywords)
+        if not has_decision:
+            return None
+
+        # 用 LLM 提取关键决策
+        try:
+            llm = get_llm_provider()
+        except Exception:
+            return None
+
+        prompt = (
+            "从以下对话中提取关键决策或已确认的参数。\n"
+            "只提取明确确认的信息（如选择的方案、确认的金额、设定的日期），不要推测。\n"
+            "输出格式：一行简洁的决策描述（不超过100字）。\n"
+            "如果没有明确决策，输出 NONE。\n\n"
+            f"用户：{query[:200]}\n"
+            f"助手：{answer[:300]}\n\n"
+            "关键决策："
+        )
+
+        try:
+            chunks: list[str] = []
+            async for chunk in llm.chat(
+                [{"role": "user", "content": prompt}],
+                stream=True,
+                max_tokens=100,
+            ):
+                if isinstance(chunk, str):
+                    chunks.append(chunk)
+            decision = "".join(chunks).strip()
+
+            if not decision or decision.upper() == "NONE":
+                return None
+
+            # 持久化到 working memory（24h 过期）
+            await self.mem0.add_fact(
+                user_id=user_id,
+                fact_text=f"关键决策：{decision}",
+                category="working",
+                ttl_hours=24,
+            )
+            logger.info(
+                "key_decision_saved",
+                user_id=str(user_id),
+                decision=decision[:80],
+            )
+            return decision
+        except Exception as exc:
+            logger.warning("key_decision_extraction_failed", error=str(exc))
+            return None
+
     async def extract_and_save_facts(
         self,
         user_id: uuid.UUID,
