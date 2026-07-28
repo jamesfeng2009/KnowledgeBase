@@ -1,0 +1,107 @@
+name: Eval Regression
+
+on:
+  schedule:
+    # 每天北京时间 02:00 运行
+    - cron: "0 18 * * *"  # UTC 18:00 = CST 02:00
+  workflow_dispatch:
+    inputs:
+      dataset:
+        description: "Dataset path (JSONL file or directory)"
+        required: false
+        default: "eval_datasets/"
+      set_baseline:
+        description: "Set this run as baseline"
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  eval-regression:
+    name: RAG Eval Regression Check
+    runs-on: ubuntu-latest
+    if: github.repository != ''
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ekb
+          POSTGRES_PASSWORD: ekb
+          POSTGRES_DB: ekb
+        ports:
+          - 15432:5432
+        options: >-
+          --health-cmd "pg_isready -U ekb"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 16379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DEPLOY_MODE: saas
+      DATABASE_URL: postgresql+asyncpg://ekb:ekb@localhost:15432/ekb
+      REDIS_URL: redis://localhost:16379/15
+      SECRET_KEY: eval-regression-secret-key
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || 'test-dummy-key' }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY || 'test-dummy-key' }}
+      EVAL_REGRESSION_THRESHOLD: "0.05"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        working-directory: backend
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Validate eval datasets
+        working-directory: backend
+        run: python scripts/validate_eval_dataset.py eval_datasets/
+
+      - name: Run eval (retrieval only, no LLM)
+        working-directory: backend
+        run: |
+          DATASET="${{ github.event.inputs.dataset || 'eval_datasets/' }}"
+          python scripts/run_eval.py \
+            --dataset "$DATASET" \
+            --no-generation \
+            ${{ github.event.inputs.set_baseline == 'true' && '--set-baseline' || '' }}
+
+      - name: Run eval (full, with generation)
+        if: ${{ secrets.OPENAI_API_KEY != '' }}
+        working-directory: backend
+        run: |
+          DATASET="${{ github.event.inputs.dataset || 'eval_datasets/' }}"
+          python scripts/run_eval.py \
+            --dataset "$DATASET" \
+            --set-baseline
+
+      - name: Upload eval results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results
+          path: |
+            backend/eval_*.json
+            backend/eval_*.log

@@ -1,0 +1,118 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install ruff
+        run: pip install ruff>=0.8.0
+
+      - name: Run ruff check
+        working-directory: backend
+        run: ruff check app/ tasks/ tests/ scripts/
+
+      - name: Run ruff format check
+        working-directory: backend
+        run: ruff format --check app/ tasks/ tests/ scripts/
+
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ekb
+          POSTGRES_PASSWORD: ekb
+          POSTGRES_DB: ekb
+        ports:
+          - 15432:5432
+        options: >-
+          --health-cmd "pg_isready -U ekb"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 16379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DEPLOY_MODE: saas
+      DATABASE_URL: postgresql+asyncpg://ekb:ekb@localhost:15432/ekb
+      REDIS_URL: redis://localhost:16379/15
+      SECRET_KEY: ci-test-secret-key-for-testing-only
+      OPENAI_API_KEY: test-dummy-key
+      ANTHROPIC_API_KEY: test-dummy-key
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        working-directory: backend
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest-cov
+
+      - name: Run tests
+        working-directory: backend
+        run: |
+          python -m pytest tests/ -v --tb=short \
+            --cov=app --cov-report=term-missing --cov-report=xml:coverage.xml \
+            --cov-fail-under=30
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: backend/coverage.xml
+
+  eval-dataset-validation:
+    name: Eval Dataset Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate eval datasets
+        working-directory: backend
+        run: python scripts/validate_eval_dataset.py eval_datasets/

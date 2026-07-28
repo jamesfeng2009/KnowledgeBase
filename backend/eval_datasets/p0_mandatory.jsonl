@@ -1,0 +1,100 @@
+{"query": "公司报销流程是什么", "expected_doc_ids": ["doc_fin_001", "doc_fin_002"], "kb_ids": ["kb_finance"], "tags": ["exact_match", "报销", "财务"]}
+{"query": "年假请假制度是怎样的", "expected_doc_ids": ["doc_hr_001"], "kb_ids": ["kb_hr"], "tags": ["exact_match", "请假", "人事"]}
+{"query": "新员工入职需要准备哪些材料", "expected_doc_ids": ["doc_hr_002", "doc_hr_003"], "kb_ids": ["kb_hr"], "tags": ["exact_match", "入职", "人事"]}
+{"query": "差旅费报销标准是多少", "expected_doc_ids": ["doc_fin_003"], "kb_ids": ["kb_finance"], "tags": ["exact_match", "差旅", "财务"]}
+{"query": "IT设备故障如何报修", "expected_doc_ids": ["doc_it_001"], "kb_ids": ["kb_it"], "tags": ["exact_match", "IT", "运维"]}
+{"query": "员工离职流程是什么", "expected_doc_ids": ["doc_hr_004"], "kb_ids": ["kb_hr"], "tags": ["exact_match", "离职", "人事"]}
+{"query": "办公用品采购申请流程", "expected_doc_ids": ["doc_admin_001"], "kb_ids": ["kb_admin"], "tags": ["exact_match", "采购", "行政"]}
+{"query": "公司保密协议内容是什么", "expected_doc_ids": ["doc_legal_001"], "kb_ids": ["kb_legal"], "tags": ["exact_match", "保密", "法务"]}
+{"query": "绩效考核评分标准", "expected_doc_ids": ["doc_hr_005"], "kb_ids": ["kb_hr"], "tags": ["exact_match", "绩效", "人事"]}
+{"query": "会议室预订流程", "expected_doc_ids": ["doc_admin_002"], "kb_ids": ["kb_admin"], "tags": ["exact_match", "会议室", "行政"]}
+{"query": "公积金缴纳比例是多少", "expected_doc_ids": ["doc_hr_006"], "kb_ids": ["kb_hr"], "tags": ["exact_match", "公积金", "人事"]}
+{"query": "公司发票管理制度", "expected_doc_ids": ["doc_fin_004"], "kb_ids": ["kb_finance"], "tags": ["exact_match", "发票", "财务"]}
+{"query": "VPN账号申请流程", "expected_doc_ids": ["doc_it_002"], "kb_ids": ["kb_it"], "tags": ["exact_match", "VPN", "IT"]}
+{"query": "员工手册内容有哪些", "expected_doc_ids": ["doc_hr_007"], "kb_ids": ["kb_hr"], "tags": ["exact_match", "手册", "人事"]}
+{"query": "合同审批流程是什么", "expected_doc_ids": ["doc_legal_002", "doc_admin_003"], "kb_ids": ["kb_legal", "kb_admin"], "tags": ["exact_match", "合同", "法务"]}
+{"query": "公司印章使用管理规定", "expected_doc_ids": ["doc_admin_004"], "kb_ids": ["kb_admin"], "tags": ["exact_match", "印章", "行政"]}
+{"query": "考勤打卡规则是什么", "expected_doc_ids": ["doc_hr_008"], "kb_ids": ["kb_hr"], "tags": ["exact_match", "考勤", "人事"]}
+{"query": "数据备份管理制度", "expected_doc_ids": ["doc_it_003"], "kb_ids": ["kb_it"], "tags": ["exact_match", "备份", "IT"]}
+{"query": "公司采购管理制度", "expected_doc_ids": ["doc_fin_005", "doc_admin_005"], "kb_ids": ["kb_finance", "kb_admin"], "tags": ["exact_match", "采购", "财务"]}
+{"query": "员工培训体系是什么", "expected_doc_ids": ["doc_hr_009", "doc_hr_010"], "kb_ids": ["kb_hr"], "tags": ["exact_match", "培训", "人事"]}
+{"query": "钱花完了怎么走报销", "expected_doc_ids": ["doc_fin_001", "doc_fin_002"], "kb_ids": ["kb_finance"], "tags": ["semantic", "报销", "财务"]}
+{"query": "想休息几天怎么跟公司说", "expected_doc_ids": ["doc_hr_001"], "kb_ids": ["kb_hr"], "tags": ["semantic", "请假", "人事"]}
+{"query": "刚来公司要办什么手续", "expected_doc_ids": ["doc_hr_002", "doc_hr_003"], "kb_ids": ["kb_hr"], "tags": ["semantic", "入职", "人事"]}
+{"query": "出差花销公司能报多少", "expected_doc_ids": ["doc_fin_003"], "kb_ids": ["kb_finance"], "tags": ["semantic", "差旅", "财务"]}
+{"query": "电脑坏了找谁修", "expected_doc_ids": ["doc_it_001"], "kb_ids": ["kb_it"], "tags": ["semantic", "IT", "运维"]}
+{"query": "不在公司干了需要办什么", "expected_doc_ids": ["doc_hr_004"], "kb_ids": ["kb_hr"], "tags": ["semantic", "离职", "人事"]}
+{"query": "办公东西用完了怎么买", "expected_doc_ids": ["doc_admin_001"], "kb_ids": ["kb_admin"], "tags": ["semantic", "采购", "行政"]}
+{"query": "签了保密条款有哪些限制", "expected_doc_ids": ["doc_legal_001"], "kb_ids": ["kb_legal"], "tags": ["semantic", "保密", "法务"]}
+{"query": "年底评分怎么算的", "expected_doc_ids": ["doc_hr_005"], "kb_ids": ["kb_hr"], "tags": ["semantic", "绩效", "人事"]}
+{"query": "开会需要场地怎么约", "expected_doc_ids": ["doc_admin_002"], "kb_ids": ["kb_admin"], "tags": ["semantic", "会议室", "行政"]}
+{"query": "五险一金公司交多少", "expected_doc_ids": ["doc_hr_006"], "kb_ids": ["kb_hr"], "tags": ["semantic", "公积金", "人事"]}
+{"query": "客户给发票了怎么处理", "expected_doc_ids": ["doc_fin_004"], "kb_ids": ["kb_finance"], "tags": ["semantic", "发票", "财务"]}
+{"query": "在家办公需要连内网怎么办", "expected_doc_ids": ["doc_it_002"], "kb_ids": ["kb_it"], "tags": ["semantic", "VPN", "IT"]}
+{"query": "公司规章制度在哪里看", "expected_doc_ids": ["doc_hr_007"], "kb_ids": ["kb_hr"], "tags": ["semantic", "手册", "人事"]}
+{"query": "签合同要走什么审批", "expected_doc_ids": ["doc_legal_002", "doc_admin_003"], "kb_ids": ["kb_legal", "kb_admin"], "tags": ["semantic", "合同", "法务"]}
+{"query": "盖公章要去哪个部门", "expected_doc_ids": ["doc_admin_004"], "kb_ids": ["kb_admin"], "tags": ["semantic", "印章", "行政"]}
+{"query": "迟到早退怎么扣钱", "expected_doc_ids": ["doc_hr_008"], "kb_ids": ["kb_hr"], "tags": ["semantic", "考勤", "人事"]}
+{"query": "服务器数据丢了怎么恢复", "expected_doc_ids": ["doc_it_003"], "kb_ids": ["kb_it"], "tags": ["semantic", "备份", "IT"]}
+{"query": "买东西走什么流程审批", "expected_doc_ids": ["doc_fin_005", "doc_admin_005"], "kb_ids": ["kb_finance", "kb_admin"], "tags": ["semantic", "采购", "财务"]}
+{"query": "新人入职有培训吗", "expected_doc_ids": ["doc_hr_009", "doc_hr_010"], "kb_ids": ["kb_hr"], "tags": ["semantic", "培训", "人事"]}
+{"query": "费用报销步骤说明", "expected_doc_ids": ["doc_fin_001", "doc_fin_002"], "kb_ids": ["kb_finance"], "tags": ["synonym", "报销", "财务"]}
+{"query": "休假申请管理规定", "expected_doc_ids": ["doc_hr_001"], "kb_ids": ["kb_hr"], "tags": ["synonym", "请假", "人事"]}
+{"query": "新人入职办理指南", "expected_doc_ids": ["doc_hr_002", "doc_hr_003"], "kb_ids": ["kb_hr"], "tags": ["synonym", "入职", "人事"]}
+{"query": "出差费用补贴政策", "expected_doc_ids": ["doc_fin_003"], "kb_ids": ["kb_finance"], "tags": ["synonym", "差旅", "财务"]}
+{"query": "信息技术设备维修申报", "expected_doc_ids": ["doc_it_001"], "kb_ids": ["kb_it"], "tags": ["synonym", "IT", "运维"]}
+{"query": "人员离职交接程序", "expected_doc_ids": ["doc_hr_004"], "kb_ids": ["kb_hr"], "tags": ["synonym", "离职", "人事"]}
+{"query": "办公物资申领办法", "expected_doc_ids": ["doc_admin_001"], "kb_ids": ["kb_admin"], "tags": ["synonym", "采购", "行政"]}
+{"query": "商业机密保护协议条款", "expected_doc_ids": ["doc_legal_001"], "kb_ids": ["kb_legal"], "tags": ["synonym", "保密", "法务"]}
+{"query": "员工年度评估准则", "expected_doc_ids": ["doc_hr_005"], "kb_ids": ["kb_hr"], "tags": ["synonym", "绩效", "人事"]}
+{"query": "会议场所预约办法", "expected_doc_ids": ["doc_admin_002"], "kb_ids": ["kb_admin"], "tags": ["synonym", "会议室", "行政"]}
+{"query": "住房公积金缴存标准", "expected_doc_ids": ["doc_hr_006"], "kb_ids": ["kb_hr"], "tags": ["synonym", "公积金", "人事"]}
+{"query": "票据管理规范制度", "expected_doc_ids": ["doc_fin_004"], "kb_ids": ["kb_finance"], "tags": ["synonym", "发票", "财务"]}
+{"query": "远程接入内网账号申请", "expected_doc_ids": ["doc_it_002"], "kb_ids": ["kb_it"], "tags": ["synonym", "VPN", "IT"]}
+{"query": "企业员工行为准则手册", "expected_doc_ids": ["doc_hr_007"], "kb_ids": ["kb_hr"], "tags": ["synonym", "手册", "人事"]}
+{"query": "商业合同审核签字流程", "expected_doc_ids": ["doc_legal_002", "doc_admin_003"], "kb_ids": ["kb_legal", "kb_admin"], "tags": ["synonym", "合同", "法务"]}
+{"query": "公司公章使用审批规范", "expected_doc_ids": ["doc_admin_004"], "kb_ids": ["kb_admin"], "tags": ["synonym", "印章", "行政"]}
+{"query": "出勤考核管理办法", "expected_doc_ids": ["doc_hr_008"], "kb_ids": ["kb_hr"], "tags": ["synonym", "考勤", "人事"]}
+{"query": "信息系统数据存档策略", "expected_doc_ids": ["doc_it_003"], "kb_ids": ["kb_it"], "tags": ["synonym", "备份", "IT"]}
+{"query": "物资采办审批程序", "expected_doc_ids": ["doc_fin_005", "doc_admin_005"], "kb_ids": ["kb_finance", "kb_admin"], "tags": ["synonym", "采购", "财务"]}
+{"query": "职工教育培养体系说明", "expected_doc_ids": ["doc_hr_009", "doc_hr_010"], "kb_ids": ["kb_hr"], "tags": ["synonym", "培训", "人事"]}
+{"query": "reimbursement process for employees", "expected_doc_ids": ["doc_fin_001", "doc_fin_002"], "kb_ids": ["kb_finance"], "tags": ["cross_lingual", "报销", "财务"]}
+{"query": "annual leave policy and application", "expected_doc_ids": ["doc_hr_001"], "kb_ids": ["kb_hr"], "tags": ["cross_lingual", "请假", "人事"]}
+{"query": "onboarding checklist for new hires", "expected_doc_ids": ["doc_hr_002", "doc_hr_003"], "kb_ids": ["kb_hr"], "tags": ["cross_lingual", "入职", "人事"]}
+{"query": "travel expense reimbursement standards", "expected_doc_ids": ["doc_fin_003"], "kb_ids": ["kb_finance"], "tags": ["cross_lingual", "差旅", "财务"]}
+{"query": "how to report IT equipment failure", "expected_doc_ids": ["doc_it_001"], "kb_ids": ["kb_it"], "tags": ["cross_lingual", "IT", "运维"]}
+{"query": "employee resignation procedure", "expected_doc_ids": ["doc_hr_004"], "kb_ids": ["kb_hr"], "tags": ["cross_lingual", "离职", "人事"]}
+{"query": "office supplies procurement request", "expected_doc_ids": ["doc_admin_001"], "kb_ids": ["kb_admin"], "tags": ["cross_lingual", "采购", "行政"]}
+{"query": "confidentiality agreement details", "expected_doc_ids": ["doc_legal_001"], "kb_ids": ["kb_legal"], "tags": ["cross_lingual", "保密", "法务"]}
+{"query": "performance evaluation criteria", "expected_doc_ids": ["doc_hr_005"], "kb_ids": ["kb_hr"], "tags": ["cross_lingual", "绩效", "人事"]}
+{"query": "meeting room booking guide", "expected_doc_ids": ["doc_admin_002"], "kb_ids": ["kb_admin"], "tags": ["cross_lingual", "会议室", "行政"]}
+{"query": "housing fund contribution ratio", "expected_doc_ids": ["doc_hr_006"], "kb_ids": ["kb_hr"], "tags": ["cross_lingual", "公积金", "人事"]}
+{"query": "invoice management policy", "expected_doc_ids": ["doc_fin_004"], "kb_ids": ["kb_finance"], "tags": ["cross_lingual", "发票", "财务"]}
+{"query": "VPN account application", "expected_doc_ids": ["doc_it_002"], "kb_ids": ["kb_it"], "tags": ["cross_lingual", "VPN", "IT"]}
+{"query": "contract approval workflow", "expected_doc_ids": ["doc_legal_002", "doc_admin_003"], "kb_ids": ["kb_legal", "kb_admin"], "tags": ["cross_lingual", "合同", "法务"]}
+{"query": "company seal usage regulations", "expected_doc_ids": ["doc_admin_004"], "kb_ids": ["kb_admin"], "tags": ["cross_lingual", "印章", "行政"]}
+{"query": "报销咋弄啊", "expected_doc_ids": ["doc_fin_001", "doc_fin_002"], "kb_ids": ["kb_finance"], "tags": ["fuzzy", "报销", "财务"]}
+{"query": "想请个假咋整", "expected_doc_ids": ["doc_hr_001"], "kb_ids": ["kb_hr"], "tags": ["fuzzy", "请假", "人事"]}
+{"query": "新人来了干啥", "expected_doc_ids": ["doc_hr_002", "doc_hr_003"], "kb_ids": ["kb_hr"], "tags": ["fuzzy", "入职", "人事"]}
+{"query": "出差花钱给报不", "expected_doc_ids": ["doc_fin_003"], "kb_ids": ["kb_finance"], "tags": ["fuzzy", "差旅", "财务"]}
+{"query": "电脑坏了咋办", "expected_doc_ids": ["doc_it_001"], "kb_ids": ["kb_it"], "tags": ["fuzzy", "IT", "运维"]}
+{"query": "不想干了咋走", "expected_doc_ids": ["doc_hr_004"], "kb_ids": ["kb_hr"], "tags": ["fuzzy", "离职", "人事"]}
+{"query": "笔用完了去哪领", "expected_doc_ids": ["doc_admin_001"], "kb_ids": ["kb_admin"], "tags": ["fuzzy", "采购", "行政"]}
+{"query": "签了保密不能说啥", "expected_doc_ids": ["doc_legal_001"], "kb_ids": ["kb_legal"], "tags": ["fuzzy", "保密", "法务"]}
+{"query": "年底打分咋评的", "expected_doc_ids": ["doc_hr_005"], "kb_ids": ["kb_hr"], "tags": ["fuzzy", "绩效", "人事"]}
+{"query": "开会地方咋定", "expected_doc_ids": ["doc_admin_002"], "kb_ids": ["kb_admin"], "tags": ["fuzzy", "会议室", "行政"]}
+{"query": "公积金交多少啊", "expected_doc_ids": ["doc_hr_006"], "kb_ids": ["kb_hr"], "tags": ["fuzzy", "公积金", "人事"]}
+{"query": "发票咋整给财务", "expected_doc_ids": ["doc_fin_004"], "kb_ids": ["kb_finance"], "tags": ["fuzzy", "发票", "财务"]}
+{"query": "连内网咋弄", "expected_doc_ids": ["doc_it_002"], "kb_ids": ["kb_it"], "tags": ["fuzzy", "VPN", "IT"]}
+{"query": "盖章找谁啊", "expected_doc_ids": ["doc_admin_004"], "kb_ids": ["kb_admin"], "tags": ["fuzzy", "印章", "行政"]}
+{"query": "迟到咋扣的", "expected_doc_ids": ["doc_hr_008"], "kb_ids": ["kb_hr"], "tags": ["fuzzy", "考勤", "人事"]}
+{"query": "财务部门差旅费报销上限是多少需要哪些材料", "expected_doc_ids": ["doc_fin_003", "doc_fin_001"], "kb_ids": ["kb_finance"], "tags": ["multi_constraint", "差旅", "报销", "财务"]}
+{"query": "入职三个月内试用期考核标准和离职流程", "expected_doc_ids": ["doc_hr_005", "doc_hr_004"], "kb_ids": ["kb_hr"], "tags": ["multi_constraint", "绩效", "离职", "人事"]}
+{"query": "分公司VPN申请审批需要多长时间", "expected_doc_ids": ["doc_it_002", "doc_admin_003"], "kb_ids": ["kb_it", "kb_admin"], "tags": ["multi_constraint", "VPN", "审批", "IT"]}
+{"query": "采购金额超过一万的审批流程和所需附件", "expected_doc_ids": ["doc_fin_005", "doc_admin_005"], "kb_ids": ["kb_finance", "kb_admin"], "tags": ["multi_constraint", "采购", "审批", "财务"]}
+{"query": "合同金额超过五十万的法务审核要求", "expected_doc_ids": ["doc_legal_002", "doc_admin_003"], "kb_ids": ["kb_legal", "kb_admin"], "tags": ["multi_constraint", "合同", "法务", "审批"]}
+{"query": "年假超过五天的审批级别和所需材料", "expected_doc_ids": ["doc_hr_001", "doc_hr_008"], "kb_ids": ["kb_hr"], "tags": ["multi_constraint", "请假", "审批", "人事"]}
+{"query": "服务器数据恢复的SLA响应时间和备份策略", "expected_doc_ids": ["doc_it_003", "doc_it_001"], "kb_ids": ["kb_it"], "tags": ["multi_constraint", "备份", "IT", "运维"]}
+{"query": "新员工入职培训课程安排和考核标准", "expected_doc_ids": ["doc_hr_009", "doc_hr_010", "doc_hr_002"], "kb_ids": ["kb_hr"], "tags": ["multi_constraint", "入职", "培训", "人事"]}
+{"query": "跨部门会议室预订冲突解决机制和审批流程", "expected_doc_ids": ["doc_admin_002", "doc_admin_003"], "kb_ids": ["kb_admin"], "tags": ["multi_constraint", "会议室", "审批", "行政"]}
+{"query": "员工离职交接清单包含哪些内容和审批环节", "expected_doc_ids": ["doc_hr_004", "doc_admin_004"], "kb_ids": ["kb_hr", "kb_admin"], "tags": ["multi_constraint", "离职", "交接", "人事"]}

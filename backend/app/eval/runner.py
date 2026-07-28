@@ -130,6 +130,7 @@ class EvalCaseResult:
         ndcg_at_5: NDCG@5。
         answer: 生成的答案（未启用生成时为 None）。
         judge_scores: LLM Judge 评分字典（未启用或失败时为 None）。
+        ragas_scores: RAGAS 四项标准指标（未启用或失败时为 None）。
         error: 异常信息（正常时为 None）。
     """
 
@@ -140,6 +141,7 @@ class EvalCaseResult:
     ndcg_at_5: float = 0.0
     answer: str | None = None
     judge_scores: dict[str, Any] | None = None
+    ragas_scores: dict[str, float] | None = None
     error: str | None = None
 
     @property
@@ -156,6 +158,7 @@ class EvalCaseResult:
             "ndcg_at_5": round(self.ndcg_at_5, 4),
             "answer": self.answer,
             "judge_scores": self.judge_scores,
+            "ragas_scores": self.ragas_scores,
             "error": self.error,
             "passed": self.passed,
         }
@@ -171,6 +174,7 @@ class EvalRunResult:
         avg_mrr: 平均 MRR。
         avg_ndcg_at_5: 平均 NDCG@5。
         avg_judge_score: 平均 Judge 总分（未启用时为 0.0）。
+        avg_ragas: RAGAS 四项指标均值（未启用时为空 dict）。
         total: 用例总数。
         passed: 通过用例数。
         evaluated_at: 评测时间（ISO 字符串）。
@@ -182,6 +186,7 @@ class EvalRunResult:
     avg_mrr: float = 0.0
     avg_ndcg_at_5: float = 0.0
     avg_judge_score: float = 0.0
+    avg_ragas: dict[str, float] = field(default_factory=dict)
     total: int = 0
     passed: int = 0
     evaluated_at: str = ""
@@ -195,6 +200,7 @@ class EvalRunResult:
             "avg_mrr": round(self.avg_mrr, 4),
             "avg_ndcg_at_5": round(self.avg_ndcg_at_5, 4),
             "avg_judge_score": round(self.avg_judge_score, 4),
+            "avg_ragas": {k: round(v, 4) for k, v in self.avg_ragas.items()},
             "total": self.total,
             "passed": self.passed,
             "evaluated_at": self.evaluated_at,
@@ -214,15 +220,22 @@ class EvalRunner:
         runner = EvalRunner(engine=rag_engine, judge_service=judge)
         result = await runner.run(dataset, with_generation=True)
 
-    engine / judge_service 均可选，缺省时优雅降级：
+    engine / judge_service / ragas_metrics 均可选，缺省时优雅降级：
         - engine 为 None：检索无能力，指标降级为 0；
-        - judge_service 为 None：跳过生成层评分。
+        - judge_service 为 None：跳过生成层 Judge 评分；
+        - ragas_metrics 为 None：跳过 RAGAS 标准指标。
     """
 
-    def __init__(self, engine: Any | None = None, judge_service: Any | None = None) -> None:
+    def __init__(
+        self,
+        engine: Any | None = None,
+        judge_service: Any | None = None,
+        ragas_metrics: Any | None = None,
+    ) -> None:
         # 延迟类型标注避免循环导入：engine 为 AgenticRAGEngine，judge 为 LLMJudgeService
         self.engine = engine
         self.judge_service = judge_service
+        self.ragas_metrics = ragas_metrics
 
     async def run(
         self,
@@ -272,6 +285,18 @@ class EvalRunner:
             ]
             avg_judge = sum(scores) / len(scores)
 
+        # RAGAS 指标均值：仅统计有 ragas_scores 的用例
+        ragas_list = [c for c in valid if c.ragas_scores is not None]
+        avg_ragas: dict[str, float] = {}
+        if ragas_list:
+            ragas_keys = {"faithfulness", "answer_relevancy", "context_precision", "context_recall"}
+            for key in ragas_keys:
+                values = [
+                    float(c.ragas_scores.get(key, 0.0))  # type: ignore[union-attr]
+                    for c in ragas_list
+                ]
+                avg_ragas[key] = sum(values) / len(values) if values else 0.0
+
         passed = sum(1 for c in case_results if c.passed)
 
         result = EvalRunResult(
@@ -280,6 +305,7 @@ class EvalRunner:
             avg_mrr=avg_mrr_val,
             avg_ndcg_at_5=avg_ndcg,
             avg_judge_score=avg_judge,
+            avg_ragas=avg_ragas,
             total=total,
             passed=passed,
             evaluated_at=datetime.utcnow().isoformat(),
@@ -295,6 +321,7 @@ class EvalRunner:
             avg_mrr=round(avg_mrr_val, 4),
             avg_ndcg_at_5=round(avg_ndcg, 4),
             avg_judge_score=round(avg_judge, 4),
+            avg_ragas={k: round(v, 4) for k, v in avg_ragas.items()},
         )
         return result
 
@@ -356,9 +383,10 @@ class EvalRunner:
         mrr_val = mrr(retrieved_doc_ids, expected_doc_ids)
         ndcg5 = ndcg(retrieved_doc_ids, expected_doc_ids, _DEFAULT_K)
 
-        # 3. 生成 + Judge（可选）
+        # 3. 生成 + Judge + RAGAS（可选）
         answer: str | None = None
         judge_scores: dict[str, Any] | None = None
+        ragas_scores: dict[str, float] | None = None
 
         if with_generation:
             answer, judge_scores, gen_error = await self._generate_and_judge(
@@ -374,6 +402,23 @@ class EvalRunner:
                 else:
                     error = f"{error} | {gen_error}"
 
+            # RAGAS 评估（需要 answer 和 contexts）
+            if answer is not None and self.ragas_metrics is not None:
+                try:
+                    contexts = [
+                        str(d.get("content", ""))
+                        for d in retrieved_docs
+                        if isinstance(d, dict) and d.get("content")
+                    ]
+                    ragas_scores = await self.ragas_metrics.evaluate(
+                        query=query,
+                        answer=answer,
+                        contexts=contexts,
+                        expected_answer=getattr(case, "expected_answer", None),
+                    )
+                except Exception as exc:
+                    log.warning("eval_runner.ragas_error", query=query[:50], error=str(exc))
+
         return EvalCaseResult(
             query=query,
             retrieved_doc_ids=retrieved_doc_ids,
@@ -382,6 +427,7 @@ class EvalRunner:
             ndcg_at_5=ndcg5,
             answer=answer,
             judge_scores=judge_scores,
+            ragas_scores=ragas_scores,
             error=error,
         )
 

@@ -1,0 +1,200 @@
+{"query": "公司报销流程是什么", "expected_doc_ids": ["doc_fin_001", "doc_fin_002"], "kb_ids": ["kb_finance"], "tags": ["exact_match", "报销", "财务"], "expected_answer": "公司报销流程：1. 填写报销单 2. 部门主管审批 3. 财务审核 4. 打款。需附发票原件。"}
+{"query": "年假请假制度是怎样的", "expected_doc_ids": ["doc_hr_001"], "kb_ids": ["kb_hr"], "tags": ["exact_match", "请假", "人事"], "expected_answer": "年假请假制度：入职满1年享5天年假，满3年享10天，满10年享15天。需提前3天在OA系统提交申请。"}
+{"query": "新员工入职需要准备哪些材料", "expected_doc_ids": ["doc_hr_002", "doc_hr_003"], "kb_ids": ["kb_hr"], "tags": ["exact_match", "入职", "人事"], "expected_answer": "新员工入职材料：1. 身份证复印件 2. 学历证明 3. 银行卡信息 4. 体检报告 5. 离职证明。"}
+{"query": "差旅费报销标准是多少", "expected_doc_ids": ["doc_fin_003"], "kb_ids": ["kb_finance"], "tags": ["exact_match", "差旅", "财务"], "expected_answer": "差旅费报销标准：交通费实报实销上限经济舱，住宿一线城市500元/晚，二线城市400元/晚，餐补100元/天。"}
+{"query": "IT设备故障如何报修", "expected_doc_ids": ["doc_it_001"], "kb_ids": ["kb_it"], "tags": ["exact_match", "IT", "运维"], "expected_answer": "IT设备故障报修：通过IT工单系统提交工单，或拨打IT服务热线4000-xxx-xxxx，工作日15分钟内响应。"}
+{"query": "员工离职流程是什么", "expected_doc_ids": ["doc_hr_004"], "kb_ids": ["kb_hr"], "tags": ["exact_match", "离职", "人事"], "expected_answer": "员工离职流程：1. 提前30天提交辞职信 2. 主管面谈 3. 交接清单 4. 财务结算 5. HR归档。"}
+{"query": "办公用品采购申请流程", "expected_doc_ids": ["doc_admin_001"], "kb_ids": ["kb_admin"], "tags": ["exact_match", "采购", "行政"], "expected_answer": "办公用品采购：在OA系统提交采购申请，部门主管审批后由行政部统一采购，3个工作日内到货。"}
+{"query": "公司保密协议内容是什么", "expected_doc_ids": ["doc_legal_001"], "kb_ids": ["kb_legal"], "tags": ["exact_match", "保密", "法务"], "expected_answer": "保密协议内容包括：商业机密定义、保密期限为离职后2年、违约赔偿条款、知识产权归属等。"}
+{"query": "绩效考核评分标准", "expected_doc_ids": ["doc_hr_005"], "kb_ids": ["kb_hr"], "tags": ["exact_match", "绩效", "人事"], "expected_answer": "绩效考核评分标准：KPI完成度60%+360度评估20%+上级评价20%，S级95+，A级85-94，B级70-84。"}
+{"query": "会议室预订流程", "expected_doc_ids": ["doc_admin_002"], "kb_ids": ["kb_admin"], "tags": ["exact_match", "会议室", "行政"], "expected_answer": "会议室预订：在OA系统-会议室管理中选择时段和人数，系统自动确认，提前30分钟签到。"}
+{"query": "公积金缴纳比例是多少", "expected_doc_ids": ["doc_hr_006"], "kb_ids": ["kb_hr"], "tags": ["exact_match", "公积金", "人事"], "expected_answer": "公积金缴纳比例：个人12%，单位12%，缴存基数上限为当地社平工资3倍。"}
+{"query": "公司发票管理制度", "expected_doc_ids": ["doc_fin_004"], "kb_ids": ["kb_finance"], "tags": ["exact_match", "发票", "财务"], "expected_answer": "发票管理制度：1. 发票抬头需公司全称 2. 增值税专票需在30天内认证 3. 财务部统一归档。"}
+{"query": "VPN账号申请流程", "expected_doc_ids": ["doc_it_002"], "kb_ids": ["kb_it"], "tags": ["exact_match", "VPN", "IT"], "expected_answer": "VPN账号申请：在IT服务台提交申请，直属主管审批后1个工作日内开通，首次使用需安装客户端。"}
+{"query": "员工手册内容有哪些", "expected_doc_ids": ["doc_hr_007"], "kb_ids": ["kb_hr"], "tags": ["exact_match", "手册", "人事"], "expected_answer": "员工手册包含：公司文化、考勤制度、薪酬福利、晋升通道、行为规范、安全制度等章节。"}
+{"query": "合同审批流程是什么", "expected_doc_ids": ["doc_legal_002", "doc_admin_003"], "kb_ids": ["kb_legal", "kb_admin"], "tags": ["exact_match", "合同", "法务"], "expected_answer": "合同审批流程：1. 经办人发起 2. 部门主管审核 3. 法务审核 4. 总经理签字 5. 盖章。"}
+{"query": "公司印章使用管理规定", "expected_doc_ids": ["doc_admin_004"], "kb_ids": ["kb_admin"], "tags": ["exact_match", "印章", "行政"], "expected_answer": "印章使用规定：1. 填写用印申请单 2. 部门主管审批 3. 行政部登记 4. 现场监印。"}
+{"query": "考勤打卡规则是什么", "expected_doc_ids": ["doc_hr_008"], "kb_ids": ["kb_hr"], "tags": ["exact_match", "考勤", "人事"], "expected_answer": "考勤打卡规则：工作日9:00-18:00，弹性30分钟，迟到超30分钟需补假条，月累计3次以上扣绩效。"}
+{"query": "数据备份管理制度", "expected_doc_ids": ["doc_it_003"], "kb_ids": ["kb_it"], "tags": ["exact_match", "备份", "IT"], "expected_answer": "数据备份策略：每日增量备份，每周全量备份，保留90天，异地灾备RPO<1小时，RTO<4小时。"}
+{"query": "公司采购管理制度", "expected_doc_ids": ["doc_fin_005", "doc_admin_005"], "kb_ids": ["kb_finance", "kb_admin"], "tags": ["exact_match", "采购", "财务"], "expected_answer": "采购管理制度：5千以下部门自采，5千-5万需比价，5万以上需招标，采购委员会审批。"}
+{"query": "员工培训体系是什么", "expected_doc_ids": ["doc_hr_009", "doc_hr_010"], "kb_ids": ["kb_hr"], "tags": ["exact_match", "培训", "人事"], "expected_answer": "培训体系：新员工入职培训7天、岗位技能培训每月1次、管理能力提升培训每季度1次。"}
+{"query": "钱花完了怎么走报销", "expected_doc_ids": ["doc_fin_001", "doc_fin_002"], "kb_ids": ["kb_finance"], "tags": ["semantic", "报销", "财务"], "expected_answer": "公司报销流程：1. 填写报销单 2. 部门主管审批 3. 财务审核 4. 打款。需附发票原件。"}
+{"query": "想休息几天怎么跟公司说", "expected_doc_ids": ["doc_hr_001"], "kb_ids": ["kb_hr"], "tags": ["semantic", "请假", "人事"], "expected_answer": "年假请假制度：入职满1年享5天年假，满3年享10天，满10年享15天。需提前3天在OA系统提交申请。"}
+{"query": "刚来公司要办什么手续", "expected_doc_ids": ["doc_hr_002", "doc_hr_003"], "kb_ids": ["kb_hr"], "tags": ["semantic", "入职", "人事"], "expected_answer": "新员工入职材料：1. 身份证复印件 2. 学历证明 3. 银行卡信息 4. 体检报告 5. 离职证明。"}
+{"query": "出差花销公司能报多少", "expected_doc_ids": ["doc_fin_003"], "kb_ids": ["kb_finance"], "tags": ["semantic", "差旅", "财务"], "expected_answer": "差旅费报销标准：交通费实报实销上限经济舱，住宿一线城市500元/晚，二线城市400元/晚，餐补100元/天。"}
+{"query": "电脑坏了找谁修", "expected_doc_ids": ["doc_it_001"], "kb_ids": ["kb_it"], "tags": ["semantic", "IT", "运维"], "expected_answer": "IT设备故障报修：通过IT工单系统提交工单，或拨打IT服务热线4000-xxx-xxxx，工作日15分钟内响应。"}
+{"query": "不在公司干了需要办什么", "expected_doc_ids": ["doc_hr_004"], "kb_ids": ["kb_hr"], "tags": ["semantic", "离职", "人事"], "expected_answer": "员工离职流程：1. 提前30天提交辞职信 2. 主管面谈 3. 交接清单 4. 财务结算 5. HR归档。"}
+{"query": "办公东西用完了怎么买", "expected_doc_ids": ["doc_admin_001"], "kb_ids": ["kb_admin"], "tags": ["semantic", "采购", "行政"], "expected_answer": "办公用品采购：在OA系统提交采购申请，部门主管审批后由行政部统一采购，3个工作日内到货。"}
+{"query": "签了保密条款有哪些限制", "expected_doc_ids": ["doc_legal_001"], "kb_ids": ["kb_legal"], "tags": ["semantic", "保密", "法务"], "expected_answer": "保密协议内容包括：商业机密定义、保密期限为离职后2年、违约赔偿条款、知识产权归属等。"}
+{"query": "年底评分怎么算的", "expected_doc_ids": ["doc_hr_005"], "kb_ids": ["kb_hr"], "tags": ["semantic", "绩效", "人事"], "expected_answer": "绩效考核评分标准：KPI完成度60%+360度评估20%+上级评价20%，S级95+，A级85-94，B级70-84。"}
+{"query": "开会需要场地怎么约", "expected_doc_ids": ["doc_admin_002"], "kb_ids": ["kb_admin"], "tags": ["semantic", "会议室", "行政"], "expected_answer": "会议室预订：在OA系统-会议室管理中选择时段和人数，系统自动确认，提前30分钟签到。"}
+{"query": "五险一金公司交多少", "expected_doc_ids": ["doc_hr_006"], "kb_ids": ["kb_hr"], "tags": ["semantic", "公积金", "人事"], "expected_answer": "公积金缴纳比例：个人12%，单位12%，缴存基数上限为当地社平工资3倍。"}
+{"query": "客户给发票了怎么处理", "expected_doc_ids": ["doc_fin_004"], "kb_ids": ["kb_finance"], "tags": ["semantic", "发票", "财务"], "expected_answer": "发票管理制度：1. 发票抬头需公司全称 2. 增值税专票需在30天内认证 3. 财务部统一归档。"}
+{"query": "在家办公需要连内网怎么办", "expected_doc_ids": ["doc_it_002"], "kb_ids": ["kb_it"], "tags": ["semantic", "VPN", "IT"], "expected_answer": "VPN账号申请：在IT服务台提交申请，直属主管审批后1个工作日内开通，首次使用需安装客户端。"}
+{"query": "公司规章制度在哪里看", "expected_doc_ids": ["doc_hr_007"], "kb_ids": ["kb_hr"], "tags": ["semantic", "手册", "人事"], "expected_answer": "员工手册包含：公司文化、考勤制度、薪酬福利、晋升通道、行为规范、安全制度等章节。"}
+{"query": "签合同要走什么审批", "expected_doc_ids": ["doc_legal_002", "doc_admin_003"], "kb_ids": ["kb_legal", "kb_admin"], "tags": ["semantic", "合同", "法务"], "expected_answer": "合同审批流程：1. 经办人发起 2. 部门主管审核 3. 法务审核 4. 总经理签字 5. 盖章。"}
+{"query": "盖公章要去哪个部门", "expected_doc_ids": ["doc_admin_004"], "kb_ids": ["kb_admin"], "tags": ["semantic", "印章", "行政"], "expected_answer": "印章使用规定：1. 填写用印申请单 2. 部门主管审批 3. 行政部登记 4. 现场监印。"}
+{"query": "迟到早退怎么扣钱", "expected_doc_ids": ["doc_hr_008"], "kb_ids": ["kb_hr"], "tags": ["semantic", "考勤", "人事"], "expected_answer": "考勤打卡规则：工作日9:00-18:00，弹性30分钟，迟到超30分钟需补假条，月累计3次以上扣绩效。"}
+{"query": "服务器数据丢了怎么恢复", "expected_doc_ids": ["doc_it_003"], "kb_ids": ["kb_it"], "tags": ["semantic", "备份", "IT"], "expected_answer": "数据备份策略：每日增量备份，每周全量备份，保留90天，异地灾备RPO<1小时，RTO<4小时。"}
+{"query": "买东西走什么流程审批", "expected_doc_ids": ["doc_fin_005", "doc_admin_005"], "kb_ids": ["kb_finance", "kb_admin"], "tags": ["semantic", "采购", "财务"], "expected_answer": "采购管理制度：5千以下部门自采，5千-5万需比价，5万以上需招标，采购委员会审批。"}
+{"query": "新人入职有培训吗", "expected_doc_ids": ["doc_hr_009", "doc_hr_010"], "kb_ids": ["kb_hr"], "tags": ["semantic", "培训", "人事"], "expected_answer": "培训体系：新员工入职培训7天、岗位技能培训每月1次、管理能力提升培训每季度1次。"}
+{"query": "费用报销步骤说明", "expected_doc_ids": ["doc_fin_001", "doc_fin_002"], "kb_ids": ["kb_finance"], "tags": ["synonym", "报销", "财务"], "expected_answer": "公司报销流程：1. 填写报销单 2. 部门主管审批 3. 财务审核 4. 打款。需附发票原件。"}
+{"query": "休假申请管理规定", "expected_doc_ids": ["doc_hr_001"], "kb_ids": ["kb_hr"], "tags": ["synonym", "请假", "人事"], "expected_answer": "年假请假制度：入职满1年享5天年假，满3年享10天，满10年享15天。需提前3天在OA系统提交申请。"}
+{"query": "新人入职办理指南", "expected_doc_ids": ["doc_hr_002", "doc_hr_003"], "kb_ids": ["kb_hr"], "tags": ["synonym", "入职", "人事"], "expected_answer": "新员工入职材料：1. 身份证复印件 2. 学历证明 3. 银行卡信息 4. 体检报告 5. 离职证明。"}
+{"query": "出差费用补贴政策", "expected_doc_ids": ["doc_fin_003"], "kb_ids": ["kb_finance"], "tags": ["synonym", "差旅", "财务"], "expected_answer": "差旅费报销标准：交通费实报实销上限经济舱，住宿一线城市500元/晚，二线城市400元/晚，餐补100元/天。"}
+{"query": "信息技术设备维修申报", "expected_doc_ids": ["doc_it_001"], "kb_ids": ["kb_it"], "tags": ["synonym", "IT", "运维"], "expected_answer": "IT设备故障报修：通过IT工单系统提交工单，或拨打IT服务热线4000-xxx-xxxx，工作日15分钟内响应。"}
+{"query": "人员离职交接程序", "expected_doc_ids": ["doc_hr_004"], "kb_ids": ["kb_hr"], "tags": ["synonym", "离职", "人事"], "expected_answer": "员工离职流程：1. 提前30天提交辞职信 2. 主管面谈 3. 交接清单 4. 财务结算 5. HR归档。"}
+{"query": "办公物资申领办法", "expected_doc_ids": ["doc_admin_001"], "kb_ids": ["kb_admin"], "tags": ["synonym", "采购", "行政"], "expected_answer": "办公用品采购：在OA系统提交采购申请，部门主管审批后由行政部统一采购，3个工作日内到货。"}
+{"query": "商业机密保护协议条款", "expected_doc_ids": ["doc_legal_001"], "kb_ids": ["kb_legal"], "tags": ["synonym", "保密", "法务"], "expected_answer": "保密协议内容包括：商业机密定义、保密期限为离职后2年、违约赔偿条款、知识产权归属等。"}
+{"query": "员工年度评估准则", "expected_doc_ids": ["doc_hr_005"], "kb_ids": ["kb_hr"], "tags": ["synonym", "绩效", "人事"], "expected_answer": "绩效考核评分标准：KPI完成度60%+360度评估20%+上级评价20%，S级95+，A级85-94，B级70-84。"}
+{"query": "会议场所预约办法", "expected_doc_ids": ["doc_admin_002"], "kb_ids": ["kb_admin"], "tags": ["synonym", "会议室", "行政"], "expected_answer": "会议室预订：在OA系统-会议室管理中选择时段和人数，系统自动确认，提前30分钟签到。"}
+{"query": "住房公积金缴存标准", "expected_doc_ids": ["doc_hr_006"], "kb_ids": ["kb_hr"], "tags": ["synonym", "公积金", "人事"], "expected_answer": "公积金缴纳比例：个人12%，单位12%，缴存基数上限为当地社平工资3倍。"}
+{"query": "票据管理规范制度", "expected_doc_ids": ["doc_fin_004"], "kb_ids": ["kb_finance"], "tags": ["synonym", "发票", "财务"], "expected_answer": "发票管理制度：1. 发票抬头需公司全称 2. 增值税专票需在30天内认证 3. 财务部统一归档。"}
+{"query": "远程接入内网账号申请", "expected_doc_ids": ["doc_it_002"], "kb_ids": ["kb_it"], "tags": ["synonym", "VPN", "IT"], "expected_answer": "VPN账号申请：在IT服务台提交申请，直属主管审批后1个工作日内开通，首次使用需安装客户端。"}
+{"query": "企业员工行为准则手册", "expected_doc_ids": ["doc_hr_007"], "kb_ids": ["kb_hr"], "tags": ["synonym", "手册", "人事"], "expected_answer": "员工手册包含：公司文化、考勤制度、薪酬福利、晋升通道、行为规范、安全制度等章节。"}
+{"query": "商业合同审核签字流程", "expected_doc_ids": ["doc_legal_002", "doc_admin_003"], "kb_ids": ["kb_legal", "kb_admin"], "tags": ["synonym", "合同", "法务"], "expected_answer": "合同审批流程：1. 经办人发起 2. 部门主管审核 3. 法务审核 4. 总经理签字 5. 盖章。"}
+{"query": "公司公章使用审批规范", "expected_doc_ids": ["doc_admin_004"], "kb_ids": ["kb_admin"], "tags": ["synonym", "印章", "行政"], "expected_answer": "印章使用规定：1. 填写用印申请单 2. 部门主管审批 3. 行政部登记 4. 现场监印。"}
+{"query": "出勤考核管理办法", "expected_doc_ids": ["doc_hr_008"], "kb_ids": ["kb_hr"], "tags": ["synonym", "考勤", "人事"], "expected_answer": "考勤打卡规则：工作日9:00-18:00，弹性30分钟，迟到超30分钟需补假条，月累计3次以上扣绩效。"}
+{"query": "信息系统数据存档策略", "expected_doc_ids": ["doc_it_003"], "kb_ids": ["kb_it"], "tags": ["synonym", "备份", "IT"], "expected_answer": "数据备份策略：每日增量备份，每周全量备份，保留90天，异地灾备RPO<1小时，RTO<4小时。"}
+{"query": "物资采办审批程序", "expected_doc_ids": ["doc_fin_005", "doc_admin_005"], "kb_ids": ["kb_finance", "kb_admin"], "tags": ["synonym", "采购", "财务"], "expected_answer": "采购管理制度：5千以下部门自采，5千-5万需比价，5万以上需招标，采购委员会审批。"}
+{"query": "职工教育培养体系说明", "expected_doc_ids": ["doc_hr_009", "doc_hr_010"], "kb_ids": ["kb_hr"], "tags": ["synonym", "培训", "人事"], "expected_answer": "培训体系：新员工入职培训7天、岗位技能培训每月1次、管理能力提升培训每季度1次。"}
+{"query": "reimbursement process for employees", "expected_doc_ids": ["doc_fin_001", "doc_fin_002"], "kb_ids": ["kb_finance"], "tags": ["cross_lingual", "报销", "财务"], "expected_answer": "公司报销流程：1. 填写报销单 2. 部门主管审批 3. 财务审核 4. 打款。需附发票原件。"}
+{"query": "annual leave policy and application", "expected_doc_ids": ["doc_hr_001"], "kb_ids": ["kb_hr"], "tags": ["cross_lingual", "请假", "人事"], "expected_answer": "年假请假制度：入职满1年享5天年假，满3年享10天，满10年享15天。需提前3天在OA系统提交申请。"}
+{"query": "onboarding checklist for new hires", "expected_doc_ids": ["doc_hr_002", "doc_hr_003"], "kb_ids": ["kb_hr"], "tags": ["cross_lingual", "入职", "人事"], "expected_answer": "新员工入职材料：1. 身份证复印件 2. 学历证明 3. 银行卡信息 4. 体检报告 5. 离职证明。"}
+{"query": "travel expense reimbursement standards", "expected_doc_ids": ["doc_fin_003"], "kb_ids": ["kb_finance"], "tags": ["cross_lingual", "差旅", "财务"], "expected_answer": "差旅费报销标准：交通费实报实销上限经济舱，住宿一线城市500元/晚，二线城市400元/晚，餐补100元/天。"}
+{"query": "how to report IT equipment failure", "expected_doc_ids": ["doc_it_001"], "kb_ids": ["kb_it"], "tags": ["cross_lingual", "IT", "运维"], "expected_answer": "IT设备故障报修：通过IT工单系统提交工单，或拨打IT服务热线4000-xxx-xxxx，工作日15分钟内响应。"}
+{"query": "employee resignation procedure", "expected_doc_ids": ["doc_hr_004"], "kb_ids": ["kb_hr"], "tags": ["cross_lingual", "离职", "人事"], "expected_answer": "员工离职流程：1. 提前30天提交辞职信 2. 主管面谈 3. 交接清单 4. 财务结算 5. HR归档。"}
+{"query": "office supplies procurement request", "expected_doc_ids": ["doc_admin_001"], "kb_ids": ["kb_admin"], "tags": ["cross_lingual", "采购", "行政"], "expected_answer": "办公用品采购：在OA系统提交采购申请，部门主管审批后由行政部统一采购，3个工作日内到货。"}
+{"query": "confidentiality agreement details", "expected_doc_ids": ["doc_legal_001"], "kb_ids": ["kb_legal"], "tags": ["cross_lingual", "保密", "法务"], "expected_answer": "保密协议内容包括：商业机密定义、保密期限为离职后2年、违约赔偿条款、知识产权归属等。"}
+{"query": "performance evaluation criteria", "expected_doc_ids": ["doc_hr_005"], "kb_ids": ["kb_hr"], "tags": ["cross_lingual", "绩效", "人事"], "expected_answer": "绩效考核评分标准：KPI完成度60%+360度评估20%+上级评价20%，S级95+，A级85-94，B级70-84。"}
+{"query": "meeting room booking guide", "expected_doc_ids": ["doc_admin_002"], "kb_ids": ["kb_admin"], "tags": ["cross_lingual", "会议室", "行政"], "expected_answer": "会议室预订：在OA系统-会议室管理中选择时段和人数，系统自动确认，提前30分钟签到。"}
+{"query": "housing fund contribution ratio", "expected_doc_ids": ["doc_hr_006"], "kb_ids": ["kb_hr"], "tags": ["cross_lingual", "公积金", "人事"], "expected_answer": "公积金缴纳比例：个人12%，单位12%，缴存基数上限为当地社平工资3倍。"}
+{"query": "invoice management policy", "expected_doc_ids": ["doc_fin_004"], "kb_ids": ["kb_finance"], "tags": ["cross_lingual", "发票", "财务"], "expected_answer": "发票管理制度：1. 发票抬头需公司全称 2. 增值税专票需在30天内认证 3. 财务部统一归档。"}
+{"query": "VPN account application", "expected_doc_ids": ["doc_it_002"], "kb_ids": ["kb_it"], "tags": ["cross_lingual", "VPN", "IT"], "expected_answer": "VPN账号申请：在IT服务台提交申请，直属主管审批后1个工作日内开通，首次使用需安装客户端。"}
+{"query": "contract approval workflow", "expected_doc_ids": ["doc_legal_002", "doc_admin_003"], "kb_ids": ["kb_legal", "kb_admin"], "tags": ["cross_lingual", "合同", "法务"], "expected_answer": "员工手册包含：公司文化、考勤制度、薪酬福利、晋升通道、行为规范、安全制度等章节。"}
+{"query": "company seal usage regulations", "expected_doc_ids": ["doc_admin_004"], "kb_ids": ["kb_admin"], "tags": ["cross_lingual", "印章", "行政"], "expected_answer": "合同审批流程：1. 经办人发起 2. 部门主管审核 3. 法务审核 4. 总经理签字 5. 盖章。"}
+{"query": "报销咋弄啊", "expected_doc_ids": ["doc_fin_001", "doc_fin_002"], "kb_ids": ["kb_finance"], "tags": ["fuzzy", "报销", "财务"], "expected_answer": "印章使用规定：1. 填写用印申请单 2. 部门主管审批 3. 行政部登记 4. 现场监印。"}
+{"query": "想请个假咋整", "expected_doc_ids": ["doc_hr_001"], "kb_ids": ["kb_hr"], "tags": ["fuzzy", "请假", "人事"], "expected_answer": "考勤打卡规则：工作日9:00-18:00，弹性30分钟，迟到超30分钟需补假条，月累计3次以上扣绩效。"}
+{"query": "新人来了干啥", "expected_doc_ids": ["doc_hr_002", "doc_hr_003"], "kb_ids": ["kb_hr"], "tags": ["fuzzy", "入职", "人事"], "expected_answer": "数据备份策略：每日增量备份，每周全量备份，保留90天，异地灾备RPO<1小时，RTO<4小时。"}
+{"query": "出差花钱给报不", "expected_doc_ids": ["doc_fin_003"], "kb_ids": ["kb_finance"], "tags": ["fuzzy", "差旅", "财务"], "expected_answer": "采购管理制度：5千以下部门自采，5千-5万需比价，5万以上需招标，采购委员会审批。"}
+{"query": "电脑坏了咋办", "expected_doc_ids": ["doc_it_001"], "kb_ids": ["kb_it"], "tags": ["fuzzy", "IT", "运维"], "expected_answer": "培训体系：新员工入职培训7天、岗位技能培训每月1次、管理能力提升培训每季度1次。"}
+{"query": "不想干了咋走", "expected_doc_ids": ["doc_hr_004"], "kb_ids": ["kb_hr"], "tags": ["fuzzy", "离职", "人事"], "expected_answer": "公司报销流程：1. 填写报销单 2. 部门主管审批 3. 财务审核 4. 打款。需附发票原件。"}
+{"query": "笔用完了去哪领", "expected_doc_ids": ["doc_admin_001"], "kb_ids": ["kb_admin"], "tags": ["fuzzy", "采购", "行政"], "expected_answer": "年假请假制度：入职满1年享5天年假，满3年享10天，满10年享15天。需提前3天在OA系统提交申请。"}
+{"query": "签了保密不能说啥", "expected_doc_ids": ["doc_legal_001"], "kb_ids": ["kb_legal"], "tags": ["fuzzy", "保密", "法务"], "expected_answer": "新员工入职材料：1. 身份证复印件 2. 学历证明 3. 银行卡信息 4. 体检报告 5. 离职证明。"}
+{"query": "年底打分咋评的", "expected_doc_ids": ["doc_hr_005"], "kb_ids": ["kb_hr"], "tags": ["fuzzy", "绩效", "人事"], "expected_answer": "差旅费报销标准：交通费实报实销上限经济舱，住宿一线城市500元/晚，二线城市400元/晚，餐补100元/天。"}
+{"query": "开会地方咋定", "expected_doc_ids": ["doc_admin_002"], "kb_ids": ["kb_admin"], "tags": ["fuzzy", "会议室", "行政"], "expected_answer": "IT设备故障报修：通过IT工单系统提交工单，或拨打IT服务热线4000-xxx-xxxx，工作日15分钟内响应。"}
+{"query": "公积金交多少啊", "expected_doc_ids": ["doc_hr_006"], "kb_ids": ["kb_hr"], "tags": ["fuzzy", "公积金", "人事"], "expected_answer": "员工离职流程：1. 提前30天提交辞职信 2. 主管面谈 3. 交接清单 4. 财务结算 5. HR归档。"}
+{"query": "发票咋整给财务", "expected_doc_ids": ["doc_fin_004"], "kb_ids": ["kb_finance"], "tags": ["fuzzy", "发票", "财务"], "expected_answer": "办公用品采购：在OA系统提交采购申请，部门主管审批后由行政部统一采购，3个工作日内到货。"}
+{"query": "连内网咋弄", "expected_doc_ids": ["doc_it_002"], "kb_ids": ["kb_it"], "tags": ["fuzzy", "VPN", "IT"], "expected_answer": "保密协议内容包括：商业机密定义、保密期限为离职后2年、违约赔偿条款、知识产权归属等。"}
+{"query": "盖章找谁啊", "expected_doc_ids": ["doc_admin_004"], "kb_ids": ["kb_admin"], "tags": ["fuzzy", "印章", "行政"], "expected_answer": "绩效考核评分标准：KPI完成度60%+360度评估20%+上级评价20%，S级95+，A级85-94，B级70-84。"}
+{"query": "迟到咋扣的", "expected_doc_ids": ["doc_hr_008"], "kb_ids": ["kb_hr"], "tags": ["fuzzy", "考勤", "人事"], "expected_answer": "会议室预订：在OA系统-会议室管理中选择时段和人数，系统自动确认，提前30分钟签到。"}
+{"query": "财务部门差旅费报销上限是多少需要哪些材料", "expected_doc_ids": ["doc_fin_003", "doc_fin_001"], "kb_ids": ["kb_finance"], "tags": ["multi_constraint", "差旅", "报销", "财务"], "expected_answer": "公积金缴纳比例：个人12%，单位12%，缴存基数上限为当地社平工资3倍。"}
+{"query": "入职三个月内试用期考核标准和离职流程", "expected_doc_ids": ["doc_hr_005", "doc_hr_004"], "kb_ids": ["kb_hr"], "tags": ["multi_constraint", "绩效", "离职", "人事"], "expected_answer": "发票管理制度：1. 发票抬头需公司全称 2. 增值税专票需在30天内认证 3. 财务部统一归档。"}
+{"query": "分公司VPN申请审批需要多长时间", "expected_doc_ids": ["doc_it_002", "doc_admin_003"], "kb_ids": ["kb_it", "kb_admin"], "tags": ["multi_constraint", "VPN", "审批", "IT"], "expected_answer": "VPN账号申请：在IT服务台提交申请，直属主管审批后1个工作日内开通，首次使用需安装客户端。"}
+{"query": "采购金额超过一万的审批流程和所需附件", "expected_doc_ids": ["doc_fin_005", "doc_admin_005"], "kb_ids": ["kb_finance", "kb_admin"], "tags": ["multi_constraint", "采购", "审批", "财务"], "expected_answer": "员工手册包含：公司文化、考勤制度、薪酬福利、晋升通道、行为规范、安全制度等章节。"}
+{"query": "合同金额超过五十万的法务审核要求", "expected_doc_ids": ["doc_legal_002", "doc_admin_003"], "kb_ids": ["kb_legal", "kb_admin"], "tags": ["multi_constraint", "合同", "法务", "审批"], "expected_answer": "合同审批流程：1. 经办人发起 2. 部门主管审核 3. 法务审核 4. 总经理签字 5. 盖章。"}
+{"query": "年假超过五天的审批级别和所需材料", "expected_doc_ids": ["doc_hr_001", "doc_hr_008"], "kb_ids": ["kb_hr"], "tags": ["multi_constraint", "请假", "审批", "人事"], "expected_answer": "印章使用规定：1. 填写用印申请单 2. 部门主管审批 3. 行政部登记 4. 现场监印。"}
+{"query": "服务器数据恢复的SLA响应时间和备份策略", "expected_doc_ids": ["doc_it_003", "doc_it_001"], "kb_ids": ["kb_it"], "tags": ["multi_constraint", "备份", "IT", "运维"], "expected_answer": "考勤打卡规则：工作日9:00-18:00，弹性30分钟，迟到超30分钟需补假条，月累计3次以上扣绩效。"}
+{"query": "新员工入职培训课程安排和考核标准", "expected_doc_ids": ["doc_hr_009", "doc_hr_010", "doc_hr_002"], "kb_ids": ["kb_hr"], "tags": ["multi_constraint", "入职", "培训", "人事"], "expected_answer": "数据备份策略：每日增量备份，每周全量备份，保留90天，异地灾备RPO<1小时，RTO<4小时。"}
+{"query": "跨部门会议室预订冲突解决机制和审批流程", "expected_doc_ids": ["doc_admin_002", "doc_admin_003"], "kb_ids": ["kb_admin"], "tags": ["multi_constraint", "会议室", "审批", "行政"], "expected_answer": "采购管理制度：5千以下部门自采，5千-5万需比价，5万以上需招标，采购委员会审批。"}
+{"query": "员工离职交接清单包含哪些内容和审批环节", "expected_doc_ids": ["doc_hr_004", "doc_admin_004"], "kb_ids": ["kb_hr", "kb_admin"], "tags": ["multi_constraint", "离职", "交接", "人事"], "expected_answer": "培训体系：新员工入职培训7天、岗位技能培训每月1次、管理能力提升培训每季度1次。"}
+{"query": "加班调休制度怎么规定的", "expected_doc_ids": ["doc_hr_011"], "kb_ids": ["kb_hr"], "tags": ["加班", "人事", "generation"], "expected_answer": "流程详情：具体操作步骤请参考公司OA系统的流程指引页面。"}
+{"query": "生育险报销流程和材料", "expected_doc_ids": ["doc_hr_012"], "kb_ids": ["kb_hr"], "tags": ["生育", "人事", "generation"], "expected_answer": "标准依据：以上标准依据公司管理制度汇编2025版第3章第15条执行。"}
+{"query": "工伤认定流程是什么", "expected_doc_ids": ["doc_hr_013"], "kb_ids": ["kb_hr"], "tags": ["工伤", "人事", "generation"], "expected_answer": "注意事项：请在办理前准备好相关电子版材料，纸质材料交至对应部门窗口。"}
+{"query": "薪酬调整申请条件", "expected_doc_ids": ["doc_hr_014"], "kb_ids": ["kb_hr"], "tags": ["薪酬", "人事", "generation"], "expected_answer": "联系部门：如需进一步咨询，请联系人事部内线8001或发邮件至hr@company.com。"}
+{"query": "晋升答辩流程和时间安排", "expected_doc_ids": ["doc_hr_015", "doc_hr_005"], "kb_ids": ["kb_hr"], "tags": ["晋升", "人事", "generation"], "expected_answer": "特殊情况：如遇特殊情况或紧急需求，可通过加急流程申请，审批时间可缩短至1个工作日。"}
+{"query": "调岗申请怎么走流程", "expected_doc_ids": ["doc_hr_016"], "kb_ids": ["kb_hr"], "tags": ["调岗", "人事", "generation"], "expected_answer": "系统入口：所有操作均在公司OA系统完成，登录后选择对应模块即可。"}
+{"query": "试用期转正考核标准", "expected_doc_ids": ["doc_hr_005"], "kb_ids": ["kb_hr"], "tags": ["试用期", "人事", "generation"], "expected_answer": "合规要求：上述操作需符合《企业信息安全管理规定》中数据分级保护要求。"}
+{"query": "病假工资怎么算", "expected_doc_ids": ["doc_hr_017"], "kb_ids": ["kb_hr"], "tags": ["病假", "人事", "generation"], "expected_answer": "时间要求：相关申请需提前至少3个工作日提交，以便预留审批时间。"}
+{"query": "婚假多少天怎么申请", "expected_doc_ids": ["doc_hr_018"], "kb_ids": ["kb_hr"], "tags": ["婚假", "人事", "generation"], "expected_answer": "费用说明：相关费用由公司承担，个人无需垫付，直接走内部结算流程。"}
+{"query": "产假期间工资待遇", "expected_doc_ids": ["doc_hr_019"], "kb_ids": ["kb_hr"], "tags": ["产假", "人事", "generation"], "expected_answer": "变更说明：以上政策如有调整，以人事部最新通知为准，建议定期查看公告栏。"}
+{"query": "年度体检安排和标准", "expected_doc_ids": ["doc_hr_020"], "kb_ids": ["kb_hr"], "tags": ["体检", "人事", "generation"], "expected_answer": "流程详情：具体操作步骤请参考公司OA系统的流程指引页面。"}
+{"query": "员工生日福利有什么", "expected_doc_ids": ["doc_hr_021"], "kb_ids": ["kb_hr"], "tags": ["福利", "人事", "generation"], "expected_answer": "标准依据：以上标准依据公司管理制度汇编2025版第3章第15条执行。"}
+{"query": "团建费用申请和限额", "expected_doc_ids": ["doc_hr_022", "doc_fin_006"], "kb_ids": ["kb_hr", "kb_finance"], "tags": ["团建", "福利", "generation"], "expected_answer": "注意事项：请在办理前准备好相关电子版材料，纸质材料交至对应部门窗口。"}
+{"query": "年终奖发放标准和时间", "expected_doc_ids": ["doc_hr_014"], "kb_ids": ["kb_hr"], "tags": ["年终奖", "人事", "generation"], "expected_answer": "联系部门：如需进一步咨询，请联系人事部内线8001或发邮件至hr@company.com。"}
+{"query": "社保基数调整时间", "expected_doc_ids": ["doc_hr_006"], "kb_ids": ["kb_hr"], "tags": ["社保", "人事", "generation"], "expected_answer": "特殊情况：如遇特殊情况或紧急需求，可通过加急流程申请，审批时间可缩短至1个工作日。"}
+{"query": "补充医疗保险报销范围", "expected_doc_ids": ["doc_hr_023"], "kb_ids": ["kb_hr"], "tags": ["医保", "人事", "generation"], "expected_answer": "系统入口：所有操作均在公司OA系统完成，登录后选择对应模块即可。"}
+{"query": "员工申诉渠道有哪些", "expected_doc_ids": ["doc_hr_024"], "kb_ids": ["kb_hr"], "tags": ["申诉", "人事", "generation"], "expected_answer": "合规要求：上述操作需符合《企业信息安全管理规定》中数据分级保护要求。"}
+{"query": "远程办公申请条件和审批", "expected_doc_ids": ["doc_hr_025", "doc_it_002"], "kb_ids": ["kb_hr", "kb_it"], "tags": ["远程", "人事", "generation"], "expected_answer": "时间要求：相关申请需提前至少3个工作日提交，以便预留审批时间。"}
+{"query": "职称评定申报流程", "expected_doc_ids": ["doc_hr_026"], "kb_ids": ["kb_hr"], "tags": ["职称", "人事", "generation"], "expected_answer": "费用说明：相关费用由公司承担，个人无需垫付，直接走内部结算流程。"}
+{"query": "劳动合同续签流程", "expected_doc_ids": ["doc_hr_004"], "kb_ids": ["kb_hr"], "tags": ["合同", "人事", "generation"], "expected_answer": "变更说明：以上政策如有调整，以人事部最新通知为准，建议定期查看公告栏。"}
+{"query": "预算编制流程和时间节点", "expected_doc_ids": ["doc_fin_006"], "kb_ids": ["kb_finance"], "tags": ["预算", "财务", "generation"], "expected_answer": "流程详情：具体操作步骤请参考公司OA系统的流程指引页面。"}
+{"query": "财务月结流程是什么", "expected_doc_ids": ["doc_fin_007"], "kb_ids": ["kb_finance"], "tags": ["月结", "财务", "generation"], "expected_answer": "标准依据：以上标准依据公司管理制度汇编2025版第3章第15条执行。"}
+{"query": "银行对账怎么操作", "expected_doc_ids": ["doc_fin_008"], "kb_ids": ["kb_finance"], "tags": ["对账", "财务", "generation"], "expected_answer": "注意事项：请在办理前准备好相关电子版材料，纸质材料交至对应部门窗口。"}
+{"query": "应收账款催收流程", "expected_doc_ids": ["doc_fin_009"], "kb_ids": ["kb_finance"], "tags": ["应收", "财务", "generation"], "expected_answer": "联系部门：如需进一步咨询，请联系人事部内线8001或发邮件至hr@company.com。"}
+{"query": "应付账款付款周期", "expected_doc_ids": ["doc_fin_010"], "kb_ids": ["kb_finance"], "tags": ["应付", "财务", "generation"], "expected_answer": "特殊情况：如遇特殊情况或紧急需求，可通过加急流程申请，审批时间可缩短至1个工作日。"}
+{"query": "固定资产折旧政策", "expected_doc_ids": ["doc_fin_011"], "kb_ids": ["kb_finance"], "tags": ["折旧", "财务", "generation"], "expected_answer": "系统入口：所有操作均在公司OA系统完成，登录后选择对应模块即可。"}
+{"query": "税务申报截止时间", "expected_doc_ids": ["doc_fin_012"], "kb_ids": ["kb_finance"], "tags": ["税务", "财务", "generation"], "expected_answer": "合规要求：上述操作需符合《企业信息安全管理规定》中数据分级保护要求。"}
+{"query": "审计配合注意事项", "expected_doc_ids": ["doc_fin_013"], "kb_ids": ["kb_finance"], "tags": ["审计", "财务", "generation"], "expected_answer": "时间要求：相关申请需提前至少3个工作日提交，以便预留审批时间。"}
+{"query": "成本中心设置规则", "expected_doc_ids": ["doc_fin_014"], "kb_ids": ["kb_finance"], "tags": ["成本", "财务", "generation"], "expected_answer": "费用说明：相关费用由公司承担，个人无需垫付，直接走内部结算流程。"}
+{"query": "财务审批权限分级表", "expected_doc_ids": ["doc_fin_015"], "kb_ids": ["kb_finance"], "tags": ["审批", "财务", "generation"], "expected_answer": "变更说明：以上政策如有调整，以人事部最新通知为准，建议定期查看公告栏。"}
+{"query": "项目预算追加流程", "expected_doc_ids": ["doc_fin_016"], "kb_ids": ["kb_finance"], "tags": ["预算", "财务", "generation"], "expected_answer": "流程详情：具体操作步骤请参考公司OA系统的流程指引页面。"}
+{"query": "备用金管理标准", "expected_doc_ids": ["doc_fin_017"], "kb_ids": ["kb_finance"], "tags": ["备用金", "财务", "generation"], "expected_answer": "标准依据：以上标准依据公司管理制度汇编2025版第3章第15条执行。"}
+{"query": "外汇结算流程", "expected_doc_ids": ["doc_fin_018"], "kb_ids": ["kb_finance"], "tags": ["外汇", "财务", "generation"], "expected_answer": "注意事项：请在办理前准备好相关电子版材料，纸质材料交至对应部门窗口。"}
+{"query": "坏账核销审批流程", "expected_doc_ids": ["doc_fin_019"], "kb_ids": ["kb_finance"], "tags": ["坏账", "财务", "generation"], "expected_answer": "联系部门：如需进一步咨询，请联系人事部内线8001或发邮件至hr@company.com。"}
+{"query": "发票认证操作指南", "expected_doc_ids": ["doc_fin_020"], "kb_ids": ["kb_finance"], "tags": ["发票", "财务", "generation"], "expected_answer": "特殊情况：如遇特殊情况或紧急需求，可通过加急流程申请，审批时间可缩短至1个工作日。"}
+{"query": "邮箱容量满了怎么扩容", "expected_doc_ids": ["doc_it_004"], "kb_ids": ["kb_it"], "tags": ["邮箱", "IT", "generation"], "expected_answer": "系统入口：所有操作均在公司OA系统完成，登录后选择对应模块即可。"}
+{"query": "密码忘记怎么重置", "expected_doc_ids": ["doc_it_005"], "kb_ids": ["kb_it"], "tags": ["密码", "IT", "generation"], "expected_answer": "合规要求：上述操作需符合《企业信息安全管理规定》中数据分级保护要求。"}
+{"query": "办公软件安装申请", "expected_doc_ids": ["doc_it_006"], "kb_ids": ["kb_it"], "tags": ["软件", "IT", "generation"], "expected_answer": "时间要求：相关申请需提前至少3个工作日提交，以便预留审批时间。"}
+{"query": "网络断了怎么排查", "expected_doc_ids": ["doc_it_007"], "kb_ids": ["kb_it"], "tags": ["网络", "IT", "generation"], "expected_answer": "费用说明：相关费用由公司承担，个人无需垫付，直接走内部结算流程。"}
+{"query": "系统访问权限申请", "expected_doc_ids": ["doc_it_008"], "kb_ids": ["kb_it"], "tags": ["权限", "IT", "generation"], "expected_answer": "变更说明：以上政策如有调整，以人事部最新通知为准，建议定期查看公告栏。"}
+{"query": "服务器申请流程", "expected_doc_ids": ["doc_it_009"], "kb_ids": ["kb_it"], "tags": ["服务器", "IT", "generation"], "expected_answer": "流程详情：具体操作步骤请参考公司OA系统的流程指引页面。"}
+{"query": "数据导出审批流程", "expected_doc_ids": ["doc_it_010"], "kb_ids": ["kb_it"], "tags": ["数据", "IT", "generation"], "expected_answer": "标准依据：以上标准依据公司管理制度汇编2025版第3章第15条执行。"}
+{"query": "杀毒软件安装要求", "expected_doc_ids": ["doc_it_011"], "kb_ids": ["kb_it"], "tags": ["安全", "IT", "generation"], "expected_answer": "注意事项：请在办理前准备好相关电子版材料，纸质材料交至对应部门窗口。"}
+{"query": "U盘使用安全管理规定", "expected_doc_ids": ["doc_it_012"], "kb_ids": ["kb_it"], "tags": ["安全", "IT", "generation"], "expected_answer": "联系部门：如需进一步咨询，请联系人事部内线8001或发邮件至hr@company.com。"}
+{"query": "移动办公安全要求", "expected_doc_ids": ["doc_it_013"], "kb_ids": ["kb_it"], "tags": ["安全", "IT", "generation"], "expected_answer": "特殊情况：如遇特殊情况或紧急需求，可通过加急流程申请，审批时间可缩短至1个工作日。"}
+{"query": "域名变更通知流程", "expected_doc_ids": ["doc_it_014"], "kb_ids": ["kb_it"], "tags": ["域名", "IT", "generation"], "expected_answer": "系统入口：所有操作均在公司OA系统完成，登录后选择对应模块即可。"}
+{"query": "证书到期续期流程", "expected_doc_ids": ["doc_it_015"], "kb_ids": ["kb_it"], "tags": ["证书", "IT", "generation"], "expected_answer": "合规要求：上述操作需符合《企业信息安全管理规定》中数据分级保护要求。"}
+{"query": "日志审计制度", "expected_doc_ids": ["doc_it_016"], "kb_ids": ["kb_it"], "tags": ["审计", "IT", "generation"], "expected_answer": "时间要求：相关申请需提前至少3个工作日提交，以便预留审批时间。"}
+{"query": "数据库备份恢复演练", "expected_doc_ids": ["doc_it_017"], "kb_ids": ["kb_it"], "tags": ["备份", "IT", "generation"], "expected_answer": "费用说明：相关费用由公司承担，个人无需垫付，直接走内部结算流程。"}
+{"query": "知识产权申请流程", "expected_doc_ids": ["doc_legal_003"], "kb_ids": ["kb_legal"], "tags": ["知识产权", "法务", "generation"], "expected_answer": "变更说明：以上政策如有调整，以人事部最新通知为准，建议定期查看公告栏。"}
+{"query": "商标注册注意事项", "expected_doc_ids": ["doc_legal_004"], "kb_ids": ["kb_legal"], "tags": ["商标", "法务", "generation"], "expected_answer": "流程详情：具体操作步骤请参考公司OA系统的流程指引页面。"}
+{"query": "专利申报材料清单", "expected_doc_ids": ["doc_legal_005"], "kb_ids": ["kb_legal"], "tags": ["专利", "法务", "generation"], "expected_answer": "标准依据：以上标准依据公司管理制度汇编2025版第3章第15条执行。"}
+{"query": "法律意见书出具流程", "expected_doc_ids": ["doc_legal_006"], "kb_ids": ["kb_legal"], "tags": ["法律", "法务", "generation"], "expected_answer": "注意事项：请在办理前准备好相关电子版材料，纸质材料交至对应部门窗口。"}
+{"query": "诉讼案件管理规范", "expected_doc_ids": ["doc_legal_007"], "kb_ids": ["kb_legal"], "tags": ["诉讼", "法务", "generation"], "expected_answer": "联系部门：如需进一步咨询，请联系人事部内线8001或发邮件至hr@company.com。"}
+{"query": "合规风险评估流程", "expected_doc_ids": ["doc_legal_008"], "kb_ids": ["kb_legal"], "tags": ["合规", "法务", "generation"], "expected_answer": "特殊情况：如遇特殊情况或紧急需求，可通过加急流程申请，审批时间可缩短至1个工作日。"}
+{"query": "反舞弊举报机制", "expected_doc_ids": ["doc_legal_009"], "kb_ids": ["kb_legal"], "tags": ["举报", "法务", "generation"], "expected_answer": "系统入口：所有操作均在公司OA系统完成，登录后选择对应模块即可。"}
+{"query": "数据隐私保护要求", "expected_doc_ids": ["doc_legal_010"], "kb_ids": ["kb_legal"], "tags": ["隐私", "法务", "generation"], "expected_answer": "合规要求：上述操作需符合《企业信息安全管理规定》中数据分级保护要求。"}
+{"query": "合同模板使用规范", "expected_doc_ids": ["doc_legal_011"], "kb_ids": ["kb_legal"], "tags": ["合同", "法务", "generation"], "expected_answer": "时间要求：相关申请需提前至少3个工作日提交，以便预留审批时间。"}
+{"query": "印章保管人职责", "expected_doc_ids": ["doc_legal_012", "doc_admin_004"], "kb_ids": ["kb_legal", "kb_admin"], "tags": ["印章", "法务", "generation"], "expected_answer": "费用说明：相关费用由公司承担，个人无需垫付，直接走内部结算流程。"}
+{"query": "档案管理规范制度", "expected_doc_ids": ["doc_admin_006"], "kb_ids": ["kb_admin"], "tags": ["档案", "行政", "generation"], "expected_answer": "变更说明：以上政策如有调整，以人事部最新通知为准，建议定期查看公告栏。"}
+{"query": "公务车使用申请", "expected_doc_ids": ["doc_admin_007"], "kb_ids": ["kb_admin"], "tags": ["车辆", "行政", "generation"], "expected_answer": "流程详情：具体操作步骤请参考公司OA系统的流程指引页面。"}
+{"query": "接待来访审批流程", "expected_doc_ids": ["doc_admin_008"], "kb_ids": ["kb_admin"], "tags": ["接待", "行政", "generation"], "expected_answer": "标准依据：以上标准依据公司管理制度汇编2025版第3章第15条执行。"}
+{"query": "公文发布审批流程", "expected_doc_ids": ["doc_admin_009"], "kb_ids": ["kb_admin"], "tags": ["公文", "行政", "generation"], "expected_answer": "注意事项：请在办理前准备好相关电子版材料，纸质材料交至对应部门窗口。"}
+{"query": "名片印制申请", "expected_doc_ids": ["doc_admin_010"], "kb_ids": ["kb_admin"], "tags": ["名片", "行政", "generation"], "expected_answer": "联系部门：如需进一步咨询，请联系人事部内线8001或发邮件至hr@company.com。"}
+{"query": "办公用品库存盘点", "expected_doc_ids": ["doc_admin_011"], "kb_ids": ["kb_admin"], "tags": ["库存", "行政", "generation"], "expected_answer": "特殊情况：如遇特殊情况或紧急需求，可通过加急流程申请，审批时间可缩短至1个工作日。"}
+{"query": "快递收发管理规定", "expected_doc_ids": ["doc_admin_012"], "kb_ids": ["kb_admin"], "tags": ["快递", "行政", "generation"], "expected_answer": "系统入口：所有操作均在公司OA系统完成，登录后选择对应模块即可。"}
+{"query": "安全门禁管理", "expected_doc_ids": ["doc_admin_013"], "kb_ids": ["kb_admin"], "tags": ["门禁", "行政", "generation"], "expected_answer": "合规要求：上述操作需符合《企业信息安全管理规定》中数据分级保护要求。"}
+{"query": "保洁服务标准", "expected_doc_ids": ["doc_admin_014"], "kb_ids": ["kb_admin"], "tags": ["保洁", "行政", "generation"], "expected_answer": "时间要求：相关申请需提前至少3个工作日提交，以便预留审批时间。"}
+{"query": "绿化维护安排", "expected_doc_ids": ["doc_admin_015"], "kb_ids": ["kb_admin"], "tags": ["绿化", "行政", "generation"], "expected_answer": "费用说明：相关费用由公司承担，个人无需垫付，直接走内部结算流程。"}
+{"query": "消防演练计划", "expected_doc_ids": ["doc_admin_016", "doc_it_011"], "kb_ids": ["kb_admin", "kb_it"], "tags": ["消防", "安全", "generation"], "expected_answer": "变更说明：以上政策如有调整，以人事部最新通知为准，建议定期查看公告栏。"}
+{"query": "应急预案启动流程", "expected_doc_ids": ["doc_admin_017"], "kb_ids": ["kb_admin"], "tags": ["应急", "行政", "generation"], "expected_answer": "流程详情：具体操作步骤请参考公司OA系统的流程指引页面。"}
+{"query": "访客管理系统使用", "expected_doc_ids": ["doc_admin_018"], "kb_ids": ["kb_admin"], "tags": ["访客", "行政", "generation"], "expected_answer": "标准依据：以上标准依据公司管理制度汇编2025版第3章第15条执行。"}
+{"query": "办公用品报废流程", "expected_doc_ids": ["doc_admin_019"], "kb_ids": ["kb_admin"], "tags": ["报废", "行政", "generation"], "expected_answer": "注意事项：请在办理前准备好相关电子版材料，纸质材料交至对应部门窗口。"}
+{"query": "不动产资产管理", "expected_doc_ids": ["doc_admin_020"], "kb_ids": ["kb_admin"], "tags": ["资产", "行政", "generation"], "expected_answer": "联系部门：如需进一步咨询，请联系人事部内线8001或发邮件至hr@company.com。"}
+{"query": "值班排班系统操作", "expected_doc_ids": ["doc_ops_001"], "kb_ids": ["kb_ops"], "tags": ["值班", "运维", "generation"], "expected_answer": "特殊情况：如遇特殊情况或紧急需求，可通过加急流程申请，审批时间可缩短至1个工作日。"}
+{"query": "监控系统告警处理", "expected_doc_ids": ["doc_ops_002"], "kb_ids": ["kb_ops"], "tags": ["监控", "运维", "generation"], "expected_answer": "系统入口：所有操作均在公司OA系统完成，登录后选择对应模块即可。"}
+{"query": "故障定级标准", "expected_doc_ids": ["doc_ops_003"], "kb_ids": ["kb_ops"], "tags": ["故障", "运维", "generation"], "expected_answer": "合规要求：上述操作需符合《企业信息安全管理规定》中数据分级保护要求。"}
+{"query": "变更管理流程", "expected_doc_ids": ["doc_ops_004"], "kb_ids": ["kb_ops"], "tags": ["变更", "运维", "generation"], "expected_answer": "时间要求：相关申请需提前至少3个工作日提交，以便预留审批时间。"}
+{"query": "容量评估报告模板", "expected_doc_ids": ["doc_ops_005"], "kb_ids": ["kb_ops"], "tags": ["容量", "运维", "generation"], "expected_answer": "费用说明：相关费用由公司承担，个人无需垫付，直接走内部结算流程。"}
+{"query": "SLA服务等级协议", "expected_doc_ids": ["doc_ops_006"], "kb_ids": ["kb_ops"], "tags": ["SLA", "运维", "generation"], "expected_answer": "变更说明：以上政策如有调整，以人事部最新通知为准，建议定期查看公告栏。"}
+{"query": "灾备切换演练", "expected_doc_ids": ["doc_ops_007"], "kb_ids": ["kb_ops"], "tags": ["灾备", "运维", "generation"], "expected_answer": "流程详情：具体操作步骤请参考公司OA系统的流程指引页面。"}
+{"query": "上线发布流程", "expected_doc_ids": ["doc_ops_008"], "kb_ids": ["kb_ops"], "tags": ["上线", "运维", "generation"], "expected_answer": "标准依据：以上标准依据公司管理制度汇编2025版第3章第15条执行。"}
+{"query": "回滚操作标准", "expected_doc_ids": ["doc_ops_009"], "kb_ids": ["kb_ops"], "tags": ["回滚", "运维", "generation"], "expected_answer": "注意事项：请在办理前准备好相关电子版材料，纸质材料交至对应部门窗口。"}
+{"query": "故障复盘模板", "expected_doc_ids": ["doc_ops_010"], "kb_ids": ["kb_ops"], "tags": ["复盘", "运维", "generation"], "expected_answer": "联系部门：如需进一步咨询，请联系人事部内线8001或发邮件至hr@company.com。"}
+{"query": "值班交接清单", "expected_doc_ids": ["doc_ops_011"], "kb_ids": ["kb_ops"], "tags": ["交接", "运维", "generation"], "expected_answer": "特殊情况：如遇特殊情况或紧急需求，可通过加急流程申请，审批时间可缩短至1个工作日。"}
+{"query": "应急预案演练计划", "expected_doc_ids": ["doc_ops_012"], "kb_ids": ["kb_ops"], "tags": ["应急", "运维", "generation"], "expected_answer": "系统入口：所有操作均在公司OA系统完成，登录后选择对应模块即可。"}
+{"query": "告警降噪策略", "expected_doc_ids": ["doc_ops_013"], "kb_ids": ["kb_ops"], "tags": ["告警", "运维", "generation"], "expected_answer": "合规要求：上述操作需符合《企业信息安全管理规定》中数据分级保护要求。"}
+{"query": "巡检报告模板", "expected_doc_ids": ["doc_ops_014"], "kb_ids": ["kb_ops"], "tags": ["巡检", "运维", "generation"], "expected_answer": "时间要求：相关申请需提前至少3个工作日提交，以便预留审批时间。"}
+{"query": "供应商对接流程", "expected_doc_ids": ["doc_ops_015"], "kb_ids": ["kb_ops"], "tags": ["供应商", "运维", "generation"], "expected_answer": "费用说明：相关费用由公司承担，个人无需垫付，直接走内部结算流程。"}
+{"query": "容量规划评审", "expected_doc_ids": ["doc_ops_016"], "kb_ids": ["kb_ops"], "tags": ["容量", "运维", "generation"], "expected_answer": "变更说明：以上政策如有调整，以人事部最新通知为准，建议定期查看公告栏。"}
+{"query": "SLO指标定义", "expected_doc_ids": ["doc_ops_017"], "kb_ids": ["kb_ops"], "tags": ["SLO", "运维", "generation"], "expected_answer": "流程详情：具体操作步骤请参考公司OA系统的流程指引页面。"}
+{"query": "混沌工程实施", "expected_doc_ids": ["doc_ops_018"], "kb_ids": ["kb_ops"], "tags": ["混沌", "运维", "generation"], "expected_answer": "标准依据：以上标准依据公司管理制度汇编2025版第3章第15条执行。"}
+{"query": "生产环境访问权限", "expected_doc_ids": ["doc_ops_019", "doc_it_008"], "kb_ids": ["kb_ops", "kb_it"], "tags": ["权限", "运维", "generation"], "expected_answer": "注意事项：请在办理前准备好相关电子版材料，纸质材料交至对应部门窗口。"}
+{"query": "日志归档策略", "expected_doc_ids": ["doc_ops_020"], "kb_ids": ["kb_ops"], "tags": ["日志", "运维", "generation"], "expected_answer": "联系部门：如需进一步咨询，请联系人事部内线8001或发邮件至hr@company.com。"}
+{"query": "变更回滚操作手册", "expected_doc_ids": ["doc_ops_009"], "kb_ids": ["kb_ops"], "tags": ["回滚", "运维", "generation"], "expected_answer": "特殊情况：如遇特殊情况或紧急需求，可通过加急流程申请，审批时间可缩短至1个工作日。"}
+{"query": "监控大盘配置指南", "expected_doc_ids": ["doc_ops_002"], "kb_ids": ["kb_ops"], "tags": ["监控", "运维", "generation"], "expected_answer": "系统入口：所有操作均在公司OA系统完成，登录后选择对应模块即可。"}
+{"query": "故障等级划分标准", "expected_doc_ids": ["doc_ops_003"], "kb_ids": ["kb_ops"], "tags": ["故障", "运维", "generation"], "expected_answer": "合规要求：上述操作需符合《企业信息安全管理规定》中数据分级保护要求。"}
+{"query": "值班表排班规则", "expected_doc_ids": ["doc_ops_001"], "kb_ids": ["kb_ops"], "tags": ["值班", "运维", "generation"], "expected_answer": "时间要求：相关申请需提前至少3个工作日提交，以便预留审批时间。"}
+{"query": "上线评审检查清单", "expected_doc_ids": ["doc_ops_008"], "kb_ids": ["kb_ops"], "tags": ["上线", "运维", "generation"], "expected_answer": "费用说明：相关费用由公司承担，个人无需垫付，直接走内部结算流程。"}
+{"query": "灾备切换操作手册", "expected_doc_ids": ["doc_ops_007"], "kb_ids": ["kb_ops"], "tags": ["灾备", "运维", "generation"], "expected_answer": "变更说明：以上政策如有调整，以人事部最新通知为准，建议定期查看公告栏。"}

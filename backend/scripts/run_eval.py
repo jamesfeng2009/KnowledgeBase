@@ -91,6 +91,23 @@ def _build_judge() -> Any | None:
         return None
 
 
+def _build_ragas(llm: Any | None = None) -> Any | None:
+    """尽力构建 RagasMetrics 指标计算器，不可用时返回 None。"""
+    try:
+        from app.eval.ragas_metrics import RagasMetrics
+
+        if llm is None:
+            try:
+                from app.llm.factory import get_llm_provider
+                llm = get_llm_provider()
+            except Exception:
+                llm = None
+        return RagasMetrics(llm)
+    except Exception as exc:
+        log.warning("eval_cli.build_ragas_failed", error=str(exc))
+        return None
+
+
 # ======================================================================
 # 报告格式化
 # ======================================================================
@@ -114,9 +131,41 @@ def _format_report(result: EvalRunResult, dataset_name: str) -> str:
         f"  avg_ndcg_at_5   : {result.avg_ndcg_at_5:.4f}\n"
         f"  avg_judge_score : {result.avg_judge_score:.4f}"
     )
+    # RAGAS 指标
+    if result.avg_ragas:
+        lines.append("  RAGAS 指标:")
+        for key in ("faithfulness", "answer_relevancy", "context_precision", "context_recall"):
+            val = result.avg_ragas.get(key, 0.0)
+            lines.append(f"    {key:<22}: {val:.4f}")
+
+    # 统一指标汇总（合并检索 + 生成层）
+    try:
+        from app.eval.unified_metrics import MetricsAdapter
+
+        unified_list = []
+        for c in result.case_results:
+            retrieval = {
+                "recall_at_5": c.recall_at_5,
+                "mrr": c.mrr,
+                "ndcg_at_5": c.ndcg_at_5,
+            }
+            unified_list.append(
+                MetricsAdapter.unify_case_result(
+                    retrieval_metrics=retrieval,
+                    judge_scores=c.judge_scores,
+                    ragas_scores=c.ragas_scores,
+                )
+            )
+        if unified_list:
+            agg = MetricsAdapter.aggregate_unified(unified_list)
+            lines.append("  统一指标汇总 (Unified):")
+            for key, val in agg.items():
+                lines.append(f"    {key:<22}: {val:.4f}")
+    except Exception:
+        pass
     lines.append("-" * 72)
     lines.append("用例明细:")
-    header = f"{'#':>3}  {'Recall@5':>9}  {'MRR':>6}  {'NDCG@5':>7}  {'Judge':>6}  Query"
+    header = f"{'#':>3}  {'Recall@5':>9}  {'MRR':>6}  {'NDCG@5':>7}  {'Judge':>6}  {'RAGAS':>6}  Query"
     lines.append(header)
     for i, c in enumerate(result.case_results, start=1):
         judge_val = (
@@ -124,10 +173,14 @@ def _format_report(result: EvalRunResult, dataset_name: str) -> str:
             if c.judge_scores
             else "-"
         )
+        ragas_val = "-"
+        if c.ragas_scores:
+            # 显示 faithfulness 作为 RAGAS 代表值
+            ragas_val = f"{c.ragas_scores.get('faithfulness', 0.0):.2f}"
         err_tag = f"  [err: {c.error}]" if c.error else ""
         lines.append(
             f"{i:>3}  {c.recall_at_5:>9.4f}  {c.mrr:>6.4f}  "
-            f"{c.ndcg_at_5:>7.4f}  {judge_val:>6}  {c.query[:30]}{err_tag}"
+            f"{c.ndcg_at_5:>7.4f}  {judge_val:>6}  {ragas_val:>6}  {c.query[:30]}{err_tag}"
         )
     lines.append("=" * 72)
     return "\n".join(lines)
@@ -227,9 +280,10 @@ def main(argv: list[str] | None = None) -> int:
 
     with_generation = not args.no_generation
 
-    # 3. 构建引擎 / Judge（best-effort）
+    # 3. 构建引擎 / Judge / RAGAS（best-effort）
     engine = _build_engine()
     judge = _build_judge() if with_generation else None
+    ragas = _build_ragas() if with_generation else None
 
     if engine is None:
         print(
@@ -238,7 +292,7 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     # 4. 运行评测
-    runner = EvalRunner(engine=engine, judge_service=judge)
+    runner = EvalRunner(engine=engine, judge_service=judge, ragas_metrics=ragas)
     result = asyncio.run(
         runner.run(dataset, kb_ids=kb_ids, with_generation=with_generation)
     )

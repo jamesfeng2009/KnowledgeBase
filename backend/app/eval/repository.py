@@ -362,6 +362,28 @@ class EvalRepository:
                 "regressed": regressed,
             }
 
+        # RAGAS 指标回归检测
+        cur_ragas = getattr(current, "avg_ragas", {}) or {}
+        base_ragas = getattr(baseline, "avg_ragas", {}) or {}
+        for ragas_key in ("faithfulness", "answer_relevancy", "context_precision", "context_recall"):
+            cur_val = float(cur_ragas.get(ragas_key, 0.0))
+            base_val = float(base_ragas.get(ragas_key, 0.0))
+            delta = cur_val - base_val
+            if base_val > 0:
+                relative_drop = (base_val - cur_val) / base_val
+            else:
+                relative_drop = 0.0
+            regressed = relative_drop > threshold
+            if regressed:
+                is_regression = True
+            result["metrics"][f"ragas_{ragas_key}"] = {
+                "current": cur_val,
+                "baseline": base_val,
+                "delta": delta,
+                "relative_drop": relative_drop,
+                "regressed": regressed,
+            }
+
         result["is_regression"] = is_regression
         return result
 
@@ -386,6 +408,7 @@ class EvalRepository:
                     ndcg_at_5=cd.get("ndcg_at_5", 0.0),
                     answer=cd.get("answer"),
                     judge_scores=cd.get("judge_scores"),
+                    ragas_scores=cd.get("ragas_scores"),
                     error=cd.get("error"),
                 )
             )
@@ -395,6 +418,7 @@ class EvalRepository:
             avg_mrr=data.get("avg_mrr", record.avg_mrr),
             avg_ndcg_at_5=data.get("avg_ndcg_at_5", record.avg_ndcg_at_5),
             avg_judge_score=data.get("avg_judge_score", record.avg_judge_score),
+            avg_ragas=data.get("avg_ragas", {}),
             total=data.get("total", record.total),
             passed=data.get("passed", record.passed),
             evaluated_at=data.get("evaluated_at", record.evaluated_at),

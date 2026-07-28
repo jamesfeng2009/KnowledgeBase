@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 from app.eval.dataset import EvalCase, EvalDataset
+from app.eval.ragas_metrics import RagasMetrics
 from app.eval.repository import EvalRepository, EvalResultRecord
 from app.eval.runner import (
     EvalCaseResult,
@@ -25,6 +26,7 @@ from app.eval.runner import (
     mrr,
     ndcg,
 )
+from app.eval.unified_metrics import MetricsAdapter, UnifiedMetrics
 
 __all__ = [
     "EvalCase",
@@ -34,6 +36,9 @@ __all__ = [
     "EvalCaseResult",
     "EvalRepository",
     "EvalResultRecord",
+    "RagasMetrics",
+    "MetricsAdapter",
+    "UnifiedMetrics",
     "recall_at_k",
     "mrr",
     "ndcg",
