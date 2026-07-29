@@ -79,21 +79,21 @@ class TestFeishuAdapter:
                 "block_id": "b1",
                 "block_type": 3,  # heading1
                 "heading1": {
-                    "elements": [{"content": "架构设计"}]
+                    "elements": [{"text_run": {"content": "架构设计"}}]
                 },
             },
             {
                 "block_id": "b2",
                 "block_type": 2,  # text
                 "text": {
-                    "elements": [{"content": "这是一段正文。"}]
+                    "elements": [{"text_run": {"content": "这是一段正文。"}}]
                 },
             },
             {
                 "block_id": "b3",
                 "block_type": 12,  # bullet
                 "bullet": {
-                    "elements": [{"content": "列表项1"}]
+                    "elements": [{"text_run": {"content": "列表项1"}}]
                 },
             },
             {
@@ -101,7 +101,7 @@ class TestFeishuAdapter:
                 "block_type": 14,  # code
                 "code": {
                     "style": {"language": "python"},
-                    "elements": [{"content": "print('hello')"}]
+                    "elements": [{"text_run": {"content": "print('hello')"}}]
                 },
             },
         ]
@@ -128,7 +128,7 @@ class TestFeishuAdapter:
             blocks.append({
                 "block_id": f"h{i}",
                 "block_type": 2 + i,  # heading1=3, heading2=4, ...
-                field: {"elements": [{"content": f"标题{i}"}]},
+                field: {"elements": [{"text_run": {"content": f"标题{i}"}}]},
             })
 
         result = adapter._blocks_to_markdown(blocks, "测试")
@@ -146,7 +146,7 @@ class TestFeishuAdapter:
             {
                 "block_id": "q1",
                 "block_type": 15,  # quote
-                "quote": {"elements": [{"content": "引用内容"}]},
+                "quote": {"elements": [{"text_run": {"content": "引用内容"}}]},
             },
             {"block_id": "d1", "block_type": 19},  # divider
         ]
@@ -205,7 +205,7 @@ class TestFeishuAdapter:
                     {
                         "block_id": "b1",
                         "block_type": 2,
-                        "text": {"elements": [{"content": "正文内容"}]},
+                        "text": {"elements": [{"text_run": {"content": "正文内容"}}]},
                     },
                 ],
                 "has_more": False,

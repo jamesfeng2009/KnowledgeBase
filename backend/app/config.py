@@ -101,6 +101,10 @@ class Settings(BaseSettings):
     DASHSCOPE_LLM_MODEL: str = "qwen-turbo"
     DASHSCOPE_EMBED_MODEL: str = "text-embedding-v3"
     DASHSCOPE_EMBED_DIM: int = 1024
+    # DashScope 重排（gte-rerank，原生 HTTP API，非 OpenAI 兼容端点）
+    DASHSCOPE_RERANK_MODEL: str = "gte-rerank-v2"
+    # DashScope 视觉理解（qwen-vl 系列，走 OpenAI 兼容端点）
+    DASHSCOPE_VLM_MODEL: str = "qwen-vl-max"
 
     # === 私有部署模型服务地址 ===
     VLLM_HOST: str = "llm-server"

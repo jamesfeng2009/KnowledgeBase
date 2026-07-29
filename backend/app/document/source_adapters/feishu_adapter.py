@@ -440,8 +440,16 @@ class FeishuAdapter(DocumentSourceAdapter):
     def _extract_text(self, block: dict[str, Any]) -> str:
         """从块中提取纯文本内容。
 
-        飞书块结构中，文本内容存在 `text` 数组的 `content` 字段中，
-        不同块类型的文本字段名不同（text/heading1/bullet/ordered/code/quote/todo）。
+        飞书块结构中，不同块类型的文本字段名不同
+        （text/heading1/bullet/ordered/code/quote/todo），字段值为
+        ``{"elements": [...]}``。elements 每项的真实结构为::
+
+            {"text_run": {"content": "实际文本", "text_element_style": {...}}}
+
+        旧实现误读 ``elem["content"]``（该字段在真实 API 响应中不存在），
+        导致飞书文档同步后全文为空。此处优先按真实结构 text_run.content
+        解析，并兼容平铺的 elem["content"]（防御性回退）；mention_doc
+        元素提取文档标题，避免提及链接丢失语义。
         """
         # 尝试所有可能的文本字段
         for field in (
@@ -455,10 +463,26 @@ class FeishuAdapter(DocumentSourceAdapter):
                 elements = text_data.get("elements", [])
                 parts: list[str] = []
                 for elem in elements:
-                    if isinstance(elem, dict):
-                        content = elem.get("content", "")
+                    if not isinstance(elem, dict):
+                        continue
+                    # 真实飞书结构：text_run.content
+                    text_run = elem.get("text_run")
+                    if isinstance(text_run, dict):
+                        content = text_run.get("content", "")
                         if content:
                             parts.append(content)
+                        continue
+                    # 提及文档：以标题占位，保留语义
+                    mention_doc = elem.get("mention_doc")
+                    if isinstance(mention_doc, dict):
+                        title = mention_doc.get("title", "")
+                        if title:
+                            parts.append(str(title))
+                        continue
+                    # 防御性回退：平铺 content 字段（旧 mock / 部分 SDK 结构）
+                    content = elem.get("content", "")
+                    if content:
+                        parts.append(content)
                 if parts:
                     return "".join(parts)
         return ""

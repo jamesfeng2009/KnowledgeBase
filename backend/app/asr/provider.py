@@ -354,6 +354,19 @@ def _make_openai_asr() -> ASRProvider:
     return OpenAIASRProvider()
 
 
+@register_asr_provider("saas_dashscope")
+def _make_dashscope_mode_asr() -> ASRProvider:
+    """SaaS·国内模式：复用自托管 ASR 服务（Faster-Whisper / FunASR）。
+
+    DashScope 未提供 OpenAI 兼容的 audio/transcriptions 端点；
+    其录音文件转写 API 为异步任务型且要求音频位于公网可访问 URL，
+    不适用于本地音视频文件场景。国内 SaaS 部署通常配套自建
+    FunASR / Faster-Whisper HTTP 服务（ASR_HOST / ASR_PORT），
+    与 private 模式共用同一实现。
+    """
+    return WhisperASRProvider()
+
+
 @register_asr_provider("private_overseas")
 @register_asr_provider("private_domestic")
 def _make_whisper_asr() -> ASRProvider:

@@ -210,6 +210,102 @@ class TEIReranker(RerankerBase):
         await self.client.aclose()
 
 
+class DashScopeReranker(RerankerBase):
+    """SaaS·国内重排器 — 阿里云 DashScope gte-rerank（原生 HTTP API）。
+
+    DashScope 重排不提供 OpenAI 兼容端点，使用原生 API::
+
+        POST https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank
+        Authorization: Bearer <DASHSCOPE_API_KEY>
+        {
+            "model": "gte-rerank-v2",
+            "input": {"query": "...", "documents": ["d1", "d2"]},
+            "parameters": {"top_n": 5, "return_documents": false}
+        }
+
+    返回 ``output.results[*] = {"index": int, "relevance_score": float}``。
+    """
+
+    _API_URL = "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank"
+
+    def __init__(self) -> None:
+        from app.utils.retry import build_retry_http_client
+
+        self.client = build_retry_http_client(timeout=10.0)
+        self.model = settings.DASHSCOPE_RERANK_MODEL
+        self._headers = {
+            "Authorization": f"Bearer {settings.DASHSCOPE_API_KEY}",
+            "Content-Type": "application/json",
+        }
+
+    @circuit_call("reranker_dashscope")
+    async def rerank(
+        self,
+        query: str,
+        documents: list[str | dict[str, Any]],
+        top_k: int = 5,
+    ) -> list[dict[str, Any]]:
+        """对文档列表重排 — 异常向上传播以触发熔断器，由调用方负责降级。"""
+        if not documents:
+            return []
+        import time
+        t0 = time.monotonic()
+        texts = [_extract_content(d) for d in documents]
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "input": {"query": query, "documents": texts},
+            "parameters": {
+                "top_n": min(top_k, len(texts)),
+                "return_documents": False,
+            },
+        }
+        log.info(
+            "reranker.dashscope.start",
+            query_len=len(query),
+            doc_count=len(texts),
+            top_k=top_k,
+        )
+        resp = await self.client.post(self._API_URL, json=payload, headers=self._headers)
+        resp.raise_for_status()
+        data: Any = resp.json()
+        results = self._parse_response(data, texts, top_k)
+        elapsed_ms = round((time.monotonic() - t0) * 1000, 2)
+        log.info("reranker.dashscope.success", count=len(results), latency_ms=elapsed_ms)
+        return results
+
+    @staticmethod
+    def _parse_response(
+        data: Any,
+        texts: list[str],
+        top_k: int,
+    ) -> list[dict[str, Any]]:
+        """解析 DashScope gte-rerank 返回结果。
+
+        返回格式::
+
+            {"output": {"results": [{"index": 0, "relevance_score": 0.98}, ...]}}
+        """
+        results: list[dict[str, Any]] = []
+        rows: list[Any] = []
+        if isinstance(data, dict):
+            output = data.get("output")
+            if isinstance(output, dict):
+                rows = output.get("results", []) or []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            idx = int(row.get("index", 0))
+            results.append(
+                {
+                    "index": idx,
+                    "score": float(row.get("relevance_score", 0.0)),
+                    "content": texts[idx] if idx < len(texts) else "",
+                }
+            )
+        results.sort(key=lambda r: r["score"], reverse=True)
+        return results[:top_k]
+
+
 # ------------------------------------------------------------------
 # 注册表 — 开闭原则落点
 # ------------------------------------------------------------------
@@ -233,6 +329,12 @@ def register_reranker(
 def _make_cohere_reranker() -> RerankerBase:
     """SaaS：Cohere Rerank 3.5。"""
     return CohereReranker()
+
+
+@register_reranker("saas_dashscope")
+def _make_dashscope_reranker() -> RerankerBase:
+    """SaaS·国内：DashScope gte-rerank。"""
+    return DashScopeReranker()
 
 
 @register_reranker("private_overseas")

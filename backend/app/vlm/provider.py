@@ -166,6 +166,22 @@ class VLLMVisionProvider(VisionProvider):
         return result
 
 
+class DashScopeVisionProvider(VLLMVisionProvider):
+    """SaaS·国内视觉处理 — 阿里云 DashScope qwen-vl 系列。
+
+    qwen-vl 模型提供 OpenAI 兼容多模态接口（image_url data URL 格式），
+    与 vLLM 的请求格式一致，故直接复用 VLLMVisionProvider.understand，
+    仅覆盖 __init__ 指向 DashScope endpoint 与真实 API Key。
+    """
+
+    def __init__(self, model: str | None = None) -> None:
+        self.client = AsyncOpenAI(
+            base_url=settings.DASHSCOPE_BASE_URL,
+            api_key=settings.DASHSCOPE_API_KEY,
+        )
+        self.model = model or settings.DASHSCOPE_VLM_MODEL
+
+
 # ------------------------------------------------------------------
 # 注册表 — 开闭原则落点
 # ------------------------------------------------------------------
@@ -189,6 +205,12 @@ def register_vision_provider(
 def _make_anthropic_vision() -> VisionProvider:
     """SaaS：复用 LLM Provider 原生多模态（Claude / GPT 视觉）。"""
     return AnthropicVisionProvider()
+
+
+@register_vision_provider("saas_dashscope")
+def _make_dashscope_vision() -> VisionProvider:
+    """SaaS·国内：DashScope qwen-vl 系列（OpenAI 兼容多模态接口）。"""
+    return DashScopeVisionProvider()
 
 
 @register_vision_provider("private_overseas")
