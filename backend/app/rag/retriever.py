@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
 from typing import Any
@@ -146,15 +147,28 @@ class HybridRetriever:
         except Exception as exc:
             log.debug("retriever.entity_expand_failed", error=str(exc))
 
-        # 并发执行多路检索（任一失败返回空列表，不影响其他路）
-        vector_results = await self._vector_search(query, kb_ids, top_k)
-        fulltext_results = await self._fulltext_search(expanded_query, kb_ids, top_k)
-
+        # 并发执行四路检索 — asyncio.gather 真正并行（原实现为顺序 await，
+        # 延迟为四路之和）。各子方法内部已捕获异常返回空列表，单路失败
+        # 不影响其他路；gather 层面再以 return_exceptions 兜底防御。
         # C1/C2 fix: 跨模态检索使用独立索引 + 独立 Embedder，与文本检索隔离
-        cross_modal_results = await self._cross_modal_search(query, kb_ids, top_k)
-
         # P2-T5: 图谱召回（第四路）
-        graph_results = await self._graph_search(graph_entity_names, kb_ids, top_k)
+        (
+            vector_results,
+            fulltext_results,
+            cross_modal_results,
+            graph_results,
+        ) = await asyncio.gather(
+            self._vector_search(query, kb_ids, top_k),
+            self._fulltext_search(expanded_query, kb_ids, top_k),
+            self._cross_modal_search(query, kb_ids, top_k),
+            self._graph_search(graph_entity_names, kb_ids, top_k),
+            return_exceptions=True,
+        )
+        # 兜底净化：子方法理论上已自捕获异常，此处防御未来重构引入的逃逸异常
+        vector_results = self._ensure_list(vector_results, "vector")
+        fulltext_results = self._ensure_list(fulltext_results, "fulltext")
+        cross_modal_results = self._ensure_list(cross_modal_results, "cross_modal")
+        graph_results = self._ensure_list(graph_results, "graph")
 
         merged = self._merge_and_dedupe(
             vector_results + cross_modal_results + graph_results,
@@ -173,6 +187,21 @@ class HybridRetriever:
             merged_count=len(merged),
         )
         return merged
+
+    @staticmethod
+    def _ensure_list(result: Any, source: str) -> list[dict[str, Any]]:
+        """gather(return_exceptions=True) 结果净化 — 异常项降级为空列表。
+
+        四路检索子方法内部已自捕获异常，此方法仅作防御层：
+        若未来某路子方法重构后逃逸异常，单路降级为空列表而非拖垮整体检索。
+        """
+        if isinstance(result, BaseException):
+            log.warning("retriever.gather_path_failed", source=source, error=str(result))
+            return []
+        if not isinstance(result, list):
+            log.warning("retriever.gather_path_bad_type", source=source, type=type(result).__name__)
+            return []
+        return result
 
     # ------------------------------------------------------------------
     # 向量检索（通过 VectorStoreBase 适配器）

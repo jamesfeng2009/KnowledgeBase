@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from contextvars import ContextVar
 from typing import Any
 
 from app.llm.base import LLMProvider, Message
@@ -52,7 +53,23 @@ class Generator:
         self.llm = llm
         self.citation_extractor = citation_extractor or CitationExtractor()
         # P0-Stage2: 最近一次 generate 的真实 token 用量（由 LLM Provider yield）
-        self.last_usage: dict[str, Any] | None = None
+        # 并发隔离修复：Generator 为引擎级共享实例，若用普通实例属性，
+        # 并发请求会互相覆写/读取对方的 usage（A 请求重置 None 时 B 正在累加，
+        # 导致用量错记到别的请求上）。改用 ContextVar 按 asyncio 任务隔离，
+        # 每个请求任务读写自己的副本；异步生成器在消费方任务上下文中执行，
+        # 故 generate() 内的 set 对同一任务内后续的 get 可见。
+        self._usage_var: ContextVar[dict[str, Any] | None] = ContextVar(
+            f"generator_last_usage_{id(self)}", default=None
+        )
+
+    @property
+    def last_usage(self) -> dict[str, Any] | None:
+        """当前请求任务的最近一次 token 用量（按 asyncio 任务隔离）。"""
+        return self._usage_var.get()
+
+    @last_usage.setter
+    def last_usage(self, value: dict[str, Any] | None) -> None:
+        self._usage_var.set(value)
 
     async def generate(
         self,

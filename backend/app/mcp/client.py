@@ -96,7 +96,12 @@ class MCPClient:
         """
         return await self._server.call_tool(tool_name, arguments, tenant_id=tenant_id)
 
-    async def call_tool_from_llm(self, tool_use: ToolUse) -> str:
+    async def call_tool_from_llm(
+        self,
+        tool_use: ToolUse,
+        *,
+        tenant_id: str | None = None,
+    ) -> str:
         """从 LLM 返回的 ``ToolUse`` 直接调用工具。
 
         将 LLM 的 ``ToolUse``（type/id/name/input）解包为
@@ -104,6 +109,10 @@ class MCPClient:
 
         Args:
             tool_use: LLM 返回的工具调用请求，包含 name 和 input 字段。
+            tenant_id: 请求级租户 ID（透传 Server 做租户过滤）。
+                多租户场景必传 — 缺失时工具内查询不做租户过滤，
+                存在跨租户数据泄漏风险。**不信任** LLM 在 input 中
+                自封的租户标识，租户上下文必须由调用方从请求注入。
 
         Returns:
             工具执行结果（JSON 序列化字符串）。
@@ -116,4 +125,4 @@ class MCPClient:
             tool=tool_name,
             tool_use_id=tool_use_id,
         )
-        return await self._server.call_tool(tool_name, arguments)
+        return await self._server.call_tool(tool_name, arguments, tenant_id=tenant_id)
