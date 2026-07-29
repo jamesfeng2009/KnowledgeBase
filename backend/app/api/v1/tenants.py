@@ -202,7 +202,10 @@ async def get_tenant_modules(
     - enabled: 当前租户是否启用
     """
     service = TenantService(db)
-    modules = await service.list_modules_with_status()
+    # 安全修复：必须传入当前用户的 tenant_id，否则 tenant_id=None 时
+    # get_tenant() 会回落到"第一条活跃租户"，导致 SaaS 模式下
+    # 任何登录用户看到的都是同一个租户的模块配置（跨租户数据泄漏）。
+    modules = await service.list_modules_with_status(tenant_id=user.tenant_id)
     return ApiResponse(code=0, data=modules, message="success")
 
 
@@ -227,7 +230,11 @@ async def update_tenant_modules(
 
     service = TenantService(db)
     try:
-        enabled = await service.update_enabled_modules(module_ids)
+        # 安全修复：传入 tenant_id，确保只修改当前租户的配置，
+        # 避免跨租户写入（tenant_id=None 时会命中第一条活跃租户）。
+        enabled = await service.update_enabled_modules(
+            module_ids, tenant_id=user.tenant_id
+        )
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -257,7 +264,10 @@ async def toggle_tenant_module(
 
     service = TenantService(db)
     try:
-        result = await service.toggle_module(module_id, enabled)
+        # 安全修复：传入 tenant_id，同上避免跨租户写入。
+        result = await service.toggle_module(
+            module_id, enabled, tenant_id=user.tenant_id
+        )
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

@@ -96,7 +96,9 @@ services:
   # === Celery 异步任务 ===
   celery-worker:
     build: ./backend
-    command: celery -A celery_app worker --loglevel=info --concurrency=4
+    # -Q 显式声明消费全部业务队列（与 celery_app.py 的 task_queues 对齐，
+    # 双重保障：即使 task_queues 配置回归，worker 也能消费全部队列）
+    command: celery -A celery_app worker --loglevel=info --concurrency=4 -Q celery,documents,indexing,scheduled,notifications,multimodal,dead_letter
     env_file: ./backend/.env
     environment:
       - DATABASE_URL=postgresql+asyncpg://ekb:ekb@postgres:5432/ekb

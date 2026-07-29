@@ -158,7 +158,10 @@ async def update_llm_config(
             detail="未找到租户，无法保存配置",
         )
 
-    llm_raw = settings.get(_LLM_CONFIG_KEY, dict(_DEFAULT_LLM_CONFIG))
+    # 函数式更新：构造新 dict 对象 — settings 是裸 JSONB 列，
+    # 原地突变同一对象再赋值回去会被 SQLAlchemy 跳过变更检测，
+    # 导致 flush 时 UPDATE 静默丢失。
+    llm_raw = dict(settings.get(_LLM_CONFIG_KEY, _DEFAULT_LLM_CONFIG))
     update_fields = body.model_dump(exclude_unset=True)
 
     for key, value in update_fields.items():
@@ -168,8 +171,7 @@ async def update_llm_config(
                 continue
         llm_raw[key] = value
 
-    settings[_LLM_CONFIG_KEY] = llm_raw
-    tenant.settings = settings
+    tenant.settings = {**settings, _LLM_CONFIG_KEY: llm_raw}
     await db.flush()
 
     return ApiResponse(
@@ -230,12 +232,12 @@ async def update_system_config(
             detail="未找到租户，无法保存配置",
         )
 
-    sys_raw = settings.get(_SYSTEM_CONFIG_KEY, dict(_DEFAULT_SYSTEM_CONFIG))
+    # 函数式更新：构造新 dict 对象，原因同上（JSONB 变更检测）。
+    sys_raw = dict(settings.get(_SYSTEM_CONFIG_KEY, _DEFAULT_SYSTEM_CONFIG))
     update_fields = body.model_dump(exclude_unset=True)
     sys_raw.update(update_fields)
 
-    settings[_SYSTEM_CONFIG_KEY] = sys_raw
-    tenant.settings = settings
+    tenant.settings = {**settings, _SYSTEM_CONFIG_KEY: sys_raw}
     await db.flush()
 
     return ApiResponse(

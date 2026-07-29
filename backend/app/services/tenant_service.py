@@ -167,8 +167,11 @@ class TenantService:
         # 合并基础模块
         final = merge_with_basics(module_ids)
 
-        # 写入 settings JSONB
-        settings = tenant.settings or {}
+        # 写入 settings JSONB — 函数式更新：必须构造新 dict 对象。
+        # settings 是裸 JSONB 列（未用 MutableDict），若原地突变同一
+        # dict 再赋值回去，SQLAlchemy 对相同对象赋值会跳过变更检测，
+        # flush 时 UPDATE 静默丢失（API 返回成功但 DB 未持久化）。
+        settings = dict(tenant.settings or {})
         settings["enabled_modules"] = final
         tenant.settings = settings
 

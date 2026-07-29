@@ -20,12 +20,26 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from celery import Celery  # noqa: E402
 from celery.schedules import crontab  # noqa: E402
 from celery.signals import worker_shutdown  # noqa: E402
+from kombu import Queue  # noqa: E402
 
 from app.config import get_settings  # noqa: E402
 from app.utils.logger import get_logger  # noqa: E402
 
 logger = get_logger(__name__)
 settings = get_settings()
+
+# 全部业务队列清单 — task_queues 与 task_routes 的唯一事实来源。
+# 包含默认队列 "celery" 作为兜底：任何未匹配 task_routes 的任务
+# 落入默认队列后仍会被 worker 消费，避免静默堆积。
+_ALL_QUEUES: tuple[str, ...] = (
+    "celery",        # 默认队列（兜底）
+    "documents",     # 文档解析/智能处理/测试平台 LLM 任务
+    "indexing",      # 索引构建
+    "scheduled",     # 定时任务/健康检查
+    "notifications", # 通知推送
+    "multimodal",    # 多模态/音视频处理
+    "dead_letter",   # 死信队列 — 重试耗尽的任务进入此队列供人工排查
+)
 
 # ------------------------------------------------------------------
 # Celery 应用创建
@@ -34,14 +48,6 @@ settings = get_settings()
 celery_app = Celery(
     "ekb_worker",
     broker=settings.REDIS_URL,
-    queues=[
-        "documents",
-        "indexing",
-        "scheduled",
-        "notifications",
-        "multimodal",
-        "dead_letter",  # 死信队列 — 重试耗尽的任务进入此队列供人工排查
-    ],
     backend=settings.REDIS_URL,
     include=[
         "tasks.document_tasks",
@@ -62,6 +68,13 @@ celery_app = Celery(
 # ------------------------------------------------------------------
 
 celery_app.conf.update(
+    # 队列声明 — 修复：原实现把 queues=[...] 传给 Celery() 构造函数，
+    # 该参数不是有效配置键（仅存入 preconf 不映射为 task_queues），
+    # 导致 task_queues 为空、worker 只消费默认 "celery" 队列，
+    # 路由到命名队列的任务全部堆积无人消费。
+    task_queues=tuple(Queue(name) for name in _ALL_QUEUES),
+    task_default_queue="celery",
+
     # 任务序列化
     task_serializer="json",
     result_serializer="json",
@@ -71,13 +84,24 @@ celery_app.conf.update(
     timezone="Asia/Shanghai",
     enable_utc=True,
 
-    # 任务路由 — 按模块路由到不同队列
+    # 任务路由 — 按模块路由到不同队列（覆盖全部任务模块，
+    # 未匹配的落入默认 "celery" 队列兜底）
     task_routes={
         "tasks.document_tasks.*": {"queue": "documents"},
         "tasks.index_tasks.*": {"queue": "indexing"},
         "tasks.scheduled_tasks.*": {"queue": "scheduled"},
         "tasks.notification_tasks.*": {"queue": "notifications"},
         "tasks.multimodal_tasks.*": {"queue": "multimodal"},
+        # 视频分片处理（GB 级，ASR 相关）— 归入多模态队列，避免阻塞文档解析
+        "tasks.video_tasks.*": {"queue": "multimodal"},
+        # 文档智能处理（摘要/标签/分类）— 文档解析的链式后续
+        "tasks.intelligence_tasks.*": {"queue": "documents"},
+        # 知识回流（提取/冲突检测/复用注入）— LLM 异步任务
+        "tasks.compounding_tasks.*": {"queue": "documents"},
+        # 智能测试平台（需求提取/用例生成/计划编排）— LLM 异步任务
+        "tasks.testing_tasks.*": {"queue": "documents"},
+        # AI 服务健康检查（每 30s，轻量高频）— 归入定时队列
+        "tasks.health_tasks.*": {"queue": "scheduled"},
     },
 
     # 任务超时（秒）— 防止任务卡死
@@ -202,7 +226,7 @@ celery_app.conf.beat_schedule = {
 logger.info(
     "celery.app_configured",
     broker=settings.REDIS_URL,
-    queues=["documents", "indexing", "scheduled"],
+    queues=list(_ALL_QUEUES),
 )
 
 
