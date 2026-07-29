@@ -52,6 +52,7 @@ def get_rag_engine() -> AgenticRAGEngine:
     from app.llm.factory import get_llm_provider
     from app.mcp.client import MCPClient
     from app.mcp.server import KnowledgeBaseMCPServer
+    from app.rag.cache import TokenCache
     from app.rag.generator import Generator
     from app.rag.reranker import get_reranker
     from app.rag.retriever import HybridRetriever
@@ -68,6 +69,12 @@ def get_rag_engine() -> AgenticRAGEngine:
         retriever=retriever,
         reranker=reranker,
         generator=generator,
+        # 修复：原实现未注入 TokenCache，engine.cache 恒为 None，
+        # 三级答案缓存（L1 Redis / L2 语义 / L3 Prompt Caching）从未生效。
+        cache=TokenCache(),
+        # 注：permission_filter 不在此注入 — 引擎为全局单例，
+        # 权限过滤依赖请求级用户上下文，由 engine.answer() 的
+        # 请求级参数传入（见 chat_service）。
     )
 
     log.info("rag_engine.initialized", deploy_mode=getattr(llm, "deploy_mode", "unknown"))
@@ -108,13 +115,15 @@ def get_rag_engine_by_model(model_id: str) -> AgenticRAGEngine:
 
     generator = Generator(llm)
 
-    # 4. 创建新引擎（共享 MCP / Retriever / Reranker，替换 LLM / Generator）
+    # 4. 创建新引擎（共享 MCP / Retriever / Reranker / Cache，替换 LLM / Generator）
     engine = AgenticRAGEngine(
         llm=llm,
         mcp_client=default_engine.mcp,
         retriever=default_engine.retriever,
         reranker=default_engine.reranker,
         generator=generator,
+        # 共享默认引擎的 TokenCache（缓存 key 含 tenant_id，跨租户互不可见）
+        cache=default_engine.cache,
         tool_guard=default_engine._tool_guard,
     )
 

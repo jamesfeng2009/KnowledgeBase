@@ -56,6 +56,7 @@ class ShortcutHandler:
         tenant_id: UUID | None = None,
         kb_ids: list[str] | None = None,
         memory_context: str = "",
+        permission_filter: Any = None,
     ) -> AsyncIterator[SSEEvent | str]:
         """处理快捷路径意图，返回 SSE 流。
 
@@ -67,6 +68,8 @@ class ShortcutHandler:
             tenant_id: 租户 ID。
             kb_ids: 知识库 ID 列表（可选）。
             memory_context: 记忆上下文。
+            permission_filter: 可选，请求级 ABAC 权限过滤器（密级维度，
+                在重排前应用）。签名为 ``async (list[dict]) -> list[dict]``。
 
         Yields:
             SSEEvent | str: SSE 事件和 token 字符串。
@@ -74,7 +77,8 @@ class ShortcutHandler:
         try:
             if intent.intent == IntentType.RAG_SEARCH:
                 async for event in self._handle_search(
-                    query, user, db, tenant_id, kb_ids, memory_context
+                    query, user, db, tenant_id, kb_ids, memory_context,
+                    permission_filter,
                 ):
                     yield event
             elif intent.intent == IntentType.LIST_DOCUMENTS:
@@ -109,8 +113,9 @@ class ShortcutHandler:
         tenant_id: UUID | None,
         kb_ids: list[str] | None,
         memory_context: str,
+        permission_filter: Any = None,
     ) -> AsyncIterator[SSEEvent | str]:
-        """快捷搜索路径 — 检索 → 重排 → 生成（1 次 LLM）。"""
+        """快捷搜索路径 — 检索 → 权限过滤 → 重排 → 生成（1 次 LLM）。"""
 
         # 1. 确定性检索（零 LLM）
         retriever = self._get_retriever()
@@ -120,6 +125,20 @@ class ShortcutHandler:
         )
 
         candidates = await retriever.search(query, kb_ids=kb_ids, top_k=_SHORTCUT_TOP_K)
+
+        # 1.5 ABAC 权限过滤（必须在重排之前！）— 与引擎 _retrieve 同一约束。
+        # kb_ids 下推只解决"知识库归属"维度，此处补"文档密级"维度；
+        # 过滤失败时保守返回空，避免越权文档进入生成上下文。
+        if permission_filter is not None and candidates:
+            try:
+                candidates = await permission_filter(candidates)
+                log.info(
+                    "shortcut.permission_filtered",
+                    after=len(candidates),
+                )
+            except Exception as exc:
+                log.error("shortcut.permission_error", error=str(exc))
+                candidates = []
 
         yield SSEEvent(
             data={"doc_count": len(candidates)},

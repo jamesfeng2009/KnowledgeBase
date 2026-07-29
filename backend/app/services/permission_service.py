@@ -204,3 +204,106 @@ class PermissionService:
             if doc.kb_id in accessible_kb_ids
             and _CLEARANCE_ORDER.get(doc.classification, 1) <= user_level
         ]
+
+    # ------------------------------------------------------------------
+    # 检索结果过滤（RAG 引擎 dict 候选）
+    # ------------------------------------------------------------------
+
+    async def get_accessible_kb_ids(self) -> set[UUID] | None:
+        """返回当前用户可访问的知识库 ID 集合。
+
+        用于 RAG 检索层下推过滤（OpenSearch terms filter / 向量检索 kb_ids），
+        在召回阶段就限定知识库范围，避免越权文档进入重排与生成上下文。
+
+        Returns:
+            - admin：返回 None（表示不限制，检索全部知识库）；
+            - 普通用户：返回可访问的 kb_id 集合（可能为空集合，
+              空集合表示无任何可访问知识库，检索应短路返回空结果）。
+        """
+        if self.user.role == "admin":
+            return None
+
+        member_subq = select(KbMember.kb_id).where(KbMember.user_id == self.user.id)
+        member_subq = apply_tenant_filter(member_subq, KbMember, self._tenant_id)
+        accessible_stmt = (
+            select(KnowledgeBase.id)
+            .where(
+                KnowledgeBase.deleted_at.is_(None),
+                or_(
+                    KnowledgeBase.owner_id == self.user.id,
+                    KnowledgeBase.id.in_(member_subq),
+                ),
+            )
+        )
+        accessible_stmt = apply_tenant_filter(accessible_stmt, KnowledgeBase, self._tenant_id)
+        result = await self.db.execute(accessible_stmt)
+        return {row[0] for row in result.all()}
+
+    async def filter_retrieval_candidates(
+        self,
+        candidates: list[dict],
+    ) -> list[dict]:
+        """过滤 RAG 检索返回的 dict 候选（ABAC 后置过滤，密级维度）。
+
+        与 kb_ids 下推过滤的关系：kb_ids 下推解决"知识库归属"维度（召回层），
+        本方法补充"文档密级"维度（重排前），二者构成双重保障。
+        即使下推过滤被绕过或索引数据越权写入，本方法仍按 DB 真实密级拦截。
+
+        Args:
+            candidates: 检索候选 dict 列表，每项含 ``doc_id`` / ``kb_id`` /
+                ``content`` / ``score`` 等字段（HybridRetriever 返回格式）。
+
+        Returns:
+            过滤后的候选子集（保持原顺序）。
+        """
+        # admin 放行全部（与 filter_documents / check_function 语义一致）
+        if self.user.role == "admin":
+            return candidates
+        if not candidates:
+            return candidates
+
+        accessible_kb_ids = await self.get_accessible_kb_ids()
+        if accessible_kb_ids is None:
+            return candidates
+        if not accessible_kb_ids:
+            return []
+
+        accessible_strs = {str(kb_id) for kb_id in accessible_kb_ids}
+        user_level = _CLEARANCE_ORDER.get(self.user.clearance_level, 1)
+
+        # 1. 知识库归属过滤（kb_id 缺失的候选保守剔除 — 无法确认归属不放行）
+        kb_allowed = [
+            c for c in candidates
+            if c.get("kb_id") and str(c["kb_id"]) in accessible_strs
+        ]
+        if not kb_allowed:
+            return []
+
+        # 2. 密级过滤 — 批量查询候选文档的 classification
+        doc_ids = {c.get("doc_id") for c in kb_allowed if c.get("doc_id")}
+        classification_map: dict[str, str] = {}
+        if doc_ids:
+            from uuid import UUID as _UUID
+
+            valid_uuids: list[_UUID] = []
+            for did in doc_ids:
+                try:
+                    valid_uuids.append(_UUID(str(did)))
+                except (ValueError, TypeError):
+                    continue
+            if valid_uuids:
+                stmt = select(Document.id, Document.classification).where(
+                    Document.id.in_(valid_uuids)
+                )
+                stmt = apply_tenant_filter(stmt, Document, self._tenant_id)
+                rows = (await self.db.execute(stmt)).all()
+                classification_map = {str(row[0]): row[1] for row in rows}
+
+        return [
+            c
+            for c in kb_allowed
+            if _CLEARANCE_ORDER.get(
+                classification_map.get(str(c.get("doc_id")), "internal"), 1
+            )
+            <= user_level
+        ]

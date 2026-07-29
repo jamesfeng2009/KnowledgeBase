@@ -174,6 +174,10 @@ class _NullQualityGuard:
     async def check_generation_quality(self, query: str, answer: str, contexts: list) -> None:
         return None
 
+    async def check_and_regenerate(self, query: str, answer: str, contexts: list, generator) -> tuple:
+        """空实现 — 不重生成，eval_result 为 None（与幻觉防护流水线接口对齐）。"""
+        return answer, None
+
     def is_low_confidence(self, eval_result) -> bool:
         return False
 

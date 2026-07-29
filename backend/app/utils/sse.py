@@ -66,6 +66,9 @@ class SSEEventType:
     # 生成
     TOKEN = "token"
     SOURCES = "sources"
+    # 忠实度拦截后重生成的完整答案 — 前端收到后应替换已展示的流式答案；
+    # data: {"answer": "<完整新答案>"}
+    ANSWER_REGENERATED = "answer_regenerated"
     # 审批（P1 预留）
     APPROVAL_REQUIRED = "approval_required"
     # 结束

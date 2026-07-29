@@ -166,6 +166,9 @@ class AgentState(TypedDict, total=False):
     conversation_focus: dict[str, Any] | None
     # P4-E: 漂移检测结果（来自 DriftDetector）
     drift_info: dict[str, Any] | None
+    # 请求级 ABAC 权限过滤器（callable，携带当前用户上下文）— 优先于
+    # 引擎构造级 permission_filter；仅纯 Python answer() 路径使用。
+    permission_filter: PermissionFilter | None
     # --- LangGraph 专用字段（纯 Python 路径不使用）---
     # think 节点产出的路由信号：retrieve / tool_call / generate。
     _decision: str
@@ -383,6 +386,7 @@ class AgenticRAGEngine:
         user_uuid: uuid.UUID | None = None,
         conversation_focus: dict[str, Any] | None = None,
         drift_info: dict[str, Any] | None = None,
+        permission_filter: PermissionFilter | None = None,
     ) -> AsyncIterator[SSEEvent | str]:
         """Agentic RAG 主入口 — 返回 SSE 事件流供前端实时消费。
 
@@ -409,14 +413,21 @@ class AgenticRAGEngine:
             query: 用户问题。
             user_id: 当前用户 ID（用于权限过滤）。
             session_id: 会话 ID。
-            kb_ids: 可选，限定检索的知识库范围。
+            kb_ids: 可选，限定检索的知识库范围。显式传空列表表示用户
+                无任何可访问知识库，检索短路返回空结果（不会回落为全库检索）。
             memory_context: 记忆引擎提供的上下文。
             tenant_id: 租户 ID（答案缓存按租户隔离，防止跨租户答案泄漏）。
+            permission_filter: 可选，请求级 ABAC 权限过滤器（携带当前用户
+                上下文）。引擎为全局单例，构造级 ``self.permission_filter``
+                无法区分用户；请求级参数优先于构造级注入。
 
         Yields:
             SSEEvent | str: SSE 事件对象（thinking/retrieve/tool_call/sources/
             quality/done）或 token 字符串（generate 阶段）。
         """
+        # 无任何可访问知识库时短路：跳过 FAQ 与检索，避免空 kb_ids
+        # 在底层被当作"不过滤"而回落为全库检索（跨知识库泄漏）。
+        no_kb_access = kb_ids is not None and len(kb_ids) == 0
         # 1. 缓存命中检查（缓存 key 含 tenant_id，跨租户互不可见）
         if self.cache is not None:
             try:
@@ -430,7 +441,7 @@ class AgenticRAGEngine:
 
         # 1.5 FAQ 快捷匹配 — 缓存未命中后，尝试 BM25 精准匹配 faq chunk
         # 命中时直接返回答案，跳过 Agent Loop（零 LLM 调用）
-        if self._faq_matcher is not None:
+        if self._faq_matcher is not None and not no_kb_access:
             try:
                 faq_result = await self._faq_matcher.match(query, kb_ids=kb_ids)
                 if faq_result.matched:
@@ -443,7 +454,17 @@ class AgenticRAGEngine:
                     # 写入缓存（与完整答案共享缓存层）
                     if self.cache is not None:
                         try:
-                            await self.cache.set(query, faq_result.answer, tenant_id=tenant_id)
+                            # 携带 doc_ids：FAQ 源文档更新时可主动失效本缓存，
+                            # 否则旧 FAQ 答案在文档修订后仍被缓存复用。
+                            _faq_doc_ids = (
+                                [faq_result.doc_id] if faq_result.doc_id else None
+                            )
+                            await self.cache.set(
+                                query,
+                                faq_result.answer,
+                                tenant_id=tenant_id,
+                                doc_ids=_faq_doc_ids,
+                            )
                         except Exception:
                             pass
                     yield faq_result.answer
@@ -468,6 +489,8 @@ class AgenticRAGEngine:
             "tenant_id": tenant_id,
             "conversation_focus": conversation_focus,
             "drift_info": drift_info,
+            # 请求级权限过滤器（携带用户上下文），优先于构造级注入
+            "permission_filter": permission_filter,
         }
         # 重置检索重试计数
         self._retrieval_retry_count = 0
@@ -578,6 +601,18 @@ class AgenticRAGEngine:
         state["answer"] = answer
         eval_result = await self._reflect(state)
 
+        # 5.5 忠实度拦截重生成答案处理：
+        # _reflect 内部 check_and_regenerate 可能产出新答案（state["answer"]），
+        # 但此前流式推给客户端的是旧答案。此处通过 ANSWER_REGENERATED 事件
+        # 把完整新答案推送给客户端（前端替换展示），并同步后续缓存与
+        # 持久化均使用新答案，避免"客户端看旧答案、缓存存旧答案"。
+        if state.get("answer_regenerated") and state["answer"] != answer:
+            answer = state["answer"]
+            yield SSEEvent(
+                data={"answer": answer},
+                event=SSEEventType.ANSWER_REGENERATED,
+            )
+
         # 6. yield sources 事件（引用来源）
         if state["retrieved_docs"]:
             sources = [
@@ -630,7 +665,15 @@ class AgenticRAGEngine:
         )
 
         # 8. 回写缓存（key 含 tenant_id，跨租户互不可见）
-        if self.cache is not None and answer:
+        # 注意：answer 此时已是重生成后的新答案（若发生过重生成）。
+        # 低置信 / 被拦截（矛盾 block / 高风险 block）的答案不写入缓存，
+        # 防止低质量答案被后续请求直接复用。
+        _cacheable = answer and not (
+            state.get("low_confidence")
+            or state.get("contradiction_blocked")
+            or state.get("high_risk_blocked")
+        )
+        if self.cache is not None and _cacheable:
             try:
                 # P1: 提取引用文档 ID，用于文档更新时主动失效缓存
                 doc_ids = list({
@@ -640,6 +683,14 @@ class AgenticRAGEngine:
                 await self.cache.set(query, answer, tenant_id=tenant_id, doc_ids=doc_ids)
             except Exception as exc:
                 log.warning("engine.cache.set_error", error=str(exc))
+        elif self.cache is not None and answer:
+            log.info(
+                "engine.cache.skip_low_quality",
+                session_id=session_id,
+                low_confidence=bool(state.get("low_confidence")),
+                contradiction_blocked=bool(state.get("contradiction_blocked")),
+                high_risk_blocked=bool(state.get("high_risk_blocked")),
+            )
 
         # 9. 结束 Trace（含质量评分上报）
         if self._trace_ctx is not None:
@@ -929,6 +980,8 @@ class AgenticRAGEngine:
         compiled = self._get_or_build_graph()
         config: dict[str, Any] = {"configurable": {"thread_id": session_id}}
         answer_parts: list[str] = []
+        # 捕获 retrieve 节点产出的文档列表（用于缓存 doc_ids 失效关联）
+        graph_retrieved_docs: list[dict[str, Any]] = []
 
         try:
             async for output in compiled.astream(
@@ -947,6 +1000,10 @@ class AgenticRAGEngine:
                 )
                 if not isinstance(update, dict):
                     continue
+                # retrieve 节点完成后记录候选文档（后序节点可能继续补充）
+                docs_update = update.get("retrieved_docs")
+                if docs_update:
+                    graph_retrieved_docs = list(docs_update)
                 # generate 节点完成后，逐 token 回放给消费者
                 tokens = update.get("_stream_tokens")
                 if tokens:
@@ -961,10 +1018,26 @@ class AgenticRAGEngine:
             return
 
         # 4. 回写缓存（key 含 tenant_id，跨租户互不可见）
+        # 修复：优先使用图最终状态中的 answer — reflect 节点若触发
+        # 忠实度重生成，最终 answer 与流式回放token拼接的旧答案不同，
+        # 缓存必须写入新答案；同时携带 doc_ids 支持文档更新主动失效。
         answer = "".join(answer_parts)
+        try:
+            final_snapshot = await compiled.aget_state(config)
+            final_values = getattr(final_snapshot, "values", None) or {}
+            final_answer = final_values.get("answer")
+            if isinstance(final_answer, str) and final_answer:
+                answer = final_answer
+        except Exception:
+            pass  # 无法读取最终状态时回退到流式拼接答案
         if self.cache is not None and answer:
             try:
-                await self.cache.set(query, answer, tenant_id=tenant_id)
+                doc_ids = list({
+                    str(d.get("doc_id"))
+                    for d in graph_retrieved_docs
+                    if d.get("doc_id")
+                }) or None
+                await self.cache.set(query, answer, tenant_id=tenant_id, doc_ids=doc_ids)
             except Exception as exc:
                 log.warning("engine.cache.set_error", error=str(exc))
 
@@ -1307,6 +1380,17 @@ class AgenticRAGEngine:
         query = state.get("rewritten_query") or state["query"]
         original_query = state["query"]
 
+        # 显式空 kb_ids（用户无任何可访问知识库）— 短路返回空，
+        # 不得把空列表传给底层检索器（底层对空列表按"不过滤"处理，
+        # 会回落为全库检索造成跨知识库泄漏）。
+        if kb_ids is not None and len(kb_ids) == 0:
+            log.info(
+                "engine.retrieve.no_accessible_kb",
+                iteration=state["iteration"],
+            )
+            state["retrieved_docs"] = []
+            return
+
         # 1. 多路检索召回候选
         candidates = await self.retriever.search(query, kb_ids=kb_ids, top_k=_RETRIEVE_TOP_K)
         log.info(
@@ -1318,10 +1402,13 @@ class AgenticRAGEngine:
         )
 
         # 2. ABAC 权限过滤（必须在重排之前！）
+        # 请求级过滤器（携带当前用户上下文）优先于构造级注入 —
+        # 引擎为全局单例，构造级过滤器无法区分请求用户。
+        active_filter = state.get("permission_filter") or self.permission_filter
         filtered = candidates
-        if self.permission_filter is not None:
+        if active_filter is not None:
             try:
-                filtered = await self.permission_filter(candidates)
+                filtered = await active_filter(candidates)
                 log.info(
                     "engine.retrieve.permission_filtered",
                     before=len(candidates),

@@ -401,13 +401,38 @@ class ChatService:
 
         full_response_parts: list[str] = []
 
+        # B2-5: 请求级 ABAC 权限上下文 — 两条检索路径（shortcut / Agent Loop）
+        # 共用。get_accessible_kb_ids 返回 None 表示 admin 不限制；
+        # 空集合表示用户无任何可访问知识库（两条路径均短路，不检索）。
+        permission_filter = None
+        accessible_kb_id_strs: list[str] | None = None
+        try:
+            from app.services.permission_service import PermissionService
+
+            permission_svc = PermissionService(self.db, self.user, self._tenant_id)
+            accessible_kb_ids = await permission_svc.get_accessible_kb_ids()
+            if accessible_kb_ids is not None:
+                accessible_kb_id_strs = [str(k) for k in accessible_kb_ids]
+            permission_filter = permission_svc.filter_retrieval_candidates
+        except Exception as exc:
+            # 权限上下文构建失败 — 保守处理：视为无可访问知识库，
+            # 避免权限服务异常时回落为全库检索造成越权泄漏。
+            logger.error("chat.permission_context_failed", error=str(exc))
+            accessible_kb_id_strs = []
+
         # P1: IntentRouter 稳态/敏态分离 — 简单查询走快捷路径，复杂查询走 Agent Loop
         shortcut_taken = False
         try:
             from app.config import get_settings
 
             settings = get_settings()
-            if settings.INTENT_ROUTER_ENABLED and settings.INTENT_SHORTCUT_ENABLED:
+            # 空 kb_ids（无可访问知识库）时跳过 shortcut — shortcut 内部
+            # 不处理空列表短路，交给 Agent Loop 路径统一短路返回。
+            if (
+                settings.INTENT_ROUTER_ENABLED
+                and settings.INTENT_SHORTCUT_ENABLED
+                and accessible_kb_id_strs != []
+            ):
                 intent_router = self._get_intent_router()
                 intent_result = await intent_router.route(
                     query=query,
@@ -435,6 +460,8 @@ class ChatService:
                         db=self.db,
                         tenant_id=self._tenant_id,
                         memory_context=prepared.memory_context,
+                        kb_ids=accessible_kb_id_strs,
+                        permission_filter=permission_filter,
                     ):
                         if isinstance(chunk, str):
                             full_response_parts.append(chunk)
@@ -496,6 +523,10 @@ class ChatService:
                     # P4-E: 传入对话焦点和漂移信息
                     conversation_focus=prepared.conversation_focus,
                     drift_info=prepared.drift_info,
+                    # B2-5: 请求级 ABAC 权限下推（kb_ids 召回层过滤 +
+                    # permission_filter 重排前密级过滤）
+                    kb_ids=accessible_kb_id_strs,
+                    permission_filter=permission_filter,
                 ):
                     # P4-B: 在 token 流中检查后台矛盾检测是否完成
                     if contra_task and not contra_pushed and contra_task.done():
@@ -509,6 +540,18 @@ class ChatService:
                         except Exception:
                             pass  # 优雅降级
                         contra_pushed = True
+
+                    # B2-5: 忠实度拦截重生成答案 — 已流出的旧答案作废，
+                    # 持久化内容替换为完整新答案（与客户端展示一致）。
+                    if (
+                        isinstance(chunk, SSEEvent)
+                        and chunk.event == SSEEventType.ANSWER_REGENERATED
+                        and isinstance(chunk.data, dict)
+                        and chunk.data.get("answer")
+                    ):
+                        full_response_parts = [chunk.data["answer"]]
+                        yield chunk
+                        continue
 
                     if isinstance(chunk, str):
                         full_response_parts.append(chunk)
