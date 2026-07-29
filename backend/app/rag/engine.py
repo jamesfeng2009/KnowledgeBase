@@ -1013,15 +1013,20 @@ class AgenticRAGEngine:
         except Exception as exc:
             log.error("engine.graph.stream_error", error=str(exc))
             if answer_parts:
+                # 已有部分答案流出 — 无法撤回，直接结束（不写缓存/不持久化错误）
                 return
-            yield f"[Graph 执行出错: {exc}]"
-            return
+            # 无任何答案产出 — 原样抛出。错误文本不得作为答案 yield，
+            # 否则消费方会把它当 assistant 消息持久化 / 写入缓存，
+            # 且向用户泄漏内部错误细节（与 Generator.generate 的契约一致：
+            # 失败时抛出而非产出，上层决定降级策略）。
+            raise
 
         # 4. 回写缓存（key 含 tenant_id，跨租户互不可见）
         # 修复：优先使用图最终状态中的 answer — reflect 节点若触发
         # 忠实度重生成，最终 answer 与流式回放token拼接的旧答案不同，
         # 缓存必须写入新答案；同时携带 doc_ids 支持文档更新主动失效。
         answer = "".join(answer_parts)
+        final_values: dict[str, Any] = {}
         try:
             final_snapshot = await compiled.aget_state(config)
             final_values = getattr(final_snapshot, "values", None) or {}
@@ -1030,7 +1035,15 @@ class AgenticRAGEngine:
                 answer = final_answer
         except Exception:
             pass  # 无法读取最终状态时回退到流式拼接答案
-        if self.cache is not None and answer:
+        # 质量门禁（与 answer() 主链路一致）：低置信 / 被拦截
+        # （矛盾 block / 高风险 block）的答案不写缓存，防止低质量答案被复用。
+        # 标记位由 reflect 节点写入图最终状态。
+        _cacheable = answer and not (
+            final_values.get("low_confidence")
+            or final_values.get("contradiction_blocked")
+            or final_values.get("high_risk_blocked")
+        )
+        if self.cache is not None and _cacheable:
             try:
                 doc_ids = list({
                     str(d.get("doc_id"))
@@ -1040,6 +1053,14 @@ class AgenticRAGEngine:
                 await self.cache.set(query, answer, tenant_id=tenant_id, doc_ids=doc_ids)
             except Exception as exc:
                 log.warning("engine.cache.set_error", error=str(exc))
+        elif self.cache is not None and answer:
+            log.info(
+                "engine.graph.cache.skip_low_quality",
+                session_id=session_id,
+                low_confidence=bool(final_values.get("low_confidence")),
+                contradiction_blocked=bool(final_values.get("contradiction_blocked")),
+                high_risk_blocked=bool(final_values.get("high_risk_blocked")),
+            )
 
     # ------------------------------------------------------------------
     # LangGraph 节点实现 — 复用现有 _think / _retrieve / _tool_call / _reflect

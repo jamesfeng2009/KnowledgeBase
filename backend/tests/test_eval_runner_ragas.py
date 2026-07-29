@@ -124,7 +124,7 @@ class TestEvalRunnerRagasIntegration:
             expected_answer="报销流程包括填写报销单和审批。",
         )]
 
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             runner.run(dataset, with_generation=True)
         )
 
@@ -153,7 +153,7 @@ class TestEvalRunnerRagasIntegration:
             expected_doc_ids=["doc_001"],
         )]
 
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             runner.run(dataset, with_generation=True)
         )
 
@@ -179,7 +179,7 @@ class TestEvalRunnerRagasIntegration:
             expected_doc_ids=["doc_001"],
         )]
 
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             runner.run(dataset, with_generation=True)
         )
 
@@ -201,7 +201,7 @@ class TestEvalRunnerRagasIntegration:
             expected_doc_ids=["doc_001"],
         )]
 
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             runner.run(dataset, with_generation=False)
         )
 

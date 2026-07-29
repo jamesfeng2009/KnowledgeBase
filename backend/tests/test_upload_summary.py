@@ -587,7 +587,9 @@ class TestDocumentTaskWarnings:
              patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock) as mock_index, \
              patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock), \
              patch("tasks.intelligence_tasks.process_intelligence") as mock_intel:
-            mock_parse.return_value = "解析后的内容"
+            # _parse_document 真实签名为 tuple[text, images]，
+            # 旧 mock 返回纯字符串导致解包失败走了 content_text 回退
+            mock_parse.return_value = ("解析后的内容", [])
             mock_chunk.return_value = []
             mock_embed.return_value = []
             mock_index.return_value = None
@@ -670,7 +672,7 @@ class TestDocumentTaskWarnings:
              patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock) as mock_index, \
              patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock), \
              patch("tasks.intelligence_tasks.process_intelligence") as mock_intel:
-            mock_parse.return_value = ""  # 旧格式返回空
+            mock_parse.return_value = ("", [])  # 旧格式返回空（tuple[text, images] 签名）
             mock_chunk.return_value = []
             mock_embed.return_value = []
             mock_index.return_value = None
@@ -890,7 +892,7 @@ class TestTaskPersistsParseMetadata:
              patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock) as mock_index, \
              patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock), \
              patch("tasks.intelligence_tasks.process_intelligence") as mock_intel:
-            mock_parse.return_value = "解析后的内容"
+            mock_parse.return_value = ("解析后的内容", [])
             mock_chunk.return_value = []
             mock_embed.return_value = []
             mock_index.return_value = None
@@ -929,7 +931,7 @@ class TestTaskPersistsParseMetadata:
              patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock) as mock_index, \
              patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock), \
              patch("tasks.intelligence_tasks.process_intelligence") as mock_intel:
-            mock_parse.return_value = "内容"
+            mock_parse.return_value = ("内容", [])
             mock_chunk.return_value = []
             # 向量化失败 → 产生警告
             mock_embed.side_effect = Exception("VLM 服务不可用")
@@ -972,7 +974,7 @@ class TestTaskPersistsParseMetadata:
              patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock) as mock_index, \
              patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock), \
              patch("tasks.intelligence_tasks.process_intelligence") as mock_intel:
-            mock_parse.return_value = parsed_content
+            mock_parse.return_value = (parsed_content, [])
             mock_chunk.return_value = []
             mock_embed.return_value = []
             mock_index.return_value = None
@@ -1015,7 +1017,7 @@ class TestTaskPersistsParseMetadata:
              patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock) as mock_index, \
              patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock), \
              patch("tasks.intelligence_tasks.process_intelligence") as mock_intel:
-            mock_parse.return_value = parsed_content
+            mock_parse.return_value = (parsed_content, [])
             mock_chunk.return_value = []
             mock_embed.return_value = []
             mock_index.return_value = None

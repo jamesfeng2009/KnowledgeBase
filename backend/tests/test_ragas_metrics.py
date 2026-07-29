@@ -28,7 +28,7 @@ class TestRagasMetricsHeuristic:
         """答案完全来自上下文时忠实度应较高。"""
         context = "公司报销流程：填写报销单，提交部门审批，财务打款。"
         answer = "公司报销流程：填写报销单，提交部门审批，财务打款。"
-        score = asyncio.get_event_loop().run_until_complete(
+        score = asyncio.run(
             metrics._faithfulness(answer, [context])
         )
         assert 0.0 <= score <= 1.0
@@ -38,21 +38,21 @@ class TestRagasMetricsHeuristic:
         """答案与上下文完全无关时忠实度应为 0。"""
         context = "公司报销流程：填写报销单。"
         answer = "今天天气很好，适合出去玩。"
-        score = asyncio.get_event_loop().run_until_complete(
+        score = asyncio.run(
             metrics._faithfulness(answer, [context])
         )
         assert score == 0.0 or score < 0.5
 
     def test_faithfulness_empty_answer(self, metrics):
         """空答案忠实度应为 0。"""
-        score = asyncio.get_event_loop().run_until_complete(
+        score = asyncio.run(
             metrics._faithfulness("", ["context"])
         )
         assert score == 0.0
 
     def test_faithfulness_empty_context(self, metrics):
         """空上下文忠实度应为 0。"""
-        score = asyncio.get_event_loop().run_until_complete(
+        score = asyncio.run(
             metrics._faithfulness("answer", [""])
         )
         assert score == 0.0
@@ -61,14 +61,14 @@ class TestRagasMetricsHeuristic:
         """切题度启发式评分。"""
         query = "报销流程是什么"
         answer = "报销流程包括填写报销单和审批"
-        score = asyncio.get_event_loop().run_until_complete(
+        score = asyncio.run(
             metrics._answer_relevancy(query, answer)
         )
         assert 0.0 <= score <= 1.0
 
     def test_answer_relevancy_empty_answer(self, metrics):
         """空答案切题度应为 0。"""
-        score = asyncio.get_event_loop().run_until_complete(
+        score = asyncio.run(
             metrics._answer_relevancy("query", "")
         )
         assert score == 0.0
@@ -85,14 +85,14 @@ class TestRagasMetricsHeuristic:
 
     def test_context_recall_no_expected(self, metrics):
         """无期望答案时召回率应为 1.0。"""
-        score = asyncio.get_event_loop().run_until_complete(
+        score = asyncio.run(
             metrics._context_recall("", ["ctx1"])
         )
         assert score == 1.0
 
     def test_context_recall_empty_contexts(self, metrics):
         """空上下文召回率应为 0。"""
-        score = asyncio.get_event_loop().run_until_complete(
+        score = asyncio.run(
             metrics._context_recall("expected answer", [])
         )
         assert score == 0.0
@@ -104,7 +104,7 @@ class TestRagasMetricsEvaluate:
     def test_evaluate_returns_all_four_metrics(self):
         """evaluate 应返回四项指标。"""
         metrics = RagasMetrics(llm=None)
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             metrics.evaluate(
                 query="报销流程",
                 answer="报销流程包括填写报销单和审批。",
@@ -122,7 +122,7 @@ class TestRagasMetricsEvaluate:
     def test_evaluate_empty_inputs(self):
         """空输入不应抛异常，应返回 0 分。"""
         metrics = RagasMetrics(llm=None)
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             metrics.evaluate(query="", answer="", contexts=[])
         )
         assert result["faithfulness"] == 0.0
