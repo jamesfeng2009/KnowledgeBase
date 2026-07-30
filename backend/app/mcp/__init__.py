@@ -11,6 +11,7 @@ MCP 工具协议层 — 统一导出 MCP Server 与 Client。
 
 from app.mcp.client import MCPClient
 from app.mcp.server import KnowledgeBaseMCPServer
+from app.mcp.task_store import TaskStore, get_task_store
 
 # 语义别名 — 外部调用方可使用 MCPServer 或 KnowledgeBaseMCPServer
 MCPServer = KnowledgeBaseMCPServer
@@ -19,4 +20,6 @@ __all__ = [
     "MCPServer",
     "KnowledgeBaseMCPServer",
     "MCPClient",
+    "TaskStore",
+    "get_task_store",
 ]

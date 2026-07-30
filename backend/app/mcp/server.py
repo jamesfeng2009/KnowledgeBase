@@ -59,6 +59,7 @@ def mcp_tool(
     category: str = "general",
     tags: list[str] | None = None,
     skill_description: str = "",
+    long_running: bool = False,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """装饰器：将方法注册为 MCP 工具。
 
@@ -70,6 +71,10 @@ def mcp_tool(
     用于构建轻量技能索引，Agent Loop 先匹配相关技能再按需加载完整 schema，
     避免工具数量增长后全量加载浪费 token。
 
+    长耗时任务（对齐 MCP 2026-07-28 Tasks 扩展）：``long_running=True`` 时，
+    HTTP API 层会通过 ``call_tool_async`` 创建持久化 taskId 返回给客户端，
+    客户端轮询 ``GET /mcp/tasks/{task_id}`` 获取最终结果，不阻塞 HTTP 连接。
+
     Args:
         name: 工具名称（对应 LLM function calling 的 function name）。
         description: 工具描述，供 LLM 决策调用。
@@ -79,6 +84,8 @@ def mcp_tool(
         tags: 工具标签列表（如 ``["全文检索", "知识库"]``），用于关键词匹配。
         skill_description: 技能详细描述（比 ``description`` 更长，仅在技能激活时加载，
             空时回退到 ``description``）。
+        long_running: 标记为长耗时工具。``True`` 时 HTTP API 层自动转为异步任务模式
+            （返回 taskId 句柄而非阻塞等待）。Agent Loop 内部调用仍走同步 ``call_tool``。
     """
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
@@ -88,6 +95,7 @@ def mcp_tool(
         func._mcp_tool_category = category  # type: ignore[attr-defined]
         func._mcp_tool_tags = tags or []  # type: ignore[attr-defined]
         func._mcp_tool_skill_description = skill_description or description  # type: ignore[attr-defined]
+        func._mcp_tool_long_running = long_running  # type: ignore[attr-defined]
         return func
 
     return decorator
@@ -164,6 +172,7 @@ class KnowledgeBaseMCPServer:
                     method, "_mcp_tool_skill_description",
                     getattr(method, "_mcp_tool_description", ""),
                 ),
+                "long_running": getattr(method, "_mcp_tool_long_running", False),
             }
         log.debug(
             "mcp.tools_registered",
@@ -278,6 +287,115 @@ class KnowledgeBaseMCPServer:
             )
         finally:
             _tenant_ctx.reset(token)
+
+    def is_long_running(self, tool_name: str) -> bool:
+        """查询工具是否标记为长耗时（需走异步任务模式）。
+
+        HTTP API 层据此决定是同步返回结果还是创建 taskId 句柄。
+        Agent Loop 内部调用 ``call_tool`` 时不受此标记影响（始终同步）。
+
+        Args:
+            tool_name: 工具名称。
+
+        Returns:
+            ``True`` 表示该工具标记为 ``long_running``，未知工具返回 ``False``。
+        """
+        entry = self._tool_registry.get(tool_name)
+        return entry is not None and entry.get("long_running", False)
+
+    async def call_tool_async(
+        self,
+        tool_name: str,
+        arguments: dict,
+        *,
+        tenant_id: str | uuid.UUID | None = None,
+    ) -> str:
+        """异步调用长耗时工具 — 返回任务句柄而非阻塞等待结果。
+
+        对齐 MCP 2026-07-28 规范 Tasks 扩展的核心语义：
+        - 创建持久化 taskId，客户端凭此 ID 轮询状态
+        - 后台通过 ``asyncio.create_task`` 执行工具逻辑
+        - 结果写入 TaskStore（Redis），客户端可断线重连后取回
+
+        与 ``call_tool`` 的区别：
+        - ``call_tool`` 阻塞等待并返回工具结果（Agent Loop 用）
+        - ``call_tool_async`` 立即返回 taskId 句柄（HTTP API 层用）
+
+        Args:
+            tool_name: 工具名称。
+            arguments: 工具入参字典。
+            tenant_id: 请求级租户 ID。
+
+        Returns:
+            JSON 字符串，包含 ``task_id`` / ``status`` / ``poll_interval_ms`` / ``ttl_ms``。
+            工具不存在时返回与 ``call_tool`` 相同的 error JSON。
+        """
+        entry = self._tool_registry.get(tool_name)
+        if entry is None:
+            log.warning(
+                "mcp.unknown_tool",
+                tool=tool_name,
+                available=list(self._tool_registry),
+            )
+            return json.dumps(
+                {
+                    "error": f"未知工具: {tool_name}",
+                    "available_tools": list(self._tool_registry),
+                },
+                ensure_ascii=False,
+            )
+
+        # 惰性导入 TaskStore — 避免 server.py 模块加载时强依赖 Redis
+        from app.mcp.task_store import get_task_store
+
+        store = get_task_store()
+        tenant_str = str(tenant_id) if tenant_id is not None else None
+        task_id = await store.create_task(
+            tool_name=tool_name,
+            arguments=arguments,
+            tenant_id=tenant_str,
+        )
+
+        # 后台执行 — 闭包捕获所需上下文，不依赖请求生命周期
+        async def _execute() -> None:
+            try:
+                result_str = await self.call_tool(
+                    tool_name, arguments, tenant_id=tenant_id,
+                )
+                # 尝试解析为 dict 便于客户端消费；解析失败保留原始字符串
+                try:
+                    result_data: Any = json.loads(result_str)
+                except (json.JSONDecodeError, TypeError):
+                    result_data = result_str
+                await store.complete_task(task_id, result_data)
+            except Exception as exc:
+                log.error(
+                    "mcp.task_execution_error",
+                    task_id=task_id, tool=tool_name, error=str(exc),
+                )
+                await store.fail_task(task_id, str(exc))
+
+        # 创建后台任务 — 不 await，立即返回
+        import asyncio
+
+        asyncio.create_task(_execute())
+
+        log.info(
+            "mcp.task_created",
+            task_id=task_id,
+            tool=tool_name,
+            poll_interval_ms=store.poll_interval_ms,
+        )
+
+        return json.dumps(
+            {
+                "task_id": task_id,
+                "status": "working",
+                "poll_interval_ms": store.poll_interval_ms,
+                "ttl_ms": store.ttl_seconds * 1000,
+            },
+            ensure_ascii=False,
+        )
 
     # ------------------------------------------------------------------
     # 内部工具方法 — 每个方法独立，新增工具只需添加新方法
@@ -529,6 +647,7 @@ class KnowledgeBaseMCPServer:
             "负向边界：不要用于搜索文档（用 knowledge_search），"
             "不要用于创建工单（用 create_it_ticket）。"
         ),
+        long_running=True,
     )
     async def _tool_query_oa_approval(self, bill_no: str) -> str:
         """查询 OA 审批状态 — Mock 实现。
@@ -611,5 +730,66 @@ class KnowledgeBaseMCPServer:
             "priority": priority,
             "status": "open",
             "created_at": "2026-07-06T10:00:00+00:00",
+        }
+        return json.dumps(result, ensure_ascii=False)
+
+    @mcp_tool(
+        name="batch_analyze_documents",
+        description=(
+            "批量分析知识库文档 — 对指定知识库中的文档执行摘要、标签提取和分类。"
+            "当前为 mock 实现，模拟批量处理延迟；"
+            "接入真实 LLM 批处理管线后替换此方法体即可。"
+            "适用场景：用户想批量处理、分析、归档大量文档。"
+            "不适用于：搜索单个文档（应改用 knowledge_search）；"
+            "查看单个文档详情（应改用 document_get）。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "kb_id": {
+                    "type": "string",
+                    "description": "目标知识库 ID（UUID 格式）",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "批量处理上限，默认 50",
+                    "default": 50,
+                },
+            },
+            "required": ["kb_id"],
+        },
+        category="analytics",
+        tags=["批量", "分析", "摘要", "标签", "分类", "batch", "analyze", "归档"],
+        skill_description=(
+            "对指定知识库中的文档执行批量智能分析（摘要+标签+分类）。"
+            "需要提供知识库 ID，可选限制处理数量。"
+            "负向边界：不要用于搜索文档（用 knowledge_search），"
+            "不要用于查看单个文档（用 document_get）。"
+        ),
+        long_running=True,
+    )
+    async def _tool_batch_analyze_documents(
+        self,
+        kb_id: str,
+        limit: int = 50,
+    ) -> str:
+        """批量分析文档 — Mock 实现，模拟批量处理延迟。
+
+        实际生产中应调用 LLM 批处理管线，此处用 asyncio.sleep 模拟延迟。
+        """
+        import asyncio
+
+        # 模拟批量处理延迟 — 按 limit 比例延迟（每 10 个文档约 1 秒）
+        delay = min(max(limit // 10, 1), 5)
+        await asyncio.sleep(delay)
+
+        result = {
+            "kb_id": kb_id,
+            "processed": limit,
+            "summary_generated": limit,
+            "tags_extracted": limit,
+            "classified": limit,
+            "duration_seconds": delay,
+            "status": "completed",
         }
         return json.dumps(result, ensure_ascii=False)

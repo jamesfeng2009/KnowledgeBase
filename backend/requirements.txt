@@ -51,9 +51,6 @@ opensearch-py>=2.8.0
 # === 消息队列 ===
 celery>=5.4.0
 
-# === MCP 协议 ===
-mcp>=1.0.0
-
 # === 工具 ===
 httpx>=0.28.0
 httpx-retry>=0.1.6  # HTTP 传输层重试（L1：httpx Transport）

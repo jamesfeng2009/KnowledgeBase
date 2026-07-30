@@ -84,7 +84,7 @@ class MCPClient:
         *,
         tenant_id: str | None = None,
     ) -> str:
-        """调用指定工具。
+        """调用指定工具（同步阻塞模式 — Agent Loop 使用）。
 
         Args:
             tool_name: 工具名称。
@@ -95,6 +95,34 @@ class MCPClient:
             工具执行结果（JSON 序列化字符串）。
         """
         return await self._server.call_tool(tool_name, arguments, tenant_id=tenant_id)
+
+    async def call_tool_async(
+        self,
+        tool_name: str,
+        arguments: dict,
+        *,
+        tenant_id: str | None = None,
+    ) -> str:
+        """异步调用长耗时工具 — 返回任务句柄（HTTP API 层使用）。
+
+        对齐 MCP 2026-07-28 Tasks 扩展：返回 taskId 而非阻塞等待。
+        Agent Loop 通常不需要此方法（内部走同步 ``call_tool``）。
+
+        Args:
+            tool_name: 工具名称。
+            arguments: 工具入参字典。
+            tenant_id: 请求级租户 ID。
+
+        Returns:
+            JSON 字符串，包含 task_id / status / poll_interval_ms / ttl_ms。
+        """
+        return await self._server.call_tool_async(
+            tool_name, arguments, tenant_id=tenant_id,
+        )
+
+    def is_long_running(self, tool_name: str) -> bool:
+        """查询工具是否标记为长耗时。"""
+        return self._server.is_long_running(tool_name)
 
     async def call_tool_from_llm(
         self,
