@@ -1,19 +1,30 @@
-# === 本地开发端口重映射 ===
+# === 本地开发端口重映射 + 平台锁定 ===
 # 本机 PostgreSQL (5432) 和 Redis (6379) 已在运行，
 # 将容器端口映射到高位端口避免冲突。
 # 注意：!override 标签用于「替换」而非「追加」端口列表（compose v2.24+）。
 # 容器间内部通信仍使用 5432/6379，不受影响。
+#
+# macOS Apple Silicon (M1/M2/M3/M4) 原生架构为 arm64。
+# 所有 build 服务锁定 platform: linux/arm64，避免 Docker 拉取/构建
+# amd64 镜像后通过 QEMU 模拟运行（性能差且可能不兼容）。
+# 生产环境部署时此文件不生效（仅本地 docker-compose.override.yml）。
 services:
   postgres:
+    platform: linux/arm64
     ports: !override
       - "15432:5432"
 
   redis:
+    platform: linux/arm64
     ports: !override
       - "16379:6379"
 
+  minio:
+    platform: linux/arm64
+
   # yjs-server 镜像内无 curl/wget，用 node 做健康检查
   yjs-server:
+    platform: linux/arm64
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:8001/health',(r)=>{process.exit(r.statusCode===200?0:1)})\""]
@@ -23,7 +34,30 @@ services:
 
   # 本地开发：容器异常退出时自动重启
   core-engine:
+    platform: linux/arm64
     restart: unless-stopped
 
   frontend:
+    platform: linux/arm64
     restart: unless-stopped
+
+  celery-worker:
+    platform: linux/arm64
+
+  celery-beat:
+    platform: linux/arm64
+
+  opensearch:
+    platform: linux/arm64
+
+  milvus-etcd:
+    platform: linux/arm64
+
+  milvus-minio:
+    platform: linux/arm64
+
+  milvus:
+    platform: linux/arm64
+
+  neo4j:
+    platform: linux/arm64
