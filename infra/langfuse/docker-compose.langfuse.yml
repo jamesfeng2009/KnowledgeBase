@@ -1,0 +1,70 @@
+# LangFuse v2 自托管 — 全链路 LLM 可观测性
+#
+# 为什么是 v2：
+#   backend/requirements.txt 锁定 langfuse>=2.45.0,<3.0.0，
+#   现有 langfuse_tracer.py 使用 v2 API（Langfuse().trace()/.flush()）。
+#   v3 SDK 改用 OpenTelemetry API，与现有 TraceContext 代码不兼容；
+#   且 v3 自托管需 Postgres+Clickhouse+Redis+S3 重型栈。
+#   v2 仅需 Postgres，轻量、与现有代码零改动匹配。
+#
+# 启动：
+#   cd infra/langfuse
+#   docker compose -f docker-compose.langfuse.yml up -d
+#   # 首次启动后访问 http://localhost:3100 注册账号、新建项目
+#   # 在 项目 Settings → API Keys 获取 PUBLIC_KEY / SECRET_KEY
+#
+# 数据持久化：./langfuse_data（Postgres）+ ./langfuse_pg（卷）
+#
+# 关闭：docker compose -f docker-compose.langfuse.yml down
+# 彻底清理（含数据）：docker compose -f docker-compose.langfuse.yml down -v
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: langfuse-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: langfuse
+      POSTGRES_DB: langfuse
+    volumes:
+      - langfuse_pg:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"   # 5432 已被主项目占用，用 5433 避免冲突
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse -d langfuse"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  langfuse:
+    image: langfuse/langfuse:2
+    container_name: langfuse-web
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "3100:3000"   # 3000 已被前端 dev server 占用，用 3100 映射
+    environment:
+      # 数据库 — 指向上方 postgres 服务
+      DATABASE_URL: postgresql://langfuse:langfuse@postgres:5432/langfuse
+      # NextAuth 签名密钥（已用 openssl rand -base64 32 生成）
+      NEXTAUTH_SECRET: op7+TwjwuD6AieinffHX44uV0WFnxjT/a/QB+u0bqkk=
+      # NextAuth 回调 URL（必须与实际访问地址一致）
+      NEXTAUTH_URL: http://localhost:3100
+      # 密码加盐（已用 openssl rand -base64 32 生成，独立值）
+      SALT: a3sdJO20APEKe+zXRURovzhNxWWIeXcmF1pbkPD6RL0=
+      # 时区（与主项目 Asia/Shanghai 对齐）
+      TZ: Asia/Shanghai
+      # 关闭注册开关：首次创建管理员后建议设 true 防止陌生人注册
+      DISABLE_SIGNUP: "false"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+volumes:
+  langfuse_pg:

@@ -11,3 +11,19 @@ services:
   redis:
     ports: !override
       - "16379:6379"
+
+  # yjs-server 镜像内无 curl/wget，用 node 做健康检查
+  yjs-server:
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:8001/health',(r)=>{process.exit(r.statusCode===200?0:1)})\""]
+      interval: 10s
+      retries: 5
+      start_period: 15s
+
+  # 本地开发：容器异常退出时自动重启
+  core-engine:
+    restart: unless-stopped
+
+  frontend:
+    restart: unless-stopped
