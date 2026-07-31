@@ -1,7 +1,7 @@
 # 企业知识库项目记忆 (Project Memory)
 
 > 本文件是企业知识库项目的全局规则、约束和约定，适用于当前项目的所有开发工作。
-> 最后更新：2026-07-05
+> 最后更新：2026-08-01
 
 ## 1. 项目概述
 
@@ -239,3 +239,40 @@
 - Serverless 不适用于此项目（长连接、有状态、GPU）
 - Python 是 AI 生态唯一可行语言（LangGraph/LlamaIndex/Mem0/Graphiti 全部 Python-only）
 - APISIX 优于自建网关（80+ 插件、Apache 2.0、SSE/WS 原生支持）
+
+## 13. MCP 协议实现（2026-08-01）
+
+### 13.1 架构决策
+
+- **不对齐官方 MCP SDK**：官方 SDK 仍为有状态设计（session/handshake），本项目采用无状态 JSON-RPC 2.0 协议，直接对接 MCP 2026-07-28 规范中的 StreamableHTTP 传输层
+- **无状态设计**：每个请求自包含协议版本、身份信息、支持能力，不依赖服务端会话状态
+- **JSON-RPC 2.0**：统一请求/响应格式，支持通知（Notification，无响应）、同步响应、SSE 流式响应三种模式
+- **长耗时任务**：通过 `tasks/create` / `tasks/get` / `tasks/cancel` 标准方法管理，任务句柄持久化到 Redis
+
+### 13.2 模块职责
+
+| 模块 | 文件 | 职责 |
+|------|------|------|
+| 协议层 | `protocol.py` | JSON-RPC 2.0 请求/响应模型、错误码、序列化、校验 |
+| 传输层 | `streamable_http.py` | 请求路由、同步/异步/SSE 三种响应模式、方法分发 |
+| 任务存储 | `task_store.py` | 长耗时任务持久化（Redis Hash 优先，进程内 dict 降级）、TTL 管理 |
+| 开放 API | `api/openapi/v1/mcp.py` | `POST /mcp` JSON-RPC 入口 |
+| 客户端 | `client.py` | JSON-RPC 协议方法（`jsonrpc_call` / `jsonrpc_tools_list` / `jsonrpc_tools_call`） |
+
+### 13.3 支持的 MCP 方法
+
+| JSON-RPC Method | 说明 | 响应模式 |
+|----------------|------|----------|
+| `server/discover` | 发现服务器能力 | 同步 JSON |
+| `tools/list` | 列出所有可用工具 | 同步 JSON |
+| `tools/call` | 调用工具（短耗时直接返回，长耗时 SSE 流式） | 同步 JSON 或 SSE |
+| `tasks/create` | 创建长耗时任务 | 同步 JSON |
+| `tasks/get` | 查询任务状态 | 同步 JSON |
+| `tasks/cancel` | 取消运行中的任务 | 同步 JSON |
+| `notifications/initialized` | 客户端初始化通知（无需响应） | 通知 |
+
+### 13.4 关键约束
+
+- 工具调用守卫（`tool_guard.py`）与 MCP 协议层解耦，守卫在 Agent Loop 层执行，协议层不感知守卫逻辑
+- 所有 MCP 端点在网关层通过 `X-API-Key` + `mcp:use` scope 认证
+- 长耗时任务轮询间隔默认 2000ms，由服务器在 `working` 响应中通过 `poll_interval_ms` 字段告知客户端

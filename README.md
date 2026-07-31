@@ -101,7 +101,12 @@ EnterpriseKnowledge/
 │   │   │   ├── dashscope_provider.py # 通义千问 Provider（saas_dashscope 模式，OpenAI 兼容）
 │   │   │   ├── model_config.py       # P2 models.json 配置加载器（lru_cache + deploy_mode 过滤）
 │   │   │   └── ...                   # anthropic / vllm / embedder / factory 等
-│   │   ├── mcp/                      # MCP 工具协议
+│   │   ├── mcp/                      # MCP 工具协议 + StreamableHTTP 传输层
+│   │   │   ├── server.py                # MCP Server（工具注册与分发）
+│   │   │   ├── client.py                # MCP Client（JSON-RPC 协议方法）
+│   │   │   ├── protocol.py              # JSON-RPC 2.0 协议编解码（对齐 MCP 2026-07-28）
+│   │   │   ├── streamable_http.py       # StreamableHTTP 传输层（同步/SSE 流式路由）
+│   │   │   └── task_store.py            # 长耗时任务持久化状态管理（Redis/进程内降级）
 │   │   ├── memory/                   # 四级记忆引擎
 │   │   │   ├── memory_manager.py        # 四级记忆编排器（关键决策持久化 + LLM 事实提取）
 │   │   │   ├── mem0_manager.py          # L3 Mem0（cosine 语义检索 + Embedding 双索引 + TTL）

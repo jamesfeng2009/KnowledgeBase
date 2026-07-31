@@ -7,12 +7,28 @@ MCP Client — 单一职责：Agent Loop 调用 MCP 工具的统一入口。
 遵循单一职责：MCPClient 只负责工具列表获取与调用转发，
 不包含工具实现逻辑（工具实现由 KnowledgeBaseMCPServer 提供）。
 遵循依赖倒置：Agent Loop 依赖 MCPClient，不直接操作 Server。
+
+StreamableHTTP 支持：
+- ``jsonrpc_call`` / ``jsonrpc_tools_list`` / ``jsonrpc_tools_call``
+  方法使用 JSON-RPC 2.0 协议格式通过 StreamableHTTPTransport 通信，
+  对齐 MCP 2026-07-28 StreamableHTTP 规范。
 """
 
 from __future__ import annotations
 
+import json
+from typing import Any
+
 from app.llm.base import Tool, ToolUse
+from app.mcp.protocol import (
+    JSONRPCResponse,
+    make_success_response,
+    make_tools_call_params,
+    make_tools_list_params,
+    parse_request,
+)
 from app.mcp.server import KnowledgeBaseMCPServer
+from app.mcp.streamable_http import StreamableHTTPTransport
 from app.utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -23,6 +39,10 @@ class MCPClient:
 
     将 LLM 的 ``ToolUse``（type/id/name/input）转换为 Server 的
     ``call_tool(name, arguments)`` 调用，是 Agent Loop 最常用的入口。
+
+    StreamableHTTP 支持：
+    通过 ``jsonrpc_*`` 方法家族使用 JSON-RPC 2.0 协议格式，
+    与外部 HTTP 客户端使用相同的协议层。
 
     使用方式::
 
@@ -37,6 +57,9 @@ class MCPClient:
 
         # 2. LLM 返回 tool_use 后，直接调用
         result = await client.call_tool_from_llm(tool_use)
+
+        # 3. 使用 JSON-RPC 协议格式
+        response = await client.jsonrpc_tools_list(request_id="1")
     """
 
     def __init__(self, server: KnowledgeBaseMCPServer) -> None:
@@ -46,6 +69,8 @@ class MCPClient:
             server: MCP Server 实例，提供工具注册与分发能力。
         """
         self._server = server
+        # 用于 JSON-RPC 通信的传输层
+        self._transport = StreamableHTTPTransport(server)
 
     async def get_tools_for_llm(self) -> list[Tool]:
         """返回 LLM 可用的工具列表。
@@ -123,6 +148,143 @@ class MCPClient:
     def is_long_running(self, tool_name: str) -> bool:
         """查询工具是否标记为长耗时。"""
         return self._server.is_long_running(tool_name)
+
+    # ------------------------------------------------------------------
+    # JSON-RPC 协议方法（对齐 MCP 2026-07-28 StreamableHTTP 规范）
+    # ------------------------------------------------------------------
+
+    async def jsonrpc_call(
+        self,
+        method: str,
+        params: dict[str, Any] | list[Any] | None = None,
+        request_id: str | int | float | None = None,
+        *,
+        tenant_id: str | None = None,
+    ) -> JSONRPCResponse:
+        """通过 JSON-RPC 协议调用任意 MCP 方法。
+
+        Args:
+            method: JSON-RPC 方法名（如 "tools/list", "tools/call"）。
+            params: 方法参数。
+            request_id: 请求 ID（None 时视为通知）。
+            tenant_id: 租户 ID。
+
+        Returns:
+            JSON-RPC 响应对象。
+        """
+        raw_body = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "method": method,
+                "params": params,
+                "id": request_id,
+            },
+            ensure_ascii=False,
+        )
+        result = await self._transport.handle_request(
+            raw_body, tenant_id=tenant_id,
+        )
+
+        # 如果是 AsyncIterator（SSE 流式），迭代到最后一个响应
+        if hasattr(result, "__aiter__"):
+            final_response = None
+            async for response in result:  # type: ignore[union-attr]
+                final_response = response
+            return final_response or make_success_response(
+                result={"error": "No response from stream"},
+                request_id=request_id,
+            )
+
+        return result  # type: ignore[return-value]
+
+    async def jsonrpc_tools_list(
+        self,
+        request_id: str | int | float | None = None,
+        *,
+        tenant_id: str | None = None,
+    ) -> JSONRPCResponse:
+        """通过 JSON-RPC 列出工具列表。
+
+        Args:
+            request_id: 请求 ID。
+            tenant_id: 租户 ID。
+
+        Returns:
+            JSON-RPC 响应，result.tools 包含工具列表。
+        """
+        return await self.jsonrpc_call(
+            method="tools/list",
+            params=make_tools_list_params(),
+            request_id=request_id,
+            tenant_id=tenant_id,
+        )
+
+    async def jsonrpc_tools_call(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        request_id: str | int | float | None = None,
+        *,
+        tenant_id: str | None = None,
+    ) -> JSONRPCResponse:
+        """通过 JSON-RPC 调用工具。
+
+        Args:
+            tool_name: 工具名称。
+            arguments: 工具入参。
+            request_id: 请求 ID。
+            tenant_id: 租户 ID。
+
+        Returns:
+            JSON-RPC 响应，result.content 包含工具执行结果。
+            对于长耗时工具，返回 result 包含 task_id/status。
+        """
+        return await self.jsonrpc_call(
+            method="tools/call",
+            params=make_tools_call_params(tool_name, arguments),
+            request_id=request_id,
+            tenant_id=tenant_id,
+        )
+
+    async def jsonrpc_tasks_get(
+        self,
+        task_id: str,
+        request_id: str | int | float | None = None,
+    ) -> JSONRPCResponse:
+        """通过 JSON-RPC 查询任务状态。
+
+        Args:
+            task_id: 任务 ID。
+            request_id: 请求 ID。
+
+        Returns:
+            JSON-RPC 响应，包含任务状态和结果。
+        """
+        return await self.jsonrpc_call(
+            method="tasks/get",
+            params={"task_id": task_id},
+            request_id=request_id,
+        )
+
+    async def jsonrpc_tasks_cancel(
+        self,
+        task_id: str,
+        request_id: str | int | float | None = None,
+    ) -> JSONRPCResponse:
+        """通过 JSON-RPC 取消任务。
+
+        Args:
+            task_id: 任务 ID。
+            request_id: 请求 ID。
+
+        Returns:
+            JSON-RPC 响应，包含取消结果。
+        """
+        return await self.jsonrpc_call(
+            method="tasks/cancel",
+            params={"task_id": task_id},
+            request_id=request_id,
+        )
 
     async def call_tool_from_llm(
         self,

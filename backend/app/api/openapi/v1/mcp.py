@@ -3,9 +3,11 @@
 将内部 MCP Server 注册的工具以标准 HTTP 接口暴露给外部 AI Agent，
 使其无需接入 MCP 协议即可调用知识库工具。
 
-对齐 MCP 2026-07-28 规范 Tasks 扩展核心语义：
-- 长耗时工具（``long_running=True``）返回持久化 taskId 句柄
-- 客户端通过 ``GET /mcp/tasks/{task_id}`` 轮询任务状态
+对齐 MCP 2026-07-28 规范 StreamableHTTP + Tasks 扩展核心语义：
+- StreamableHTTP 传输层：``POST /mcp`` 接受 JSON-RPC 2.0 请求
+- 工具调用（tools/list, tools/call）通过 JSON-RPC 方法路由
+- 长耗时工具（``long_running=True``）通过 SSE 流式推送状态
+- 客户端也可通过 ``GET /mcp/tasks/{task_id}`` 轮询任务状态
 - 支持 ``POST /mcp/tasks/{task_id}/cancel`` 协作式取消
 
 权限说明：
@@ -18,15 +20,18 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Literal
+from typing import Any, AsyncIterator, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.api.openapi.deps import require_scope
 from app.database import async_session_factory
 from app.mcp.client import MCPClient
 from app.mcp.server import KnowledgeBaseMCPServer
+from app.mcp.protocol import JSONRPCResponse
+from app.mcp.streamable_http import StreamableHTTPTransport, sse_serialize
 from app.mcp.task_store import get_task_store
 from app.schemas.common import ApiResponse
 from app.utils.logger import get_logger
@@ -40,6 +45,27 @@ def _get_mcp_client() -> MCPClient:
     """构造 MCP Client — 基于 async_session_factory 创建 Server。"""
     server = KnowledgeBaseMCPServer(db_factory=async_session_factory)
     return MCPClient(server)
+
+
+def _get_mcp_transport() -> StreamableHTTPTransport:
+    """构造 StreamableHTTP 传输层实例。"""
+    server = KnowledgeBaseMCPServer(db_factory=async_session_factory)
+    return StreamableHTTPTransport(server)
+
+
+def response_from_jsonrpc(response: JSONRPCResponse) -> JSONResponse:
+    """将 JSON-RPC 响应对象转换为 FastAPI JSONResponse。
+
+    Args:
+        response: JSON-RPC 响应对象。
+
+    Returns:
+        FastAPI JSONResponse，Content-Type 为 application/json。
+    """
+    return JSONResponse(
+        content=response.to_dict(),
+        media_type="application/json",
+    )
 
 
 # ======================================================================
@@ -62,6 +88,89 @@ class InvokeToolRequest(BaseModel):
             "async=强制异步调用（返回 taskId 句柄）。"
         ),
     )
+
+
+# ======================================================================
+# 端点 — StreamableHTTP JSON-RPC 入口（对齐 MCP 2026-07-28）
+# ======================================================================
+
+
+@router.post("")
+async def mcp_jsonrpc_endpoint(
+    request: Request,
+    api_key_info: dict = Depends(require_scope("mcp:use")),
+):
+    """StreamableHTTP 传输层入口 — 接受 JSON-RPC 2.0 请求。
+
+    请求格式::
+
+        POST /mcp
+        Content-Type: application/json
+
+        {
+            "jsonrpc": "2.0",
+            "method": "tools/list",
+            "id": "1"
+        }
+
+    同步响应（tools/list, tools/call 非长耗时）::
+
+        HTTP/1.1 200 OK
+        Content-Type: application/json
+
+        {"jsonrpc": "2.0", "result": {...}, "id": "1"}
+
+    SSE 流式响应（tools/call 长耗时工具）::
+
+        HTTP/1.1 200 OK
+        Content-Type: text/event-stream
+
+        data: {"jsonrpc": "2.0", "result": {"task_id": "...", "status": "working"}, "id": "1"}
+
+        data: {"jsonrpc": "2.0", "result": {"task_id": "...", "status": "completed", "result": ...}, "id": "1"}
+
+    错误响应::
+
+        HTTP/1.1 200 OK
+        Content-Type: application/json
+
+        {"jsonrpc": "2.0", "error": {"code": -32601, "message": "Method not found"}, "id": "1"}
+
+    MCP 协议头:
+    - ``MCP-Protocol-Version``: 协议版本号（可选，用于兼容性检测）
+    - ``MCP-Method``: 请求方法名（可选，用于快速路由）
+    - ``MCP-Name``: 客户端名称（可选，用于日志审计）
+
+    认证方式: X-API-Key header，需要 scope 为 ``mcp:use``。
+    """
+    tenant_id = api_key_info.get("tenant_id")
+    raw_body = await request.body()
+
+    transport = _get_mcp_transport()
+    result = await transport.handle_request(raw_body, tenant_id=tenant_id)
+
+    # 检查是否为 SSE 流式响应
+    if isinstance(result, AsyncIterator):
+        return StreamingResponse(
+            _sse_stream(result),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    # 同步 JSON 响应
+    return response_from_jsonrpc(result)
+
+
+async def _sse_stream(
+    iterator: AsyncIterator[JSONRPCResponse],
+) -> AsyncIterator[str]:
+    """将 JSON-RPC 响应流转换为 SSE 事件流。"""
+    async for response in iterator:
+        yield sse_serialize(response)
 
 
 # ======================================================================
