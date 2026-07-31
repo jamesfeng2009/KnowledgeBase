@@ -41,10 +41,14 @@ _IMAGE_PROMPT: str = (
 
 # DOCX XML 命名空间
 _W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+# VML 命名空间（旧版文本框 v:textbox）
+_VML_NS = "urn:schemas-microsoft-com:vml"
+# DrawingML WordprocessingShape 命名空间（新版文本框 wps:txbx）
+_WPS_NS = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape"
 
 
 class DOCXParser(DocumentParser):
-    """DOCX 解析器 — python-docx 文本 + 表格 + 图片 URL/VLM + 分页检测。"""
+    """DOCX 解析器 — python-docx 文本 + 表格 + 图片 URL/VLM + 分页检测 + 文本框提取。"""
 
     async def parse(self, file_path: str) -> str:
         """解析 DOCX 文档，返回增强文本。
@@ -93,16 +97,33 @@ class DOCXParser(DocumentParser):
                     if has_break and current_page > 0:
                         current_page += 1
 
-                # 格式化段落 — 标题/列表/正文分别输出 HTML 标签
-                content = self._format_paragraph(element)
-                if content and content.strip():
-                    sections.append(
-                        ParsedSection(
-                            kind="text",
-                            content=content.strip(),
-                            page=current_page,
+                # 优先检测文本框 — 某些 DOCX（如用模板/文本框排版的简历）
+                # 全部内容在 wps:txbx / v:textbox 内，常规 para.text 为空。
+                # 每个文本框的段落独立提取，保留文档结构。
+                txbx_sections = self._extract_textbox_sections(element, current_page)
+                if txbx_sections:
+                    sections.extend(txbx_sections)
+                    # 同时提取段落直接子元素中的非文本框文本（如有）
+                    direct_content = self._format_paragraph_direct(element)
+                    if direct_content and direct_content.strip():
+                        sections.append(
+                            ParsedSection(
+                                kind="text",
+                                content=direct_content.strip(),
+                                page=current_page,
+                            )
                         )
-                    )
+                else:
+                    # 常规段落 — 格式化标题/列表/正文
+                    content = self._format_paragraph(element)
+                    if content and content.strip():
+                        sections.append(
+                            ParsedSection(
+                                kind="text",
+                                content=content.strip(),
+                                page=current_page,
+                            )
+                        )
             elif tag == "tbl" and table_enabled:
                 # 表格
                 html = self._extract_table_html(element)
@@ -177,6 +198,84 @@ class DOCXParser(DocumentParser):
             return False
         except Exception:
             return False
+
+    @staticmethod
+    def _extract_textbox_sections(
+        element: Any, page: int
+    ) -> list[ParsedSection]:
+        """从 <w:p> 元素中提取所有文本框（textbox）内容。
+
+        支持两种文本框格式：
+            - VML（旧版）: v:textbox → w:txbxContent → w:p → w:t
+            - DrawingML（新版）: wps:txbx → w:txbxContent → w:p → w:t
+
+        每个文本框的段落独立提取为一个 ParsedSection，
+        避免多个文本框内容被合并为无结构的单一字符串。
+
+        Args:
+            element: <w:p> XML 元素。
+            page: 当前页码。
+
+        Returns:
+            文本框内容的 ParsedSection 列表。无文本框时返回空列表。
+        """
+        sections: list[ParsedSection] = []
+        try:
+            ns = f"{{{_W_NS}}}"
+
+            # 查找所有 txbxContent 元素（VML 和 DrawingML 都用同一元素）
+            txbx_contents = element.findall(f".//{ns}txbxContent")
+            if not txbx_contents:
+                return sections
+
+            for txbx in txbx_contents:
+                # 提取文本框内的每个段落，保持段落分隔
+                paragraphs = txbx.findall(f"{ns}p")
+                para_texts: list[str] = []
+                for para in paragraphs:
+                    text = DOCXParser._extract_text_from_element(para)
+                    if text and text.strip():
+                        para_texts.append(text.strip())
+
+                if para_texts:
+                    content = "\n".join(para_texts)
+                    sections.append(
+                        ParsedSection(
+                            kind="text",
+                            content=content,
+                            page=page,
+                        )
+                    )
+        except Exception as exc:
+            log.debug("docx.textbox_extract_failed", error=str(exc))
+
+        return sections
+
+    @staticmethod
+    def _format_paragraph_direct(element: Any) -> str:
+        """仅提取 <w:p> 直接子元素中的文本，排除文本框内容。
+
+        用于段落同时包含常规文本和文本框时，分离提取常规文本部分。
+        避免 _format_paragraph（使用 iter 递归遍历）将文本框文本
+        与常规文本混在一起。
+
+        Args:
+            element: <w:p> XML 元素。
+
+        Returns:
+            直接子元素的文本。无直接文本时返回空字符串。
+        """
+        try:
+            ns = f"{{{_W_NS}}}"
+            texts: list[str] = []
+            # 只遍历 w:r 的直接子元素 w:t（不递归进入 drawing/pict）
+            for r_node in element.findall(f"{ns}r"):
+                for t_node in r_node.findall(f"{ns}t"):
+                    if t_node.text:
+                        texts.append(t_node.text)
+            return "".join(texts)
+        except Exception:
+            return ""
 
     @staticmethod
     def _format_paragraph(element: Any) -> str:

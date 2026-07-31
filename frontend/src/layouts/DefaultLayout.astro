@@ -400,6 +400,8 @@ const currentPath = Astro.url.pathname;
 
       // 加载未读通知数量（右上角红点）
       async function loadUnreadCount() {
+        const token = localStorage.getItem('ekb_access_token');
+        if (!token) return; // 未登录时跳过，避免 401 → ERR_ABORTED
         try {
           const { getUnreadCount } = await import('@/lib/apis/notifications');
           const count = await getUnreadCount();

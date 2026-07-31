@@ -609,7 +609,7 @@ class TestServerSkillIntegration:
         server = KnowledgeBaseMCPServer(db_factory=mock_db_factory)
 
         index = server.get_skill_index()
-        assert len(index) == 5
+        assert len(index) == 6
         names = [item["name"] for item in index]
         assert "knowledge_search" in names
         assert "document_create" in names
@@ -625,7 +625,7 @@ class TestServerSkillIntegration:
         index = server.get_skill_index()
         for item in index:
             assert "category" in item
-            assert item["category"] in ("search", "document", "workflow", "general")
+            assert item["category"] in ("search", "document", "workflow", "analytics", "general")
 
     def test_server_skill_index_has_tags(self) -> None:
         """技能索引包含 tags 字段。"""
@@ -808,7 +808,7 @@ class TestMCPClientSkillIntegration:
         client = MCPClient(server)
 
         index = client.get_skill_index()
-        assert len(index) == 5
+        assert len(index) == 6
 
     @pytest.mark.asyncio
     async def test_client_get_tools_by_names(self) -> None:
