@@ -42,6 +42,7 @@ async def db_session():
 
     自动创建所有表，测试结束后销毁引擎，保证测试隔离。
     """
+    from sqlalchemy import text
     from sqlalchemy.ext.asyncio import (
         AsyncSession,
         async_sessionmaker,
@@ -52,6 +53,8 @@ async def db_session():
 
     engine = create_async_engine(os.environ["DATABASE_URL"], echo=False)
     async with engine.begin() as conn:
+        # pgvector 扩展 — memory_facts.embedding_vec 的 VECTOR 类型依赖
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         # 先 drop 再 create — 确保表结构与当前 model 定义一致
         # （PostgreSQL 的 create_all 不会 ALTER 已存在的表）
         await conn.run_sync(Base.metadata.drop_all)

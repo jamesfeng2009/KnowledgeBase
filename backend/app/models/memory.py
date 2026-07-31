@@ -12,6 +12,7 @@
 import uuid
 from datetime import datetime
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     Boolean,
     DateTime,
@@ -50,7 +51,10 @@ class MemoryFact(UUIDMixin, TimestampMixin, Base):
         Text, nullable=True, comment="结构化值（可选）"
     )
     embedding: Mapped[list | None] = mapped_column(
-        JSONB, nullable=True, comment="向量嵌入（语义检索用）"
+        JSONB, nullable=True, comment="向量嵌入 JSONB（语义检索降级用）"
+    )
+    embedding_vec: Mapped[list | None] = mapped_column(
+        Vector(1536), nullable=True, comment="向量嵌入 pgvector（语义检索主索引）"
     )
     is_active: Mapped[bool] = mapped_column(
         Boolean, default=True, comment="是否有效（软删除标记）"

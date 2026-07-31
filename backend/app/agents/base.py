@@ -323,6 +323,7 @@ class BaseAgent(ABC):
                 user_id=UUID(user_id),
                 session_id=session_id,
                 recent_messages=[{"role": "user", "content": query}],
+                query=query,
             )
             return ctx.to_system_prompt()
         except Exception as exc:

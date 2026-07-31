@@ -32,7 +32,11 @@ EVENT_TYPES = {
     "deprecated": "知识废弃（如：技术栈不再推荐）",
     "merged": "实体合并（如：两个重复概念合并）",
     "split": "实体拆分（如：一个产品拆成两个）",
+    "preference_changed": "用户偏好变更（如：回答风格从简洁变为详细）",
 }
+
+# 偏好实体类型：user_preference 实体以 "user_pref:{user_id}:{key}" 命名
+PREFERENCE_ENTITY_TYPE = "user_preference"
 
 
 class GraphitiManager:
@@ -116,6 +120,64 @@ class GraphitiManager:
             "event_recorded",
             entity_id=str(entity_id),
             event_type=event_type,
+            old_value=old_value,
+            new_value=new_value,
+        )
+        return event
+
+    async def record_preference_change(
+        self,
+        user_id: uuid.UUID,
+        key: str,
+        old_value: str | None,
+        new_value: str,
+        source: str = "user",
+    ) -> EntityEvent:
+        """记录一次用户偏好变更到时序图谱。
+
+        每个 (user_id, key) 对应一个 user_preference 实体（首次变更时
+        自动注册），变更以 preference_changed 事件追加到实体时间线，
+        供偏好漂移分析和"什么时候变成了什么"回溯查询。
+
+        Args:
+            user_id: 用户 ID（作为 entity_ref_id 关联）。
+            key: 偏好键（如 "answer_style"）。
+            old_value: 变更前的值（首次设置为 None）。
+            new_value: 变更后的值。
+            source: 事件来源，默认 "user"。
+
+        Returns:
+            新创建的 EntityEvent。
+        """
+        entity_name = f"user_pref:{user_id}:{key}"
+
+        # 查找或注册偏好实体
+        result = await self.db.execute(
+            select(KnowledgeEntity).where(
+                KnowledgeEntity.entity_type == PREFERENCE_ENTITY_TYPE,
+                KnowledgeEntity.name == entity_name,
+            )
+        )
+        entity = result.scalar_one_or_none()
+        if entity is None:
+            entity = await self.register_entity(
+                entity_type=PREFERENCE_ENTITY_TYPE,
+                name=entity_name,
+                entity_ref_id=user_id,
+                version=new_value,
+            )
+
+        event = await self.record_event(
+            entity_id=entity.id,
+            event_type="preference_changed",
+            old_value=old_value,
+            new_value=new_value,
+            source=source,
+        )
+        logger.info(
+            "preference_change_recorded",
+            user_id=str(user_id),
+            key=key,
             old_value=old_value,
             new_value=new_value,
         )

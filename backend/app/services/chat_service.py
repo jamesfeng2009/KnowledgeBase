@@ -187,6 +187,7 @@ class ChatService:
             user_id=self.user.id,
             session_id=str(conversation_id),
             recent_messages=[{"role": "user", "content": query}],
+            query=query,
         )
 
         # P3-A: 焦点追踪 + 指代消解 — 在构建 memory_context 之前执行

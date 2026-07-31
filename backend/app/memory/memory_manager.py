@@ -33,6 +33,9 @@ _SHORT_TERM_MSG_MAX_CHARS = 200  # 每条消息截断到 200 字符
 # P1-Opt5: L3 用户偏好注入 top-N（从全量 10 条缩减到 top-3，省 ~200 tok）
 _L3_INJECT_TOP_N = 3
 
+# P1-1: LLM 事实提取的最低重要性阈值（1-5），低于此值不入库
+_MIN_IMPORTANCE = 3
+
 
 class MemoryContext:
     """聚合后的记忆上下文 — 传递给 Agent Loop 的完整记忆。"""
@@ -125,6 +128,7 @@ class MemoryManager:
         user_id: uuid.UUID,
         session_id: str | None = None,
         recent_messages: list[dict] | None = None,
+        query: str | None = None,
     ) -> MemoryContext:
         """构建完整的记忆上下文（四级合并）。
 
@@ -132,6 +136,8 @@ class MemoryManager:
             user_id: 用户 ID
             session_id: 会话 ID（为 None 则跳过 Checkpoint）
             recent_messages: 最近消息列表（L1 短期窗口）
+            query: 当前用户查询（传入后 L3 长期记忆使用语义检索，
+                而非简单的时间排序平铺）
 
         Returns:
             MemoryContext 对象，包含所有层级的记忆
@@ -149,19 +155,21 @@ class MemoryManager:
             except Exception as e:
                 logger.warning("checkpoint_load_failed", session_id=session_id, error=str(e))
 
-        # L3: Mem0 长期偏好 — 获取用户偏好和历史摘要
+        # L3: Mem0 长期偏好 — 有 query 时做语义检索，无 query 时按时间排序
         try:
             ctx.user_facts = await self.mem0.search_facts(
                 user_id=user_id,
+                query=query,
                 limit=10,
             )
         except Exception as e:
             logger.warning("mem0_search_failed", user_id=str(user_id), error=str(e))
 
-        # L4: 工作记忆 — 获取当前任务相关事实
+        # L4: 工作记忆 — 获取当前任务相关事实（有 query 时也做语义检索）
         try:
             ctx.working_memory = await self.mem0.search_facts(
                 user_id=user_id,
+                query=query,
                 category="working",
                 limit=5,
             )
@@ -175,6 +183,7 @@ class MemoryManager:
             has_checkpoint=ctx.checkpoint is not None,
             user_facts_count=len(ctx.user_facts),
             working_memory_count=len(ctx.working_memory),
+            has_query=query is not None,
         )
         return ctx
 
@@ -213,6 +222,53 @@ class MemoryManager:
                 logger.error("summary_save_failed", error=str(e))
 
         logger.info("session_memory_saved", session_id=session_id, user_id=str(user_id))
+
+    async def set_preference(
+        self,
+        user_id: uuid.UUID,
+        key: str,
+        value: str,
+        fact_text: str | None = None,
+    ):
+        """设置用户偏好，并将变更同步写入 Graphiti 时序图谱。
+
+        编排逻辑：
+            1. 读取旧值（Mem0 当前事实）
+            2. 写入新值（Mem0，内置冲突检测自动停用旧偏好）
+            3. 变更事件写入 Graphiti 时间线（"什么时候变成了什么"，
+               供偏好漂移分析回溯；Graphiti 失败不影响主流程）
+
+        Args:
+            user_id: 用户 ID
+            key: 偏好键（如 "answer_style"）
+            value: 新偏好值
+            fact_text: 可选的自然语言描述（默认 "{key}: {value}"）
+
+        Returns:
+            新创建的 MemoryFact。
+        """
+        old_value = await self.mem0.get_preference(user_id, key)
+        fact = await self.mem0.set_preference(
+            user_id=user_id, key=key, value=value, fact_text=fact_text
+        )
+
+        # 同步到 Graphiti 时序图谱（best-effort，失败不阻断主流程）
+        try:
+            await self.graphiti.record_preference_change(
+                user_id=user_id,
+                key=key,
+                old_value=old_value,
+                new_value=value,
+            )
+        except Exception as e:
+            logger.error(
+                "preference_graphiti_sync_failed",
+                user_id=str(user_id),
+                key=key,
+                error=str(e),
+            )
+
+        return fact
 
     async def extract_and_save_key_decisions(
         self,
@@ -322,7 +378,12 @@ class MemoryManager:
         user_id: uuid.UUID,
         messages: list[dict],
     ) -> list[str]:
-        """P3-F: LLM 驱动的事实提取。"""
+        """P3-F: LLM 驱动的事实提取。
+
+        增加重要性评分：LLM 输出格式包含 importance (1-5)，
+        仅保留 importance >= _MIN_IMPORTANCE 的事实，避免低价值噪声入库。
+        增加去重：写入前检查是否已有语义相似的活跃事实。
+        """
         # 构建对话文本（最近 10 条消息）
         conversation = "\n".join(
             f"{m.get('role', 'user')}: {m.get('content', '')[:200]}"
@@ -334,8 +395,9 @@ class MemoryManager:
         prompt = (
             "分析以下对话，提取值得长期记住的用户偏好和事实。\n"
             "只提取明确的偏好和事实，不要推测。\n"
-            "输出格式：每行一个事实，格式为 category|content\n"
+            "输出格式：每行一个事实，格式为 category|importance|content\n"
             "category 可选：preference（用户偏好）/ fact（事实信息）\n"
+            "importance 为 1-5 的整数（5=非常重要，1=可有可无）\n"
             "如果没有值得提取的内容，输出 NONE。\n\n"
             f"对话内容：\n{conversation}\n\n"
             "提取结果："
@@ -345,7 +407,7 @@ class MemoryManager:
             llm = get_llm_provider()
             messages_for_llm: list = [{"role": "user", "content": prompt}]
             chunks: list[str] = []
-            async for chunk in llm.chat(messages_for_llm, stream=True, max_tokens=200):
+            async for chunk in llm.chat(messages_for_llm, stream=True, max_tokens=300):
                 if isinstance(chunk, str):
                     chunks.append(chunk)
             result_text = "".join(chunks).strip()
@@ -358,10 +420,40 @@ class MemoryManager:
                 line = line.strip()
                 if "|" not in line:
                     continue
-                category, content = line.split("|", 1)
+
+                parts = line.split("|", 2)
+                # 兼容旧格式 category|content（无 importance 字段）
+                if len(parts) == 2:
+                    category, content = parts
+                    importance = 3  # 默认中等重要性
+                elif len(parts) == 3:
+                    category, importance_str, content = parts
+                    try:
+                        importance = int(importance_str.strip())
+                    except ValueError:
+                        importance = 3
+                else:
+                    continue
+
                 category = category.strip().lower()
                 content = content.strip()
+
+                # 重要性过滤：低于阈值的不入库
+                if importance < _MIN_IMPORTANCE:
+                    logger.debug(
+                        "fact_skipped_low_importance",
+                        content=content[:50],
+                        importance=importance,
+                    )
+                    continue
+
                 if category in ("preference", "fact") and content:
+                    # 去重：检查是否已有语义相似的活跃事实
+                    is_dup = await self._check_duplicate(user_id, content, category)
+                    if is_dup:
+                        logger.debug("fact_skipped_duplicate", content=content[:50])
+                        continue
+
                     await self.mem0.add_fact(
                         user_id=user_id,
                         fact_text=content,
@@ -382,6 +474,40 @@ class MemoryManager:
             logger.warning("fact_extraction_llm_failed", error=str(exc))
             # 降级为关键词启发式
             return await self._keyword_extract_facts(user_id, messages)
+
+    async def _check_duplicate(
+        self,
+        user_id: uuid.UUID,
+        content: str,
+        category: str,
+        similarity_threshold: float = 0.85,
+    ) -> bool:
+        """检查是否已有语义相似的活跃事实（去重）。
+
+        使用 Mem0 语义检索：如果已有事实与新内容相似度 >= threshold，
+        则视为重复。
+
+        Args:
+            user_id: 用户 ID
+            content: 新事实内容
+            category: 事实类别
+            similarity_threshold: 语义相似度阈值（高于此值视为重复）
+
+        Returns:
+            True 表示存在重复，False 表示无重复。
+        """
+        try:
+            existing = await self.mem0.search_facts(
+                user_id=user_id,
+                query=content,
+                category=category,
+                limit=3,
+                similarity_threshold=similarity_threshold,
+            )
+            return len(existing) > 0
+        except Exception as exc:
+            logger.warning("dedup_check_failed", error=str(exc))
+            return False  # 检查失败时不过滤，避免漏记
 
     async def _keyword_extract_facts(
         self,

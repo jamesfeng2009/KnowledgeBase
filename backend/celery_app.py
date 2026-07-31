@@ -196,6 +196,11 @@ celery_app.conf.beat_schedule = {
         "task": "tasks.scheduled_tasks.cleanup_expired_facts",
         "schedule": crontab(minute=0, hour=4),  # 每天凌晨 4 点
     },
+    # 每日清理过期 Checkpoint 会话
+    "cleanup-stale-checkpoints-daily": {
+        "task": "tasks.scheduled_tasks.cleanup_stale_checkpoints",
+        "schedule": crontab(minute=30, hour=4),  # 每天凌晨 4:30
+    },
     # 每周一生成质量报告
     "generate-quality-report-weekly": {
         "task": "tasks.scheduled_tasks.generate_quality_report",

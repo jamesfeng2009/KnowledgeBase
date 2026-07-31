@@ -320,3 +320,153 @@ class TestSearchFactsSemantic:
         # fact_low 相似度 ≈ 0.1 < 0.3 被过滤
         assert fact_high in results
         assert fact_low not in results
+
+
+# ======================================================================
+# 时间衰减因子测试
+# ======================================================================
+
+
+class TestTimeDecay:
+    """_time_decay 函数测试。"""
+
+    def test_no_decay_when_disabled(self) -> None:
+        """half_life=0 时禁用衰减。"""
+        from app.memory.mem0_manager import _time_decay
+
+        old_time = datetime(2020, 1, 1)
+        assert _time_decay(old_time, 1700000000.0, 0) == 1.0
+
+    def test_no_decay_for_none_created_at(self) -> None:
+        """created_at 为 None 时不衰减。"""
+        from app.memory.mem0_manager import _time_decay
+
+        assert _time_decay(None, 1700000000.0, 30.0) == 1.0
+
+    def test_recent_fact_high_weight(self) -> None:
+        """刚创建的事实衰减小（接近 1.0）。"""
+        from app.memory.mem0_manager import _time_decay
+
+        now = datetime.utcnow()
+        decay = _time_decay(now, now.timestamp(), 30.0)
+        assert decay == pytest.approx(1.0, abs=0.01)
+
+    def test_half_life_decay(self) -> None:
+        """半衰期时衰减约 0.5。"""
+        from app.memory.mem0_manager import _time_decay
+
+        created = datetime(2024, 1, 1)
+        now_ts = created.timestamp() + 30 * 86400  # 30 天后
+        decay = _time_decay(created, now_ts, half_life_days=30.0)
+        assert decay == pytest.approx(0.5, abs=0.01)
+
+    def test_double_half_life_decay(self) -> None:
+        """两倍半衰期时衰减约 0.25。"""
+        from app.memory.mem0_manager import _time_decay
+
+        created = datetime(2024, 1, 1)
+        now_ts = created.timestamp() + 60 * 86400  # 60 天后
+        decay = _time_decay(created, now_ts, half_life_days=30.0)
+        assert decay == pytest.approx(0.25, abs=0.01)
+
+    def test_very_old_fact_low_weight(self) -> None:
+        """非常旧的事实衰减接近 0。"""
+        from app.memory.mem0_manager import _time_decay
+
+        created = datetime(2020, 1, 1)
+        now_ts = created.timestamp() + 365 * 86400  # 1 年后
+        decay = _time_decay(created, now_ts, half_life_days=30.0)
+        assert decay < 0.01
+
+    def test_future_time_no_decay(self) -> None:
+        """未来时间不衰减。"""
+        from app.memory.mem0_manager import _time_decay
+
+        created = datetime(2025, 6, 1)
+        now_ts = created.timestamp() - 86400  # 创建时间比 now 晚
+        assert _time_decay(created, now_ts, 30.0) == 1.0
+
+
+class TestTimeDecaySearch:
+    """search_facts 时间衰减集成测试。"""
+
+    def _make_fact(
+        self,
+        text: str,
+        embedding: list[float] | None = None,
+        created_at: datetime | None = None,
+    ) -> MagicMock:
+        fact = MagicMock()
+        fact.fact_text = text
+        fact.embedding = embedding
+        fact.is_active = True
+        fact.category = "working"
+        fact.fact_key = None
+        fact.fact_value = None
+        fact.created_at = created_at or datetime.utcnow()
+        fact.expires_at = None
+        return fact
+
+    @pytest.mark.asyncio
+    async def test_recent_fact_ranks_higher(self) -> None:
+        """相同语义相似度下，近期事实排名更高。"""
+        from app.memory.mem0_manager import Mem0Manager
+
+        mock_db = MagicMock()
+        mock_db.execute = AsyncMock()
+
+        now = datetime.utcnow()
+        old_date = now - timedelta(days=90)  # 3 个半衰期前
+
+        fact_old = self._make_fact("用户偏好简洁", embedding=[1.0, 0.0], created_at=old_date)
+        fact_new = self._make_fact("用户偏好简洁", embedding=[1.0, 0.0], created_at=now)
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [fact_old, fact_new]
+        mock_db.execute.return_value = mock_result
+
+        manager = Mem0Manager(mock_db)
+        manager._embedder = MagicMock()
+        manager._embedder.embed = AsyncMock(return_value=[[1.0, 0.0]])
+
+        results = await manager.search_facts(
+            user_id=uuid.uuid4(),
+            query="偏好",
+            limit=10,
+        )
+
+        # 相同相似度，但新事实衰减更少 → 排前面
+        assert results[0] == fact_new
+        assert results[1] == fact_old
+
+    @pytest.mark.asyncio
+    async def test_decay_disabled_when_zero(self) -> None:
+        """half_life_days=0 时禁用衰减，纯按相似度排序。"""
+        from app.memory.mem0_manager import Mem0Manager
+
+        mock_db = MagicMock()
+        mock_db.execute = AsyncMock()
+
+        now = datetime.utcnow()
+        old_date = now - timedelta(days=90)
+
+        fact_old = self._make_fact("用户偏好简洁", embedding=[1.0, 0.0], created_at=old_date)
+        fact_new = self._make_fact("用户偏好简洁", embedding=[1.0, 0.0], created_at=now)
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [fact_old, fact_new]
+        mock_db.execute.return_value = mock_result
+
+        manager = Mem0Manager(mock_db)
+        manager._embedder = MagicMock()
+        manager._embedder.embed = AsyncMock(return_value=[[1.0, 0.0]])
+
+        results = await manager.search_facts(
+            user_id=uuid.uuid4(),
+            query="偏好",
+            limit=10,
+            half_life_days=0,  # 禁用衰减
+        )
+
+        # 禁用衰减时，相同相似度按原始顺序（DB 返回顺序）
+        assert len(results) == 2

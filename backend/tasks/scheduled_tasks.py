@@ -10,6 +10,7 @@
 - detect_knowledge_gaps：每日检测高频无结果查询
 - check_expiration：每日检查知识过期预警
 - cleanup_expired_facts：每日清理过期记忆事实
+- cleanup_stale_checkpoints：每日清理过期 Checkpoint 会话
 - generate_quality_report：每周生成质量报告
 - cleanup_orphan_multipart_uploads：每日清理 24h 未 complete 的孤儿分片
 """
@@ -100,6 +101,29 @@ def cleanup_expired_facts() -> dict[str, Any]:
         return result
     except Exception as exc:
         logger.error("scheduled.cleanup_facts_failed", error=str(exc))
+        raise
+
+
+@celery_app.task(name="tasks.scheduled_tasks.cleanup_stale_checkpoints")
+def cleanup_stale_checkpoints() -> dict[str, Any]:
+    """每日清理过期 Checkpoint 会话。
+
+    清理超过 7 天未更新的 agent_checkpoints 记录，
+    避免废弃会话的 Checkpoint 无限膨胀。
+
+    Returns:
+        清理结果字典，包含清理的会话数量。
+    """
+    logger.info("scheduled.cleanup_checkpoints_started")
+    try:
+        result = asyncio.run(_cleanup_stale_checkpoints_async())
+        logger.info(
+            "scheduled.cleanup_checkpoints_completed",
+            cleaned_count=result.get("cleaned_count", 0),
+        )
+        return result
+    except Exception as exc:
+        logger.error("scheduled.cleanup_checkpoints_failed", error=str(exc))
         raise
 
 
@@ -283,6 +307,32 @@ async def _cleanup_expired_facts_async() -> dict[str, Any]:
             "status": "success",
             "cleaned_count": cleaned_count,
             "cleaned_at": now.isoformat(),
+        }
+
+
+async def _cleanup_stale_checkpoints_async() -> dict[str, Any]:
+    """异步清理过期 Checkpoint 会话。"""
+    from sqlalchemy import text as sa_text
+
+    from app.database import task_db_session
+
+    stale_days = 7
+    async with task_db_session() as session:
+        result = await session.execute(
+            sa_text(
+                "DELETE FROM agent_checkpoints "
+                "WHERE updated_at < NOW() - CAST(:interval AS INTERVAL)"
+            ),
+            {"interval": f"{stale_days} days"},
+        )
+        cleaned = result.rowcount
+        await session.commit()
+
+        return {
+            "status": "success",
+            "cleaned_count": cleaned,
+            "stale_days": stale_days,
+            "cleaned_at": datetime.now(timezone.utc).isoformat(),
         }
 
 
