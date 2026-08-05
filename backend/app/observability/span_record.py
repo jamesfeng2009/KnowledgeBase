@@ -29,9 +29,9 @@ from __future__ import annotations
 import time
 import uuid
 from contextlib import contextmanager
-from contextvars import ContextVar
+from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
-from typing import Any, Iterator
+from typing import Any, Generator
 
 from app.utils.logger import get_logger
 
@@ -187,7 +187,7 @@ class SpanRecorder:
         name: str | None = None,
         input_ref: str | None = None,
         metadata: dict[str, Any] | None = None,
-    ) -> Iterator[str]:
+    ) -> Generator[str, None, None]:
         """上下文管理器形式的 Span — with 块结束自动关闭。"""
         span_id = self.start_span(
             span_type, name=name, input_ref=input_ref, metadata=metadata
@@ -259,18 +259,32 @@ def get_current_recorder() -> SpanRecorder | None:
     return _recorder_var.get()
 
 
-@contextmanager
-def span_recorder(recorder: SpanRecorder | None = None) -> Iterator[SpanRecorder]:
+class span_recorder:
     """激活一个 SpanRecorder（contextvar 作用域）。
 
     评测模式：EvalRunner 在 case 执行前进入此上下文，
     TraceContext 创建时自动从 contextvar 拾取 recorder，实现 engine 零改动。
+
+    以显式类实现替代 ``@contextmanager`` 装饰器，规避 contextlib 装饰器在
+    静态检查/后续 Python 版本中的潜在变更，行为与原函数完全等价。
     """
-    # 注意不能用 `recorder or SpanRecorder()`：SpanRecorder 实现了 __len__，
-    # 空 recorder 为 falsy 会被错误替换
-    rec = recorder if recorder is not None else SpanRecorder()
-    token = _recorder_var.set(rec)
-    try:
-        yield rec
-    finally:
-        _recorder_var.reset(token)
+
+    def __init__(self, recorder: SpanRecorder | None = None) -> None:
+        # 注意不能用 `recorder or SpanRecorder()`：SpanRecorder 实现了 __len__，
+        # 空 recorder 为 falsy 会被错误替换
+        self.recorder = recorder if recorder is not None else SpanRecorder()
+        self._token: Token[SpanRecorder | None] | None = None
+
+    def __enter__(self) -> SpanRecorder:
+        self._token = _recorder_var.set(self.recorder)
+        return self.recorder
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: Any,
+    ) -> None:
+        if self._token is not None:
+            _recorder_var.reset(self._token)
+            self._token = None
