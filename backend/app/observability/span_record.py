@@ -159,8 +159,13 @@ class SpanRecorder:
         error: str | None = None,
         cost: dict[str, Any] | None = None,
         evidence_ref: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
-        """结束一个 Span。"""
+        """结束一个 Span。
+
+        metadata 提供时合并进 Span 已有元数据（start_span 时未知、
+        结束时才可得的证据，如 latency / 检索结果数）。
+        """
         record = self._open.pop(span_id, None)
         if record is None:
             log.warning("span_record.end_unknown", span_id=span_id)
@@ -173,6 +178,8 @@ class SpanRecorder:
         if record.latency_ms is not None:
             record.cost.setdefault("latency_ms", record.latency_ms)
         record.evidence_ref = evidence_ref
+        if metadata:
+            record.metadata.update(metadata)
         # 从栈中移除（正常情况在栈顶；异常嵌套时做防御性清理）
         if span_id in self._stack:
             while self._stack and self._stack[-1] != span_id:
@@ -247,6 +254,16 @@ class SpanRecorder:
 
     def __len__(self) -> int:
         return len(self._spans)
+
+    @property
+    def spans(self) -> list[SpanRecord]:
+        """已记录 Span 的只读快照（含未闭合的）— 评测侧消费证据用。
+
+        与 ``collect()`` 的区别：不清空内部状态、不补 timeout 语义，
+        适用于 task run 进行中读取证据（如 runner 在 answer() 结束后、
+        collect() 之前提取检索证据）。
+        """
+        return list(self._spans)
 
 
 # ======================================================================

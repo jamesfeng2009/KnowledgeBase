@@ -275,10 +275,13 @@ class TestTraceContextDualWrite:
             metadata={"latency_ms": 5.0, "token_count": 10},
         )
 
+        # P0-4 树形 Trace：start() 压入 task.run 根 Span，节点 Span 挂为其子节点
         spans = rec.collect()
-        assert len(spans) == 1
-        s = spans[0]
-        assert s.name == "think_iter1"
+        assert len(spans) == 2
+        root = next(s for s in spans if s.span_type == "task.run")
+        s = next(s for s in spans if s.name == "think_iter1")
+        assert root.parent_span_id is None
+        assert s.parent_span_id == root.span_id
         assert s.status == "ok"
         assert s.cost.get("latency_ms") == 5.0
         assert s.cost.get("token_count") == 10
@@ -293,9 +296,12 @@ class TestTraceContextDualWrite:
         with span_recorder() as rec:
             ctx = TraceContext(session_id="s1")
             ctx.span(name="retrieve", metadata={"latency_ms": 3.0})
+        # 根 task.run Span + retrieve 节点 Span
         spans = rec.collect()
-        assert len(spans) == 1
-        assert spans[0].name == "retrieve"
+        assert len(spans) == 2
+        names = {s.name for s in spans}
+        assert "retrieve" in names
+        assert any(s.span_type == "task.run" for s in spans)
 
     def test_no_recorder_no_crash(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from app.observability.langfuse_tracer import TraceContext
@@ -317,8 +323,10 @@ class TestTraceContextDualWrite:
         ctx = TraceContext(recorder=rec)
         ctx.span(name="retrieve", metadata={"error": "db down", "latency_ms": 1.0})
         spans = rec.collect()
-        assert spans[0].status == "error"
-        assert spans[0].error == "db down"
+        # 按名称取节点 Span（spans[0] 为未闭合的 task.run 根 Span）
+        s = next(sp for sp in spans if sp.name == "retrieve")
+        assert s.status == "error"
+        assert s.error == "db down"
 
 
 # ======================================================================
@@ -437,9 +445,12 @@ class TestEvalRunnerSpanIntegration:
         case_result = result.case_results[0]
         assert case_result.error is None
         assert case_result.recall_at_5 == 1.0
-        assert len(case_result.spans) == 1
-        assert case_result.spans[0]["name"] == "retrieve_iter1"
-        assert case_result.spans[0]["status"] == "ok"
+        # P0-4 树形 Trace：task.run 根 Span + retrieve 节点 Span
+        assert len(case_result.spans) == 2
+        node = next(s for s in case_result.spans if s["name"] == "retrieve_iter1")
+        root = next(s for s in case_result.spans if s["span_type"] == "task.run")
+        assert node["status"] == "ok"
+        assert node["parent_span_id"] == root["span_id"]
 
     @pytest.mark.asyncio
     async def test_spans_serialize_roundtrip(self) -> None:
@@ -463,7 +474,8 @@ class TestEvalRunnerSpanIntegration:
         )
         d = result.to_dict()
         assert "spans" in d["case_results"][0]
-        assert d["case_results"][0]["spans"][0]["name"] == "retrieve_iter1"
+        names = [s["name"] for s in d["case_results"][0]["spans"]]
+        assert "retrieve_iter1" in names
 
     @pytest.mark.asyncio
     async def test_engine_none_still_returns_empty_spans(self) -> None:

@@ -152,6 +152,60 @@ class TestTrailAggregator:
 
 
 # ======================================================================
+# P2-9 滑动窗口驱逐
+# ======================================================================
+
+
+class TestSlidingWindow:
+    """P2-9: window_seconds 实际生效 —— 超出窗口的会话被驱逐。"""
+
+    @pytest.mark.asyncio
+    async def test_evict_removes_expired_sessions(self, monkeypatch) -> None:
+        """超出 window_seconds 的会话在 record/window_summary 时被驱逐。"""
+        agg = TrailAggregator(window_seconds=100)
+        fake_now = [1000.0]
+        monkeypatch.setattr(
+            "app.observability.trail_aggregator.time.monotonic",
+            lambda: fake_now[0],
+        )
+
+        # t=1000 上报会话 A
+        await agg.record_session(iterations=2)
+        # t=1050 上报会话 B（cutoff=950，A@1000 仍在窗口内）
+        fake_now[0] = 1050.0
+        await agg.record_session(iterations=4)
+
+        summary = await agg.window_summary()
+        assert summary["window"]["total_sessions"] == 2
+        assert summary["window"]["avg_iterations"] == 3.0  # (2+4)/2
+
+        # 时间推进到 t=1110：cutoff=1010，A@1000 超出窗口被驱逐，B@1050 保留
+        fake_now[0] = 1110.0
+        summary = await agg.window_summary()
+        assert summary["window"]["total_sessions"] == 1
+        assert summary["window"]["avg_iterations"] == 4.0
+
+    @pytest.mark.asyncio
+    async def test_evict_on_record_session(self, monkeypatch) -> None:
+        """record_session 入队前先驱逐过期记录，避免窗口无限增长。"""
+        agg = TrailAggregator(window_seconds=100)
+        fake_now = [1000.0]
+        monkeypatch.setattr(
+            "app.observability.trail_aggregator.time.monotonic",
+            lambda: fake_now[0],
+        )
+
+        await agg.record_session(iterations=2)  # A@1000
+        # 推进到远超窗口后上报 B —— A 应在入队前被驱逐
+        fake_now[0] = 5000.0
+        await agg.record_session(iterations=6)  # B@5000
+
+        summary = await agg.window_summary()
+        assert summary["window"]["total_sessions"] == 1
+        assert summary["window"]["avg_iterations"] == 6.0
+
+
+# ======================================================================
 # engine 埋点与卡死防护测试
 # ======================================================================
 

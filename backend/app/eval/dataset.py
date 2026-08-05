@@ -31,6 +31,8 @@ class EvalCase:
 
     Attributes:
         query: 用户问题。
+        case_id: 用例唯一标识（可选，P2-2：基线 case 级匹配优先使用，
+            避免数据集中重复 query 在对比时互相覆盖；缺省回退按 query 匹配）。
         expected_doc_ids: 期望命中的文档 ID 列表（用于检索指标计算）。
         expected_answer: 期望答案文本（可选，用于人工比对或答案匹配）。
         kb_ids: 限定检索的知识库 ID 列表（可选，覆盖运行级 kb_ids）。
@@ -43,9 +45,14 @@ class EvalCase:
         context_expect: 上下文管理期望（§7.3 / §9.3 p4_context 七类样本），
             支持字段：required_files / distractor_files / forbidden_files /
             stale_refs / required_after_compact / type（样本类型标记）。
+        expected_tools: 期望调用的工具名列表（P1-4 标注式工具选择评测）。
+            Agent 应针对本 query 调用这些工具；未调用即 recall 不足。
+        forbidden_tools: 禁止调用的工具名列表（P1-4 负样本）。
+            Agent 不应针对本 query 调用这些工具；调用即 precision 受损。
     """
 
     query: str
+    case_id: str = ""
     expected_doc_ids: list[str] = field(default_factory=list)
     expected_answer: str | None = None
     kb_ids: list[str] | None = None
@@ -54,6 +61,8 @@ class EvalCase:
     must_have_points: list[str] = field(default_factory=list)
     forbidden_content: list[str] = field(default_factory=list)
     context_expect: dict[str, Any] = field(default_factory=dict)
+    expected_tools: list[str] = field(default_factory=list)
+    forbidden_tools: list[str] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> EvalCase:
@@ -66,6 +75,7 @@ class EvalCase:
             EvalCase 实例。query 缺失时返回空 query（由调用方决定是否过滤）。
         """
         query = str(data.get("query", "")).strip()
+        case_id = str(data.get("case_id", "") or "").strip()
         expected_doc_ids = [
             str(d) for d in data.get("expected_doc_ids", []) if d is not None
         ]
@@ -94,8 +104,16 @@ class EvalCase:
             dict(context_expect_raw) if isinstance(context_expect_raw, dict) else {}
         )
 
+        expected_tools = [
+            str(t) for t in data.get("expected_tools", []) if t is not None
+        ]
+        forbidden_tools = [
+            str(t) for t in data.get("forbidden_tools", []) if t is not None
+        ]
+
         return cls(
             query=query,
+            case_id=case_id,
             expected_doc_ids=expected_doc_ids,
             expected_answer=expected_answer,
             kb_ids=kb_ids,
@@ -104,12 +122,15 @@ class EvalCase:
             must_have_points=must_have_points,
             forbidden_content=forbidden_content,
             context_expect=context_expect,
+            expected_tools=expected_tools,
+            forbidden_tools=forbidden_tools,
         )
 
     def to_dict(self) -> dict[str, Any]:
         """序列化为可 JSON 化的字典。"""
         return {
             "query": self.query,
+            "case_id": self.case_id,
             "expected_doc_ids": self.expected_doc_ids,
             "expected_answer": self.expected_answer,
             "kb_ids": self.kb_ids,
@@ -118,6 +139,8 @@ class EvalCase:
             "must_have_points": self.must_have_points,
             "forbidden_content": self.forbidden_content,
             "context_expect": self.context_expect,
+            "expected_tools": self.expected_tools,
+            "forbidden_tools": self.forbidden_tools,
         }
 
 
@@ -152,6 +175,38 @@ class EvalDataset:
 
     def __bool__(self) -> bool:
         return len(self._cases) > 0
+
+    def fingerprint(self) -> str:
+        """数据集版本指纹（P2-2）— sha1 前缀（12 位十六进制）。
+
+        对全部用例的规范化内容（query / case_id / expected_doc_ids /
+        expected_answer / case_type）做有序哈希。任一用例内容变更都会
+        改变指纹，用于基线对比时校验两侧数据集一致性，防止不同版本
+        数据集的结果被误比。
+        """
+        import hashlib
+
+        h = hashlib.sha1()
+        for c in self._cases:
+            h.update(c.query.strip().encode("utf-8"))
+            h.update(b"\x00")
+            h.update(c.case_id.encode("utf-8"))
+            h.update(b"\x00")
+            for d in sorted(c.expected_doc_ids):
+                h.update(d.encode("utf-8"))
+                h.update(b"\x01")
+            h.update((c.expected_answer or "").encode("utf-8"))
+            h.update(b"\x02")
+            h.update(c.case_type.encode("utf-8"))
+            h.update(b"\x03")
+            # P1-4: 工具选择标注变更也应改变指纹
+            for t in sorted(c.expected_tools):
+                h.update(t.encode("utf-8"))
+                h.update(b"\x04")
+            for t in sorted(c.forbidden_tools):
+                h.update(t.encode("utf-8"))
+                h.update(b"\x05")
+        return h.hexdigest()[:12]
 
     # ------------------------------------------------------------------
     # 加载器

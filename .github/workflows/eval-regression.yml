@@ -26,6 +26,11 @@ jobs:
     if: github.repository != ''
 
     services:
+      # P3-11: 此处使用 GitHub Actions 托管 services（跑在 ubuntu-latest x86
+      # runner 上），并非 docker-compose 自建服务，故不适用项目硬约束
+      # 「Docker 服务须设 platform: linux/arm64」。若后续在本 CI 中引入自建
+      # Docker 服务（docker-compose / docker run），必须为每个 service 声明
+      # `platform: linux/arm64` 以满足项目硬约束（macOS Apple Silicon 兼容）。
       postgres:
         image: postgres:16-alpine
         env:
@@ -58,6 +63,14 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || 'test-dummy-key' }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY || 'test-dummy-key' }}
       EVAL_REGRESSION_THRESHOLD: "0.05"
+      # P3-10: secrets.* 在 if 表达式里始终为 truthy 字符串上下文，
+      # `secrets.X != ''` 无法正确判空。改用 env 中转：把原始 secret 值（无 fallback）
+      # 暴露到 HAS_OPENAI_KEY，步骤级 if 再判 env.HAS_OPENAI_KEY 是否非空。
+      HAS_OPENAI_KEY: ${{ secrets.OPENAI_API_KEY }}
+      # P2-7: 评测裁判/评分模型独立于生成模型，消除自评偏好偏差。
+      # 未配置 secrets 时为空字符串 → run_eval.py 回退生成模型并告警偏差。
+      EVAL_JUDGE_MODEL: ${{ secrets.EVAL_JUDGE_MODEL }}
+      EVAL_RAGAS_MODEL: ${{ secrets.EVAL_RAGAS_MODEL }}
 
     steps:
       - uses: actions/checkout@v4
@@ -79,6 +92,17 @@ jobs:
         working-directory: backend
         run: python scripts/validate_eval_dataset.py eval_datasets/
 
+      # P1-2：基线跨 run 持久化 — CI 的 Postgres 是临时的，
+      # 文件基线（eval_baseline_*.json）通过 actions/cache 在 run 之间传递。
+      # 基线仅在手动触发且 set_baseline=true 时更新；定时任务只做对比，
+      # 不再每次 --set-baseline（否则基线对比失去意义）。
+      - name: Restore eval baseline cache
+        uses: actions/cache/restore@v4
+        with:
+          path: backend/eval_baseline_*.json
+          key: eval-baseline-${{ github.run_id }}
+          restore-keys: eval-baseline-
+
       - name: Run eval (retrieval only, no LLM)
         working-directory: backend
         run: |
@@ -86,16 +110,26 @@ jobs:
           python scripts/run_eval.py \
             --dataset "$DATASET" \
             --no-generation \
+            --baseline latest \
             ${{ github.event.inputs.set_baseline == 'true' && '--set-baseline' || '' }}
 
       - name: Run eval (full, with generation)
-        if: ${{ secrets.OPENAI_API_KEY != '' }}
+        # P3-10: 改用 env 中转判断 secret 是否存在（secrets.* 在 if 中恒为 truthy）
+        if: ${{ env.HAS_OPENAI_KEY != '' }}
         working-directory: backend
         run: |
           DATASET="${{ github.event.inputs.dataset || 'eval_datasets/' }}"
           python scripts/run_eval.py \
             --dataset "$DATASET" \
-            --set-baseline
+            --baseline latest \
+            ${{ github.event.inputs.set_baseline == 'true' && '--set-baseline' || '' }}
+
+      - name: Save eval baseline cache
+        if: ${{ github.event.inputs.set_baseline == 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: backend/eval_baseline_*.json
+          key: eval-baseline-${{ github.run_id }}
 
       - name: Upload eval results
         if: always()

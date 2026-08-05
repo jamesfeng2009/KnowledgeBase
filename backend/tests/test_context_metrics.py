@@ -238,6 +238,25 @@ class TestComputeContextMetrics:
         assert r["robustness"] == 1.0
         assert r["passed"] is True
 
+    def test_robustness_unknown_when_preserved_refs_not_instrumented(self) -> None:
+        """P2-8: compaction_event 缺 preserved_refs 键时标记 unknown（不误判全丢）。"""
+        from app.eval.context_metrics import compute_context_metrics
+        from app.eval.context_trace import ContextTraceRecord
+
+        # engine 未写 preserved_refs —— 无法评估，应标记 unknown 而非 robustness=0
+        record = ContextTraceRecord(
+            compaction_events=[{"reason": "token_budget_exceeded"}]
+        )
+        r = compute_context_metrics(
+            record,
+            {"required_after_compact": ["constraints/backup_first"]},
+        )
+        assert r is not None
+        assert r["robustness"] == 1.0
+        assert r.get("robustness_unknown") is True
+        # 未插桩不应误判丢失，passed 不被 robustness 翻转
+        assert r["lost_after_compact"] == []
+
     def test_expect_without_known_fields_returns_none(self) -> None:
         from app.eval.context_metrics import compute_context_metrics
 

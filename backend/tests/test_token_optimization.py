@@ -126,6 +126,10 @@ def _make_engine(
         cache=None,
         max_iterations=max_iterations,
     )
+    # 本测试组聚焦 think 的 system prompt 稳定性与 messages 增量，
+    # 不验证 Planner 行为；禁用自动创建的 PlanManager 避免其 LLM 调用
+    # （_PLAN_PROMPT「任务规划专家」）混入 call_history 污染断言。
+    engine._planner = None
     return engine, llm, retriever, reranker
 
 

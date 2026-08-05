@@ -87,6 +87,9 @@ def _make_engine(
         cache=None,
         max_iterations=max_iterations,
     )
+    # 禁用自动创建的 PlanManager：本测试组聚焦 think/工具结果去重，
+    # Planner 的 LLM 调用会消耗 mock responses 序列污染断言。
+    engine._planner = None
     return engine, llm
 
 

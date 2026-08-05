@@ -39,6 +39,30 @@ log = get_logger(__name__)
 # 默认 K 值
 _DEFAULT_K = 5
 
+#: 分词正则 — 连续拉丁字母数字串 或 单个 CJK 字符（U+2E80-U+9FFF）
+_TOKEN_RE = re.compile(r"[a-z0-9]+|[⺀-鿿]")
+
+
+def _tokenize(text: str) -> set[str]:
+    """中英文混合分词（启发式降级评分用，P2-1）。
+
+    拉丁字母/数字按连续串切词；CJK 字符取单字 + 相邻二字 bigram。
+    替代原先的 ``set(text)`` 字符级重叠 —— 中文字符级重叠会让任意两个
+    中文文本都产生大量"命中"（常见字虚高分），bigram 显著缓解该问题，
+    且无需引入 jieba 等外部依赖。
+    """
+    tokens: set[str] = set()
+    cjk_chars: list[str] = []
+    for match in _TOKEN_RE.finditer(text.lower()):
+        tok = match.group(0)
+        if ord(tok[0]) >= 0x2E80:
+            cjk_chars.append(tok)
+        else:
+            tokens.add(tok)
+    tokens.update(cjk_chars)
+    tokens.update(a + b for a, b in zip(cjk_chars, cjk_chars[1:]))
+    return tokens
+
 
 class RagasMetrics:
     """RAGAS 兼容评测指标计算器。
@@ -60,19 +84,22 @@ class RagasMetrics:
         answer: str,
         contexts: list[str],
         expected_answer: str | None = None,
-    ) -> dict[str, float]:
+    ) -> dict[str, float | None]:
         """计算 RAGAS 四项标准指标。
 
         Args:
             query: 用户问题。
             answer: RAG 系统生成的答案。
             contexts: 检索到的上下文文档列表。
-            expected_answer: 期望答案（可选，用于 context_recall）。
+            expected_answer: 期望答案（可选，用于 context_precision / context_recall）。
 
         Returns:
             包含四项指标的字典，取值 0.0 ~ 1.0。
+            P2-1: context_precision / context_recall 依赖 expected_answer 判定
+            相关性，无 expected_answer 时对应键为 None（不参与均值），
+            不再返回虚假的 1.0 满分。
         """
-        results: dict[str, float] = {}
+        results: dict[str, float | None] = {}
 
         try:
             results["faithfulness"] = await self._faithfulness(answer, contexts)
@@ -86,21 +113,26 @@ class RagasMetrics:
             log.warning("ragas.answer_relevancy_error", error=str(exc))
             results["answer_relevancy"] = 0.0
 
-        try:
-            results["context_precision"] = self._context_precision(
-                query, contexts, expected_answer
-            )
-        except Exception as exc:
-            log.warning("ragas.context_precision_error", error=str(exc))
-            results["context_precision"] = 0.0
+        if expected_answer and expected_answer.strip():
+            try:
+                results["context_precision"] = self._context_precision(
+                    query, contexts, expected_answer
+                )
+            except Exception as exc:
+                log.warning("ragas.context_precision_error", error=str(exc))
+                results["context_precision"] = 0.0
 
-        try:
-            results["context_recall"] = await self._context_recall(
-                expected_answer or "", contexts
-            )
-        except Exception as exc:
-            log.warning("ragas.context_recall_error", error=str(exc))
-            results["context_recall"] = 0.0
+            try:
+                results["context_recall"] = await self._context_recall(
+                    expected_answer, contexts
+                )
+            except Exception as exc:
+                log.warning("ragas.context_recall_error", error=str(exc))
+                results["context_recall"] = 0.0
+        else:
+            # 无期望答案：两项上下文指标不可计算，置 None（P2-1）
+            results["context_precision"] = None
+            results["context_recall"] = None
 
         return results
 
@@ -148,16 +180,18 @@ score 为 1.0 表示完全忠实，0.0 表示完全编造。"""
     def _heuristic_faithfulness(self, answer: str, context_text: str) -> float:
         """启发式忠实度评分（LLM 不可用时降级）。
 
-        基于答案中句子与上下文的词重叠比例。
+        基于答案中句子与上下文的词重叠比例（P2-1：bigram 分词）。
         """
         answer_sentences = [s.strip() for s in answer.split("。") if s.strip()]
         if not answer_sentences:
             return 0.0
 
-        context_words = set(context_text)
+        context_words = _tokenize(context_text)
         supported = 0
         for sentence in answer_sentences:
-            words = set(sentence)
+            words = _tokenize(sentence)
+            if not words:
+                continue
             overlap = len(words & context_words)
             if overlap > len(words) * 0.5:
                 supported += 1
@@ -200,10 +234,12 @@ score 为 1.0 表示完全切题，0.0 表示完全跑题。"""
     def _heuristic_answer_relevancy(self, query: str, answer: str) -> float:
         """启发式切题度评分（LLM 不可用时降级）。
 
-        基于问题和答案的词重叠比例。
+        基于问题和答案的词重叠比例（P0-1：bigram 分词，替代字符级匹配）。
+        中文字符级 ``set(query)`` 会让任意两段中文文本产生大量"命中"
+        （常见字虚高分），bigram 显著缓解该问题。
         """
-        query_words = set(query)
-        answer_words = set(answer)
+        query_words = _tokenize(query)
+        answer_words = _tokenize(answer)
         if not query_words:
             return 0.0
         overlap = len(query_words & answer_words)
@@ -235,10 +271,11 @@ score 为 1.0 表示完全切题，0.0 表示完全跑题。"""
             return 1.0
 
         # 基于关键词匹配判断每个上下文的相关性
-        expected_keywords = set(expected_answer)
+        # P0-1: 统一使用 _tokenize() 的 CJK bigram 分词，避免字符级匹配虚高分
+        expected_keywords = _tokenize(expected_answer)
         relevance_scores: list[float] = []
         for ctx in contexts:
-            ctx_words = set(ctx)
+            ctx_words = _tokenize(ctx)
             overlap = len(expected_keywords & ctx_words)
             # 归一化到 0-1
             score = min(overlap / max(len(expected_keywords), 1), 1.0)
@@ -306,15 +343,20 @@ score 为 1.0 表示全部覆盖，0.0 表示完全未覆盖。"""
     def _heuristic_context_recall(
         self, expected_answer: str, context_text: str
     ) -> float:
-        """启发式召回率评分（LLM 不可用时降级）。"""
+        """启发式召回率评分（LLM 不可用时降级）。
+
+        P0-1: 统一使用 _tokenize() 的 CJK bigram 分词，替代字符级匹配。
+        """
         expected_sentences = [s.strip() for s in expected_answer.split("。") if s.strip()]
         if not expected_sentences:
             return 1.0
 
-        context_words = set(context_text)
+        context_words = _tokenize(context_text)
         covered = 0
         for sentence in expected_sentences:
-            words = set(sentence)
+            words = _tokenize(sentence)
+            if not words:
+                continue
             overlap = len(words & context_words)
             if overlap > len(words) * 0.5:
                 covered += 1

@@ -108,19 +108,33 @@ def compute_context_metrics(
     freshness = _ratio_hit(len(stale) - len(included_stale), len(stale))
 
     # Robustness：压缩后约束保留率（无压缩事件时视为不适用）
+    # P2-8: preserved_refs 由 engine 的 context.compact span 写入（压缩后仍
+    # 出现在上下文消息中的文档引用）。区分两种情况：
+    #   - compaction_event 含 preserved_refs 键：按实际保留集判定（空集=全丢，robustness=0）
+    #   - compaction_event 缺 preserved_refs 键：engine 未插桩，无法判定，
+    #     标记 robustness_unknown 并保持 1.0（避免误报全部丢失的假回归）
     lost_after_compact: list[str] = []
+    robustness_unknown = False
     if record.compaction_events and required_after_compact:
         preserved: set[str] = set()
+        has_preserved_refs_key = False
         for event in record.compaction_events:
-            for ref in event.get("preserved_refs") or []:
-                preserved.add(str(ref))
-        lost_after_compact = [
-            r for r in required_after_compact if r not in preserved
-        ]
-        robustness = _ratio_hit(
-            len(required_after_compact) - len(lost_after_compact),
-            len(required_after_compact),
-        )
+            if "preserved_refs" in event:
+                has_preserved_refs_key = True
+                for ref in event.get("preserved_refs") or []:
+                    preserved.add(str(ref))
+        if not has_preserved_refs_key:
+            # engine 未写 preserved_refs —— 无法评估压缩保留率，显式标记未知
+            robustness_unknown = True
+            robustness = 1.0
+        else:
+            lost_after_compact = [
+                r for r in required_after_compact if r not in preserved
+            ]
+            robustness = _ratio_hit(
+                len(required_after_compact) - len(lost_after_compact),
+                len(required_after_compact),
+            )
     else:
         robustness = 1.0
 
@@ -137,7 +151,7 @@ def compute_context_metrics(
         and not lost_after_compact
     )
 
-    return {
+    result: dict[str, Any] = {
         **metrics.to_dict(),
         "missing_required": missing_required,
         "included_distractors": included_distractors,
@@ -145,3 +159,6 @@ def compute_context_metrics(
         "lost_after_compact": lost_after_compact,
         "passed": passed,
     }
+    if robustness_unknown:
+        result["robustness_unknown"] = True
+    return result

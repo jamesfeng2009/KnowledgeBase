@@ -776,6 +776,15 @@ class TestEvalRepositoryDegradation:
 class TestRunEvalCLI:
     """run_eval.main() 退出码测试。"""
 
+    class _StubEngine:
+        """最小可用 RAG 引擎 stub。
+
+        P2-3 起 engine=None 直接退出码 2，需要非 None 引擎才能走完流程。
+        """
+
+        async def _retrieve(self, state: dict, kb_ids: object = None) -> None:
+            state["retrieved_docs"] = []
+
     def test_main_exit_zero_no_baseline(self, tmp_path, capsys) -> None:  # type: ignore[no-untyped-def]
         from scripts import run_eval
 
@@ -787,8 +796,8 @@ class TestRunEvalCLI:
             encoding="utf-8",
         )
 
-        with patch.object(run_eval, "_build_engine", return_value=None), \
-             patch.object(run_eval, "_build_judge", return_value=None), \
+        with patch.object(run_eval, "_build_engine", return_value=self._StubEngine()), \
+             patch.object(run_eval, "_build_judge_with_model", return_value=None), \
              patch("app.eval.repository._session_factory", None):
             rc = run_eval.main(
                 ["--dataset", str(ds_path), "--no-generation"]
@@ -798,6 +807,28 @@ class TestRunEvalCLI:
         out = capsys.readouterr().out
         assert "离线评测报告" in out
         assert "avg_recall_at_5" in out
+
+    def test_main_engine_unavailable_exit_two(self, tmp_path, capsys) -> None:  # type: ignore[no-untyped-def]
+        """P2-3：引擎不可用时退出码 2，不再静默降级全 0 误绿 CI。"""
+        from scripts import run_eval
+
+        ds_path = tmp_path / "sample.jsonl"
+        ds_path.write_text(
+            json.dumps({"query": "q1", "expected_doc_ids": ["d1"]}, ensure_ascii=False)
+            + "\n",
+            encoding="utf-8",
+        )
+
+        with patch.object(run_eval, "_build_engine", return_value=None), \
+             patch.object(run_eval, "_build_judge_with_model", return_value=None), \
+             patch("app.eval.repository._session_factory", None):
+            rc = run_eval.main(
+                ["--dataset", str(ds_path), "--no-generation"]
+            )
+
+        assert rc == 2
+        err = capsys.readouterr().err
+        assert "引擎不可用" in err
 
     def test_main_regression_exit_one(self, tmp_path, capsys) -> None:  # type: ignore[no-untyped-def]
         from scripts import run_eval
@@ -822,8 +853,8 @@ class TestRunEvalCLI:
             evaluated_at="2026-01-01T00:00:00",
         )
 
-        with patch.object(run_eval, "_build_engine", return_value=None), \
-             patch.object(run_eval, "_build_judge", return_value=None), \
+        with patch.object(run_eval, "_build_engine", return_value=self._StubEngine()), \
+             patch.object(run_eval, "_build_judge_with_model", return_value=None), \
              patch("app.eval.repository._session_factory", None), \
              patch.object(
                  EvalRepository,
@@ -878,8 +909,8 @@ class TestRunEvalCLI:
 
                 return EvalRunResult(total=1, passed=1, evaluated_at="t")
 
-        with patch.object(run_eval, "_build_engine", return_value=None), \
-             patch.object(run_eval, "_build_judge", return_value=None), \
+        with patch.object(run_eval, "_build_engine", return_value=object()), \
+             patch.object(run_eval, "_build_judge_with_model", return_value=None), \
              patch.object(run_eval, "EvalRunner", _StubRunner), \
              patch("app.eval.repository._session_factory", None):
             rc = run_eval.main(

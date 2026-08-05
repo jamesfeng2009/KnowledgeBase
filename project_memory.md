@@ -1,7 +1,7 @@
 # 企业知识库项目记忆 (Project Memory)
 
 > 本文件是企业知识库项目的全局规则、约束和约定，适用于当前项目的所有开发工作。
-> 最后更新：2026-08-01
+> 最后更新：2026-08-05
 
 ## 1. 项目概述
 
@@ -276,3 +276,51 @@
 - 工具调用守卫（`tool_guard.py`）与 MCP 协议层解耦，守卫在 Agent Loop 层执行，协议层不感知守卫逻辑
 - 所有 MCP 端点在网关层通过 `X-API-Key` + `mcp:use` scope 认证
 - 长耗时任务轮询间隔默认 2000ms，由服务器在 `working` 响应中通过 `poll_interval_ms` 字段告知客户端
+
+## 14. Agent Loop think/Planner 双 prompt 架构与测试隔离（2026-08-05）
+
+### 14.1 两个 prompt 各司其职，不可混用
+
+| 组件 | Prompt 常量 | 文件 | 范式 | 职责 |
+|------|------------|------|------|------|
+| think 节点 | `_THINK_SYSTEM_STABLE`「决策大脑」 | `app/rag/engine.py:108` | ReAct 单步路由 | 每轮返回 retrieve/tool_call/generate 单关键词，由 `_parse_decision` 解析 |
+| PlanManager | `_PLAN_PROMPT`「任务规划专家」 | `app/agents/planner.py:50` | Plan-and-Execute 一次性规划 | 输出 2-4 步 JSON 计划数组，存入 `state["plan_steps"]` |
+
+### 14.2 think 必须用「决策大脑」的硬依据
+
+- **循环结构**：`engine.py:19` 注释「think → [retrieve|tool_call] → think → ... → generate」，think 被多次调用
+- **`_parse_decision`**：`engine.py:1822` 解析单个关键词，不是 JSON 数组
+- **`max_iterations`**：`engine.py:228` 默认 5 次防无限循环，循环决策才需要迭代上限
+- **KV Cache**：`_THINK_SYSTEM_STABLE` 不含动态内容（`engine.py:105-107`），适合 Anthropic Prompt Cache 前缀匹配；`_PLAN_PROMPT` 含 `{query}` 模板变量无法缓存
+
+### 14.3 混合架构执行顺序
+
+`_run_decision_loop`（`engine.py:1281`）执行顺序：
+1. 第 1325 行初始化 `state["messages"]`（决策大脑 system + user query）
+2. 第 1333 行 `build_initial_plan()` → LLM 调用 1（任务规划专家）生成 plan_steps
+3. 第 1345 行 while 循环 → `_think()` → LLM 调用 2+（决策大脑）每轮路由
+4. think 第 1761-1767 行将 plan_steps 的 brief 注入 dynamic zone 作为决策参考
+
+### 14.4 测试隔离约定（关键）
+
+**问题**：engine 构造时 `planner=None` 会自动创建 `PlanManager(llm)`（`engine.py:304-308`），复用同一个 `self.llm`。测试 mock `llm.chat` 记录所有调用到 `call_history`，Planner 的 LLM 调用与 think 的混在一起，导致：
+- 遍历 `call_history` 断言「所有 system role 调用都是决策大脑」时被 Planner 的「任务规划专家」污染
+- Planner 调用消耗 `mock_chat` 的 `responses[0]`，think 拿到错位 response
+
+**约定**：测试 think 的 system prompt 稳定性 / messages 增量 / budget 压缩 / 工具结果去重等**不涉及 Planner 行为**的场景时，`_make_engine` 构造后必须显式禁用 Planner：
+
+```python
+engine = AgenticRAGEngine(llm=llm, ...)
+engine._planner = None  # 禁用自动创建的 PlanManager，避免其 LLM 调用污染 call_history
+```
+
+**已应用的文件**：
+- `tests/test_token_optimization.py:132`
+- `tests/test_p1_token_optimization.py:92`
+- `tests/test_p2_token_optimization.py:92`
+
+**验证**：94 个测试全部通过。
+
+### 14.5 不是 engine bug，是测试隔离缺失
+
+engine 的 Planner 自动实例化是合理设计（复用 LLM 实例），混合架构（Planner 出全局计划 + think 单步路由）正确。问题在于测试想单独验证 think 时无法隔离 Planner 的 LLM 调用，通过 `engine._planner = None` 显式禁用即可。不应改 engine 的 prompt 或 Planner 集成逻辑。

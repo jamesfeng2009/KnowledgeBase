@@ -37,9 +37,14 @@ import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any, TypedDict
 
+from app.eval.span_types import SpanType
 from app.llm.base import LLMProvider, Message, ToolUse
 from app.mcp.client import MCPClient
-from app.observability.langfuse_tracer import TraceContext, trace_node
+from app.observability.langfuse_tracer import (
+    TraceContext,
+    map_span_type,
+    trace_node,
+)
 from app.rag.cache import TokenCache
 from app.rag.context_budget import ContextBudgetManager
 from app.rag.context_dedup import CrossTurnDeduplicator
@@ -470,6 +475,17 @@ class AgenticRAGEngine:
                 cached = await self.cache.get(query, tenant_id=tenant_id)
                 if cached is not None:
                     log.info("engine.cache.hit", session_id=session_id)
+                    # P1-3: 缓存命中短路路径补最小 Trace（此前完全无追踪记录，
+                    # 评测无法观测缓存命中路径）
+                    self._record_shortcut_trace(
+                        name="cache_hit",
+                        span_type="cache.lookup",
+                        query=query,
+                        user_id=user_id,
+                        session_id=session_id,
+                        output=cached[:200],
+                        metadata={"source": "answer_cache"},
+                    )
                     yield cached
                     return
             except Exception as exc:
@@ -503,6 +519,20 @@ class AgenticRAGEngine:
                             )
                         except Exception:
                             pass
+                    # P1-3: FAQ 命中短路路径补最小 Trace
+                    self._record_shortcut_trace(
+                        name="faq_hit",
+                        span_type="faq.match",
+                        query=query,
+                        user_id=user_id,
+                        session_id=session_id,
+                        output=faq_result.answer[:200],
+                        metadata={
+                            "source": "faq",
+                            "score": faq_result.score,
+                            "chunk_id": faq_result.chunk_id,
+                        },
+                    )
                     yield faq_result.answer
                     return
             except Exception as exc:
@@ -541,6 +571,17 @@ class AgenticRAGEngine:
         # 2.5 初始化 LangFuse 追踪
         # P0-Stage3: 关联 HTTP request_id，使 LangFuse 追踪可按请求 ID 搜索
         _http_request_id = get_request_id()
+        # P0-3: 生产路径工具审计 — 非评测模式（无激活 recorder）且 db 可用时，
+        # 为本次 run 创建本地 SpanRecorder 并显式注入 TraceContext，
+        # 使 tool.call 审计 Span 可收集并在 answer() 尾部落库 tool_audit_log。
+        from app.observability.span_record import (
+            SpanRecorder,
+            get_current_recorder,
+        )
+
+        _audit_recorder: SpanRecorder | None = None
+        if db is not None and get_current_recorder() is None:
+            _audit_recorder = SpanRecorder()
         self._trace_ctx = TraceContext(
             trace_name="rag_agent_loop",
             session_id=session_id,
@@ -549,6 +590,7 @@ class AgenticRAGEngine:
                 "query": query[:200],
                 "http_request_id": _http_request_id,
             },
+            recorder=_audit_recorder,
         )
         self._trace_ctx.start()
 
@@ -631,14 +673,24 @@ class AgenticRAGEngine:
             answer_parts.append(token)
             yield token
         # 记录 generate 节点 Span（trace_node 装饰器无法作用于内联流式调用）
+        # P0-2: metadata 携带 included_refs — 生成阶段实际使用的上下文引用，
+        # 与 retrieve span 证据互证（P0-1: 使用标准 SpanType）。
         if self._trace_ctx is not None:
+            _gen_included = [
+                str(d.get("doc_id") or d.get("chunk_id"))
+                for d in state["retrieved_docs"]
+                if isinstance(d, dict) and (d.get("doc_id") or d.get("chunk_id"))
+            ]
             self._trace_ctx.span(
                 name=f"generate_iter{state['iteration']}",
+                span_type=SpanType.STATE_UPDATE.value,
                 input_data={"query": state["query"][:200], "doc_count": len(state["retrieved_docs"])},
                 output_data={"answer_preview": "".join(answer_parts)[:200]},
                 metadata={
                     "latency_ms": round((time.perf_counter() - _gen_t0) * 1000, 2),
                     "token_count": len("".join(answer_parts)) // 4,
+                    "included_refs": _gen_included,
+                    "trust_levels": {rid: "internal" for rid in _gen_included},
                 },
             )
 
@@ -789,6 +841,30 @@ class AgenticRAGEngine:
                 output=answer[:500],
                 metadata=trace_metadata,
             )
+
+        # 9.5 P0-3: 生产路径工具审计落库（best-effort，失败不影响主链路）—
+        # 收集本次 run 的 tool.call / permission.decision Span 写入 tool_audit_log，
+        # 使安全审计与评测回溯在生产环境有数据（此前 persist_tool_spans 无调用方）。
+        if _audit_recorder is not None and db is not None:
+            try:
+                from app.models.tool_audit import persist_tool_spans
+
+                _audit_spans = _audit_recorder.collect()
+                _written = await persist_tool_spans(
+                    _audit_spans,
+                    db,
+                    run_id=_http_request_id or session_id,
+                    session_id=session_id,
+                )
+                if _written:
+                    await db.commit()
+                    log.info(
+                        "engine.tool_audit_persisted",
+                        count=_written,
+                        session_id=session_id,
+                    )
+            except Exception as exc:
+                log.warning("engine.tool_audit_persist_failed", error=str(exc))
 
         # 10. yield done 事件（结束信号 + 统计摘要）
         _done_total_tokens = (
@@ -1309,6 +1385,10 @@ class AgenticRAGEngine:
                     state["messages"],
                     scratchpad=state.get("scratchpad", ""),
                 )
+                # P0-2: 记录 compaction_event 证据 span（压缩原因 / 保留摘要 /
+                # 丢弃内容类型 / token 前后对比），供 ContextTraceRecord 聚合
+                # P2-8: 透传 state 以写入 preserved_refs（压缩后仍保留的文档引用）
+                self._record_compaction_evidence(state)
 
             decision = await self._think_with_timeout(state)
             if decision is None:
@@ -1378,12 +1458,41 @@ class AgenticRAGEngine:
                         )
                 continue
             if decision == "tool_call":
-                # P0-3: yield tool_call_start/end 事件
-                # P1-4: 传入 db / user_uuid 以支持审批记录持久化
-                async for event in self._tool_call_streaming(
-                    state, db=db, user_uuid=user_uuid
-                ):
-                    yield event
+                # P0-3: 压栈记录 tool_call 节点 Span — 生产路径直接调用
+                # _tool_call_streaming（不经 @trace_node 装饰的 _tool_call），
+                # 节点 Span 在此显式开启，具体工具执行挂为其子 Span。
+                node_span_id: str | None = None
+                if self._trace_ctx is not None:
+                    node_span_id = self._trace_ctx.start_span(
+                        name=f"tool_call_iter{state['iteration']}",
+                        span_type=map_span_type("tool_call"),
+                        input_data={"iteration": state["iteration"]},
+                    )
+                _tc_t0 = time.perf_counter()
+                _tc_error: str | None = None
+                try:
+                    # P0-3: yield tool_call_start/end 事件
+                    # P1-4: 传入 db / user_uuid 以支持审批记录持久化
+                    async for event in self._tool_call_streaming(
+                        state, db=db, user_uuid=user_uuid
+                    ):
+                        yield event
+                except Exception as exc:
+                    _tc_error = str(exc)
+                    raise
+                finally:
+                    if self._trace_ctx is not None and node_span_id is not None:
+                        self._trace_ctx.end_span(
+                            node_span_id,
+                            name=f"tool_call_iter{state['iteration']}",
+                            metadata={
+                                "latency_ms": round(
+                                    (time.perf_counter() - _tc_t0) * 1000, 2
+                                ),
+                                "error": _tc_error,
+                                "tool_results": len(state["tool_results"]),
+                            },
+                        )
                 # P0-Opt2 + P1-Opt3: 只追加最新工具结果摘要（经去重），不重传历史结果
                 if state["tool_results"]:
                     latest = state["tool_results"][-1]
@@ -1453,6 +1562,98 @@ class AgenticRAGEngine:
     # ------------------------------------------------------------------
     # think：LLM 决策
     # ------------------------------------------------------------------
+
+    def _record_shortcut_trace(
+        self,
+        *,
+        name: str,
+        span_type: str,
+        query: str,
+        user_id: str,
+        session_id: str,
+        output: str,
+        metadata: dict[str, Any],
+    ) -> None:
+        """P1-3: 短路路径（缓存/FAQ 命中）记录最小 Trace。
+
+        这些路径在完整 TraceContext 创建前即返回，此前完全无追踪记录，
+        评测无法观测短路命中率与短路答案。此处创建一次性 TraceContext
+        记录单个闭合 Span 后立即 finalize。任何失败静默降级。
+        """
+        try:
+            ctx = TraceContext(
+                trace_name=f"rag_shortcut_{name}",
+                session_id=session_id,
+                user_id=user_id,
+                metadata={"query": query[:200]},
+            )
+            ctx.start()
+            ctx.span(
+                name=name,
+                span_type=span_type,
+                input_data={"query": query[:200]},
+                output_data=output,
+                metadata=metadata,
+            )
+            ctx.finalize(output=output, metadata=metadata)
+        except Exception as exc:
+            log.warning("engine.shortcut_trace_error", error=str(exc))
+
+    def _record_compaction_evidence(self, state: AgentState) -> None:
+        """P0-2: 记录上下文压缩证据 Span（compaction_event）。
+
+        从 ContextBudgetManager 的最近快照提取压缩前后对比，
+        以事后闭合 Span 记录（父节点为当前栈顶 — 压缩发生在 think 压栈前，
+        故挂到 task run 根 Span 下）。recorder 不可用时零开销。
+
+        P2-8: 写入 ``preserved_refs`` —— 压缩后仍出现在上下文消息中的文档引用，
+        供 compute_context_metrics 的 robustness 维度判定约束保留率。判定方式：
+        state["retrieved_docs"] 中文档内容前缀出现在 after 消息文本里即视为保留
+        （tail 区原文保留 + 摘要区指针引用）。无文档内容命中时为空列表。
+        """
+        if self._trace_ctx is None:
+            return
+        snapshot = self._budget.get_last_snapshot()
+        if not snapshot:
+            return
+        after_msgs = snapshot.get("after") or []
+        summary_preview = ""
+        for m in after_msgs:
+            content = str(m.get("content", ""))
+            if "早期上下文摘要" in content:
+                summary_preview = content[:200]
+                break
+        before_count = len(snapshot.get("before") or [])
+
+        # P2-8: 提取压缩后仍保留在上下文中的文档引用
+        after_text = "\n".join(str(m.get("content", "")) for m in after_msgs)
+        preserved_refs: list[str] = []
+        for doc in state.get("retrieved_docs", []) or []:
+            if not isinstance(doc, dict):
+                continue
+            rid = str(doc.get("doc_id") or doc.get("chunk_id") or "")
+            content = str(doc.get("content", ""))
+            # 文档内容前缀（60 字）出现在 after 消息中即视为保留
+            if rid and content and content[:60] in after_text:
+                preserved_refs.append(rid)
+
+        self._trace_ctx.span(
+            name="context_compaction",
+            span_type="context.compact",
+            metadata={
+                "compaction_event": {
+                    "reason": "token_budget_exceeded",
+                    "kept_summary": summary_preview,
+                    "dropped_content_types": ["middle_messages"],
+                    "dropped_message_count": max(0, before_count - len(after_msgs)),
+                    "preserved_refs": preserved_refs,
+                },
+                "token_cost": {
+                    "compact_before_tokens": int(snapshot.get("before_tokens", 0)),
+                    "compact_after_tokens": int(snapshot.get("after_tokens", 0)),
+                },
+            },
+        )
 
     async def _maybe_replan(
         self,
@@ -1620,6 +1821,13 @@ class AgenticRAGEngine:
                 if isinstance(chunk, str):
                     text += chunk
             decision = self._parse_decision(text)
+            # P1-3: 保留 LLM 原始决策文本（截断 500 字）作为 think Span 证据 —
+            # _parse_decision 只留路由词，评测无法回溯"为什么选这条路"；
+            # 由 @trace_node 在 Span 闭合时合并进 metadata。
+            state["_span_evidence"] = {
+                "raw_decision_text": text[:500],
+                "decision": decision,
+            }
             log.info(
                 "engine.think",
                 iteration=state["iteration"],
@@ -1691,6 +1899,13 @@ class AgenticRAGEngine:
                 iteration=state["iteration"],
             )
             state["retrieved_docs"] = []
+            # P0-2: 短路路径同样产出选择证据（空纳入），避免上下文评分误判
+            state["_span_evidence"] = {
+                "source": "knowledge_base",
+                "included_refs": [],
+                "excluded_refs": [],
+                "no_accessible_kb": True,
+            }
             return
 
         # 1. 多路检索召回候选
@@ -1802,6 +2017,53 @@ class AgenticRAGEngine:
             except Exception as exc:
                 # 优雅降级：recency 处理失败不影响已召回结果
                 log.warning("engine.retrieve.recency_error", error=str(exc))
+
+        # P0-2: 上下文选择证据 — 写入 _span_evidence，由 @trace_node 装饰器
+        # 在 Span 闭合时合并进 metadata，供 ContextTraceRecord.from_spans 聚合
+        # （included_refs / excluded_refs / trust_levels / token_cost）。
+        def _ref_id(d: dict[str, Any]) -> str | None:
+            rid = d.get("doc_id") or d.get("chunk_id")
+            return str(rid) if rid else None
+
+        included_ids = [
+            rid
+            for d in state["retrieved_docs"]
+            if isinstance(d, dict)
+            for rid in [_ref_id(d)]
+            if rid
+        ]
+        filtered_id_set = {
+            rid
+            for d in filtered
+            if isinstance(d, dict)
+            for rid in [_ref_id(d)]
+            if rid
+        }
+        excluded_ids = [
+            rid
+            for d in candidates
+            if isinstance(d, dict)
+            for rid in [_ref_id(d)]
+            if rid and rid not in filtered_id_set
+        ]
+        # included_contents 为截断摘要（每条 500 字符），供离线评测的
+        # RAGAS / Judge 在不重复检索的前提下拿到上下文内容（P1-1）。
+        included_contents = [
+            str(d.get("content", ""))[:500]
+            for d in state["retrieved_docs"]
+            if isinstance(d, dict) and d.get("content")
+        ]
+        state["_span_evidence"] = {
+            "source": "knowledge_base",
+            "included_refs": included_ids,
+            "included_contents": included_contents,
+            "excluded_refs": excluded_ids,
+            "trust_levels": {rid: "internal" for rid in included_ids},
+            "token_cost": {
+                "context_load_tokens": sum(len(c) for c in included_contents) // 4
+            },
+            "permission_filtered_count": max(0, len(candidates) - len(filtered)),
+        }
 
         log.info(
             "engine.retrieve.done",
@@ -2060,6 +2322,25 @@ class AgenticRAGEngine:
         tool_input = tool_use.get("input", {})
         tool_use_id = tool_use.get("id", "")
 
+        # P0-3: 工具审计 Span — 每次工具执行（含被守卫拦截）都记录
+        # tool.call 标准 Span，使 persist_tool_spans 过滤集合可匹配、
+        # 评测轨迹可回溯每次工具调用的参数/状态/结果。
+        _audit_span_id: str | None = None
+        if self._trace_ctx is not None:
+            _audit_span_id = self._trace_ctx.start_span(
+                name=f"tool:{tool_name}",
+                span_type=SpanType.TOOL_CALL.value,
+                metadata={
+                    "arguments": (
+                        _safe_serialize(tool_input)
+                        if isinstance(tool_input, dict)
+                        else {"raw": str(tool_input)[:200]}
+                    ),
+                    "tool_use_id": tool_use_id,
+                },
+            )
+        _audit: dict[str, Any] = {"status": "success", "output": "", "error": None}
+
         # 工具调用守卫 — beforeTool 拦截（P1: 传入 session_id 实现会话级控制）
         guard_result = self._tool_guard.check(
             tool_name, tool_input, session_id=state.get("session_id")
@@ -2147,6 +2428,9 @@ class AgenticRAGEngine:
                     "content": blocked_msg,
                 }
             )
+            _audit["status"] = "blocked"
+            _audit["output"] = blocked_msg
+            self._end_tool_audit_span(_audit_span_id, tool_name, _audit)
             return
 
         # 未知工具被守卫阻断（deny-by-default）— 不执行，返回结构化错误
@@ -2173,6 +2457,9 @@ class AgenticRAGEngine:
                     "content": blocked_msg,
                 }
             )
+            _audit["status"] = "blocked"
+            _audit["output"] = blocked_msg
+            self._end_tool_audit_span(_audit_span_id, tool_name, _audit)
             return
 
         log.info(
@@ -2195,6 +2482,7 @@ class AgenticRAGEngine:
                     "content": result,
                 }
             )
+            _audit["output"] = str(result)[:200]
             log.info("engine.tool_call.done", tool=tool_name, result_len=len(result))
         except Exception as exc:
             log.error("engine.tool_call.execute_error", tool=tool_name, error=str(exc))
@@ -2210,6 +2498,29 @@ class AgenticRAGEngine:
                     "content": error_result,
                 }
             )
+            _audit["status"] = "error"
+            _audit["error"] = str(exc)
+            _audit["output"] = error_result
+        self._end_tool_audit_span(_audit_span_id, tool_name, _audit)
+
+    def _end_tool_audit_span(
+        self,
+        span_id: str | None,
+        tool_name: str,
+        audit: dict[str, Any],
+    ) -> None:
+        """P0-3: 闭合工具审计 Span（_execute_tool_use 各返回路径统一调用）。"""
+        if self._trace_ctx is None or span_id is None:
+            return
+        self._trace_ctx.end_span(
+            span_id,
+            name=f"tool:{tool_name}",
+            output_data=str(audit.get("output", ""))[:200],
+            metadata={
+                "tool_status": audit.get("status", "success"),
+                "error": audit.get("error"),
+            },
+        )
 
     def _serialize_state_for_snapshot(self, state: AgentState) -> dict[str, Any]:
         """将 AgentState 序列化为 JSONB 兼容的快照字典 — 审批恢复时使用。

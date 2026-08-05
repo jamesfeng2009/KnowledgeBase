@@ -34,6 +34,8 @@ OPTIONAL_FIELDS = {
     "must_have_points",
     "forbidden_content",
     "context_expect",
+    "expected_tools",  # P1-4: 标注式工具选择评测
+    "forbidden_tools",  # P1-4: 禁止调用的工具（负样本）
 }
 
 #: 合法用例类型（case_type 字段）
@@ -85,6 +87,12 @@ def validate_jsonl_file(file_path: str) -> list[str]:
     line_no = 0
     case_count = 0
     dimensions_found: set[str] = set()
+
+    # P3-12: 重复 query 检测。
+    # case 级回归对比（_compare_cases）按 query 匹配时，重复 query 会互相覆盖；
+    # 标注了 case_id 的用例可被优先匹配消歧，但未标注 case_id 的旧数据仍有风险。
+    # 故仅对「缺 case_id 的重复 query」报错；有 case_id 的重复允许（已消歧）。
+    query_to_lines: dict[str, list[int]] = {}
 
     with open(file_path, encoding="utf-8") as f:
         for line in f:
@@ -146,11 +154,29 @@ def validate_jsonl_file(file_path: str) -> list[str]:
                             f" {sorted(unknown_keys)}"
                         )
 
+            # P1-4: 校验工具选择标注字段类型
+            for tool_field in ("expected_tools", "forbidden_tools"):
+                tool_val = data.get(tool_field)
+                if tool_val is not None and not isinstance(tool_val, list):
+                    errors.append(
+                        f"{file_path}:{line_no} {tool_field} 必须为列表"
+                    )
+
             # 检查 query 非空
             if "query" in data and not isinstance(data["query"], str) or (
                 "query" in data and not data["query"].strip()
             ):
                 errors.append(f"{file_path}:{line_no} query 不能为空")
+
+            # P3-12: 记录无 case_id 的 query 行号（用于循环后检测重复）
+            query_val = data.get("query")
+            case_id_val = data.get("case_id")
+            if (
+                isinstance(query_val, str)
+                and query_val.strip()
+                and not case_id_val
+            ):
+                query_to_lines.setdefault(query_val, []).append(line_no)
 
             # 检查 tags 包含至少一个标准维度
             tags = data.get("tags", [])
@@ -165,6 +191,14 @@ def validate_jsonl_file(file_path: str) -> list[str]:
             if unknown:
                 # 未知字段不报错，只记录
                 pass
+
+    # P3-12: 报告无 case_id 的重复 query（case 级回归按 query 匹配会互相覆盖）
+    for q, lines in query_to_lines.items():
+        if len(lines) > 1:
+            errors.append(
+                f"{file_path}: 重复 query（无 case_id 消歧，行 {lines}）:"
+                f" {q[:50]}"
+            )
 
     # 检查用例数量
     expected_min = MIN_CASES.get(file_name, 0)

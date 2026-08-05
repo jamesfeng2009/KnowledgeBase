@@ -17,6 +17,16 @@
     - compaction_events：压缩触发原因、保留摘要、丢弃内容类型
     - subagent_summaries：子 Agent 摘要及证据引用
     - token_cost：压缩前后 token 对比（before / after）
+
+compaction_events 每个事件 dict 的标准字段（P2-8 文档化）：
+    - reason: 压缩触发原因（如 "token_budget_exceeded"）
+    - kept_summary: 压缩后保留的摘要消息预览（≤200 字符）
+    - dropped_content_types: 被丢弃的内容类型（如 ["middle_messages"]）
+    - dropped_message_count: 被丢弃的消息条数
+    - preserved_refs: 压缩后仍出现在上下文消息中的文档引用列表
+      （engine 的 context.compact span 写入；compute_context_metrics 的
+      robustness 维度据此判定 required_after_compact 的保留率。缺该键时
+      robustness 标记为 unknown 而非误判全丢）
 """
 
 from __future__ import annotations

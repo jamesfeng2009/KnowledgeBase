@@ -47,6 +47,44 @@ def _make_run_result(
     )
 
 
+def _make_case_with_metrics(
+    query: str = "q1",
+    recall_at_5: float = 1.0,
+    mrr: float = 0.0,
+    ndcg_at_5: float = 0.0,
+    judge_total: float | None = None,
+    ragas: dict[str, float] | None = None,
+    error: str | None = None,
+) -> object:
+    """构造带完整指标的 EvalCaseResult（P0-2 多维度退化检测测试用）。"""
+    from app.eval.runner import EvalCaseResult
+
+    judge_scores = None
+    if judge_total is not None:
+        judge_scores = {"total_score": judge_total, "passed": True}
+    ragas_scores = ragas if ragas is not None else None
+    return EvalCaseResult(
+        query=query,
+        recall_at_5=recall_at_5,
+        mrr=mrr,
+        ndcg_at_5=ndcg_at_5,
+        judge_scores=judge_scores,
+        ragas_scores=ragas_scores,
+        error=error,
+    )
+
+
+def _wrap_run(case: object) -> object:
+    """将单个 case 包装为 EvalRunResult。"""
+    from app.eval.runner import EvalRunResult
+
+    return EvalRunResult(
+        case_results=[case],  # type: ignore[arg-type]
+        total=1,
+        passed=sum(1 for c in [case] if c.passed),  # type: ignore[union-attr]
+    )
+
+
 # ======================================================================
 # _compare_cases 单元测试
 # ======================================================================
@@ -136,6 +174,84 @@ class TestCompareCases:
         diffs, regressed = self._compare(cur, base)
         assert diffs == []
         assert regressed is False
+
+    # ------------------------------------------------------------------
+    # P0-2: 多维度个案退化检测（MRR / NDCG / Judge / RAGAS）
+    # ------------------------------------------------------------------
+
+    def test_mrr_drop_detected(self) -> None:
+        """MRR 1.0 → 0.2（相对下降 80%）应触发 metric_drop。"""
+        cur = _wrap_run(_make_case_with_metrics(mrr=0.2, recall_at_5=1.0))
+        base = _wrap_run(_make_case_with_metrics(mrr=1.0, recall_at_5=1.0))
+        diffs, regressed = self._compare(cur, base, threshold=0.05)
+        assert regressed is True
+        assert diffs[0]["change"] == "metric_drop"
+        drops = {m["metric"]: m for m in diffs[0].get("metric_drops", [])}
+        assert "mrr" in drops
+        assert drops["mrr"]["relative_drop"] == 0.8
+
+    def test_judge_score_drop_detected(self) -> None:
+        """Judge total_score 4.5 → 2.0（相对下降 ~55%）应触发退化。"""
+        cur = _wrap_run(
+            _make_case_with_metrics(recall_at_5=1.0, judge_total=2.0)
+        )
+        base = _wrap_run(
+            _make_case_with_metrics(recall_at_5=1.0, judge_total=4.5)
+        )
+        diffs, regressed = self._compare(cur, base, threshold=0.05)
+        assert regressed is True
+        drops = {m["metric"]: m for m in diffs[0].get("metric_drops", [])}
+        assert "judge_total_score" in drops
+
+    def test_ragas_faithfulness_drop_detected(self) -> None:
+        """RAGAS faithfulness 0.9 → 0.3（相对下降 ~66%）应触发退化。"""
+        cur = _wrap_run(
+            _make_case_with_metrics(
+                recall_at_5=1.0, ragas={"faithfulness": 0.3}
+            )
+        )
+        base = _wrap_run(
+            _make_case_with_metrics(
+                recall_at_5=1.0, ragas={"faithfulness": 0.9}
+            )
+        )
+        diffs, regressed = self._compare(cur, base, threshold=0.05)
+        assert regressed is True
+        drops = {m["metric"]: m for m in diffs[0].get("metric_drops", [])}
+        assert drops["ragas_faithfulness"]["relative_drop"] > 0.6
+
+    def test_metric_from_computable_to_none_is_full_drop(self) -> None:
+        """基线有 Judge 分而当前为 None（生成失败）视为完全退化（drop=1.0）。"""
+        cur = _wrap_run(
+            _make_case_with_metrics(recall_at_5=1.0, judge_total=None)
+        )
+        base = _wrap_run(
+            _make_case_with_metrics(recall_at_5=1.0, judge_total=4.0)
+        )
+        diffs, regressed = self._compare(cur, base, threshold=0.05)
+        assert regressed is True
+        drops = {m["metric"]: m for m in diffs[0].get("metric_drops", [])}
+        assert drops["judge_total_score"]["relative_drop"] == 1.0
+        assert drops["judge_total_score"]["current"] is None
+
+    def test_no_regression_when_metrics_stable(self) -> None:
+        """recall/mrr/judge/ragas 全部稳定时不触发退化。"""
+        shared = dict(recall_at_5=0.8, mrr=0.5, judge_total=3.5,
+                      ragas={"faithfulness": 0.8, "answer_relevancy": 0.7})
+        cur = _wrap_run(_make_case_with_metrics(**shared))
+        base = _wrap_run(_make_case_with_metrics(**shared))
+        diffs, regressed = self._compare(cur, base, threshold=0.05)
+        assert regressed is False
+        assert diffs[0]["change"] == "ok"
+        assert "metric_drops" not in diffs[0]
+
+    def test_baseline_zero_metric_no_drop(self) -> None:
+        """基线指标为 0 时不参与退化判定（避免除零误报）。"""
+        cur = _wrap_run(_make_case_with_metrics(recall_at_5=1.0, mrr=0.0))
+        base = _wrap_run(_make_case_with_metrics(recall_at_5=1.0, mrr=0.0))
+        diffs, regressed = self._compare(cur, base, threshold=0.05)
+        assert regressed is False
+        assert "metric_drops" not in diffs[0]
 
 
 # ======================================================================
@@ -265,3 +381,43 @@ class TestFormatComparisonCaseLevel:
         }
         output = _format_comparison(comparison)
         assert "case 级回归" not in output
+
+    def test_metric_drops_rendered(self) -> None:
+        """P0-2: metric_drops 明细（含 None current）应正确渲染不崩溃。"""
+        from scripts.run_eval import _format_comparison
+
+        comparison = {
+            "threshold": 0.05,
+            "is_regression": True,
+            "metrics": {},
+            "regressed_case_count": 1,
+            "case_diffs": [
+                {
+                    "query": "多轮检索查询",
+                    "change": "metric_drop",
+                    "regressed": True,
+                    "recall_current": 1.0,
+                    "recall_baseline": 1.0,
+                    "recall_relative_drop": 0.0,
+                    "error": None,
+                    "metric_drops": [
+                        {
+                            "metric": "mrr",
+                            "current": 0.2,
+                            "baseline": 1.0,
+                            "relative_drop": 0.8,
+                        },
+                        {
+                            "metric": "judge_total_score",
+                            "current": None,
+                            "baseline": 4.0,
+                            "relative_drop": 1.0,
+                        },
+                    ],
+                },
+            ],
+        }
+        output = _format_comparison(comparison)
+        assert "[metric_drop] 多轮检索查询" in output
+        assert "mrr" in output
+        assert "N/A" in output  # None current 渲染为 N/A
