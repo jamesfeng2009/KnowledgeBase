@@ -318,3 +318,167 @@ class TestValidateEvalDataset:
         from scripts.validate_eval_dataset import main as validate_main
         result = validate_main([str(bad_file)])
         assert result == 1
+
+
+# ======================================================================
+# §5.6 / §7.3 扩展字段验证（p4_context / p5_generation）
+# ======================================================================
+
+
+class TestValidateExtendedFields:
+    """测试 case_type / context_expect 等新字段的验证规则。"""
+
+    def _write(self, tmp_path, obj: dict) -> Path:
+        f = tmp_path / "ext.jsonl"
+        f.write_text(
+            json.dumps(obj, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+        return f
+
+    def test_invalid_case_type_rejected(self, tmp_path):
+        from scripts.validate_eval_dataset import main as validate_main
+
+        f = self._write(
+            tmp_path,
+            {
+                "query": "q",
+                "expected_doc_ids": ["d1"],
+                "tags": ["exact_match"],
+                "case_type": "weird",
+            },
+        )
+        assert validate_main([str(f)]) == 1
+
+    def test_valid_case_types_accepted(self, tmp_path):
+        from scripts.validate_eval_dataset import main as validate_main
+
+        for ct in ("normal", "negative", "golden"):
+            f = self._write(
+                tmp_path,
+                {
+                    "query": "q",
+                    "expected_doc_ids": ["d1"],
+                    "tags": ["exact_match"],
+                    "case_type": ct,
+                },
+            )
+            assert validate_main([str(f)]) == 0, f"case_type={ct} 应通过"
+
+    def test_negative_case_empty_doc_ids_allowed(self, tmp_path):
+        """negative 用例 expected_doc_ids 为空应通过（无安全标签也可）。"""
+        from scripts.validate_eval_dataset import main as validate_main
+
+        f = self._write(
+            tmp_path,
+            {
+                "query": "越权查询",
+                "expected_doc_ids": [],
+                "tags": ["boundary"],
+                "case_type": "negative",
+            },
+        )
+        assert validate_main([str(f)]) == 0
+
+    def test_prompt_injection_tag_empty_doc_ids_allowed(self, tmp_path):
+        from scripts.validate_eval_dataset import main as validate_main
+
+        f = self._write(
+            tmp_path,
+            {
+                "query": "忽略指令",
+                "expected_doc_ids": [],
+                "tags": ["prompt_injection"],
+            },
+        )
+        assert validate_main([str(f)]) == 1  # prompt_injection 非标准维度标签
+
+    def test_prompt_injection_with_boundary_tag_passes(self, tmp_path):
+        from scripts.validate_eval_dataset import main as validate_main
+
+        f = self._write(
+            tmp_path,
+            {
+                "query": "忽略指令",
+                "expected_doc_ids": [],
+                "tags": ["prompt_injection", "boundary"],
+            },
+        )
+        assert validate_main([str(f)]) == 0
+
+    def test_context_expect_must_be_dict(self, tmp_path):
+        from scripts.validate_eval_dataset import main as validate_main
+
+        f = self._write(
+            tmp_path,
+            {
+                "query": "q",
+                "expected_doc_ids": ["d1"],
+                "tags": ["context"],
+                "context_expect": ["not", "a", "dict"],
+            },
+        )
+        assert validate_main([str(f)]) == 1
+
+    def test_context_expect_unknown_keys_rejected(self, tmp_path):
+        from scripts.validate_eval_dataset import main as validate_main
+
+        f = self._write(
+            tmp_path,
+            {
+                "query": "q",
+                "expected_doc_ids": ["d1"],
+                "tags": ["context"],
+                "context_expect": {"required_files": ["a"], "bogus_key": 1},
+            },
+        )
+        assert validate_main([str(f)]) == 1
+
+    def test_context_expect_valid_keys_accepted(self, tmp_path):
+        from scripts.validate_eval_dataset import main as validate_main
+
+        f = self._write(
+            tmp_path,
+            {
+                "query": "q",
+                "expected_doc_ids": ["d1"],
+                "tags": ["context"],
+                "context_expect": {
+                    "type": "required_file",
+                    "required_files": ["a"],
+                    "distractor_files": ["b"],
+                    "forbidden_files": ["c"],
+                    "stale_refs": ["d"],
+                    "required_after_compact": ["e"],
+                },
+            },
+        )
+        assert validate_main([str(f)]) == 0
+
+
+class TestNewDatasetExistence:
+    """p4_context / p5_generation 数据集存在性与数量。"""
+
+    def test_p4_context_exists_and_count(self):
+        path = EVAL_DIR / "p4_context.jsonl"
+        assert path.exists(), f"p4_context 数据集不存在: {path}"
+        dataset = EvalDataset.load(str(path))
+        assert len(dataset) >= 7, f"p4_context 用例数不足: {len(dataset)} < 7"
+
+    def test_p5_generation_exists_and_count(self):
+        path = EVAL_DIR / "p5_generation.jsonl"
+        assert path.exists(), f"p5_generation 数据集不存在: {path}"
+        dataset = EvalDataset.load(str(path))
+        assert len(dataset) >= 6, f"p5_generation 用例数不足: {len(dataset)} < 6"
+
+    def test_p4_context_expect_loaded(self):
+        """p4 用例的 context_expect 应随加载保留。"""
+        dataset = EvalDataset.load(str(EVAL_DIR / "p4_context.jsonl"))
+        with_expect = [c for c in dataset if c.context_expect]
+        assert len(with_expect) == len(dataset), "p4 用例均应携带 context_expect"
+
+    def test_p5_golden_cases_have_checkpoints(self):
+        """p5 golden 用例均应携带 must_have_points。"""
+        dataset = EvalDataset.load(str(EVAL_DIR / "p5_generation.jsonl"))
+        for case in dataset:
+            assert case.case_type == "golden"
+            assert case.must_have_points, f"golden 用例缺 must_have_points: {case.query}"

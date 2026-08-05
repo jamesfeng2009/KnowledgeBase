@@ -132,6 +132,11 @@ class EvalCaseResult:
         judge_scores: LLM Judge 评分字典（未启用或失败时为 None）。
         ragas_scores: RAGAS 四项标准指标（未启用或失败时为 None）。
         error: 异常信息（正常时为 None）。
+        spans: 本次用例执行收集到的标准 Span 记录（dict 列表，评测.md §4.4）。
+        rule_scores: 规则评分结果（§5.6：negative 拒答判定 / golden 检查点评分，
+            无规则评分需求的用例为 None）。
+        context_metrics: 上下文质量四类分数（§7.3 recall/precision/freshness/
+            robustness + 失败明细，用例无 context_expect 时为 None）。
     """
 
     query: str
@@ -143,11 +148,23 @@ class EvalCaseResult:
     judge_scores: dict[str, Any] | None = None
     ragas_scores: dict[str, float] | None = None
     error: str | None = None
+    spans: list[dict[str, Any]] = field(default_factory=list)
+    rule_scores: dict[str, Any] | None = None
+    context_metrics: dict[str, Any] | None = None
 
     @property
     def passed(self) -> bool:
-        """单条用例是否通过 — 无错误即视为通过。"""
-        return self.error is None
+        """单条用例是否通过 — 无错误且规则/上下文评分（如有）通过。"""
+        if self.error is not None:
+            return False
+        if self.rule_scores is not None and self.rule_scores.get("passed") is False:
+            return False
+        if (
+            self.context_metrics is not None
+            and self.context_metrics.get("passed") is False
+        ):
+            return False
+        return True
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -161,6 +178,9 @@ class EvalCaseResult:
             "ragas_scores": self.ragas_scores,
             "error": self.error,
             "passed": self.passed,
+            "spans": self.spans,
+            "rule_scores": self.rule_scores,
+            "context_metrics": self.context_metrics,
         }
 
 
@@ -346,7 +366,39 @@ class EvalRunner:
         run_kb_ids: list[str] | None,
         with_generation: bool,
     ) -> EvalCaseResult:
-        """评测单条用例 — 检索 → 指标计算 → （可选）生成 + Judge。"""
+        """评测单条用例 — 检索 → 指标计算 → （可选）生成 + Judge。
+
+        全程注入 SpanRecorder（contextvar），engine 内 @trace_node 埋点
+        自动双写到本地标准 SpanRecord，实现轨迹级评测数据收集（§4.4）。
+        """
+        from app.observability.span_record import span_recorder
+
+        with span_recorder() as recorder:
+            result = await self._eval_case_inner(case, run_kb_ids, with_generation)
+            try:
+                collected = recorder.collect()
+                result.spans = [s.to_dict() for s in collected]
+                # 上下文质量评分（§7.3）：由 Span 证据聚合 ContextTraceRecord 后计算
+                context_expect = getattr(case, "context_expect", None)
+                if context_expect:
+                    from app.eval.context_metrics import compute_context_metrics
+                    from app.eval.context_trace import ContextTraceRecord
+
+                    trace = ContextTraceRecord.from_spans(collected)
+                    result.context_metrics = compute_context_metrics(
+                        trace, context_expect
+                    )
+            except Exception as exc:  # pragma: no cover - 防御性降级
+                log.warning("eval_runner.span_collect_error", error=str(exc))
+            return result
+
+    async def _eval_case_inner(
+        self,
+        case: Any,
+        run_kb_ids: list[str] | None,
+        with_generation: bool,
+    ) -> EvalCaseResult:
+        """评测单条用例的实际执行体（由 _eval_case 包裹 span 收集）。"""
         query: str = getattr(case, "query", "")
         expected_doc_ids: list[str] = list(getattr(case, "expected_doc_ids", []))
         # 用例级 kb_ids 优先于运行级
@@ -430,6 +482,20 @@ class EvalRunner:
                 except Exception as exc:
                     log.warning("eval_runner.ragas_error", query=query[:50], error=str(exc))
 
+        # 4. 规则评分（§5.6：negative 拒答判定 / golden 检查点评分，纯代码不调 LLM）
+        rule_scores: dict[str, Any] | None = None
+        try:
+            from app.eval.refusal_metrics import evaluate_case_rules
+
+            rule_scores = evaluate_case_rules(
+                case_type=getattr(case, "case_type", "normal"),
+                answer=answer,
+                must_have_points=getattr(case, "must_have_points", None),
+                forbidden_content=getattr(case, "forbidden_content", None),
+            )
+        except Exception as exc:
+            log.warning("eval_runner.rule_score_error", query=query[:50], error=str(exc))
+
         return EvalCaseResult(
             query=query,
             retrieved_doc_ids=retrieved_doc_ids,
@@ -440,6 +506,7 @@ class EvalRunner:
             judge_scores=judge_scores,
             ragas_scores=ragas_scores,
             error=error,
+            rule_scores=rule_scores,
         )
 
     # ------------------------------------------------------------------

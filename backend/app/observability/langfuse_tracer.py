@@ -115,6 +115,7 @@ class TraceContext:
         session_id: str = "",
         user_id: str = "",
         metadata: dict[str, Any] | None = None,
+        recorder: Any | None = None,
     ) -> None:
         self.trace_name = trace_name
         self.session_id = session_id
@@ -122,6 +123,16 @@ class TraceContext:
         self.metadata = metadata or {}
         self._trace: Any = None
         self._spans: list[Any] = []
+        # 标准 Span 收集器（双写目标）— 显式传入或从 contextvar 拾取，
+        # 使 EvalRunner 注入的 recorder 对 engine 零改动生效
+        if recorder is None:
+            try:
+                from app.observability.span_record import get_current_recorder
+
+                recorder = get_current_recorder()
+            except Exception:  # pragma: no cover - 防御性降级
+                recorder = None
+        self.recorder = recorder
 
     def start(self) -> None:
         """启动 Trace。"""
@@ -155,6 +166,26 @@ class TraceContext:
             output_data: 节点输出。
             metadata: 额外元数据（token_count, doc_count 等）。
         """
+        # 双写分支 1：本地标准 SpanRecord（评测消费，不依赖 LangFuse）
+        if self.recorder is not None:
+            try:
+                meta = dict(metadata or {})
+                error = meta.get("error")
+                cost = {
+                    k: meta[k] for k in ("latency_ms", "token_count") if k in meta
+                }
+                self.recorder.record_closed(
+                    name=name,
+                    input_ref=str(input_data)[:500] if input_data is not None else None,
+                    output_ref=str(output_data)[:500] if output_data is not None else None,
+                    error=str(error) if error else None,
+                    cost=cost,
+                    metadata=meta,
+                )
+            except Exception as exc:  # pragma: no cover - 防御性降级
+                logger.warning("span_record.write_error", name=name, error=str(exc))
+
+        # 双写分支 2：LangFuse（实时观测，可选）
         if self._trace is None:
             return
 

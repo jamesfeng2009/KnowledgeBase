@@ -202,6 +202,23 @@ def _format_comparison(comparison: dict[str, Any]) -> str:
             f"{name:<22}{m['current']:>10.4f}{m['baseline']:>10.4f}"
             f"{m['delta']:>10.4f}{m['relative_drop']:>9.2%}{'  是' if m['regressed'] else '  否':>8}"
         )
+
+    # case 级对比（§10.5 gate：个案退化也算回归）
+    case_diffs = comparison.get("case_diffs") or []
+    regressed_cases = [d for d in case_diffs if d.get("regressed")]
+    if regressed_cases:
+        lines.append(
+            f"case 级回归: {len(regressed_cases)} 条用例退化"
+        )
+        for d in regressed_cases:
+            detail = (
+                f"  [{d['change']}] {d['query'][:40]}  "
+                f"recall {d.get('recall_baseline', 0.0):.2f}"
+                f"→{d.get('recall_current', 0.0):.2f}"
+            )
+            if d.get("error"):
+                detail += f"  err: {str(d['error'])[:40]}"
+            lines.append(detail)
     lines.append("-" * 72)
     return "\n".join(lines)
 

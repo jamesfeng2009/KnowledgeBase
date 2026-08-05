@@ -384,8 +384,96 @@ class EvalRepository:
                 "regressed": regressed,
             }
 
+        # case 级回归对比（评测.md §10.5 gate：均值不变但个案退化也算回归）
+        case_diffs, case_regressed = EvalRepository._compare_cases(
+            current, baseline, threshold
+        )
+        result["case_diffs"] = case_diffs
+        result["regressed_case_count"] = sum(
+            1 for d in case_diffs if d.get("regressed")
+        )
+        if case_regressed:
+            is_regression = True
+
         result["is_regression"] = is_regression
         return result
+
+    # ------------------------------------------------------------------
+    # case 级对比（纯函数）
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _compare_cases(
+        current: Any, baseline: Any, threshold: float
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """按 query 匹配对比每个 case，检测 pass→fail 与指标个案退化。
+
+        回归判定（满足其一）：
+            1. pass→fail：基线无错误而当前出现错误；
+            2. recall_at_5 相对下降超阈值。
+
+        Returns:
+            (case_diffs, any_regressed) 二元组。case_diffs 中 change 取值：
+            ok / pass→fail / metric_drop / new / missing。
+        """
+        cur_cases = {
+            getattr(c, "query", ""): c
+            for c in (getattr(current, "case_results", None) or [])
+        }
+        base_cases = {
+            getattr(c, "query", ""): c
+            for c in (getattr(baseline, "case_results", None) or [])
+        }
+
+        case_diffs: list[dict[str, Any]] = []
+        any_regressed = False
+
+        for query, cur in cur_cases.items():
+            base = base_cases.get(query)
+            if base is None:
+                case_diffs.append({"query": query, "change": "new", "regressed": False})
+                continue
+
+            cur_err = getattr(cur, "error", None)
+            base_err = getattr(base, "error", None)
+            pass_to_fail = base_err is None and cur_err is not None
+
+            cur_r = float(getattr(cur, "recall_at_5", 0.0))
+            base_r = float(getattr(base, "recall_at_5", 0.0))
+            recall_drop = (base_r - cur_r) / base_r if base_r > 0 else 0.0
+            metric_dropped = recall_drop > threshold
+
+            regressed = pass_to_fail or metric_dropped
+            if regressed:
+                any_regressed = True
+
+            if pass_to_fail:
+                change = "pass→fail"
+            elif metric_dropped:
+                change = "metric_drop"
+            else:
+                change = "ok"
+
+            case_diffs.append(
+                {
+                    "query": query,
+                    "change": change,
+                    "regressed": regressed,
+                    "recall_current": round(cur_r, 4),
+                    "recall_baseline": round(base_r, 4),
+                    "recall_relative_drop": round(recall_drop, 4),
+                    "error": cur_err,
+                }
+            )
+
+        # 基线有而当前没有的 case（数据集变更信号，仅提示不算回归）
+        for query in base_cases:
+            if query not in cur_cases:
+                case_diffs.append(
+                    {"query": query, "change": "missing", "regressed": False}
+                )
+
+        return case_diffs, any_regressed
 
     # ------------------------------------------------------------------
     # 内部转换
@@ -410,6 +498,9 @@ class EvalRepository:
                     judge_scores=cd.get("judge_scores"),
                     ragas_scores=cd.get("ragas_scores"),
                     error=cd.get("error"),
+                    spans=cd.get("spans", []),
+                    rule_scores=cd.get("rule_scores"),
+                    context_metrics=cd.get("context_metrics"),
                 )
             )
         return EvalRunResult(

@@ -35,6 +35,14 @@ class EvalCase:
         expected_answer: 期望答案文本（可选，用于人工比对或答案匹配）。
         kb_ids: 限定检索的知识库 ID 列表（可选，覆盖运行级 kb_ids）。
         tags: 用例标签（便于按维度筛选统计，如 ["报销", "财务"]）。
+        case_type: 用例类型（normal / negative / golden，评测.md §5.6）。
+            negative — 负样本，期望系统拒答；
+            golden — golden 集，按检查点评分。
+        must_have_points: 答案必须覆盖的检查点（子串命中判定）。
+        forbidden_content: 答案禁止出现的内容（子串命中判定，如泄露标记）。
+        context_expect: 上下文管理期望（§7.3 / §9.3 p4_context 七类样本），
+            支持字段：required_files / distractor_files / forbidden_files /
+            stale_refs / required_after_compact / type（样本类型标记）。
     """
 
     query: str
@@ -42,6 +50,10 @@ class EvalCase:
     expected_answer: str | None = None
     kb_ids: list[str] | None = None
     tags: list[str] = field(default_factory=list)
+    case_type: str = "normal"
+    must_have_points: list[str] = field(default_factory=list)
+    forbidden_content: list[str] = field(default_factory=list)
+    context_expect: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> EvalCase:
@@ -68,12 +80,30 @@ class EvalCase:
 
         tags = [str(t) for t in data.get("tags", []) if t is not None]
 
+        case_type = str(data.get("case_type", "normal") or "normal").strip()
+
+        must_have_points = [
+            str(p) for p in data.get("must_have_points", []) if p is not None
+        ]
+        forbidden_content = [
+            str(p) for p in data.get("forbidden_content", []) if p is not None
+        ]
+
+        context_expect_raw = data.get("context_expect")
+        context_expect: dict[str, Any] = (
+            dict(context_expect_raw) if isinstance(context_expect_raw, dict) else {}
+        )
+
         return cls(
             query=query,
             expected_doc_ids=expected_doc_ids,
             expected_answer=expected_answer,
             kb_ids=kb_ids,
             tags=tags,
+            case_type=case_type,
+            must_have_points=must_have_points,
+            forbidden_content=forbidden_content,
+            context_expect=context_expect,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -84,6 +114,10 @@ class EvalCase:
             "expected_answer": self.expected_answer,
             "kb_ids": self.kb_ids,
             "tags": self.tags,
+            "case_type": self.case_type,
+            "must_have_points": self.must_have_points,
+            "forbidden_content": self.forbidden_content,
+            "context_expect": self.context_expect,
         }
 
 

@@ -24,8 +24,30 @@ from pathlib import Path
 # 必填字段
 REQUIRED_FIELDS = {"query", "expected_doc_ids"}
 
-# 可选字段
-OPTIONAL_FIELDS = {"expected_answer", "kb_ids", "tags"}
+# 可选字段（§5.6 规则评分 / §7.3 上下文管理扩展字段已登记）
+OPTIONAL_FIELDS = {
+    "expected_answer",
+    "kb_ids",
+    "tags",
+    "case_id",
+    "case_type",
+    "must_have_points",
+    "forbidden_content",
+    "context_expect",
+}
+
+#: 合法用例类型（case_type 字段）
+VALID_CASE_TYPES = {"normal", "negative", "golden"}
+
+#: context_expect 支持的判定字段（§9.3 p4_context 七类样本）
+CONTEXT_EXPECT_KEYS = {
+    "type",
+    "required_files",
+    "distractor_files",
+    "forbidden_files",
+    "stale_refs",
+    "required_after_compact",
+}
 
 # 标准评测维度（tags 中应包含至少一个）
 STANDARD_DIMENSIONS = {
@@ -39,13 +61,19 @@ STANDARD_DIMENSIONS = {
     "generation",
     "boundary",
     "tenant_isolation",
+    "context",
 }
+
+#: 允许 expected_doc_ids 为空列表的标签（安全/边界/注入类负样本）
+EMPTY_DOC_IDS_TAGS = {"boundary", "tenant_isolation", "prompt_injection"}
 
 # 各数据集文件期望的用例数量下限
 MIN_CASES = {
     "p0_mandatory": 100,
     "p1_complete": 200,
     "p2_security": 15,
+    "p4_context": 7,
+    "p5_generation": 6,
     "sample": 1,
 }
 
@@ -83,15 +111,40 @@ def validate_jsonl_file(file_path: str) -> list[str]:
                         errors.append(
                             f"{file_path}:{line_no} expected_doc_ids 必须为列表"
                         )
-                    # 允许空列表（安全/边界测试用例期望不返回任何文档）
+                    # 允许空列表（安全/边界/注入负样本期望不返回任何文档）
                     # 普通用例空列表给出警告
                     elif len(data[field]) == 0:
-                        tags = data.get("tags", [])
-                        if "boundary" not in tags and "tenant_isolation" not in tags:
+                        tags = set(data.get("tags", []))
+                        is_negative = data.get("case_type") == "negative"
+                        if not tags & EMPTY_DOC_IDS_TAGS and not is_negative:
                             errors.append(
                                 f"{file_path}:{line_no} expected_doc_ids 为空列表"
-                                f"（仅 boundary/tenant_isolation 用例允许）"
+                                f"（仅 boundary/tenant_isolation/prompt_injection"
+                                f"/negative 用例允许）"
                             )
+
+            # 校验 case_type 合法性
+            case_type = data.get("case_type")
+            if case_type is not None and case_type not in VALID_CASE_TYPES:
+                errors.append(
+                    f"{file_path}:{line_no} case_type 非法: {case_type}"
+                    f"（应为 {sorted(VALID_CASE_TYPES)} 之一）"
+                )
+
+            # 校验 context_expect 结构
+            context_expect = data.get("context_expect")
+            if context_expect is not None:
+                if not isinstance(context_expect, dict):
+                    errors.append(
+                        f"{file_path}:{line_no} context_expect 必须为对象"
+                    )
+                else:
+                    unknown_keys = set(context_expect.keys()) - CONTEXT_EXPECT_KEYS
+                    if unknown_keys:
+                        errors.append(
+                            f"{file_path}:{line_no} context_expect 含未知字段:"
+                            f" {sorted(unknown_keys)}"
+                        )
 
             # 检查 query 非空
             if "query" in data and not isinstance(data["query"], str) or (
