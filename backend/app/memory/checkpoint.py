@@ -4,10 +4,14 @@ LangGraph Checkpoint 会话状态管理 — 单一职责：持久化 Agent Loop 
 定位：多轮对话中断恢复、Agent Loop 状态持久化。
 特点：基于 PostgreSQL 的 Checkpoint，支持会话恢复。
 
+P2-13: 里程碑字段 — 长任务按阶段存检查点（milestones 列表存于 agent_state
+JSONB 内），失败重试时从最近已完成里程碑恢复，跳过已做阶段。
+
 遵循单一职责：只管状态存取，不管业务逻辑。
 """
 
 import uuid
+from datetime import datetime, timezone
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +19,39 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+#: P2-13: 里程碑列表在 agent_state 中的字段名
+MILESTONES_FIELD = "milestones"
+
+
+def append_milestone_to_state(
+    state: dict,
+    name: str,
+    detail: dict | None = None,
+) -> list[dict]:
+    """向 agent_state 追加一条里程碑记录（纯函数，原地修改并返回列表）。
+
+    里程碑结构::
+
+        {"seq": 1, "name": "parse", "detail": {...}, "timestamp": "..."}
+
+    Args:
+        state: Agent 状态字典（被原地修改）
+        name: 里程碑名称（如阶段名 parse/index/graph）
+        detail: 附加明细（如 {"status": "done", "duration_ms": 123}）
+
+    Returns:
+        更新后的里程碑列表
+    """
+    milestones = state.setdefault(MILESTONES_FIELD, [])
+    entry = {
+        "seq": len(milestones) + 1,
+        "name": name,
+        "detail": detail or {},
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    milestones.append(entry)
+    return milestones
 
 
 class CheckpointManager:
@@ -102,6 +139,59 @@ class CheckpointManager:
         )
         await self.db.flush()
         logger.info("checkpoint_deleted", session_id=session_id)
+
+    # ------------------------------------------------------------------
+    # P2-13: 长任务里程碑 checkpoint
+    # ------------------------------------------------------------------
+
+    async def save_milestone(
+        self,
+        session_id: str,
+        name: str,
+        detail: dict | None = None,
+        state_extra: dict | None = None,
+    ) -> None:
+        """记录一个里程碑 — 加载现有状态 → 追加里程碑 → 保存。
+
+        Args:
+            session_id: 会话/任务 ID（Celery 任务建议用 "task:{task_id}" 前缀）
+            name: 里程碑名称（阶段名）
+            detail: 里程碑明细（status/duration_ms 等）
+            state_extra: 需要一并合并进 agent_state 的顶层字段（可选）
+        """
+        state = await self.load_checkpoint(session_id) or {}
+        append_milestone_to_state(state, name, detail)
+        if state_extra:
+            state.update(state_extra)
+        await self.save_checkpoint(
+            session_id, state, iteration=int(state.get("iteration", 0))
+        )
+        logger.info(
+            "milestone_saved",
+            session_id=session_id,
+            milestone=name,
+        )
+
+    async def get_milestones(self, session_id: str) -> list[dict]:
+        """获取全部里程碑列表（按追加顺序）。"""
+        state = await self.load_checkpoint(session_id)
+        if not state:
+            return []
+        milestones = state.get(MILESTONES_FIELD, [])
+        return list(milestones) if isinstance(milestones, list) else []
+
+    async def get_completed_milestone_names(self, session_id: str) -> set[str]:
+        """获取状态为 done 的里程碑名集合 — 断点恢复时跳过这些阶段。"""
+        return {
+            m.get("name", "")
+            for m in await self.get_milestones(session_id)
+            if m.get("detail", {}).get("status") == "done"
+        }
+
+    async def get_latest_milestone(self, session_id: str) -> dict | None:
+        """获取最近一条里程碑（无则 None）。"""
+        milestones = await self.get_milestones(session_id)
+        return milestones[-1] if milestones else None
 
     async def list_active_sessions(
         self, user_id: uuid.UUID, limit: int = 20

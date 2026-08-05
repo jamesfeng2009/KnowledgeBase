@@ -119,6 +119,9 @@ class SkillRegistry:
         """初始化空注册表。"""
         self._metadata: dict[str, SkillMetadata] = {}
         self._server: Any = None  # KnowledgeBaseMCPServer 引用
+        # P0-1: 技能描述向量（进程内缓存）— 技能量级为数十个，
+        # 进程内余弦计算与 pgvector 等效，避免运行时易变索引的表生命周期管理
+        self._embeddings: dict[str, list[float]] = {}
 
     def load_from_server(self, server: Any) -> None:
         """从 MCP Server 构建轻量技能索引。
@@ -131,6 +134,7 @@ class SkillRegistry:
         """
         self._server = server
         self._metadata.clear()
+        self._embeddings.clear()  # 索引重建后向量失效，需重新预计算
 
         try:
             index_data = server.get_skill_index()
@@ -175,6 +179,61 @@ class SkillRegistry:
     def get_all_names(self) -> list[str]:
         """返回所有已注册技能的名称列表。"""
         return list(self._metadata.keys())
+
+    # ------------------------------------------------------------------
+    # P0-1: 描述向量预计算（语义召回通道）
+    # ------------------------------------------------------------------
+
+    async def build_embeddings(self, embedder: Any) -> int:
+        """预计算技能描述向量 — 语义召回通道的索引构建。
+
+        每个技能的嵌入文本为 ``name + category + tags + description`` 拼接，
+        与关键词匹配共用同一语义空间，保证向量通道与关键词通道互补。
+
+        Args:
+            embedder: EmbeddingProvider 实例（复用现有嵌入设施）。
+
+        Returns:
+            成功预计算的技能向量数；embedder 不可用或无技能时返回 0。
+        """
+        if not self._metadata:
+            return 0
+        try:
+            names: list[str] = []
+            texts: list[str] = []
+            for name, meta in self._metadata.items():
+                text = " ".join(
+                    part
+                    for part in [meta.name, meta.category, " ".join(meta.tags), meta.description]
+                    if part
+                )
+                names.append(name)
+                texts.append(text)
+            vectors = await embedder.embed(texts)
+            self._embeddings = {
+                name: vec
+                for name, vec in zip(names, vectors, strict=False)
+                if vec
+            }
+            log.info(
+                "skill_registry.embeddings_built",
+                count=len(self._embeddings),
+                total=len(self._metadata),
+            )
+            return len(self._embeddings)
+        except Exception as exc:
+            # 优雅降级：向量构建失败不影响关键词通道
+            log.warning("skill_registry.embeddings_build_failed", error=str(exc))
+            self._embeddings = {}
+            return 0
+
+    def get_embedding(self, name: str) -> list[float] | None:
+        """获取技能的描述向量（未预计算时返回 None）。"""
+        return self._embeddings.get(name)
+
+    def get_all_embeddings(self) -> dict[str, list[float]]:
+        """返回全部技能向量（SkillFinder 语义召回用）。"""
+        return self._embeddings
 
     def get_categories(self) -> list[str]:
         """返回所有技能分类列表（去重）。"""

@@ -179,6 +179,7 @@ class EvalRunResult:
         passed: 通过用例数。
         evaluated_at: 评测时间（ISO 字符串）。
         run_id: 运行 ID（UUID，由 runner 生成，便于持久化引用）。
+        max_iterations: 本次评测使用的 Agent Loop 迭代上限（默认 5）。
     """
 
     case_results: list[EvalCaseResult] = field(default_factory=list)
@@ -191,10 +192,12 @@ class EvalRunResult:
     passed: int = 0
     evaluated_at: str = ""
     run_id: str = ""
+    max_iterations: int = 5
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "run_id": self.run_id,
+            "max_iterations": self.max_iterations,
             "case_results": [c.to_dict() for c in self.case_results],
             "avg_recall_at_5": round(self.avg_recall_at_5, 4),
             "avg_mrr": round(self.avg_mrr, 4),
@@ -224,6 +227,10 @@ class EvalRunner:
         - engine 为 None：检索无能力，指标降级为 0；
         - judge_service 为 None：跳过生成层 Judge 评分；
         - ragas_metrics 为 None：跳过 RAGAS 标准指标。
+
+    max_iterations 控制传入 Agent 状态的迭代上限（默认 5，与引擎默认值一致）。
+    历史上此处硬编码为 1，导致评测只能覆盖单轮检索+生成，无法评估
+    think → execute → reflect 多轮循环；现已参数化解除该限制。
     """
 
     def __init__(
@@ -231,11 +238,14 @@ class EvalRunner:
         engine: Any | None = None,
         judge_service: Any | None = None,
         ragas_metrics: Any | None = None,
+        max_iterations: int = 5,
     ) -> None:
         # 延迟类型标注避免循环导入：engine 为 AgenticRAGEngine，judge 为 LLMJudgeService
         self.engine = engine
         self.judge_service = judge_service
         self.ragas_metrics = ragas_metrics
+        # Agent Loop 迭代上限 — 透传给评测 state，支持多轮任务级评估
+        self.max_iterations = max(1, max_iterations)
 
     async def run(
         self,
@@ -310,6 +320,7 @@ class EvalRunner:
             passed=passed,
             evaluated_at=datetime.utcnow().isoformat(),
             run_id=run_id,
+            max_iterations=self.max_iterations,
         )
 
         log.info(
@@ -356,7 +367,7 @@ class EvalRunner:
                     "tool_results": [],
                     "session_id": f"eval-{uuid.uuid4()}",
                     "user_id": "eval-runner",
-                    "max_iterations": 1,
+                    "max_iterations": self.max_iterations,
                     "kb_ids": kb_ids_for_case,
                     "messages": [],
                     "answer": "",

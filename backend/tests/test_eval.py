@@ -470,6 +470,62 @@ class TestEvalRunnerRun:
         assert json.dumps(d, ensure_ascii=False)  # 可 JSON 序列化
 
 
+class TestMaxIterationsConfigurable:
+    """max_iterations 不再硬编码为 1 — 构造参数化并透传到评测 state。"""
+
+    @pytest.mark.asyncio
+    async def test_default_max_iterations_is_five(self) -> None:
+        """默认 max_iterations=5（与引擎默认值一致），不再是 1。"""
+        from app.eval.dataset import EvalCase, EvalDataset
+        from app.eval.runner import EvalRunner
+
+        captured: dict = {}
+
+        class _CaptureEngine(_FakeEngine):
+            async def _retrieve(self, state: dict, kb_ids: list[str] | None) -> None:
+                captured["max_iterations"] = state.get("max_iterations")
+                await super()._retrieve(state, kb_ids)
+
+        engine = _CaptureEngine({"q": [{"doc_id": "d1", "content": "c"}]})
+        ds = EvalDataset([EvalCase(query="q", expected_doc_ids=["d1"])])
+        runner = EvalRunner(engine=engine, judge_service=None)
+        result = await runner.run(ds, with_generation=False)
+
+        assert runner.max_iterations == 5
+        assert captured["max_iterations"] == 5
+        assert result.max_iterations == 5
+        assert result.to_dict()["max_iterations"] == 5
+
+    @pytest.mark.asyncio
+    async def test_custom_max_iterations_propagates_to_state(self) -> None:
+        """自定义 max_iterations 透传到 _retrieve 的 state。"""
+        from app.eval.dataset import EvalCase, EvalDataset
+        from app.eval.runner import EvalRunner
+
+        captured: dict = {}
+
+        class _CaptureEngine(_FakeEngine):
+            async def _retrieve(self, state: dict, kb_ids: list[str] | None) -> None:
+                captured["max_iterations"] = state.get("max_iterations")
+                await super()._retrieve(state, kb_ids)
+
+        engine = _CaptureEngine({"q": [{"doc_id": "d1", "content": "c"}]})
+        ds = EvalDataset([EvalCase(query="q", expected_doc_ids=["d1"])])
+        runner = EvalRunner(engine=engine, judge_service=None, max_iterations=3)
+        result = await runner.run(ds, with_generation=False)
+
+        assert captured["max_iterations"] == 3
+        assert result.max_iterations == 3
+
+    @pytest.mark.asyncio
+    async def test_max_iterations_floor_is_one(self) -> None:
+        """max_iterations 下限保护为 1（0 或负数被钳制）。"""
+        from app.eval.runner import EvalRunner
+
+        assert EvalRunner(max_iterations=0).max_iterations == 1
+        assert EvalRunner(max_iterations=-3).max_iterations == 1
+
+
 # ======================================================================
 # repository.py compare_with_baseline 测试
 # ======================================================================

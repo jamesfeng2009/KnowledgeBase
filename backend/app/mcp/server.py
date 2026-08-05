@@ -22,6 +22,13 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.llm.base import Tool
+from app.mcp.resources import (
+    Resource,
+    ResourceMetadata,
+    make_resource_uri,
+    parse_resource_uri,
+    split_usage_boundaries,
+)
 from app.models.knowledge import Document
 from app.repositories.knowledge_repository import (
     DocumentRepository,
@@ -60,6 +67,11 @@ def mcp_tool(
     tags: list[str] | None = None,
     skill_description: str = "",
     long_running: bool = False,
+    when_to_use: str = "",
+    when_not_to_use: str = "",
+    output_interpretation: str = "",
+    version: str = "1.0.0",
+    review_status: str = "draft",
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """装饰器：将方法注册为 MCP 工具。
 
@@ -75,17 +87,28 @@ def mcp_tool(
     HTTP API 层会通过 ``call_tool_async`` 创建持久化 taskId 返回给客户端，
     客户端轮询 ``GET /mcp/tasks/{task_id}`` 获取最终结果，不阻塞 HTTP 连接。
 
+    Resource Metadata（resources/list + resources/read）：
+    ``when_to_use`` / ``when_not_to_use`` / ``output_interpretation`` /
+    ``version`` / ``review_status`` 构成资源元数据，帮助 Agent 理解
+    工具的正向场景、负向边界与输出解读方式。未显式提供时，
+    自动从 ``description`` 的「适用场景：/ 不适用于：」段落提取兜底。
+
     Args:
         name: 工具名称（对应 LLM function calling 的 function name）。
         description: 工具描述，供 LLM 决策调用。
         parameters: 工具入参 JSON Schema（``{"type": "object", "properties": ...}``）。
         category: 工具分类（如 ``search`` / ``document`` / ``workflow`` / ``analytics``），
-            用于 Find Skills 分组匹配。
+            用于 Find Skills 分组匹配，同时作为资源元数据的 domain。
         tags: 工具标签列表（如 ``["全文检索", "知识库"]``），用于关键词匹配。
         skill_description: 技能详细描述（比 ``description`` 更长，仅在技能激活时加载，
             空时回退到 ``description``）。
         long_running: 标记为长耗时工具。``True`` 时 HTTP API 层自动转为异步任务模式
             （返回 taskId 句柄而非阻塞等待）。Agent Loop 内部调用仍走同步 ``call_tool``。
+        when_to_use: 正向适用场景（空时从 description 提取）。
+        when_not_to_use: 负向边界（空时从 description 提取）。
+        output_interpretation: 输出解读说明。
+        version: 元数据语义化版本。
+        review_status: 评审状态（draft / reviewed / approved / deprecated）。
     """
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
@@ -96,6 +119,11 @@ def mcp_tool(
         func._mcp_tool_tags = tags or []  # type: ignore[attr-defined]
         func._mcp_tool_skill_description = skill_description or description  # type: ignore[attr-defined]
         func._mcp_tool_long_running = long_running  # type: ignore[attr-defined]
+        func._mcp_tool_when_to_use = when_to_use  # type: ignore[attr-defined]
+        func._mcp_tool_when_not_to_use = when_not_to_use  # type: ignore[attr-defined]
+        func._mcp_tool_output_interpretation = output_interpretation  # type: ignore[attr-defined]
+        func._mcp_tool_version = version  # type: ignore[attr-defined]
+        func._mcp_tool_review_status = review_status  # type: ignore[attr-defined]
         return func
 
     return decorator
@@ -147,6 +175,11 @@ class KnowledgeBaseMCPServer:
                     "category": "search",
                     "tags": ["全文检索", "知识库"],
                     "skill_description": "...",
+                    "when_to_use": "...",
+                    "when_not_to_use": "...",
+                    "output_interpretation": "...",
+                    "version": "1.0.0",
+                    "review_status": "draft",
                 },
             }
         """
@@ -159,20 +192,34 @@ class KnowledgeBaseMCPServer:
             tool_name = getattr(method, "_mcp_tool_name", None)
             if tool_name is None or not isinstance(tool_name, str):
                 continue
+            description = getattr(method, "_mcp_tool_description", "")
+            when_to_use = getattr(method, "_mcp_tool_when_to_use", "")
+            when_not_to_use = getattr(method, "_mcp_tool_when_not_to_use", "")
+            if not when_to_use or not when_not_to_use:
+                extracted_pos, extracted_neg = split_usage_boundaries(description)
+                if not when_to_use:
+                    when_to_use = extracted_pos
+                if not when_not_to_use:
+                    when_not_to_use = extracted_neg
             self._tool_registry[tool_name] = {
                 "handler": method,
                 "definition": Tool(
                     name=tool_name,
-                    description=getattr(method, "_mcp_tool_description", ""),
+                    description=description,
                     parameters=getattr(method, "_mcp_tool_parameters", {}),
                 ),
                 "category": getattr(method, "_mcp_tool_category", "general"),
                 "tags": getattr(method, "_mcp_tool_tags", []),
                 "skill_description": getattr(
                     method, "_mcp_tool_skill_description",
-                    getattr(method, "_mcp_tool_description", ""),
+                    description,
                 ),
                 "long_running": getattr(method, "_mcp_tool_long_running", False),
+                "when_to_use": when_to_use,
+                "when_not_to_use": when_not_to_use,
+                "output_interpretation": getattr(method, "_mcp_tool_output_interpretation", ""),
+                "version": getattr(method, "_mcp_tool_version", "1.0.0"),
+                "review_status": getattr(method, "_mcp_tool_review_status", "draft"),
             }
         log.debug(
             "mcp.tools_registered",
@@ -225,6 +272,69 @@ class KnowledgeBaseMCPServer:
             }
             for name, entry in self._tool_registry.items()
         ]
+
+    # ------------------------------------------------------------------
+    # 资源接口（resources/list + resources/read）— 每个工具即一个资源
+    # ------------------------------------------------------------------
+
+    def _build_resource(self, tool_name: str, entry: dict[str, Any]) -> Resource:
+        """从工具注册表条目构建 Resource 对象。"""
+        definition = entry["definition"]
+        metadata = ResourceMetadata(
+            domain=entry.get("category", "general"),
+            tags=list(entry.get("tags", [])),
+            when_to_use=entry.get("when_to_use", ""),
+            when_not_to_use=entry.get("when_not_to_use", ""),
+            output_interpretation=entry.get("output_interpretation", ""),
+            version=entry.get("version", "1.0.0"),
+            review_status=entry.get("review_status", "draft"),
+        )
+        content = json.dumps(
+            {
+                "name": tool_name,
+                "description": definition.get("description", ""),
+                "inputSchema": definition.get("parameters", {}),
+                "long_running": entry.get("long_running", False),
+                "metadata": metadata.to_dict(),
+            },
+            ensure_ascii=False,
+        )
+        return Resource(
+            uri=make_resource_uri(tool_name),
+            name=tool_name,
+            description=definition.get("description", "")[:200],
+            metadata=metadata,
+            content=content,
+        )
+
+    async def list_resources(self) -> list[dict[str, Any]]:
+        """返回资源列表（resources/list）— 每个工具即一个资源。
+
+        每个资源携带 Resource Metadata（domain / tags / when_to_use /
+        when_not_to_use / output_interpretation / version / review_status），
+        帮助 Agent 在调用前理解工具边界，减少误调用。
+        """
+        return [
+            self._build_resource(name, entry).to_list_dict()
+            for name, entry in self._tool_registry.items()
+        ]
+
+    async def read_resource(self, uri: str) -> dict[str, Any] | None:
+        """读取单个资源（resources/read）— 返回完整资源内容与元数据。
+
+        Args:
+            uri: 资源 URI（``resource://skill/{tool_name}``）。
+
+        Returns:
+            资源字典（含 content）；URI 非法或资源不存在时返回 None。
+        """
+        tool_name = parse_resource_uri(uri)
+        if tool_name is None:
+            return None
+        entry = self._tool_registry.get(tool_name)
+        if entry is None:
+            return None
+        return self._build_resource(tool_name, entry).to_read_dict()
 
     async def call_tool(
         self,

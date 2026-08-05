@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -260,5 +260,195 @@ async def get_observability_stats(
             else 0.0,
             by_model=by_model,
             by_date=by_date,
+        ),
+    )
+
+
+# ------------------------------------------------------------------
+# P0-3: Agent 执行轨迹聚合指标
+# ------------------------------------------------------------------
+
+
+class TrailWindowMetrics(BaseModel):
+    """Agent Loop 轨迹窗口指标。"""
+
+    total_sessions: int
+    completion_rate: float
+    max_iterations_rate: float
+    timeout_rate: float
+    dedup_hit_rate: float
+    loitering_rate: float  # 兜圈率 = dedup 指针会话占比 + max_iterations 会话占比
+    tool_call_rate: float
+    tool_hit_rate: float
+    avg_iterations: float
+    avg_think_latency_ms: float
+    avg_retrieve_latency_ms: float
+    avg_tool_latency_ms: float
+
+
+class TrailSummaryResponse(BaseModel):
+    """轨迹聚合响应。"""
+
+    window: TrailWindowMetrics
+    tool_distribution: dict[str, int]
+
+
+@router.get(
+    "/observability/trajectory",
+    response_model=ApiResponse[TrailSummaryResponse],
+)
+async def get_trajectory_metrics(
+    user: User = Depends(get_current_active_user),
+) -> ApiResponse[TrailSummaryResponse]:
+    """获取 Agent 执行轨迹聚合指标（P0-3）。
+
+    权限：仅管理员。
+    返回：完成率 / 工具命中率 / 平均收敛步数 / 兜圈率 / 超时率，
+         以及工具命中分布。卡死监控告警可通过
+         ``max_iterations_rate + timeout_rate`` 阈值规则驱动。
+    """
+    _require_admin(user)
+
+    from app.observability.trail_aggregator import get_trail_aggregator
+
+    summary = await get_trail_aggregator().window_summary()
+    return ApiResponse(
+        code=0,
+        data=TrailSummaryResponse(
+            window=TrailWindowMetrics(**summary["window"]),
+            tool_distribution=summary["tool_distribution"],
+        ),
+    )
+
+
+# ------------------------------------------------------------------
+# P1-8: 高风险拦截审计 — block 决策复查与误判率统计
+# ------------------------------------------------------------------
+
+
+class HighRiskAuditListResponse(BaseModel):
+    """高风险审计记录列表响应。"""
+
+    total: int
+    items: list[dict[str, Any]]
+
+
+class HighRiskReviewRequest(BaseModel):
+    """复查请求体。"""
+
+    review_status: str = Field(..., pattern="^(confirmed|misjudged)$")
+    comment: str | None = None
+
+
+class HighRiskMisjudgmentStats(BaseModel):
+    """误判率统计响应 — 反哺三档分级阈值。"""
+
+    total_blocks: int
+    pending: int
+    confirmed: int
+    misjudged: int
+    misjudgment_rate: float | None = None
+    current_thresholds: dict[str, Any]
+
+
+@router.get(
+    "/observability/high-risk-audits",
+    response_model=ApiResponse[HighRiskAuditListResponse],
+)
+async def list_high_risk_audits(
+    review_status: str | None = Query(
+        None, description="按复查状态筛选: pending/confirmed/misjudged"
+    ),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    user: User = Depends(get_current_active_user),
+) -> ApiResponse[HighRiskAuditListResponse]:
+    """查询高风险拦截审计记录（P1-8）。
+
+    权限：仅管理员。
+    """
+    _require_admin(user)
+
+    from app.services.high_risk_audit_service import get_high_risk_audit_service
+
+    result = await get_high_risk_audit_service().list_audits(
+        review_status=review_status,
+        limit=page_size,
+        offset=(page - 1) * page_size,
+    )
+    return ApiResponse(
+        code=0,
+        data=HighRiskAuditListResponse(
+            total=result["total"], items=result["items"]
+        ),
+    )
+
+
+@router.post(
+    "/observability/high-risk-audits/{record_id}/review",
+    response_model=ApiResponse[dict[str, Any]],
+)
+async def review_high_risk_audit(
+    record_id: str,
+    body: HighRiskReviewRequest,
+    user: User = Depends(get_current_active_user),
+) -> ApiResponse[dict[str, Any]]:
+    """复查高风险拦截决策（P1-8）— 标记 confirmed / misjudged。
+
+    权限：仅管理员。误判记录累积用于定期评估阈值合理性。
+    """
+    _require_admin(user)
+
+    import uuid as _uuid
+
+    from app.services.high_risk_audit_service import get_high_risk_audit_service
+
+    try:
+        record_uuid = _uuid.UUID(record_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="无效的审计记录 ID",
+        )
+
+    updated = await get_high_risk_audit_service().review_audit(
+        record_uuid,
+        review_status=body.review_status,
+        reviewer_id=user.id,
+        comment=body.comment,
+    )
+    if not updated:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="审计记录不存在",
+        )
+    return ApiResponse(code=0, data={"id": record_id, "review_status": body.review_status})
+
+
+@router.get(
+    "/observability/high-risk-audits/stats",
+    response_model=ApiResponse[HighRiskMisjudgmentStats],
+)
+async def get_high_risk_misjudgment_stats(
+    user: User = Depends(get_current_active_user),
+) -> ApiResponse[HighRiskMisjudgmentStats]:
+    """高风险拦截误判率统计（P1-8）— 反哺三档分级阈值。
+
+    权限：仅管理员。误判率 = misjudged / (confirmed + misjudged)。
+    """
+    _require_admin(user)
+
+    from app.services.high_risk_audit_service import get_high_risk_audit_service
+
+    stats = await get_high_risk_audit_service().get_misjudgment_stats()
+    return ApiResponse(
+        code=0,
+        data=HighRiskMisjudgmentStats(
+            total_blocks=stats["total_blocks"],
+            pending=stats["pending"],
+            confirmed=stats["confirmed"],
+            misjudged=stats["misjudged"],
+            misjudgment_rate=stats["misjudgment_rate"],
+            current_thresholds=stats["current_thresholds"],
         ),
     )

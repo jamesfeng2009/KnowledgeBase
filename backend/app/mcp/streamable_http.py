@@ -14,6 +14,8 @@ StreamableHTTPTransport.handle_request()
     ↓
     ├─ tools/list    → server.list_tools()
     ├─ tools/call    → server.call_tool() 或 server.call_tool_async()
+    ├─ resources/list → server.list_resources()
+    ├─ resources/read → server.read_resource()
     ├─ tasks/create  → server.call_tool_async()
     ├─ tasks/get     → task_store.get_task()
     ├─ tasks/cancel  → task_store.cancel_task()
@@ -43,6 +45,8 @@ from app.mcp.protocol import (
     JSONRPCRequest,
     JSONRPCResponse,
     METHOD_NOT_FOUND,
+    METHOD_RESOURCES_LIST,
+    METHOD_RESOURCES_READ,
     METHOD_TOOLS_CALL,
     METHOD_TOOLS_LIST,
     METHOD_TASKS_CANCEL,
@@ -50,6 +54,7 @@ from app.mcp.protocol import (
     METHOD_TASKS_GET,
     METHOD_NOTIFICATION_INITIALIZED,
     INTERNAL_ERROR,
+    RESOURCE_NOT_FOUND,
     TOOL_NOT_FOUND,
     TOOL_EXECUTION_ERROR,
     TASK_NOT_FOUND,
@@ -145,6 +150,10 @@ class StreamableHTTPTransport:
                 return await self._handle_tools_list(request)
             elif request.method == METHOD_TOOLS_CALL:
                 return await self._handle_tools_call(request, tenant_id=tenant_id)
+            elif request.method == METHOD_RESOURCES_LIST:
+                return await self._handle_resources_list(request)
+            elif request.method == METHOD_RESOURCES_READ:
+                return await self._handle_resources_read(request)
             elif request.method == METHOD_TASKS_CREATE:
                 return await self._handle_tasks_create(request, tenant_id=tenant_id)
             elif request.method == METHOD_TASKS_GET:
@@ -197,6 +206,55 @@ class StreamableHTTPTransport:
 
         return make_success_response(
             result=result,
+            request_id=request.id,
+        )
+
+    async def _handle_resources_list(
+        self,
+        request: JSONRPCRequest,
+    ) -> JSONRPCResponse:
+        """处理 resources/list 请求 — 返回资源列表（含 Resource Metadata）。"""
+        resources = await self._server.list_resources()
+
+        return make_success_response(
+            result={"resources": resources},
+            request_id=request.id,
+        )
+
+    async def _handle_resources_read(
+        self,
+        request: JSONRPCRequest,
+    ) -> JSONRPCResponse:
+        """处理 resources/read 请求 — 读取单个资源完整内容。
+
+        请求 params 格式::
+            {"uri": "resource://skill/knowledge_search"}
+        """
+        if not isinstance(request.params, dict):
+            return make_error_response(
+                code=INVALID_PARAMS,
+                message="params must be a JSON object",
+                request_id=request.id,
+            )
+
+        uri = request.params.get("uri", "")
+        if not uri:
+            return make_error_response(
+                code=INVALID_PARAMS,
+                message="'uri' is required in params",
+                request_id=request.id,
+            )
+
+        resource = await self._server.read_resource(uri)
+        if resource is None:
+            return make_error_response(
+                code=RESOURCE_NOT_FOUND,
+                message=f"Resource not found: {uri}",
+                request_id=request.id,
+            )
+
+        return make_success_response(
+            result={"contents": [resource]},
             request_id=request.id,
         )
 

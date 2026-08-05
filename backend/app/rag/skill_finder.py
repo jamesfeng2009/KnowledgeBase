@@ -25,12 +25,26 @@ Find Skills 匹配引擎 — 渐进式技能加载的意图匹配层。
 
 from __future__ import annotations
 
+import math
 import re
+from typing import Any
 
 from app.rag.skill_registry import SkillRegistry
 from app.utils.logger import get_logger
 
 log = get_logger(__name__)
+
+
+def _cosine(a: list[float], b: list[float]) -> float:
+    """余弦相似度 — 零向量/维度不符返回 0.0（优雅降级）。"""
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b, strict=False))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
+    if na == 0.0 or nb == 0.0:
+        return 0.0
+    return dot / (na * nb)
 
 
 class SkillFinder:
@@ -73,6 +87,8 @@ class SkillFinder:
         registry: SkillRegistry,
         match_threshold: int = 5,
         max_skills: int = 10,
+        vector_weight: float = 10.0,
+        vector_sim_threshold: float = 0.4,
     ) -> None:
         """初始化 Find Skills 匹配引擎。
 
@@ -80,13 +96,63 @@ class SkillFinder:
             registry: SkillRegistry 实例。
             match_threshold: 匹配阈值，分数低于此值的技能不加载。
             max_skills: 单次最多返回的技能数。
+            vector_weight: P0-1 向量通道权重 — 余弦相似度 × 此值折算为
+                与关键词分数可比的加分（默认 10，对齐 name 命中权重）。
+            vector_sim_threshold: P0-1 向量通道相似度阈值 — 低于此值
+                不产生加分，防止弱相关技能被语义噪声召回。
         """
         self.registry = registry
         self.match_threshold = match_threshold
         self.max_skills = max_skills
+        self.vector_weight = vector_weight
+        self.vector_sim_threshold = vector_sim_threshold
+
+    def _keyword_scores(self, query: str) -> list[tuple[int, str]] | None:
+        """关键词通道打分 — 返回 ``[(score, name)]``；查询无效时返回 None。
+
+        ``None`` 表示查询为空/无有效词，调用方应直接 fallback 全量。
+        """
+        if not query or not query.strip():
+            return None
+        query_terms = self._tokenize(query)
+        if not query_terms:
+            return None
+
+        query_lower = query.lower()
+        scored: list[tuple[int, str]] = []
+        for name in self.registry.get_all_names():
+            meta = self.registry.get_metadata(name)
+            if meta is None:
+                continue
+            scored.append((meta.match_score(query, query_lower, query_terms), name))
+        return scored
+
+    def _finalize(self, scored: list[tuple[float, str]], query: str) -> list[str]:
+        """排序 + 阈值过滤 + fallback（零回归语义，双通道共用）。"""
+        matched_scores = [(s, n) for s, n in scored if s >= self.match_threshold]
+        if not matched_scores:
+            # Fallback: 无匹配时返回全部（零回归保证）
+            all_names = self.registry.get_all_names()
+            log.debug(
+                "skill_finder.no_match_fallback",
+                query=query[:80],
+                total_skills=len(all_names),
+            )
+            return all_names
+
+        matched_scores.sort(key=lambda x: x[0], reverse=True)
+        matched = [name for _, name in matched_scores[: self.max_skills]]
+        log.info(
+            "skill_finder.matched",
+            query=query[:80],
+            matched=matched,
+            scores=[s for s, _ in matched_scores[: self.max_skills]],
+            total_indexed=len(self.registry.get_all_names()),
+        )
+        return matched
 
     def find_relevant_skills(self, query: str) -> list[str]:
-        """根据用户查询匹配相关技能名称。
+        """根据用户查询匹配相关技能名称（关键词通道，同步）。
 
         匹配流程：
             1. 查询分词（中英文）；
@@ -100,46 +166,62 @@ class SkillFinder:
         Returns:
             匹配到的技能名称列表。匹配为空时返回全部技能名。
         """
-        if not query or not query.strip():
+        scored = self._keyword_scores(query)
+        if scored is None:
+            return self.registry.get_all_names()
+        return self._finalize(scored, query)
+
+    async def afind_relevant_skills(
+        self, query: str, embedder: Any = None
+    ) -> list[str]:
+        """根据用户查询匹配相关技能名称（P0-1 向量 + 关键词融合，异步）。
+
+        双通道融合：
+            1. 关键词通道：与同步版一致的 match_score；
+            2. 向量通道：query 嵌入与技能描述向量余弦相似度 ×
+               ``vector_weight`` 折算加分（≥ ``vector_sim_threshold`` 才加分）；
+            3. 融合分数 = 关键词分数 + 向量加分，语义命中可补齐关键词盲区
+               （如"报销怎么走"命中"费用审批流程"）；
+            4. embedder 不可用 / 向量未预计算时退化为纯关键词通道；
+            5. 无命中时 fallback 返回全部（零回归语义不变）。
+
+        Args:
+            query: 用户查询字符串。
+            embedder: EmbeddingProvider 实例；None 时仅关键词通道。
+
+        Returns:
+            匹配到的技能名称列表。匹配为空时返回全部技能名。
+        """
+        scored = self._keyword_scores(query)
+        if scored is None:
             return self.registry.get_all_names()
 
-        query_terms = self._tokenize(query)
-        if not query_terms:
-            return self.registry.get_all_names()
+        embeddings = self.registry.get_all_embeddings()
+        if embedder is None or not embeddings:
+            return self._finalize(scored, query)
 
-        query_lower = query.lower()
+        try:
+            query_vecs = await embedder.embed([query])
+            query_vec = query_vecs[0] if query_vecs else None
+        except Exception as exc:
+            # 优雅降级：向量通道失败不影响关键词结果
+            log.warning("skill_finder.vector_channel_failed", error=str(exc))
+            return self._finalize(scored, query)
 
-        scored: list[tuple[int, str]] = []
-        for name in self.registry.get_all_names():
-            meta = self.registry.get_metadata(name)
-            if meta is None:
-                continue
-            score = meta.match_score(query, query_lower, query_terms)
-            if score >= self.match_threshold:
-                scored.append((score, name))
+        if not query_vec:
+            return self._finalize(scored, query)
 
-        if not scored:
-            # Fallback: 无匹配时返回全部（零回归保证）
-            all_names = self.registry.get_all_names()
-            log.debug(
-                "skill_finder.no_match_fallback",
-                query=query[:80],
-                total_skills=len(all_names),
-            )
-            return all_names
+        fused: list[tuple[float, str]] = []
+        for kw_score, name in scored:
+            bonus = 0.0
+            skill_vec = embeddings.get(name)
+            if skill_vec is not None:
+                sim = _cosine(query_vec, skill_vec)
+                if sim >= self.vector_sim_threshold:
+                    bonus = sim * self.vector_weight
+            fused.append((kw_score + bonus, name))
 
-        # 按分数降序排列
-        scored.sort(key=lambda x: x[0], reverse=True)
-        matched = [name for _, name in scored[: self.max_skills]]
-
-        log.info(
-            "skill_finder.matched",
-            query=query[:80],
-            matched=matched,
-            scores=[s for s, _ in scored[: self.max_skills]],
-            total_indexed=len(self.registry.get_all_names()),
-        )
-        return matched
+        return self._finalize(fused, query)
 
     async def find_and_load(self, query: str):
         """匹配技能并加载完整 Tool schema — 一步到位。

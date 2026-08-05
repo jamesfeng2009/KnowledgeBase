@@ -67,6 +67,8 @@ class ContextBudgetManager:
         # 压缩统计（用于日志和监控）
         self._compress_count: int = 0
         self._total_tokens_saved: int = 0
+        # P1-6: 最近一次压缩的前后快照 — 供压缩信息损耗评估双跑对比
+        self._last_snapshot: dict[str, Any] | None = None
 
     @staticmethod
     def estimate_tokens(messages: list[dict[str, Any]]) -> int:
@@ -162,6 +164,14 @@ class ContextBudgetManager:
         self._compress_count += 1
         self._total_tokens_saved += max(0, saved)
 
+        # P1-6: 记录压缩前后快照 — 压缩信息损耗评估（实体保留率 / 一致性双跑）
+        self._last_snapshot = {
+            "before": [dict(m) for m in messages],
+            "after": [dict(m) for m in result],
+            "before_tokens": before_tokens,
+            "after_tokens": after_tokens,
+        }
+
         log.info(
             "context_budget.compressed",
             before_msgs=len(messages),
@@ -241,7 +251,17 @@ class ContextBudgetManager:
             "total_tokens_saved": self._total_tokens_saved,
         }
 
+    def get_last_snapshot(self) -> dict[str, Any] | None:
+        """返回最近一次压缩的前后快照（P1-6 压缩信息损耗评估）。
+
+        Returns:
+            含 ``before`` / ``after`` 消息列表与对应 token 数的字典；
+            未发生过压缩时返回 None。
+        """
+        return self._last_snapshot
+
     def reset(self) -> None:
         """重置统计信息（新一轮对话开始时调用）。"""
         self._compress_count = 0
         self._total_tokens_saved = 0
+        self._last_snapshot = None

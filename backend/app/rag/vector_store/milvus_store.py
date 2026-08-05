@@ -113,6 +113,9 @@ class MilvusVectorStore(VectorStoreBase):
                 "content_type",
                 "chunk_strategy",
                 "parent_id",
+                "doc_updated_at",
+                "effective_from",
+                "effective_to",
             ],
         }
         if kb_ids:
@@ -156,6 +159,9 @@ class MilvusVectorStore(VectorStoreBase):
                     kb_id=str(row.get("kb_id") or "") or None,
                     title=row.get("title_path") or None,
                     parent_id=row.get("parent_id") or None,
+                    updated_at=row.get("doc_updated_at") or None,
+                    effective_from=row.get("effective_from") or None,
+                    effective_to=row.get("effective_to") or None,
                 )
             )
             if len(results) >= top_k:
@@ -172,11 +178,16 @@ class MilvusVectorStore(VectorStoreBase):
         chunks: list[Chunk],
         embeddings: list[list[float]],
         kb_id: str | None = None,
+        doc_updated_at: str | None = None,
+        effective_from: str | None = None,
+        effective_to: str | None = None,
     ) -> int:
         """批量写入向量数据到 Milvus collection。
 
         ``kb_id`` 字段写入文档所属知识库 ID（入参或 chunk 携带），
         与检索端按知识库过滤对齐；历史 bug 曾错误写入 doc_id。
+        recency 字段（doc_updated_at / effective_from / effective_to）
+        仅在提供时写入，依赖 collection 开启动态 schema。
         """
         if not embeddings or not chunks:
             return 0
@@ -191,19 +202,24 @@ class MilvusVectorStore(VectorStoreBase):
         records: list[dict[str, Any]] = []
         for i in range(n):
             chunk = chunks[i]
-            records.append(
-                {
-                    "doc_id": doc_id,
-                    "chunk_id": chunk.id,
-                    "content": chunk.content,
-                    "embedding": embeddings[i],
-                    "kb_id": self._resolve_kb_id(chunk, doc_id, kb_id),
-                    "title_path": chunk.title_path,
-                    "content_type": chunk.content_type,
-                    "chunk_strategy": chunk.chunk_strategy,
-                    "parent_id": chunk.parent_id or "",
-                }
-            )
+            record: dict[str, Any] = {
+                "doc_id": doc_id,
+                "chunk_id": chunk.id,
+                "content": chunk.content,
+                "embedding": embeddings[i],
+                "kb_id": self._resolve_kb_id(chunk, doc_id, kb_id),
+                "title_path": chunk.title_path,
+                "content_type": chunk.content_type,
+                "chunk_strategy": chunk.chunk_strategy,
+                "parent_id": chunk.parent_id or "",
+            }
+            if doc_updated_at:
+                record["doc_updated_at"] = doc_updated_at
+            if effective_from:
+                record["effective_from"] = effective_from
+            if effective_to:
+                record["effective_to"] = effective_to
+            records.append(record)
 
         payload: dict[str, Any] = {
             "collectionName": self._collection,

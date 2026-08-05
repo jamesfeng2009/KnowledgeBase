@@ -39,6 +39,10 @@ class HighRiskItem:
         end: 在答案中的结束位置。
         verified: 是否在来源文档中找到匹配。
         source_snippet: 匹配到的来源文档片段（verified=True 时有值）。
+        risk_level: P1-8 三档分级（未核验项有效）：
+            "low"（偏差 <1%，警告）/ "medium"（偏差 1-10%，提示核实）/
+            "high"（偏差 >10% 或完全编造，阻断）。已核验项为空串。
+        deviation: 金额偏差幅度（仅 amount 类型未核验时有值，0-1 小数）。
     """
 
     type: str
@@ -47,6 +51,8 @@ class HighRiskItem:
     end: int
     verified: bool = False
     source_snippet: str = ""
+    risk_level: str = ""
+    deviation: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """转为字典。"""
@@ -57,6 +63,8 @@ class HighRiskItem:
             "end": self.end,
             "verified": self.verified,
             "source_snippet": self.source_snippet,
+            "risk_level": self.risk_level,
+            "deviation": self.deviation,
         }
 
 
@@ -74,12 +82,21 @@ class HighRiskResult:
     items: list[HighRiskItem] = field(default_factory=list)
     unverified_count: int = 0
     has_risk: bool = False
-    action: str = "pass"
+    action: str = "pass"  # pass / warn / confirm / block
 
     @property
     def total_count(self) -> int:
         """检测到的高风险信息总数。"""
         return len(self.items)
+
+    @property
+    def max_risk_level(self) -> str:
+        """未核验项中的最高风险等级（P1-8），无风险时返回空串。"""
+        order = {"": 0, "low": 1, "medium": 2, "high": 3}
+        unverified = [i for i in self.items if not i.verified]
+        if not unverified:
+            return ""
+        return max((i.risk_level for i in unverified), key=lambda lv: order.get(lv, 0))
 
     def to_dict(self) -> dict[str, Any]:
         """转为字典。"""
@@ -89,6 +106,7 @@ class HighRiskResult:
             "unverified_count": self.unverified_count,
             "has_risk": self.has_risk,
             "action": self.action,
+            "max_risk_level": self.max_risk_level,
         }
 
 
@@ -129,6 +147,18 @@ class HighRiskDetector:
         "合同", "协议", "条款", "法律", "法规", "权利", "义务",
         "违约", "赔偿", "解除", "终止", "生效", "失效",
         "甲方", "乙方", "知识产权", "保密", "竞业",
+    }
+
+    #: P1-8 三档分级阈值（金额偏差幅度，相对来源值的比例）
+    #: <1% → low（警告）；1%-10% → medium（提示核实）；>10% → high（阻断）
+    _DEVIATION_LOW: float = 0.01
+    _DEVIATION_MEDIUM: float = 0.10
+
+    #: P1-8 未核验 date / legal_term 的默认风险等级
+    #: 日期与法律关键词无法计算数值偏差，且多为上下文性提及，默认 low（警告）
+    _DEFAULT_UNVERIFIED_LEVEL: dict[str, str] = {
+        "date": "low",
+        "legal_term": "low",
     }
 
     def detect_high_risk_terms(self, text: str) -> list[HighRiskItem]:
@@ -237,15 +267,26 @@ class HighRiskDetector:
             item.verified = self._verify_item(item, source_texts)
             if item.verified:
                 item.source_snippet = self._find_source_snippet(item, source_texts)
+            else:
+                # P1-8: 未核验项按偏差幅度三档分级
+                item.risk_level, item.deviation = self._classify_risk_level(
+                    item, source_texts
+                )
 
         unverified = [item for item in items if not item.verified]
         unverified_count = len(unverified)
         total = len(items)
         unverified_ratio = unverified_count / total if total > 0 else 0.0
 
-        # 根据未核验比例决定建议动作
-        if unverified_ratio > 0.5:
+        # P1-8 三档分级决策：
+        #   任一 high（金额偏差 >10% / 完全编造）→ block
+        #   任一 medium（偏差 1-10%）→ confirm（提示核实）
+        #   其余未核验（low）→ warn
+        levels = {item.risk_level for item in unverified}
+        if "high" in levels:
             action = "block"
+        elif "medium" in levels:
+            action = "confirm"
         elif unverified_count > 0:
             action = "warn"
         else:
@@ -259,6 +300,7 @@ class HighRiskDetector:
             ratio=round(unverified_ratio, 2),
             action=action,
             unverified_types=list({item.type for item in unverified}),
+            risk_levels={lv: sum(1 for i in unverified if i.risk_level == lv) for lv in levels},
         )
 
         return HighRiskResult(
@@ -287,14 +329,102 @@ class HighRiskDetector:
                 source_core = source_text.replace(" ", "").replace(",", "")
                 if core_value in source_core:
                     return True
-                # 尝试只匹配数字部分（金额的数值）
+                # 金额：同单位数值相等视为匹配（避免 "5" 误命中 "50000"）
                 if item.type == "amount":
-                    numbers = re.findall(r"\d+(?:\.\d+)?", item.value)
-                    if numbers:
-                        for num in numbers:
-                            if num in source_text:
+                    item_amount = HighRiskDetector._parse_amount(item.value)
+                    if item_amount is not None:
+                        for match in HighRiskDetector._AMOUNT_PATTERN.finditer(
+                            source_text
+                        ):
+                            src_amount = HighRiskDetector._parse_amount(
+                                match.group(0)
+                            )
+                            if (
+                                src_amount is not None
+                                and src_amount[1] == item_amount[1]
+                                and src_amount[0] == item_amount[0]
+                            ):
                                 return True
         return False
+
+    @classmethod
+    def _classify_risk_level(
+        cls,
+        item: HighRiskItem,
+        source_texts: list[str],
+    ) -> tuple[str, float | None]:
+        """P1-8: 对未核验项按偏差幅度三档分级。
+
+        分级规则：
+            - amount：与来源中同单位金额比较，取最小相对偏差
+              <1% → low（警告）；1%-10% → medium（提示核实）；
+              >10% 或来源中无同单位金额（完全编造）→ high（阻断）
+            - date / legal_term：无数值偏差可算，默认 low（警告）
+
+        Args:
+            item: 未核验的高风险信息项。
+            source_texts: 来源文档内容列表。
+
+        Returns:
+            (risk_level, deviation) 元组；deviation 仅 amount 有值。
+        """
+        if item.type != "amount":
+            return cls._DEFAULT_UNVERIFIED_LEVEL.get(item.type, "low"), None
+
+        answer_amount = cls._parse_amount(item.value)
+        if answer_amount is None:
+            return "high", None
+        answer_value, answer_unit = answer_amount
+
+        # 收集来源中所有同单位金额
+        source_values: list[float] = []
+        for source_text in source_texts:
+            for match in cls._AMOUNT_PATTERN.finditer(source_text):
+                parsed = cls._parse_amount(match.group(0))
+                if parsed is not None and parsed[1] == answer_unit:
+                    source_values.append(parsed[0])
+
+        if not source_values:
+            # 来源中无同单位金额 — 完全编造，最高风险
+            return "high", None
+
+        # 取相对偏差最小的来源值（偏差 = |答案值 - 来源值| / 来源值）
+        deviation = min(
+            abs(answer_value - src) / src for src in source_values if src > 0
+        ) if any(src > 0 for src in source_values) else 1.0
+
+        if deviation < cls._DEVIATION_LOW:
+            return "low", deviation
+        if deviation <= cls._DEVIATION_MEDIUM:
+            return "medium", deviation
+        return "high", deviation
+
+    @staticmethod
+    def _parse_amount(text: str) -> tuple[float, str] | None:
+        """从金额文本中解析 (数值, 单位)。
+
+        单位直接以原文匹配（元 ≠ 万元，不跨单位比较，避免误配）。
+
+        Args:
+            text: 金额文本（如 "50000元"、"100 USD"）。
+
+        Returns:
+            (数值, 单位) 或解析失败时 None。
+        """
+        match = re.search(
+            r"(\d[\d,]*(?:\.\d+)?)\s*"
+            r"(元|万元|亿元|美元|欧元|人民币|港币|日元|英镑|"
+            r"USD|EUR|CNY|RMB|JPY|GBP|HKD)",
+            text,
+            re.IGNORECASE,
+        )
+        if not match:
+            return None
+        try:
+            value = float(match.group(1).replace(",", ""))
+        except ValueError:
+            return None
+        return value, match.group(2).lower()
 
     @staticmethod
     def _find_source_snippet(

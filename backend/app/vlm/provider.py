@@ -58,6 +58,40 @@ class VisionProvider(ABC):
         """
         raise NotImplementedError
 
+    async def understand_structured(
+        self,
+        image: bytes,
+        image_type: str = "general",
+        mime_type: str = "image/png",
+    ) -> dict[str, Any]:
+        """结构化理解（P0-5）— JSON schema 输出 + 校验层 + prompt 路由。
+
+        按图片类型路由专用 prompt，统一要求 JSON 输出（状态枚举判定代替
+        自由生成）；解析后对数值字段做范围规则校验，越界标记
+        ``low_confidence``，由调用方决定降级处理（而非幻觉内容直接入库）。
+
+        基类默认实现：prompt 约束 + JSON 提取，对所有 Provider 生效，
+        无需子类改动（开闭原则）。
+
+        Args:
+            image: 图片二进制数据。
+            image_type: 图片类型（drawing / handwriting / chart / table /
+                scanned_text / whiteboard / general）。
+            mime_type: 图片 MIME 类型。
+
+        Returns:
+            StructuredImageResult.to_dict() 格式字典，含
+            status / description / tags / numbers / low_confidence / issues。
+        """
+        from app.vlm.structured import build_structured_prompt, parse_structured
+
+        raw = await self.understand(
+            image=image,
+            prompt=build_structured_prompt(image_type),
+            mime_type=mime_type,
+        )
+        return parse_structured(raw, image_type).to_dict()
+
 
 class AnthropicVisionProvider(VisionProvider):
     """SaaS 模式视觉处理 — 复用 LLM Provider 的原生多模态能力。

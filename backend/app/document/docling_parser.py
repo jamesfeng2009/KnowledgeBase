@@ -179,13 +179,21 @@ class DoclingParser(DocumentParser):
             enhanced_parts: list[str] = []
             for pic_info in pictures:
                 try:
-                    desc = await vlm.understand(
+                    # P0-5: 结构化输出 + 校验层 — 越界数值/非法输出标记
+                    # low_confidence，注入时显式标注待复核而非直接入库
+                    result_dict = await vlm.understand_structured(
                         image=pic_info["data"],
-                        prompt="请用一句话描述这张图片的内容，重点关注图表、数据和关键信息。",
+                        image_type="general",
                         mime_type=pic_info.get("mime_type", "image/png"),
                     )
+                    desc = result_dict.get("description") or ""
                     if desc:
-                        enhanced_parts.append(f"<p>[图片描述: {desc}]</p>")
+                        if result_dict.get("low_confidence"):
+                            enhanced_parts.append(
+                                f"<p>[图片描述（低置信度，待人工复核）: {desc}]</p>"
+                            )
+                        else:
+                            enhanced_parts.append(f"<p>[图片描述: {desc}]</p>")
                 except Exception as exc:
                     log.debug("docling.vlm_enhance_failed", error=str(exc))
 

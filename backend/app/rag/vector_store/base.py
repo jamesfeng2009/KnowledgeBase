@@ -67,6 +67,9 @@ class VectorStoreBase(ABC):
         chunks: list[Chunk],
         embeddings: list[list[float]],
         kb_id: str | None = None,
+        doc_updated_at: str | None = None,
+        effective_from: str | None = None,
+        effective_to: str | None = None,
     ) -> int:
         """批量写入（插入或更新）向量数据。
 
@@ -77,6 +80,10 @@ class VectorStoreBase(ABC):
             kb_id: 文档所属知识库 ID — 写入 ``kb_id`` 字段，
                 与检索端按知识库过滤（``terms: {kb_id: ...}``）对齐；
                 缺省时回退使用 chunk 携带的 kb_id。
+            doc_updated_at: 文档更新时间（ISO 格式）— 检索端 recency
+                平局裁决依据；缺省则不写入（该文档不参与新鲜度排序）。
+            effective_from: 文档生效时间（ISO 格式，规范类文档可选）。
+            effective_to: 文档失效时间（ISO 格式，规范类文档可选）。
 
         Returns:
             成功写入的向量数量。
@@ -141,9 +148,16 @@ class VectorStoreBase(ABC):
         kb_id: str | None = None,
         title: str | None = None,
         parent_id: str | None = None,
+        updated_at: Any = None,
+        effective_from: Any = None,
+        effective_to: Any = None,
     ) -> dict[str, Any]:
-        """格式化搜索结果为统一字典格式。"""
-        return {
+        """格式化搜索结果为统一字典格式。
+
+        ``updated_at`` / ``effective_from`` / ``effective_to`` 为检索层
+        recency 加权与生效窗口过滤字段，仅在写入侧提供时出现（向后兼容）。
+        """
+        result: dict[str, Any] = {
             "doc_id": doc_id,
             "chunk_id": chunk_id,
             "content": content,
@@ -153,6 +167,13 @@ class VectorStoreBase(ABC):
             "title": title,
             "parent_id": parent_id,
         }
+        if updated_at is not None:
+            result["updated_at"] = updated_at
+        if effective_from is not None:
+            result["effective_from"] = effective_from
+        if effective_to is not None:
+            result["effective_to"] = effective_to
+        return result
 
     @property
     def dimension(self) -> int:

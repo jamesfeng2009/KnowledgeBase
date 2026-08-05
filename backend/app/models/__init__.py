@@ -17,6 +17,7 @@ from app.models.comment import DocumentComment
 from app.models.conversation import Conversation, Message
 from app.models.feedback import Feedback
 from app.models.gap import KnowledgeGap
+from app.models.high_risk import HighRiskAuditRecord
 from app.models.knowledge import Document, DocumentVersion, KnowledgeBase
 from app.models.knowledge_compounding import (
     CompoundingTask,
@@ -75,6 +76,8 @@ __all__ = [
     "EntityEvent",
     # 知识缺口 ORM
     "KnowledgeGap",
+    # P1-8: 高风险拦截审计
+    "HighRiskAuditRecord",
     # Agent 配置与 API 密钥
     "AgentConfig",
     "ApiKey",

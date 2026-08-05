@@ -13,6 +13,8 @@ MCP 2026-07-28 StreamableHTTP 协议方法映射:
 |----------------------------------------|-------------|--------------------------|
 | tools/list                             | 请求→响应    | 列出可用工具               |
 | tools/call                             | 请求→响应    | 调用工具（同步或异步）       |
+| resources/list                         | 请求→响应    | 列出可用资源（含元数据）     |
+| resources/read                         | 请求→响应    | 读取指定资源内容            |
 | tasks/create                           | 请求→响应    | 创建长耗时任务              |
 | tasks/get                              | 请求→响应    | 查询任务状态               |
 | tasks/cancel                           | 请求→响应    | 取消任务                   |
@@ -51,6 +53,7 @@ TOOL_EXECUTION_ERROR = -32001
 TASK_NOT_FOUND = -32002
 TASK_ALREADY_TERMINAL = -32003
 AUTHENTICATION_ERROR = -32004
+RESOURCE_NOT_FOUND = -32005
 
 #: 错误消息映射
 _ERROR_MESSAGES: dict[int, str] = {
@@ -64,6 +67,7 @@ _ERROR_MESSAGES: dict[int, str] = {
     TASK_NOT_FOUND: "Task not found",
     TASK_ALREADY_TERMINAL: "Task already in terminal state",
     AUTHENTICATION_ERROR: "Authentication error",
+    RESOURCE_NOT_FOUND: "Resource not found",
 }
 
 
@@ -169,6 +173,10 @@ class JSONRPCResponse(Generic[T]):
 METHOD_TOOLS_LIST = "tools/list"
 METHOD_TOOLS_CALL = "tools/call"
 
+#: 资源方法
+METHOD_RESOURCES_LIST = "resources/list"
+METHOD_RESOURCES_READ = "resources/read"
+
 #: 任务方法
 METHOD_TASKS_CREATE = "tasks/create"
 METHOD_TASKS_GET = "tasks/get"
@@ -181,6 +189,8 @@ METHOD_NOTIFICATION_INITIALIZED = "notifications/initialized"
 SUPPORTED_MCP_METHODS: frozenset[str] = frozenset({
     METHOD_TOOLS_LIST,
     METHOD_TOOLS_CALL,
+    METHOD_RESOURCES_LIST,
+    METHOD_RESOURCES_READ,
     METHOD_TASKS_CREATE,
     METHOD_TASKS_GET,
     METHOD_TASKS_CANCEL,
@@ -352,6 +362,30 @@ def make_tools_call_params(
     return {
         "name": name,
         "arguments": arguments,
+    }
+
+
+# ======================================================================
+# 资源方法请求/响应类型
+# ======================================================================
+
+
+def make_resources_list_params() -> dict[str, Any]:
+    """构造 resources/list 请求参数。"""
+    return {}
+
+
+def make_resources_read_params(uri: str) -> dict[str, Any]:
+    """构造 resources/read 请求参数。
+
+    Args:
+        uri: 资源 URI（如 ``resource://skill/knowledge_search``）。
+
+    Returns:
+        符合 MCP 规范的请求参数字典。
+    """
+    return {
+        "uri": uri,
     }
 
 

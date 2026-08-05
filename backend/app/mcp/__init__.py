@@ -19,11 +19,19 @@ from app.mcp.protocol import (
     make_error_response,
     METHOD_TOOLS_LIST,
     METHOD_TOOLS_CALL,
+    METHOD_RESOURCES_LIST,
+    METHOD_RESOURCES_READ,
     METHOD_TASKS_GET,
     METHOD_TASKS_CREATE,
     METHOD_TASKS_CANCEL,
     METHOD_NOTIFICATION_INITIALIZED,
     SUPPORTED_MCP_METHODS,
+)
+from app.mcp.resources import (
+    Resource,
+    ResourceMetadata,
+    make_resource_uri,
+    parse_resource_uri,
 )
 from app.mcp.server import KnowledgeBaseMCPServer
 from app.mcp.streamable_http import StreamableHTTPTransport, sse_serialize
@@ -48,9 +56,15 @@ __all__ = [
     "make_error_response",
     "METHOD_TOOLS_LIST",
     "METHOD_TOOLS_CALL",
+    "METHOD_RESOURCES_LIST",
+    "METHOD_RESOURCES_READ",
     "METHOD_TASKS_GET",
     "METHOD_TASKS_CREATE",
     "METHOD_TASKS_CANCEL",
     "METHOD_NOTIFICATION_INITIALIZED",
     "SUPPORTED_MCP_METHODS",
+    "Resource",
+    "ResourceMetadata",
+    "make_resource_uri",
+    "parse_resource_uri",
 ]

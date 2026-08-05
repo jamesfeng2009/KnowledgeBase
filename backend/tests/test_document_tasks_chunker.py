@@ -242,7 +242,9 @@ class TestBuildIndexes:
         ) as mock_vec:
             await _build_indexes("doc-001", chunk_objects, chunks_text, embeddings)
             mock_os.assert_called_once_with("doc-001", chunk_objects, kb_id=None)
-            mock_vec.assert_called_once_with("doc-001", chunk_objects, embeddings, kb_id=None)
+            mock_vec.assert_called_once_with(
+                "doc-001", chunk_objects, embeddings, kb_id=None, doc=None
+            )
 
     @pytest.mark.asyncio
     async def test_build_opensearch_index_with_chunk_metadata(self) -> None:
@@ -312,7 +314,10 @@ class TestBuildIndexes:
             await _build_milvus_index("doc-001", chunk_objects, embeddings)
 
         # 验证 upsert 被调用且接收 Chunk 元数据
-        mock_store.upsert.assert_called_once_with("doc-001", chunk_objects, embeddings, kb_id=None)
+        mock_store.upsert.assert_called_once_with(
+            "doc-001", chunk_objects, embeddings, kb_id=None,
+            doc_updated_at=None, effective_from=None, effective_to=None,
+        )
 
     @pytest.mark.asyncio
     async def test_build_opensearch_skipped_when_not_installed(self) -> None:

@@ -15,6 +15,15 @@
 
 from __future__ import annotations
 
+from app.eval.compression_metrics import (
+    CompressionJudge,
+    ConsistencyResult,
+    DualFaithfulnessReport,
+    EntityRetentionReport,
+    compute_entity_retention,
+    compute_entity_retention_from_snapshot,
+    extract_key_entities,
+)
 from app.eval.dataset import EvalCase, EvalDataset
 from app.eval.ragas_metrics import RagasMetrics
 from app.eval.repository import EvalRepository, EvalResultRecord
@@ -42,4 +51,11 @@ __all__ = [
     "recall_at_k",
     "mrr",
     "ndcg",
+    "CompressionJudge",
+    "ConsistencyResult",
+    "DualFaithfulnessReport",
+    "EntityRetentionReport",
+    "compute_entity_retention",
+    "compute_entity_retention_from_snapshot",
+    "extract_key_entities",
 ]

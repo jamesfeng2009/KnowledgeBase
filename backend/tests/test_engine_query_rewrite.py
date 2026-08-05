@@ -85,6 +85,20 @@ class FailingQueryRewriter:
         raise RuntimeError("QueryRewriter failed")
 
 
+class FakePlanner:
+    """空计划 Planner — 不消耗 MultiResponseLLM 的有序响应。
+
+    P1-9 起 engine 会在决策循环前调用 planner.build_initial_plan，
+    真实 PlanManager 会消耗一次 LLM 响应，打乱本文件预设的
+    ["retrieve", "generate"] 序列；空计划时 engine 跳过全部 plan 逻辑。
+    """
+
+    max_replans: int = 2
+
+    async def build_initial_plan(self, query: str) -> list[dict[str, Any]]:
+        return []
+
+
 # ======================================================================
 # 辅助函数
 # ======================================================================
@@ -118,6 +132,7 @@ def _make_engine_with_retrieve(
         cache=None,
         max_iterations=5,
         query_rewriter=query_rewriter,
+        planner=FakePlanner(),
     )
     return engine, llm, retriever, reranker
 

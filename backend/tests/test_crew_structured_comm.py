@@ -61,9 +61,13 @@ class TestAggregateResults:
         data = json.loads(result)
         assert data["task_count"] == 3
         assert len(data["results"]) == 3
-        assert data["results"][0]["step"] == 1
-        assert data["results"][1]["step"] == 2
-        assert data["results"][2]["step"] == 3
+        # P1-9: 子任务结果采用 plan 步骤模式（step_id/action/status）
+        assert data["results"][0]["step_id"] == 1
+        assert data["results"][1]["step_id"] == 2
+        assert data["results"][2]["step_id"] == 3
+        assert data["results"][0]["action"] == "retrieve"
+        assert data["results"][1]["action"] == "tool_call"
+        assert data["results"][0]["status"] == "done"
 
     def test_structured_output_contains_summary(self) -> None:
         """结构化结果包含原始输出的摘要。"""

@@ -24,13 +24,89 @@ from __future__ import annotations
 
 import hashlib
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any
 
 from app.llm.base import LLMProvider, Message
 from app.utils.logger import get_logger
 
 log = get_logger(__name__)
+
+
+# ======================================================================
+# P1-10: Query 类型分类（规则式，零 LLM 调用）
+# ======================================================================
+
+
+class QueryType(str, Enum):
+    """查询类型 — 决定路由到哪些改写策略。
+
+    - SINGLE: 单意图明确查询 → rewrite + expansion（精确化 + 扩召回面）
+    - MULTI: 多意图/复合查询 → rewrite + decomposition（拆子查询分别检索）
+    - VAGUE: 模糊/语义不清查询 → rewrite + hyde（假设文档承载语义）
+    """
+
+    SINGLE = "single"
+    MULTI = "multi"
+    VAGUE = "vague"
+
+
+# 强多意图标记 — 命中 1 个即判定复合查询
+_MULTI_STRONG_MARKERS: tuple[str, ...] = (
+    "以及", "同时", "还要", "另外", "然后", "并且", "；", ";",
+)
+# 弱多意图标记 — 需配合长度阈值（短查询中"和/与/并"多为词组内连接）
+_MULTI_WEAK_MARKERS: tuple[str, ...] = ("和", "与", "并", "再")
+# 模糊查询标记 — 指示代词/泛化动词，语义需假设文档承载
+_VAGUE_MARKERS: tuple[str, ...] = (
+    "这个", "那个", "怎么办", "怎么处理", "怎么弄", "如何办", "咋办", "啥",
+)
+# 弱标记触发多意图所需的最小查询长度（字符数）
+_MULTI_WEAK_MIN_LEN: int = 12
+
+# 策略路由表 — QueryType → 策略名列表（与配置开关取交集后执行）
+_STRATEGY_ROUTE_TABLE: dict[QueryType, list[str]] = {
+    QueryType.SINGLE: ["rewrite", "expansion"],
+    QueryType.MULTI: ["rewrite", "decomposition"],
+    QueryType.VAGUE: ["rewrite", "hyde"],
+}
+
+
+def classify_query_type(query: str) -> QueryType:
+    """规则式查询分类 — 零 LLM 调用，毫秒级。
+
+    判定顺序：vague → multi → single（模糊优先，语义承载比拆分更关键）。
+
+    Args:
+        query: 用户原始查询
+
+    Returns:
+        QueryType 分类结果
+    """
+    # 1. 模糊查询 — 含指示代词/泛化动词
+    if any(marker in query for marker in _VAGUE_MARKERS):
+        return QueryType.VAGUE
+
+    # 2. 多意图 — 强标记命中 / 多个问号 / 弱标记 + 长度阈值
+    if any(marker in query for marker in _MULTI_STRONG_MARKERS):
+        return QueryType.MULTI
+    if query.count("?") + query.count("？") >= 2:
+        return QueryType.MULTI
+    weak_hits = sum(1 for marker in _MULTI_WEAK_MARKERS if marker in query)
+    if weak_hits >= 2:
+        return QueryType.MULTI
+    if weak_hits >= 1 and len(query) >= _MULTI_WEAK_MIN_LEN:
+        return QueryType.MULTI
+
+    # 3. 兜底 — 单意图
+    return QueryType.SINGLE
+
+
+# 召回质量评估器类型 — 接收查询文本，返回召回质量分（越高越好）。
+# 由 engine 侧注入（封装 retriever.search 小 top_k 双跑）。
+RecallEvaluator = Callable[[str], Awaitable[float]]
 
 
 # ======================================================================
@@ -51,6 +127,11 @@ class QueryRewriteResult:
         strategy: 实际使用的策略名称列表
         latency_ms: 总耗时（毫秒）
         cache_hit: 是否命中缓存
+        query_type: P1-10 规则分类结果（single/multi/vague），未启用自动路由时为 None
+        recall_original: P1-10 在线回退 — 原查询召回质量分（未评估为 None）
+        recall_rewritten: P1-10 在线回退 — 改写后召回质量分（未评估为 None）
+        fallback_to_original: P1-10 在线回退 — 改写后召回更差时为 True，
+            此时 get_search_query() 返回原始查询
     """
 
     original: str
@@ -61,16 +142,23 @@ class QueryRewriteResult:
     strategy: list[str] = field(default_factory=list)
     latency_ms: float = 0.0
     cache_hit: bool = False
+    query_type: str | None = None
+    recall_original: float | None = None
+    recall_rewritten: float | None = None
+    fallback_to_original: bool = False
 
     def get_search_query(self) -> str:
         """获取用于向量检索的查询文本。
 
-        优先使用 HyDE 文档（语义更丰富），其次使用重写后的查询，
+        P1-10 在线回退优先：双跑对比判定改写后召回更差时，直接返回原始查询。
+        否则优先使用 HyDE 文档（语义更丰富），其次使用重写后的查询，
         最后回退到原始查询。
 
         Returns:
             检索用查询文本
         """
+        if self.fallback_to_original:
+            return self.original
         if self.hyde_document:
             return self.hyde_document
         if self.rewritten:
@@ -105,6 +193,10 @@ class QueryRewriteResult:
             "strategy": self.strategy,
             "latency_ms": self.latency_ms,
             "cache_hit": self.cache_hit,
+            "query_type": self.query_type,
+            "recall_original": self.recall_original,
+            "recall_rewritten": self.recall_rewritten,
+            "fallback_to_original": self.fallback_to_original,
             "search_query": self.get_search_query(),
         }
 
@@ -191,6 +283,9 @@ class QueryRewriter:
         enable_decomposition: bool = False,
         enable_hyde: bool = False,
         cache_size: int = 128,
+        auto_route: bool = False,
+        enable_online_fallback: bool = False,
+        fallback_margin: float = 0.0,
     ) -> None:
         """初始化查询重写器。
 
@@ -201,12 +296,22 @@ class QueryRewriter:
             enable_decomposition: 启用查询分解
             enable_hyde: 启用 HyDE 假设文档
             cache_size: LRU 缓存大小
+            auto_route: P1-10 按 query 类型自动路由策略（规则分类，零 LLM）。
+                False 时保持原行为（执行全部配置启用的策略）。
+            enable_online_fallback: P1-10 在线回退开关 — 仅作为 engine 侧
+                是否注入召回评估器的标记，rewrite() 本身以 recall_evaluator
+                是否传入为准。
+            fallback_margin: P1-10 回退判定余量 — 改写后召回分低于
+                原查询召回分减去该余量时才回退（避免噪声抖动）。
         """
         self._llm = llm
         self._enable_rewrite = enable_rewrite
         self._enable_expansion = enable_expansion
         self._enable_decomposition = enable_decomposition
         self._enable_hyde = enable_hyde
+        self.auto_route = auto_route
+        self.enable_online_fallback = enable_online_fallback
+        self._fallback_margin = fallback_margin
 
         # 内存缓存 — key: hash(query+context), value: QueryRewriteResult
         self._cache: dict[str, QueryRewriteResult] = {}
@@ -257,14 +362,67 @@ class QueryRewriter:
                 chunks.append(chunk)
         return "".join(chunks).strip()
 
-    async def rewrite(self, query: str, context: str = "") -> QueryRewriteResult:
+    def _resolve_strategies(self, query: str) -> tuple[set[str], QueryType | None]:
+        """解析本次查询实际执行的策略集合。
+
+        auto_route 开启时按规则分类路由（与配置开关取交集，配置仍是总闸）；
+        关闭时返回全部配置启用的策略（保持原行为）。
+        P2-12 降级模式：DEGRADE_MODE_ENABLED 开启时移除高成本策略
+        （hyde / decomposition），保留 rewrite / expansion 保核心链路。
+
+        Args:
+            query: 用户原始查询
+
+        Returns:
+            (策略名集合, 分类结果或 None)
+        """
+        enabled: dict[str, bool] = {
+            "rewrite": self._enable_rewrite,
+            "expansion": self._enable_expansion,
+            "decomposition": self._enable_decomposition,
+            "hyde": self._enable_hyde,
+        }
+
+        # P2-12: 降级模式 — 动态读取配置（支持运行时切换），
+        # 高负载时关闭 HyDE / QueryDecomposition 两个高成本 LLM 策略
+        try:
+            from app.config import get_settings
+
+            if get_settings().DEGRADE_MODE_ENABLED:
+                enabled["hyde"] = False
+                enabled["decomposition"] = False
+        except Exception:
+            pass  # 配置不可用时保持原样，不阻断主链路
+
+        if not self.auto_route:
+            return {name for name, on in enabled.items() if on}, None
+
+        query_type = classify_query_type(query)
+        routed = set(_STRATEGY_ROUTE_TABLE[query_type])
+        strategies = {name for name in routed if enabled.get(name, False)}
+        # 路由结果为空（目标策略全被配置禁用）— 回退到配置启用集合，保证有策略执行
+        if not strategies:
+            strategies = {name for name, on in enabled.items() if on}
+        return strategies, query_type
+
+    async def rewrite(
+        self,
+        query: str,
+        context: str = "",
+        recall_evaluator: RecallEvaluator | None = None,
+    ) -> QueryRewriteResult:
         """重写查询 — 主入口，编排所有启用的策略。
 
         幂等性：同一 (query, context) 输入返回缓存结果，不重复调用 LLM。
+        P1-10：auto_route 开启时按 query 类型路由策略；recall_evaluator
+        传入时对改写结果做双跑对比，召回更差则回退原查询（判定结果随
+        缓存复用，同一查询只双跑一次，控成本）。
 
         Args:
             query: 用户原始查询
             context: 可选上下文（如对话历史摘要）
+            recall_evaluator: 可选召回质量评估器（engine 注入，封装小
+                top_k 检索双跑）；None 时跳过在线回退评估
 
         Returns:
             QueryRewriteResult 重写结果
@@ -285,8 +443,13 @@ class QueryRewriter:
         result = QueryRewriteResult(original=query)
         strategy: list[str] = []
 
+        # P1-10: 解析本次实际执行的策略（自动路由或全量配置）
+        active, query_type = self._resolve_strategies(query)
+        if query_type is not None:
+            result.query_type = query_type.value
+
         # 2a. 查询重写
-        if self._enable_rewrite:
+        if "rewrite" in active:
             try:
                 rewritten = await self._do_rewrite(query, context)
                 if rewritten and rewritten != query:
@@ -305,7 +468,7 @@ class QueryRewriter:
                 )
 
         # 2b. 查询扩展
-        if self._enable_expansion:
+        if "expansion" in active:
             try:
                 terms = await self._do_expansion(query)
                 if terms:
@@ -324,7 +487,7 @@ class QueryRewriter:
                 )
 
         # 2c. 查询分解
-        if self._enable_decomposition:
+        if "decomposition" in active:
             try:
                 sub_queries = await self._do_decomposition(query)
                 if sub_queries:
@@ -342,7 +505,7 @@ class QueryRewriter:
                 )
 
         # 2d. HyDE 假设文档
-        if self._enable_hyde:
+        if "hyde" in active:
             try:
                 hyde_doc = await self._do_hyde(query, context)
                 if hyde_doc:
@@ -359,10 +522,33 @@ class QueryRewriter:
                     query=query[:100],
                 )
 
+        # 2e. P1-10: 在线回退 — 双跑对比改写前后召回质量
+        if recall_evaluator is not None and result.get_search_query() != query:
+            try:
+                original_score = await recall_evaluator(query)
+                rewritten_score = await recall_evaluator(result.get_search_query())
+                result.recall_original = original_score
+                result.recall_rewritten = rewritten_score
+                if rewritten_score < original_score - self._fallback_margin:
+                    result.fallback_to_original = True
+                    log.info(
+                        "query_rewriter.online_fallback",
+                        query=query[:100],
+                        recall_original=original_score,
+                        recall_rewritten=rewritten_score,
+                    )
+            except Exception as exc:
+                # 评估失败不影响主链路 — 保持改写结果
+                log.warning(
+                    "query_rewriter.fallback_eval_failed",
+                    error=str(exc),
+                    query=query[:100],
+                )
+
         result.strategy = strategy
         result.latency_ms = round((time.monotonic() - t0) * 1000, 2)
 
-        # 3. 缓存结果
+        # 3. 缓存结果（含在线回退判定 — 同一查询只双跑一次）
         result.cache_hit = False
         self._set_cached(cache_key, result)
 
@@ -371,10 +557,12 @@ class QueryRewriter:
             query=query[:100],
             strategy=strategy,
             latency_ms=result.latency_ms,
+            query_type=result.query_type,
             has_rewritten=bool(result.rewritten),
             has_expanded=bool(result.expanded_terms),
             has_sub_queries=bool(result.sub_queries),
             has_hyde=bool(result.hyde_document),
+            fallback_to_original=result.fallback_to_original,
         )
 
         return result
@@ -476,6 +664,11 @@ def get_query_rewriter() -> QueryRewriter | None:
             enable_expansion=settings.QUERY_EXPANSION_ENABLED,
             enable_decomposition=settings.QUERY_DECOMPOSITION_ENABLED,
             enable_hyde=settings.HYDE_ENABLED,
+            auto_route=getattr(settings, "QUERY_REWRITE_AUTO_ROUTE", False),
+            enable_online_fallback=getattr(
+                settings, "QUERY_REWRITE_ONLINE_FALLBACK", False
+            ),
+            fallback_margin=getattr(settings, "QUERY_REWRITE_FALLBACK_MARGIN", 0.0),
         )
         log.info(
             "query_rewriter.initialized",
@@ -483,6 +676,8 @@ def get_query_rewriter() -> QueryRewriter | None:
             expansion=settings.QUERY_EXPANSION_ENABLED,
             decomposition=settings.QUERY_DECOMPOSITION_ENABLED,
             hyde=settings.HYDE_ENABLED,
+            auto_route=_query_rewriter.auto_route,
+            online_fallback=_query_rewriter.enable_online_fallback,
         )
         return _query_rewriter
     except Exception as exc:

@@ -187,8 +187,11 @@ class KnowledgeBaseCrew:
         """将 CrewAI 的原始输出汇总为结构化结果。
 
         防传话游戏：将自然语言输出解析为结构化 JSON，避免下游转述失真。
+        P1-9 对齐：子任务结果采用 plan 步骤模式（step_id/action/description/status）。
         """
         import json as _json
+
+        from app.agents.planner import STEP_DONE, map_task_type_to_action
 
         structured = {
             "original_query": sub_tasks[0].get("original_query", "") if sub_tasks else "",
@@ -199,11 +202,12 @@ class KnowledgeBaseCrew:
 
         for i, sub in enumerate(sub_tasks):
             structured["results"].append({
-                "step": i + 1,
+                "step_id": i + 1,
+                "action": map_task_type_to_action(sub.get("type", "")),
                 "type": sub.get("type", "unknown"),
                 "description": sub.get("description", ""),
                 "expected_output": sub.get("expected_output", ""),
-                "status": "completed",
+                "status": STEP_DONE,
             })
 
         try:

@@ -782,6 +782,7 @@ async def _build_index_async(
 ) -> dict[str, Any]:
     """chord 支线 A — 向量化 + 索引构建。"""
     warnings: list[str] = []
+    doc: Any = None  # 两个 try 块均失败时保持 None（recency 字段跳过写入）
     try:
         emb = await _generate_embeddings(chunks)
         logger.info("document.embedded", doc_id=doc_id, embedding_count=len(emb))
@@ -825,6 +826,7 @@ async def _build_index_async(
         await _build_indexes(
             doc_id, chunk_objects, chunks, emb, kb_id=kb_id,
             images=extracted_images if extracted_images else None,
+            doc=doc,
         )
     except Exception as exc:
         logger.warning("document.index_failed", doc_id=doc_id, error=str(exc))
@@ -1153,6 +1155,7 @@ async def _process_document_async(doc_id: str) -> dict[str, Any]:
                     doc_id, chunk_objects, chunks, emb,
                     kb_id=str(doc.kb_id) if doc.kb_id else None,
                     images=extracted_images if extracted_images else None,
+                    doc=doc,
                 )
             except Exception as exc:
                 logger.warning("document.index_failed", doc_id=doc_id, error=str(exc))
@@ -2179,6 +2182,7 @@ async def _build_indexes(
     embeddings: list[list[float]],
     kb_id: str | None = None,
     images: list[tuple[bytes, str]] | None = None,
+    doc: Any = None,
 ) -> None:
     """构建全文索引和向量索引 — 延迟导入。
 
@@ -2192,6 +2196,7 @@ async def _build_indexes(
         kb_id: 文档所属知识库 ID — 写入索引供检索端按知识库过滤。
         images: P2-Step3 图片数据列表 [(二进制, VLM描述), ...] —
             CROSS_MODAL_ENABLED 时向量化入库，实现跨模态检索。
+        doc: Document 对象 — P0-4 提取 updated_at / 生效窗口写入向量索引。
     """
     # 构建全文索引（OpenSearch）— 传入 Chunk 元数据
     try:
@@ -2201,7 +2206,9 @@ async def _build_indexes(
 
     # 构建向量索引（通过 VectorStoreBase 适配器，默认 OpenSearch k-NN，可选 Milvus）
     try:
-        await _build_vector_index(doc_id, chunk_objects, embeddings, kb_id=kb_id)
+        await _build_vector_index(
+            doc_id, chunk_objects, embeddings, kb_id=kb_id, doc=doc
+        )
     except Exception as exc:
         logger.warning("vector.index_failed", doc_id=doc_id, error=str(exc))
 
@@ -2395,6 +2402,7 @@ async def _build_vector_index(
     chunk_objects: list[Chunk],
     embeddings: list[list[float]],
     kb_id: str | None = None,
+    doc: Any = None,
 ) -> int:
     """构建向量索引 — 通过 VectorStoreBase 适配器写入向量数据。
 
@@ -2409,6 +2417,8 @@ async def _build_vector_index(
         chunk_objects: Chunk 对象列表（含元数据）。
         embeddings: 向量嵌入列表。
         kb_id: 文档所属知识库 ID — 写入向量库供检索端按知识库过滤。
+        doc: Document 对象 — 提取 updated_at / effective_from / effective_to
+            写入向量索引（P0-4 recency 加权 + 生效窗口过滤）。
 
     Returns:
         成功写入的向量数量。
@@ -2420,8 +2430,24 @@ async def _build_vector_index(
     try:
         from app.rag.vector_store import get_vector_store
 
+        # P0-4: recency 字段（ISO 格式；缺失时为 None，向量库跳过写入）
+        def _iso(value: Any) -> str | None:
+            return value.isoformat() if value is not None else None
+
+        doc_updated_at = _iso(getattr(doc, "updated_at", None)) if doc else None
+        effective_from = _iso(getattr(doc, "effective_from", None)) if doc else None
+        effective_to = _iso(getattr(doc, "effective_to", None)) if doc else None
+
         store = get_vector_store()
-        count = await store.upsert(doc_id, chunk_objects, embeddings, kb_id=kb_id)
+        count = await store.upsert(
+            doc_id,
+            chunk_objects,
+            embeddings,
+            kb_id=kb_id,
+            doc_updated_at=doc_updated_at,
+            effective_from=effective_from,
+            effective_to=effective_to,
+        )
         logger.info(
             "vector.indexed",
             doc_id=doc_id,

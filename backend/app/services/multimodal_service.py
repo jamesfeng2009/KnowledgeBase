@@ -81,6 +81,55 @@ class MultimodalService:
         )
         return {"description": description, "tags": tags}
 
+    async def process_image_typed(
+        self,
+        image: bytes,
+        image_type: str = "general",
+        mime_type: str = "image/png",
+    ) -> dict[str, Any]:
+        """图片类型化结构化解析（P0-5）— prompt 路由 + 校验层。
+
+        按图片类型（图纸/手写批注/数据图表等）路由专用 prompt，
+        VLM 输出 JSON schema；校验层对数值字段做范围规则校验，
+        越界/非法输出标记 ``low_confidence``，调用方据此降级
+        （如标记待人工复核），避免幻觉内容直接入库。
+
+        Args:
+            image: 图片二进制数据。
+            image_type: 图片类型（drawing / handwriting / chart / table /
+                scanned_text / whiteboard / general）。
+            mime_type: 图片 MIME 类型。
+
+        Returns:
+            {"status", "description", "tags", "numbers",
+             "low_confidence", "issues"}
+        """
+        try:
+            result = await self.vlm.understand_structured(
+                image=image, image_type=image_type, mime_type=mime_type
+            )
+        except Exception as exc:
+            logger.warning(
+                "multimodal.typed_vlm_failed", image_type=image_type, error=str(exc)
+            )
+            return {
+                "status": "error",
+                "description": f"[图像处理失败: {exc}]",
+                "tags": [],
+                "numbers": [],
+                "low_confidence": True,
+                "issues": [f"VLM 调用异常: {exc}"],
+            }
+
+        logger.info(
+            "multimodal.typed_image_processed",
+            image_type=image_type,
+            status=result.get("status"),
+            low_confidence=result.get("low_confidence"),
+            issues=result.get("issues"),
+        )
+        return result
+
     async def process_table(
         self,
         image: bytes,

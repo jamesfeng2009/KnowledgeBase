@@ -230,3 +230,125 @@ class TestVerifyAgainstSources:
         assert d["value"] == "50000元"
         assert d["verified"] is True
         assert d["source_snippet"] == "金额为 50000元 已确认"
+
+
+class TestThreeTierRiskLevel:
+    """P1-8 三档分级测试 — 按金额偏差幅度分 low/medium/high。"""
+
+    def test_deviation_below_1pct_is_low_warn(self) -> None:
+        """偏差 <1% → low，整体动作 warn。"""
+        detector = HighRiskDetector()
+        answer = "报销上限 5040元"  # 偏差 40/5000 = 0.8%
+        sources = [{"content": "报销上限为 5000元"}]
+
+        result = detector.verify_against_sources(answer, sources)
+
+        assert result.action == "warn"
+        amount = next(i for i in result.items if i.type == "amount")
+        assert amount.risk_level == "low"
+        assert amount.deviation is not None
+        assert amount.deviation < 0.01
+        assert result.max_risk_level == "low"
+
+    def test_deviation_1_to_10pct_is_medium_confirm(self) -> None:
+        """偏差 1%-10% → medium，整体动作 confirm。"""
+        detector = HighRiskDetector()
+        answer = "报销上限 5250元"  # 偏差 250/5000 = 5%
+        sources = [{"content": "报销上限为 5000元"}]
+
+        result = detector.verify_against_sources(answer, sources)
+
+        assert result.action == "confirm"
+        amount = next(i for i in result.items if i.type == "amount")
+        assert amount.risk_level == "medium"
+        assert 0.01 <= amount.deviation <= 0.10
+        assert result.max_risk_level == "medium"
+
+    def test_deviation_above_10pct_is_high_block(self) -> None:
+        """偏差 >10% → high，整体动作 block。"""
+        detector = HighRiskDetector()
+        answer = "报销上限 6000元"  # 偏差 1000/5000 = 20%
+        sources = [{"content": "报销上限为 5000元"}]
+
+        result = detector.verify_against_sources(answer, sources)
+
+        assert result.action == "block"
+        amount = next(i for i in result.items if i.type == "amount")
+        assert amount.risk_level == "high"
+        assert amount.deviation > 0.10
+
+    def test_no_comparable_source_amount_is_high(self) -> None:
+        """来源中无同单位金额 → 完全编造 → high → block。"""
+        detector = HighRiskDetector()
+        answer = "合同金额 88888元"
+        sources = [{"content": "本合同规定了双方的权利义务"}]  # 无金额
+
+        result = detector.verify_against_sources(answer, sources)
+
+        assert result.action == "block"
+        amount = next(i for i in result.items if i.type == "amount")
+        assert amount.risk_level == "high"
+        assert amount.deviation is None
+
+    def test_unit_mismatch_not_cross_compared(self) -> None:
+        """万元 ≠ 元 — 不跨单位比较，无同单位来源 → high。"""
+        detector = HighRiskDetector()
+        answer = "合同金额 5万元"
+        sources = [{"content": "合同金额为 50000元"}]  # 数值等价但单位不同
+
+        result = detector.verify_against_sources(answer, sources)
+
+        amount = next(i for i in result.items if i.type == "amount")
+        # 精确串匹配不上（5万元 vs 50000元）→ 未核验；单位不同 → high
+        assert not amount.verified
+        assert amount.risk_level == "high"
+
+    def test_unverified_date_defaults_low(self) -> None:
+        """未核验日期 → 默认 low → warn。"""
+        detector = HighRiskDetector()
+        answer = "签订日期 2099-12-31"
+        sources = [{"content": "合同相关说明"}]
+
+        result = detector.verify_against_sources(answer, sources)
+
+        assert result.action == "warn"
+        date_item = next(i for i in result.items if i.type == "date")
+        assert date_item.risk_level == "low"
+        assert date_item.deviation is None
+
+    def test_verified_item_has_no_risk_level(self) -> None:
+        """已核验项不参与分级，risk_level 为空串。"""
+        detector = HighRiskDetector()
+        answer = "金额 50000元"
+        sources = [{"content": "金额为 50000元"}]
+
+        result = detector.verify_against_sources(answer, sources)
+
+        assert result.action == "pass"
+        assert all(i.risk_level == "" for i in result.items)
+        assert result.max_risk_level == ""
+
+    def test_medium_does_not_escalate_to_block(self) -> None:
+        """仅 medium 时动作是 confirm 而非 block。"""
+        detector = HighRiskDetector()
+        answer = "金额 5200元，日期 2024-01-15"
+        sources = [{"content": "金额 5000元，日期 2024-01-15"}]
+
+        result = detector.verify_against_sources(answer, sources)
+
+        # 金额偏差 4% → medium；日期精确匹配 → verified
+        assert result.action == "confirm"
+        assert result.max_risk_level == "medium"
+
+    def test_item_to_dict_includes_level(self) -> None:
+        """to_dict 包含 risk_level 与 deviation。"""
+        detector = HighRiskDetector()
+        result = detector.verify_against_sources(
+            "报销上限 6000元", [{"content": "报销上限为 5000元"}]
+        )
+        d = result.to_dict()
+        assert "max_risk_level" in d
+        assert d["max_risk_level"] == "high"
+        amount_dict = next(i for i in d["items"] if i["type"] == "amount")
+        assert amount_dict["risk_level"] == "high"
+        assert amount_dict["deviation"] is not None

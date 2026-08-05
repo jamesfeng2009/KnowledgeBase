@@ -202,6 +202,13 @@ class Settings(BaseSettings):
     SKILL_MATCH_THRESHOLD: int = 5
     # 单次最多加载的技能数 — 防止过多工具淹没 LLM 上下文
     SKILL_MAX_LOADED: int = 10
+    # P0-1: 向量召回通道 — 技能描述预计算 embedding，与关键词分数融合排序，
+    # 补齐关键词语义盲区（"报销怎么走" → "费用审批流程"）；embedder 不可用时自动退化
+    SKILL_VECTOR_RECALL_ENABLED: bool = True
+    # 向量通道相似度阈值 — 低于此值不产生加分，防止语义噪声召回
+    SKILL_VECTOR_SIM_THRESHOLD: float = 0.4
+    # 向量通道权重 — 余弦相似度 × 此值折算加分（对齐 name 命中权重 +10）
+    SKILL_VECTOR_WEIGHT: float = 10.0
 
     # === API 限流 ===
     RATE_LIMIT_ENABLED: bool = True
@@ -213,6 +220,9 @@ class Settings(BaseSettings):
     RAG_RETRIEVE_TOP_K: int = 20
     RAG_RERANK_TOP_K: int = 5
     RAG_MAX_ITERATIONS: int = 5
+    # Agent Loop 超时分级（P1-7）— 单步骤超时与总任务超时分开管理
+    AGENT_STEP_TIMEOUT_SECONDS: float = 60.0  # think/retrieve 单步骤超时
+    AGENT_TOTAL_TIMEOUT_SECONDS: float = 300.0  # Agent Loop 决策循环总超时
     # 检索质量守卫 — 重排分数均值低于阈值时扩展 top_k 重排
     RAG_QUALITY_GUARD_ENABLED: bool = True
     RAG_RETRIEVAL_SCORE_THRESHOLD: float = 0.3
@@ -230,6 +240,12 @@ class Settings(BaseSettings):
     RAG_THRESHOLD_FREQ_TTL: int = 86400  # 频次统计窗口（秒，默认 24h）
     RAG_THRESHOLD_MIN: float = 0.1  # 动态阈值下限
     RAG_THRESHOLD_MAX: float = 0.6  # 动态阈值上限
+
+    # === 检索时间新鲜度（recency）===
+    # 新旧规范冲突场景：分数相近时新版本优先 + 生效窗口硬过滤
+    RECENCY_BOOST_ENABLED: bool = True  # 重排后对平局组按 updated_at 裁决
+    RECENCY_TIE_BAND: float = 0.02  # 平局带宽：分差 <= 此值视为同分
+    RECENCY_HALF_LIFE_DAYS: float = 180.0  # 新鲜度半衰期（天，用于可观测标注）
 
     # === P4 实时对话智能 ===
     # P4-A: 漂移检测
@@ -349,6 +365,17 @@ class Settings(BaseSettings):
     QUERY_EXPANSION_ENABLED: bool = True  # 查询扩展（同义词/相关词）
     QUERY_DECOMPOSITION_ENABLED: bool = False  # 查询分解（复杂查询拆子查询）
     HYDE_ENABLED: bool = False  # HyDE 假设文档生成
+    # === P1-10 改写策略自动路由 + 在线回退 ===
+    QUERY_REWRITE_AUTO_ROUTE: bool = False  # 按 query 类型自动路由策略（规则分类，零 LLM）
+    QUERY_REWRITE_ONLINE_FALLBACK: bool = False  # 改写后双跑对比召回，更差则回退原 query
+    QUERY_REWRITE_FALLBACK_MARGIN: float = 0.0  # 回退判定余量（防噪声抖动）
+    # === P2-12 请求队列 + 配置化降级 ===
+    RATE_LIMIT_QUEUE_ENABLED: bool = True  # 429 前短队列缓冲（返回预计等待时间）
+    RATE_LIMIT_QUEUE_MAX_WAIT_MS: int = 2000  # 允许排队的最大预计等待毫秒数
+    RATE_LIMIT_QUEUE_MAX_QUEUED: int = 20  # 全局同时排队请求数上限
+    DEGRADE_MODE_ENABLED: bool = False  # 降级模式：高负载时关闭 HyDE/QueryDecomposition 保核心链路
+    # === P2-13 长任务里程碑 + 超时分级 ===
+    TASK_STEP_TIMEOUT_SECONDS: int = 300  # Celery 长任务单阶段超时（总超时由 task_time_limit 控制）
 
     # === P3 缓存容量上限 ===
     CACHE_L2_MAX_SIZE: int = 1000  # L2 语义缓存（进程内存）最大条目数，超容逐出最旧（LRU）
@@ -441,6 +468,8 @@ class Settings(BaseSettings):
         "CIRCUIT_BREAKER_RECOVERY_TIMEOUT",
         "RAG_THRESHOLD_HOT_BOOST",
         "RAG_THRESHOLD_COLD_DROP",
+        "AGENT_STEP_TIMEOUT_SECONDS",
+        "AGENT_TOTAL_TIMEOUT_SECONDS",
     )
     @classmethod
     def validate_positive_float(cls, v: float) -> float:

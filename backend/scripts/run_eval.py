@@ -240,6 +240,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="将本次评测结果设为该数据集的回归基线",
     )
+    parser.add_argument(
+        "--max-iterations",
+        type=int,
+        default=5,
+        help="Agent Loop 最大迭代次数（默认 5，最小 1），用于多轮任务级评估",
+    )
     return parser.parse_args(argv)
 
 
@@ -292,7 +298,12 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     # 4. 运行评测
-    runner = EvalRunner(engine=engine, judge_service=judge, ragas_metrics=ragas)
+    runner = EvalRunner(
+        engine=engine,
+        judge_service=judge,
+        ragas_metrics=ragas,
+        max_iterations=args.max_iterations,
+    )
     result = asyncio.run(
         runner.run(dataset, kb_ids=kb_ids, with_generation=with_generation)
     )

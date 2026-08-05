@@ -29,6 +29,7 @@ Agentic RAG 主引擎 — 单一职责：编排 think → retrieve/tool_call →
 
 from __future__ import annotations
 
+import asyncio
 import contextvars
 import json
 import time
@@ -44,6 +45,7 @@ from app.rag.context_budget import ContextBudgetManager
 from app.rag.context_dedup import CrossTurnDeduplicator
 from app.rag.generator import Generator
 from app.rag.tool_guard import DangerousToolGuard
+from app.observability.trail_aggregator import get_trail_aggregator
 from app.utils.request_context import get_request_id
 from app.rag.reranker import RerankerBase
 from app.rag.retriever import HybridRetriever
@@ -92,6 +94,8 @@ _DEFAULT_MAX_ITERATIONS: int = 5
 _RERANK_TOP_K: int = 5
 # 检索默认 top_k
 _RETRIEVE_TOP_K: int = 20
+# P1-10: 在线回退双跑评估的召回 top_k（小样本对比，控成本）
+_FALLBACK_EVAL_TOP_K: int = 5
 
 # P0-Opt2: 稳定 system prompt — 不含动态内容（迭代计数/文档数/工具数），
 # 使前缀字节稳定以命中 Anthropic KV Cache。
@@ -174,6 +178,11 @@ class AgentState(TypedDict, total=False):
     _decision: str
     # generate 节点产出的逐 token 片段，供 answer_with_graph 流式回放。
     _stream_tokens: list[str]
+    # P1-9: 显式计划状态清单 — [{step_id, action, description, status}]
+    # status: pending / done / skipped（app.agents.planner 常量）
+    plan_steps: list[dict[str, Any]]
+    # P1-9: 本会话已发生的重规划次数（上限由 PlanManager.max_replans 控制）
+    replan_count: int
 
 
 class AgenticRAGEngine:
@@ -217,6 +226,7 @@ class AgenticRAGEngine:
         quality_guard: Any = None,
         query_rewriter: Any = None,
         faq_matcher: Any = None,
+        planner: Any = None,
     ) -> None:
         self.llm = llm
         self.mcp = mcp_client
@@ -283,6 +293,18 @@ class AgenticRAGEngine:
                 log.warning("engine.query_rewriter_init_failed", error=str(exc))
                 self._query_rewriter = None
 
+        # P1-9: 显式计划管理器 — plan 状态清单 + 偏离检测 + 仅重规划剩余
+        # 传入时直接使用（测试注入），未传入时用同一 LLM 创建
+        self._planner: Any = planner
+        if self._planner is None:
+            try:
+                from app.agents.planner import PlanManager
+
+                self._planner = PlanManager(llm)
+            except Exception as exc:
+                log.warning("engine.planner_init_failed", error=str(exc))
+                self._planner = None
+
         # Find Skills 渐进式技能加载 — 按需加载工具 schema，避免全量加载浪费 token
         # 启动时从 MCP Server 构建轻量技能索引，Agent Loop 每轮按查询匹配相关技能
         self._skill_finder: Any = None
@@ -305,6 +327,20 @@ class AgenticRAGEngine:
             log.warning("engine.skill_finder_init_failed", error=str(exc))
             self._skill_finder = None
             self._skill_registry = None
+
+        # P1-7: Agent Loop 超时分级 — 单步骤超时 / 总任务超时（读取配置，兜底默认值）
+        try:
+            from app.config import get_settings as _get_settings
+            _s = _get_settings()
+            self._step_timeout_s: float = float(
+                getattr(_s, "AGENT_STEP_TIMEOUT_SECONDS", 60.0)
+            )
+            self._total_timeout_s: float = float(
+                getattr(_s, "AGENT_TOTAL_TIMEOUT_SECONDS", 300.0)
+            )
+        except Exception:
+            self._step_timeout_s = 60.0
+            self._total_timeout_s = 300.0
 
     # ------------------------------------------------------------------
     # 请求级状态（ContextVar 隔离，并发安全）
@@ -519,10 +555,21 @@ class AgenticRAGEngine:
         # 2.8 P2-B: 查询重写 — 检索前优化用户查询
         if self._query_rewriter is not None:
             try:
-                rewrite_result = await self._query_rewriter.rewrite(
-                    query=query,
-                    context=memory_context,
-                )
+                # P1-10: 在线回退 — 开关开启时注入召回评估器（小 top_k 双跑对比，
+                # 判定结果随 rewriter LRU 缓存复用，同一查询只双跑一次）。
+                # 用 `is True` 判型且仅在启用时传参：测试注入的 Mock/Fake rewriter
+                # 无此属性，保持其 rewrite(query, context) 签名兼容。
+                if getattr(self._query_rewriter, "enable_online_fallback", False) is True:
+                    rewrite_result = await self._query_rewriter.rewrite(
+                        query=query,
+                        context=memory_context,
+                        recall_evaluator=self._build_recall_evaluator(kb_ids),
+                    )
+                else:
+                    rewrite_result = await self._query_rewriter.rewrite(
+                        query=query,
+                        context=memory_context,
+                    )
                 rewritten = rewrite_result.get_search_query()
                 if rewritten and rewritten != query:
                     state["rewritten_query"] = rewritten
@@ -551,6 +598,26 @@ class AgenticRAGEngine:
             state, db=db, user_uuid=user_uuid
         ):
             yield event
+
+        # P0-3: 轨迹聚合埋点 — 决策循环结束后上报会话快照（失败不影响主链路）
+        try:
+            _tool_calls = [
+                {
+                    "name": r.get("tool", "unknown"),
+                    "hit": "error" not in r,
+                }
+                for r in state.get("tool_results", [])
+                if isinstance(r, dict)
+            ]
+            await get_trail_aggregator().record_session(
+                iterations=state.get("iteration", 0),
+                max_iter_reached=bool(state.get("_max_iter_hit")),
+                total_timeout=bool(state.get("_total_timeout")),
+                dedup_hit=state.get("_dedup_hits", 0) > 0,
+                tool_calls=_tool_calls,
+            )
+        except Exception as exc:
+            log.debug("engine.trail_record_failed", error=str(exc))
 
         # 4. 流式生成答案（plain str token，_to_sse_stream 自动包装为 data:）
         answer_parts: list[str] = []
@@ -1175,6 +1242,7 @@ class AgenticRAGEngine:
         逻辑与原 ``_run_decision_loop`` 完全等价，仅增加了 SSE 事件 yield。
         """
         kb_ids = state.get("kb_ids")
+        _loop_t0 = time.monotonic()
 
         # P0-Opt2: 初始化稳定前缀 — system prompt（无动态内容）+ user query
         # 此前缀在整个循环中不修改，保证 Anthropic Prompt Cache 命中。
@@ -1183,11 +1251,43 @@ class AgenticRAGEngine:
             {"role": "user", "content": state["query"]},
         ]
 
+        # P1-9: 生成初始计划状态清单（失败降级为默认两步计划，不阻塞循环）
+        if self._planner is not None and "plan_steps" not in state:
+            try:
+                state["plan_steps"] = await self._planner.build_initial_plan(
+                    state["query"]
+                )
+                state["replan_count"] = 0
+            except Exception as exc:
+                log.warning("engine.plan_init_failed", error=str(exc))
+                state["plan_steps"] = []
+
+        # P1-9: 同一决策连续重复计数（偏离检测启发式触发器之一）
+        _last_decision: str | None = None
+        _same_decision_count: int = 0
+
         while True:
+            # P1-7: 总任务超时兜底 — 决策循环整体卡死防护（卡死监控告警）
+            _elapsed = time.monotonic() - _loop_t0
+            if _elapsed > self._total_timeout_s:
+                state["_total_timeout"] = True
+                log.warning(
+                    "engine.total_timeout",
+                    alert=True,
+                    alert_type="agent_loop_total_timeout",
+                    elapsed_s=round(_elapsed, 1),
+                    iteration=state["iteration"],
+                    session_id=state["session_id"],
+                )
+                break
+
             state["iteration"] += 1
             if state["iteration"] > state["max_iterations"]:
-                log.info(
+                state["_max_iter_hit"] = True
+                log.warning(
                     "engine.max_iterations_reached",
+                    alert=True,
+                    alert_type="agent_loop_max_iterations",
                     iteration=state["iteration"],
                     session_id=state["session_id"],
                 )
@@ -1210,7 +1310,17 @@ class AgenticRAGEngine:
                     scratchpad=state.get("scratchpad", ""),
                 )
 
-            decision = await self._think(state)
+            decision = await self._think_with_timeout(state)
+            if decision is None:
+                # 单步骤超时 — 跳出循环进入生成兜底（P1-7 卡死防护）
+                break
+
+            # P1-9: 同一决策连续重复 → 偏离检测触发器（Agent 原地决策无进展）
+            if decision == _last_decision and decision in ("retrieve", "tool_call"):
+                _same_decision_count += 1
+            else:
+                _same_decision_count = 0
+            _last_decision = decision
 
             if decision == "retrieve":
                 # yield retrieve_start 事件
@@ -1243,6 +1353,29 @@ class AgenticRAGEngine:
                 # P3-E: Scratchpad 追加推理笔记
                 _sp = state.get("scratchpad", "")
                 state["scratchpad"] = _sp + f"\n[轮{state['iteration']}] retrieve: 检索到 {len(state['retrieved_docs'])} 篇文档"
+
+                # P1-9: 推进计划状态 + 偏离检测（触发器：检索为空 / 决策重复）
+                if state.get("plan_steps"):
+                    from app.agents.planner import PlanManager
+
+                    PlanManager.mark_action_done(state["plan_steps"], "retrieve")
+                    _trigger = (
+                        len(state["retrieved_docs"]) == 0
+                        or _same_decision_count >= 2
+                    )
+                    _observation = (
+                        f"第{state['iteration']}轮检索到 "
+                        f"{len(state['retrieved_docs'])} 篇文档"
+                    )
+                    if await self._maybe_replan(state, _observation, _trigger):
+                        yield SSEEvent(
+                            data={
+                                "content": "观察结果偏离计划，已重新规划剩余步骤",
+                                "iteration": state["iteration"],
+                                "replan_count": state.get("replan_count", 0),
+                            },
+                            event=SSEEventType.THINKING,
+                        )
                 continue
             if decision == "tool_call":
                 # P0-3: yield tool_call_start/end 事件
@@ -1262,6 +1395,20 @@ class AgenticRAGEngine:
                         tool_name=tool_name,
                         result_content=raw_summary,
                     )
+                    # P0-3/P1-7: 兜圈信号 — 重复工具结果被指针引用，
+                    # 连续多次命中说明 Agent 在原地兜圈，触发告警日志。
+                    if isinstance(deduped, str) and deduped.startswith("↑"):
+                        state["_dedup_hits"] = state.get("_dedup_hits", 0) + 1
+                        if state["_dedup_hits"] >= 2:
+                            log.warning(
+                                "engine.repeated_tool_results",
+                                alert=True,
+                                alert_type="agent_loop_repeated_results",
+                                dedup_hits=state["_dedup_hits"],
+                                tool=tool_name,
+                                iteration=state["iteration"],
+                                session_id=state["session_id"],
+                            )
                     state["messages"].append(
                         {
                             "role": "user",
@@ -1272,6 +1419,28 @@ class AgenticRAGEngine:
                     _sp = state.get("scratchpad", "")
                     _note = deduped[:80] if isinstance(deduped, str) else ""
                     state["scratchpad"] = _sp + f"\n[轮{state['iteration']}] tool_call: {tool_name} → {_note}"
+
+                    # P1-9: 推进计划状态 + 偏离检测
+                    # （触发器：工具结果重复指针命中 / 决策重复）
+                    if state.get("plan_steps"):
+                        from app.agents.planner import PlanManager
+
+                        PlanManager.mark_action_done(state["plan_steps"], "tool_call")
+                        _trigger = (
+                            isinstance(deduped, str) and deduped.startswith("↑")
+                        ) or _same_decision_count >= 2
+                        _observation = (
+                            f"第{state['iteration']}轮工具 {tool_name} 返回：{_note}"
+                        )
+                        if await self._maybe_replan(state, _observation, _trigger):
+                            yield SSEEvent(
+                                data={
+                                    "content": "观察结果偏离计划，已重新规划剩余步骤",
+                                    "iteration": state["iteration"],
+                                    "replan_count": state.get("replan_count", 0),
+                                },
+                                event=SSEEventType.THINKING,
+                            )
                 continue
             # decision == "generate" 或其他 → 退出循环进入生成
             log.info(
@@ -1284,6 +1453,88 @@ class AgenticRAGEngine:
     # ------------------------------------------------------------------
     # think：LLM 决策
     # ------------------------------------------------------------------
+
+    async def _maybe_replan(
+        self,
+        state: AgentState,
+        observation: str,
+        trigger: bool,
+    ) -> bool:
+        """P1-9: 启发式触发器命中时执行偏离检测，必要时仅重规划剩余步骤。
+
+        成本控制：
+            - 未触发（trigger=False）时零 LLM 调用；
+            - 每会话最多重规划 PlanManager.max_replans 次；
+            - 偏离度 < 阈值时不改动计划。
+
+        Args:
+            state: Agent Loop 状态。
+            observation: 最新观察结果摘要。
+            trigger: 启发式触发器是否命中（检索为空 / dedup 指针 / 决策重复）。
+
+        Returns:
+            True 表示发生了重规划。
+        """
+        if not trigger or self._planner is None:
+            return False
+        plan = state.get("plan_steps")
+        if not plan:
+            return False
+        if state.get("replan_count", 0) >= self._planner.max_replans:
+            log.info(
+                "engine.replan_cap_reached",
+                replan_count=state["replan_count"],
+                session_id=state["session_id"],
+            )
+            return False
+
+        from app.agents.planner import DEVIATION_THRESHOLD
+
+        deviation = await self._planner.assess_deviation(
+            state["query"], plan, observation
+        )
+        if deviation < DEVIATION_THRESHOLD:
+            return False
+
+        state["plan_steps"] = await self._planner.replan_remaining(
+            state["query"], plan, observation
+        )
+        state["replan_count"] = state.get("replan_count", 0) + 1
+        log.info(
+            "engine.replanned",
+            deviation=deviation,
+            replan_count=state["replan_count"],
+            kept_done=sum(1 for s in plan if s.get("status") == "done"),
+            session_id=state["session_id"],
+        )
+        return True
+
+    async def _think_with_timeout(self, state: AgentState) -> str | None:
+        """带单步骤超时的 think 调用（P1-7 卡死防护）。
+
+        think 是 Agent Loop 中最可能卡死的节点（LLM 无响应）。
+        超时时返回 None，由调用方跳出决策循环进入生成兜底，
+        避免无限等待导致整个请求挂起。
+        """
+        try:
+            return await asyncio.wait_for(
+                self._think(state),
+                timeout=self._step_timeout_s,
+            )
+        except asyncio.TimeoutError:
+            state["_step_timeouts"] = state.get("_step_timeouts", 0) + 1
+            log.warning(
+                "engine.step_timeout",
+                alert=True,
+                alert_type="agent_step_timeout",
+                step="think",
+                timeout_s=self._step_timeout_s,
+                iteration=state.get("iteration", 0),
+                session_id=state.get("session_id", ""),
+            )
+            return None
+        except Exception:
+            raise
 
     @trace_node("think")
     async def _think(self, state: AgentState) -> str:
@@ -1324,6 +1575,15 @@ class AgenticRAGEngine:
             # 截断到最近 300 字，避免 Scratchpad 自身膨胀
             recent_scratchpad = scratchpad[-300:] if len(scratchpad) > 300 else scratchpad
             dynamic_parts.append(f"\n推理笔记：\n{recent_scratchpad}")
+
+        # P1-9: 注入计划状态视图 — LLM 决策时感知全局进度（已完成 / 剩余步骤）
+        plan = state.get("plan_steps")
+        if plan:
+            from app.agents.planner import PlanManager
+
+            brief = PlanManager.format_plan_brief(plan)
+            if brief:
+                dynamic_parts.append(f"执行计划：{brief}")
 
         # P4-E: 注入对话焦点 — 让 LLM 感知当前话题和实体
         focus = state.get("conversation_focus")
@@ -1383,6 +1643,27 @@ class AgenticRAGEngine:
     # ------------------------------------------------------------------
     # retrieve：检索 → 权限过滤 → 重排（关键：权限过滤在重排之前！）
     # ------------------------------------------------------------------
+
+    def _build_recall_evaluator(
+        self, kb_ids: list[str] | None
+    ) -> "Callable[[str], Awaitable[float]]":
+        """构建召回质量评估器 — P1-10 在线回退双跑用。
+
+        以小 top_k 检索召回，返回候选分数均值（空召回为 0.0）。
+        注意：此处评估的是"召回面"质量，刻意不做权限过滤与重排 ——
+        双跑两侧同口径对比即公平，且避免重复消耗重排算力。
+        """
+
+        async def _evaluate(q: str) -> float:
+            docs = await self.retriever.search(
+                q, kb_ids=kb_ids, top_k=_FALLBACK_EVAL_TOP_K
+            )
+            if not docs:
+                return 0.0
+            scores = [float(d.get("score", 0.0)) for d in docs]
+            return sum(scores) / len(scores)
+
+        return _evaluate
 
     @trace_node("retrieve")
     async def _retrieve(
@@ -1501,6 +1782,26 @@ class AgenticRAGEngine:
                 state["retrieved_docs"] = filtered[:_RERANK_TOP_K]
         else:
             state["retrieved_docs"] = []
+
+        # 4. P0-4 时间新鲜度 — 生效窗口硬过滤 + 平局组按 updated_at 裁决
+        # 新旧规范冲突场景：已过失效时间的旧规范不再进入上下文；
+        # 重排分数相近（tie band 内）时新版本排前，分数差距大时顺序不变。
+        if state["retrieved_docs"]:
+            try:
+                from app.config import get_settings as _gs
+
+                if getattr(_gs(), "RECENCY_BOOST_ENABLED", True):
+                    from app.rag.recency import (
+                        apply_recency_boost,
+                        filter_by_validity_window,
+                    )
+
+                    state["retrieved_docs"] = apply_recency_boost(
+                        filter_by_validity_window(state["retrieved_docs"])
+                    )
+            except Exception as exc:
+                # 优雅降级：recency 处理失败不影响已召回结果
+                log.warning("engine.retrieve.recency_error", error=str(exc))
 
         log.info(
             "engine.retrieve.done",
@@ -1673,8 +1974,35 @@ class AgenticRAGEngine:
                 if not self._skill_registry.get_all_names():
                     self._skill_registry.load_from_server(self.mcp._server)
 
-                # 匹配相关技能并按需加载完整 schema
-                matched_names = self._skill_finder.find_relevant_skills(query)
+                # P0-1: 向量召回通道 — 首次索引构建后预计算技能描述向量
+                embedder = None
+                if (
+                    not self._skill_registry.get_all_embeddings()
+                    and self._skill_registry.get_all_names()
+                ):
+                    try:
+                        from app.config import get_settings as _gs2
+
+                        if getattr(_gs2(), "SKILL_VECTOR_RECALL_ENABLED", True):
+                            from app.llm.embedder import get_embedder
+
+                            embedder = get_embedder()
+                            await self._skill_registry.build_embeddings(embedder)
+                    except Exception as exc:
+                        log.warning("engine.skill_embed_build_failed", error=str(exc))
+                        embedder = None
+                elif self._skill_registry.get_all_embeddings():
+                    try:
+                        from app.llm.embedder import get_embedder
+
+                        embedder = get_embedder()
+                    except Exception:
+                        embedder = None
+
+                # 匹配相关技能并按需加载完整 schema（向量通道不可用时自动退化关键词）
+                matched_names = await self._skill_finder.afind_relevant_skills(
+                    query, embedder=embedder
+                )
                 if matched_names:
                     tools = await self._skill_registry.load_tools(matched_names)
                     if tools:
@@ -2092,9 +2420,22 @@ class AgenticRAGEngine:
                     total=result.total_count,
                     unverified=result.unverified_count,
                     action=result.action,
+                    max_risk_level=result.max_risk_level,
                 )
                 state["high_risk_blocked"] = True
                 state["low_confidence"] = True
+                # P1-8: block 决策落审计表（fire-and-forget，失败不影响主流程）
+                self._schedule_high_risk_audit(state, answer, result)
+            elif result.action == "confirm":
+                # P1-8: 中风险（金额偏差 1-10%）— 提示核实，不阻断
+                log.warning(
+                    "engine.high_risk_confirm",
+                    total=result.total_count,
+                    unverified=result.unverified_count,
+                    action=result.action,
+                    max_risk_level=result.max_risk_level,
+                )
+                state["high_risk_confirm"] = True
             elif result.has_risk:
                 log.info(
                     "engine.high_risk_warning",
@@ -2104,6 +2445,53 @@ class AgenticRAGEngine:
                 )
         except Exception as exc:
             log.warning("engine.high_risk_check_error", error=str(exc))
+
+    def _schedule_high_risk_audit(
+        self,
+        state: AgentState,
+        answer: str,
+        result: Any,
+    ) -> None:
+        """P1-8: block 决策落审计表 — fire-and-forget 异步写库。
+
+        审计失败仅记录日志，不影响问答主流程；无运行中事件循环时跳过
+        （同步测试场景）。
+        """
+
+        def _on_done(task: asyncio.Task) -> None:
+            if not task.cancelled() and task.exception():
+                log.warning(
+                    "engine.high_risk_audit_task_error",
+                    error=str(task.exception()),
+                )
+
+        try:
+            from app.services.high_risk_audit_service import (
+                get_high_risk_audit_service,
+            )
+
+            coro = get_high_risk_audit_service().record_block_audit(
+                query=state.get("query", ""),
+                answer=answer,
+                session_id=state.get("session_id", ""),
+                user_id=state.get("user_id"),
+                tenant_id=state.get("tenant_id"),
+                total_count=result.total_count,
+                unverified_count=result.unverified_count,
+                max_risk_level=result.max_risk_level,
+                items=[i.to_dict() for i in result.items],
+            )
+            try:
+                task = asyncio.create_task(coro)
+            except RuntimeError:
+                coro.close()  # 无运行中事件循环 — 关闭协程避免泄漏告警
+                log.debug(
+                    "engine.high_risk_audit_skipped", reason="no running event loop"
+                )
+                return
+            task.add_done_callback(_on_done)
+        except Exception as exc:
+            log.warning("engine.high_risk_audit_schedule_error", error=str(exc))
 
     async def _reflect_inline(self, state: AgentState) -> None:
         """内联简单反思 — LLMJudgeService 不可用时的降级路径。

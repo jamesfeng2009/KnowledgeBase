@@ -22,6 +22,8 @@ from typing import Any
 from app.llm.base import Tool, ToolUse
 from app.mcp.protocol import (
     JSONRPCResponse,
+    make_resources_list_params,
+    make_resources_read_params,
     make_success_response,
     make_tools_call_params,
     make_tools_list_params,
@@ -101,6 +103,30 @@ class MCPClient:
         token 开销极小（每个技能约 20-30 token）。
         """
         return self._server.get_skill_index()
+
+    # ------------------------------------------------------------------
+    # 资源发现与读取（resources/list + resources/read）
+    # ------------------------------------------------------------------
+
+    async def list_resources(self) -> list[dict[str, Any]]:
+        """返回资源列表 — 每个工具即一个资源，携带 Resource Metadata。
+
+        元数据包含 domain / tags / when_to_use / when_not_to_use /
+        output_interpretation / version / review_status，
+        供 Agent 在调用前理解工具边界，减少误调用。
+        """
+        return await self._server.list_resources()
+
+    async def read_resource(self, uri: str) -> dict[str, Any] | None:
+        """读取单个资源完整内容。
+
+        Args:
+            uri: 资源 URI（``resource://skill/{tool_name}``）。
+
+        Returns:
+            资源字典（含 content）；URI 非法或资源不存在时返回 None。
+        """
+        return await self._server.read_resource(uri)
 
     async def call_tool(
         self,
@@ -264,6 +290,53 @@ class MCPClient:
             method="tasks/get",
             params={"task_id": task_id},
             request_id=request_id,
+        )
+
+    async def jsonrpc_resources_list(
+        self,
+        request_id: str | int | float | None = None,
+        *,
+        tenant_id: str | None = None,
+    ) -> JSONRPCResponse:
+        """通过 JSON-RPC 列出资源列表（含 Resource Metadata）。
+
+        Args:
+            request_id: 请求 ID。
+            tenant_id: 租户 ID。
+
+        Returns:
+            JSON-RPC 响应，result.resources 包含资源列表。
+        """
+        return await self.jsonrpc_call(
+            method="resources/list",
+            params=make_resources_list_params(),
+            request_id=request_id,
+            tenant_id=tenant_id,
+        )
+
+    async def jsonrpc_resources_read(
+        self,
+        uri: str,
+        request_id: str | int | float | None = None,
+        *,
+        tenant_id: str | None = None,
+    ) -> JSONRPCResponse:
+        """通过 JSON-RPC 读取资源内容。
+
+        Args:
+            uri: 资源 URI（``resource://skill/{tool_name}``）。
+            request_id: 请求 ID。
+            tenant_id: 租户 ID。
+
+        Returns:
+            JSON-RPC 响应，result.contents 包含资源内容；
+            资源不存在时返回 RESOURCE_NOT_FOUND 错误。
+        """
+        return await self.jsonrpc_call(
+            method="resources/read",
+            params=make_resources_read_params(uri),
+            request_id=request_id,
+            tenant_id=tenant_id,
         )
 
     async def jsonrpc_tasks_cancel(

@@ -3,8 +3,9 @@
 """
 
 import uuid
+from datetime import datetime
 
-from sqlalchemy import ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -96,6 +97,14 @@ class Document(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     # 多租户隔离 — SaaS 模式下按租户隔离文档，私有部署为 NULL
     tenant_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), nullable=True, comment="租户 ID（多租户隔离）"
+    )
+    # === P0-4 生效窗口（规范类文档）===
+    # 检索层硬过滤：窗口外文档不进入候选；NULL = 永久有效（向后兼容）
+    effective_from: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, comment="生效时间（NULL=立即生效）"
+    )
+    effective_to: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, comment="失效时间（NULL=永久有效）"
     )
 
     knowledge_base: Mapped[KnowledgeBase] = relationship(back_populates="documents")

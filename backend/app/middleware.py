@@ -13,7 +13,9 @@ Redis 不可用时自动降级为内存令牌桶，保证限流功能始终可�
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import math
 import time
 import uuid
 from uuid import UUID
@@ -56,6 +58,21 @@ class TokenBucket:
             return True
         return False
 
+    def time_until_available(self, tokens: int = 1) -> float:
+        """估算补足指定令牌数所需的等待秒数（0 = 立即可用）。
+
+        只读估算，不消费令牌、不更新内部状态。
+        """
+        now = time.monotonic()
+        projected = min(
+            self._capacity,
+            self._tokens + (now - self._last_refill) * self._refill_rate,
+        )
+        deficit = tokens - projected
+        if deficit <= 0:
+            return 0.0
+        return deficit / self._refill_rate
+
 
 class RateLimiter:
     """按客户端维度的限流管理器 — 内存令牌桶。
@@ -85,6 +102,10 @@ class RateLimiter:
     def allow(self, client_id: str) -> bool:
         """检查客户端是否被允许通过。"""
         return self._get_bucket(client_id).try_consume()
+
+    def estimate_wait(self, client_id: str) -> float:
+        """估算该客户端获得下一个令牌的等待秒数（P2-12 排队用）。"""
+        return self._get_bucket(client_id).time_until_available()
 
     def clear(self) -> None:
         """清空所有桶（测试用）。"""
@@ -210,6 +231,14 @@ class RedisRateLimiter:
             self._degraded = True
             return self._fallback.allow(client_id)
 
+    def estimate_wait(self, client_id: str) -> float:
+        """估算等待秒数（P2-12 排队用）。
+
+        分布式场景下精确值需额外 RTT 读取 Redis 桶状态，此处用
+        "补足一个令牌所需时间"近似 —— 足够支撑排队/直拒的决策。
+        """
+        return 1.0 / self._refill_per_second
+
     def clear(self) -> None:
         """清空内存降级桶（测试用，不影响 Redis 中的状态）。"""
         self._fallback.clear()
@@ -217,6 +246,63 @@ class RedisRateLimiter:
 
 # 全局限流器实例 — 在 setup_middleware 中初始化
 _rate_limiter: RateLimiter | RedisRateLimiter | None = None
+
+# P2-12: 排队缓冲计数器 — 当前正在排队等待令牌的请求数。
+# 仅作上限闸门防止排队堆积拖垮进程；自增/自减发生在 await 之间的
+# 同步代码段，单事件循环内无竞态。
+_queued_requests: int = 0
+
+
+def get_queued_request_count() -> int:
+    """获取当前排队中的请求数（测试/监控用）。"""
+    return _queued_requests
+
+
+async def _try_queued_consume(
+    client_id: str,
+    max_wait_ms: int,
+    max_queued: int,
+) -> tuple[bool, float]:
+    """P2-12: 排队等待令牌 — 在预计等待时间内缓冲请求而非直接 429。
+
+    Args:
+        client_id: 客户端标识。
+        max_wait_ms: 允许排队的最大预计等待毫秒数（超出直接拒绝）。
+        max_queued: 全局同时排队请求上限（超出直接拒绝）。
+
+    Returns:
+        (是否最终获得令牌, 实际排队等待毫秒数)
+    """
+    global _queued_requests
+
+    if _rate_limiter is None:
+        return False, 0.0
+
+    estimated_s = _rate_limiter.estimate_wait(client_id)
+    if estimated_s * 1000 > max_wait_ms:
+        return False, 0.0
+    if _queued_requests >= max_queued:
+        return False, 0.0
+
+    _queued_requests += 1
+    t0 = time.monotonic()
+    try:
+        # 等待估算时长后重试消费；令牌桶按时间补充，到期大概率可消费
+        await asyncio.sleep(estimated_s)
+        if isinstance(_rate_limiter, RedisRateLimiter):
+            allowed = await _rate_limiter.allow(client_id)
+        else:
+            allowed = _rate_limiter.allow(client_id)
+        waited_ms = round((time.monotonic() - t0) * 1000, 2)
+        if allowed:
+            log.info(
+                "ratelimit.queue_admitted",
+                client_id=client_id,
+                waited_ms=waited_ms,
+            )
+        return allowed, waited_ms
+    finally:
+        _queued_requests -= 1
 
 
 def get_rate_limiter() -> RateLimiter | RedisRateLimiter | None:
@@ -343,6 +429,7 @@ def setup_middleware(app: FastAPI) -> None:
 
         try:
             # --- 限流检查（健康检查等路径豁免） ---
+            queued_wait_ms: float | None = None
             if _rate_limiter is not None:
                 if not path.startswith(_EXEMPT_PATHS):
                     client_id = _get_client_id(request)
@@ -352,19 +439,44 @@ def setup_middleware(app: FastAPI) -> None:
                     else:
                         allowed = _rate_limiter.allow(client_id)
                     if not allowed:
+                        # P2-12: 429 前短队列缓冲 — 预计等待可接受时排队取令牌，
+                        # 成功则放行（响应头带排队耗时），失败/超时再 429。
+                        queue_enabled = getattr(
+                            settings, "RATE_LIMIT_QUEUE_ENABLED", True
+                        )
+                        if queue_enabled:
+                            admitted, queued_wait_ms = await _try_queued_consume(
+                                client_id,
+                                max_wait_ms=getattr(
+                                    settings, "RATE_LIMIT_QUEUE_MAX_WAIT_MS", 2000
+                                ),
+                                max_queued=getattr(
+                                    settings, "RATE_LIMIT_QUEUE_MAX_QUEUED", 20
+                                ),
+                            )
+                            if admitted:
+                                allowed = True
+                    if not allowed:
+                        # Retry-After 取令牌补充周期的整数秒，替代固定 60s
+                        retry_after = max(
+                            1,
+                            math.ceil(_rate_limiter.estimate_wait(client_id)),
+                        )
                         log.warning(
                             "ratelimit.exceeded",
                             client_id=client_id,
                             path=path,
+                            retry_after=retry_after,
                         )
                         return JSONResponse(
                             status_code=429,
                             content={
                                 "code": 429,
                                 "message": "请求过于频繁，请稍后再试",
+                                "retry_after_seconds": retry_after,
                             },
                             headers={
-                                "Retry-After": "60",
+                                "Retry-After": str(retry_after),
                             },
                         )
 
@@ -375,6 +487,9 @@ def setup_middleware(app: FastAPI) -> None:
 
             # P0-Stage3: 响应头回传 request_id，供客户端/前端关联追踪
             response.headers["X-Request-ID"] = request_id
+            # P2-12: 排队放行的请求带排队耗时，便于客户端/监控感知降级
+            if queued_wait_ms is not None:
+                response.headers["X-RateLimit-Queued-Ms"] = str(queued_wait_ms)
 
             log.info(
                 "http.request",

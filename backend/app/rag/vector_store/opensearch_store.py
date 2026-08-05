@@ -25,7 +25,10 @@ OpenSearch k-NN 向量存储实现 — 默认后端。
                 "title_path":      {"type": "text", "analyzer": "keyword"},
                 "content_type":    {"type": "keyword"},
                 "chunk_strategy":  {"type": "keyword"},
-                "parent_id":       {"type": "keyword"}
+                "parent_id":       {"type": "keyword"},
+                "doc_updated_at":  {"type": "date"},
+                "effective_from":  {"type": "date"},
+                "effective_to":    {"type": "date"}
             }
         }
     }
@@ -136,6 +139,9 @@ class OpenSearchVectorStore(VectorStoreBase):
                 "content_type",
                 "chunk_strategy",
                 "parent_id",
+                "doc_updated_at",
+                "effective_from",
+                "effective_to",
             ],
         }
 
@@ -171,6 +177,9 @@ class OpenSearchVectorStore(VectorStoreBase):
                     kb_id=str(source.get("kb_id") or "") or None,
                     title=source.get("title_path") or None,
                     parent_id=source.get("parent_id") or None,
+                    updated_at=source.get("doc_updated_at") or None,
+                    effective_from=source.get("effective_from") or None,
+                    effective_to=source.get("effective_to") or None,
                 )
             )
             if len(results) >= top_k:
@@ -187,11 +196,16 @@ class OpenSearchVectorStore(VectorStoreBase):
         chunks: list[Chunk],
         embeddings: list[list[float]],
         kb_id: str | None = None,
+        doc_updated_at: str | None = None,
+        effective_from: str | None = None,
+        effective_to: str | None = None,
     ) -> int:
         """批量写入向量数据到 OpenSearch k-NN 索引。
 
         ``kb_id`` 字段写入文档所属知识库 ID（入参或 chunk 携带），
         与检索端按知识库过滤对齐；历史 bug 曾错误写入 doc_id。
+        ``doc_updated_at`` / ``effective_from`` / ``effective_to`` 为
+        recency 加权与生效窗口过滤字段，提供时写入索引。
         """
         if not embeddings or not chunks:
             return 0
@@ -227,6 +241,13 @@ class OpenSearchVectorStore(VectorStoreBase):
                 "chunk_strategy": chunk.chunk_strategy,
                 "parent_id": chunk.parent_id,
             }
+            # recency 字段：缺省不写入（旧索引无此 mapping 时依赖动态映射）
+            if doc_updated_at:
+                doc_body["doc_updated_at"] = doc_updated_at
+            if effective_from:
+                doc_body["effective_from"] = effective_from
+            if effective_to:
+                doc_body["effective_to"] = effective_to
             lines.append(json.dumps(action, ensure_ascii=False))
             lines.append(json.dumps(doc_body, ensure_ascii=False))
 
@@ -310,6 +331,10 @@ class OpenSearchVectorStore(VectorStoreBase):
                     "content_type": {"type": "keyword"},
                     "chunk_strategy": {"type": "keyword"},
                     "parent_id": {"type": "keyword"},
+                    # P0-4 recency：文档更新时间 + 生效窗口（新旧规范冲突裁决）
+                    "doc_updated_at": {"type": "date"},
+                    "effective_from": {"type": "date"},
+                    "effective_to": {"type": "date"},
                 }
             },
         }

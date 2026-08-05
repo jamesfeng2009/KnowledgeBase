@@ -100,6 +100,8 @@ celery_app.conf.update(
         "tasks.compounding_tasks.*": {"queue": "documents"},
         # 智能测试平台（需求提取/用例生成/计划编排）— LLM 异步任务
         "tasks.testing_tasks.*": {"queue": "documents"},
+        # Deep Research 课题调研 — 多子课题长任务（里程碑断点恢复）
+        "tasks.deep_research_tasks.*": {"queue": "documents"},
         # AI 服务健康检查（每 30s，轻量高频）— 归入定时队列
         "tasks.health_tasks.*": {"queue": "scheduled"},
     },

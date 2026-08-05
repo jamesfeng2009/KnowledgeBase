@@ -208,7 +208,14 @@ class TestGetClientId:
 # ======================================================================
 
 
-def _create_test_app(rate_limit_enabled: bool = True, per_minute: int = 60, burst: int = 2):
+def _create_test_app(
+    rate_limit_enabled: bool = True,
+    per_minute: int = 60,
+    burst: int = 2,
+    queue_enabled: bool = False,
+    queue_max_wait_ms: int = 2000,
+    queue_max_queued: int = 20,
+):
     """创建测试用 FastAPI 应用。"""
     import app.middleware as mw
     from app.middleware import setup_middleware
@@ -221,6 +228,10 @@ def _create_test_app(rate_limit_enabled: bool = True, per_minute: int = 60, burs
     settings.RATE_LIMIT_ENABLED = rate_limit_enabled
     settings.RATE_LIMIT_PER_MINUTE = per_minute
     settings.RATE_LIMIT_BURST = burst
+    # P2-12: 排队缓冲配置（显式赋值，避免 MagicMock 比较异常）
+    settings.RATE_LIMIT_QUEUE_ENABLED = queue_enabled
+    settings.RATE_LIMIT_QUEUE_MAX_WAIT_MS = queue_max_wait_ms
+    settings.RATE_LIMIT_QUEUE_MAX_QUEUED = queue_max_queued
 
     app = FastAPI()
     with patch("app.middleware.get_settings", return_value=settings):
@@ -251,7 +262,7 @@ class TestRateLimitIntegration:
             assert resp.status_code == 200
 
     def test_rate_limit_returns_429(self) -> None:
-        """超过 burst 后返回 429。"""
+        """超过 burst 后返回 429（P2-12：Retry-After 动态估算令牌补充时间）。"""
         app = _create_test_app(burst=2)
         client = TestClient(app)
 
@@ -261,10 +272,11 @@ class TestRateLimitIntegration:
         resp2 = client.get("/api/test")
         assert resp2.status_code == 200
 
-        # 第三次被限流
+        # 第三次被限流 — 60/min = 1 token/s → 预计 1s 后可重试
         resp3 = client.get("/api/test")
         assert resp3.status_code == 429
-        assert resp3.headers.get("Retry-After") == "60"
+        assert resp3.headers.get("Retry-After") == "1"
+        assert resp3.json()["retry_after_seconds"] == 1
 
     def test_rate_limit_disabled(self) -> None:
         """限流关闭时不限制请求。"""
@@ -436,3 +448,168 @@ class TestRedisRateLimiter:
         assert "math.min" in _RATE_LIMIT_LUA
         assert "capacity" in _RATE_LIMIT_LUA
         assert "refill_rate" in _RATE_LIMIT_LUA
+
+
+# ======================================================================
+# P2-12: 请求队列缓冲测试
+# ======================================================================
+
+
+class TestTimeUntilAvailable:
+    """TokenBucket.time_until_available 估算测试。"""
+
+    def test_zero_when_tokens_available(self) -> None:
+        """桶内有令牌时估算为 0。"""
+        from app.middleware import TokenBucket
+
+        bucket = TokenBucket(capacity=5, refill_per_second=1.0)
+        assert bucket.time_until_available() == 0.0
+
+    def test_positive_when_empty(self) -> None:
+        """桶空时按补充速率估算等待时间。"""
+        from app.middleware import TokenBucket
+
+        bucket = TokenBucket(capacity=1, refill_per_second=2.0)
+        assert bucket.try_consume()  # 清空
+        wait = bucket.time_until_available()
+        # 缺 1 个令牌，2/s 补充 → 约 0.5s
+        assert 0.4 < wait <= 0.5
+
+    def test_estimate_does_not_consume(self) -> None:
+        """估算为只读操作，不消费令牌。"""
+        from app.middleware import TokenBucket
+
+        bucket = TokenBucket(capacity=1, refill_per_second=0.0)
+        bucket.time_until_available()
+        bucket.time_until_available()
+        assert bucket.try_consume()  # 令牌仍在
+
+
+class TestEstimateWait:
+    """限流器 estimate_wait 接口测试。"""
+
+    def test_rate_limiter_estimate_wait(self) -> None:
+        """内存限流器按桶状态估算。"""
+        from app.middleware import RateLimiter
+
+        limiter = RateLimiter(per_minute=60, burst=1)  # 1 token/s
+        assert limiter.estimate_wait("c1") == 0.0
+        limiter.allow("c1")  # 清空
+        wait = limiter.estimate_wait("c1")
+        assert 0.9 < wait <= 1.0
+
+    def test_redis_limiter_estimate_wait_approximation(self) -> None:
+        """Redis 限流器用补满一个令牌的时间近似。"""
+        from app.middleware import RedisRateLimiter
+
+        limiter = RedisRateLimiter(
+            per_minute=120, burst=5, redis_url="redis://localhost:6379/0"
+        )
+        # 120/min = 2/s → 0.5s
+        assert limiter.estimate_wait("c1") == 0.5
+
+
+class TestQueuedConsume:
+    """_try_queued_consume 单元测试。"""
+
+    @pytest.mark.asyncio
+    async def test_no_limiter_returns_false(self) -> None:
+        """限流器未初始化时直接拒绝排队。"""
+        import app.middleware as mw
+        from app.middleware import _try_queued_consume
+
+        old = mw._rate_limiter
+        mw._rate_limiter = None
+        try:
+            allowed, waited = await _try_queued_consume("c1", 2000, 20)
+            assert allowed is False
+            assert waited == 0.0
+        finally:
+            mw._rate_limiter = old
+
+    @pytest.mark.asyncio
+    async def test_wait_too_long_rejected(self) -> None:
+        """预计等待超过上限时不排队。"""
+        import app.middleware as mw
+        from app.middleware import RateLimiter, _try_queued_consume
+
+        old = mw._rate_limiter
+        mw._rate_limiter = RateLimiter(per_minute=6, burst=1)  # 10s/token
+        mw._rate_limiter.allow("c1")  # 清空 → 等待约 10s
+        try:
+            allowed, _ = await _try_queued_consume("c1", max_wait_ms=2000, max_queued=20)
+            assert allowed is False
+        finally:
+            mw._rate_limiter = old
+
+    @pytest.mark.asyncio
+    async def test_queue_full_rejected(self) -> None:
+        """排队数达上限时拒绝新排队。"""
+        import app.middleware as mw
+        from app.middleware import RateLimiter, _try_queued_consume
+
+        old = mw._rate_limiter
+        old_queued = mw._queued_requests
+        mw._rate_limiter = RateLimiter(per_minute=600, burst=1)
+        mw._rate_limiter.allow("c1")
+        mw._queued_requests = 20  # 占满队列
+        try:
+            allowed, _ = await _try_queued_consume("c1", max_wait_ms=2000, max_queued=20)
+            assert allowed is False
+        finally:
+            mw._rate_limiter = old
+            mw._queued_requests = old_queued
+
+    @pytest.mark.asyncio
+    async def test_queue_admitted_after_wait(self) -> None:
+        """排队等待令牌补充后放行，计数器归零。"""
+        import app.middleware as mw
+        from app.middleware import RateLimiter, _try_queued_consume, get_queued_request_count
+
+        old = mw._rate_limiter
+        mw._rate_limiter = RateLimiter(per_minute=600, burst=1)  # 10/s → 0.1s
+        mw._rate_limiter.allow("c1")  # 清空
+        try:
+            allowed, waited = await _try_queued_consume("c1", max_wait_ms=2000, max_queued=20)
+            assert allowed is True
+            assert waited >= 80  # 实际等待约 100ms
+            assert get_queued_request_count() == 0
+        finally:
+            mw._rate_limiter = old
+
+
+class TestQueuedRateLimitIntegration:
+    """排队缓冲 FastAPI 集成测试。"""
+
+    def test_queued_request_admitted_with_header(self) -> None:
+        """超限时排队放行，响应头带排队耗时。"""
+        app = _create_test_app(burst=1, per_minute=600, queue_enabled=True)
+        client = TestClient(app)
+
+        resp1 = client.get("/api/test")
+        assert resp1.status_code == 200
+
+        # 第二次超限 → 排队约 0.1s 后放行
+        resp2 = client.get("/api/test")
+        assert resp2.status_code == 200
+        assert "X-RateLimit-Queued-Ms" in resp2.headers
+
+    def test_queue_disabled_returns_429_immediately(self) -> None:
+        """排队关闭时超限直接 429。"""
+        app = _create_test_app(burst=1, per_minute=600, queue_enabled=False)
+        client = TestClient(app)
+
+        client.get("/api/test")
+        resp = client.get("/api/test")
+        assert resp.status_code == 429
+
+    def test_long_wait_skips_queue(self) -> None:
+        """预计等待超上限时不排队直接 429，Retry-After 为动态估算值。"""
+        # 6/min = 0.1/s → 补 1 令牌需 10s > 2000ms 上限
+        app = _create_test_app(burst=1, per_minute=6, queue_enabled=True)
+        client = TestClient(app)
+
+        client.get("/api/test")
+        resp = client.get("/api/test")
+        assert resp.status_code == 429
+        assert resp.headers.get("Retry-After") == "10"
