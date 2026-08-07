@@ -428,6 +428,7 @@ class AgenticRAGEngine:
         conversation_focus: dict[str, Any] | None = None,
         drift_info: dict[str, Any] | None = None,
         permission_filter: PermissionFilter | None = None,
+        cache_scope: str | None = None,
     ) -> AsyncIterator[SSEEvent | str]:
         """Agentic RAG 主入口 — 返回 SSE 事件流供前端实时消费。
 
@@ -461,6 +462,9 @@ class AgenticRAGEngine:
             permission_filter: 可选，请求级 ABAC 权限过滤器（携带当前用户
                 上下文）。引擎为全局单例，构造级 ``self.permission_filter``
                 无法区分用户；请求级参数优先于构造级注入。
+            cache_scope: 可选，权限视图指纹（由调用方按可访问 kb_ids +
+                用户密级计算）。参与答案缓存 key 计算，不同权限视图的
+                用户互不可见，防止缓存跨权限泄漏。
 
         Yields:
             SSEEvent | str: SSE 事件对象（thinking/retrieve/tool_call/sources/
@@ -469,10 +473,15 @@ class AgenticRAGEngine:
         # 无任何可访问知识库时短路：跳过 FAQ 与检索，避免空 kb_ids
         # 在底层被当作"不过滤"而回落为全库检索（跨知识库泄漏）。
         no_kb_access = kb_ids is not None and len(kb_ids) == 0
-        # 1. 缓存命中检查（缓存 key 含 tenant_id，跨租户互不可见）
-        if self.cache is not None:
+        # 1. 缓存命中检查（缓存 key 含 tenant_id + 权限视图 scope，
+        # 跨租户 / 跨权限视图互不可见）。
+        # 无可访问知识库（no_kb_access）时跳过缓存读取：缓存中的答案
+        # 可能来自有权限用户的权限视图，直接命中会造成越权泄漏。
+        if self.cache is not None and not no_kb_access:
             try:
-                cached = await self.cache.get(query, tenant_id=tenant_id)
+                cached = await self.cache.get(
+                    query, tenant_id=tenant_id, scope=cache_scope
+                )
                 if cached is not None:
                     log.info("engine.cache.hit", session_id=session_id)
                     # P1-3: 缓存命中短路路径补最小 Trace（此前完全无追踪记录，
@@ -495,7 +504,43 @@ class AgenticRAGEngine:
         # 命中时直接返回答案，跳过 Agent Loop（零 LLM 调用）
         if self._faq_matcher is not None and not no_kb_access:
             try:
+                # 局部导入 — 与 __init__ 中 FAQMatcher 的延迟导入策略一致，
+                # faq_matcher 依赖不可用时引擎整体仍可用（_faq_matcher 为 None
+                # 时本分支不会进入）。
+                from app.rag.faq_matcher import FAQMatchResult
+
                 faq_result = await self._faq_matcher.match(query, kb_ids=kb_ids)
+                if faq_result.matched:
+                    # Bug3 修复：FAQ 检索仅按 kb_ids 做了知识库归属下推，
+                    # 未做文档密级检查 — 低密级用户可直接读到高密级文档的
+                    # FAQ 答案。返回答案前对命中文档执行请求级权限过滤
+                    # （与 _retrieve 同一约束：请求级优先于构造级），
+                    # 被过滤则放弃 FAQ 短路、降级到正常检索路径。
+                    faq_allowed = True
+                    active_filter = permission_filter or self.permission_filter
+                    if active_filter is not None:
+                        try:
+                            passed = await active_filter(
+                                [
+                                    {
+                                        "doc_id": faq_result.doc_id,
+                                        "kb_id": faq_result.kb_id,
+                                        "chunk_id": faq_result.chunk_id,
+                                    }
+                                ]
+                            )
+                            faq_allowed = bool(passed)
+                        except Exception as exc:
+                            # 权限过滤异常 — fail-closed，放弃短路
+                            log.warning("engine.faq.permission_error", error=str(exc))
+                            faq_allowed = False
+                    if not faq_allowed:
+                        log.warning(
+                            "engine.faq.permission_denied",
+                            session_id=session_id,
+                            doc_id=faq_result.doc_id,
+                        )
+                        faq_result = FAQMatchResult(matched=False)
                 if faq_result.matched:
                     log.info(
                         "engine.faq.hit",
@@ -503,7 +548,7 @@ class AgenticRAGEngine:
                         score=faq_result.score,
                         chunk_id=faq_result.chunk_id,
                     )
-                    # 写入缓存（与完整答案共享缓存层）
+                    # 写入缓存（与完整答案共享缓存层，key 含权限视图 scope）
                     if self.cache is not None:
                         try:
                             # 携带 doc_ids：FAQ 源文档更新时可主动失效本缓存，
@@ -516,6 +561,7 @@ class AgenticRAGEngine:
                                 faq_result.answer,
                                 tenant_id=tenant_id,
                                 doc_ids=_faq_doc_ids,
+                                scope=cache_scope,
                             )
                         except Exception:
                             pass
@@ -783,11 +829,14 @@ class AgenticRAGEngine:
             event=SSEEventType.QUALITY,
         )
 
-        # 8. 回写缓存（key 含 tenant_id，跨租户互不可见）
+        # 8. 回写缓存（key 含 tenant_id + 权限视图 scope，跨租户 /
+        # 跨权限视图互不可见）
         # 注意：answer 此时已是重生成后的新答案（若发生过重生成）。
         # 低置信 / 被拦截（矛盾 block / 高风险 block）的答案不写入缓存，
         # 防止低质量答案被后续请求直接复用。
-        _cacheable = answer and not (
+        # 无可访问知识库（no_kb_access）时同样不写缓存：短路产生的
+        # "无内容"答案不应被缓存复用（与缓存读取的短路策略一致）。
+        _cacheable = answer and not no_kb_access and not (
             state.get("low_confidence")
             or state.get("contradiction_blocked")
             or state.get("high_risk_blocked")
@@ -799,7 +848,10 @@ class AgenticRAGEngine:
                     str(d.get("doc_id")) for d in state.get("retrieved_docs", [])
                     if d.get("doc_id")
                 }) or None
-                await self.cache.set(query, answer, tenant_id=tenant_id, doc_ids=doc_ids)
+                await self.cache.set(
+                    query, answer, tenant_id=tenant_id, doc_ids=doc_ids,
+                    scope=cache_scope,
+                )
             except Exception as exc:
                 log.warning("engine.cache.set_error", error=str(exc))
         elif self.cache is not None and answer:
@@ -1068,6 +1120,7 @@ class AgenticRAGEngine:
         kb_ids: list[str] | None = None,
         memory_context: str = "",
         tenant_id: str | None = None,
+        cache_scope: str | None = None,
     ) -> AsyncIterator[str]:
         """LangGraph 驱动的 RAG 入口 — 返回答案 token 流。
 
@@ -1082,6 +1135,8 @@ class AgenticRAGEngine:
             kb_ids: 可选，限定检索的知识库范围。
             memory_context: 记忆引擎提供的上下文。
             tenant_id: 租户 ID（答案缓存按租户隔离，防止跨租户答案泄漏）。
+            cache_scope: 可选，权限视图指纹 — 参与答案缓存 key 计算，
+                不同权限视图的用户互不可见（与 answer() 语义一致）。
 
         Yields:
             str: 答案文本片段。
@@ -1091,10 +1146,14 @@ class AgenticRAGEngine:
                 "LangGraph not installed — 请回退到默认的 answer() 方法。"
             )
 
-        # 1. 缓存命中检查（与 answer() 行为一致，key 含 tenant_id）
-        if self.cache is not None:
+        # 无可访问知识库时跳过缓存读取（与 answer() 行为一致）
+        no_kb_access = kb_ids is not None and len(kb_ids) == 0
+        # 1. 缓存命中检查（与 answer() 行为一致，key 含 tenant_id + scope）
+        if self.cache is not None and not no_kb_access:
             try:
-                cached = await self.cache.get(query, tenant_id=tenant_id)
+                cached = await self.cache.get(
+                    query, tenant_id=tenant_id, scope=cache_scope
+                )
                 if cached is not None:
                     log.info("engine.cache.hit", session_id=session_id)
                     yield cached
@@ -1164,7 +1223,8 @@ class AgenticRAGEngine:
             # 失败时抛出而非产出，上层决定降级策略）。
             raise
 
-        # 4. 回写缓存（key 含 tenant_id，跨租户互不可见）
+        # 4. 回写缓存（key 含 tenant_id + 权限视图 scope，
+        # 跨租户 / 跨权限视图互不可见）
         # 修复：优先使用图最终状态中的 answer — reflect 节点若触发
         # 忠实度重生成，最终 answer 与流式回放token拼接的旧答案不同，
         # 缓存必须写入新答案；同时携带 doc_ids 支持文档更新主动失效。
@@ -1180,8 +1240,9 @@ class AgenticRAGEngine:
             pass  # 无法读取最终状态时回退到流式拼接答案
         # 质量门禁（与 answer() 主链路一致）：低置信 / 被拦截
         # （矛盾 block / 高风险 block）的答案不写缓存，防止低质量答案被复用。
+        # 无可访问知识库（no_kb_access）时同样不写缓存。
         # 标记位由 reflect 节点写入图最终状态。
-        _cacheable = answer and not (
+        _cacheable = answer and not no_kb_access and not (
             final_values.get("low_confidence")
             or final_values.get("contradiction_blocked")
             or final_values.get("high_risk_blocked")
@@ -1193,7 +1254,10 @@ class AgenticRAGEngine:
                     for d in graph_retrieved_docs
                     if d.get("doc_id")
                 }) or None
-                await self.cache.set(query, answer, tenant_id=tenant_id, doc_ids=doc_ids)
+                await self.cache.set(
+                    query, answer, tenant_id=tenant_id, doc_ids=doc_ids,
+                    scope=cache_scope,
+                )
             except Exception as exc:
                 log.warning("engine.cache.set_error", error=str(exc))
         elif self.cache is not None and answer:
@@ -2076,7 +2140,13 @@ class AgenticRAGEngine:
         docs: list[dict[str, Any]],
         reranked: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        """将重排结果（index+score）回填到原文档列表，按重排顺序输出。"""
+        """将重排结果（index+score）回填到原文档列表，按重排顺序输出。
+
+        只保留重排器选中的 top_k 结果 — 不补回未入选候选：
+        补回会让被重排器截断的低分文档重新进入生成上下文，
+        抵消重排的筛选作用并浪费上下文预算。
+        （重排器异常时由调用方回退 ``filtered[:_RERANK_TOP_K]``。）
+        """
         result: list[dict[str, Any]] = []
         for item in reranked:
             idx = item.get("index")
@@ -2085,12 +2155,6 @@ class AgenticRAGEngine:
                 doc["score"] = item.get("score", doc.get("score", 0.0))
                 doc["rerank_content"] = item.get("content", doc.get("content", ""))
                 result.append(doc)
-        # 若重排结果不足，补上未命中的原文档
-        if len(result) < len(docs):
-            seen = {d.get("chunk_id") for d in result}
-            for doc in docs:
-                if doc.get("chunk_id") not in seen:
-                    result.append(doc)
         return result
 
     # ------------------------------------------------------------------

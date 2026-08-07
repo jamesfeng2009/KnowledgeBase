@@ -15,7 +15,7 @@ from __future__ import annotations
 import uuid
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import case, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit import AuditFlow
@@ -105,6 +105,14 @@ class AuditService:
         Returns:
             ``PageResult``，包含当前页待审核列表与分页信息。
         """
+        # priority 是字符串列（low/normal/high），直接按字典序 desc 会得到
+        # normal > low > high 的错误顺序；用 case 映射权重（high=3/normal=2/low=1）
+        # 降序排列，保证高优先级审核排在最前。
+        priority_rank = case(
+            {"high": 3, "normal": 2, "low": 1},
+            value=AuditFlow.priority,
+            else_=0,
+        )
         stmt = (
             select(AuditFlow)
             .where(
@@ -112,7 +120,7 @@ class AuditService:
                 AuditFlow.deleted_at.is_(None),
             )
             .order_by(
-                AuditFlow.priority.desc(),
+                priority_rank.desc(),
                 AuditFlow.created_at.asc(),
             )
         )

@@ -185,9 +185,10 @@ def _extract_audio_stage(doc_id: str) -> str | None:
 
 @celery_app.task(
     name="tasks.video_tasks.asr_multipart_task",
+    bind=True,
     **make_celery_retry_kwargs(),
 )
-def asr_multipart_task(doc_id: str, wav_path: str) -> dict[str, Any]:
+def asr_multipart_task(self, doc_id: str, wav_path: str) -> dict[str, Any]:
     """分段 ASR 转写 — 逐段调用 Whisper，结果存 Redis（P2-D）。
 
     每段 8 分钟，单段 ASR 1-2 分钟。总时长取决于视频长度。
@@ -267,6 +268,13 @@ def asr_multipart_task(doc_id: str, wav_path: str) -> dict[str, Any]:
 
     except Exception as exc:
         log.exception("video_multipart.asr_failed", doc_id=doc_id)
+        # 可重试异常（连接/超时/IO 类）交回 Celery 重试 — 修复"声明了
+        # autoretry_for 但异常被 except 吞掉导致重试失效"的问题；
+        # 未达最大重试次数时重新入队，耗尽或不可重试时保持原"返回错误字典"行为
+        if isinstance(exc, (ConnectionError, TimeoutError, OSError)) and (
+            self.request.retries < self.max_retries
+        ):
+            raise self.retry(exc=exc)
         _update_parse_progress(
             doc_id, "parsing",
             message=f"ASR 转写失败: {exc}",
@@ -380,9 +388,11 @@ def keyframe_task(doc_id: str) -> dict[str, Any]:
 
 @celery_app.task(
     name="tasks.video_tasks.finalize_video_task",
+    bind=True,
     **make_celery_retry_kwargs(),
 )
 def finalize_video_task(
+    self,
     asr_keyframe_results: list,
     doc_id: str,
     wav_path: str = "",
@@ -523,7 +533,12 @@ def finalize_video_task(
         async def _embed_and_index() -> None:
             chunks = [c.content for c in chunk_objects]
             embeddings = await _generate_embeddings(chunks)
-            await _build_indexes(doc_id, chunk_objects, chunks, embeddings)
+            # 传入文档所属 kb_id（对齐 document_tasks 正常管线的传参方式），
+            # 缺失时索引无 kb_id，非 admin 用户按知识库过滤将检索不到该视频
+            await _build_indexes(
+                doc_id, chunk_objects, chunks, embeddings,
+                kb_id=str(doc.kb_id) if doc.kb_id else None,
+            )
 
         asyncio.run(_embed_and_index())
 
@@ -585,6 +600,13 @@ def finalize_video_task(
 
     except Exception as exc:
         log.exception("video_multipart.finalize_failed", doc_id=doc_id)
+        # 可重试异常（连接/超时/IO 类）交回 Celery 重试 — 修复"声明了
+        # autoretry_for 但异常被 except 吞掉导致重试失效"的问题；
+        # 未达最大重试次数时重新入队，耗尽或不可重试时保持原"更新失败进度"行为
+        if isinstance(exc, (ConnectionError, TimeoutError, OSError)) and (
+            self.request.retries < self.max_retries
+        ):
+            raise self.retry(exc=exc)
         _update_parse_progress(
             doc_id, "failed",
             message=f"合并处理失败: {exc}",

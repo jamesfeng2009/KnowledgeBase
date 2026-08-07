@@ -80,6 +80,28 @@ class QaQuestionRepository(BaseRepository[QaQuestion]):
         result = await self.session.execute(stmt)
         return (result.rowcount or 0) > 0
 
+    async def increment_answer_count(self, question_id: UUID) -> bool:
+        """原子递增问题回答数（排除已软删除）。
+
+        使用 UPDATE ... SET answer_count = answer_count + 1 原子操作，
+        避免并发创建回答时"先读后写"导致的丢失更新（与 increment_view 同构）。
+
+        Returns:
+            True 表示成功递增（记录存在且未删除），False 表示未找到记录。
+        """
+        stmt = (
+            update(QaQuestion)
+            .where(
+                QaQuestion.id == question_id,
+                QaQuestion.deleted_at.is_(None),
+            )
+        )
+        if self._tenant_id is not None:
+            stmt = stmt.where(QaQuestion.tenant_id == self._tenant_id)
+        stmt = stmt.values(answer_count=QaQuestion.answer_count + 1)
+        result = await self.session.execute(stmt)
+        return (result.rowcount or 0) > 0
+
 
 class QaAnswerRepository(BaseRepository[QaAnswer]):
     """回答仓储 — 封装回答表的领域查询。"""

@@ -103,7 +103,9 @@ class CrossTurnDeduplicator:
         # 词集的子集，相似度 ≈ |摘要词| / |全文词|，全文较长时即使内容
         # 完全相同也低于阈值，导致长结果跨轮去重失效、重复注入 messages。
         for ref in self._seen_results:
-            if self._is_similar(summary, ref.summary):
+            # Bug24 修复：传入实例级阈值 — 此前 _is_similar 使用模块默认
+            # 阈值，构造注入的 similarity_threshold 被静默忽略。
+            if self._is_similar(summary, ref.summary, self._similarity_threshold):
                 log.info(
                     "dedup.replaced",
                     turn=turn,

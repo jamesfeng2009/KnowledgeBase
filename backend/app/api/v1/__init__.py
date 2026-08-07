@@ -31,6 +31,7 @@ from app.api.v1.multimodal import router as multimodal_router
 from app.api.v1.notifications import router as notifications_router
 from app.api.v1.observability import router as observability_router
 from app.api.v1.qa import router as qa_router
+from app.api.v1.recommendations import router as recommendations_router
 from app.api.v1.reports import router as reports_router
 from app.api.v1.search import router as search_router
 from app.api.v1.settings import router as settings_router
@@ -63,6 +64,7 @@ api_router.include_router(users_router)
 api_router.include_router(tenants_router)
 api_router.include_router(apikeys_router)
 api_router.include_router(settings_router)
+api_router.include_router(recommendations_router)
 api_router.include_router(reports_router)
 api_router.include_router(stats_router)
 api_router.include_router(approvals_router)

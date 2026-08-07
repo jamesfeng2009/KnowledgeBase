@@ -100,6 +100,12 @@ export async function* createSSEStream(
   // 一个 SSE 事件可能被 TCP 分包拆到多次 read() 中，若状态声明在循环内会被重置，导致事件静默丢失
   let currentEvent = '';
   let currentData = '';
+  // 是否已收到 data 字段：空串 data 也需正常派发（SSE 规范），用此标记区分"无 data 字段"
+  let hasData = false;
+
+  // SSE 规范：去掉字段名前缀后，仅移除至多一个前导空格，不 trim 内容，
+  // 避免损坏 LLM token 首尾空白（后端以裸字符串发送原始 token）
+  const stripFieldValue = (s: string) => s.replace(/^ /, '');
 
   try {
     while (true) {
@@ -107,15 +113,16 @@ export async function* createSSEStream(
 
       if (done) {
         // 冲刷缓冲区中最后一行（可能是不含换行的事件行）
-        const lastLine = buffer.trim();
+        const lastLine = buffer.endsWith('\r') ? buffer.slice(0, -1) : buffer;
         if (lastLine.startsWith('event:')) {
-          currentEvent = lastLine.slice(6).trim();
+          currentEvent = stripFieldValue(lastLine.slice(6));
         } else if (lastLine.startsWith('data:')) {
-          const dataLine = lastLine.slice(5).trim();
-          currentData = currentData ? `${currentData}\n${dataLine}` : dataLine;
+          const dataLine = stripFieldValue(lastLine.slice(5));
+          currentData = hasData ? `${currentData}\n${dataLine}` : dataLine;
+          hasData = true;
         }
         // 冲刷未派发完的最后一个事件
-        if (currentData || currentEvent) {
+        if (hasData) {
           const event = parseSSEData(currentEvent, currentData);
           if (event) {
             yield event;
@@ -133,27 +140,33 @@ export async function* createSSEStream(
       buffer = lines.pop() || '';
 
       for (const line of lines) {
-        const trimmed = line.trim();
+        // 仅去除行尾 \r（\n 已被 split 移除），不整行 trim
+        const raw = line.endsWith('\r') ? line.slice(0, -1) : line;
 
         // 空行表示一个事件结束
-        if (trimmed === '') {
-          if (currentData || currentEvent) {
+        if (raw === '') {
+          if (hasData) {
             const event = parseSSEData(currentEvent, currentData);
             if (event) {
               yield event;
             }
             currentEvent = '';
             currentData = '';
+            hasData = false;
           }
           continue;
         }
 
+        // 心跳/注释行（": heartbeat"）按 SSE 规范忽略
+        if (raw.startsWith(':')) continue;
+
         // 解析 SSE 字段
-        if (trimmed.startsWith('event:')) {
-          currentEvent = trimmed.slice(6).trim();
-        } else if (trimmed.startsWith('data:')) {
-          const dataLine = trimmed.slice(5).trim();
-          currentData = currentData ? `${currentData}\n${dataLine}` : dataLine;
+        if (raw.startsWith('event:')) {
+          currentEvent = stripFieldValue(raw.slice(6));
+        } else if (raw.startsWith('data:')) {
+          const dataLine = stripFieldValue(raw.slice(5));
+          currentData = hasData ? `${currentData}\n${dataLine}` : dataLine;
+          hasData = true;
         }
       }
     }
@@ -164,7 +177,8 @@ export async function* createSSEStream(
 
 /** 解析 SSE event + data 字段 */
 function parseSSEData(event: string, data: string): SSEEvent | null {
-  if (!data) return null;
+  // 仅在既无 data 也无 event 时不派发；空串 data 属合法 token，需正常送达
+  if (!data && !event) return null;
 
   try {
     const parsed = JSON.parse(data);

@@ -11,6 +11,7 @@ from app.models.apikey import ApiKey
 from app.models.approval import ToolApproval
 from app.models.audit import AuditFlow
 from app.models.base import Base
+from app.models.behavior import UserBehavior
 from app.models.billing import Subscription, Tenant, UsageRecord
 from app.models.checkpoint import AgentCheckpoint
 from app.models.comment import DocumentComment
@@ -67,6 +68,8 @@ __all__ = [
     "DocumentComment",
     "AuditFlow",
     "Feedback",
+    # 推荐模块用户行为
+    "UserBehavior",
     "Tenant",
     "Subscription",
     "UsageRecord",

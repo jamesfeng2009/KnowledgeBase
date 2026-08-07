@@ -265,6 +265,7 @@ class Mem0Manager:
         limit: int = 10,
         similarity_threshold: float = 0.3,
         half_life_days: float = _DEFAULT_HALF_LIFE_DAYS,
+        fallback_to_latest: bool = True,
     ) -> list[MemoryFact]:
         """检索用户事实 — 支持向量语义检索 + 时间衰减 + 关键词降级。
 
@@ -284,6 +285,9 @@ class Mem0Manager:
             limit: 返回数量
             similarity_threshold: 语义相似度阈值（低于此值不返回）
             half_life_days: 时间衰减半衰期（天），0 表示禁用衰减
+            fallback_to_latest: 语义/关键词均无命中时是否兜底返回最新 N 条
+                （与 query 无关）。记忆上下文注入场景保持 True；判重场景
+                必须传 False，否则只要有任意同类别事实就会被误判为重复。
         """
         stmt = (
             select(MemoryFact)
@@ -361,7 +365,10 @@ class Mem0Manager:
         # --- 关键词降级（在原始 DB 结果上操作） ---
         query_lower = query.lower()
         keyword_matched = [f for f in db_facts if query_lower in f.fact_text.lower()]
-        return keyword_matched[:limit] if keyword_matched else db_facts[:limit]
+        if keyword_matched:
+            return keyword_matched[:limit]
+        # 无命中时按调用方意图决定是否兜底返回最新 N 条
+        return db_facts[:limit] if fallback_to_latest else []
 
     async def _search_by_pgvector(
         self,

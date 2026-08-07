@@ -148,7 +148,11 @@ class JSONRPCResponse(Generic[T]):
     id: str | int | float | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        """序列化为 JSON-RPC 2.0 响应字典。"""
+        """序列化为 JSON-RPC 2.0 响应字典。
+
+        始终包含 ``id`` 键（为 None 时输出 null）— JSON-RPC 2.0 规范要求
+        parse error 等无法确定请求 id 的响应也必须显式携带 ``"id": null``。
+        """
         result: dict[str, Any] = {
             "jsonrpc": self.jsonrpc,
         }
@@ -156,8 +160,7 @@ class JSONRPCResponse(Generic[T]):
             result["error"] = self.error.to_dict()
         else:
             result["result"] = self.result
-        if self.id is not None:
-            result["id"] = self.id
+        result["id"] = self.id
         return result
 
     def to_json(self, ensure_ascii: bool = False) -> str:

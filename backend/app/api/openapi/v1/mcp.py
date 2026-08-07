@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 from typing import Any, AsyncIterator, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -32,7 +32,7 @@ from app.mcp.client import MCPClient
 from app.mcp.server import KnowledgeBaseMCPServer
 from app.mcp.protocol import JSONRPCResponse
 from app.mcp.streamable_http import StreamableHTTPTransport, sse_serialize
-from app.mcp.task_store import get_task_store
+from app.mcp.task_store import get_task_store, task_tenant_matches
 from app.schemas.common import ApiResponse
 from app.utils.logger import get_logger
 
@@ -148,6 +148,16 @@ async def mcp_jsonrpc_endpoint(
 
     transport = _get_mcp_transport()
     result = await transport.handle_request(raw_body, tenant_id=tenant_id)
+
+    # 通知（notifications/*）按 JSON-RPC 2.0 规范不应产生响应体 —
+    # 传输层以 id/result/error 均为 None 的空响应对象标识通知，转为 202 空响应
+    if (
+        isinstance(result, JSONRPCResponse)
+        and result.id is None
+        and result.result is None
+        and result.error is None
+    ):
+        return Response(status_code=status.HTTP_202_ACCEPTED)
 
     # 检查是否为 SSE 流式响应
     if isinstance(result, AsyncIterator):
@@ -367,7 +377,8 @@ async def get_task(
     """
     store = get_task_store()
     task = await store.get_task(task_id)
-    if task is None:
+    # 租户隔离（安全 — 防 IDOR）：归属租户与 API Key 租户不一致时按不存在处理
+    if task is None or not task_tenant_matches(task, api_key_info.get("tenant_id")):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"任务不存在或已过期: {task_id}",
@@ -416,18 +427,23 @@ async def cancel_task(
         HTTPException 409: 任务已处于终态，无法取消。
     """
     store = get_task_store()
+    # 先查询任务并校验租户归属（安全 — 防 IDOR，先校验再变更），
+    # 归属租户与 API Key 租户不一致时按不存在处理（不泄露任务存在性）
+    task = await store.get_task(task_id)
+    if task is None or not task_tenant_matches(task, api_key_info.get("tenant_id")):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"任务不存在或已过期: {task_id}",
+        )
+
     cancelled = await store.cancel_task(task_id)
     if not cancelled:
-        # 区分 "不存在" 和 "已终态"
-        task = await store.get_task(task_id)
-        if task is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"任务不存在或已过期: {task_id}",
-            )
+        # 任务存在但已处于终态（取消期间状态可能变化，重新读取最新状态）
+        latest = await store.get_task(task_id)
+        current_status = (latest or task).get("status")
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"任务已处于终态（{task.get('status')}），无法取消",
+            detail=f"任务已处于终态（{current_status}），无法取消",
         )
 
     logger.info("openapi.mcp.task_cancelled", task_id=task_id)

@@ -352,7 +352,7 @@ const breadcrumb = [{ label: '知识', href: '/knowledge' }, { label: '问答社
         <div style="margin-bottom: var(--space-4);">
           <h3 style="font-size: var(--text-lg); margin-bottom: var(--space-2);">${escapeHtml(data.title || '')}</h3>
           <div class="text-muted" style="font-size: var(--text-xs);">
-            ${escapeHtml(data.author || '匿名')} · ${escapeHtml(data.created_at || '')} · ${data.answers || answers.length || 0} 回答
+            ${escapeHtml(data.author || '匿名')} · ${escapeHtml(data.created_at || '')} · ${answers.length} 回答
           </div>
           ${data.tags && data.tags.length ? `<div style="margin-top: var(--space-2);">${data.tags.map((t) => `<span class="tag">${escapeHtml(t)}</span>`).join('')}</div>` : ''}
         </div>

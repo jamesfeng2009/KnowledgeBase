@@ -99,6 +99,9 @@ class FeedbackService:
     ) -> PageResult:
         """分页查询反馈列表，可按状态过滤。
 
+        权限规则：管理员（admin/kb_admin，口径同 ``_require_admin``）可查看
+        全租户反馈；普通用户仅能查看自己提交的反馈，避免越权读取他人反馈。
+
         Args:
             status: 可选，反馈状态 — open/processing/resolved/closed。
                     为 ``None`` 时查询全部状态。
@@ -111,6 +114,9 @@ class FeedbackService:
         stmt = select(Feedback)
         if status:
             stmt = stmt.where(Feedback.status == status)
+        # 权限过滤：非管理员仅能看到自己的反馈
+        if self._user.role not in ("admin", "kb_admin"):
+            stmt = stmt.where(Feedback.user_id == self._user.id)
         stmt = apply_tenant_filter(stmt, Feedback, self._tenant_id)
         stmt = stmt.order_by(Feedback.created_at.desc())
 

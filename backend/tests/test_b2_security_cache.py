@@ -115,7 +115,12 @@ class FakeCache:
     def __init__(self) -> None:
         self.set_calls: list[dict[str, Any]] = []
 
-    async def get(self, query: str, tenant_id: str | None = None) -> None:
+    async def get(
+        self,
+        query: str,
+        tenant_id: str | None = None,
+        scope: str | None = None,
+    ) -> None:
         return None
 
     async def set(
@@ -124,6 +129,7 @@ class FakeCache:
         answer: str,
         tenant_id: str | None = None,
         doc_ids: list[str] | None = None,
+        scope: str | None = None,
     ) -> None:
         self.set_calls.append(
             {
@@ -131,6 +137,7 @@ class FakeCache:
                 "answer": answer,
                 "tenant_id": tenant_id,
                 "doc_ids": doc_ids,
+                "scope": scope,
             }
         )
 
@@ -304,8 +311,12 @@ class TestFilterRetrievalCandidates:
         assert result[0]["content"] == "可见"
 
     @pytest.mark.asyncio
-    async def test_missing_doc_classification_defaults_internal(self) -> None:
-        """DB 查不到 classification 时默认 internal（权重 1）。"""
+    async def test_missing_doc_classification_fail_closed(self) -> None:
+        """DB 查不到 classification 时保守剔除（fail-closed）。
+
+        索引中残留的已删除/越权文档分块若按 internal 默认放行，
+        会对低密级用户泄漏高密级内容 — 必须与 kb 维度一致 fail-closed。
+        """
         kb_allowed = uuid4()
         doc_id = uuid4()
         user = SimpleNamespace(role="editor", clearance_level="internal", id=uuid4())
@@ -314,7 +325,7 @@ class TestFilterRetrievalCandidates:
         kb_result = MagicMock()
         kb_result.all.return_value = [(kb_allowed,)]
         cls_result = MagicMock()
-        cls_result.all.return_value = []  # 查不到 → 默认 internal
+        cls_result.all.return_value = []  # 查不到 → 保守剔除
         db.execute = AsyncMock(side_effect=[kb_result, cls_result])
 
         service = PermissionService(db=db, user=user)
@@ -322,8 +333,8 @@ class TestFilterRetrievalCandidates:
 
         result = await service.filter_retrieval_candidates(candidates)
 
-        # internal(1) <= internal(1) → 保留
-        assert len(result) == 1
+        # 密级未知 → fail-closed 剔除
+        assert len(result) == 0
 
 
 # ======================================================================

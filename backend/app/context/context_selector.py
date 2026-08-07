@@ -96,10 +96,20 @@ class ContextSelector:
             selected_indices: set[int] = set()
             total_tokens = 0
 
-            # 1. 先选相似度高的（超过阈值的）
+            # 1. 近因优先：最近 N 条始终保留，但条数受 top_k 约束、
+            #    token 先从预算扣除（避免无条件并入突破预算/top_k 上限）
+            recent_count = min(self._always_keep_recent, top_k)
+            recent_start = len(history) - recent_count
+            for i in range(recent_start, len(history)):
+                selected_indices.add(i)
+                total_tokens += len(history_texts[i]) // 3  # 粗估 token
+
+            # 2. 再选相似度高的（超过阈值的），受剩余 top_k 名额与预算约束
             for idx, sim in scored:
                 if len(selected_indices) >= top_k:
                     break
+                if idx in selected_indices:
+                    continue  # 已被近因保留
                 if sim < self._similarity_threshold:
                     continue
                 msg_tokens = len(history_texts[idx]) // 3  # 粗估 token
@@ -107,11 +117,6 @@ class ContextSelector:
                     continue
                 selected_indices.add(idx)
                 total_tokens += msg_tokens
-
-            # 2. 保证最近 N 条入选
-            recent_start = len(history) - self._always_keep_recent
-            for i in range(recent_start, len(history)):
-                selected_indices.add(i)
 
             # 3. 按时间正序排列
             result = [history[i] for i in sorted(selected_indices)]

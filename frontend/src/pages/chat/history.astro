@@ -225,16 +225,18 @@ const breadcrumb = [
     document.getElementById('history-retry-btn')?.addEventListener('click', loadHistory);
   }
 
+  /** 解析会话时间戳：created_at 为 ISO 字符串，直接相减会得到 NaN */
+  function toTs(c: any): number {
+    if (typeof c.created_at === 'number') return c.created_at;
+    if (typeof c.created_at === 'string') {
+      const t = new Date(c.created_at).getTime();
+      return isNaN(t) ? 0 : t;
+    }
+    return 0;
+  }
+
   function updateStats() {
     const now = Date.now();
-    const toTs = (c: any): number => {
-      if (typeof c.created_at === 'number') return c.created_at;
-      if (typeof c.created_at === 'string') {
-        const t = new Date(c.created_at).getTime();
-        return isNaN(t) ? 0 : t;
-      }
-      return 0;
-    };
     const today = allConversations.filter((c) => {
       const ts = toTs(c);
       return ts > 0 && now - ts < 86400000;
@@ -243,7 +245,6 @@ const breadcrumb = [
       const ts = toTs(c);
       return ts > 0 && now - ts < 86400000 * 7;
     }).length;
-    const refs = allConversations.reduce((s, c) => s + (c.references || 0), 0);
     const setText = (id: string, v: number) => {
       const el = document.getElementById(id);
       if (el) el.textContent = String(v);
@@ -251,7 +252,9 @@ const breadcrumb = [
     setText('stat-total', allConversations.length);
     setText('stat-today', today);
     setText('stat-week', week);
-    setText('stat-refs', refs);
+    // 后端 ConversationResponse 无 references 字段，引用次数暂无数据源，显示占位符
+    const refsEl = document.getElementById('stat-refs');
+    if (refsEl) refsEl.textContent = '-';
   }
 
   function renderHistory() {
@@ -264,7 +267,8 @@ const breadcrumb = [
     let list = allConversations.filter((c) => {
       if (keyword && !c.title.toLowerCase().includes(keyword)) return false;
       if (agent && c.agent_type !== agent) return false;
-      const age = Date.now() - c.created_at;
+      const ts = toTs(c);
+      const age = ts > 0 ? Date.now() - ts : 0;
       if (range === 'today' && age > 86400000) return false;
       if (range === 'week' && age > 86400000 * 7) return false;
       if (range === 'month' && age > 86400000 * 30) return false;
@@ -309,8 +313,6 @@ const breadcrumb = [
               <div class="history-item-title">${escapeHtml(c.title)}</div>
               <div class="history-item-meta">
                 <span class="badge badge-primary">${agentLabel[c.agent_type] || '问答'} Agent</span>
-                <span>${c.message_count || 0} 条消息</span>
-                <span>${c.references || 0} 个引用</span>
                 <span>${formatTime(c.created_at)}</span>
               </div>
             </div>

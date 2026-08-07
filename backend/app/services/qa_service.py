@@ -162,10 +162,12 @@ class QaService:
             is_ai_generated=is_ai_generated,
         )
 
-        # 同步更新问题计数与状态
+        # 同步更新问题计数与状态：
+        # answer_count 走原子 UPDATE 递增（避免并发回答的读-改-写竞态），
+        # 状态流转仍走仓储 update。
+        await self.question_repo.increment_answer_count(question_id)
         await self.question_repo.update(
             question_id,
-            answer_count=question.answer_count + 1,
             status="answered",
         )
         return answer

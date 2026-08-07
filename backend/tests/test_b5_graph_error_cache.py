@@ -95,7 +95,12 @@ class FakeCache:
     def __init__(self) -> None:
         self.set_calls: list[dict[str, Any]] = []
 
-    async def get(self, query: str, tenant_id: str | None = None) -> None:
+    async def get(
+        self,
+        query: str,
+        tenant_id: str | None = None,
+        scope: str | None = None,
+    ) -> None:
         return None
 
     async def set(
@@ -104,6 +109,7 @@ class FakeCache:
         answer: str,
         tenant_id: str | None = None,
         doc_ids: list[str] | None = None,
+        scope: str | None = None,
     ) -> None:
         self.set_calls.append(
             {"query": query, "answer": answer, "tenant_id": tenant_id, "doc_ids": doc_ids}

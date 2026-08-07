@@ -31,7 +31,12 @@ if "opensearchpy" not in sys.modules:
     sys.modules["opensearchpy"] = MagicMock()
 
 if "pymilvus" not in sys.modules:
-    sys.modules["pymilvus"] = MagicMock()
+    # pymilvus 已安装时必须用真实模块 — MagicMock 会让
+    # llama_index.vector_stores.milvus 的 Union 类型注解在导入时求值失败（SyntaxError）
+    try:
+        import pymilvus  # noqa: F401
+    except ImportError:
+        sys.modules["pymilvus"] = MagicMock()
 
 
 # ======================================================================
@@ -646,13 +651,40 @@ class TestVideoConfig:
 # 向量化与索引走 _generate_embeddings + _build_indexes 真实签名。
 
 
+class _FakeBoundTask:
+    """模拟 Celery bind=True 注入的任务实例（retry 语义的最小接口）。"""
+
+    def __init__(self) -> None:
+        from types import SimpleNamespace
+
+        self.request = SimpleNamespace(retries=0)
+        self.max_retries = 3
+
+    def retry(self, exc: Exception | None = None) -> None:
+        # 测试不覆盖重试路径 — 直接抛出原异常，模拟 Celery Retry 的控制流
+        raise exc if exc is not None else Exception("retry")
+
+
 class _CeleryTaskStub:
-    """celery_app.task 装饰器桩 — 保留原函数使其可直接调用。"""
+    """celery_app.task 装饰器桩 — 保留原函数使其可直接调用。
+
+    bind=True 时 Celery 会把任务实例注入为首个位置参数，此处包一层
+    注入 _FakeBoundTask，使测试仍按业务参数列表直接调用。
+    """
 
     @staticmethod
-    def task(*_args, **_kwargs):
+    def task(*_args, **kwargs):
         def _decorator(fn):
-            return fn
+            if not kwargs.get("bind"):
+                return fn
+
+            import functools
+
+            @functools.wraps(fn)
+            def _bound(*args, **kw):
+                return fn(_FakeBoundTask(), *args, **kw)
+
+            return _bound
 
         return _decorator
 
@@ -731,8 +763,8 @@ class TestFinalizeVideoTask:
             calls["embed"] = chunks
             return [[0.1, 0.2], [0.3, 0.4]][: len(chunks)]
 
-        async def _fake_build_indexes(doc_id, c_objects, chunks, embeddings):
-            calls["indexes"] = (doc_id, c_objects, chunks, embeddings)
+        async def _fake_build_indexes(doc_id, c_objects, chunks, embeddings, kb_id=None):
+            calls["indexes"] = (doc_id, c_objects, chunks, embeddings, kb_id)
 
         monkeypatch.setattr(doc_tasks, "_generate_embeddings", _fake_generate_embeddings)
         monkeypatch.setattr(doc_tasks, "_build_indexes", _fake_build_indexes)
@@ -749,6 +781,11 @@ class TestFinalizeVideoTask:
         fake_doc = MagicMock()
         fake_doc.tenant_id = None
         fake_doc.file_path = "local:///tmp/fake.mp4"
+        # 具体 kb_id — 验证 finalize 构建索引时透传知识库 ID
+        # （缺失则非 admin 用户按知识库过滤检索不到该视频）
+        import uuid as _uuid
+
+        fake_doc.kb_id = _uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 
         class _FakeRepo:
             def __init__(self, db, tenant_id=None):
@@ -797,6 +834,8 @@ class TestFinalizeVideoTask:
         assert idx[1] == chunk_objects
         assert idx[2] == ["分块内容一", "分块内容二"]
         assert idx[3] == [[0.1, 0.2], [0.3, 0.4]]
+        # kb_id 透传（回归：缺失则非 admin 按知识库过滤检索不到该视频）
+        assert idx[4] == "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
         # 完成进度
         stages = [a[1] for a, _k in calls["progress"] if len(a) > 1]
         assert "done" in stages

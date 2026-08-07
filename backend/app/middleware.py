@@ -165,7 +165,13 @@ class RedisRateLimiter:
 
     降级策略：Redis 不可用时自动降级为内存 RateLimiter，
     保证限流功能始终可用（单机降级模式下限流精度降低但功能不丢）。
+    降级可自愈：进入降级后经过冷却窗口（_DEGRADED_COOLDOWN_SECONDS）允许
+    重试 Redis 路径，成功即退出降级；失败则刷新冷却起点继续内存降级。
     """
+
+    #: 降级自愈冷却窗口（秒）— 抖动后间隔该时长才重试 Redis 路径，
+    #: 避免故障期间每次请求都额外付出一次连接尝试的代价
+    _DEGRADED_COOLDOWN_SECONDS: float = 30.0
 
     def __init__(
         self,
@@ -186,6 +192,13 @@ class RedisRateLimiter:
         # 降级用内存限流器（Redis 不可用时 fallback）
         self._fallback = RateLimiter(per_minute=per_minute, burst=burst)
         self._degraded = False
+        # 进入降级的时间戳（monotonic），供冷却窗口判断；未降级为 None
+        self._degraded_since: float | None = None
+
+    def _mark_degraded(self) -> None:
+        """标记进入降级模式并记录冷却起点（供自愈重试判断）。"""
+        self._degraded = True
+        self._degraded_since = time.monotonic()
 
     async def _ensure_redis(self):
         """惰性初始化 Redis 连接，失败则标记降级模式。"""
@@ -197,18 +210,29 @@ class RedisRateLimiter:
             self._redis = aioredis.from_url(self._redis_url, decode_responses=True)
             # 预加载 Lua 脚本（EVALSHA 比 EVAL 快，省去每次脚本传输）
             self._lua_sha = await self._redis.script_load(_RATE_LIMIT_LUA)
+            # 连接成功 — 若此前处于降级状态则自愈退出降级
             self._degraded = False
+            self._degraded_since = None
             return self._redis
         except Exception as exc:
             log.warning("ratelimit.redis_init_failed", error=str(exc)[:200])
-            self._degraded = True
+            self._mark_degraded()
             return None
 
     async def allow(self, client_id: str) -> bool:
         """检查客户端是否被允许通过（异步，Redis 原子化）。"""
+        if self._degraded:
+            # 冷却窗口内直接走内存 fallback — Redis 健康时的热路径不受任何影响
+            since = self._degraded_since
+            if since is not None and (
+                time.monotonic() - since < self._DEGRADED_COOLDOWN_SECONDS
+            ):
+                return self._fallback.allow(client_id)
+            # 冷却到期 — 旧连接可能已损坏，置空强制重建后重试 Redis 路径
+            self._redis = None
+
         redis_conn = await self._ensure_redis()
-        if redis_conn is None or self._degraded:
-            # 降级模式：用内存限流器
+        if redis_conn is None:
             return self._fallback.allow(client_id)
 
         try:
@@ -226,9 +250,9 @@ class RedisRateLimiter:
             )
             return bool(int(result))
         except Exception as exc:
-            # Redis 运行时故障 → 临时降级为内存模式
+            # Redis 运行时故障 → 降级为内存模式，冷却窗口后可自愈
             log.warning("ratelimit.redis_error_fallback", error=str(exc)[:200])
-            self._degraded = True
+            self._mark_degraded()
             return self._fallback.allow(client_id)
 
     def estimate_wait(self, client_id: str) -> float:

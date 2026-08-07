@@ -17,7 +17,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.knowledge import Document, KnowledgeBase
 from app.models.user import KbMember, User
+from app.utils.logger import get_logger
 from app.utils.tenant import apply_tenant_filter
+
+log = get_logger(__name__)
 
 # 密级权重表 — 数字越大密级越高。
 # 用户只能访问 classification 权重 <= 自身 clearance_level 权重的文档。
@@ -299,11 +302,17 @@ class PermissionService:
                 rows = (await self.db.execute(stmt)).all()
                 classification_map = {str(row[0]): row[1] for row in rows}
 
-        return [
-            c
-            for c in kb_allowed
-            if _CLEARANCE_ORDER.get(
-                classification_map.get(str(c.get("doc_id")), "internal"), 1
-            )
-            <= user_level
-        ]
+        # fail-closed：查不到密级的候选（文档已删除 / doc_id 非法）一律剔除，
+        # 与上方 kb_id 缺失剔除的保守策略保持一致，杜绝越权放行。
+        filtered: list[dict] = []
+        for c in kb_allowed:
+            classification = classification_map.get(str(c.get("doc_id")))
+            if classification is None:
+                log.warning(
+                    "permission.classification_missing",
+                    doc_id=str(c.get("doc_id")),
+                )
+                continue
+            if _CLEARANCE_ORDER.get(classification, 1) <= user_level:
+                filtered.append(c)
+        return filtered

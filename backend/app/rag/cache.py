@@ -13,6 +13,11 @@ Token 缓存 — 单一职责：缓存 RAG 生成的答案，降低重复查询�
     缓存 key 由 tenant_id 与 query 联合计算，L2 条目同样按 tenant_id 隔离，
     不同租户的相同/相似 query 互不可见，杜绝跨租户答案泄漏。
 
+权限视图隔离（安全，可选扩展）：
+    调用方可额外传入 ``scope``（权限视图指纹，如可访问 kb_ids 排序哈希 +
+    密级维度），参与 key 计算与 L2 条目隔离，使同租户内不同权限视图的
+    用户不共享答案缓存；缺省时 key 结构与既有版本完全一致（向后兼容）。
+
 遵循单一职责：本模块只负责缓存读写，不涉及检索与生成逻辑。
 遵循依赖倒置：Redis 地址、Embedder 均通过依赖注入获取，可替换为 Mock。
 遵循优雅降级：Redis 不可用时回退到 L2 内存缓存，不抛异常。
@@ -55,6 +60,8 @@ class _L2Entry:
     tenant_id: str | None = None
     # P1 主动失效：记录此缓存条目关联的 doc_id 列表
     doc_ids: list[str] | None = None
+    # 权限视图指纹（可选）：仅与同 scope 的查询互相命中
+    scope: str | None = None
 
 
 class TokenCache:
@@ -126,7 +133,12 @@ class TokenCache:
     # 公共接口
     # ------------------------------------------------------------------
 
-    async def get(self, query: str, tenant_id: str | None = None) -> str | None:
+    async def get(
+        self,
+        query: str,
+        tenant_id: str | None = None,
+        scope: str | None = None,
+    ) -> str | None:
         """查询缓存 — 依次走 L1 精确 → L2 语义，命中即返回，否则 None。
 
         L3（模型原生 Prompt Caching）由 LLM Provider 在请求层处理，
@@ -135,23 +147,26 @@ class TokenCache:
         Args:
             query: 用户查询文本。
             tenant_id: 租户 ID（安全隔离）— 不同租户的缓存互不可见。
+            scope: 权限视图指纹（安全隔离，可选）— 与 set 传入值一致
+                   才可命中，不同权限视图的用户互不可见。
         """
         # L1: Redis 精确缓存
-        cached = await self._l1_get(query, tenant_id)
+        cached = await self._l1_get(query, tenant_id, scope)
         if cached is not None:
-            log.debug("cache.hit", level="L1", query_hash=self._hash(query, tenant_id)[:12])
+            log.debug("cache.hit", level="L1", query_hash=self._hash(query, tenant_id, scope)[:12])
             return cached
 
         # L2: 内存语义缓存
-        l2_hit = await self._l2_get(query, tenant_id)
+        l2_hit = await self._l2_get(query, tenant_id, scope)
         if l2_hit is not None:
             cached, hit_doc_ids = l2_hit
-            log.debug("cache.hit", level="L2", query_hash=self._hash(query, tenant_id)[:12])
+            log.debug("cache.hit", level="L2", query_hash=self._hash(query, tenant_id, scope)[:12])
             # 回填 L1 加速后续精确命中 — 必须带上 doc_ids 写入反向索引，
             # 否则回填的 key 不受 invalidate_by_doc_id 主动失效管理，
             # 文档更新后陈旧答案仍会在 L1 中服务至 TTL 过期。
             await self._l1_set(
-                query, cached, ttl=_L1_TTL, tenant_id=tenant_id, doc_ids=hit_doc_ids
+                query, cached, ttl=_L1_TTL, tenant_id=tenant_id,
+                doc_ids=hit_doc_ids, scope=scope,
             )
             return cached
 
@@ -164,6 +179,7 @@ class TokenCache:
         answer: str,
         tenant_id: str | None = None,
         doc_ids: list[str] | None = None,
+        scope: str | None = None,
     ) -> None:
         """写入缓存 — 同时写入 L1（精确）与 L2（语义）。
 
@@ -173,26 +189,45 @@ class TokenCache:
             tenant_id: 租户 ID（安全隔离）— 与 get 传入值一致才可命中。
             doc_ids: 答案引用的文档 ID 列表（主动失效用）— 文档更新时
                      据此清除受影响缓存条目，避免返回过期答案。
+            scope: 权限视图指纹（安全隔离，可选）— 与 get 传入值一致
+                   才可命中。
         """
-        await self._l1_set(query, answer, ttl=_L1_TTL, tenant_id=tenant_id, doc_ids=doc_ids)
-        await self._l2_set(query, answer, tenant_id, doc_ids)
+        await self._l1_set(query, answer, ttl=_L1_TTL, tenant_id=tenant_id, doc_ids=doc_ids, scope=scope)
+        await self._l2_set(query, answer, tenant_id, doc_ids, scope)
 
     # ------------------------------------------------------------------
     # L1: Redis 精确缓存
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _hash(query: str, tenant_id: str | None = None) -> str:
-        """计算缓存 key 的 sha256 摘要 — 租户 ID 参与计算，隔离跨租户缓存。"""
-        return hashlib.sha256(f"{tenant_id or ''}\n{query}".encode("utf-8")).hexdigest()
+    def _hash(
+        query: str,
+        tenant_id: str | None = None,
+        scope: str | None = None,
+    ) -> str:
+        """计算缓存 key 的 sha256 摘要 — 租户 ID 参与计算，隔离跨租户缓存。
 
-    async def _l1_get(self, query: str, tenant_id: str | None = None) -> str | None:
+        ``scope``（权限视图指纹）为可选扩展维度：仅在显式传入时参与计算，
+        缺省时摘要与既有版本逐字节一致（既有缓存 key 不受影响）。
+        """
+        if scope:
+            raw = f"{tenant_id or ''}\n{scope}\n{query}"
+        else:
+            raw = f"{tenant_id or ''}\n{query}"
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    async def _l1_get(
+        self,
+        query: str,
+        tenant_id: str | None = None,
+        scope: str | None = None,
+    ) -> str | None:
         """从 Redis 读取精确缓存。"""
         redis = await self._get_redis()
         if redis is None:
             return None
         try:
-            key = f"cache:l1:{self._hash(query, tenant_id)}"
+            key = f"cache:l1:{self._hash(query, tenant_id, scope)}"
             value: Any = await redis.get(key)
             return value if isinstance(value, str) else None
         except Exception as exc:
@@ -206,6 +241,7 @@ class TokenCache:
         ttl: int,
         tenant_id: str | None = None,
         doc_ids: list[str] | None = None,
+        scope: str | None = None,
     ) -> None:
         """写入 Redis 精确缓存，失败仅记录日志。
 
@@ -216,7 +252,7 @@ class TokenCache:
         if redis is None:
             return
         try:
-            key = f"cache:l1:{self._hash(query, tenant_id)}"
+            key = f"cache:l1:{self._hash(query, tenant_id, scope)}"
             await redis.set(key, answer, ex=ttl)
             # 写入 doc_id 反向索引
             if doc_ids:
@@ -233,11 +269,15 @@ class TokenCache:
     # ------------------------------------------------------------------
 
     async def _l2_get(
-        self, query: str, tenant_id: str | None = None
+        self,
+        query: str,
+        tenant_id: str | None = None,
+        scope: str | None = None,
     ) -> tuple[str, list[str] | None] | None:
         """从内存语义缓存查询 — embedding 余弦相似度 > 阈值即命中。
 
-        仅匹配同一 tenant_id 的条目，避免跨租户语义命中导致的答案泄漏。
+        仅匹配同一 tenant_id 且同一 scope 的条目，避免跨租户/跨权限视图
+        语义命中导致的答案泄漏。
 
         Returns:
             命中返回 (answer, doc_ids) 二元组（doc_ids 供回填 L1 时
@@ -262,6 +302,8 @@ class TokenCache:
                 continue
             if entry.tenant_id != tenant_id:
                 continue
+            if entry.scope != scope:
+                continue
             score = _cosine_similarity(query_vec, entry.embedding)
             if score > best_score:
                 best_score = score
@@ -282,6 +324,7 @@ class TokenCache:
         answer: str,
         tenant_id: str | None = None,
         doc_ids: list[str] | None = None,
+        scope: str | None = None,
     ) -> None:
         """写入内存语义缓存 — 存储 query 的 embedding 与所属租户供后续相似度匹配。"""
         embedder = await self._get_embedder()
@@ -293,7 +336,7 @@ class TokenCache:
             log.warning("cache.l2.embed_error", error=str(exc))
             return
         self._purge_expired()
-        key = self._hash(query, tenant_id)
+        key = self._hash(query, tenant_id, scope)
         self._l2_store[key] = _L2Entry(
             query=query,
             answer=answer,
@@ -301,6 +344,7 @@ class TokenCache:
             expire_at=time.time() + _L2_TTL,
             tenant_id=tenant_id,
             doc_ids=doc_ids,
+            scope=scope,
         )
         self._l2_store.move_to_end(key)
         # 有界 LRU：超容逐出最久未使用条目（队首）

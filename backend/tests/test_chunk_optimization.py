@@ -374,10 +374,12 @@ class TestContextCliff:
     def test_context_cliff_preserves_top_k(self) -> None:
         """截断后应保留前 Top-K 个文档（保持重排顺序）。"""
         gen = self._make_generator()
+        # Bug23 修复后按截断后内容（≤1500 字符 ≈ 429 token/篇）估算 token，
+        # 需 6 篇（6×429=2574）才超过 2500 token 阈值触发降级
         big_content = "B" * 2000
         docs = [
             {"content": big_content, "title": f"doc-{i}", "score": 0.9 - i * 0.1}
-            for i in range(5)
+            for i in range(6)
         ]
         result = gen._check_context_cliff(docs)
         assert len(result) == _CONTEXT_CLIFF_FALLBACK_TOP_K

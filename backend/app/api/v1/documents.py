@@ -294,6 +294,9 @@ async def upload_document_file(
     P0: doc_type_map 补全 pptx/xlsx/xls/txt/csv（修复原映射缺失导致误归 md）。
     """
     tenant_id = getattr(request.state, "tenant_id", None)
+    # 安全：先校验知识库写权限再做任何文件 IO（防 IDOR，与 multipart init 端点一致），
+    # 避免未授权用户向他人知识库命名空间写入 MinIO 对象
+    await _check_kb_write_access(db, user, kb_id, tenant_id)
     service = KnowledgeService(db, user, tenant_id=tenant_id)
 
     # 根据文件扩展名推断文档类型
@@ -329,15 +332,18 @@ async def upload_document_file(
 
     # 尝试上传到 MinIO
     file_path = None
+    object_name = f"{kb_id}/{title}"
+    minio_uploaded = False
     try:
         from app.utils.minio_client import upload_file
 
         file_path = await upload_file(
             bucket="ekb-documents",
-            object_name=f"{kb_id}/{title}",
+            object_name=object_name,
             data=content_bytes,
             content_type=file.content_type,
         )
+        minio_uploaded = True
     except ImportError:
         log.debug("MinIO 客户端未安装，文件路径仅记录文件名")
         file_path = f"minio://ekb-documents/{kb_id}/{title}"
@@ -353,8 +359,19 @@ async def upload_document_file(
             content=content_text,
             doc_type=doc_type,
         )
-    except PermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except Exception as exc:
+        # 补偿：文档创建失败时删除已上传的 MinIO 对象，避免遗留孤儿文件；
+        # 删除本身再失败仅记录日志，不掩盖原始异常
+        if minio_uploaded:
+            try:
+                from app.utils.minio_client import delete_file
+
+                await delete_file(bucket="ekb-documents", object_name=object_name)
+            except Exception:
+                log.warning("MinIO 孤儿对象补偿删除失败: %s", object_name)
+        if isinstance(exc, PermissionError):
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        raise
 
     # 更新 file_path（租户隔离的 Repository）
     from app.repositories.knowledge_repository import DocumentRepository

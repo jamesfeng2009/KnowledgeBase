@@ -60,6 +60,9 @@ class FAQMatchResult:
     score: float = 0.0
     chunk_id: str = ""
     doc_id: str = ""
+    # 命中 chunk 所属知识库 ID — 供引擎在 FAQ 短路前做权限过滤
+    # （kb 归属 + 文档密级），避免快捷路径绕过密级检查。
+    kb_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -68,6 +71,7 @@ class FAQMatchResult:
             "score": round(self.score, 4),
             "chunk_id": self.chunk_id,
             "doc_id": self.doc_id,
+            "kb_id": self.kb_id,
         }
 
 
@@ -145,7 +149,7 @@ class FAQMatcher:
         payload: dict[str, Any] = {
             "size": 1,  # 只取 top-1
             "query": query_clause,
-            "_source": ["doc_id", "chunk_id", "content", "title_path"],
+            "_source": ["doc_id", "chunk_id", "content", "title_path", "kb_id"],
         }
 
         try:
@@ -199,6 +203,7 @@ class FAQMatcher:
             score=score,
             chunk_id=str(source.get("chunk_id") or ""),
             doc_id=str(source.get("doc_id") or ""),
+            kb_id=str(source.get("kb_id") or ""),
         )
 
     async def close(self) -> None:

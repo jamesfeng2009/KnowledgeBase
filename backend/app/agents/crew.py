@@ -145,6 +145,13 @@ class KnowledgeBaseCrew:
 
             logger.info("crew.task_decomposed", query=query[:50], sub_tasks=len(sub_tasks))
 
+            # 注入原始查询到子任务（防传话游戏透传字段）：
+            # _decompose_task 返回的 LLM JSON 只有 type/description/expected_output，
+            # _aggregate_results 从 sub_tasks[0] 读取 original_query，不注入则恒为空串。
+            # setdefault 保证已存在时不覆盖。
+            for sub_task in sub_tasks:
+                sub_task.setdefault("original_query", query)
+
             # 2. 构建 CrewAI Agent 和 Task
             agents = await self._build_crew_agents()
             tasks = self._build_crew_tasks(sub_tasks, agents, original_query=query)

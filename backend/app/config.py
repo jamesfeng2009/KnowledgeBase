@@ -393,6 +393,20 @@ class Settings(BaseSettings):
     GRAPH_SEARCH_MAX_RESULTS: int = 10          # 图谱召回最大结果数
     GRAPH_SEARCH_SCORE: float = 0.5             # 图谱召回固定分（合并时的权重）
 
+    # === 知识推荐（Recommendation）===
+    # 三路召回按数据成熟度分级启停（冷启动 → 行为积累），非默认全开。
+    # 每路一个开关；协同过滤在用户行为数达阈值后才启用（冷启动回退向量+热门）。
+    RECOMMEND_ENABLED: bool = True            # 推荐模块总开关
+    RECOMMEND_ENABLE_CF: bool = True          # 协同过滤召回开关（需行为积累）
+    RECOMMEND_ENABLE_VECTOR: bool = True      # 向量内容召回开关（冷启动兜底）
+    RECOMMEND_ENABLE_GRAPH: bool = True       # 图谱关联召回开关
+    RECOMMEND_CF_MIN_INTERACTIONS: int = 3    # 用户行为数达此阈值才启用协同过滤
+    RECOMMEND_CF_SIMILAR_USERS: int = 10      # UserCF 相似用户数
+    RECOMMEND_CF_SIMILAR_ITEMS: int = 10      # ItemCF 相似文档数
+    RECOMMEND_RRF_K: int = 60                 # RRF 常数（1/(K+rank)）
+    RECOMMEND_HOT_FALLBACK_TOP_K: int = 10    # 冷启动热门兜底数量
+    RECOMMEND_CACHE_TTL: int = 300            # 推荐结果缓存 TTL（秒）
+
     # === P3 上下文工程 ===
     CONTEXT_FOCUS_TRACKING_ENABLED: bool = True       # P3-A 焦点追踪总开关
     CONTEXT_FOCUS_HISTORY_WINDOW: int = 12            # 焦点追踪加载的历史消息数

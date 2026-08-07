@@ -106,8 +106,9 @@ class GraphitiManager:
         )
         self.db.add(event)
 
-        # 更新实体版本（如果是版本更新事件）
-        if event_type == "version_updated" and new_value:
+        # 更新实体当前值（版本更新 / 偏好变更事件均以 new_value 为最新状态，
+        # 否则偏好实体的 current_version 会永久停留在首次注册值）
+        if event_type in ("version_updated", "preference_changed") and new_value:
             entity_result = await self.db.execute(
                 select(KnowledgeEntity).where(KnowledgeEntity.id == entity_id)
             )

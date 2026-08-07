@@ -35,10 +35,11 @@ except ImportError:
 class TestDashScopeConfig:
     """DashScope 配置项测试。"""
 
-    def test_dashscope_api_key_default(self) -> None:
+    def test_dashscope_api_key_default(self, monkeypatch) -> None:
         from app.config import Settings
 
-        # _env_file=None 排除 .env 文件干扰，只测试默认值
+        # 排除环境变量与 .env 文件干扰，只测试默认值
+        monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
         settings = Settings(_env_file=None)
         assert hasattr(settings, "DASHSCOPE_API_KEY")
         assert settings.DASHSCOPE_API_KEY == ""

@@ -311,7 +311,8 @@ class QualityGuard:
             2. 如果 is_low_confidence 为 True 且 generator 可用：
                - 使用增强 prompt（强调禁止编造）重新生成答案；
                - 对新答案再次评估；
-               - 返回新答案和新评测结果；
+               - 仅当新答案忠实度优于原答案时返回新答案和新评测结果，
+                 否则保留原答案（避免重生成引入更差答案）；
             3. 如果不可重生成（generator 不可用或守卫关闭）：
                - 返回原答案和原评测结果。
 
@@ -360,17 +361,31 @@ class QualityGuard:
                 query=query, answer=new_answer, contexts=contexts,
             )
 
+            # Bug25 修复：仅当新答案忠实度优于原答案时才采用新答案 ——
+            # 此前无条件返回新答案，重生成结果忠实度更差（或未评估成功，
+            # new_eval 为 None）时仍被采用，反而降低答案质量。
+            orig_faith = getattr(eval_result, "hallucination_inverse", None)
+            new_faith = (
+                getattr(new_eval, "hallucination_inverse", None)
+                if new_eval is not None
+                else None
+            )
+            improved = (
+                orig_faith is not None
+                and new_faith is not None
+                and new_faith > orig_faith
+            )
+
             log.info(
                 "quality_guard.regenerated",
-                original_faithfulness=getattr(eval_result, "hallucination_inverse", None),
-                new_faithfulness=getattr(new_eval, "hallucination_inverse", None) if new_eval else None,
-                improved=(
-                    new_eval is not None
-                    and getattr(new_eval, "hallucination_inverse", 0)
-                    > getattr(eval_result, "hallucination_inverse", 0)
-                ),
+                original_faithfulness=orig_faith,
+                new_faithfulness=new_faith,
+                improved=improved,
             )
-            return new_answer, new_eval
+            if improved:
+                return new_answer, new_eval
+            # 新答案未优于原答案 — 保留原答案与原评估结果
+            return answer, eval_result
         except Exception as exc:
             log.warning("quality_guard.regen_failed", error=str(exc))
             return answer, eval_result

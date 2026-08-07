@@ -105,6 +105,13 @@ MODULE_REGISTRY: list[ModuleDef] = [
         description="PRD/UI 稿自动需求拆分、AI 用例生成、用例评审、统一管理、AI 自动编排、知识回流层（4 类知识资产沉淀 + 冲突检测 + 复用注入）",
         category="intelligence",
     ),
+    # === 知识推荐 ===
+    ModuleDef(
+        id="knowledge_recommendation",
+        name="知识推荐",
+        description="基于用户行为 + 内容语义 + 图谱关联的个性化知识推荐、相关阅读",
+        category="integration",
+    ),
 ]
 
 # ------------------------------------------------------------------

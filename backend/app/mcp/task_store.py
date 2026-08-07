@@ -45,6 +45,30 @@ _REDIS_KEY_PREFIX: str = "mcp:task:"
 _fallback_store: dict[str, dict[str, Any]] = {}
 
 
+def task_tenant_matches(task: dict[str, Any], tenant_id: Any) -> bool:
+    """比对任务归属租户与调用方租户（安全 — 防跨租户 IDOR）。
+
+    任务创建时写入的 tenant_id 与调用方 API Key 的 tenant_id 必须一致，
+    查询/取消前均应调用本函数校验，不匹配时按"任务不存在"处理（不泄露存在性）。
+
+    两侧统一归一化为字符串比较（Redis 读取回来为 str，进程内降级存储
+    可能保留原始 UUID 对象）。两侧均未设置租户（内部/脚本场景）时视为匹配。
+
+    Args:
+        task: get_task 返回的任务状态字典。
+        tenant_id: 调用方（API Key）的租户 ID。
+
+    Returns:
+        True = 租户匹配（或两侧均无租户），允许访问；False = 不匹配。
+    """
+    task_tenant = task.get("tenant_id")
+    if task_tenant is None and tenant_id is None:
+        return True
+    if task_tenant is None or tenant_id is None:
+        return False
+    return str(task_tenant) == str(tenant_id)
+
+
 class TaskStore:
     """MCP 任务状态存储 — Redis 优先，进程内降级。
 

@@ -22,6 +22,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.conversation import Message
 from app.models.feedback import Feedback
 from app.models.knowledge import Document
 from app.repositories.feedback_repository import FeedbackRepository
@@ -269,10 +270,46 @@ class QualityService:
         ]
         return sum(1 for f in fields if f) / len(fields)
 
+    async def _load_doc_feedbacks(self, doc_id: uuid.UUID) -> list[Feedback]:
+        """查询与指定文档关联的用户反馈。
+
+        Feedback 表没有 doc_id/kb_id 字段，唯一可用的关联链路为：
+        ``Feedback.related_message_id`` → ``Message.sources``
+        （JSONB 引用卡片列表，每项含 doc_id）。
+        仅返回"关联消息的引用来源包含该文档"的反馈，
+        避免全租户反馈混淆单文档评分。
+        """
+        stmt = select(Feedback).where(Feedback.related_message_id.isnot(None))
+        stmt = apply_tenant_filter(stmt, Feedback, self._tenant_id)
+        result = await self.db.execute(stmt)
+        feedbacks = list(result.scalars().all())
+        if not feedbacks:
+            return []
+
+        msg_stmt = select(Message.id, Message.sources).where(
+            Message.id.in_({f.related_message_id for f in feedbacks})
+        )
+        msg_rows = (await self.db.execute(msg_stmt)).all()
+        # 消息 ID → 该消息引用来源中的 doc_id 集合
+        msg_doc_map: dict[uuid.UUID, set[str]] = {}
+        for msg_id, sources in msg_rows:
+            doc_ids: set[str] = set()
+            for source in sources or []:
+                if isinstance(source, dict) and source.get("doc_id"):
+                    doc_ids.add(str(source["doc_id"]))
+            msg_doc_map[msg_id] = doc_ids
+
+        target = str(doc_id)
+        return [
+            f
+            for f in feedbacks
+            if target in msg_doc_map.get(f.related_message_id, set())
+        ]
+
     async def _score_citation(self, doc_id: uuid.UUID) -> float:
         """计算文档引用准确率评分（0.0-1.0）。
 
-        基于 related_message_id 关联的反馈中正面反馈（praise）的比例。
+        基于该文档关联反馈中正面反馈（praise）的比例。
         无反馈时返回默认分 0.5（中性）。
 
         Args:
@@ -281,21 +318,14 @@ class QualityService:
         Returns:
             引用准确率评分（0.0-1.0）。
         """
-        # 查询与该文档关联的反馈（通过 related_message_id 间接关联）
-        # 简化实现：统计 praise 与 complaint/complaint 的比例
-        stmt = select(Feedback).where(
-            Feedback.related_message_id.isnot(None),
-        )
-        stmt = apply_tenant_filter(stmt, Feedback, self._tenant_id)
-        result = await self.db.execute(stmt)
-        all_feedbacks = list(result.scalars().all())
+        feedbacks = await self._load_doc_feedbacks(doc_id)
 
-        if not all_feedbacks:
+        if not feedbacks:
             return 0.5  # 无反馈时中性评分
 
-        positive = sum(1 for f in all_feedbacks if f.type == "praise")
+        positive = sum(1 for f in feedbacks if f.type == "praise")
         negative = sum(
-            1 for f in all_feedbacks if f.type in ("bug", "complaint")
+            1 for f in feedbacks if f.type in ("bug", "complaint")
         )
         total = positive + negative
         if total == 0:
@@ -305,7 +335,7 @@ class QualityService:
     async def _score_feedback(self, doc_id: uuid.UUID) -> float:
         """计算用户反馈评分（0.0-1.0）。
 
-        基于 resolved/processing 状态的反馈占比。
+        基于该文档关联反馈中 resolved/closed 状态的占比。
         无反馈时返回默认分 0.5（中性）。
 
         Args:
@@ -314,11 +344,7 @@ class QualityService:
         Returns:
             用户反馈评分（0.0-1.0）。
         """
-        # 查询所有反馈（简化实现，实际应关联到文档）
-        stmt = select(Feedback)
-        stmt = apply_tenant_filter(stmt, Feedback, self._tenant_id)
-        result = await self.db.execute(stmt)
-        feedbacks = list(result.scalars().all())
+        feedbacks = await self._load_doc_feedbacks(doc_id)
 
         if not feedbacks:
             return 0.5

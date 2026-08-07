@@ -32,13 +32,18 @@ def _make_db_first_change() -> MagicMock:
     mock_db.add = MagicMock()
     mock_db.flush = AsyncMock()
 
-    # 第一次 execute：查实体 → None；第二次 execute：查历史事件 → 空
+    # 第一次 execute：查实体 → None；第二次：查历史事件 → 空；
+    # 第三次：record_event 回查实体以更新 current_version（Bug32 修复新增）
     entity_result = MagicMock()
     entity_result.scalar_one_or_none.return_value = None
     prev_events_result = MagicMock()
     prev_events_result.scalars.return_value = []  # record_event 直接迭代 scalars()
+    refresh_result = MagicMock()
+    refresh_result.scalar_one_or_none.return_value = MagicMock()  # 注册后的实体
 
-    mock_db.execute = AsyncMock(side_effect=[entity_result, prev_events_result])
+    mock_db.execute = AsyncMock(
+        side_effect=[entity_result, prev_events_result, refresh_result]
+    )
     return mock_db
 
 
@@ -52,8 +57,13 @@ def _make_db_existing_entity(entity: MagicMock) -> MagicMock:
     entity_result.scalar_one_or_none.return_value = entity
     prev_events_result = MagicMock()
     prev_events_result.scalars.return_value = []  # record_event 直接迭代 scalars()
+    # record_event 回查实体以更新 current_version（Bug32 修复新增）
+    refresh_result = MagicMock()
+    refresh_result.scalar_one_or_none.return_value = entity
 
-    mock_db.execute = AsyncMock(side_effect=[entity_result, prev_events_result])
+    mock_db.execute = AsyncMock(
+        side_effect=[entity_result, prev_events_result, refresh_result]
+    )
     return mock_db
 
 
@@ -117,6 +127,8 @@ class TestRecordPreferenceChange:
         assert event.entity_id == existing_entity.id
         assert event.old_value == "简洁"
         assert event.new_value == "详细"
+        # Bug32 回归：偏好变更后实体 current_version 同步更新为新值
+        assert existing_entity.current_version == "详细"
 
     @pytest.mark.asyncio
     async def test_event_closes_previous_event(self) -> None:
@@ -136,7 +148,12 @@ class TestRecordPreferenceChange:
         entity_result.scalar_one_or_none.return_value = existing_entity
         prev_events_result = MagicMock()
         prev_events_result.scalars.return_value = [prev_event]  # 直接迭代 scalars()
-        mock_db.execute = AsyncMock(side_effect=[entity_result, prev_events_result])
+        # record_event 回查实体以更新 current_version（Bug32 修复新增）
+        refresh_result = MagicMock()
+        refresh_result.scalar_one_or_none.return_value = existing_entity
+        mock_db.execute = AsyncMock(
+            side_effect=[entity_result, prev_events_result, refresh_result]
+        )
 
         manager = GraphitiManager(mock_db)
         await manager.record_preference_change(

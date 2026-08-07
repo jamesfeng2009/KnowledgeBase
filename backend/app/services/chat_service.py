@@ -17,6 +17,8 @@ MemoryManager / AgenticRAGEngine，新增 Agent 类型只需在 _SYSTEM_PROMPTS
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import hashlib
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
@@ -421,6 +423,21 @@ class ChatService:
             logger.error("chat.permission_context_failed", error=str(exc))
             accessible_kb_id_strs = []
 
+        # Bug3 修复：答案缓存的权限视图指纹 — 可访问 kb_ids（排序）+ 用户密级
+        # 参与缓存 key 计算，不同权限视图的用户互不可见，防止缓存跨权限泄漏。
+        # admin（accessible_kb_ids 为 None 不限制）用 "*" 占位，与普通用户隔离。
+        cache_scope: str | None = None
+        try:
+            _scope_kb = (
+                ",".join(sorted(accessible_kb_id_strs))
+                if accessible_kb_id_strs is not None
+                else "*"
+            )
+            _scope_raw = f"{_scope_kb}|{getattr(self.user, 'clearance_level', '')}"
+            cache_scope = hashlib.sha256(_scope_raw.encode("utf-8")).hexdigest()
+        except Exception:
+            cache_scope = None  # 计算失败时退化为仅 tenant_id 隔离
+
         # P1: IntentRouter 稳态/敏态分离 — 简单查询走快捷路径，复杂查询走 Agent Loop
         shortcut_taken = False
         try:
@@ -528,6 +545,8 @@ class ChatService:
                     # permission_filter 重排前密级过滤）
                     kb_ids=accessible_kb_id_strs,
                     permission_filter=permission_filter,
+                    # Bug3: 缓存 key 加入权限视图维度，跨权限视图互不可见
+                    cache_scope=cache_scope,
                 ):
                     # P4-B: 在 token 流中检查后台矛盾检测是否完成
                     if contra_task and not contra_pushed and contra_task.done():
@@ -564,6 +583,12 @@ class ChatService:
                     error=str(exc),
                     conversation_id=str(conversation_id),
                 )
+                # 取消后台矛盾检测任务 — 避免 fire-and-forget 泄漏
+                # （任务继续占用 LLM 资源且异常永不回收）
+                if contra_task is not None and not contra_task.done():
+                    contra_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError, Exception):
+                        await contra_task
                 yield SSEEvent(
                     data={"type": "error", "message": str(exc)},
                     event=SSEEventType.ERROR,
@@ -608,9 +633,11 @@ class ChatService:
 
         if self._tenant_id:
             # 补设 RLS 租户上下文（连接已更换，原 SET LOCAL 随事务结束失效）
+            # 注意：asyncpg 不支持 SET LOCAL 的参数化绑定（$1 语法在 SET 中无效），
+            # 与 database.py 同款写法 — tenant_id 强制 UUID 校验后可安全拼接。
+            tenant_id = UUID(str(self._tenant_id))
             await self.db.execute(
-                text("SET LOCAL app.tenant_id = :tid"),
-                {"tid": str(self._tenant_id)},
+                text(f"SET LOCAL app.tenant_id = '{tenant_id}'")
             )
 
         # 7. 持久化完整 AI 回复

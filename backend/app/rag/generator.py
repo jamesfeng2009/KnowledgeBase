@@ -198,10 +198,12 @@ class Generator:
         if not retrieved_docs:
             return retrieved_docs
 
-        # 计算总 token 数
+        # 计算总 token 数 — 口径与实际注入一致：基于 _truncate 截断后的
+        # 内容估算。注入 prompt 的是截断后内容（见 _build_system_prompt），
+        # 若按原始全文估算会系统性高估 token 数，导致未超阈值也误触发降级。
         total_tokens = 0
         for doc in retrieved_docs:
-            content = str(doc.get("content") or "")
+            content = self._truncate(str(doc.get("content") or ""))
             total_tokens += estimate_tokens(content)
 
         if total_tokens <= _CONTEXT_CLIFF_THRESHOLD:
@@ -211,9 +213,10 @@ class Generator:
         original_count = len(retrieved_docs)
         truncated = retrieved_docs[:_CONTEXT_CLIFF_FALLBACK_TOP_K]
 
-        # 计算降级后的 token 数
+        # 计算降级后的 token 数（同样基于截断后内容，与注入口径一致）
         truncated_tokens = sum(
-            estimate_tokens(str(doc.get("content") or "")) for doc in truncated
+            estimate_tokens(self._truncate(str(doc.get("content") or "")))
+            for doc in truncated
         )
 
         log.warning(

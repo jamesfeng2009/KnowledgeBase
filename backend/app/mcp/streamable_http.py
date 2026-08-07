@@ -71,7 +71,7 @@ from app.mcp.protocol import (
     parse_request,
 )
 from app.mcp.server import KnowledgeBaseMCPServer
-from app.mcp.task_store import TaskStore, get_task_store
+from app.mcp.task_store import TaskStore, get_task_store, task_tenant_matches
 from app.utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -157,9 +157,9 @@ class StreamableHTTPTransport:
             elif request.method == METHOD_TASKS_CREATE:
                 return await self._handle_tasks_create(request, tenant_id=tenant_id)
             elif request.method == METHOD_TASKS_GET:
-                return await self._handle_tasks_get(request)
+                return await self._handle_tasks_get(request, tenant_id=tenant_id)
             elif request.method == METHOD_TASKS_CANCEL:
-                return await self._handle_tasks_cancel(request)
+                return await self._handle_tasks_cancel(request, tenant_id=tenant_id)
             else:
                 # 不应到达此处（已在 SUPPORTED_MCP_METHODS 校验）
                 return make_error_response(
@@ -444,6 +444,8 @@ class StreamableHTTPTransport:
     async def _handle_tasks_get(
         self,
         request: JSONRPCRequest,
+        *,
+        tenant_id: str | None = None,
     ) -> JSONRPCResponse:
         """处理 tasks/get 请求 — 查询任务状态。
 
@@ -466,7 +468,8 @@ class StreamableHTTPTransport:
             )
 
         task = await self._task_store.get_task(task_id)
-        if task is None:
+        # 租户隔离（安全 — 防 IDOR）：归属租户与调用方不一致时按不存在处理
+        if task is None or not task_tenant_matches(task, tenant_id):
             return make_error_response(
                 code=TASK_NOT_FOUND,
                 message=f"Task not found: {task_id}",
@@ -495,6 +498,8 @@ class StreamableHTTPTransport:
     async def _handle_tasks_cancel(
         self,
         request: JSONRPCRequest,
+        *,
+        tenant_id: str | None = None,
     ) -> JSONRPCResponse:
         """处理 tasks/cancel 请求 — 取消任务。
 
@@ -516,19 +521,24 @@ class StreamableHTTPTransport:
                 request_id=request.id,
             )
 
+        # 先查询任务并校验租户归属（安全 — 防 IDOR，先校验再变更），
+        # 归属租户与调用方不一致时按不存在处理（不泄露任务存在性）
+        task = await self._task_store.get_task(task_id)
+        if task is None or not task_tenant_matches(task, tenant_id):
+            return make_error_response(
+                code=TASK_NOT_FOUND,
+                message=f"Task not found: {task_id}",
+                request_id=request.id,
+            )
+
         cancelled = await self._task_store.cancel_task(task_id)
         if not cancelled:
-            # 检查任务是否存在
-            task = await self._task_store.get_task(task_id)
-            if task is None:
-                return make_error_response(
-                    code=TASK_NOT_FOUND,
-                    message=f"Task not found: {task_id}",
-                    request_id=request.id,
-                )
+            # 任务存在但已处于终态（取消期间状态可能变化，重新读取最新状态）
+            latest = await self._task_store.get_task(task_id)
+            current_status = (latest or task).get("status")
             return make_error_response(
                 code=TASK_ALREADY_TERMINAL,
-                message=f"Task already in terminal state: {task.get('status')}",
+                message=f"Task already in terminal state: {current_status}",
                 request_id=request.id,
             )
 
@@ -544,10 +554,11 @@ class StreamableHTTPTransport:
         self,
         request: JSONRPCRequest,
     ) -> JSONRPCResponse:
-        """处理通知请求 — 无响应体，但返回空响应对象以保持接口一致。
+        """处理通知请求 — 返回空响应对象作为"通知"标记，不产生实际响应体。
 
         MCP 2026-07-28 规范：notifications/initialized 表示客户端初始化完成，
-        服务器无需响应。但 JSON-RPC 通知由 id==null 标识，仍然返回空响应。
+        按 JSON-RPC 2.0 规范通知不应产生响应。此处返回 id/result/error 均为
+        None 的空响应对象，HTTP 层据此转换为 202 空响应（不序列化响应体）。
         """
         log.info("mcp.notification.initialized")
         return make_notification_response()

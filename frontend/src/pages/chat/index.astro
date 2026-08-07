@@ -110,8 +110,8 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
       const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
       const TOKEN_KEY = 'ekb_access_token';
 
-      // 对话状态
-      let conversations: Array<{ id: string; title: string; messages: any[] }> = [];
+      // 对话状态（后端 ConversationResponse 不含 messages 字段，历史消息需单独请求消息接口）
+      let conversations: Array<{ id: string; title: string }> = [];
       let currentConvId: string | null = null;
       let currentAgent: 'qa' | 'workflow' | 'action' = 'qa';
       let isStreaming = false;
@@ -338,7 +338,7 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
         });
       }
 
-      function selectConversation(id: string) {
+      async function selectConversation(id: string) {
         // 流式进行中切换会话：先中止当前流，防止后续 token 写入已切换的会话（竞态）
         // abort 幂等 — 重复切换/重复点击不会产生额外副作用
         if (isStreaming && streamAbortController) {
@@ -346,13 +346,36 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
           streamAbortController.abort();
         }
         currentConvId = id;
-        const conv = conversations.find((c) => c.id === id);
         renderConversationList();
-        messagesEl.innerHTML = '';
-        if (conv && conv.messages.length > 0) {
-          conv.messages.forEach((m) => renderMessage(m.role, m.content));
-        } else {
-          renderWelcome();
+        // 历史消息不在会话列表响应中，需调用消息接口加载
+        messagesEl.innerHTML = '<div class="chat-empty-hint">历史消息加载中...</div>';
+        const token = localStorage.getItem(TOKEN_KEY);
+        try {
+          const res = await fetch(
+            `${API_BASE}/api/v1/chat/conversations/${encodeURIComponent(id)}/messages`,
+            { headers: { Authorization: `Bearer ${token}` } },
+          );
+          if (res.status === 401) {
+            window.location.href = '/auth/login';
+            return;
+          }
+          if (!res.ok) {
+            throw new Error(`请求失败 (${res.status})`);
+          }
+          const result = await res.json();
+          // 加载期间用户可能又切换了会话，丢弃过期响应，避免消息写入错误的会话
+          if (currentConvId !== id) return;
+          const messages: Array<{ role: string; content: string }> =
+            result.data?.items || result.data || [];
+          messagesEl.innerHTML = '';
+          if (messages.length > 0) {
+            messages.forEach((m) => renderMessage(m.role, m.content));
+          } else {
+            renderWelcome();
+          }
+        } catch (err) {
+          if (currentConvId !== id) return;
+          messagesEl.innerHTML = `<div class="chat-empty-hint">历史消息加载失败：${escapeHtml(err instanceof Error ? err.message : String(err))}</div>`;
         }
       }
 
@@ -432,10 +455,9 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
         // 新会话不预先创建本地 ID：首次发消息时由后端自动创建会话
         const isNewConversation = !currentConvId;
 
-        // 渲染用户消息
+        // 渲染用户消息（乐观更新直接追加到 DOM，不再维护本地 messages 缓存 —
+        // 会话对象无 messages 字段，历史消息以服务端消息接口为准）
         renderMessage('user', query);
-        const conv = conversations.find((c) => c.id === currentConvId);
-        conv?.messages.push({ role: 'user', content: query });
 
         inputEl.value = '';
         inputEl.style.height = 'auto';
@@ -488,6 +510,12 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
           // 一个 SSE 事件可能被 TCP 分包拆到多次 read() 中，若状态声明在循环内会被重置，导致事件静默丢失
           let evtType = '';
           let evtData = '';
+          // 是否已收到 data 字段：空串 data 也需正常派发（SSE 规范），用此标记区分"无 data 字段"
+          let evtHasData = false;
+
+          // SSE 规范：去掉字段名前缀后，仅移除至多一个前导空格，不 trim 内容，
+          // 避免损坏 LLM token 首尾空白（后端以裸字符串发送原始 token）
+          const stripFieldValue = (s: string) => s.replace(/^ /, '');
 
           while (true) {
             const { done, value } = await reader.read();
@@ -498,33 +526,40 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
             buffer = lines.pop() || '';
 
             for (const line of lines) {
-              const trimmed = line.trim();
-              if (trimmed === '') {
-                if (evtData) {
+              // 仅去除行尾 \r（\n 已被 split 移除），不整行 trim
+              const raw = line.endsWith('\r') ? line.slice(0, -1) : line;
+              if (raw === '') {
+                // 空行 = 事件边界：收到过 data 字段即派发，空串 data 不拦截
+                if (evtHasData) {
                   handleSSEEvent(evtType, evtData, contentEl, sources, streamState, statusEl, toolsEl);
                   evtType = '';
                   evtData = '';
+                  evtHasData = false;
                 }
                 continue;
               }
-              if (trimmed.startsWith('event:')) {
-                evtType = trimmed.slice(6).trim();
-              } else if (trimmed.startsWith('data:')) {
-                const d = trimmed.slice(5).trim();
-                evtData = evtData ? `${evtData}\n${d}` : d;
+              // 心跳/注释行（": heartbeat"）按 SSE 规范忽略
+              if (raw.startsWith(':')) continue;
+              if (raw.startsWith('event:')) {
+                evtType = stripFieldValue(raw.slice(6));
+              } else if (raw.startsWith('data:')) {
+                const d = stripFieldValue(raw.slice(5));
+                evtData = evtHasData ? `${evtData}\n${d}` : d;
+                evtHasData = true;
               }
             }
           }
 
           // 处理最后的数据：先冲刷缓冲区最后一行，再派发未派发完的事件
-          const lastLine = buffer.trim();
+          const lastLine = buffer.endsWith('\r') ? buffer.slice(0, -1) : buffer;
           if (lastLine.startsWith('event:')) {
-            evtType = lastLine.slice(6).trim();
+            evtType = stripFieldValue(lastLine.slice(6));
           } else if (lastLine.startsWith('data:')) {
-            const d = lastLine.slice(5).trim();
-            evtData = evtData ? `${evtData}\n${d}` : d;
+            const d = stripFieldValue(lastLine.slice(5));
+            evtData = evtHasData ? `${evtData}\n${d}` : d;
+            evtHasData = true;
           }
-          if (evtData) {
+          if (evtHasData) {
             handleSSEEvent(evtType, evtData, contentEl, sources, streamState, statusEl, toolsEl);
           }
 
@@ -540,15 +575,9 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
               const newConv = conversations.find((c) => c.id === currentConvId);
               if (newConv) {
                 newConv.title = newConv.title || query.slice(0, 20);
-                newConv.messages = [
-                  { role: 'user', content: query },
-                  { role: 'assistant', content: streamState.fullText },
-                ];
               }
               renderConversationList();
             }
-          } else {
-            conv?.messages.push({ role: 'assistant', content: streamState.fullText });
           }
         } catch (err) {
           // 用户主动中止（切换会话/新建对话）不视为错误：仅记录日志，不展示错误提示
@@ -768,6 +797,15 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
             contentEl.innerHTML = `<div class="markdown-body">${renderMarkdownStream(state.fullText)}</div><span class="chat-cursor"></span>`;
             messagesEl.scrollTop = messagesEl.scrollHeight;
           });
+        } else if (evtType === 'answer_regenerated') {
+          // B2-5: 忠实度拦截后重生成的完整答案 — 已流出的旧答案作废，
+          // 重置累积 buffer 并以新答案重新渲染 Markdown
+          const newAnswer = typeof parsed?.answer === 'string' ? parsed.answer : '';
+          state.fullText = newAnswer;
+          // 丢弃节流队列中基于旧答案的待渲染内容，避免覆盖新答案
+          cancelStreamRender();
+          contentEl.innerHTML = `<div class="markdown-body">${renderMarkdownStream(newAnswer)}</div><span class="chat-cursor"></span>`;
+          messagesEl.scrollTop = messagesEl.scrollHeight;
         } else if (evtType === 'meta') {
           // P0-6: 绑定会话 ID
           if (parsed?.conversation_id && !currentConvId) {
@@ -1236,8 +1274,16 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
       });
 
       bindSuggestions();
-      loadConversations();
       loadModels(); // P2-6: 加载可用模型列表
+
+      // 初始化：加载会话列表；若 URL 携带 ?id=<会话ID>（对话历史页深链），自动选中并加载该会话
+      (async () => {
+        await loadConversations();
+        const deepLinkId = new URLSearchParams(window.location.search).get('id');
+        if (deepLinkId && conversations.some((c) => c.id === deepLinkId)) {
+          await selectConversation(deepLinkId);
+        }
+      })();
     </script>
 
     <style>

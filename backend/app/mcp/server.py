@@ -12,6 +12,7 @@ MCP Server — 单一职责：暴露知识库工具给 AI Agent。
 
 from __future__ import annotations
 
+import asyncio
 import contextvars
 import json
 import uuid
@@ -485,10 +486,11 @@ class KnowledgeBaseMCPServer:
                 )
                 await store.fail_task(task_id, str(exc))
 
-        # 创建后台任务 — 不 await，立即返回
-        import asyncio
-
-        asyncio.create_task(_execute())
+        # 创建后台任务 — 不 await，立即返回；
+        # 持有强引用防止任务被 GC 提前回收，完成后自动从集合移除
+        task = asyncio.create_task(_execute())
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
 
         log.info(
             "mcp.task_created",

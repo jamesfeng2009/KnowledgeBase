@@ -37,6 +37,22 @@ _L3_INJECT_TOP_N = 3
 _MIN_IMPORTANCE = 3
 
 
+def _fact_to_dict(fact) -> dict:
+    """将 MemoryFact ORM 对象转换为 dict，供 prompt 渲染层以键值方式消费。
+
+    消费端（to_system_prompt / chat_service 滚动摘要 / Agent 基类）统一使用
+    f["fact_text"] / f.get("category") 的 dict 访问方式，直接传 ORM 对象会抛
+    AttributeError/TypeError，导致有记忆的用户第二轮对话起必崩。
+    """
+    return {
+        "id": str(fact.id),
+        "category": fact.category,
+        "fact_text": fact.fact_text,
+        "fact_key": fact.fact_key,
+        "fact_value": fact.fact_value,
+    }
+
+
 class MemoryContext:
     """聚合后的记忆上下文 — 传递给 Agent Loop 的完整记忆。"""
 
@@ -88,11 +104,13 @@ class MemoryContext:
             working = [f["fact_text"] for f in self.working_memory]
             parts.append("当前任务上下文：\n" + "\n".join(f"  - {w}" for w in working))
 
-        # L2: Checkpoint 恢复
+        # L2: Checkpoint 恢复 — 仅有实质进度时才渲染恢复提示，
+        # 存根 checkpoint（iteration=0 且无检索结果）不渲染，避免误导性文本
         if self.checkpoint:
             iteration = self.checkpoint.get("iteration", 0)
             retrieved_count = len(self.checkpoint.get("retrieved_docs", []))
-            parts.append(f"（从上次中断处恢复：已迭代 {iteration} 次，已检索 {retrieved_count} 条文档）")
+            if iteration > 0 or retrieved_count > 0:
+                parts.append(f"（从上次中断处恢复：已迭代 {iteration} 次，已检索 {retrieved_count} 条文档）")
 
         return "\n\n".join(parts) if parts else ""
 
@@ -156,23 +174,30 @@ class MemoryManager:
                 logger.warning("checkpoint_load_failed", session_id=session_id, error=str(e))
 
         # L3: Mem0 长期偏好 — 有 query 时做语义检索，无 query 时按时间排序
+        # ORM 对象统一转为 dict（消费端均为 dict 式访问，见 _fact_to_dict）
         try:
-            ctx.user_facts = await self.mem0.search_facts(
-                user_id=user_id,
-                query=query,
-                limit=10,
-            )
+            ctx.user_facts = [
+                _fact_to_dict(f)
+                for f in await self.mem0.search_facts(
+                    user_id=user_id,
+                    query=query,
+                    limit=10,
+                )
+            ]
         except Exception as e:
             logger.warning("mem0_search_failed", user_id=str(user_id), error=str(e))
 
         # L4: 工作记忆 — 获取当前任务相关事实（有 query 时也做语义检索）
         try:
-            ctx.working_memory = await self.mem0.search_facts(
-                user_id=user_id,
-                query=query,
-                category="working",
-                limit=5,
-            )
+            ctx.working_memory = [
+                _fact_to_dict(f)
+                for f in await self.mem0.search_facts(
+                    user_id=user_id,
+                    query=query,
+                    category="working",
+                    limit=5,
+                )
+            ]
         except Exception as e:
             logger.warning("working_memory_load_failed", error=str(e))
 
@@ -497,12 +522,15 @@ class MemoryManager:
             True 表示存在重复，False 表示无重复。
         """
         try:
+            # 判重只认真实相似命中：关闭"无命中返回最新 N 条"兜底，
+            # 否则用户已有任意同类别事实后新事实会永远被判重复
             existing = await self.mem0.search_facts(
                 user_id=user_id,
                 query=content,
                 category=category,
                 limit=3,
                 similarity_threshold=similarity_threshold,
+                fallback_to_latest=False,
             )
             return len(existing) > 0
         except Exception as exc:

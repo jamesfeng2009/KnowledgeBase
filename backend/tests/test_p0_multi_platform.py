@@ -298,15 +298,16 @@ title: Frontmatter标题
         assert result == ""
 
     def test_factory_registers_markdown(self) -> None:
-        """工厂应注册 MarkdownParser。"""
+        """工厂应注册 MarkdownParser（Docling 禁用时走 legacy 路径）。"""
         from app.document.factory import get_parser
 
-        parser = get_parser("md")
-        assert parser is not None
-        assert parser.__class__.__name__ == "MarkdownParser"
+        with patch("app.document.factory._is_docling_enabled", return_value=False):
+            parser = get_parser("md")
+            assert parser is not None
+            assert parser.__class__.__name__ == "MarkdownParser"
 
-        parser2 = get_parser("markdown")
-        assert parser2 is not None
+            parser2 = get_parser("markdown")
+            assert parser2 is not None
 
 
 # ======================================================================

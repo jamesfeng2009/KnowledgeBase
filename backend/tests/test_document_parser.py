@@ -563,34 +563,40 @@ class TestFactory:
         from app.document.factory import get_parser
         from app.document.pdf_parser import PDFParser
 
-        parser = get_parser("pdf")
+        # 显式禁用 Docling，验证原有 PDFParser 路由
+        with patch("app.document.factory._is_docling_enabled", return_value=False):
+            parser = get_parser("pdf")
         assert isinstance(parser, PDFParser)
 
     def test_get_parser_pptx(self) -> None:
         from app.document.factory import get_parser
         from app.document.pptx_parser import PPTXParser
 
-        parser = get_parser("pptx")
+        with patch("app.document.factory._is_docling_enabled", return_value=False):
+            parser = get_parser("pptx")
         assert isinstance(parser, PPTXParser)
 
     def test_get_parser_ppt_not_registered(self) -> None:
         """ppt 旧格式不再注册别名 — 由 _parse_document 路由层兜底。"""
         from app.document.factory import get_parser
 
-        parser = get_parser("ppt")
+        with patch("app.document.factory._is_docling_enabled", return_value=False):
+            parser = get_parser("ppt")
         assert parser is None
 
     def test_get_parser_unsupported(self) -> None:
         from app.document.factory import get_parser
 
-        parser = get_parser("unknown")
+        with patch("app.document.factory._is_docling_enabled", return_value=False):
+            parser = get_parser("unknown")
         assert parser is None
 
     def test_get_parser_case_insensitive(self) -> None:
         from app.document.factory import get_parser
         from app.document.pdf_parser import PDFParser
 
-        parser = get_parser("PDF")
+        with patch("app.document.factory._is_docling_enabled", return_value=False):
+            parser = get_parser("PDF")
         assert isinstance(parser, PDFParser)
 
 
@@ -949,7 +955,8 @@ class TestFactoryDOCX:
         from app.document.factory import get_parser
         from app.document.docx_parser import DOCXParser
 
-        parser = get_parser("docx")
+        with patch("app.document.factory._is_docling_enabled", return_value=False):
+            parser = get_parser("docx")
         assert isinstance(parser, DOCXParser)
 
 
@@ -1352,21 +1359,24 @@ class TestFactoryXLSX:
         from app.document.factory import get_parser
         from app.document.xlsx_parser import XLSXParser
 
-        parser = get_parser("xlsx")
+        with patch("app.document.factory._is_docling_enabled", return_value=False):
+            parser = get_parser("xlsx")
         assert isinstance(parser, XLSXParser)
 
     def test_get_parser_xls_alias(self) -> None:
         from app.document.factory import get_parser
         from app.document.xlsx_parser import XLSXParser
 
-        parser = get_parser("xls")
+        with patch("app.document.factory._is_docling_enabled", return_value=False):
+            parser = get_parser("xls")
         assert isinstance(parser, XLSXParser)
 
     def test_get_parser_xlsx_case_insensitive(self) -> None:
         from app.document.factory import get_parser
         from app.document.xlsx_parser import XLSXParser
 
-        parser = get_parser("XLSX")
+        with patch("app.document.factory._is_docling_enabled", return_value=False):
+            parser = get_parser("XLSX")
         assert isinstance(parser, XLSXParser)
 
 

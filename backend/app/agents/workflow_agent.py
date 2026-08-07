@@ -114,7 +114,9 @@ class WorkflowAgent(BaseAgent):
         import re
 
         # 匹配常见单据编号格式：字母前缀 + 数字
-        pattern = r"\b([BQC][GJP]\d{4,})\b"
+        # 注意：Python Unicode 模式下中文属于 \w，\b 对中文边界失效
+        # （如"查一下BG2024001的进度"匹配不到），改用显式的前后边界断言
+        pattern = r"(?<![0-9A-Za-z])([BQC][GJP]\d{4,})(?![0-9A-Za-z])"
         match = re.search(pattern, query.upper())
         if match:
             bill_no = match.group(1)

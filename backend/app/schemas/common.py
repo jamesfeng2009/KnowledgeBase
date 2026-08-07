@@ -48,3 +48,25 @@ class PageResponse(BaseModel, Generic[T]):
     page: int = Field(default=1, ge=1, description="当前页码")
     size: int = Field(default=20, ge=1, description="每页数量")
     pages: int = Field(default=0, ge=0, description="总页数")
+
+
+class RecommendationItem(BaseModel):
+    """推荐结果条目 — 含召回来源 reason 与融合分数。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    doc_id: str = Field(..., description="文档 ID")
+    title: str | None = Field(default=None, description="文档标题")
+    reason: str = Field(default="", description="召回来源（user_cf/item_cf/vector/graph/hot/related）")
+    score: float = Field(default=0.0, ge=0, description="融合分数")
+
+
+class BehaviorReport(BaseModel):
+    """行为上报请求体。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    doc_id: str = Field(..., description="文档 ID")
+    action_type: str = Field(
+        ..., pattern="^(view|search_click|collect|like)$", description="行为类型"
+    )

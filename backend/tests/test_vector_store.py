@@ -31,11 +31,8 @@ if "celery_app" not in sys.modules:
     mock_celery_app.celery_app = MagicMock()
     sys.modules["celery_app"] = mock_celery_app
 
-if "opensearchpy" not in sys.modules:
-    sys.modules["opensearchpy"] = MagicMock()
-
-if "pymilvus" not in sys.modules:
-    sys.modules["pymilvus"] = MagicMock()
+# 注意：opensearchpy / pymilvus 为真实安装依赖，不得以裸 MagicMock 顶替，
+# 否则会破坏 llama_index 内部的 Union[...] 类型注解（生成 ForwardRef 失败）。
 
 from app.rag.chunker import Chunk
 from app.rag.vector_store.base import VectorStoreBase
@@ -1102,8 +1099,8 @@ class TestRetrieverWithVectorStore:
         # 去重后只剩 1 个结果（同一父块）
         assert len(results) == 1
         assert results[0]["content"] == "父块完整内容"
-        # 保留最高分（0.95）
-        assert results[0]["score"] == 0.95
+        # 保留最高分 — 向量路合并前经 min-max 归一化（0.90/0.95 → 0.0/1.0）
+        assert results[0]["score"] == 1.0
 
     @pytest.mark.asyncio
     async def test_expand_to_parents_no_parent_id_returns_as_is(self) -> None:
@@ -1219,7 +1216,10 @@ class TestDocumentTasksVectorIndex:
             count = await _build_vector_index("doc-001", chunks, embeddings)
 
         assert count == 2
-        mock_store.upsert.assert_called_once_with("doc-001", chunks, embeddings, kb_id=None)
+        mock_store.upsert.assert_called_once_with(
+            "doc-001", chunks, embeddings, kb_id=None,
+            doc_updated_at=None, effective_from=None, effective_to=None,
+        )
 
     @pytest.mark.asyncio
     async def test_build_vector_index_returns_zero_for_empty_embeddings(self) -> None:
@@ -1275,4 +1275,6 @@ class TestDocumentTasksVectorIndex:
         ) as mock_vec:
             await _build_indexes("doc-001", chunks, chunks_text, embeddings)
             mock_os.assert_called_once_with("doc-001", chunks, kb_id=None)
-            mock_vec.assert_called_once_with("doc-001", chunks, embeddings, kb_id=None)
+            mock_vec.assert_called_once_with(
+                "doc-001", chunks, embeddings, kb_id=None, doc=None
+            )

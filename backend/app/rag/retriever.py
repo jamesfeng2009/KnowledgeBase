@@ -467,6 +467,33 @@ class HybridRetriever:
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _normalize_scores(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """对单路检索结果做 min-max 归一化（score 映射到 [0, 1]）。
+
+        Bug6 修复：向量路 score 为余弦相似度（[0,1] 区间），BM25 路 score
+        无上界（常见 10~30+），直接比分/排序会让 BM25 路系统性地压制
+        向量路（跨量纲比分）。合并前对每路独立归一化，使两路分数可比。
+
+        - 返回新列表（浅拷贝 dict），不改写调用方的原始结果；
+        - 空列表原样返回；
+        - 分数全部相同（max == min，含单条结果）时统一置 1.0 ——
+          该路无可区分度，视为并列最高。
+        """
+        if not results:
+            return results
+        copied = [dict(d) for d in results]
+        scores = [float(d.get("score", 0.0)) for d in copied]
+        lo, hi = min(scores), max(scores)
+        if hi <= lo:
+            for d in copied:
+                d["score"] = 1.0
+            return copied
+        span = hi - lo
+        for d, s in zip(copied, scores):
+            d["score"] = (s - lo) / span
+        return copied
+
+    @staticmethod
     def _merge_and_dedupe(
         vector_results: list[dict[str, Any]],
         fulltext_results: list[dict[str, Any]],
@@ -475,7 +502,11 @@ class HybridRetriever:
         """合并多路结果并按 chunk_id 去重，保留最高分。
 
         同一 chunk_id 在两路均命中时，取较高 score 并标注首次命中的来源。
+        合并前两路各自做 min-max 归一化（见 ``_normalize_scores``），
+        避免向量路与 BM25 路跨量纲比分。
         """
+        vector_results = HybridRetriever._normalize_scores(vector_results)
+        fulltext_results = HybridRetriever._normalize_scores(fulltext_results)
         merged: dict[str, dict[str, Any]] = {}
         for doc in vector_results:
             cid = doc["chunk_id"]
