@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.feedback import Feedback
+from app.models.conversation import Message
 from app.models.user import User
 from app.repositories.feedback_repository import FeedbackRepository
 from app.utils.logger import get_logger
@@ -66,6 +67,7 @@ class FeedbackService:
         type: str,
         content: str,
         related_message_id: uuid.UUID | None = None,
+        doc_id: uuid.UUID | None = None,
     ) -> Feedback:
         """创建用户反馈。
 
@@ -73,23 +75,48 @@ class FeedbackService:
             type: 反馈类型 — bug/suggestion/praise/complaint。
             content: 反馈内容。
             related_message_id: 可选，关联的对话消息 ID。
+            doc_id: 可选，关联文档 ID（质量评分 doc_id 维度）。
+                    缺省时若传了 related_message_id，则从该消息的
+                    引用来源（Message.sources）解析第一个 doc_id 兜底。
 
         Returns:
             创建后的 ``Feedback`` 对象（status 默认 open，priority 默认 normal）。
         """
+        if doc_id is None and related_message_id is not None:
+            doc_id = await self._resolve_doc_id_from_message(related_message_id)
         feedback = await self._repo.create(
             user_id=self._user.id,
             type=type,
             content=content,
             related_message_id=related_message_id,
+            doc_id=doc_id,
         )
         log.info(
             "feedback.created",
             feedback_id=str(feedback.id),
             user_id=str(self._user.id),
             type=type,
+            doc_id=str(doc_id) if doc_id else None,
         )
         return feedback
+
+    async def _resolve_doc_id_from_message(
+        self, message_id: uuid.UUID
+    ) -> uuid.UUID | None:
+        """从消息引用来源（JSONB 引用卡片列表）解析第一个 doc_id。
+
+        解析失败（消息不存在 / sources 为空 / 无合法 UUID）时返回 None，
+        不阻断反馈创建。
+        """
+        stmt = select(Message.sources).where(Message.id == message_id)
+        sources = (await self._db.execute(stmt)).scalar_one_or_none()
+        for source in sources or []:
+            if isinstance(source, dict) and source.get("doc_id"):
+                try:
+                    return uuid.UUID(str(source["doc_id"]))
+                except ValueError:
+                    continue
+        return None
 
     async def list_feedback(
         self,

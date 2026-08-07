@@ -273,21 +273,31 @@ class QualityService:
     async def _load_doc_feedbacks(self, doc_id: uuid.UUID) -> list[Feedback]:
         """查询与指定文档关联的用户反馈。
 
-        Feedback 表没有 doc_id/kb_id 字段，唯一可用的关联链路为：
+        优先直查：``Feedback.doc_id`` 冗余列（P0 doc_id 维度，写入时落库）。
+        兼容兜底：doc_id 为 NULL 的旧数据仍走
         ``Feedback.related_message_id`` → ``Message.sources``
-        （JSONB 引用卡片列表，每项含 doc_id）。
-        仅返回"关联消息的引用来源包含该文档"的反馈，
-        避免全租户反馈混淆单文档评分。
+        （JSONB 引用卡片列表，每项含 doc_id）链路。
+        两条链路按 doc_id IS NULL 互斥切分，天然无重复计数。
         """
-        stmt = select(Feedback).where(Feedback.related_message_id.isnot(None))
+        # 1. 直查：新数据按 doc_id 冗余列命中
+        stmt = select(Feedback).where(Feedback.doc_id == doc_id)
         stmt = apply_tenant_filter(stmt, Feedback, self._tenant_id)
         result = await self.db.execute(stmt)
-        feedbacks = list(result.scalars().all())
-        if not feedbacks:
-            return []
+        direct = list(result.scalars().all())
+
+        # 2. 兼容兜底：仅扫描 doc_id 为 NULL 且关联了消息的旧数据
+        legacy_stmt = select(Feedback).where(
+            Feedback.doc_id.is_(None),
+            Feedback.related_message_id.isnot(None),
+        )
+        legacy_stmt = apply_tenant_filter(legacy_stmt, Feedback, self._tenant_id)
+        legacy_result = await self.db.execute(legacy_stmt)
+        legacy = list(legacy_result.scalars().all())
+        if not legacy:
+            return direct
 
         msg_stmt = select(Message.id, Message.sources).where(
-            Message.id.in_({f.related_message_id for f in feedbacks})
+            Message.id.in_({f.related_message_id for f in legacy})
         )
         msg_rows = (await self.db.execute(msg_stmt)).all()
         # 消息 ID → 该消息引用来源中的 doc_id 集合
@@ -300,11 +310,12 @@ class QualityService:
             msg_doc_map[msg_id] = doc_ids
 
         target = str(doc_id)
-        return [
+        legacy_matched = [
             f
-            for f in feedbacks
+            for f in legacy
             if target in msg_doc_map.get(f.related_message_id, set())
         ]
+        return direct + legacy_matched
 
     async def _score_citation(self, doc_id: uuid.UUID) -> float:
         """计算文档引用准确率评分（0.0-1.0）。

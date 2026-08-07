@@ -53,6 +53,7 @@ async def create_feedback(
         type=body.type.value,
         content=body.content,
         related_message_id=body.related_message_id,
+        doc_id=body.doc_id,
     )
     return ApiResponse(
         code=0,

@@ -53,6 +53,9 @@ class FeedbackCreate(BaseModel):
     related_message_id: uuid.UUID | None = Field(
         default=None, description="关联消息 ID"
     )
+    doc_id: uuid.UUID | None = Field(
+        default=None, description="关联文档 ID（可选，缺省时服务端从关联消息引用来源解析）"
+    )
 
 
 class FeedbackUpdate(BaseModel):
@@ -79,6 +82,7 @@ class FeedbackResponse(BaseModel):
     related_message_id: uuid.UUID | None = Field(
         default=None, description="关联消息 ID"
     )
+    doc_id: uuid.UUID | None = Field(default=None, description="关联文档 ID")
     response: str | None = Field(default=None, description="处理回复")
     created_at: datetime = Field(..., description="创建时间")
     updated_at: datetime = Field(..., description="更新时间")
