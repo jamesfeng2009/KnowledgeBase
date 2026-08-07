@@ -23,6 +23,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.llm.base import Tool
+from app.mcp.oa_adapter import OaAdapter, get_oa_adapter
 from app.mcp.resources import (
     Resource,
     ResourceMetadata,
@@ -153,6 +154,9 @@ class KnowledgeBaseMCPServer:
                        （通常是 ``async_sessionmaker`` 实例）。
         """
         self._db_factory = db_factory
+        # OA 审批流适配器 — 惰性创建（首次调用审批/IT 工具时按配置
+        # 选择 HTTP/Mock 实现），避免 Server 初始化即占用 HTTP 连接
+        self._oa_adapter: OaAdapter | None = None
         # 工具注册表：tool_name -> {"handler": method, "definition": Tool}
         self._tool_registry: dict[str, dict[str, Any]] = {}
         self._scan_tools()
@@ -513,6 +517,12 @@ class KnowledgeBaseMCPServer:
     # 内部工具方法 — 每个方法独立，新增工具只需添加新方法
     # ------------------------------------------------------------------
 
+    def _oa(self) -> OaAdapter:
+        """获取 OA 审批流适配器（惰性创建并缓存到实例）。"""
+        if self._oa_adapter is None:
+            self._oa_adapter = get_oa_adapter()
+        return self._oa_adapter
+
     @mcp_tool(
         name="knowledge_search",
         description=(
@@ -735,8 +745,7 @@ class KnowledgeBaseMCPServer:
         name="query_oa_approval",
         description=(
             "查询 OA 系统审批状态。"
-            "当前为 mock 实现，返回模拟审批流数据；"
-            "接入真实 OA 系统后替换此方法体即可。"
+            "通过 OA 适配器对接企业 OA 系统（未配置 OA API 时返回模拟数据）。"
             "适用场景：用户想查询单据审批进度、审批到哪个节点。"
             "不适用于：搜索知识库文档（应改用 knowledge_search）；"
             "创建 IT 工单（应改用 create_it_ticket）。"
@@ -762,40 +771,19 @@ class KnowledgeBaseMCPServer:
         long_running=True,
     )
     async def _tool_query_oa_approval(self, bill_no: str) -> str:
-        """查询 OA 审批状态 — Mock 实现。
+        """查询 OA 审批状态 — 委托 OaAdapter（HTTP/Mock 由工厂按配置决定）。
 
-        实际生产中应调用企业 OA 系统 API，此处返回模拟数据供开发联调。
+        适配器异常向上传播，由 ``call_tool`` 统一包装为
+        ``{"error": ..., "tool": ...}`` JSON 返回。
         """
-        # Mock 数据 — 实际应调用 OA 系统 API
-        result = {
-            "bill_no": bill_no,
-            "status": "processing",
-            "current_node": "部门经理审批",
-            "submitter": "mock_user",
-            "submit_time": "2026-07-06T10:00:00+00:00",
-            "history": [
-                {
-                    "node": "发起申请",
-                    "operator": "mock_user",
-                    "time": "2026-07-06T09:00:00+00:00",
-                    "action": "提交",
-                },
-                {
-                    "node": "部门经理审批",
-                    "operator": "mock_manager",
-                    "time": "2026-07-06T10:00:00+00:00",
-                    "action": "审批中",
-                },
-            ],
-        }
+        result = await self._oa().get_approval_status(bill_no)
         return json.dumps(result, ensure_ascii=False)
 
     @mcp_tool(
         name="create_it_ticket",
         description=(
             "创建 IT 服务台工单。"
-            "当前为 mock 实现，返回模拟工单号；"
-            "接入真实 IT 服务台后替换此方法体即可。"
+            "通过 OA 适配器对接企业 IT 服务台（未配置 OA API 时返回模拟工单号）。"
             "适用场景：用户想报修、提工单、寻求 IT 支持。"
             "不适用于：查询已有工单状态（当前不支持查询）；"
             "查询 OA 审批进度（应改用 query_oa_approval）；"
@@ -829,20 +817,12 @@ class KnowledgeBaseMCPServer:
         description: str,
         priority: str = "normal",
     ) -> str:
-        """创建 IT 工单 — Mock 实现。
+        """创建 IT 工单 — 委托 OaAdapter（HTTP/Mock 由工厂按配置决定）。
 
-        实际生产中应调用 IT 服务台系统 API，此处返回模拟工单号供开发联调。
+        适配器异常向上传播，由 ``call_tool`` 统一包装为
+        ``{"error": ..., "tool": ...}`` JSON 返回。
         """
-        # Mock 数据 — 实际应调用 IT 服务台 API
-        ticket_id = f"IT-{uuid.uuid4().hex[:8].upper()}"
-        result = {
-            "ticket_id": ticket_id,
-            "title": title,
-            "description": description,
-            "priority": priority,
-            "status": "open",
-            "created_at": "2026-07-06T10:00:00+00:00",
-        }
+        result = await self._oa().create_it_ticket(title, description, priority)
         return json.dumps(result, ensure_ascii=False)
 
     @mcp_tool(

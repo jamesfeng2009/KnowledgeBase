@@ -281,6 +281,13 @@ class Settings(BaseSettings):
     LDAP_BIND_PASSWORD: str = ""
     LDAP_BASE_DN: str = ""
 
+    # === OA 连接器（审批流查询 / IT 服务台对接）===
+    # 关闭时 MCP query_oa_approval / create_it_ticket 工具走 Mock 适配器
+    # （行为与历史 mock 一致）；启用且配置 API URL 后走真实 OA 系统
+    CONNECTOR_OA_ENABLED: bool = False
+    CONNECTOR_OA_API_URL: str = ""
+    CONNECTOR_OA_API_KEY: str = ""
+
     # === CORS ===
     CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:8090"]
 
