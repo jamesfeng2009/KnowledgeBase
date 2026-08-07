@@ -60,6 +60,7 @@ celery_app = Celery(
         "tasks.compounding_tasks",
         "tasks.testing_tasks",
         "tasks.health_tasks",
+        "tasks.recommendation_tasks",
     ],
 )
 
@@ -104,6 +105,8 @@ celery_app.conf.update(
         "tasks.deep_research_tasks.*": {"queue": "documents"},
         # AI 服务健康检查（每 30s，轻量高频）— 归入定时队列
         "tasks.health_tasks.*": {"queue": "scheduled"},
+        # 推荐模型离线重建 — 归入定时队列，避免阻塞文档解析
+        "tasks.recommendation_tasks.*": {"queue": "scheduled"},
     },
 
     # 任务超时（秒）— 防止任务卡死

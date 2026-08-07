@@ -348,7 +348,12 @@ class TestRebuild:
         app.dependency_overrides[get_current_user] = override_user
         app.dependency_overrides[get_db_session] = override_db
 
-        with patch("app.api.v1.recommendations.RecommendationService"):
+        # 端点现已提交真实 Celery 任务 — mock delay 避免依赖 broker
+        mock_task = AsyncMock()
+        mock_task.delay = lambda **kwargs: SimpleNamespace(id="celery-task-test")
+
+        with patch("app.api.v1.recommendations.RecommendationService"), \
+             patch("tasks.recommendation_tasks.rebuild_recommendation_model", mock_task):
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=app),
                 base_url="http://test",
@@ -360,3 +365,4 @@ class TestRebuild:
         data = response.json()
         assert data["code"] == 0
         assert data["data"]["status"] == "queued"
+        assert data["data"]["task_id"] == "celery-task-test"

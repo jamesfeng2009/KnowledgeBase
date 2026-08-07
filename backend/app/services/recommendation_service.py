@@ -68,6 +68,9 @@ class RecommendationService:
         self._vector_store = vector_store
         self._graph_service = graph_service
         self._cache = cache
+        # 预计算模型数据读取用的懒加载 Redis（未注入 cache 时使用）
+        self._redis: Any | None = None
+        self._redis_unavailable: bool = False
 
     # ------------------------------------------------------------------
     # 对外接口
@@ -365,29 +368,39 @@ class RecommendationService:
         behaviors: list[UserBehavior],
         top_k: int,
     ) -> list[dict[str, Any]]:
-        """向量内容召回 — 用户浏览文档标题聚合为偏好向量，向量库 Top-K。
+        """向量内容召回 — 用户偏好向量 → 向量库 Top-K。
 
-        解决新文档（无行为但语义可召回）与冷启动；embedder / 向量库不可用时
+        偏好向量优先读 Celery 预计算结果（recommend:{tenant}:prefvec:{user_id}），
+        未命中时按用户近期浏览文档标题现算；embedder / 向量库不可用时
         优雅降级返回空列表。
         """
-        # 取用户近期浏览的前 N 篇文档标题
-        recent = sorted(
-            behaviors, key=lambda b: b.acted_at, reverse=True
-        )[:_PREFERENCE_MAX_DOCS]
-        doc_ids = [b.doc_id for b in recent]
-        docs = await self._fetch_docs({str(d) for d in doc_ids})
-        titles = [d.title for d in docs.values() if d.title]
-        if not titles:
-            return []
+        vec: list[float] | None = None
+        if behaviors:
+            precomputed = await self._precomputed_get(
+                self._model_key(f"prefvec:{behaviors[0].user_id}")
+            )
+            if isinstance(precomputed, list) and precomputed:
+                vec = precomputed
 
-        embedder = self._embedder or self._get_embedder()
-        if embedder is None:
-            return []
-        try:
-            vec = (await embedder.embed([" ".join(titles)]))[0]
-        except Exception as exc:
-            logger.warning("recommend.vector.embed_error", error=str(exc))
-            return []
+        if vec is None:
+            # 回退现算：取用户近期浏览的前 N 篇文档标题
+            recent = sorted(
+                behaviors, key=lambda b: b.acted_at, reverse=True
+            )[:_PREFERENCE_MAX_DOCS]
+            doc_ids = [b.doc_id for b in recent]
+            docs = await self._fetch_docs({str(d) for d in doc_ids})
+            titles = [d.title for d in docs.values() if d.title]
+            if not titles:
+                return []
+
+            embedder = self._embedder or self._get_embedder()
+            if embedder is None:
+                return []
+            try:
+                vec = (await embedder.embed([" ".join(titles)]))[0]
+            except Exception as exc:
+                logger.warning("recommend.vector.embed_error", error=str(exc))
+                return []
 
         store = self._vector_store or self._get_vector_store()
         try:
@@ -565,7 +578,14 @@ class RecommendationService:
         return list((await self.db.execute(stmt)).scalars().all())
 
     async def _load_all_behaviors(self) -> dict[str, dict[str, float]]:
-        """加载同租户全部用户 → 文档权重映射（协同过滤矩阵）。"""
+        """加载同租户全部用户 → 文档权重映射（协同过滤矩阵）。
+
+        优先读 Celery 预计算矩阵（recommend:{tenant}:cf:matrix），
+        未命中时回退 DB 现算（保持原有行为兜底）。
+        """
+        precomputed = await self._precomputed_get(self._model_key("cf:matrix"))
+        if isinstance(precomputed, dict):
+            return precomputed
         stmt = select(UserBehavior).where(UserBehavior.deleted_at.is_(None))
         stmt = apply_tenant_filter(stmt, UserBehavior, self._tenant_id)
         rows = (await self.db.execute(stmt)).scalars().all()
@@ -624,6 +644,52 @@ class RecommendationService:
             )
         except Exception as exc:
             logger.debug("recommend.cache_set_error", error=str(exc))
+
+    # ------------------------------------------------------------------
+    # 预计算模型数据（Celery rebuild 写入 Redis，未命中回退现算）
+    # ------------------------------------------------------------------
+
+    def _model_key(self, suffix: str) -> str:
+        """预计算模型数据 Redis key — 与结果缓存同前缀，含租户隔离。"""
+        return f"recommend:{self._tenant_id or 'default'}:{suffix}"
+
+    async def _precomputed_get(self, key: str) -> Any | None:
+        """读取预计算模型数据 — 优先用注入的 cache，否则懒加载 Redis。
+
+        任一环节失败都返回 None（调用方回退现算），不阻塞推荐主流程。
+        """
+        store = self._cache if self._cache is not None else await self._get_redis()
+        if store is None:
+            return None
+        try:
+            raw = await store.get(key)
+            if raw:
+                return json.loads(raw)
+        except Exception as exc:
+            logger.debug("recommend.precomputed_get_error", error=str(exc))
+        return None
+
+    async def _get_redis(self) -> Any | None:
+        """懒加载 Redis 客户端 — 不可用时标记并返回 None（优雅降级）。"""
+        if self._redis_unavailable:
+            return None
+        if self._redis is not None:
+            return self._redis
+        try:
+            import redis.asyncio as aioredis
+
+            self._redis = aioredis.from_url(
+                settings.REDIS_URL,
+                decode_responses=True,
+                socket_timeout=2.0,
+                socket_connect_timeout=2.0,
+            )
+            await self._redis.ping()
+        except Exception as exc:
+            self._redis_unavailable = True
+            self._redis = None
+            logger.warning("recommend.redis.unavailable", error=str(exc))
+        return self._redis
 
     # ------------------------------------------------------------------
     # 外部服务懒加载

@@ -5,7 +5,7 @@
     GET /recommendations/user?top_k=10   — 个性化推荐（猜你想看）
     GET /recommendations/document/{doc_id}?top_k=5 — 相关阅读
     POST /recommendations/feedback        — 行为上报（浏览/收藏/点赞/搜索点击）
-    POST /recommendations/rebuild         — 触发离线索引重建（管理员，预留）
+    POST /recommendations/rebuild         — 触发离线索引重建（管理员，Celery 异步）
 
 权限：推荐模块经 require_module("knowledge_recommendation") 门控；
     结果统一经 PermissionService.filter_documents 过滤（密级 + 知识库归属）。
@@ -24,6 +24,9 @@ from app.models.user import User
 from app.schemas.common import ApiResponse, BehaviorReport, RecommendationItem
 from app.services.permission_service import PermissionService
 from app.services.recommendation_service import RecommendationService
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/recommendations", tags=["recommendations"])
 
@@ -105,8 +108,30 @@ async def trigger_rebuild(
     user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse[dict]:
-    """触发离线索引重建 — 预留端点，需管理员权限。"""
+    """触发离线索引重建 — 提交 Celery 任务，需管理员权限。
+
+    返回真实 ``task_id``（Celery AsyncResult.id）。项目暂无 Celery 任务
+    状态查询端点（``/mcp/tasks/{task_id}`` 仅服务于 MCP 长耗时工具，
+    与 Celery 任务无关），调用方可凭 task_id 通过 Celery 结果后端
+    （Redis，result_expires=3600s）查询任务状态。
+    """
     if user.role not in ("admin", "kb_admin"):
         return ApiResponse(code=403, data=None, message="需要管理员权限")
-    # TODO(Phase 2): 提交 Celery 任务重建协同过滤相似度矩阵 / 用户偏好向量
-    return ApiResponse(code=0, data={"status": "queued"}, message="已提交重建任务（Phase 2 实现）")
+
+    try:
+        from tasks.recommendation_tasks import rebuild_recommendation_model
+
+        tenant_id = getattr(request.state, "tenant_id", None)
+        async_result = rebuild_recommendation_model.delay(
+            tenant_id=str(tenant_id) if tenant_id else None
+        )
+    except Exception as exc:
+        # Celery broker 不可用时不应 500，返回明确错误供管理员排查
+        logger.error("recommend.rebuild.submit_failed", error=str(exc))
+        return ApiResponse(code=500, data=None, message=f"重建任务提交失败: {exc}")
+
+    return ApiResponse(
+        code=0,
+        data={"status": "queued", "task_id": async_result.id},
+        message="推荐模型重建任务已提交",
+    )
