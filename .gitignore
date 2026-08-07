@@ -49,3 +49,17 @@ frontend/node_modules/
 # Gap analysis reports (deliverables, not source code)
 frontend-gap-analysis/
 frontend-gap-report-v2/
+
+# Personal resume / cover-letter / interview / review documents (keep local, do not publish to remote)
+resume.md
+resume_*.md
+resume_*.html
+resume_*.docx
+cover_letter.md
+cover_letter_cn.md
+interview_questions.md
+test.md
+todo.md
+technical-qa.md
+简历-*.md
+评审-*.md
