@@ -21,6 +21,7 @@ from app.api.v1.connectors import router as connectors_router
 from app.api.v1.documents import router as documents_router
 from app.api.v1.experts import router as experts_router
 from app.api.v1.feedback import router as feedback_router
+from app.api.v1.finetune import router as finetune_router
 from app.api.v1.graph import router as graph_router
 from app.api.v1.intelligence import router as intelligence_router
 from app.api.v1.knowledge import router as knowledge_router
@@ -76,3 +77,4 @@ api_router.include_router(manage_router)
 api_router.include_router(admin_router)
 api_router.include_router(observability_router)
 api_router.include_router(tts_router)
+api_router.include_router(finetune_router)

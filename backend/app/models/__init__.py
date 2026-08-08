@@ -17,6 +17,7 @@ from app.models.checkpoint import AgentCheckpoint
 from app.models.comment import DocumentComment
 from app.models.conversation import Conversation, Message
 from app.models.feedback import Feedback
+from app.models.finetune import DatasetExport
 from app.models.gap import KnowledgeGap
 from app.models.high_risk import HighRiskAuditRecord
 from app.models.knowledge import Document, DocumentVersion, KnowledgeBase
@@ -68,6 +69,8 @@ __all__ = [
     "DocumentComment",
     "AuditFlow",
     "Feedback",
+    # 微调数据飞轮
+    "DatasetExport",
     # 推荐模块用户行为
     "UserBehavior",
     "Tenant",
