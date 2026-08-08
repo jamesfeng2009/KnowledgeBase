@@ -50,6 +50,11 @@ frontend/node_modules/
 frontend-gap-analysis/
 frontend-gap-report-v2/
 
+# Fine-tuning model cache & outputs (large binary, do not commit)
+backend/.hf_cache/
+backend/outputs/
+backend/models/
+
 # Personal resume / cover-letter / interview / review documents (keep local, do not publish to remote)
 resume.md
 resume_*.md

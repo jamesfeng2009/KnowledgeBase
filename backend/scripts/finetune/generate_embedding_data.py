@@ -134,6 +134,7 @@ def _query_variants(query: str) -> list[str]:
 
     避免模型只学到精确匹配，提升对真实用户多样化提问的泛化能力。
     模拟真实用户提问的多种表达方式（口语化、礼貌用语、省略修饰词等）。
+    每个模板可生成 8-10 个变体，82 模板 × 9 ≈ 700+ 条三元组。
     """
     variants = [query]
     plain = query.rstrip("？?。.！!")
@@ -142,10 +143,15 @@ def _query_variants(query: str) -> list[str]:
     # "怎么" → "如何"
     if query.startswith("怎么"):
         variants.append(query.replace("怎么", "如何", 1))
+    # "怎么" → "咋"（口语化）
+    if query.startswith("怎么"):
+        variants.append(query.replace("怎么", "咋", 1))
     # "请问" 前缀
     variants.append("请问" + plain + "？")
     # "我想知道" 前缀
     variants.append("我想知道" + plain)
+    # "麻烦问下" 前缀
+    variants.append("麻烦问下" + plain)
     # "呢" 结尾口语化
     if not plain.endswith("呢"):
         variants.append(plain + "呢")
