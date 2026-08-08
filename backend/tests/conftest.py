@@ -1,9 +1,14 @@
 """pytest 全局配置与 fixtures。
 
 提供测试基础设施：
-- 事件循环（session 级）；
-- PostgreSQL 数据库会话（自动建表）；
+- 事件循环（function 级，asyncpg 连接绑定到 loop 必须每测试独立）；
+- PostgreSQL 数据库会话（事务回滚隔离 SAVEPOINT）；
 - 模拟已认证用户。
+
+DB 隔离机制演进（见 technical-qa.md 11.1）：
+- 旧方案：function 级 DROP/CREATE ALL，DROP TABLE 要 AccessExclusiveLock，
+  并发跑多 pytest 进程时 AB-BA 死锁；
+- 新方案：模块级初始化表结构一次 + function 级 savepoint 回滚，无 DROP 无死锁。
 """
 import asyncio
 import os
@@ -28,9 +33,47 @@ os.environ.setdefault("OPENAI_API_KEY", "test-dummy-key")
 os.environ.setdefault("ANTHROPIC_API_KEY", "test-dummy-key")
 
 
+def _init_test_schema() -> None:
+    """模块导入时同步初始化测试库表结构（一次性 DROP+CREATE）。
+
+    用 asyncio.run() 在临时 loop 上执行，避免 async fixture 的 loop 绑定问题
+    （asyncpg 连接绑定到创建它的 event_loop，session scope fixture 的 loop 与
+    测试 loop 不一致时报 "attached to a different loop"）。
+    后续测试只做 create_all（IF NOT EXISTS，极快）+ savepoint 回滚，无 DROP 无死锁。
+    DB 不可用时静默跳过（纯 mock 测试不需要 DB）。
+    """
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from app.models.base import Base
+
+    async def _init() -> None:
+        engine = create_async_engine(os.environ["DATABASE_URL"])
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+                await conn.run_sync(Base.metadata.drop_all)
+                await conn.run_sync(Base.metadata.create_all)
+        finally:
+            await engine.dispose()
+
+    try:
+        asyncio.run(_init())
+    except Exception:
+        pass  # DB 不可用时静默（mock 测试不需要 DB）
+
+
+_init_test_schema()
+
+
 @pytest.fixture
 def event_loop():
-    """创建函数级事件循环 — asyncpg 连接绑定到事件循环，必须每个测试独立。"""
+    """function 级事件循环 — asyncpg 连接绑定到 loop，每个测试独立。
+
+    保持 function scope：session scope event_loop 会导致 asyncpg 连接池跨 loop
+    （pytest-asyncio 的 loop 管理与 session scope async fixture 不完全兼容，
+    即使 loop_scope="session" 仍报 "attached to a different loop"）。
+    """
     loop = asyncio.new_event_loop()
     yield loop
     loop.close()
@@ -38,34 +81,42 @@ def event_loop():
 
 @pytest_asyncio.fixture
 async def db_session():
-    """创建测试用数据库会话（PostgreSQL）。
+    """function 级会话 — 事务回滚隔离（SAVEPOINT），测试结束回滚，数据不残留。
 
-    自动创建所有表，测试结束后销毁引擎，保证测试隔离。
+    替代原 DROP/CREATE ALL 隔离方案：
+    - 原方案每个测试 DROP+CREATE 全部表，DROP TABLE 要 AccessExclusiveLock，
+      并发跑多 pytest 进程时经典 AB-BA 死锁；
+    - 新方案表结构由模块级 _init_test_schema() 保证，每个测试只 create_all
+      （IF NOT EXISTS，极快）+ savepoint 回滚，无 DROP 无死锁。
+    NullPool：不缓存连接，每次 connect() 新建绑定当前 loop（asyncpg 安全）。
+    join_transaction_mode="create_savepoint"：session 在外层事务内用 savepoint
+    嵌套，session.commit() 只 release savepoint 不会真正提交，结束时外层
+    rollback 撤销全部更改。
     """
-    from sqlalchemy import text
-    from sqlalchemy.ext.asyncio import (
-        AsyncSession,
-        async_sessionmaker,
-        create_async_engine,
-    )
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+    from sqlalchemy.pool import NullPool
 
     from app.models.base import Base
 
-    engine = create_async_engine(os.environ["DATABASE_URL"], echo=False)
+    engine = create_async_engine(
+        os.environ["DATABASE_URL"], echo=False, poolclass=NullPool
+    )
+    # create_all IF NOT EXISTS — 表已存在则跳过（保证新增模型表及时创建）
     async with engine.begin() as conn:
-        # pgvector 扩展 — memory_facts.embedding_vec 的 VECTOR 类型依赖
-        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-        # 先 drop 再 create — 确保表结构与当前 model 定义一致
-        # （PostgreSQL 的 create_all 不会 ALTER 已存在的表）
-        await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
 
-    session_factory = async_sessionmaker(
-        engine, class_=AsyncSession, expire_on_commit=False
-    )
-    async with session_factory() as session:
-        yield session
-
+    async with engine.connect() as conn:
+        trans = await conn.begin()
+        session = AsyncSession(
+            bind=conn,
+            join_transaction_mode="create_savepoint",
+            expire_on_commit=False,
+        )
+        try:
+            yield session
+        finally:
+            await session.close()
+            await trans.rollback()
     await engine.dispose()
 
 
