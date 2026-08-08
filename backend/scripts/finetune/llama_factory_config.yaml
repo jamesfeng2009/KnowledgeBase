@@ -1,0 +1,97 @@
+# =============================================================================
+# LLaMA-Factory 训练配置模板 — 企业知识库 SFT（对应本项目 sft.jsonl）
+#
+# 本文件为"模板合集"，包含两段配置，使用时请拆分到 LLaMA-Factory 约定位置：
+#   1) dataset_info 片段 —— 追加到 LLaMA-Factory 的 data/dataset_info.json
+#      （注意：dataset_info.json 是 JSON 文件，需将 YAML 写法转为 JSON）
+#   2) 训练参数 —— 保存为 LLaMA-Factory 的 train yaml（如 examples/ 下自定义 yaml）
+#
+# 安装：pip install "llamafactory>=0.9"
+# 运行：llamafactory-cli train <训练参数yaml路径>
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# 第 1 段：dataset_info.json 片段（追加进 data/dataset_info.json）
+#
+# sft.jsonl 每行格式：
+#   {"messages":[{"role":"system","content":"..."},{"role":"user","content":"..."},
+#                {"role":"assistant","content":"..."}],
+#    "meta":{"source":"...","doc_ids":[...],"tenant_id":"..."}}
+#
+# 采用 sharegpt 格式解析：columns.messages 指向 messages 列；
+# LLaMA-Factory 新版 sharegpt 解析器直接兼容 OpenAI 风格 role/content messages。
+# meta 列通过 tags 挂接为附加元信息（不参与训练，仅保留溯源）。
+# -----------------------------------------------------------------------------
+ekb_sft:
+  # 数据文件路径：相对于 LLaMA-Factory 的 data/ 目录（或用绝对路径 + file_name）
+  file_name: sft.jsonl
+  # sharegpt 格式 = 多轮对话 messages 结构
+  formatting: sharegpt
+  columns:
+    messages: messages   # messages 列名映射
+  tags:
+    role_tag: role       # 角色字段名
+    content_tag: content # 内容字段名
+    user_tag: user       # 用户角色取值
+    assistant_tag: assistant
+    system_tag: system
+  # 训练集占比（其余留作验证集）；如需独立验证文件可另行声明 val 数据集
+  split: train
+
+---
+# -----------------------------------------------------------------------------
+# 第 2 段：训练参数 yaml（Qwen2.5-7B-Instruct + LoRA SFT）
+# 与 scripts/finetune/train_lora.py 的超参保持一致，便于两种工具链互相对照。
+# -----------------------------------------------------------------------------
+
+### 模型
+model_name_or_path: Qwen/Qwen2.5-7B-Instruct   # 基座模型（HF repo 或本地路径）
+trust_remote_code: true
+
+### 方法
+stage: sft                  # 监督微调阶段
+do_train: true
+finetuning_type: lora       # LoRA（改 full 为全参数微调，需多卡）
+lora_rank: 16               # 与 train_lora.py --lora_rank 对齐
+lora_alpha: 32              # 与 --lora_alpha 对齐（缩放 = alpha/rank）
+lora_dropout: 0.05
+lora_target: all            # 注入全部线性层（等价 q/k/v/o/gate/up/down_proj）
+
+### QLoRA（4bit 量化，单卡 24GB 可训 7B；不用则删除这两行）
+# quantization_bit: 4
+# quantization_type: nf4
+
+### 数据
+dataset: ekb_sft            # 对应第 1 段 dataset_info 中的键名
+template: qwen              # Qwen2.5 官方 chat 模板（<|im_start|>/<|im_end|>）
+cutoff_len: 2048            # 最大序列长度，与 --max_len 对齐
+max_samples: 100000         # 调试用样本上限（全量训练可注释掉）
+overwrite_cache: true
+preprocessing_num_workers: 16
+val_size: 0.05              # 留出 5% 验证集，输出 eval loss
+
+### 训练超参
+per_device_train_batch_size: 4
+gradient_accumulation_steps: 8    # 等效 batch = 4 × 8 = 32
+learning_rate: 1.0e-4
+num_train_epochs: 3.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.03
+bf16: true                  # A100/H100/4090 均支持 bf16；老卡改 fp16: true
+gradient_checkpointing: true # 省显存（约 -40% 激活值显存，代价 ~20% 速度）
+seed: 42
+
+### 输出
+output_dir: saves/qwen2.5-7b-ekb-lora-sft
+logging_steps: 10
+save_strategy: epoch
+save_total_limit: 2
+plot_loss: true             # 输出 loss 曲线图，便于面试展示训练过程
+report_to: []               # 不接 wandb/mlflow；需要时改为 [wandb]
+
+### 训练后导出（合并 LoRA 得到完整模型，供 vLLM/后端网关部署）
+# llamafactory-cli export \
+#   --model_name_or_path Qwen/Qwen2.5-7B-Instruct \
+#   --adapter_name_or_path saves/qwen2.5-7b-ekb-lora-sft \
+#   --template qwen --finetuning_type lora \
+#   --export_dir models/qwen2.5-7b-ekb-sft-merged --export_size 2 --export_device cpu
