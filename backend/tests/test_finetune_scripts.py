@@ -29,6 +29,9 @@ PY_SCRIPTS = [
     "train_reranker",
     "eval_compare",
     "prepare_mlx_data",
+    "seed_documents",
+    "import_open_dataset",
+    "synthesize_qa",
 ]
 
 #: 顶层禁止出现的重依赖（必须延迟导入到函数内）

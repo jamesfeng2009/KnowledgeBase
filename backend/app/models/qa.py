@@ -5,7 +5,7 @@
 import uuid
 
 from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, SoftDeleteMixin, TimestampMixin, UUIDMixin
@@ -57,5 +57,17 @@ class QaAnswer(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
         Boolean, default=False, comment="是否 AI 生成"
     )
     vote_count: Mapped[int] = mapped_column(Integer, default=0, comment="投票数")
+    # 合成 QA 溯源 — doc_id 关联源文档（合成 QA 专用，真实回答为 NULL）；
+    # meta 标注 source=synthetic / doc_id / category / classification 等，
+    # 供 dataset_builder 幂等判断与密级继承使用。
+    doc_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("documents.id"),
+        nullable=True,
+        comment="源文档 ID（合成 QA 溯源，真实回答为 NULL）",
+    )
+    meta: Mapped[dict | None] = mapped_column(
+        JSONB, nullable=True, comment="扩展元数据（合成标注 source/doc_id/category 等）"
+    )
 
     question: Mapped[QaQuestion] = relationship(back_populates="answers")
