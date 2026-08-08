@@ -81,12 +81,13 @@ _BOUNDARY_CASES: list[tuple[str, str]] = [
 
 
 def _to_extractive_answer(question: str, answer: str) -> str:
-    """将原文答案转为提取式回答（不照抄 context 原文）。
+    """将原文答案转为提取式回答（不照抄 context 原文）——v2 规则化方案。
 
-    转换策略：
-    - 按句号/分号拆分多句答案为编号步骤，以"回答问题"的口吻呈现
-    - 单句答案加"根据文档，"前缀直接回答
-    - 核心目的：让 assistant ≠ context，教模型"提取+重组"而非"复制粘贴"
+    v3 起优先使用 _load_extractive_answers() 加载基座模型生成的提取式答案，
+    此函数仅作为 fallback（无 extractive_answers.json 时使用）。
+
+    转换策略：按句号/分号拆分多句答案为编号步骤 + "根据文档，"前缀。
+    局限：只做格式重组，教不了"理解问题+提取具体答案"（见微调.md 6.3b）。
     """
     import re
 
@@ -99,9 +100,37 @@ def _to_extractive_answer(question: str, answer: str) -> str:
     return f"根据文档，{answer}"
 
 
+# ---- 基座模型生成的提取式答案（self-distillation）----
+# v3 关键改进：用基座 Qwen 1.5B（未微调）生成直接回答作为 SFT 训练目标，
+# 教模型"提取答案"而非"照抄 context"。详见 generate_extractive_answers.py。
+_EXTRACTIVE_ANSWERS: dict[str, str] | None = None
+
+
+def _load_extractive_answers() -> dict[str, str] | None:
+    """延迟加载 extractive_answers.json（基座模型生成的提取式答案）。
+
+    返回 {template_index: "提取式答案"} 字典，文件不存在时返回 None。
+    """
+    global _EXTRACTIVE_ANSWERS
+    if _EXTRACTIVE_ANSWERS is not None:
+        return _EXTRACTIVE_ANSWERS
+    import json
+    from pathlib import Path
+
+    path = Path(__file__).parent.parent.parent / "data" / "open" / "extractive_answers.json"
+    if not path.exists():
+        return None
+    try:
+        _EXTRACTIVE_ANSWERS = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return _EXTRACTIVE_ANSWERS
+
+
 def _build_rag_sample(
     qa: tuple[str, str, str],
     query_variant: str,
+    qa_index: int = 0,
     all_qas: list[tuple[str, str, str]] | None = None,
     rng: random.Random | None = None,
 ) -> dict:
@@ -110,12 +139,19 @@ def _build_rag_sample(
     模拟真实 RAG 场景：检索返回 2 个文档片段（1 相关 + 1 干扰），
     模型需识别相关段落并提取信息作答。
 
-    关键设计（修复 v1 的"复制粘贴"问题）：
-    - context 含干扰文档 → 模型必须判断哪段相关，不能全盘照抄
-    - assistant 用 _to_extractive_answer 重组 → 不等于 context 原文，
-      教模型"提取+重组"而非"复制"
+    v3 关键改进（self-distillation）：
+    - assistant 优先用基座模型生成的提取式答案（_load_extractive_answers），
+      教模型"直接回答"而非"照抄 context"
+    - 无提取式答案时 fallback 到 _to_extractive_answer（规则化重组）
     """
     scene, _question, answer = qa
+
+    # ---- assistant：优先用基座模型提取式答案，fallback 到规则化重组 ----
+    extractive_map = _load_extractive_answers()
+    if extractive_map and str(qa_index) in extractive_map:
+        assistant_answer = extractive_map[str(qa_index)]
+    else:
+        assistant_answer = _to_extractive_answer(_question, answer)
 
     # ---- context：相关文档 + 干扰文档（模拟真实检索多段返回）----
     context_parts = [f"【文档1】（来源：{scene}知识库）\n{answer}"]
@@ -131,7 +167,7 @@ def _build_rag_sample(
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT_RAG},
             {"role": "user", "content": user_msg},
-            {"role": "assistant", "content": _to_extractive_answer(_question, answer)},
+            {"role": "assistant", "content": assistant_answer},
         ],
         "meta": {"type": "rag", "scene": scene},
     }
@@ -179,11 +215,11 @@ def generate_sft_samples(count: int = 800, seed: int = 42) -> list[dict]:
 
     # ---- 60% RAG 问答 ----
     rag_count = int(count * 0.6)
-    for qa in _QA_TEMPLATES:
+    for qa_idx, qa in enumerate(_QA_TEMPLATES):
         for variant in _query_variants(qa[1]):
             if len(samples) >= rag_count:
                 break
-            samples.append(_build_rag_sample(qa, variant, all_qas=_QA_TEMPLATES, rng=rng))
+            samples.append(_build_rag_sample(qa, variant, qa_index=qa_idx, all_qas=_QA_TEMPLATES, rng=rng))
         if len(samples) >= rag_count:
             break
 
