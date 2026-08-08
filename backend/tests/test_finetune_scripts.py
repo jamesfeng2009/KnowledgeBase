@@ -28,6 +28,7 @@ PY_SCRIPTS = [
     "train_embedding",
     "train_reranker",
     "eval_compare",
+    "prepare_mlx_data",
 ]
 
 #: 顶层禁止出现的重依赖（必须延迟导入到函数内）
@@ -294,7 +295,79 @@ class TestEvalMetrics:
 
 
 # ---------------------------------------------------------------------------
-# 6. LLaMA-Factory 配置模板结构校验（PyYAML 可用时）
+# 6. prepare_mlx_data MLX 数据准备
+# ---------------------------------------------------------------------------
+
+class TestPrepareMlxData:
+    def test_split_dataset_ratio(self):
+        pm = _load_module("prepare_mlx_data")
+        records = [{"messages": [{"role": "user", "content": f"q{i}"},
+                                 {"role": "assistant", "content": f"a{i}"}]} for i in range(100)]
+        train, valid = pm.split_dataset(records, valid_ratio=0.1, seed=42)
+        assert len(train) == 90
+        assert len(valid) == 10
+        # 可复现：同种子两次结果一致
+        train2, valid2 = pm.split_dataset(records, valid_ratio=0.1, seed=42)
+        assert train == train2 and valid == valid2
+
+    def test_split_dataset_min_valid(self):
+        pm = _load_module("prepare_mlx_data")
+        # 仅 2 条样本：valid 至少 1 条，train 至少 1 条
+        records = [{"messages": [{"role": "user", "content": "q"},
+                                 {"role": "assistant", "content": "a"}]}] * 2
+        train, valid = pm.split_dataset(records, valid_ratio=0.1, seed=1)
+        assert len(valid) >= 1
+        assert len(train) >= 1
+
+    def test_split_dataset_empty(self):
+        pm = _load_module("prepare_mlx_data")
+        assert pm.split_dataset([], valid_ratio=0.1) == ([], [])
+
+    def test_write_jsonl_roundtrip(self, tmp_path: Path):
+        pm = _load_module("prepare_mlx_data")
+        rec = {"messages": [{"role": "user", "content": "如何重置密码"}],
+               "meta": {"source": "qa_adopted", "tenant_id": "t1"}}
+        path = tmp_path / "mlx" / "train.jsonl"
+        n = pm.write_jsonl([rec, rec], path)
+        assert n == 2
+        # ensure_ascii=False：中文原样落盘
+        text = path.read_text(encoding="utf-8")
+        assert "如何重置密码" in text
+        assert text.count("\n") == 2
+
+    def test_main_end_to_end(self, tmp_path: Path):
+        pm = _load_module("prepare_mlx_data")
+        good = {"messages": [{"role": "system", "content": "你是助手"},
+                             {"role": "user", "content": "年假几天？"},
+                             {"role": "assistant", "content": "正式员工 10 天起。"}],
+                "meta": {"source": "qa_adopted"}}
+        src = _write_jsonl(tmp_path / "sft.jsonl", [good, good, good, good,
+                                                    "{bad json", good])
+        out_dir = tmp_path / "mlx_out"
+        rc = pm.main(["--data", str(src), "--output_dir", str(out_dir),
+                      "--valid_ratio", "0.2", "--seed", "7"])
+        assert rc == 0
+        train_path = out_dir / "train.jsonl"
+        valid_path = out_dir / "valid.jsonl"
+        assert train_path.is_file() and valid_path.is_file()
+        # 5 条有效（1 条坏行被跳过），8:2 拆分 → train 4 / valid 1
+        train_lines = [l for l in train_path.read_text(encoding="utf-8").splitlines() if l.strip()]
+        valid_lines = [l for l in valid_path.read_text(encoding="utf-8").splitlines() if l.strip()]
+        assert len(train_lines) + len(valid_lines) == 5
+        assert len(valid_lines) == 1
+        # 校验写出的仍是合法 messages 结构
+        obj = json.loads(train_lines[0])
+        assert obj["messages"][2]["role"] == "assistant"
+
+    def test_main_empty_input_returns_error(self, tmp_path: Path):
+        pm = _load_module("prepare_mlx_data")
+        src = _write_jsonl(tmp_path / "empty.jsonl", ["{bad json only"])
+        rc = pm.main(["--data", str(src), "--output_dir", str(tmp_path / "out")])
+        assert rc == 1
+
+
+# ---------------------------------------------------------------------------
+# 7. LLaMA-Factory 配置模板结构校验（PyYAML 可用时）
 # ---------------------------------------------------------------------------
 
 class TestLlamaFactoryConfig:
