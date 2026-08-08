@@ -80,24 +80,60 @@ _BOUNDARY_CASES: list[tuple[str, str]] = [
 ]
 
 
-def _build_rag_sample(qa: tuple[str, str, str], query_variant: str) -> dict:
-    """构造 RAG 问答样本：带检索文档 context。
+def _to_extractive_answer(question: str, answer: str) -> str:
+    """将原文答案转为提取式回答（不照抄 context 原文）。
 
-    模拟真实 RAG 场景：检索到的文档片段 + 用户问题 → 基于文档的答案。
-    教模型学习"基于 context 回答"而非"凭记忆回答"。
+    转换策略：
+    - 按句号/分号拆分多句答案为编号步骤，以"回答问题"的口吻呈现
+    - 单句答案加"根据文档，"前缀直接回答
+    - 核心目的：让 assistant ≠ context，教模型"提取+重组"而非"复制粘贴"
     """
-    _scene, _question, answer = qa
-    # context = 答案本身（模拟检索命中了正确文档）
-    # 额外加一段无关文档作为干扰（模拟真实检索的多段返回）
-    context = f"【相关文档】{answer}"
+    import re
+
+    parts = re.split(r"[。；]", answer)
+    parts = [p.strip() for p in parts if p.strip()]
+
+    if len(parts) >= 2:
+        steps = "\n".join(f"{i}. {p}" for i, p in enumerate(parts, 1))
+        return f"根据文档，具体如下：\n{steps}"
+    return f"根据文档，{answer}"
+
+
+def _build_rag_sample(
+    qa: tuple[str, str, str],
+    query_variant: str,
+    all_qas: list[tuple[str, str, str]] | None = None,
+    rng: random.Random | None = None,
+) -> dict:
+    """构造 RAG 问答样本：带检索文档 context（多段落 + 干扰文档）。
+
+    模拟真实 RAG 场景：检索返回 2 个文档片段（1 相关 + 1 干扰），
+    模型需识别相关段落并提取信息作答。
+
+    关键设计（修复 v1 的"复制粘贴"问题）：
+    - context 含干扰文档 → 模型必须判断哪段相关，不能全盘照抄
+    - assistant 用 _to_extractive_answer 重组 → 不等于 context 原文，
+      教模型"提取+重组"而非"复制"
+    """
+    scene, _question, answer = qa
+
+    # ---- context：相关文档 + 干扰文档（模拟真实检索多段返回）----
+    context_parts = [f"【文档1】（来源：{scene}知识库）\n{answer}"]
+    if all_qas and rng:
+        distractors = [q for q in all_qas if q[2] != answer and q[0] != scene]
+        if distractors:
+            d = rng.choice(distractors)
+            context_parts.append(f"【文档2】（来源：{d[0]}知识库）\n{d[2]}")
+    context = "\n\n".join(context_parts)
+
     user_msg = f"根据以下文档回答问题。\n\n{context}\n\n【问题】{query_variant}"
     return {
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT_RAG},
             {"role": "user", "content": user_msg},
-            {"role": "assistant", "content": answer},
+            {"role": "assistant", "content": _to_extractive_answer(_question, answer)},
         ],
-        "meta": {"type": "rag", "scene": _scene},
+        "meta": {"type": "rag", "scene": scene},
     }
 
 
@@ -147,7 +183,7 @@ def generate_sft_samples(count: int = 800, seed: int = 42) -> list[dict]:
         for variant in _query_variants(qa[1]):
             if len(samples) >= rag_count:
                 break
-            samples.append(_build_rag_sample(qa, variant))
+            samples.append(_build_rag_sample(qa, variant, all_qas=_QA_TEMPLATES, rng=rng))
         if len(samples) >= rag_count:
             break
 
