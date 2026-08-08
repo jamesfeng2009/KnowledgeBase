@@ -1,0 +1,871 @@
+---
+/**
+ * 微调数据集管理页面
+ * 数据集类型卡片 + 构建任务提交 + 版本列表 + 样本预览 + JSONL 下载
+ * 数据来源：POST /api/v1/finetune/datasets/export、GET /api/v1/finetune/datasets、
+ *          GET /api/v1/finetune/datasets/{id}(/preview|/download)
+ */
+import DefaultLayout from '@/layouts/DefaultLayout.astro';
+
+const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '微调数据集' }];
+---
+
+<DefaultLayout title="微调数据集" breadcrumb={breadcrumb}>
+  <div class="page-header">
+    <h1 class="page-title">微调数据集管理</h1>
+  </div>
+
+  <!-- 无权限提示（仅管理员可见本页内容） -->
+  <div class="card" id="no-permission" style="display: none;">
+    <div class="empty-state" style="padding: var(--space-8);">
+      <div style="font-size: 40px; margin-bottom: var(--space-3);">🔒</div>
+      <div style="font-weight: 500; margin-bottom: var(--space-2);">无权限访问</div>
+      <div class="text-muted">微调数据集管理仅对管理员（admin）开放</div>
+    </div>
+  </div>
+
+  <div id="finetune-content">
+    <!-- 数据集类型卡片 -->
+    <div class="grid grid-cols-4" style="margin-bottom: var(--space-5);">
+      <div class="card type-card">
+        <div class="type-card-title">SFT 指令微调</div>
+        <p class="type-card-desc">从高质量问答对构建指令微调样本，用于训练模型的问答遵循能力</p>
+        <div class="type-card-latest" id="latest-sft">
+          <span class="text-muted" style="font-size: var(--text-xs);">加载中...</span>
+        </div>
+        <button class="btn btn-primary btn-sm" data-build="sft">构建数据集</button>
+      </div>
+      <div class="card type-card">
+        <div class="type-card-title">DPO 偏好对</div>
+        <p class="type-card-desc">从用户点赞/点踩反馈构建偏好对样本，用于对齐人类偏好的强化训练</p>
+        <div class="type-card-latest" id="latest-dpo">
+          <span class="text-muted" style="font-size: var(--text-xs);">加载中...</span>
+        </div>
+        <button class="btn btn-primary btn-sm" data-build="dpo">构建数据集</button>
+      </div>
+      <div class="card type-card">
+        <div class="type-card-title">Embedding 检索三元组</div>
+        <p class="type-card-desc">构建 query/正例/负例三元组，用于检索向量模型的对比学习微调</p>
+        <div class="type-card-latest" id="latest-embedding">
+          <span class="text-muted" style="font-size: var(--text-xs);">加载中...</span>
+        </div>
+        <button class="btn btn-primary btn-sm" data-build="embedding">构建数据集</button>
+      </div>
+      <div class="card type-card">
+        <div class="type-card-title">Golden 评测集</div>
+        <p class="type-card-desc">从人工标注的金标准问答构建评测集，用于回归评估模型效果</p>
+        <div class="type-card-latest" id="latest-golden">
+          <span class="text-muted" style="font-size: var(--text-xs);">加载中...</span>
+        </div>
+        <button class="btn btn-primary btn-sm" data-build="golden">构建数据集</button>
+      </div>
+    </div>
+
+    <!-- 版本列表 -->
+    <div class="card">
+      <div class="card-header">
+        <h3>版本列表</h3>
+        <div style="display: flex; gap: var(--space-2);">
+          <select class="form-input" id="type-filter" style="width: 180px; font-size: var(--text-sm);">
+            <option value="">全部类型</option>
+            <option value="sft">SFT 指令微调</option>
+            <option value="dpo">DPO 偏好对</option>
+            <option value="embedding">Embedding 检索三元组</option>
+            <option value="golden">Golden 评测集</option>
+          </select>
+          <button class="btn btn-outline btn-sm" id="refresh-btn">刷新</button>
+        </div>
+      </div>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>版本</th>
+            <th>类型</th>
+            <th>状态</th>
+            <th>样本数</th>
+            <th>过滤统计</th>
+            <th>文件大小</th>
+            <th>创建时间</th>
+            <th>完成时间</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="dataset-list">
+          <tr><td colspan="9" class="loading-state">加载中...</td></tr>
+        </tbody>
+      </table>
+      <div class="pagination" id="pagination"></div>
+    </div>
+  </div>
+
+  <!-- 构建数据集弹窗 -->
+  <div class="modal-overlay" id="build-modal" style="display: none;">
+    <div class="modal" style="max-width: 480px;">
+      <div class="modal-header">
+        <h3 id="build-modal-title">构建数据集</h3>
+        <button class="btn btn-ghost btn-sm" id="build-close">✕</button>
+      </div>
+      <form id="build-form">
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">数据时间范围（天）*</label>
+            <input type="number" class="form-input" name="days" value="90" min="1" max="365" required />
+            <div class="form-hint">采集最近 N 天的反馈与问答数据</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">最低评分 *</label>
+            <input type="number" class="form-input" name="min_rating" value="4" min="1" max="5" step="1" required />
+            <div class="form-hint">仅纳入用户评分不低于该值的样本（1-5 分）</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">密级上限 *</label>
+            <select class="form-input" name="max_classification">
+              <option value="public">公开（public）</option>
+              <option value="internal" selected>内部（internal）</option>
+              <option value="confidential">机密（confidential）</option>
+            </select>
+            <div class="form-hint">仅导出密级不超过该级别的知识数据</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">样本上限 *</label>
+            <input type="number" class="form-input" name="limit" value="10000" min="100" max="100000" step="100" required />
+            <div class="form-hint">单次导出最多包含的样本条数</div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-ghost" id="build-cancel">取消</button>
+          <button type="submit" class="btn btn-primary" id="build-submit">提交构建</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 样本预览弹窗 -->
+  <div class="modal-overlay" id="preview-modal" style="display: none;">
+    <div class="modal" style="max-width: 720px;">
+      <div class="modal-header">
+        <h3 id="preview-modal-title">样本预览</h3>
+        <button class="btn btn-ghost btn-sm" id="preview-close">✕</button>
+      </div>
+      <div class="modal-body" id="preview-body">
+        <div class="loading-state">加载中...</div>
+      </div>
+    </div>
+  </div>
+</DefaultLayout>
+
+<style>
+  .type-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+  .type-card-title {
+    font-weight: 600;
+    font-size: var(--text-base);
+    color: var(--text);
+  }
+  .type-card-desc {
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    line-height: var(--lh-relaxed);
+    margin: 0;
+    flex: 1;
+  }
+  .type-card-latest {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    min-height: 32px;
+    line-height: 1.6;
+  }
+  .type-card-latest strong {
+    color: var(--text);
+    font-weight: 600;
+  }
+  .type-card .btn {
+    align-self: flex-start;
+  }
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .data-table th {
+    text-align: left;
+    padding: var(--space-3) var(--space-4);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-muted);
+    white-space: nowrap;
+  }
+  .data-table td {
+    padding: var(--space-3) var(--space-4);
+    font-size: var(--text-sm);
+    color: var(--text);
+    border-bottom: 1px solid var(--border-light);
+  }
+  .badge-muted {
+    background: var(--surface-muted);
+    color: var(--text-muted);
+  }
+  .stats-cell {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    cursor: help;
+    line-height: 1.6;
+  }
+  .pagination {
+    display: flex;
+    gap: var(--space-2);
+    justify-content: center;
+    align-items: center;
+    padding: var(--space-3);
+  }
+  .pagination button {
+    padding: var(--space-1) var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--text);
+    cursor: pointer;
+    font-size: var(--text-sm);
+  }
+  .pagination button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .pagination button.active {
+    background: var(--primary);
+    color: #fff;
+    border-color: var(--primary);
+  }
+  .pagination .page-info {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+  }
+  .form-hint {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    margin-top: var(--space-1);
+  }
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+  .modal {
+    background: var(--surface);
+    border-radius: var(--radius-lg);
+    width: 100%;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: var(--shadow-xl);
+  }
+  .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-5);
+    border-bottom: 1px solid var(--border);
+  }
+  .modal-body {
+    padding: var(--space-5);
+  }
+  .modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-3);
+    padding: var(--space-5);
+    border-top: 1px solid var(--border);
+  }
+  .loading-state {
+    text-align: center;
+    padding: var(--space-6);
+    color: var(--text-muted);
+  }
+  .empty-state {
+    text-align: center;
+    padding: var(--space-6);
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+  }
+  .error-state {
+    text-align: center;
+    padding: var(--space-6);
+    color: var(--danger);
+    font-size: var(--text-sm);
+  }
+  /* 样本预览 */
+  .sample-item {
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius);
+    padding: var(--space-3);
+    margin-bottom: var(--space-3);
+  }
+  .sample-item:last-child {
+    margin-bottom: 0;
+  }
+  .sample-index {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    margin-bottom: var(--space-2);
+  }
+  .sample-json {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    background: var(--surface-muted);
+    padding: var(--space-3);
+    border-radius: var(--radius);
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+    margin: 0;
+  }
+  .chat-msg {
+    display: flex;
+    gap: var(--space-2);
+    margin-bottom: var(--space-2);
+  }
+  .chat-msg:last-child {
+    margin-bottom: 0;
+  }
+  .chat-role {
+    flex-shrink: 0;
+    width: 44px;
+    font-size: var(--text-xs);
+    font-weight: 600;
+    color: var(--primary);
+    padding-top: 2px;
+  }
+  .chat-content {
+    flex: 1;
+    min-width: 0;
+    font-size: var(--text-sm);
+    color: var(--text);
+    line-height: var(--lh-relaxed);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+</style>
+
+<script>
+  import { exportDataset, getDatasets, getDataset, previewDataset } from '@/lib/apis/finetune';
+  import { ApiError, API_BASE } from '@/lib/api';
+
+  // Token 在 localStorage 中的存储键名（与 api.ts 保持一致，下载接口需手动带 Authorization 头）
+  const TOKEN_KEY = 'ekb_access_token';
+  const POLL_INTERVAL = 5000;
+  const PAGE_SIZE = 10;
+
+  const typeMap: Record<string, string> = {
+    sft: 'SFT 指令微调',
+    dpo: 'DPO 偏好对',
+    embedding: 'Embedding 检索三元组',
+    golden: 'Golden 评测集',
+  };
+  const statusMap: Record<string, { label: string; badge: string }> = {
+    pending: { label: '排队中', badge: 'badge-muted' },
+    building: { label: '构建中', badge: 'badge-warning' },
+    completed: { label: '已完成', badge: 'badge-success' },
+    failed: { label: '失败', badge: 'badge-danger' },
+  };
+  const roleLabelMap: Record<string, string> = {
+    system: '系统',
+    user: '用户',
+    assistant: '助手',
+  };
+
+  interface DatasetItem {
+    id: string;
+    dataset_type: string;
+    version: string;
+    status: string;
+    sample_count: number;
+    filtered_stats: Record<string, unknown> | null;
+    file_size_bytes: number | null;
+    created_at: string;
+    completed_at: string;
+  }
+
+  let datasets: DatasetItem[] = [];
+  let total = 0;
+  let currentPage = 1;
+  let currentBuildType = 'sft';
+  // building/pending 行的轮询定时器（全局唯一，页面卸载时清理）
+  let pollTimer: number | null = null;
+
+  /** 判断是否为 401/未登录错误（已在底层处理跳转，业务层需静默退出） */
+  function isAuthError(err: unknown): boolean {
+    return err instanceof ApiError && err.status === 401;
+  }
+
+  function getToken(): string | null {
+    return localStorage.getItem(TOKEN_KEY);
+  }
+
+  /** 从 JWT token 中解析角色（与 api.ts 的解析方式一致） */
+  function getRoleFromToken(): string | null {
+    const token = getToken();
+    if (!token) return null;
+    try {
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      return typeof payload.role === 'string' ? payload.role : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** 非管理员：隐藏业务内容，展示无权限提示 */
+  function showNoPermission(): void {
+    stopPolling();
+    document.getElementById('finetune-content')!.style.display = 'none';
+    document.getElementById('no-permission')!.style.display = 'block';
+  }
+
+  /** 从接口返回值中提取数组（兼容数组 / { items: [] } / 分页对象） */
+  function toItems(raw: unknown): Record<string, unknown>[] {
+    if (Array.isArray(raw)) return raw as Record<string, unknown>[];
+    if (raw && typeof raw === 'object') {
+      const obj = raw as { items?: unknown[] };
+      if (Array.isArray(obj.items)) return obj.items as Record<string, unknown>[];
+    }
+    return [];
+  }
+
+  function normalizeDataset(raw: Record<string, unknown>): DatasetItem {
+    return {
+      id: String(raw.id || raw.dataset_id || ''),
+      dataset_type: String(raw.dataset_type || raw.type || 'sft'),
+      version: String(raw.version || raw.version_tag || '-'),
+      status: String(raw.status || 'pending'),
+      sample_count: typeof raw.sample_count === 'number' ? raw.sample_count : Number(raw.sample_count) || 0,
+      filtered_stats:
+        raw.filtered_stats && typeof raw.filtered_stats === 'object' && !Array.isArray(raw.filtered_stats)
+          ? (raw.filtered_stats as Record<string, unknown>)
+          : null,
+      file_size_bytes:
+        typeof raw.file_size_bytes === 'number' ? raw.file_size_bytes : raw.file_size_bytes != null ? Number(raw.file_size_bytes) || null : null,
+      created_at: String(raw.created_at || '-'),
+      completed_at: String(raw.completed_at || ''),
+    };
+  }
+
+  /** 文件大小人性化展示（B/KB/MB） */
+  function formatSize(bytes: number | null): string {
+    if (bytes == null || Number.isNaN(bytes)) return '-';
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  // ===== 数据集类型卡片 =====
+
+  /** 加载各类型最新一个 completed 版本并展示在卡片上 */
+  async function loadTypeCards(): Promise<void> {
+    await Promise.all(
+      Object.keys(typeMap).map(async (type) => {
+        const el = document.getElementById(`latest-${type}`);
+        if (!el) return;
+        try {
+          // 取最近一批版本，客户端挑选第一个已完成的
+          const result = await getDatasets({ dataset_type: type, page: 1, size: 20 });
+          const items = toItems(result).map(normalizeDataset);
+          const latest = items.find((d) => d.status === 'completed');
+          el.innerHTML = latest
+            ? `最新版本：<strong>${escapeHtml(latest.version)}</strong><br/>样本数：${latest.sample_count}`
+            : '暂无已完成版本';
+        } catch (err) {
+          if (isAuthError(err)) return;
+          if (err instanceof ApiError && err.status === 403) {
+            showNoPermission();
+            return;
+          }
+          el.textContent = '加载失败';
+        }
+      })
+    );
+  }
+
+  // ===== 版本列表 =====
+
+  async function loadDatasets(): Promise<void> {
+    const tbody = document.getElementById('dataset-list')!;
+    tbody.innerHTML = '<tr><td colspan="9" class="loading-state">加载中...</td></tr>';
+
+    const typeFilter = (document.getElementById('type-filter') as HTMLSelectElement).value;
+    try {
+      const params: { dataset_type?: string; page: number; size: number } = { page: currentPage, size: PAGE_SIZE };
+      if (typeFilter) params.dataset_type = typeFilter;
+      const result = await getDatasets(params);
+      datasets = toItems(result).map(normalizeDataset);
+      total = result && typeof result.total === 'number' ? result.total : datasets.length;
+    } catch (err) {
+      if (isAuthError(err)) return;
+      if (err instanceof ApiError && err.status === 403) {
+        showNoPermission();
+        return;
+      }
+      const msg = err instanceof Error ? err.message : '网络异常';
+      tbody.innerHTML = `<tr><td colspan="9" class="error-state">加载版本列表失败：${escapeHtml(msg)}<br/><button class="btn btn-outline btn-sm" id="retry-list" style="margin-top: var(--space-3);">重试</button></td></tr>`;
+      document.getElementById('retry-list')?.addEventListener('click', loadDatasets);
+      return;
+    }
+    renderTable();
+    renderPagination();
+    syncPolling();
+  }
+
+  /** 过滤统计列：子文本展示 key: value，title 悬浮展示完整 JSON */
+  function renderFilteredStats(stats: Record<string, unknown> | null): string {
+    if (!stats) return '<span class="text-muted">-</span>';
+    const entries = Object.entries(stats);
+    if (entries.length === 0) return '<span class="text-muted">-</span>';
+    const full = JSON.stringify(stats, null, 2);
+    const lines = entries
+      .map(([k, v]) => `${escapeHtml(k)}: ${escapeHtml(typeof v === 'object' && v !== null ? JSON.stringify(v) : v)}`)
+      .join('<br/>');
+    return `<span class="stats-cell" title="${escapeHtml(full)}">${lines}</span>`;
+  }
+
+  function renderTable(): void {
+    const tbody = document.getElementById('dataset-list')!;
+    if (datasets.length === 0) {
+      tbody.innerHTML =
+        '<tr><td colspan="9" class="empty-state">还没有任何数据集版本<br/>点击上方卡片中的「构建数据集」按钮，创建第一个数据集版本</td></tr>';
+      return;
+    }
+    tbody.innerHTML = datasets
+      .map((d) => {
+        const statusInfo = statusMap[d.status] || { label: d.status, badge: 'badge-muted' };
+        const actionable = d.status === 'completed';
+        return `
+      <tr>
+        <td style="font-weight: 500;">${escapeHtml(d.version)}</td>
+        <td>${escapeHtml(typeMap[d.dataset_type] || d.dataset_type)}</td>
+        <td><span class="badge ${statusInfo.badge}">${escapeHtml(statusInfo.label)}</span></td>
+        <td>${d.sample_count}</td>
+        <td>${renderFilteredStats(d.filtered_stats)}</td>
+        <td class="text-muted">${formatSize(d.file_size_bytes)}</td>
+        <td class="text-muted">${escapeHtml(d.created_at)}</td>
+        <td class="text-muted">${escapeHtml(d.completed_at || '-')}</td>
+        <td>
+          <div style="display: flex; gap: var(--space-2);">
+            <button class="btn btn-ghost btn-sm" data-action="preview" data-id="${escapeHtml(d.id)}" ${actionable ? '' : 'disabled'}>预览</button>
+            <button class="btn btn-ghost btn-sm" data-action="download" data-id="${escapeHtml(d.id)}" ${actionable ? '' : 'disabled'}>下载</button>
+          </div>
+        </td>
+      </tr>`;
+      })
+      .join('');
+
+    tbody.querySelectorAll('button[data-action]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const action = (btn as HTMLElement).dataset.action!;
+        const id = (btn as HTMLElement).dataset.id!;
+        const item = datasets.find((d) => d.id === id);
+        if (!item || item.status !== 'completed') return;
+        if (action === 'preview') {
+          openPreview(item);
+        } else if (action === 'download') {
+          downloadDataset(item, btn as HTMLButtonElement);
+        }
+      });
+    });
+  }
+
+  function renderPagination(): void {
+    const container = document.getElementById('pagination')!;
+    const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    if (total <= 0) {
+      container.innerHTML = '';
+      return;
+    }
+    let html = `<button ${currentPage <= 1 ? 'disabled' : ''} data-page="${currentPage - 1}">上一页</button>`;
+    // 页码窗口：当前页前后各 2 页
+    const start = Math.max(1, Math.min(currentPage - 2, totalPages - 4));
+    const end = Math.min(totalPages, start + 4);
+    for (let p = start; p <= end; p++) {
+      html += `<button class="${p === currentPage ? 'active' : ''}" data-page="${p}">${p}</button>`;
+    }
+    html += `<button ${currentPage >= totalPages ? 'disabled' : ''} data-page="${currentPage + 1}">下一页</button>`;
+    html += `<span class="page-info">共 ${total} 条 / ${totalPages} 页</span>`;
+    container.innerHTML = html;
+
+    container.querySelectorAll('button[data-page]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const p = Number((btn as HTMLElement).dataset.page);
+        if (p >= 1 && p <= totalPages && p !== currentPage) {
+          currentPage = p;
+          loadDatasets();
+        }
+      });
+    });
+  }
+
+  // ===== building/pending 状态轮询 =====
+
+  function stopPolling(): void {
+    if (pollTimer !== null) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
+  }
+
+  /** 存在非终态行时启动轮询，否则停止 */
+  function syncPolling(): void {
+    const hasActive = datasets.some((d) => d.status === 'building' || d.status === 'pending');
+    if (!hasActive) {
+      stopPolling();
+      return;
+    }
+    if (pollTimer === null) {
+      pollTimer = window.setInterval(pollActiveDatasets, POLL_INTERVAL);
+    }
+  }
+
+  /** 每 5 秒刷新非终态行的详情，直至进入终态（completed/failed） */
+  async function pollActiveDatasets(): Promise<void> {
+    const targets = datasets.filter((d) => d.status === 'building' || d.status === 'pending');
+    if (targets.length === 0) {
+      stopPolling();
+      return;
+    }
+    let changed = false;
+    await Promise.all(
+      targets.map(async (d) => {
+        try {
+          const detail = await getDataset(d.id);
+          const detailStatus = String((detail as unknown as Record<string, unknown>)?.status || '');
+          if (detailStatus && detailStatus !== d.status) {
+            Object.assign(d, normalizeDataset(detail as unknown as Record<string, unknown>));
+            changed = true;
+          }
+        } catch {
+          // 单次轮询失败静默处理，等待下一轮
+        }
+      })
+    );
+    if (changed) {
+      renderTable();
+      // 构建完成会影响类型卡片的"最新版本"，一并刷新
+      loadTypeCards();
+    }
+    syncPolling();
+  }
+
+  // ===== 构建数据集 =====
+
+  function openBuildModal(type: string): void {
+    currentBuildType = type;
+    document.getElementById('build-modal-title')!.textContent = `构建数据集 - ${typeMap[type] || type}`;
+    (document.getElementById('build-modal') as HTMLElement).style.display = 'flex';
+  }
+
+  function closeBuildModal(): void {
+    (document.getElementById('build-modal') as HTMLElement).style.display = 'none';
+  }
+
+  /** 数值参数解析（带上下限夹取） */
+  function clampInt(raw: FormDataEntryValue | undefined, fallback: number, min: number, max: number): number {
+    const n = parseInt(String(raw ?? ''), 10);
+    if (Number.isNaN(n)) return fallback;
+    return Math.min(max, Math.max(min, n));
+  }
+
+  async function submitBuild(e: Event): Promise<void> {
+    e.preventDefault();
+    const form = e.target as HTMLFormElement;
+    const data = new FormData(form);
+    const submitBtn = document.getElementById('build-submit') as HTMLButtonElement;
+
+    const payload = {
+      dataset_type: currentBuildType as 'sft' | 'dpo' | 'embedding' | 'golden',
+      days: clampInt(data.get('days') ?? undefined, 90, 1, 365),
+      min_rating: clampInt(data.get('min_rating') ?? undefined, 4, 1, 5),
+      max_classification: String(data.get('max_classification') || 'internal'),
+      limit: clampInt(data.get('limit') ?? undefined, 10000, 100, 100000),
+    };
+
+    submitBtn.disabled = true;
+    submitBtn.textContent = '提交中...';
+    try {
+      await exportDataset(payload);
+      alert('构建任务已提交，数据集版本将以「构建中」状态出现在列表中');
+      closeBuildModal();
+      // 切到对应类型筛选并回到第一页，方便看到新构建的版本
+      (document.getElementById('type-filter') as HTMLSelectElement).value = currentBuildType;
+      currentPage = 1;
+      await loadDatasets();
+    } catch (err) {
+      if (isAuthError(err)) return;
+      if (err instanceof ApiError && err.status === 403) {
+        showNoPermission();
+        return;
+      }
+      alert(err instanceof Error ? err.message : '网络异常');
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = '提交构建';
+    }
+  }
+
+  // ===== 样本预览 =====
+
+  function openPreview(item: DatasetItem): void {
+    document.getElementById('preview-modal-title')!.textContent = `样本预览 - ${item.version}（前 5 条）`;
+    const body = document.getElementById('preview-body')!;
+    body.innerHTML = '<div class="loading-state">加载中...</div>';
+    (document.getElementById('preview-modal') as HTMLElement).style.display = 'flex';
+
+    previewDataset(item.id, 5)
+      .then((result) => {
+        const samples = toItems(result);
+        if (samples.length === 0) {
+          body.innerHTML = '<div class="empty-state">该数据集暂无样本</div>';
+          return;
+        }
+        body.innerHTML = samples
+          .map(
+            (sample, i) => `
+          <div class="sample-item">
+            <div class="sample-index">样本 ${i + 1}</div>
+            ${renderSample(sample, item.dataset_type)}
+          </div>`
+          )
+          .join('');
+      })
+      .catch((err) => {
+        if (isAuthError(err)) return;
+        const msg = err instanceof Error ? err.message : '网络异常';
+        body.innerHTML = `<div class="error-state">加载样本失败：${escapeHtml(msg)}</div>`;
+      });
+  }
+
+  /** SFT 类型且含 messages 字段时渲染角色对话，其余情况 JSON 美化展示 */
+  function renderSample(sample: Record<string, unknown>, datasetType: string): string {
+    const messages = sample.messages;
+    if (datasetType === 'sft' && Array.isArray(messages)) {
+      return messages
+        .map((m) => {
+          const msg = (m || {}) as { role?: unknown; content?: unknown };
+          const role = String(msg.role || 'user');
+          const label = roleLabelMap[role] || role;
+          return `
+            <div class="chat-msg">
+              <span class="chat-role">${escapeHtml(label)}</span>
+              <div class="chat-content">${escapeHtml(msg.content)}</div>
+            </div>`;
+        })
+        .join('');
+    }
+    return `<pre class="sample-json">${escapeHtml(JSON.stringify(sample, null, 2))}</pre>`;
+  }
+
+  // ===== 下载（接口要求 Authorization 头，需 fetch blob 后触发下载） =====
+
+  async function downloadDataset(item: DatasetItem, btn: HTMLButtonElement): Promise<void> {
+    const token = getToken();
+    if (!token) {
+      window.location.href = '/auth/login';
+      return;
+    }
+
+    const original = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '下载中';
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/finetune/datasets/${encodeURIComponent(item.id)}/download`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        if (res.status === 401) {
+          localStorage.removeItem(TOKEN_KEY);
+          window.location.href = '/auth/login';
+          return;
+        }
+        if (res.status === 403) {
+          showNoPermission();
+          return;
+        }
+        let msg = `下载失败 (${res.status})`;
+        try {
+          const j = (await res.json()) as { message?: string; detail?: string };
+          if (j.message) msg = j.message;
+          else if (j.detail) msg = j.detail;
+        } catch {
+          /* 响应可能不是 JSON，忽略 */
+        }
+        throw new Error(msg);
+      }
+      const blob = await res.blob();
+      triggerDownload(blob, `finetune_${item.dataset_type}_${item.version}.jsonl`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '下载失败，请稍后重试';
+      alert(`下载失败：${msg}`);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = original;
+    }
+  }
+
+  function triggerDownload(blob: Blob, filename: string): void {
+    const objUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = objUrl;
+    a.download = filename;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    // 释放对象 URL（稍延迟以确保下载已触发）
+    setTimeout(() => URL.revokeObjectURL(objUrl), 1500);
+  }
+
+  function escapeHtml(s: unknown): string {
+    return String(s ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  // ===== 事件绑定与初始化 =====
+
+  document.querySelectorAll('button[data-build]').forEach((btn) => {
+    btn.addEventListener('click', () => openBuildModal((btn as HTMLElement).dataset.build!));
+  });
+  document.getElementById('build-close')?.addEventListener('click', closeBuildModal);
+  document.getElementById('build-cancel')?.addEventListener('click', closeBuildModal);
+  document.getElementById('build-form')?.addEventListener('submit', submitBuild);
+  document.getElementById('preview-close')?.addEventListener('click', () => {
+    (document.getElementById('preview-modal') as HTMLElement).style.display = 'none';
+  });
+  document.getElementById('type-filter')?.addEventListener('change', () => {
+    currentPage = 1;
+    loadDatasets();
+  });
+  document.getElementById('refresh-btn')?.addEventListener('click', () => {
+    loadDatasets();
+    loadTypeCards();
+  });
+
+  // 页面卸载时清理轮询定时器
+  window.addEventListener('beforeunload', stopPolling);
+
+  // 权限前置检查：token 中能解析出角色且不是 admin 时直接提示无权限；
+  // 无法解析角色（未登录等）时照常加载，由底层 401 逻辑跳转登录页
+  const role = getRoleFromToken();
+  if (role !== null && role !== 'admin') {
+    showNoPermission();
+  } else {
+    loadTypeCards();
+    loadDatasets();
+  }
+</script>
