@@ -285,6 +285,24 @@ def eval_retrieval_model(model_name: str, golden: list[dict],
 # 生成模式（transformers，函数内延迟导入）
 # ---------------------------------------------------------------------------
 
+def _detect_bf16() -> bool:
+    """检测当前设备是否支持 bf16（CUDA 或 Apple Silicon MPS）。
+
+    用实际分配张量探测，比按版本号判断更可靠（MPS 自 PyTorch 2.3+/macOS 14+ 支持 bf16）。
+    """
+    import torch  # 延迟导入
+
+    if torch.cuda.is_available():
+        return bool(torch.cuda.is_bf16_supported())
+    if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+        try:
+            torch.zeros(1, dtype=torch.bfloat16, device="mps")
+            return True
+        except Exception:
+            return False
+    return False
+
+
 def _load_causal_lm(model_path: str, adapter_path: str | None = None):
     """加载生成模型；adapter_path 非空时叠加 LoRA adapter。"""
     import torch  # 延迟导入
@@ -293,11 +311,14 @@ def _load_causal_lm(model_path: str, adapter_path: str | None = None):
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-    use_bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
+    use_bf16 = _detect_bf16()
+    has_accelerator = torch.cuda.is_available() or (
+        getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available()
+    )
     model = AutoModelForCausalLM.from_pretrained(
         model_path,
         torch_dtype=torch.bfloat16 if use_bf16 else torch.float32,
-        device_map="auto" if torch.cuda.is_available() else None,
+        device_map="auto" if has_accelerator else None,
         trust_remote_code=True,
     )
     if adapter_path:

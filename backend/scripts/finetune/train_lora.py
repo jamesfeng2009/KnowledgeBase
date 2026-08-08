@@ -26,6 +26,12 @@
     python scripts/finetune/train_lora.py \
         --data data/sft.jsonl --base_model Qwen/Qwen2.5-7B-Instruct \
         --output_dir outputs/lora-sft --lora_rank 16 --lora_alpha 32 --lr 1e-4
+
+Mac（Apple Silicon）注意：
+    - QLoRA 不可用（bitsandbytes 不支持 MPS），请用默认 LoRA 模式；
+      PyTorch 2.3+ / macOS 14+ 会自动检测并启用 MPS bf16（比 fp16 训练更稳）
+    - 建议先用 Qwen2.5-1.5B/3B + --batch_size 1 --grad_accum 8 --max_len 1024 跑通；
+      7B 可跑但较慢，追求速度可改用 mlx-lm（Apple 原生框架）
 """
 
 from __future__ import annotations
@@ -151,6 +157,25 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _detect_bf16() -> bool:
+    """检测当前训练设备是否支持 bf16（CUDA 或 Apple Silicon MPS）。
+
+    PyTorch 2.3+ / macOS 14+ 的 MPS 后端已支持 bf16，训练比 fp16 更稳
+    （fp16 易梯度溢出）。用实际分配张量探测，比按版本号判断更可靠。
+    """
+    import torch  # 延迟导入，保持无 GPU 环境可 import 本模块
+
+    if torch.cuda.is_available():
+        return bool(torch.cuda.is_bf16_supported())
+    if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+        try:
+            torch.zeros(1, dtype=torch.bfloat16, device="mps")
+            return True
+        except Exception:  # 旧版 PyTorch/macOS 的 MPS 不支持 bf16
+            return False
+    return False
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -179,7 +204,7 @@ def main(argv: list[str] | None = None) -> int:
     logger.info("训练集 %d 条 / 验证集 %d 条", len(train_ds), len(eval_ds))
 
     # ---- 模型（QLoRA 4bit 或 LoRA bf16）----
-    use_bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
+    use_bf16 = _detect_bf16()
     quantization_config = None
     if args.qlora:
         quantization_config = BitsAndBytesConfig(
