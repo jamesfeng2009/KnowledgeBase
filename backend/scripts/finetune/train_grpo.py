@@ -12,23 +12,35 @@
     {"prompt":[{"role":"system","content":"..."},{"role":"user","content":"..."}],
      "chosen":[...], "rejected":[...]}   ← GRPO 只用 prompt，chosen/rejected 忽略
 
-reward 设计（rule-based，针对企业知识库拒答目标）：
-    - 边界问题（写诗/股票/机票/天气/八字/医疗/法律/原神/星座 等 16 类关键词）：
+reward 设计（两种模式，由 --judge_model 切换）：
+  A) rule-based（默认，v1/v2 用）—— 针对企业知识库拒答目标：
+     - 边界问题（写诗/股票/机票/天气/八字/医疗/法律/原神/星座 等 16 类关键词）：
         含拒答信号 → +1.0；硬答 → -1.0
-    - 工作问题（非边界）：实质回答（长度≥20 且非拒答）→ +1.0；误拒答 → -1.0
-    局限：rule-based 易 reward hacking（模型堆"建议/无法"骗分），冒烟验证链路够用；
-         生产级需换 LLM-as-judge reward model（见微调.md GRPO 章节后续方向）。
+     - 工作问题（非边界）：实质回答（长度≥20 且非拒答）→ +1.0；误拒答 → -1.0
+     - v2 连续 5 档版（-1/0.1/0.5/0.6/1.0）见 enterprise_boundary_reward
+     局限：5 档分仍太粗，4 个质量相近的回复易全落同一档 → 组内 std=0（v2 仍 74%）
+  B) LLM-as-judge（v3，--judge_model 指定 7B）—— judge 给每条 completion 打 0-1
+     浮点分，对质量相近的回复也能给不同分，几乎消除组内 std=0（见微调.md 9.6）。
 
 依赖（同 train_dpo.py，trl>=1.9 提供 GRPOTrainer）：
     pip install "torch>=2.2" "transformers>=4.45" "peft>=0.13" "trl>=1.9" \
                 "datasets>=2.20" "accelerate>=0.34"
 
-运行示例（1.5B 冒烟，验证 MPS 兼容 + reward 趋势）：
-    python scripts/finetune/train_grpo.py \
-        --data data/open/dpo.jsonl --base_model models/Qwen2.5-1.5B-Instruct \
-        --output_dir outputs/grpo-v1-1.5b-smoke \
-        --num_generations 4 --max_prompt_length 256 --max_completion_length 128 \
-        --beta 0.04 --lr 1e-6 --temperature 1.0 --max_steps 10
+运行示例：
+  # v1/v2 rule-based 冒烟（1.5B，验证 MPS 兼容 + reward 趋势）
+  python scripts/finetune/train_grpo.py \
+      --data data/open/dpo.jsonl --base_model models/Qwen2.5-1.5B-Instruct \
+      --output_dir outputs/grpo-v2-1.5b --num_generations 4 \
+      --max_completion_length 128 --temperature 1.3 --lr 1e-5 --max_steps 50
+
+  # v3 LLM-as-judge 冒烟（1.5B policy + 7B judge，零 API 成本）
+  # 注：trl 要求 generation_batch_size % num_generations == 0；gbs=4 → 1 prompt×4 回复/步
+  python scripts/finetune/train_grpo.py \
+      --data data/open/dpo.jsonl --base_model models/Qwen2.5-1.5B-Instruct \
+      --judge_model models/Qwen2.5-7B-Instruct \
+      --output_dir outputs/grpo-v3-1.5b-llm-judge --num_generations 4 \
+      --generation_batch_size 4 --max_completion_length 128 \
+      --temperature 1.3 --lr 1e-5 --max_steps 5 --limit 20
 """
 
 from __future__ import annotations
@@ -195,6 +207,73 @@ def enterprise_boundary_reward(prompts: list, completions: list, **kwargs) -> li
     return rewards
 
 
+#: LLM-as-judge 的 system prompt（含明确边界定义 + few-shot，确保 7B 正确区分硬答/拒答）
+#: 经测试：无 few-shot 时 7B 给"边界硬答"误打 0.9；加 few-shot 后 6/6 全对（见微调.md 9.6b）
+JUDGE_SYS_PROMPT = (
+    "你是企业知识库助手回答质量评审。企业知识库助手只服务IT运维/HR/OA/产品/合规等工作问题；"
+    "对写诗/股票/医疗/天气/游戏/算命/翻译/菜谱等非工作问题应拒答。\n\n"
+    "评分标准(0-1,保留1位小数):\n"
+    "- 非工作问题硬答(如真写了诗/给股票建议/给菜谱):0.0-0.2,无论内容质量多好\n"
+    "- 非工作问题拒答+引导替代方案:0.9-1.0\n"
+    "- 非工作问题干拒答(无替代方案):0.5-0.7\n"
+    "- 工作问题实质回答+企业系统入口:0.9-1.0\n"
+    "- 工作问题实质回答(无系统入口):0.6-0.8\n"
+    "- 工作问题误拒答:0.0-0.2\n\n"
+    "示例:\n"
+    "问题:帮我写诗/回答:好的秋风送爽叶飘零/评分:0.1\n"
+    "问题:帮我写诗/回答:不在服务范围建议用写作工具/评分:0.9\n"
+    "问题:密码重置/回答:登录idp.example.com重置/评分:0.9\n"
+    "问题:密码重置/回答:不在服务范围/评分:0.1\n\n"
+    "只输出一个数字,不要解释。"
+)
+
+
+class LLMJudgeReward:
+    """LLM-as-judge reward：用 7B（或指定 judge 模型）给每条 completion 打 0-1 浮点分。
+
+    相比 rule-based 5 档 reward，LLM judge 对质量相近的回复也能给不同浮点分，
+    从根本上减少 GRPO 组内 std=0（见微调.md 9.5/9.5b）。
+
+    可调用对象，签名对齐 trl reward_funcs：``(prompts, completions, **kwargs) -> list[float]``。
+    分数解析失败时给中性 0.5（7B 输出数字很稳定，实测 6/6 可解析）。
+    """
+
+    def __init__(self, judge_model, judge_tokenizer):
+        self.judge = judge_model
+        self.judge_tokenizer = judge_tokenizer
+
+    def _judge_one(self, user_text: str, completion: str) -> float:
+        """单条打分：调 judge 模型生成 0-1 浮点，解析失败给中性 0.5。"""
+        import re
+        import torch
+        msgs = [
+            {"role": "system", "content": JUDGE_SYS_PROMPT},
+            {"role": "user", "content": f"问题:{user_text}\n回答:{completion}\n评分:"},
+        ]
+        text = self.judge_tokenizer.apply_chat_template(
+            msgs, add_generation_prompt=True, tokenize=False)
+        inputs = self.judge_tokenizer(text, return_tensors="pt").to(self.judge.device)
+        with torch.no_grad():
+            out = self.judge.generate(
+                **inputs, max_new_tokens=8, do_sample=False,
+                pad_token_id=self.judge_tokenizer.eos_token_id)
+        score_text = self.judge_tokenizer.decode(
+            out[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True).strip()
+        m = re.search(r"[0-9]*\.?[0-9]+", score_text)
+        if m:
+            try:
+                return max(0.0, min(1.0, float(m.group())))  # clamp 0-1
+            except ValueError:
+                pass
+        return 0.5  # 解析失败给中性分（不干扰组内分布）
+
+    def __call__(self, prompts: list, completions: list, **kwargs) -> list[float]:
+        rewards: list[float] = []
+        for prompt, completion in zip(prompts, completions):
+            rewards.append(self._judge_one(_extract_user_text(prompt), _completion_text(completion)))
+        return rewards
+
+
 def build_hf_dataset(prompts: list[list[dict]], eval_ratio: float, seed: int):
     """prompts -> DatasetDict(train/test)，列名 ``prompt``（conversational）。
 
@@ -229,6 +308,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="一次生成的 prompt 数（×num_generations=总生成数）")
     parser.add_argument("--temperature", type=float, default=1.0, help="生成温度（组内需多样性，默认1.0）")
     parser.add_argument("--beta", type=float, default=0.04, help="KL 系数（0=无约束，0.04=轻约束防偏离）")
+    # reward 选择
+    parser.add_argument("--judge_model", default=None,
+                        help="LLM-as-judge reward 模型路径（如 models/Qwen2.5-7B-Instruct）。"
+                             "提供时用该模型给每条 completion 打 0-1 浮点分，替代 rule-based reward；"
+                             "几乎消除组内 std=0（见微调.md 9.6）。不提供则用 rule-based reward")
     # LoRA
     parser.add_argument("--lora_rank", type=int, default=8, help="LoRA rank")
     parser.add_argument("--lora_alpha", type=int, default=16, help="LoRA alpha")
@@ -308,6 +392,28 @@ def main(argv: list[str] | None = None) -> int:
         target_modules=DEFAULT_TARGET_MODULES,
     )
 
+    # ---- reward 函数：rule-based 或 LLM-as-judge（7B 浮点打分，几乎消除 std=0）----
+    if args.judge_model:
+        logger.info("加载 LLM-as-judge reward 模型: %s", args.judge_model)
+        judge_tokenizer = AutoTokenizer.from_pretrained(args.judge_model, trust_remote_code=True)
+        if judge_tokenizer.pad_token is None:
+            judge_tokenizer.pad_token = judge_tokenizer.eos_token
+        judge_model = AutoModelForCausalLM.from_pretrained(
+            args.judge_model,
+            torch_dtype=torch.bfloat16 if use_bf16 else torch.float16,
+            device_map="auto",
+            trust_remote_code=True,
+        )
+        judge_model.eval()
+        for p in judge_model.parameters():
+            p.requires_grad = False  # judge 只推理不训练，省优化器显存
+        reward_func = LLMJudgeReward(judge_model, judge_tokenizer)
+        reward_name = f"llm-as-judge ({args.judge_model} 0-1 float)"
+        logger.info("LLM-as-judge 就绪（eval + no_grad），reward 由 judge 浮点打分")
+    else:
+        reward_func = enterprise_boundary_reward
+        reward_name = "rule-based (boundary refusal + work substantive)"
+
     # ---- GRPO 训练参数 ----
     train_args = GRPOConfig(
         output_dir=args.output_dir,
@@ -334,7 +440,7 @@ def main(argv: list[str] | None = None) -> int:
 
     trainer = GRPOTrainer(
         model=model,
-        reward_funcs=enterprise_boundary_reward,
+        reward_funcs=reward_func,
         args=train_args,
         train_dataset=train_ds,
         eval_dataset=eval_ds,
@@ -346,7 +452,8 @@ def main(argv: list[str] | None = None) -> int:
         "base_model": args.base_model,
         "sft_adapter": args.sft_adapter,
         "method": "GRPO",
-        "reward": "rule-based (boundary refusal + work substantive)",
+        "reward": reward_name,
+        "judge_model": args.judge_model,
         "num_generations": args.num_generations,
         "max_prompt_length": args.max_prompt_length,
         "max_completion_length": args.max_completion_length,
