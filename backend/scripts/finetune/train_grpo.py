@@ -166,6 +166,34 @@ def _completion_text(completion: Any) -> str:
     return str(completion)
 
 
+def enterprise_boundary_reward_v1(prompts: list, completions: list, **kwargs) -> list[float]:
+    """二值 reward（v1）：仅 ±1 两档，作为 GRPO baseline 用于和 v2 对比。
+
+    边界问题：含拒答信号（含或不含引导）→ +1.0；硬答 → -1.0
+    工作问题：实质回答（长度≥20 且非拒答）→ +1.0；误拒答/空话 → -1.0
+
+    局限：4 个质量相近的回复极易全落 ±1 同档 → 组内 std=0、优势=0、梯度=0。
+    v1 是 v2 连续 reward 的对照基线（见微调.md 9.5），用于证明 std=0 的根因是
+    分档过粗而非数据本身。
+
+    签名对齐 trl GRPOTrainer：``(prompts, completions, **kwargs) -> list[float]``。
+    """
+    rewards: list[float] = []
+    for prompt, completion in zip(prompts, completions):
+        user_text = _extract_user_text(prompt)
+        comp_text = _completion_text(completion)
+        is_boundary = any(kw in user_text for kw in BOUNDARY_KEYWORDS)
+        has_refusal = any(sig in comp_text for sig in REFUSAL_SIGNALS)
+        is_substantive = len(comp_text) >= SUBSTANTIVE_MIN_LEN
+
+        if is_boundary:
+            r = 1.0 if has_refusal else -1.0        # 拒答(含/不含引导) vs 硬答
+        else:
+            r = 1.0 if (is_substantive and not has_refusal) else -1.0  # 实质回答 vs 误拒答/空话
+        rewards.append(r)
+    return rewards
+
+
 def enterprise_boundary_reward(prompts: list, completions: list, **kwargs) -> list[float]:
     """连续 reward（v2）：多梯度分值减少组内 std=0，让 GRPO 有持续学习信号。
 
@@ -309,6 +337,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--temperature", type=float, default=1.0, help="生成温度（组内需多样性，默认1.0）")
     parser.add_argument("--beta", type=float, default=0.04, help="KL 系数（0=无约束，0.04=轻约束防偏离）")
     # reward 选择
+    parser.add_argument("--reward_version", default="v2", choices=["v1", "v2"],
+                        help="rule-based reward 版本（仅当未指定 --judge_model 时生效）："
+                             "v1 二值 ±1（baseline，易致组内 std=0）；"
+                             "v2 连续 5 档 -1/0.1/0.5/0.6/1.0（减少 std=0，见微调.md 9.5b）")
     parser.add_argument("--judge_model", default=None,
                         help="LLM-as-judge reward 模型路径（如 models/Qwen2.5-7B-Instruct）。"
                              "提供时用该模型给每条 completion 打 0-1 浮点分，替代 rule-based reward；"
@@ -392,7 +424,7 @@ def main(argv: list[str] | None = None) -> int:
         target_modules=DEFAULT_TARGET_MODULES,
     )
 
-    # ---- reward 函数：rule-based 或 LLM-as-judge（7B 浮点打分，几乎消除 std=0）----
+    # ---- reward 函数：rule-based(v1/v2) 或 LLM-as-judge（7B 浮点打分，几乎消除 std=0）----
     if args.judge_model:
         logger.info("加载 LLM-as-judge reward 模型: %s", args.judge_model)
         judge_tokenizer = AutoTokenizer.from_pretrained(args.judge_model, trust_remote_code=True)
@@ -410,9 +442,14 @@ def main(argv: list[str] | None = None) -> int:
         reward_func = LLMJudgeReward(judge_model, judge_tokenizer)
         reward_name = f"llm-as-judge ({args.judge_model} 0-1 float)"
         logger.info("LLM-as-judge 就绪（eval + no_grad），reward 由 judge 浮点打分")
+    elif args.reward_version == "v1":
+        reward_func = enterprise_boundary_reward_v1
+        reward_name = "rule-based v1 (binary ±1, baseline)"
+        logger.info("使用 rule-based v1 二值 reward（±1，对照基线）")
     else:
         reward_func = enterprise_boundary_reward
-        reward_name = "rule-based (boundary refusal + work substantive)"
+        reward_name = "rule-based v2 (5-level continuous -1/0.1/0.5/0.6/1.0)"
+        logger.info("使用 rule-based v2 连续 reward（5 档）")
 
     # ---- GRPO 训练参数 ----
     train_args = GRPOConfig(
@@ -453,6 +490,7 @@ def main(argv: list[str] | None = None) -> int:
         "sft_adapter": args.sft_adapter,
         "method": "GRPO",
         "reward": reward_name,
+        "reward_version": args.reward_version,
         "judge_model": args.judge_model,
         "num_generations": args.num_generations,
         "max_prompt_length": args.max_prompt_length,
