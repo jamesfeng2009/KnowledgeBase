@@ -50,6 +50,7 @@ import json
 import logging
 import random
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -262,16 +263,30 @@ class LLMJudgeReward:
     相比 rule-based 5 档 reward，LLM judge 对质量相近的回复也能给不同浮点分，
     从根本上减少 GRPO 组内 std=0（见微调.md 9.5/9.5b）。
 
+    两种加载模式：
+      - 独立 judge（``use_base=False``）：单独加载一份 judge_model，与 policy 各占一份显存。
+        1.5B policy + 7B judge 共 25G，M3 Max 可跑；但双 7B（28G 权重）会 OOM。
+      - 共享基座 judge（``use_base=True``，``--judge_model self``）：不加载第二份模型，
+        复用 policy 的 PeftModel，打分时用 ``disable_adapter()`` 上下文禁用 LoRA =
+        用基座权重做 judge。与 trl GRPO ref_model 同款机制（peft 下 ref=禁用 adapter 的基座）。
+        双 7B 只占一份 7B 显存（~14G 权重 + 开销 ~22G），M3 Max 36G 可跑。
+        由于 GRPO 从 raw 基座训练（无 SFT 前置），基座 7B = 独立 7B judge（同模型同权重），行为等价。
+
     可调用对象，签名对齐 trl reward_funcs：``(prompts, completions, **kwargs) -> list[float]``。
     分数解析失败时给中性 0.5（7B 输出数字很稳定，实测 6/6 可解析）。
     """
 
-    def __init__(self, judge_model, judge_tokenizer):
+    def __init__(self, judge_model, judge_tokenizer, use_base: bool = False):
         self.judge = judge_model
         self.judge_tokenizer = judge_tokenizer
+        self.use_base = use_base  # True = 复用 policy PeftModel，打分时 disable_adapter
 
     def _judge_one(self, user_text: str, completion: str) -> float:
-        """单条打分：调 judge 模型生成 0-1 浮点，解析失败给中性 0.5。"""
+        """单条打分：调 judge 模型生成 0-1 浮点，解析失败给中性 0.5。
+
+        ``use_base=True`` 时用 ``disable_adapter()`` 上下文禁用 LoRA，使 judge 用基座权重
+        （即未训练的 7B）打分——保证 judge 在训练全程恒为同一基座，不受 LoRA 更新影响。
+        """
         import re
         import torch
         msgs = [
@@ -281,7 +296,9 @@ class LLMJudgeReward:
         text = self.judge_tokenizer.apply_chat_template(
             msgs, add_generation_prompt=True, tokenize=False)
         inputs = self.judge_tokenizer(text, return_tensors="pt").to(self.judge.device)
-        with torch.no_grad():
+        # use_base 模式下 disable_adapter（PeftModel 上下文管理器）；否则空上下文
+        adapter_ctx = self.judge.disable_adapter() if self.use_base else nullcontext()
+        with adapter_ctx, torch.no_grad():
             out = self.judge.generate(
                 **inputs, max_new_tokens=8, do_sample=False,
                 pad_token_id=self.judge_tokenizer.eos_token_id)
@@ -342,9 +359,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                              "v1 二值 ±1（baseline，易致组内 std=0）；"
                              "v2 连续 5 档 -1/0.1/0.5/0.6/1.0（减少 std=0，见微调.md 9.5b）")
     parser.add_argument("--judge_model", default=None,
-                        help="LLM-as-judge reward 模型路径（如 models/Qwen2.5-7B-Instruct）。"
-                             "提供时用该模型给每条 completion 打 0-1 浮点分，替代 rule-based reward；"
-                             "几乎消除组内 std=0（见微调.md 9.6）。不提供则用 rule-based reward")
+                        help="LLM-as-judge reward：模型路径（如 models/Qwen2.5-7B-Instruct）"
+                             "单独加载一份 judge；或 'self' 复用 policy 基座（disable_adapter，省一份显存，"
+                             "双 7B 本机可跑）。提供时用该模型给每条 completion 打 0-1 浮点分，替代 rule-based "
+                             "reward；几乎消除组内 std=0（见微调.md 9.6）。不提供则用 rule-based reward")
     # LoRA
     parser.add_argument("--lora_rank", type=int, default=8, help="LoRA rank")
     parser.add_argument("--lora_alpha", type=int, default=16, help="LoRA alpha")
@@ -425,8 +443,9 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     # ---- reward 函数：rule-based(v1/v2) 或 LLM-as-judge（7B 浮点打分，几乎消除 std=0）----
-    if args.judge_model:
-        logger.info("加载 LLM-as-judge reward 模型: %s", args.judge_model)
+    judge_self = args.judge_model == "self"
+    if args.judge_model and not judge_self:
+        logger.info("加载独立 LLM-as-judge reward 模型: %s", args.judge_model)
         judge_tokenizer = AutoTokenizer.from_pretrained(args.judge_model, trust_remote_code=True)
         if judge_tokenizer.pad_token is None:
             judge_tokenizer.pad_token = judge_tokenizer.eos_token
@@ -439,9 +458,16 @@ def main(argv: list[str] | None = None) -> int:
         judge_model.eval()
         for p in judge_model.parameters():
             p.requires_grad = False  # judge 只推理不训练，省优化器显存
-        reward_func = LLMJudgeReward(judge_model, judge_tokenizer)
+        reward_func = LLMJudgeReward(judge_model, judge_tokenizer, use_base=False)
         reward_name = f"llm-as-judge ({args.judge_model} 0-1 float)"
-        logger.info("LLM-as-judge 就绪（eval + no_grad），reward 由 judge 浮点打分")
+        logger.info("LLM-as-judge 就绪（独立模型，eval + no_grad），reward 由 judge 浮点打分")
+    elif judge_self:
+        # 共享基座 judge：不加载第二份模型，复用 policy PeftModel + disable_adapter。
+        # judge 引用在 trainer 创建后注入（trainer 才会把模型包成 PeftModel）。
+        reward_func = LLMJudgeReward(None, tokenizer, use_base=True)
+        reward_name = f"llm-as-judge self ({args.base_model} 基座, disable_adapter 0-1 float)"
+        logger.info("LLM-as-judge self 模式：复用 policy 基座（disable_adapter）作 judge，省一份 %s 显存",
+                    args.base_model)
     elif args.reward_version == "v1":
         reward_func = enterprise_boundary_reward_v1
         reward_name = "rule-based v1 (binary ±1, baseline)"
@@ -484,6 +510,12 @@ def main(argv: list[str] | None = None) -> int:
         processing_class=tokenizer,
         peft_config=peft_config,
     )
+
+    # 共享基座 judge：trainer 创建后 model 已是 PeftModel，注入给 reward_func。
+    # reward_func 仅在 trainer.train() 时被调用，此注入在 train 之前完成，时序安全。
+    if judge_self:
+        reward_func.judge = trainer.model
+        logger.info("LLM-as-judge self 注入完成：judge = trainer.model (PeftModel, disable_adapter 打分)")
 
     repro_info = {
         "base_model": args.base_model,
