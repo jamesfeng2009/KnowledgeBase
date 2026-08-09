@@ -1,12 +1,14 @@
 #!/usr/bin/env python
 """DPO 偏好对齐训练脚本 — 在 SFT 模型之上做偏好优化（trl DPOTrainer）。
 
-输入数据（与后端导出 pipeline 对齐的 dpo.jsonl）：
-    {"prompt":"...","chosen":"...","rejected":"...","meta":{...}}
-    其中 prompt 为用户问题，chosen / rejected 分别为偏好 / 非偏好的 assistant 回答。
+输入数据（conversational 格式，trl 原生支持）：
+    {"prompt":[{"role":"system","content":"..."},{"role":"user","content":"..."}],
+     "chosen":[{"role":"assistant","content":"好答案"}],
+     "rejected":[{"role":"assistant","content":"坏答案"}],
+     "meta":{...}}
 
 训练策略：
-    - prompt 经 chat template（add_generation_prompt=True）渲染，chosen/rejected 作为补全文本
+    - conversational 格式：trl DPOTrainer 自动检测并通过 apply_chat_template 渲染
     - 支持两种起点：
         a) 直接从 --base_model 开始（基座上新建 LoRA）
         b) 指定 --sft_adapter：先把 SFT LoRA 合并进基座（merge_and_unload），
@@ -20,9 +22,9 @@
 
 运行示例：
     python scripts/finetune/train_dpo.py \
-        --data data/dpo.jsonl --base_model Qwen/Qwen2.5-7B-Instruct \
-        --sft_adapter outputs/lora-sft --output_dir outputs/lora-dpo \
-        --beta 0.1 --lr 5e-5 --epochs 1 --qlora
+        --data data/open/dpo.jsonl --base_model models/Qwen2.5-1.5B-Instruct \
+        --sft_adapter outputs/sft-v3-distill --output_dir outputs/dpo-v1-1.5b \
+        --beta 0.1 --lr 5e-5 --epochs 1
 """
 
 from __future__ import annotations
@@ -68,19 +70,37 @@ def iter_jsonl(path: str | Path) -> Iterator[tuple[int, dict]]:
             yield lineno, obj
 
 
-def load_dpo_jsonl(path: str | Path) -> list[dict]:
-    """加载 dpo.jsonl，返回 [{"prompt":..., "chosen":..., "rejected":..., "meta":{...}}]。
+def _validate_messages(messages: Any) -> bool:
+    """校验消息列表：非空 list，每条含 str 类型的 role/content。"""
+    if not isinstance(messages, list) or len(messages) == 0:
+        return False
+    for msg in messages:
+        if not isinstance(msg, dict):
+            return False
+        role = msg.get("role")
+        content = msg.get("content")
+        if not isinstance(role, str) or not isinstance(content, str) or not content.strip():
+            return False
+    return True
 
-    校验规则：三个字段均为非空字符串，且 chosen != rejected（相同则无偏好信号，跳过）。
+
+def load_dpo_jsonl(path: str | Path) -> list[dict]:
+    """加载 dpo.jsonl（conversational 格式），返回 [{"prompt":[...], "chosen":[...], "rejected":[...], "meta":{...}}]。
+
+    校验规则：
+    - prompt/chosen/rejected 均为非空消息列表（每条含 role/content）
+    - chosen 与 rejected 的 content 不能相同（无偏好信号，跳过）
     可独立导入测试（仅依赖标准库）。
     """
     records: list[dict] = []
     for lineno, obj in iter_jsonl(path):
         prompt, chosen, rejected = obj.get("prompt"), obj.get("chosen"), obj.get("rejected")
-        if not all(isinstance(x, str) and x.strip() for x in (prompt, chosen, rejected)):
-            logger.warning("跳过样本 %s:%d — prompt/chosen/rejected 必须为非空字符串", path, lineno)
+        if not all(_validate_messages(x) for x in (prompt, chosen, rejected)):
+            logger.warning("跳过样本 %s:%d — prompt/chosen/rejected 必须为非空消息列表", path, lineno)
             continue
-        if chosen.strip() == rejected.strip():
+        chosen_text = chosen[-1]["content"].strip()
+        rejected_text = rejected[-1]["content"].strip()
+        if chosen_text == rejected_text:
             logger.warning("跳过样本 %s:%d — chosen 与 rejected 相同，无偏好信号", path, lineno)
             continue
         meta = obj.get("meta") if isinstance(obj.get("meta"), dict) else {}
@@ -89,24 +109,18 @@ def load_dpo_jsonl(path: str | Path) -> list[dict]:
     return records
 
 
-def render_prompt(user_query: str, tokenizer: Any | None = None) -> str:
-    """将用户问题渲染为带生成提示的 prompt 文本（add_generation_prompt=True）。"""
-    messages = [{"role": "user", "content": user_query}]
-    if tokenizer is not None and getattr(tokenizer, "chat_template", None):
-        return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    return f"<|user|>\n{user_query}\n<|assistant|>\n"
+def build_hf_dataset(records: list[dict], eval_ratio: float, seed: int):
+    """records -> DatasetDict(train/test)，列为 prompt / chosen / rejected（conversational 格式）。
 
-
-def build_hf_dataset(records: list[dict], tokenizer: Any, eval_ratio: float, seed: int):
-    """records -> DatasetDict(train/test)，列为 prompt / chosen / rejected（DPO 显式 prompt 格式）。
-
+    trl DPOTrainer 自动检测 conversational 格式并通过 apply_chat_template 渲染，
+    无需在此手动渲染 prompt。
     重依赖 datasets 在此函数内延迟导入。
     """
     from datasets import Dataset  # 延迟导入：无 GPU 环境也可 import 本模块
 
     rows = [
         {
-            "prompt": render_prompt(r["prompt"], tokenizer),
+            "prompt": r["prompt"],
             "chosen": r["chosen"],
             "rejected": r["rejected"],
         }
@@ -142,6 +156,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--max_prompt_len", type=int, default=1024, help="prompt 最大长度（超出左截断）")
     parser.add_argument("--eval_ratio", type=float, default=0.05, help="验证集比例")
     parser.add_argument("--seed", type=int, default=42, help="随机种子")
+    parser.add_argument("--no_gradient_checkpointing", action="store_true",
+                        help="关闭梯度检查点。1.5B 小模型推荐开启（实测内存不变快40%%）；"
+                             "7B 勿用——权重占大头，关 ckpt 激活翻倍会 OOM。见微调.md 附录D")
     return parser.parse_args(argv)
 
 
@@ -187,7 +204,7 @@ def main(argv: list[str] | None = None) -> int:
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    split = build_hf_dataset(records, tokenizer, eval_ratio=args.eval_ratio, seed=args.seed)
+    split = build_hf_dataset(records, eval_ratio=args.eval_ratio, seed=args.seed)
     train_ds, eval_ds = split["train"], split["test"]
     logger.info("训练集 %d 条 / 验证集 %d 条", len(train_ds), len(eval_ds))
 
@@ -229,11 +246,11 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     # ---- DPO 训练参数 ----
+    # 注意：trl 1.9.2 移除了 max_prompt_length，trl 自动处理 prompt 长度
     train_args = DPOConfig(
         output_dir=args.output_dir,
         beta=args.beta,
         max_length=args.max_len,
-        max_prompt_length=args.max_prompt_len,
         num_train_epochs=args.epochs,
         per_device_train_batch_size=args.batch_size,
         per_device_eval_batch_size=args.batch_size,
@@ -247,7 +264,7 @@ def main(argv: list[str] | None = None) -> int:
         save_total_limit=2,
         bf16=use_bf16,
         fp16=(not use_bf16) and torch.cuda.is_available(),
-        gradient_checkpointing=True,
+        gradient_checkpointing=not args.no_gradient_checkpointing,
         report_to=[],
         seed=args.seed,
     )
@@ -272,6 +289,7 @@ def main(argv: list[str] | None = None) -> int:
         "effective_batch_size": args.batch_size * args.grad_accum,
         "max_len": args.max_len,
         "max_prompt_len": args.max_prompt_len,
+        "gradient_checkpointing": not args.no_gradient_checkpointing,
         "seed": args.seed,
         "num_train_samples": len(train_ds),
         "num_eval_samples": len(eval_ds),

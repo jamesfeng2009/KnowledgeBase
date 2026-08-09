@@ -121,17 +121,28 @@ class TestDataLoaders:
         assert _load_module("train_lora").load_sft_jsonl(path2)[0]["meta"] == {}
 
     def test_load_dpo_jsonl(self, tmp_path: Path):
-        good = {"prompt": "报销流程？", "chosen": "好答案", "rejected": "差答案",
-                "meta": {"source": "feedback"}}
+        good = {
+            "prompt": [{"role": "user", "content": "报销流程？"}],
+            "chosen": [{"role": "assistant", "content": "好答案"}],
+            "rejected": [{"role": "assistant", "content": "差答案"}],
+            "meta": {"source": "feedback"},
+        }
         path = _write_jsonl(tmp_path / "dpo.jsonl", [
             good,
-            {"prompt": "q", "chosen": "相同", "rejected": "相同"},   # 无偏好信号 → 跳过
-            {"prompt": "", "chosen": "a", "rejected": "b"},          # 空 prompt → 跳过
-            {"prompt": "q", "chosen": "a"},                          # 缺字段 → 跳过
+            # 无偏好信号（chosen == rejected）→ 跳过
+            {"prompt": [{"role": "user", "content": "q"}],
+             "chosen": [{"role": "assistant", "content": "相同"}],
+             "rejected": [{"role": "assistant", "content": "相同"}]},
+            # 空 prompt → 跳过
+            {"prompt": [], "chosen": [{"role": "assistant", "content": "a"}],
+             "rejected": [{"role": "assistant", "content": "b"}]},
+            # 缺字段 → 跳过
+            {"prompt": [{"role": "user", "content": "q"}],
+             "chosen": [{"role": "assistant", "content": "a"}]},
         ])
         records = _load_module("train_dpo").load_dpo_jsonl(path)
         assert len(records) == 1
-        assert records[0]["chosen"] == "好答案"
+        assert records[0]["chosen"][-1]["content"] == "好答案"
         assert records[0]["meta"]["source"] == "feedback"
 
     def test_load_triplets(self, tmp_path: Path):

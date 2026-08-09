@@ -154,6 +154,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--max_len", type=int, default=2048, help="最大序列长度（超出截断）")
     parser.add_argument("--eval_ratio", type=float, default=0.05, help="验证集比例")
     parser.add_argument("--seed", type=int, default=42, help="随机种子")
+    parser.add_argument("--no_gradient_checkpointing", action="store_true",
+                        help="关闭梯度检查点。1.5B 小模型推荐开启（实测内存不变快40%%）；"
+                             "7B 勿用——权重占大头，关 ckpt 激活翻倍会 OOM。见微调.md 附录D")
     return parser.parse_args(argv)
 
 
@@ -249,7 +252,7 @@ def main(argv: list[str] | None = None) -> int:
         save_total_limit=2,
         bf16=use_bf16,
         fp16=(not use_bf16) and torch.cuda.is_available(),
-        gradient_checkpointing=True,
+        gradient_checkpointing=not args.no_gradient_checkpointing,
         max_length=args.max_len,
         packing=False,
         dataset_text_field="text",
@@ -278,6 +281,7 @@ def main(argv: list[str] | None = None) -> int:
         "epochs": args.epochs,
         "effective_batch_size": args.batch_size * args.grad_accum,
         "max_len": args.max_len,
+        "gradient_checkpointing": not args.no_gradient_checkpointing,
         "seed": args.seed,
         "num_train_samples": len(train_ds),
         "num_eval_samples": len(eval_ds),
