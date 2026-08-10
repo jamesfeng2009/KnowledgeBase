@@ -68,13 +68,19 @@ def load_model(base: str, adapter: str | None):
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
     use_bf16 = _detect_bf16()
+    dtype = torch.bfloat16 if use_bf16 else torch.float16
     print(f"[加载] 基座 {base} (bf16={use_bf16}) ...", flush=True)
-    model = AutoModelForCausalLM.from_pretrained(
-        base,
-        torch_dtype=torch.bfloat16 if use_bf16 else torch.float16,
-        device_map="auto",
-        trust_remote_code=True,
-    )
+    # MPS 不用 device_map="auto"：7B 会触发 disk offload → meta device，
+    # 导致 PeftModel.from_pretrained 加载 adapter 时 KeyError（layers.*.mlp.down_proj）。
+    # M3 Max 36G 内存足够承载 7B bf16(~14G)，直接 .to("mps") 避免 offload。
+    if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+        model = AutoModelForCausalLM.from_pretrained(
+            base, torch_dtype=dtype, trust_remote_code=True,
+        ).to("mps")
+    else:
+        model = AutoModelForCausalLM.from_pretrained(
+            base, torch_dtype=dtype, device_map="auto", trust_remote_code=True,
+        )
     if adapter:
         print(f"[加载] 叠加 adapter {adapter} ...", flush=True)
         model = PeftModel.from_pretrained(model, adapter)
