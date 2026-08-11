@@ -20,7 +20,7 @@ graph TB
         SERVICE[Service 层<br/>21 个业务服务]
         RAG[Agentic RAG 引擎<br/>Agent Loop]
         MEMORY[四级记忆引擎<br/>L1-L4]
-        LLM_LAYER[LLM Provider 抽象层<br/>Anthropic / vLLM]
+        LLM_LAYER[LLM Provider 抽象层<br/>Anthropic / vLLM / vLLM+LoRA]
         MCP_LAYER[MCP 工具协议<br/>知识搜索/OA/ERP/IT工单]
         SSE_LAYER[SSE 基础设施<br/>流式输出 + 通知推送]
     end
@@ -45,7 +45,8 @@ graph TB
 
     subgraph "LLM 服务"
         CLAUDE[Anthropic Claude<br/>SaaS 模式]
-        VLLM[vLLM<br/>私有部署]
+        VLLM[vLLM<br/>私有部署<br/>base 模型]
+        VLLM_FT[vLLM + LoRA<br/>微调模型<br/>private_finetuned]
     end
 
     Web --> CADDY
@@ -73,6 +74,7 @@ graph TB
     MEMORY --> NEO4J
     LLM_LAYER --> CLAUDE
     LLM_LAYER --> VLLM
+    LLM_LAYER --> VLLM_FT
 
     YJS --> PG
     SSE_LAYER --> REDIS
@@ -88,6 +90,52 @@ graph TB
 | **依赖倒置** | LLM、检索器、重排器、权限过滤器均通过构造注入，可替换为 Mock |
 | **优雅降级** | Redis / Neo4j / OpenSearch / 向量存储 延迟初始化 + try/except 降级，PostgreSQL 为唯一强依赖 |
 | **模块化单体** | 微服务不适合（共享数据库依赖），仅 Yjs 协作服务因技术栈原因独立部署 |
+
+### LLM Provider 部署模式
+
+`DEPLOY_MODE` 环境变量控制 LLM 服务后端切换，通过 `register_llm_provider` 装饰器注册，工厂模式按 deploy mode 路由：
+
+| DEPLOY_MODE | Provider | 模型 | 适用场景 |
+|-------------|---------|------|---------|
+| `saas` | AnthropicProvider | Claude Sonnet 4 | SaaS 公有云，API 调用 |
+| `saas_dashscope` | DashScopeProvider | Qwen3 | 国内 SaaS，阿里云 API |
+| `private_overseas` | VLLMProvider | Llama 3.3 70B | 海外私有部署，vLLM base 模型 |
+| `private_domestic` | VLLMProvider | Qwen3 72B | 国内私有部署，vLLM base 模型 |
+| `private_finetuned` | VLLMProvider | Qwen2.5-7B + LoRA `dpo-v3-7b` | **微调模型部署**，vLLM multi-LoRA 模式 |
+
+**`private_finetuned` 模式**：vLLM 加载 Qwen2.5-7B base 模型 + DPO LoRA adapter，通过 `--enable-lora --lora-modules dpo-v3-7b=/path/to/adapter` 启动 multi-LoRA 服务。VLLMProvider 通过 `model="dpo-v3-7b"` 字段路由到 base + adapter，API 接口与 base 模式完全兼容（OpenAI 兼容 API）。
+
+**Multi-LoRA 三层隔离**：
+- **base 只读** — 预训练权重不包含租户数据，所有租户共享
+- **adapter 权重独立** — 按 `lora_adapter_id` 路由，不会加载错误 adapter
+- **KV cache 请求级隔离** — PagedAttention 每请求独立页，结束即释放
+
+### MLOps 闭环（训练→部署→监控→回流）
+
+```mermaid
+flowchart LR
+    subgraph "训练"
+        TRAIN[模型微调<br/>Embedding/SFT/DPO/GRPO] --> ADAPTER[LoRA Adapter]
+    end
+    subgraph "部署"
+        ADAPTER --> VLLM_DEPLOY[vLLM 加载<br/>base + adapter]
+        VLLM_DEPLOY --> SERVE[OpenAI 兼容 API]
+    end
+    subgraph "运行"
+        SERVE --> RAG_USE[RAG Agent Loop<br/>消费微调模型]
+        RAG_USE --> LANGFUSE[LangFuse<br/>全链路 Trace]
+    end
+    subgraph "回流"
+        LANGFUSE --> BADCASE[bad case 归因]
+        BADCASE --> EVAL[100 题评测集<br/>边界拒答/误拒答门禁]
+        EVAL --> TRAIN
+    end
+```
+
+- **训练**：基于线上 bad case 归因，Embedding/SFT/DPO/GRPO 全链路微调产出 LoRA adapter（详见 `微调.md`）
+- **部署**：vLLM `private_finetuned` 模式加载 base + adapter，continuous batching 应对 Agent Loop 单问多次调用
+- **运行**：RAG Agent Loop 通过 VLLMProvider 调用微调模型，LangFuse 记录全链路 Trace
+- **回流**：LangFuse Trace → bad case 归因 → 100 题评测门禁（边界拒答率 ≥ 90%、工作误拒答率 ≤ 4%）→ 触发重训
 
 ---
 
