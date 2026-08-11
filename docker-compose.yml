@@ -206,6 +206,39 @@ services:
         reservations:
           devices: [{ driver: nvidia, capabilities: [gpu], count: 2 }]
 
+  # 微调模型服务 — 7B base + LoRA adapter（DPO v3）
+  # 启动：DEPLOY_MODE=private_finetuned docker compose --profile finetuned up llm-finetuned
+  llm-finetuned:
+    image: vllm/vllm-openai:latest
+    profiles: ["finetuned"]
+    runtime: nvidia
+    ports: ["8003:8003"]
+    volumes:
+      - "${VLLM_FINETUNED_MODEL_PATH:-/models/Qwen2.5-7B-Instruct}:/model"
+      - "${VLLM_LORA_PATH:-/data/adapters/dpo-7b-v3}:/lora"
+    command: >
+      --model /model
+      --enable-lora
+      --lora-modules dpo-v3-7b=/lora
+      --max-num-loras 4
+      --max-lora-rank 64
+      --dtype bfloat16
+      --gpu-memory-utilization 0.9
+      --max-model-len 4096
+      --port 8003
+    environment:
+      - VLLM_LORA_ADAPTER=dpo-v3-7b
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/v1/models"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        reservations:
+          devices: [{ driver: nvidia, capabilities: [gpu], count: 1 }]
+
   embedding-server:
     image: ghcr.io/huggingface/text-embeddings-inference:latest
     profiles: ["private"]

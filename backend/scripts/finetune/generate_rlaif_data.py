@@ -401,11 +401,14 @@ def _detect_bf16() -> bool:
     return False
 
 
-def generate_candidates(model, tokenizer, prompt: list[dict], n: int = 2) -> list[str]:
+def generate_candidates(model, tokenizer, prompt: list[dict], n: int = 2,
+                        max_new_tokens: int = 256) -> list[str]:
     """对单个 prompt 采样 n 个候选回复（不同 temperature 造差异）。
 
     RLAIF 的核心：同一 prompt 采样多个回复，靠 temperature 差异造自然多样性。
     温度对：0.3（保守低质）+ 1.1（发散高质），让两个候选有可判定的质量差异。
+
+    修复：max_new_tokens 此前硬编码 256，--max_new_tokens 参数无效（batch 优化评审）。
     """
     import torch
     text = tokenizer.apply_chat_template(prompt, add_generation_prompt=True, tokenize=False)
@@ -418,7 +421,7 @@ def generate_candidates(model, tokenizer, prompt: list[dict], n: int = 2) -> lis
         with torch.no_grad():
             out = model.generate(
                 **inputs,
-                max_new_tokens=256,
+                max_new_tokens=max_new_tokens,
                 do_sample=True,
                 temperature=temp,
                 top_p=0.95,
@@ -427,6 +430,59 @@ def generate_candidates(model, tokenizer, prompt: list[dict], n: int = 2) -> lis
         resp = tokenizer.decode(out[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True).strip()
         candidates.append(resp)
     return candidates
+
+
+def generate_candidates_batch(
+    model, tokenizer, prompts: list[list[dict]], n: int = 2,
+    max_new_tokens: int = 128,
+) -> list[list[str]]:
+    """对一批 prompt 批量采样候选回复（batch 加速：GPU 利用率 33%→80%）。
+
+    策略：同一温度的候选一起 batch 生成（左 padding 对齐），n 个温度 = n 次
+    batch forward。比逐条 2n 次顺序 forward 快 ~3x（GPU 并行 + 减少 kernel launch）。
+
+    左 padding 原因：生成任务需所有序列在同一位置开始输出新 token，左 padding
+    保证 prompt 末尾右侧对齐（padding 在左侧，生成从右侧统一开始）。
+    """
+    import torch
+
+    texts = [
+        tokenizer.apply_chat_template(p, add_generation_prompt=True, tokenize=False)
+        for p in prompts
+    ]
+    # 左 padding：生成任务必须左 padding（右对齐），否则生成位置错乱
+    orig_side = tokenizer.padding_side
+    tokenizer.padding_side = "left"
+    try:
+        encodings = tokenizer(texts, return_tensors="pt", padding=True)
+    finally:
+        tokenizer.padding_side = orig_side  # 恢复，避免污染后续单条调用
+
+    input_ids = encodings["input_ids"].to(model.device)
+    attention_mask = encodings["attention_mask"].to(model.device)
+    input_len = input_ids.shape[1]  # 含 padding 的统一长度
+
+    temps = [0.3, 1.1] if n == 2 else [0.3 + 0.8 * i / max(n - 1, 1) for i in range(n)]
+
+    all_candidates: list[list[str]] = [[] for _ in prompts]
+    for temp in temps[:n]:
+        with torch.no_grad():
+            out = model.generate(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                max_new_tokens=max_new_tokens,
+                do_sample=True,
+                temperature=temp,
+                top_p=0.95,
+                pad_token_id=tokenizer.eos_token_id,
+            )
+        # out shape: (batch, input_len + new_tokens)。只取生成部分（input_len 之后）
+        for i in range(len(prompts)):
+            new_tokens = out[i][input_len:]
+            resp = tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
+            all_candidates[i].append(resp)
+
+    return all_candidates
 
 
 # ============================================================================
@@ -486,6 +542,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--n_candidates", type=int, default=2,
                         help="每个 prompt 采样候选数（默认 2，pairwise 裁判）")
     parser.add_argument("--max_new_tokens", type=int, default=256, help="候选回复最大长度")
+    # batch 加速（batch 优化评审：GPU 33% → 80%）
+    parser.add_argument("--batch_size", type=int, default=1,
+                        help="batch 候选生成大小（1=逐条旧逻辑，8=批量加速 ~3x）。"
+                             "batch>1 时用 generate_candidates_batch 左 padding 批量生成")
     # 裁判
     parser.add_argument("--judge", choices=["api", "rule", "local"], default="api",
                         help="裁判模式：api=Anthropic Claude（需 key）；"
@@ -499,6 +559,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     # 断点续传
     parser.add_argument("--checkpoint_every", type=int, default=50, help="每 N 条存盘一次")
     parser.add_argument("--resume", action="store_true", help="断点续传：跳过已产出的 prompt")
+    parser.add_argument("--resume_keep", action="store_true",
+                        help="保留已产出数据并从现有计数续跑，但允许 prompt 复用（不跳过已见 "
+                             "prompt）。适合 batch 优化续跑：保留已有 750 对 + 生成 4250 对 = "
+                             "5000 总。--resume 会跳过已见 prompt（严格去重，~900 池只能产 "
+                             "~900 对），--resume_keep 允许 do_sample 复用扩到 5k+")
     parser.add_argument("--seed", type=int, default=42, help="随机种子")
     return parser.parse_args(argv)
 
@@ -528,101 +593,147 @@ def main(argv: list[str] | None = None) -> int:
     logger.info("prompt 池 %d 条，目标产出 %d 对", len(prompt_pool), args.count)
 
     # ---- 3. 断点续传 ----
-    seen = load_existing(args.output) if args.resume else set()
-    if seen and not args.resume:
+    # --resume：严格去重，跳过已见 prompt（~900 池只能产 ~900 对）
+    # --resume_keep：保留已有数据 + 从现有计数续跑，允许 prompt 复用（扩到 5k+）
+    # 两者都不设：文件有内容则覆盖
+    if args.resume_keep:
+        seen = load_existing(args.output)
+    elif args.resume:
+        seen = load_existing(args.output)
+    else:
+        seen = set()
+    if seen and not args.resume and not args.resume_keep:
         # 非 resume 模式但文件已有内容：覆盖
         Path(args.output).unlink(missing_ok=True)
         seen = set()
 
     # ---- 4. 加载 policy model ----
-    logger.info("加载 policy model: %s", args.policy_model)
+    logger.info("加载 policy model: %s (batch_size=%d)", args.policy_model, args.batch_size)
     model, tokenizer = load_policy_model(args.policy_model, args.sft_adapter)
 
-    # ---- 5. 逐条生成 + 裁判 ----
+    # ---- 5. 生成 + 裁判 ----
     produced = len(seen)
     skipped_same = 0
     skipped_tie = 0
     rng = random.Random(args.seed)
     buffer: list[dict] = []
 
+    use_batch = args.batch_size > 1
+    if use_batch:
+        logger.info("batch 模式：batch_size=%d，左 padding 批量候选生成", args.batch_size)
+
     # 循环采样 prompt 池直到达成目标数量
-    # 评审 #4：此前 while produced < count 无退出条件——当 prompt 池全部
-    # 耗尽（已产出/候选相同/TIE）时 produced 不再增长，循环空转永不退出。
-    # 以"连续跳过一整圈池"为耗尽判据，提前 break。
+    # 评审 #4：以"连续跳过"为耗尽判据提前 break，防止循环空转永不退出。
+    # batch 模式下 consecutive_skips 跨 batch 累计（收集阶段 + 裁判阶段）。
     pool_idx = 0
     consecutive_skips = 0
     while produced < args.count:
-        if consecutive_skips >= len(prompt_pool):
+        if consecutive_skips >= len(prompt_pool) * 2:
             logger.warning(
                 "连续 %d 个 prompt 未产出（池已耗尽或全被跳过），提前结束于 %d/%d",
                 consecutive_skips, produced, args.count,
             )
             break
-        prompt_item = prompt_pool[pool_idx % len(prompt_pool)]
-        pool_idx += 1
-        prompt = prompt_item["prompt"]
-        meta = prompt_item["meta"]
 
-        # 断点续传：跳过已产出
-        ph = _prompt_hash(prompt)
-        if ph in seen:
-            consecutive_skips += 1
-            continue
+        # ---- Phase 1: 收集 batch ----
+        # --resume 跳过已见 prompt；--resume_keep 和非 resume 允许复用
+        batch_items: list[tuple[dict, str]] = []
+        scanned = 0
+        while len(batch_items) < args.batch_size and produced + len(batch_items) < args.count:
+            if scanned >= len(prompt_pool) * 2:
+                break  # 扫了 2 圈池仍凑不齐 batch → 池已耗尽
+            prompt_item = prompt_pool[pool_idx % len(prompt_pool)]
+            pool_idx += 1
+            scanned += 1
+            prompt = prompt_item["prompt"]
+            ph = _prompt_hash(prompt)
+            # --resume 严格跳过已见；--resume_keep / 非 resume 允许复用
+            if args.resume and ph in seen:
+                consecutive_skips += 1
+                continue
+            batch_items.append((prompt_item, ph))
 
-        user_text = _extract_user_text(prompt)
+        if not batch_items:
+            break  # 池已耗尽
 
-        # 5a. 生成候选
-        try:
-            candidates = generate_candidates(model, tokenizer, prompt, n=args.n_candidates)
-        except Exception as exc:
-            logger.warning("候选生成失败（跳过）：%s", exc)
-            consecutive_skips += 1
-            continue
+        # ---- Phase 2: 候选生成 ----
+        batch_prompts = [item[0]["prompt"] for item in batch_items]
+        if use_batch:
+            try:
+                batch_candidates = generate_candidates_batch(
+                    model, tokenizer, batch_prompts,
+                    n=args.n_candidates, max_new_tokens=args.max_new_tokens,
+                )
+            except Exception as exc:
+                logger.warning("batch 生成失败，降级逐条：%s", exc)
+                batch_candidates = [
+                    generate_candidates(model, tokenizer, p, n=args.n_candidates,
+                                       max_new_tokens=args.max_new_tokens)
+                    for p in batch_prompts
+                ]
+        else:
+            batch_candidates = [
+                generate_candidates(model, tokenizer, p, n=args.n_candidates,
+                                   max_new_tokens=args.max_new_tokens)
+                for p in batch_prompts
+            ]
 
-        # 候选相同则跳过（无偏好信号）
-        if len(set(candidates)) < 2:
-            skipped_same += 1
-            consecutive_skips += 1
-            continue
+        # ---- Phase 3: 裁判 + 存盘（逐条，裁判仅 8 token 无需 batch）----
+        batch_produced = 0
+        for (prompt_item, ph), candidates in zip(batch_items, batch_candidates):
+            if produced >= args.count:
+                break
+            prompt = prompt_item["prompt"]
+            meta = prompt_item["meta"]
 
-        # 评审 #5：候选顺序乱序后再呈交裁判——此前 candidates[0] 恒为低温
-        # 保守回复（A 位），candidates[1] 恒为高温发散回复（B 位），裁判的
-        # 位置偏置与温度完全相关，标注结果被污染。
-        shuffled = list(candidates)
-        rng.shuffle(shuffled)
+            # 候选相同则跳过（无偏好信号）
+            if len(set(candidates)) < 2:
+                skipped_same += 1
+                consecutive_skips += 1
+                continue
 
-        # 5b. 裁判判定
-        verdict = judge.judge(user_text, shuffled[0], shuffled[1])
+            user_text = _extract_user_text(prompt)
 
-        if verdict == "A":
-            chosen_text, rejected_text = shuffled[0], shuffled[1]
-        elif verdict == "B":
-            chosen_text, rejected_text = shuffled[1], shuffled[0]
-        else:  # TIE
-            skipped_tie += 1
-            consecutive_skips += 1
-            continue
+            # 评审 #5：候选顺序乱序后再呈交裁判——位置偏置与温度去相关
+            shuffled = list(candidates)
+            rng.shuffle(shuffled)
 
-        # 5c. 组装偏好对
-        pair = {
-            "prompt": prompt,
-            "chosen": [{"role": "assistant", "content": chosen_text}],
-            "rejected": [{"role": "assistant", "content": rejected_text}],
-            "meta": {**meta, "source": "rlaif", "judge": args.judge},
-        }
+            verdict = judge.judge(user_text, shuffled[0], shuffled[1])
 
-        buffer.append(pair)
-        seen.add(ph)
-        produced += 1
-        consecutive_skips = 0
+            if verdict == "A":
+                chosen_text, rejected_text = shuffled[0], shuffled[1]
+            elif verdict == "B":
+                chosen_text, rejected_text = shuffled[1], shuffled[0]
+            else:  # TIE
+                skipped_tie += 1
+                consecutive_skips += 1
+                continue
 
-        # 5d. 存盘
-        if len(buffer) >= args.checkpoint_every:
-            for p in buffer:
-                append_pair(args.output, p)
-            buffer.clear()
-            logger.info("进度：%d/%d（跳过 相同=%d TIE=%d）",
-                        produced, args.count, skipped_same, skipped_tie)
+            # 组装偏好对
+            pair = {
+                "prompt": prompt,
+                "chosen": [{"role": "assistant", "content": chosen_text}],
+                "rejected": [{"role": "assistant", "content": rejected_text}],
+                "meta": {**meta, "source": "rlaif", "judge": args.judge},
+            }
+
+            buffer.append(pair)
+            seen.add(ph)
+            produced += 1
+            batch_produced += 1
+            consecutive_skips = 0
+
+            # 存盘
+            if len(buffer) >= args.checkpoint_every:
+                for p in buffer:
+                    append_pair(args.output, p)
+                buffer.clear()
+                logger.info("进度：%d/%d（跳过 相同=%d TIE=%d）[batch=%d]",
+                            produced, args.count, skipped_same, skipped_tie, args.batch_size)
+
+        # batch 内零产出 → consecutive_skips 已在 Phase 3 累计
+        if batch_produced == 0 and not use_batch:
+            pass  # 逐条模式已有 continue 逻辑
 
     # 5e. 写入剩余 buffer
     for p in buffer:

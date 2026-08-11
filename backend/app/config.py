@@ -81,8 +81,10 @@ class Settings(BaseSettings):
     NEO4J_DATABASE: str = "neo4j"
 
     # === 部署模式（核心切换变量）===
+    # private_finetuned: 微调后的 7B + LoRA adapter，vLLM multi-LoRA 模式
     DEPLOY_MODE: Literal[
-        "saas", "saas_dashscope", "private_overseas", "private_domestic"
+        "saas", "saas_dashscope",
+        "private_overseas", "private_domestic", "private_finetuned",
     ] = "saas"
 
     # C6 fix: SaaS 模式默认关闭开放注册，需管理员邀请或审批
@@ -110,6 +112,11 @@ class Settings(BaseSettings):
     VLLM_HOST: str = "llm-server"
     VLLM_PORT: str = "8003"
     VLLM_MODEL: str = "meta-llama/Llama-3.3-70B-Instruct"
+    # private_finetuned 模式：微调后的 7B + LoRA adapter
+    # vLLM multi-LoRA：model 字段传 adapter name（如 "dpo-v3-7b"）路由到 base+adapter
+    VLLM_FINETUNED_MODEL: str = "Qwen2.5-7B-Instruct"
+    VLLM_LORA_ADAPTER: str = "dpo-v3-7b"  # vLLM --lora-modules 注册的 adapter name
+    VLLM_LORA_PATH: str = "/data/adapters/dpo-7b-v3"  # adapter 权重路径
     TEI_HOST: str = "embedding-server"
     TEI_PORT: str = "80"
     TEI_RERANKER_HOST: str = "reranker-server"
@@ -307,6 +314,28 @@ class Settings(BaseSettings):
     LANGFUSE_SECRET_KEY: str = ""
     LANGFUSE_HOST: str = "https://cloud.langfuse.com"
 
+    # === P1-6 PII 脱敏（LangFuse span export 前应用）===
+    # LangFuse 是外部观测系统，span input/output/metadata 会携带实际推理内容，
+    # 其中可能含用户输入的 PII（手机/身份证/邮箱/银行卡），export 前必须脱敏。
+    # 关闭后 span 原样上报（仅在内网自托管 LangFuse 且确认无 PII 风险时关闭）。
+    LANGFUSE_PII_SCRUB_ENABLED: bool = True
+
+    # === P2-9 LangFuse 采样策略（error span 强制不采样）===
+    # 高流量场景下 LangFuse SaaS 配额易耗尽，且海量正常 span 淹没故障信号。
+    # 采样策略（仅作用于 LangFuse 双写分支，本地 SpanRecord 不采样）：
+    #   - 正常 span 按 LANGFUSE_SAMPLING_RATE 随机上报（控制成本与配额）
+    #   - error span（metadata.error 非空）强制 100% 上报（保证故障可追溯）
+    #   - 根 Span（task.run）强制不采样（保证每条 Trace 至少有一个锚点）
+    # 默认关闭 — 避免改变现有行为；高流量上线时显式开启。
+    LANGFUSE_SAMPLING_ENABLED: bool = False
+    # 正常 span 采样率（0.0=全部丢弃，1.0=全部保留）。
+    # 推荐 0.1（10% 采样，配 90% 成本节省，error span 100% 兜底）。
+    LANGFUSE_SAMPLING_RATE: float = 0.1
+    # error span 强制不采样的开关（独立于 LANGFUSE_SAMPLING_ENABLED，
+    # 即使采样关闭，error span 仍可被此开关单独控制）。
+    # 默认 True — error span 是故障排查的核心证据，不应被采样丢弃。
+    LANGFUSE_SAMPLING_FORCE_ERROR: bool = True
+
     # === TTS 语音合成 ===
     TTS_VOICE: str = "zh-CN-XiaoxiaoNeural"  # 默认女声；男声 zh-CN-YunxiNeural
     TTS_RATE: str = "+0%"  # 语速调节：-50% 慢 ~ +50% 快
@@ -347,10 +376,49 @@ class Settings(BaseSettings):
     RETRY_MAX_ATTEMPTS: int = 3  # 最大重试次数
     RETRY_JITTER: float = 1.0  # 抖动范围（秒），全抖动模式
 
+    # === P0-2 LLM Provider 重试（专用参数，比普通 HTTP 更保守）===
+    # LLM 调用昂贵且限流常见，重试策略需独立配置：
+    #   - 更多重试次数（限流恢复需要时间）
+    #   - 更长基础延迟（避免连续打满限流窗口）
+    #   - 更短最大延迟（避免用户单次等待超 30 秒）
+    LLM_RETRY_MAX_ATTEMPTS: int = 4  # LLM 最大重试次数（含首次，比普通 HTTP 多 1 次）
+    LLM_RETRY_BACKOFF_BASE: float = 2.0  # LLM 基础延迟（秒）
+    LLM_RETRY_BACKOFF_MAX: float = 32.0  # LLM 最大延迟上限（秒）
+
+    # === P1-4 检索结果注入扫描（RAG 安全核心）===
+    # 启用后 HybridRetriever 返回的候选文档经 InjectionGuard 扫描，
+    # 命中 prompt injection 模式的文档进 quarantined 列表（不丢弃，保留审计证据）。
+    # 6 类注入模式：指令劫持 / 角色覆盖 / 数据外泄 / 工具滥用 / 越狱 / 分隔符注入
+    RAG_INJECTION_GUARD_ENABLED: bool = True
+    # 隔离阈值 — 严重级别 >= 此值的命中才隔离（low/medium/high）
+    #   "low"    ：所有命中隔离（最严格，高敏感场景）
+    #   "medium" ：MEDIUM + HIGH 隔离（默认，平衡误报与安全）
+    #   "high"   ：仅 HIGH 隔离（最宽松，低风险场景）
+    RAG_INJECTION_GUARD_QUARANTINE_THRESHOLD: str = "medium"
+    # 命中后是否触发 admin 告警（通过 NotificationService 发送站内通知）
+    RAG_INJECTION_GUARD_ALERT_ADMINS: bool = True
+
+    # === P0-3 四轴硬预算（Agent Loop 前置闸门）===
+    # 单次 answer() 调用的四轴硬上限，任一触顶即抛 BudgetExceeded 硬停。
+    # 与 max_iterations / AGENT_TOTAL_TIMEOUT_SECONDS 并存：
+    #   - max_iterations: 软终止（break 循环，走兜底生成）
+    #   - 硬预算: 硬终止（抛异常，拒绝继续）
+    # 保守默认：无人值守的 run 应"宁可早死，不要烧钱"。
+    AGENT_BUDGET_MAX_TURNS: int = 10  # 决策循环最大迭代次数（硬上限，软 max_iterations 之上）
+    AGENT_BUDGET_MAX_SECONDS: float = 300.0  # wall-clock 最大时间（秒，与 AGENT_TOTAL_TIMEOUT_SECONDS 对齐）
+    AGENT_BUDGET_MAX_TOKENS: int = 200_000  # 累积 token 上限（cache-read 从基数扣除）
+    AGENT_BUDGET_MAX_COST_USD: float = 1.0  # 累积成本上限（美元）
+
     # === P1-A 熔断器 ===
-    CIRCUIT_BREAKER_FAILURE_THRESHOLD: int = 5  # 连续失败次数触发熔断
+    CIRCUIT_BREAKER_FAILURE_THRESHOLD: int = 5  # 滑动窗口内失败次数触发熔断
     CIRCUIT_BREAKER_RECOVERY_TIMEOUT: float = 30.0  # OPEN → HALF_OPEN 冷却时间（秒）
     CIRCUIT_BREAKER_HALF_OPEN_MAX_CALLS: int = 1  # 半开状态最多探测请求数
+    # P2-8: 滑动窗口大小（秒）— 只统计窗口内的失败时间戳，
+    # 过期时间戳自动从 deque 左侧淘汰。窗口外失败不计数，
+    # 避免历史偶发失败永久累计导致服务"无法恢复"。
+    # 与 CIRCUIT_BREAKER_FAILURE_THRESHOLD 组合：
+    #   "窗口内失败 >= threshold 才熔断"
+    CIRCUIT_BREAKER_FAILURE_WINDOW: float = 60.0
 
     # === P1-B 幂等锁 ===
     TASK_LOCK_TTL: int = 1800  # Celery 任务幂等锁 TTL（秒），默认 30 分钟
@@ -460,8 +528,12 @@ class Settings(BaseSettings):
         "SHUTDOWN_GRACE_PERIOD_CORE",
         "SHUTDOWN_GRACE_PERIOD_CELERY",
         "RETRY_MAX_ATTEMPTS",
+        "LLM_RETRY_MAX_ATTEMPTS",
+        "AGENT_BUDGET_MAX_TURNS",
+        "AGENT_BUDGET_MAX_TOKENS",
         "CIRCUIT_BREAKER_FAILURE_THRESHOLD",
         "CIRCUIT_BREAKER_HALF_OPEN_MAX_CALLS",
+        "CIRCUIT_BREAKER_FAILURE_WINDOW",
         "TASK_LOCK_TTL",
         "GRAPH_SEARCH_MAX_DEPTH",
         "GRAPH_SEARCH_MAX_RESULTS",
@@ -486,7 +558,12 @@ class Settings(BaseSettings):
         "RETRY_BACKOFF_BASE_DB",
         "RETRY_BACKOFF_MAX",
         "RETRY_JITTER",
+        "LLM_RETRY_BACKOFF_BASE",
+        "LLM_RETRY_BACKOFF_MAX",
+        "AGENT_BUDGET_MAX_SECONDS",
+        "AGENT_BUDGET_MAX_COST_USD",
         "CIRCUIT_BREAKER_RECOVERY_TIMEOUT",
+        "CIRCUIT_BREAKER_FAILURE_WINDOW",
         "RAG_THRESHOLD_HOT_BOOST",
         "RAG_THRESHOLD_COLD_DROP",
         "AGENT_STEP_TIMEOUT_SECONDS",
@@ -522,6 +599,7 @@ class Settings(BaseSettings):
         "GRAPH_SEARCH_SCORE",
         "RAG_THRESHOLD_MIN",
         "RAG_THRESHOLD_MAX",
+        "LANGFUSE_SAMPLING_RATE",
     )
     @classmethod
     def validate_float_0_1(cls, v: float) -> float:
@@ -590,7 +668,9 @@ class Settings(BaseSettings):
     @property
     def is_private(self) -> bool:
         """是否为私有部署模式。"""
-        return self.DEPLOY_MODE in ("private_overseas", "private_domestic")
+        return self.DEPLOY_MODE in (
+            "private_overseas", "private_domestic", "private_finetuned",
+        )
 
     @property
     def vllm_base_url(self) -> str:

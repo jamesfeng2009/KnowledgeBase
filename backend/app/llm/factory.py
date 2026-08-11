@@ -10,6 +10,7 @@ Provider 工厂 — 单一职责：根据 DEPLOY_MODE 创建对应 LLM / Embeddi
     saas_dashscope    → DashScopeProvider（通义千问 Qwen，国内 SaaS）
     private_overseas  → VLLMProvider（Llama 3.3 70B）
     private_domestic  → VLLMProvider（Qwen 3 72B）
+    private_finetuned → VLLMProvider（Qwen2.5-7B + LoRA adapter dpo-v3-7b）
 
 P2-3 扩展：``get_llm_provider_by_model(model_id)`` 根据 models.json 中的
 模型 ID 创建对应 Provider，支持用户在会话级切换模型。
@@ -89,6 +90,17 @@ def _make_vllm_llama_provider() -> VLLMProvider:
 def _make_vllm_qwen_provider() -> VLLMProvider:
     """私有部署·国内：Qwen 3 72B（阿里）。"""
     return VLLMProvider(model="Qwen/Qwen3-72B-Instruct")
+
+
+@register_llm_provider("private_finetuned")
+def _make_vllm_finetuned_provider() -> VLLMProvider:
+    """私有部署·微调：Qwen2.5-7B + LoRA adapter（DPO v3）。
+
+    vLLM multi-LoRA 模式：model 字段传 adapter name（VLLM_LORA_ADAPTER），
+    vLLM 服务端通过 --lora-modules 注册的 name 路由到 base+adapter。
+    省显存：一个 7B base 共享，多租户可叠领域 adapter（multi-LoRA）。
+    """
+    return VLLMProvider(model=settings.VLLM_LORA_ADAPTER)
 
 
 @lru_cache
