@@ -95,3 +95,14 @@ class ChatRequest(BaseModel):
         default=None, description="对话 ID，为空则新建对话"
     )
     agent_type: AgentType = Field(default=AgentType.qa, description="Agent 类型")
+    # P0 wiki 层级：检索范围限定（语义化命名，对话场景比 filters 更直观）。
+    # 端点层把 scope 作为 filters 透传给 engine.answer，再下推到 retriever。
+    # 可选 key: series_id / path_prefix / parent_id / depth / version_of
+    scope: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "检索范围限定（层级过滤），可选 key: "
+            "series_id(系列) / path_prefix(子树路径前缀) / "
+            "parent_id(父文档) / depth(层级深度,根=0) / version_of(版本族)"
+        ),
+    )

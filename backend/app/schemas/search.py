@@ -36,6 +36,17 @@ class SearchRequest(BaseModel):
     )
     page: int = Field(default=1, ge=1, description="页码")
     page_size: int = Field(default=20, ge=1, le=100, description="每页数量")
+    # P0 wiki 层级：检索层级过滤 — 透传到 retriever.search，由
+    # filter_builder 转为后端 filter 子句。可选 key：
+    #   series_id / path_prefix / parent_id / depth / version_of
+    filters: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "层级过滤条件，可选 key: "
+            "series_id(系列精确匹配) / path_prefix(路径前缀匹配子树) / "
+            "parent_id(直系父文档) / depth(层级深度,根=0) / version_of(版本族主文档)"
+        ),
+    )
 
 
 class SearchResult(BaseModel):

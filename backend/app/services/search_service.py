@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import or_, select
@@ -90,6 +91,7 @@ class SearchService:
         search_type: SearchType = SearchType.hybrid,
         page: int = 1,
         page_size: int = 20,
+        filters: dict[str, Any] | None = None,
     ) -> dict:
         """执行混合检索并返回格式化结果。
 
@@ -105,6 +107,8 @@ class SearchService:
             search_type: 检索类型 — fulltext / vector / hybrid。
             page: 页码（从 1 开始）。
             page_size: 每页数量。
+            filters: P0 wiki 层级过滤 — series_id/path_prefix/parent_id/
+                depth/version_of。透传到 retriever.search。
 
         Returns:
             包含 results / total / query 的 dict。
@@ -116,11 +120,16 @@ class SearchService:
         retriever = self._get_retriever()
         if retriever is not None:
             try:
+                # P0 wiki 层级：filters 透传到 retriever.search。
+                # 修复：HybridRetriever.search 签名无 search_type 参数（固定
+                # 向量+全文多路混合），历史误传 search_type 会 TypeError 被下方
+                # except 捕获降级为 DB ILIKE，导致 RAG 引擎实际从未生效。
+                # 移除 search_type 误传，让 RAG 真正运行，filters 才有意义。
                 raw_results = await retriever.search(
                     query=query,
                     kb_ids=accessible_kb_ids,
-                    search_type=search_type.value,
                     top_k=page * page_size,
+                    filters=filters,
                 )
                 results = self._format_rag_results(raw_results)
             except Exception:

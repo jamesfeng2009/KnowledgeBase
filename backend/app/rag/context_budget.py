@@ -32,11 +32,104 @@ _MAX_THINK_TOKENS: int = 2000  # ~7000 字符，为生成阶段留出足够空�
 # 压缩时保留的最近消息条数（不压缩的 Live Zone 大小）
 _KEEP_RECENT: int = 2
 
-# 中英文混合 token 估算系数：约 1 token ≈ 3.5 字符
-_CHARS_PER_TOKEN: float = 3.5
-
 # 压缩摘要中每条消息的最大保留长度
 _COMPRESSED_MSG_MAX_CHARS: int = 80
+
+# ======================================================================
+# P1-5: CJK 感知的 token 估算
+# ======================================================================
+#
+# 原 _CHARS_PER_TOKEN=3.5 对中英文混合场景存在系统性低估：
+#   - 中文实际约 1.5-2 字符/token（BPE 分词后每个汉字常独立成 token）
+#   - 英文实际约 4 字符/token
+#   - 用统一 3.5 估算 1000 字纯中文文档 → 估算 285 token，
+#     但真实 token 数可能高达 500-666，导致上下文预算被悄悄击穿。
+#
+# 改造策略（故意高估，保守优先）：
+#   - CJK 字符：1.5 字符/token（每个汉字 ≈ 0.67 token，比真实略高，宁早压缩不超限）
+#   - 非 CJK 字符：4.0 字符/token（标准英文估算）
+#   - 混合文本按字符类别分别累计，避免一刀切。
+#
+# CJK Unicode 范围（覆盖中日韩 + 全角符号 + 假名 + 谚文）：
+#   - U+3000-U+303F: CJK 符号和标点（　、。「」等）
+#   - U+3040-U+309F: 平假名
+#   - U+30A0-U+30FF: 片假名
+#   - U+3400-U+4DBF: CJK 扩展 A
+#   - U+4E00-U+9FFF: CJK 统一表意文字（基本汉字）
+#   - U+F900-U+FAFF: CJK 兼容表意文字
+#   - U+FF00-U+FFEF: 全角形式（全角字母/数字/符号）
+#   - U+20000-U+2A6DF: CJK 扩展 B（罕见汉字， Python 用 \U 转义）
+# 保留 _CHARS_PER_TOKEN 仅为向后兼容引用，新代码请用下方 CJK 感知估算。
+
+# 旧系数（向后兼容引用，不应在新代码中使用）
+_CHARS_PER_TOKEN: float = 3.5
+
+# CJK 字符的 token 估算系数（字符/token，越小代表每个字符消耗越多 token）
+_CJK_CHARS_PER_TOKEN: float = 1.5
+
+# 非 CJK 字符的 token 估算系数（英文/数字/半角标点，约 4 字符/token）
+_NON_CJK_CHARS_PER_TOKEN: float = 4.0
+
+# CJK 字符 Unicode 范围元组（用于快速判断）
+# 按 code point 升序排列，便于 bisect 或线性扫描
+_CJK_RANGES: tuple[tuple[int, int], ...] = (
+    (0x3000, 0x303F),    # CJK 符号和标点
+    (0x3040, 0x309F),    # 平假名
+    (0x30A0, 0x30FF),    # 片假名
+    (0x3400, 0x4DBF),    # CJK 扩展 A
+    (0x4E00, 0x9FFF),    # CJK 统一表意文字（基本汉字）
+    (0xF900, 0xFAFF),    # CJK 兼容表意文字
+    (0xFF00, 0xFFEF),    # 全角形式
+    (0x20000, 0x2A6DF),  # CJK 扩展 B
+    (0x2A700, 0x2B73F),  # CJK 扩展 C
+    (0x2B740, 0x2B81F),  # CJK 扩展 D
+    (0x2B820, 0x2CEAF),  # CJK 扩展 E
+    (0x2CEB0, 0x2EBEF),  # CJK 扩展 F
+)
+
+
+def _is_cjk_char(ch: str) -> bool:
+    """判断单个字符是否为 CJK 字符（中日韩文字 + 全角符号 + 假名 + 谚文）。
+
+    用于 CJK 感知的 token 估算。空字符返回 False。
+    """
+    if not ch:
+        return False
+    cp = ord(ch)
+    for lo, hi in _CJK_RANGES:
+        if cp < lo:
+            # 当前字符 code point 小于范围下界，后续范围更大，可短路
+            return False
+        if cp <= hi:
+            return True
+    return False
+
+
+def _count_cjk_chars(text: str) -> int:
+    """统计文本中的 CJK 字符数量。"""
+    if not text:
+        return 0
+    return sum(1 for ch in text if _is_cjk_char(ch))
+
+
+def estimate_tokens_for_text(text: str) -> int:
+    """CJK 感知的 token 估算 — 对单段文本估算 token 数。
+
+    CJK 字符按 1.5 字符/token 估（故意高估，保守优先），
+    非 CJK 字符按 4.0 字符/token 估（标准英文估算）。
+
+    Args:
+        text: 待估算的文本。
+
+    Returns:
+        估算的 token 数（至少为 0）。
+    """
+    if not text:
+        return 0
+    cjk_count = _count_cjk_chars(text)
+    non_cjk_count = len(text) - cjk_count
+    tokens = cjk_count / _CJK_CHARS_PER_TOKEN + non_cjk_count / _NON_CJK_CHARS_PER_TOKEN
+    return int(tokens)
 
 
 class ContextBudgetManager:
@@ -72,9 +165,13 @@ class ContextBudgetManager:
 
     @staticmethod
     def estimate_tokens(messages: list[dict[str, Any]]) -> int:
-        """估算消息列表的总 token 数。
+        """估算消息列表的总 token 数（CJK 感知）。
 
-        使用字符数 / 3.5 的粗略估算（中英文混合场景的保守值）。
+        P1-5: 区分 CJK 字符和非 CJK 字符分别估算，
+        中文按 1.5 字符/token（故意高估，保守优先），
+        英文/数字/标点按 4.0 字符/token。
+        旧版统一 3.5 系数会系统性低估中文 token 数，
+        导致上下文预算被悄悄击穿。
 
         Args:
             messages: 消息列表（每条含 role 和 content）。
@@ -82,8 +179,15 @@ class ContextBudgetManager:
         Returns:
             估算的 token 数。
         """
-        total_chars = sum(len(m.get("content", "")) for m in messages)
-        return int(total_chars / _CHARS_PER_TOKEN)
+        total_tokens = 0
+        for m in messages:
+            content = m.get("content", "")
+            if isinstance(content, str):
+                total_tokens += estimate_tokens_for_text(content)
+            elif content:
+                # 非 str 类型（如 list/dict）降级用字符长度估算
+                total_tokens += estimate_tokens_for_text(str(content))
+        return total_tokens
 
     def should_compress(self, messages: list[dict[str, Any]]) -> bool:
         """判断是否需要压缩。

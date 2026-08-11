@@ -1219,6 +1219,7 @@ class TestDocumentTasksVectorIndex:
         mock_store.upsert.assert_called_once_with(
             "doc-001", chunks, embeddings, kb_id=None,
             doc_updated_at=None, effective_from=None, effective_to=None,
+            doc_meta=None,
         )
 
     @pytest.mark.asyncio

@@ -50,6 +50,8 @@ from app.rag.context_budget import ContextBudgetManager
 from app.rag.context_dedup import CrossTurnDeduplicator
 from app.rag.generator import Generator
 from app.rag.tool_guard import DangerousToolGuard
+from app.core.budget import HardBudget, RunBudget, check_budget, get_budget_status
+from app.core.exceptions import BudgetExceeded
 from app.observability.trail_aggregator import get_trail_aggregator
 from app.utils.request_context import get_request_id
 from app.rag.reranker import RerankerBase
@@ -91,6 +93,13 @@ _dedup_ctx: contextvars.ContextVar[Any] = contextvars.ContextVar(
 )
 _budget_ctx: contextvars.ContextVar[Any] = contextvars.ContextVar(
     "rag_budget", default=None
+)
+# P0-3: 四轴硬预算 —— turns/seconds/tokens/cost_usd 任一触顶即硬停
+_hard_budget_ctx: contextvars.ContextVar[HardBudget | None] = contextvars.ContextVar(
+    "rag_hard_budget", default=None
+)
+_run_budget_ctx: contextvars.ContextVar[RunBudget | None] = contextvars.ContextVar(
+    "rag_run_budget", default=None
 )
 
 # 默认最大迭代次数
@@ -178,6 +187,10 @@ class AgentState(TypedDict, total=False):
     # 请求级 ABAC 权限过滤器（callable，携带当前用户上下文）— 优先于
     # 引擎构造级 permission_filter；仅纯 Python answer() 路径使用。
     permission_filter: PermissionFilter | None
+    # P0 wiki 层级：检索层级过滤 — series_id/path_prefix/parent_id/depth/
+    # version_of。透传到 retriever.search，由 filter_builder 转为后端 filter。
+    # None 表示不做层级过滤（向后兼容旧调用）。
+    filters: dict[str, Any] | None
     # --- LangGraph 专用字段（纯 Python 路径不使用）---
     # think 节点产出的路由信号：retrieve / tool_call / generate。
     _decision: str
@@ -232,6 +245,7 @@ class AgenticRAGEngine:
         query_rewriter: Any = None,
         faq_matcher: Any = None,
         planner: Any = None,
+        injection_guard: Any = None,
     ) -> None:
         self.llm = llm
         self.mcp = mcp_client
@@ -347,6 +361,20 @@ class AgenticRAGEngine:
             self._step_timeout_s = 60.0
             self._total_timeout_s = 300.0
 
+        # P1-4: 检索结果注入扫描守卫 — HybridRetriever 返回后扫描 prompt injection
+        # 传入时直接使用（测试注入）；未传入时从工厂获取单例（可能为 None，
+        # 当 RAG_INJECTION_GUARD_ENABLED=False 时禁用）。
+        # 告警回调由调用方（如 app.main lifespan）通过 get_injection_guard(alert_callback=...)
+        # 预绑定到单例；engine 不主动注入回调，避免 RAG 层反向依赖 NotificationService/DB。
+        self._injection_guard: Any = injection_guard
+        if self._injection_guard is None:
+            try:
+                from app.rag.injection_guard import get_injection_guard
+                self._injection_guard = get_injection_guard()
+            except Exception as exc:
+                log.warning("engine.injection_guard_init_failed", error=str(exc))
+                self._injection_guard = None
+
     # ------------------------------------------------------------------
     # 请求级状态（ContextVar 隔离，并发安全）
     #
@@ -411,6 +439,31 @@ class AgenticRAGEngine:
     def _budget(self, value: ContextBudgetManager) -> None:
         _budget_ctx.set(value)
 
+    @property
+    def _hard_budget(self) -> HardBudget:
+        """P0-3: 四轴硬预算配置 —— 从 Settings 读取，ContextVar 隔离。"""
+        inst = _hard_budget_ctx.get()
+        if inst is None:
+            from app.config import get_settings as _get_settings
+            _s = _get_settings()
+            inst = HardBudget(
+                max_turns=_s.AGENT_BUDGET_MAX_TURNS,
+                max_seconds=_s.AGENT_BUDGET_MAX_SECONDS,
+                max_tokens=_s.AGENT_BUDGET_MAX_TOKENS,
+                max_cost_usd=_s.AGENT_BUDGET_MAX_COST_USD,
+            )
+            _hard_budget_ctx.set(inst)
+        return inst
+
+    @property
+    def _run_budget(self) -> RunBudget:
+        """P0-3: 运行时累积预算 —— 每次 LLM 调用后更新，决策循环每轮检查。"""
+        inst = _run_budget_ctx.get()
+        if inst is None:
+            inst = RunBudget()
+            _run_budget_ctx.set(inst)
+        return inst
+
     # ------------------------------------------------------------------
     # 对外入口
     # ------------------------------------------------------------------
@@ -429,6 +482,7 @@ class AgenticRAGEngine:
         drift_info: dict[str, Any] | None = None,
         permission_filter: PermissionFilter | None = None,
         cache_scope: str | None = None,
+        filters: dict[str, Any] | None = None,
     ) -> AsyncIterator[SSEEvent | str]:
         """Agentic RAG 主入口 — 返回 SSE 事件流供前端实时消费。
 
@@ -465,6 +519,11 @@ class AgenticRAGEngine:
             cache_scope: 可选，权限视图指纹（由调用方按可访问 kb_ids +
                 用户密级计算）。参与答案缓存 key 计算，不同权限视图的
                 用户互不可见，防止缓存跨权限泄漏。
+            filters: P0 wiki 层级过滤 — series_id/path_prefix/parent_id/
+                depth/version_of。透传到 retriever.search 限定检索范围
+                （如"只在某系列/子 wiki 下检索"）。filters 指纹自动并入
+                cache_scope，防止不同层级视图的用户互读缓存（如
+                series_id=X 的答案不应命中无 filters 的查询）。
 
         Yields:
             SSEEvent | str: SSE 事件对象（thinking/retrieve/tool_call/sources/
@@ -473,6 +532,20 @@ class AgenticRAGEngine:
         # 无任何可访问知识库时短路：跳过 FAQ 与检索，避免空 kb_ids
         # 在底层被当作"不过滤"而回落为全库检索（跨知识库泄漏）。
         no_kb_access = kb_ids is not None and len(kb_ids) == 0
+        # P0 wiki 层级：filters 指纹并入 cache_scope，防止不同层级视图
+        # 缓存互读（如 series_id=X 的答案不应命中无 filters 的查询）。
+        # filters 为 None 时 cache_scope 不变（向后兼容旧调用）。
+        if filters:
+            import hashlib
+
+            _filters_hash = hashlib.sha256(
+                json.dumps(filters, sort_keys=True, ensure_ascii=False).encode("utf-8")
+            ).hexdigest()[:16]
+            cache_scope = (
+                f"{cache_scope}|hier={_filters_hash}"
+                if cache_scope
+                else f"hier={_filters_hash}"
+            )
         # 1. 缓存命中检查（缓存 key 含 tenant_id + 权限视图 scope，
         # 跨租户 / 跨权限视图互不可见）。
         # 无可访问知识库（no_kb_access）时跳过缓存读取：缓存中的答案
@@ -603,6 +676,8 @@ class AgenticRAGEngine:
             "drift_info": drift_info,
             # 请求级权限过滤器（携带用户上下文），优先于构造级注入
             "permission_filter": permission_filter,
+            # P0 wiki 层级：检索层级过滤（透传到 _retrieve → retriever.search）
+            "filters": filters,
         }
         # 重置检索重试计数
         self._retrieval_retry_count = 0
@@ -613,6 +688,9 @@ class AgenticRAGEngine:
         self._dedup.reset()
         # P2-Opt6: 重置预算管理器统计
         self._budget.reset()
+        # P0-3: 重置四轴硬预算累积器（新一轮 answer 从零开始计数）
+        self._run_budget.reset()
+        self._run_budget.run_id = session_id
 
         # 2.5 初始化 LangFuse 追踪
         # P0-Stage3: 关联 HTTP request_id，使 LangFuse 追踪可按请求 ID 搜索
@@ -747,6 +825,19 @@ class AgenticRAGEngine:
             self._accumulated_usage["output_tokens"] += _gen_usage.get("output_tokens", 0)
             if _gen_usage.get("model"):
                 self._accumulated_usage["model"] = _gen_usage["model"]
+            # P0-3: 同步到四轴硬预算累积器（tokens + cost 轴）
+            _gen_in = _gen_usage.get("input_tokens", 0)
+            _gen_out = _gen_usage.get("output_tokens", 0)
+            _gen_cost_usd = self._estimate_cost_cents(
+                _gen_usage.get("model", ""),
+                _gen_in,
+                _gen_out,
+            ) / 100.0  # 分 → 美元
+            self._run_budget.add_usage(
+                input_tokens=_gen_in,
+                output_tokens=_gen_out,
+                cost_usd=_gen_cost_usd,
+            )
 
         # P0-Stage2: 写入 UsageRecord（真实 token 用量 + 真实耗时）
         if db is not None and user_uuid is not None:
@@ -1407,6 +1498,28 @@ class AgenticRAGEngine:
         _same_decision_count: int = 0
 
         while True:
+            # P0-3: 四轴硬预算前置闸门 —— turns/seconds/tokens/cost_usd 任一触顶即硬停。
+            # 与下方 _total_timeout_s / max_iterations 软终止并存：
+            #   - 软终止: break 循环，走兜底生成（用户仍能拿到回答）
+            #   - 硬预算: 抛 BudgetExceeded 不可重试异常（拒绝继续，保护成本）
+            self._run_budget.increment_turn()
+            try:
+                check_budget(
+                    self._run_budget,
+                    self._hard_budget,
+                    run_id=state.get("session_id"),
+                )
+            except BudgetExceeded as exc:
+                state["_budget_exceeded"] = True
+                log.warning(
+                    "engine.budget_exceeded",
+                    alert=True,
+                    alert_type="agent_budget_exceeded",
+                    **exc.context,
+                )
+                # 预算耗尽走兜底生成路径（不抛异常给用户，而是用已有信息生成回答）
+                break
+
             # P1-7: 总任务超时兜底 — 决策循环整体卡死防护（卡死监控告警）
             _elapsed = time.monotonic() - _loop_t0
             if _elapsed > self._total_timeout_s:
@@ -1881,6 +1994,19 @@ class AgenticRAGEngine:
                     self._accumulated_usage["output_tokens"] += chunk.get("output_tokens", 0)
                     if chunk.get("model"):
                         self._accumulated_usage["model"] = chunk["model"]
+                    # P0-3: 同步到四轴硬预算累积器（think 调用的 tokens + cost）
+                    _think_in = chunk.get("input_tokens", 0)
+                    _think_out = chunk.get("output_tokens", 0)
+                    _think_cost_usd = self._estimate_cost_cents(
+                        chunk.get("model", ""),
+                        _think_in,
+                        _think_out,
+                    ) / 100.0  # 分 → 美元
+                    self._run_budget.add_usage(
+                        input_tokens=_think_in,
+                        output_tokens=_think_out,
+                        cost_usd=_think_cost_usd,
+                    )
                     continue
                 if isinstance(chunk, str):
                     text += chunk
@@ -1973,7 +2099,12 @@ class AgenticRAGEngine:
             return
 
         # 1. 多路检索召回候选
-        candidates = await self.retriever.search(query, kb_ids=kb_ids, top_k=_RETRIEVE_TOP_K)
+        # P0 wiki 层级：filters 从 state 取（answer 初始化时写入），透传给
+        # retriever.search，由 filter_builder 转为后端 filter 子句。
+        hierarchy_filters = state.get("filters")
+        candidates = await self.retriever.search(
+            query, kb_ids=kb_ids, top_k=_RETRIEVE_TOP_K, filters=hierarchy_filters
+        )
         log.info(
             "engine.retrieve.candidates",
             count=len(candidates),
@@ -1981,6 +2112,36 @@ class AgenticRAGEngine:
             query_used=query[:100],
             is_rewritten=query != original_query,
         )
+
+        # 1.5 P1-4: 检索结果注入扫描 — HybridRetriever 返回后扫描 prompt injection
+        # 命中文档进 state["quarantined_docs"]（不丢弃，保留审计证据），
+        # 安全文档继续走权限过滤 → 重排 → 生成。
+        # 扫描失败时优雅降级：放行全部文档，仅记录日志（不阻塞 RAG 主流程）。
+        if self._injection_guard is not None and candidates:
+            try:
+                scan_result = self._injection_guard.scan(
+                    candidates, query=original_query
+                )
+                candidates = scan_result.safe_docs
+                # 累积隔离文档到 state（多轮检索可能叠加）
+                quarantined = state.get("quarantined_docs") or []
+                quarantined.extend(scan_result.quarantined_docs)
+                state["quarantined_docs"] = quarantined
+                if scan_result.total_quarantined > 0:
+                    log.warning(
+                        "engine.retrieve.injection_quarantined",
+                        scanned=scan_result.total_scanned,
+                        quarantined=scan_result.total_quarantined,
+                        hits=scan_result.total_hits,
+                        iteration=state["iteration"],
+                    )
+            except Exception as exc:
+                # 优雅降级：扫描异常不影响主流程，保留原 candidates
+                log.warning(
+                    "engine.retrieve.injection_scan_error",
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                )
 
         # 2. ABAC 权限过滤（必须在重排之前！）
         # 请求级过滤器（携带当前用户上下文）优先于构造级注入 —
@@ -2127,6 +2288,22 @@ class AgenticRAGEngine:
                 "context_load_tokens": sum(len(c) for c in included_contents) // 4
             },
             "permission_filtered_count": max(0, len(candidates) - len(filtered)),
+            # P1-4: 注入扫描隔离记录 — 命中 prompt injection 的文档引用 + 命中模式
+            # 仅记录引用 ID 与模式，不携带命中原文（避免敏感内容扩散到 trace）。
+            "injection_quarantined_refs": [
+                rid
+                for d in (state.get("quarantined_docs") or [])
+                if isinstance(d, dict)
+                for rid in [_ref_id(d)]
+                if rid
+            ],
+            "injection_hit_patterns": sorted({
+                h.get("pattern_id")
+                for d in (state.get("quarantined_docs") or [])
+                if isinstance(d, dict)
+                for h in (d.get("injection_hits") or [])
+                if h.get("pattern_id")
+            }),
         }
 
         log.info(

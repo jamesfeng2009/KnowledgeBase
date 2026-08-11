@@ -92,8 +92,13 @@ class MilvusVectorStore(VectorStoreBase):
         query_vec: list[float],
         kb_ids: list[str] | None = None,
         top_k: int = 20,
+        filters: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
-        """通过 Milvus REST API 执行向量相似度检索 — 异常向上传播以触发熔断器。"""
+        """通过 Milvus REST API 执行向量相似度检索 — 异常向上传播以触发熔断器。
+
+        P0 wiki 层级：filters 通过 filter_builder.build_milvus_expr 转为
+        Milvus expr 字符串，与 kb_ids 合并。两者都为空时不设 filter。
+        """
         if self._available is False:
             return []
 
@@ -116,14 +121,38 @@ class MilvusVectorStore(VectorStoreBase):
                 "doc_updated_at",
                 "effective_from",
                 "effective_to",
+                # P0 wiki 层级字段
+                "series_id",
+                "path",
+                "doc_parent_id",
+                "depth",
+                "version_of",
             ],
         }
-        if kb_ids:
-            payload["filter"] = 'kb_id in ["' + '", "'.join(
-                _safe_filter_value(kb_id) for kb_id in kb_ids
-            ) + '"]'
 
-        log.info("vector_store.milvus.search_start", top_k=top_k, has_kb_filter=bool(kb_ids))
+        # P0 wiki 层级：合并 kb_ids + filters 为 Milvus expr 字符串
+        from app.rag.filter_builder import build_milvus_expr
+
+        # kb_id 仍走 _safe_filter_value 白名单（UUID 安全），
+        # filters 中的值由 filter_builder 转义（支持中文路径等）
+        expr_parts: list[str] = []
+        if kb_ids:
+            safe_ids = [_safe_filter_value(k) for k in kb_ids]
+            expr_parts.append('kb_id in ["' + '", "'.join(safe_ids) + '"]')
+        # filters 由 filter_builder 构建额外 expr 片段
+        if filters:
+            filters_expr = build_milvus_expr(None, filters)  # kb_ids 已单独处理
+            if filters_expr:
+                expr_parts.append(filters_expr)
+        if expr_parts:
+            payload["filter"] = " and ".join(expr_parts)
+
+        log.info(
+            "vector_store.milvus.search_start",
+            top_k=top_k,
+            has_kb_filter=bool(kb_ids),
+            has_hierarchy_filter=bool(filters),
+        )
         resp = await self._http.post(url, json=payload)
         resp.raise_for_status()
         data: Any = resp.json()
@@ -181,6 +210,7 @@ class MilvusVectorStore(VectorStoreBase):
         doc_updated_at: str | None = None,
         effective_from: str | None = None,
         effective_to: str | None = None,
+        doc_meta: dict[str, Any] | None = None,
     ) -> int:
         """批量写入向量数据到 Milvus collection。
 
@@ -188,6 +218,9 @@ class MilvusVectorStore(VectorStoreBase):
         与检索端按知识库过滤对齐；历史 bug 曾错误写入 doc_id。
         recency 字段（doc_updated_at / effective_from / effective_to）
         仅在提供时写入，依赖 collection 开启动态 schema。
+
+        P0 wiki 层级：``doc_meta`` 携带文档级层级元数据
+        （series_id/path/doc_parent_id/depth/version_of），依赖动态 schema 写入。
         """
         if not embeddings or not chunks:
             return 0
@@ -197,6 +230,20 @@ class MilvusVectorStore(VectorStoreBase):
 
         url = f"{self._base_url()}/v2/vectordb/entities/upsert"
         n = min(len(embeddings), len(chunks))
+
+        # P0 wiki 层级：提取文档级层级字段（所有 chunk 共享同一文档的层级元数据）
+        hierarchy_fields: dict[str, Any] = {}
+        if doc_meta:
+            for field in ("series_id", "path", "doc_parent_id", "version_of"):
+                val = doc_meta.get(field)
+                if val is not None:
+                    hierarchy_fields[field] = str(val)
+            depth_val = doc_meta.get("depth")
+            if depth_val is not None:
+                try:
+                    hierarchy_fields["depth"] = int(depth_val)
+                except (ValueError, TypeError):
+                    pass
 
         # Milvus REST API 接收 data 数组，每项是一条记录
         records: list[dict[str, Any]] = []
@@ -219,6 +266,8 @@ class MilvusVectorStore(VectorStoreBase):
                 record["effective_from"] = effective_from
             if effective_to:
                 record["effective_to"] = effective_to
+            # P0 wiki 层级字段：所有 chunk 共享文档级层级元数据
+            record.update(hierarchy_fields)
             records.append(record)
 
         payload: dict[str, Any] = {

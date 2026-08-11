@@ -70,9 +70,9 @@ class TestRetrieverParallelExecution:
             entered -= 1
             return []
 
-        retriever._vector_search = lambda q, k, t: _path("vector")  # type: ignore[method-assign]
-        retriever._fulltext_search = lambda q, k, t: _path("fulltext")  # type: ignore[method-assign]
-        retriever._cross_modal_search = lambda q, k, t: _path("cross_modal")  # type: ignore[method-assign]
+        retriever._vector_search = lambda q, k, t, f: _path("vector")  # type: ignore[method-assign]
+        retriever._fulltext_search = lambda q, k, t, f: _path("fulltext")  # type: ignore[method-assign]
+        retriever._cross_modal_search = lambda q, k, t, f: _path("cross_modal")  # type: ignore[method-assign]
         retriever._graph_search = lambda e, k, t: _path("graph")  # type: ignore[method-assign]
 
         await retriever.search("并行测试", top_k=5)

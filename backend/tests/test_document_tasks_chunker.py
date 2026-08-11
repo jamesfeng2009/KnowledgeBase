@@ -317,6 +317,7 @@ class TestBuildIndexes:
         mock_store.upsert.assert_called_once_with(
             "doc-001", chunk_objects, embeddings, kb_id=None,
             doc_updated_at=None, effective_from=None, effective_to=None,
+            doc_meta=None,
         )
 
     @pytest.mark.asyncio

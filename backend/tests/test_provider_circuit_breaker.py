@@ -199,7 +199,7 @@ class TestOpenAIEmbedderCircuitBreaker:
         assert cb.state == CircuitState.OPEN
 
     def test_intermittent_failure_no_trip(self):
-        """间歇性失败 — 成功重置 failure_count，不触发熔断。"""
+        """间歇性失败 — 滑动窗口内失败数未达阈值，不触发熔断。"""
         from app.llm.embedder import OpenAIEmbedder
 
         emb = OpenAIEmbedder()
@@ -219,8 +219,8 @@ class TestOpenAIEmbedderCircuitBreaker:
 
         emb.client.embeddings.create = intermittent
 
-        # fail, success, fail, success, fail, success — 间歇性，不连续达阈值
-        for i in range(6):
+        # success, fail, success, fail — 滑动窗口内仅 2 次失败，未达阈值 3
+        for i in range(4):
             try:
                 asyncio.run(emb.embed(["test"]))
             except RuntimeError:

@@ -141,6 +141,111 @@ class CheckpointManager:
         logger.info("checkpoint_deleted", session_id=session_id)
 
     # ------------------------------------------------------------------
+    # P2-7: 混合恢复 — Checkpoint + EventLog 对齐
+    # ------------------------------------------------------------------
+
+    async def save_checkpoint_with_event_log(
+        self,
+        session_id: str,
+        agent_state: dict,
+        iteration: int = 0,
+        base_seq: int | None = None,
+    ) -> None:
+        """保存 Checkpoint 并记录对应的 EventLog base_seq。
+
+        混合恢复的核心契约：Checkpoint 保存状态快照，同时记录此快照对应的
+        EventLog seq。恢复时加载 Checkpoint 后从 base_seq 之后重放事件，
+        得到最新状态。
+
+        ``base_seq`` 为 None 时自动取当前 EventLog 的最新 seq（即 Checkpoint
+        包含到该 seq 为止的所有事件效果）。显式传入 base_seq 用于"先存事件
+        后存 Checkpoint"的场景（如节点执行后立即存 Checkpoint，base_seq
+        应为该节点事件的 seq）。
+
+        Args:
+            session_id: 会话 ID。
+            agent_state: Agent 完整状态。
+            iteration: 当前迭代次数。
+            base_seq: 对应的 EventLog seq（None 时自动取最新）。
+        """
+        # 取 base_seq（自动模式：读取 EventLog 最新 seq）
+        if base_seq is None:
+            try:
+                from app.memory.event_log import EventLogManager
+
+                event_log = EventLogManager(self.db)
+                base_seq = await event_log.get_last_seq(session_id)
+            except Exception as exc:
+                logger.warning(
+                    "checkpoint.event_log_base_seq_error",
+                    session_id=session_id,
+                    error=str(exc),
+                )
+                base_seq = 0
+
+        # 在 agent_state 中嵌入 _base_seq 元数据（恢复时读取）
+        # 不污染业务字段，用下划线前缀标记内部元数据
+        state_with_meta = dict(agent_state)
+        state_with_meta["_base_seq"] = base_seq
+
+        await self.save_checkpoint(session_id, state_with_meta, iteration)
+        logger.info(
+            "checkpoint_saved_with_event_log",
+            session_id=session_id,
+            iteration=iteration,
+            base_seq=base_seq,
+        )
+
+    async def load_checkpoint_with_event_log(
+        self,
+        session_id: str,
+        replay_events: bool = True,
+    ) -> dict | None:
+        """加载 Checkpoint 并可选重放后续 EventLog 事件，得到最新状态。
+
+        混合恢复入口：先加载 Checkpoint（含 _base_seq 元数据），若
+        ``replay_events=True`` 则从 _base_seq 之后重放事件流，得到
+        Checkpoint 之后的所有增量变化。
+
+        Args:
+            session_id: 会话 ID。
+            replay_events: 是否重放 _base_seq 之后的事件（默认 True）。
+                False 时仅返回 Checkpoint 快照状态（含 _base_seq）。
+
+        Returns:
+            重放后的最新状态；无 Checkpoint 时返回 None。
+        """
+        state = await self.load_checkpoint(session_id)
+        if state is None:
+            return None
+
+        if not replay_events:
+            return state
+
+        base_seq = state.pop("_base_seq", 0)
+        if not isinstance(base_seq, int) or base_seq < 0:
+            base_seq = 0
+
+        # 无 EventLog 可重放时直接返回 Checkpoint 状态
+        try:
+            from app.memory.event_log import EventLogManager
+
+            event_log = EventLogManager(self.db)
+            last_seq = await event_log.get_last_seq(session_id)
+            if last_seq <= base_seq:
+                # 无新增事件，直接返回 Checkpoint 状态
+                return state
+            return await event_log.replay(session_id, state, after_seq=base_seq)
+        except Exception as exc:
+            logger.warning(
+                "checkpoint.event_log_replay_error",
+                session_id=session_id,
+                base_seq=base_seq,
+                error=str(exc),
+            )
+            return state
+
+    # ------------------------------------------------------------------
     # P2-13: 长任务里程碑 checkpoint
     # ------------------------------------------------------------------
 

@@ -47,6 +47,7 @@ class VectorStoreBase(ABC):
         query_vec: list[float],
         kb_ids: list[str] | None = None,
         top_k: int = 20,
+        filters: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """向量相似度检索 — 返回最相似的文档块列表。
 
@@ -54,6 +55,10 @@ class VectorStoreBase(ABC):
             query_vec: 查询向量（与索引时使用的 Embedder 一致）。
             kb_ids: 可选，限定检索的知识库 ID 列表。
             top_k: 返回结果数量上限。
+            filters: P0 wiki 层级过滤 — 标准 key:
+                series_id / path_prefix / parent_id / depth / version_of。
+                由 app.rag.filter_builder 转为后端 filter 子句。
+                None 或空时不过滤（向后兼容）。
 
         Returns:
             候选文档列表，按相似度降序排列，每项格式见模块文档。
@@ -70,6 +75,7 @@ class VectorStoreBase(ABC):
         doc_updated_at: str | None = None,
         effective_from: str | None = None,
         effective_to: str | None = None,
+        doc_meta: dict[str, Any] | None = None,
     ) -> int:
         """批量写入（插入或更新）向量数据。
 
@@ -84,6 +90,9 @@ class VectorStoreBase(ABC):
                 平局裁决依据；缺省则不写入（该文档不参与新鲜度排序）。
             effective_from: 文档生效时间（ISO 格式，规范类文档可选）。
             effective_to: 文档失效时间（ISO 格式，规范类文档可选）。
+            doc_meta: P0 wiki 层级元数据 — series_id/path/doc_parent_id/
+                depth/version_of。写入索引后支持检索时按 filters 过滤。
+                None 时跳过层级字段（向后兼容旧文档）。
 
         Returns:
             成功写入的向量数量。

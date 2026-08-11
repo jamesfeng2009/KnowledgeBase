@@ -19,6 +19,7 @@ from openai import AsyncOpenAI
 from app.config import get_settings
 from app.llm.base import LLMProvider, Message, Tool, ToolUse
 from app.utils.circuit_breaker import get_circuit_breaker
+from app.utils.llm_retry import with_llm_retry
 from app.utils.logger import get_logger
 
 settings = get_settings()
@@ -89,6 +90,7 @@ class VLLMProvider(LLMProvider):
                 api_kwargs[key] = kwargs[key]
         return api_kwargs
 
+    @with_llm_retry(provider="vllm")
     async def chat(
         self,
         messages: list[Message],

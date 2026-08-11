@@ -23,6 +23,7 @@ from app.config import get_settings
 from app.llm.base import LLMProvider, Message, Tool, ToolUse
 from app.llm.cache_aligner import check_cache_alignment
 from app.utils.circuit_breaker import get_circuit_breaker
+from app.utils.llm_retry import with_llm_retry
 from app.utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -128,6 +129,7 @@ class AnthropicProvider(LLMProvider):
                 api_kwargs[key] = kwargs[key]
         return api_kwargs
 
+    @with_llm_retry(provider="anthropic")
     async def chat(
         self,
         messages: list[Message],

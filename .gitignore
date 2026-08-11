@@ -30,6 +30,9 @@ Thumbs.db
 .env.local
 *.env
 
+# AutoDL instance SSH credentials (临时密码，实例释放后失效)
+backend/scripts/autodl/instance.conf
+
 # TRAE share packages
 .trae-html-share-packages/
 

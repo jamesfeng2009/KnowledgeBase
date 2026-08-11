@@ -71,13 +71,21 @@ class CrossModalService:
         doc_id: str,
         kb_id: str | None,
         images: list[tuple[bytes, str]],
+        doc_meta: dict[str, Any] | None = None,
     ) -> int:
         """将图片批量向量化并写入向量库。
+
+        P0 wiki 层级：``doc_meta`` 携带文档级层级元数据
+        （series_id/path/doc_parent_id/depth/version_of），透传到
+        VectorStoreBase.upsert 写入索引，支持跨模态检索按层级过滤。
+        None 时跳过（向后兼容旧调用）。
 
         Args:
             doc_id: 文档 ID。
             kb_id: 所属知识库 ID。
             images: 元组列表 [(图片二进制数据, VLM描述文本), ...]。
+            doc_meta: 文档级层级元数据（series_id/path/doc_parent_id/
+                depth/version_of），透传到向量索引。
 
         Returns:
             成功写入的图片向量数量。
@@ -121,7 +129,10 @@ class CrossModalService:
             chunks.append(chunk)
 
         # 写入向量库 — 与文本向量在同一索引
-        count = await self._vector_store.upsert(doc_id, chunks, embeddings, kb_id=kb_id)
+        # P0 wiki 层级：doc_meta 透传层级字段到向量索引
+        count = await self._vector_store.upsert(
+            doc_id, chunks, embeddings, kb_id=kb_id, doc_meta=doc_meta
+        )
         log.info(
             "cross_modal.stored",
             doc_id=doc_id,

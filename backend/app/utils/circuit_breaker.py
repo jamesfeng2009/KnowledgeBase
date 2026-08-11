@@ -3,13 +3,29 @@
 
 状态机（三态）::
 
-    CLOSED ──(连续失败 ≥ threshold)──▶ OPEN
-       ▲                                 │
-       │                                 │ (recovery_timeout 到期)
-       │                                 ▼
+    CLOSED ──(窗口内失败 ≥ threshold)──▶ OPEN
+       ▲                                    │
+       │                                    │ (recovery_timeout 到期)
+       │                                    ▼
        └──(探测成功)── HALF_OPEN ◀──(自动降级)
                           │
                           └──(探测失败)──▶ OPEN
+
+P2-8 滑动窗口改造：
+    旧机制（连续失败计数）— failure_count 在每次成功时重置为 0，
+    必须"连续 N 次失败"才熔断。问题：服务偶发抖动时累计的失败
+    永远不会被一次成功清零，导致服务"无法恢复"；反之偶发成功
+    会立即清零历史失败，掩盖真实故障。
+
+    新机制（滑动窗口时间戳队列）— 用 deque[float] 保存最近
+    ``failure_window`` 秒内的失败时间戳：
+    - 窗口内失败数 >= threshold → 熔断
+    - 过期时间戳自动从 deque 左侧淘汰（窗口外失败不计数）
+    - 成功不重置 deque（成功不抹除历史失败证据）
+    - 只有 HALF_OPEN 探测成功才清空 deque（确认恢复）
+
+    语义对齐 prodagent 的 per-tool sliding window breaker，避免
+    "连续失败"语义在偶发抖动场景下的两个极端（永久累计 / 立即清零）。
 
 遵循单一职责：仅管理熔断状态机，不关心业务逻辑。
 遵循依赖倒置：所有阈值从 app.config.get_settings() 获取。
@@ -43,6 +59,7 @@ import asyncio
 import functools
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, TypeVar
@@ -81,13 +98,18 @@ class CircuitBreaker:
 
     线程安全：使用 threading.Lock 保护状态转换，兼容跨事件循环场景。
 
+    P2-8: 滑动窗口语义 — ``_failure_timestamps`` deque 保存窗口内失败时间戳，
+    ``failure_count`` 同步反映 ``len(_failure_timestamps)``（窗口内失败数），
+    不再是"连续失败计数"。
+
     Attributes:
         name: 熔断器名称（如 "dashscope", "milvus"）。
-        failure_threshold: 连续失败次数触发熔断。
+        failure_threshold: 窗口内失败次数触发熔断。
         recovery_timeout: OPEN → HALF_OPEN 冷却时间（秒）。
         half_open_max_calls: 半开状态最多探测请求数。
+        failure_window: 滑动窗口大小（秒），过期时间戳自动淘汰。
         state: 当前状态。
-        failure_count: 连续失败计数。
+        failure_count: 窗口内失败数（= len(_failure_timestamps)）。
         last_failure_time: 上次失败时间戳。
         half_open_calls: 半开状态已发出的探测请求数。
     """
@@ -96,10 +118,16 @@ class CircuitBreaker:
     failure_threshold: int = 5
     recovery_timeout: float = 30.0
     half_open_max_calls: int = 1
+    # P2-8: 滑动窗口大小（秒），0 表示禁用窗口（退化为"窗口无限大"，
+    # 即所有失败永久累计，等价于旧的"连续失败"语义但成功仍不重置）。
+    # 默认 60.0 — 从 settings.CIRCUIT_BREAKER_FAILURE_WINDOW 覆盖。
+    failure_window: float = 60.0
     state: CircuitState = CircuitState.CLOSED
     failure_count: int = 0
     last_failure_time: float = 0.0
     half_open_calls: int = 0
+    # P2-8: 滑动窗口失败时间戳队列（monotonic 时间戳，升序）
+    _failure_timestamps: deque = field(default_factory=deque, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def __post_init__(self) -> None:
@@ -111,6 +139,24 @@ class CircuitBreaker:
             self.recovery_timeout = settings.CIRCUIT_BREAKER_RECOVERY_TIMEOUT
         if self.half_open_max_calls == 1:
             self.half_open_max_calls = settings.CIRCUIT_BREAKER_HALF_OPEN_MAX_CALLS
+        if self.failure_window == 60.0:
+            self.failure_window = settings.CIRCUIT_BREAKER_FAILURE_WINDOW
+
+    def _evict_expired_timestamps(self, now: float | None = None) -> None:
+        """清理 deque 左侧过期的时间戳（必须在 _lock 内调用）。
+
+        Args:
+            now: 当前 monotonic 时间戳；None 时取 time.monotonic()。
+        """
+        if self.failure_window <= 0:
+            # 窗口禁用 — 永不淘汰（保留所有历史失败时间戳）
+            return
+        if now is None:
+            now = time.monotonic()
+        cutoff = now - self.failure_window
+        # deque 左侧是最老的时间戳，按升序 pop 直到第一个未过期的
+        while self._failure_timestamps and self._failure_timestamps[0] < cutoff:
+            self._failure_timestamps.popleft()
 
     def _should_transition_to_half_open(self) -> bool:
         """检查是否应从 OPEN 转为 HALF_OPEN。"""
@@ -170,10 +216,17 @@ class CircuitBreaker:
             self._record_success()
 
     def _record_success(self) -> None:
-        """记录一次成功调用（同步，加锁）。"""
+        """记录一次成功调用（同步，加锁）。
+
+        P2-8 滑动窗口语义：
+        - HALF_OPEN 状态下成功 → CLOSED，清空 deque（确认恢复）
+        - CLOSED 状态下成功 → 不清空 deque（成功不抹除历史失败证据）
+          只清理过期时间戳（窗口外失败本来就不计数）。
+        """
         with self._lock:
             if self.state == CircuitState.HALF_OPEN:
                 self.state = CircuitState.CLOSED
+                self._failure_timestamps.clear()
                 self.failure_count = 0
                 self.half_open_calls = 0
                 log.info(
@@ -184,15 +237,29 @@ class CircuitBreaker:
                     reason="probe_success",
                 )
             elif self.state == CircuitState.CLOSED:
-                self.failure_count = 0
+                # P2-8: 不再 failure_count = 0 — 滑动窗口语义下，
+                # 成功不抹除历史失败证据；只清理过期时间戳。
+                self._evict_expired_timestamps()
+                self.failure_count = len(self._failure_timestamps)
 
     def _record_failure(self) -> None:
-        """记录一次失败调用（同步，加锁）。"""
+        """记录一次失败调用（同步，加锁）。
+
+        P2-8 滑动窗口语义：
+        - 追加当前时间戳到 deque
+        - 清理过期时间戳（左侧淘汰）
+        - 更新 failure_count = len(deque)
+        - 若 failure_count >= threshold → 转 OPEN
+        - HALF_OPEN 状态下失败 → 转 OPEN（清空 deque，等价于"重新进入熔断"）
+        """
         with self._lock:
-            self.last_failure_time = time.monotonic()
+            now = time.monotonic()
+            self.last_failure_time = now
 
             if self.state == CircuitState.HALF_OPEN:
+                # 探测失败 — 回到 OPEN，清空 deque（重新开始计数）
                 self.state = CircuitState.OPEN
+                self._failure_timestamps.clear()
                 self.failure_count = 0
                 self.half_open_calls = 0
                 log.warning(
@@ -203,7 +270,10 @@ class CircuitBreaker:
                     reason="probe_failure",
                 )
             elif self.state == CircuitState.CLOSED:
-                self.failure_count += 1
+                # 追加时间戳 + 清理过期
+                self._failure_timestamps.append(now)
+                self._evict_expired_timestamps(now=now)
+                self.failure_count = len(self._failure_timestamps)
                 if self.failure_count >= self.failure_threshold:
                     self.state = CircuitState.OPEN
                     log.warning(
@@ -213,11 +283,15 @@ class CircuitBreaker:
                         to_state="open",
                         failure_count=self.failure_count,
                         threshold=self.failure_threshold,
+                        window=self.failure_window,
                     )
 
     def get_status(self) -> dict[str, Any]:
         """获取当前状态快照。"""
         with self._lock:
+            # 清理过期时间戳后再统计，确保 failure_count 反映窗口内真实数
+            self._evict_expired_timestamps()
+            self.failure_count = len(self._failure_timestamps)
             return {
                 "name": self.name,
                 "state": self.state.value,
@@ -227,6 +301,8 @@ class CircuitBreaker:
                 "half_open_max_calls": self.half_open_max_calls,
                 "last_failure_time": self.last_failure_time,
                 "half_open_calls": self.half_open_calls,
+                # P2-8: 滑动窗口字段
+                "failure_window": self.failure_window,
             }
 
 
@@ -242,6 +318,7 @@ def get_circuit_breaker(
     failure_threshold: int | None = None,
     recovery_timeout: float | None = None,
     half_open_max_calls: int | None = None,
+    failure_window: float | None = None,
 ) -> CircuitBreaker:
     """获取或创建指定名称的熔断器（单例）。
 
@@ -250,9 +327,10 @@ def get_circuit_breaker(
 
     Args:
         name: 熔断器名称（如 "dashscope", "milvus", "opensearch"）。
-        failure_threshold: 连续失败触发熔断的次数。
+        failure_threshold: 窗口内失败触发熔断的次数。
         recovery_timeout: OPEN → HALF_OPEN 冷却时间（秒）。
         half_open_max_calls: 半开状态最多探测请求数。
+        failure_window: 滑动窗口大小（秒），过期时间戳自动淘汰。
 
     Returns:
         CircuitBreaker 实例。
@@ -263,6 +341,7 @@ def get_circuit_breaker(
             failure_threshold=failure_threshold or 5,
             recovery_timeout=recovery_timeout or 30.0,
             half_open_max_calls=half_open_max_calls or 1,
+            failure_window=failure_window or 60.0,
         )
     return _breakers[name]
 
@@ -280,6 +359,7 @@ def reset_all_circuit_breakers() -> None:
             cb.failure_count = 0
             cb.half_open_calls = 0
             cb.last_failure_time = 0.0
+            cb._failure_timestamps.clear()
 
 
 # ------------------------------------------------------------------

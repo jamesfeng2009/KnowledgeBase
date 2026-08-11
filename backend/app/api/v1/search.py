@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
@@ -45,15 +46,32 @@ async def search(
     ),
     page: int = Query(default=1, ge=1, description="页码"),
     page_size: int = Query(default=20, ge=1, le=100, description="每页数量"),
+    # P0 wiki 层级过滤 Query 参数 — GET 场景适合 Query 而非 body
+    series_id: str | None = Query(
+        default=None, description="系列 ID 过滤（同系列文档共享）"
+    ),
+    path_prefix: str | None = Query(
+        default=None, description="层级路径前缀过滤（匹配整个子树，如 '产品/合规/'）"
+    ),
+    parent_id: UUID | None = Query(
+        default=None, description="父文档 ID 过滤（直系子文档）"
+    ),
+    depth: int | None = Query(
+        default=None, ge=0, description="层级深度过滤（根=0）"
+    ),
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse[SearchResponse]:
-    """混合搜索（全文 + 向量），支持知识库过滤。
+    """混合搜索（全文 + 向量），支持知识库过滤与 wiki 层级过滤。
 
     搜索类型：
     - fulltext: 仅全文检索（基于 OpenSearch / PostgreSQL ILIKE）；
     - vector: 仅向量检索（基于 Milvus）；
     - hybrid: 混合检索（全文 + 向量 + Rerank 重排序）。
+
+    P0 wiki 层级：series_id / path_prefix / parent_id / depth 四个 Query
+    参数组装为 filters dict 下推到 retriever。任一非空即生效，全部为空
+    时 filters=None（向后兼容，不做层级过滤）。
     """
     # 解析 kb_ids 参数
     parsed_kb_ids: list[UUID] | None = None
@@ -66,6 +84,19 @@ async def search(
                 detail="kb_ids 参数格式错误，应为逗号分隔的 UUID",
             )
 
+    # P0 wiki 层级：组装层级过滤 dict（任一非空即构建）
+    filters: dict[str, Any] | None = None
+    if series_id or path_prefix or parent_id is not None or depth is not None:
+        filters = {}
+        if series_id:
+            filters["series_id"] = series_id
+        if path_prefix:
+            filters["path_prefix"] = path_prefix
+        if parent_id is not None:
+            filters["parent_id"] = str(parent_id)
+        if depth is not None:
+            filters["depth"] = depth
+
     tenant_id = getattr(request.state, "tenant_id", None)
     service = SearchService(db, user, tenant_id=tenant_id)
     result = await service.search(
@@ -74,6 +105,7 @@ async def search(
         search_type=search_type,
         page=page,
         page_size=page_size,
+        filters=filters,
     )
 
     return ApiResponse(

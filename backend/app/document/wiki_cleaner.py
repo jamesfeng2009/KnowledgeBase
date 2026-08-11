@@ -143,6 +143,19 @@ def clean_wiki_html(html: str, source: str = "auto") -> str:
         log.warning("wiki_cleaner.bs4_not_installed")
         return _fallback_clean(html, source)
 
+    # lxml HTML 解析器将 <![CDATA[...]]> 视为 bogus comment 并丢弃内容
+    # （HTML5 规范下 CDATA 仅在 SVG/MathML 外部内容中合法）。
+    # Confluence 代码宏 <ac:plain-text-body> 用 CDATA 包裹代码正文，
+    # 解析前需将其转为转义文本，否则代码内容（如 print("hello")）会丢失。
+    import html as _html
+
+    html = re.sub(
+        r"<!\[CDATA\[(.*?)\]\]>",
+        lambda m: _html.escape(m.group(1)),
+        html,
+        flags=re.DOTALL,
+    )
+
     soup = BeautifulSoup(html, "lxml")
 
     # Step 1: 命名空间宏剥离
@@ -186,10 +199,18 @@ def _strip_namespaces(soup, NavigableString) -> None:
     处理顺序至关重要：先 unwrap 内容容器（子节点上提），再 drop 宏外壳。
     如果顺序反了会丢失正文。
     """
-    from bs4 import Tag
+    from bs4 import CData, Tag
 
     # 1. 先 unwrap 内容容器（子节点上提到父级）
-    for tag in soup.find_all(lambda t: isinstance(t, Tag) and t.name in _UNWRAP_NS):
+    # 逆序处理（内层先于外层）— 否则外层 macro 先 unwrap 时，
+    # lxml 会丢弃内层 ac:plain-text-body 中的 CDATA 代码宏内容。
+    tags = soup.find_all(lambda t: isinstance(t, Tag) and t.name in _UNWRAP_NS)
+    for tag in reversed(tags):
+        # lxml 解析器下 CDATA 节点（代码宏 <ac:plain-text-body> 的纯文本正文）
+        # 在 unwrap 时会丢失，先转为 NavigableString 保留代码内容
+        for child in list(tag.children):
+            if isinstance(child, CData):
+                child.replace_with(NavigableString(str(child)))
         tag.unwrap()
 
     # 2. 特殊处理 ri:user / ri:url

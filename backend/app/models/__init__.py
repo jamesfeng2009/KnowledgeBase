@@ -16,6 +16,7 @@ from app.models.billing import Subscription, Tenant, UsageRecord
 from app.models.checkpoint import AgentCheckpoint
 from app.models.comment import DocumentComment
 from app.models.conversation import Conversation, Message
+from app.models.event_log import AgentEventLog
 from app.models.feedback import Feedback
 from app.models.finetune import DatasetExport
 from app.models.gap import KnowledgeGap
@@ -95,6 +96,8 @@ __all__ = [
     "Notification",
     # LangGraph Agent Loop 状态检查点
     "AgentCheckpoint",
+    # P2-7: Agent Loop 事件日志（混合恢复 — Checkpoint + Event Log）
+    "AgentEventLog",
     # P1: 工具审批持久化
     "ToolApproval",
     # P2: 用户模型偏好

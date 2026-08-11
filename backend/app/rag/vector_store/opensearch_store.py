@@ -97,8 +97,13 @@ class OpenSearchVectorStore(VectorStoreBase):
         query_vec: list[float],
         kb_ids: list[str] | None = None,
         top_k: int = 20,
+        filters: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
-        """通过 OpenSearch k-NN 执行向量相似度检索 — 异常向上传播以触发熔断器。"""
+        """通过 OpenSearch k-NN 执行向量相似度检索 — 异常向上传播以触发熔断器。
+
+        P0 wiki 层级：filters 通过 filter_builder 转为 OpenSearch filter 子句，
+        与 kb_ids 合并追加到 bool query 的 filter 数组。
+        """
         if self._available is False:
             return []
 
@@ -117,11 +122,15 @@ class OpenSearchVectorStore(VectorStoreBase):
             }
         }
 
-        if kb_ids:
+        # P0 wiki 层级：合并 kb_ids + filters 为 filter 子句列表
+        from app.rag.filter_builder import build_opensearch_combined_filter
+
+        filter_clauses = build_opensearch_combined_filter(kb_ids, filters)
+        if filter_clauses:
             query_body: dict[str, Any] = {
                 "bool": {
                     "must": [knn_clause],
-                    "filter": [{"terms": {"kb_id": kb_ids}}],
+                    "filter": filter_clauses,
                 }
             }
         else:
@@ -142,10 +151,21 @@ class OpenSearchVectorStore(VectorStoreBase):
                 "doc_updated_at",
                 "effective_from",
                 "effective_to",
+                # P0 wiki 层级字段（检索结果可携带，便于上层聚合）
+                "series_id",
+                "path",
+                "doc_parent_id",
+                "depth",
+                "version_of",
             ],
         }
 
-        log.info("vector_store.os_knn.search_start", top_k=top_k, has_kb_filter=bool(kb_ids))
+        log.info(
+            "vector_store.os_knn.search_start",
+            top_k=top_k,
+            has_kb_filter=bool(kb_ids),
+            has_hierarchy_filter=bool(filters),
+        )
         resp = await self._http.post(url, json=payload)
         resp.raise_for_status()
         data: Any = resp.json()
@@ -199,6 +219,7 @@ class OpenSearchVectorStore(VectorStoreBase):
         doc_updated_at: str | None = None,
         effective_from: str | None = None,
         effective_to: str | None = None,
+        doc_meta: dict[str, Any] | None = None,
     ) -> int:
         """批量写入向量数据到 OpenSearch k-NN 索引。
 
@@ -206,6 +227,10 @@ class OpenSearchVectorStore(VectorStoreBase):
         与检索端按知识库过滤对齐；历史 bug 曾错误写入 doc_id。
         ``doc_updated_at`` / ``effective_from`` / ``effective_to`` 为
         recency 加权与生效窗口过滤字段，提供时写入索引。
+
+        P0 wiki 层级：``doc_meta`` 携带文档级层级元数据
+        （series_id/path/doc_parent_id/depth/version_of），写入索引后
+        支持检索时按 filters 过滤。None 时跳过（向后兼容旧文档）。
         """
         if not embeddings or not chunks:
             return 0
@@ -223,6 +248,20 @@ class OpenSearchVectorStore(VectorStoreBase):
 
         settings = get_settings()
         url = f"{settings.OPENSEARCH_URL}/{self._index_name}/_bulk"
+
+        # P0 wiki 层级：提取文档级层级字段（所有 chunk 共享同一文档的层级元数据）
+        hierarchy_fields: dict[str, Any] = {}
+        if doc_meta:
+            for field in ("series_id", "path", "doc_parent_id", "version_of"):
+                val = doc_meta.get(field)
+                if val is not None:
+                    hierarchy_fields[field] = str(val)
+            depth_val = doc_meta.get("depth")
+            if depth_val is not None:
+                try:
+                    hierarchy_fields["depth"] = int(depth_val)
+                except (ValueError, TypeError):
+                    pass
 
         # 构建 bulk 请求体（NDJSON 格式）
         n = min(len(embeddings), len(chunks))
@@ -248,6 +287,8 @@ class OpenSearchVectorStore(VectorStoreBase):
                 doc_body["effective_from"] = effective_from
             if effective_to:
                 doc_body["effective_to"] = effective_to
+            # P0 wiki 层级字段：所有 chunk 共享文档级层级元数据
+            doc_body.update(hierarchy_fields)
             lines.append(json.dumps(action, ensure_ascii=False))
             lines.append(json.dumps(doc_body, ensure_ascii=False))
 
@@ -335,6 +376,14 @@ class OpenSearchVectorStore(VectorStoreBase):
                     "doc_updated_at": {"type": "date"},
                     "effective_from": {"type": "date"},
                     "effective_to": {"type": "date"},
+                    # P0 wiki 层级元数据 — 检索时按 filters 过滤（系列/路径/父文档）
+                    # doc_parent_id 区别于 chunk 级 parent_id（父子回溯），
+                    # 表示文档级别的父文档 ID。
+                    "series_id": {"type": "keyword"},
+                    "path": {"type": "keyword"},
+                    "doc_parent_id": {"type": "keyword"},
+                    "depth": {"type": "integer"},
+                    "version_of": {"type": "keyword"},
                 }
             },
         }

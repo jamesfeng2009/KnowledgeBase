@@ -106,9 +106,55 @@ class Document(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     effective_to: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, comment="失效时间（NULL=永久有效）"
     )
+    # === P0 wiki 层级元数据（系列/子 wiki/子文档）===
+    # 存储扁平化 + 元数据编码层级 — 检索时按 filters 过滤，非多跳存储。
+    # 所有字段 nullable：旧文档无层级信息时不影响检索（向后兼容）。
+    # 多跳（沿引用链追溯 N 跳）留给 Neo4j GraphService，不在本次范围。
+    series_id: Mapped[str | None] = mapped_column(
+        String(100), nullable=True, index=True, comment="所属系列 ID（同系列文档共享）"
+    )
+    parent_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("documents.id"), nullable=True, comment="父文档 ID"
+    )
+    path: Mapped[str | None] = mapped_column(
+        String(1000), nullable=True, index=True, comment="层级路径 '产品/合规/数据安全'"
+    )
+    depth: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False, comment="层级深度（根=0）"
+    )
+    sort_order: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False, comment="同级排序"
+    )
+    version_of: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("documents.id"), nullable=True,
+        comment="版本族主文档 ID（v2 的 version_of 指向 v1）"
+    )
 
     knowledge_base: Mapped[KnowledgeBase] = relationship(back_populates="documents")
     versions: Mapped[list["DocumentVersion"]] = relationship(back_populates="document")
+    # P0 wiki 层级：子文档 + 版本族反向关系（便于 ORM 查询层级树）
+    children: Mapped[list["Document"]] = relationship(
+        "Document",
+        foreign_keys=[parent_id],
+        back_populates="parent",
+    )
+    parent: Mapped["Document | None"] = relationship(
+        "Document",
+        foreign_keys=[parent_id],
+        back_populates="children",
+        remote_side="Document.id",
+    )
+    version_children: Mapped[list["Document"]] = relationship(
+        "Document",
+        foreign_keys=[version_of],
+        back_populates="version_master",
+    )
+    version_master: Mapped["Document | None"] = relationship(
+        "Document",
+        foreign_keys=[version_of],
+        back_populates="version_children",
+        remote_side="Document.id",
+    )
 
 
 class DocumentVersion(UUIDMixin, TimestampMixin, Base):

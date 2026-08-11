@@ -69,6 +69,9 @@ class PreparedChat:
     repetition_info: dict[str, Any] | None = None
     # P4-B: 后台矛盾检测任务引用（stream_chat 中检查完成状态）
     contradiction_task: asyncio.Task | None = None
+    # P0 wiki 层级：检索范围限定（来自 ChatRequest.scope），透传到
+    # engine.answer(filters=scope) → retriever.search。None 表示不过滤。
+    scope: dict[str, Any] | None = None
 
 # Agent 类型 → 系统提示词映射。
 # 开闭原则落点：新增 Agent 类型只需在此字典追加一项，chat 方法无需改动。
@@ -146,6 +149,7 @@ class ChatService:
         conversation_id: UUID | None,
         agent_type: str,
         tenant_id: str | None = None,
+        scope: dict[str, Any] | None = None,
     ) -> PreparedChat:
         """流式开始前的全部 DB 读写（准备阶段）。
 
@@ -158,6 +162,9 @@ class ChatService:
             conversation_id: 对话 ID，为 None 时创建新对话。
             agent_type: Agent 类型 — qa / workflow / action。
             tenant_id: 多租户预留（当前不实施隔离逻辑）。
+            scope: P0 wiki 层级检索范围限定（series_id/path_prefix/
+                parent_id/depth/version_of）。透传到 stream_chat →
+                engine.answer(filters=scope)。
 
         Returns:
             PreparedChat: 流式阶段所需的全部上下文（原生类型，不含 ORM 对象）。
@@ -318,6 +325,8 @@ class ChatService:
             drift_info=drift_info,
             preference_overrides=preference_overrides,
             repetition_info=repetition_info,
+            # P0 wiki 层级：scope 透传到 stream_chat → engine.answer
+            scope=scope,
         )
 
     async def stream_chat(
@@ -547,6 +556,9 @@ class ChatService:
                     permission_filter=permission_filter,
                     # Bug3: 缓存 key 加入权限视图维度，跨权限视图互不可见
                     cache_scope=cache_scope,
+                    # P0 wiki 层级：scope 作为 filters 下推到 retriever
+                    # （filters 指纹已并入 cache_scope，防跨层级缓存泄漏）
+                    filters=prepared.scope,
                 ):
                     # P4-B: 在 token 流中检查后台矛盾检测是否完成
                     if contra_task and not contra_pushed and contra_task.done():
@@ -682,6 +694,7 @@ class ChatService:
         conversation_id: UUID | None,
         agent_type: str,
         tenant_id: str | None = None,
+        scope: dict[str, Any] | None = None,
     ) -> AsyncIterator[SSEEvent | str]:
         """与 AI 对话，流式返回 SSE 事件和 token。
 
@@ -719,6 +732,8 @@ class ChatService:
             conversation_id=conversation_id,
             agent_type=agent_type,
             tenant_id=tenant_id,
+            # P0 wiki 层级：scope 透传到 prepare_chat → stream_chat
+            scope=scope,
         )
         async for chunk in self.stream_chat(prepared):
             yield chunk

@@ -224,6 +224,82 @@ class NotificationService:
         return len(admins)
 
     # ------------------------------------------------------------------
+    # 4. 检索结果注入扫描告警
+    # ------------------------------------------------------------------
+
+    async def send_injection_alert(
+        self,
+        scan_result: Any,
+    ) -> int:
+        """检索注入扫描告警 — 通知知识管理员有文档命中 prompt injection 模式。
+
+        由 app.rag.injection_guard.InjectionGuard 的 alert_callback 调用，
+        将扫描结果转为站内通知发送给所有 kb_admin 角色用户。
+
+        Args:
+            scan_result: InjectionScanResult 对象，含 quarantined_docs / hits /
+                         total_scanned 等字段（避免直接依赖 RAG 层类型，用 Any）。
+
+        Returns:
+            通知的管理员数量。
+        """
+        # 延迟导入避免循环依赖（NotificationService 在多处被引用）
+        try:
+            quarantined_count = int(getattr(scan_result, "total_quarantined", 0))
+            hits_count = int(getattr(scan_result, "total_hits", 0))
+            scanned_count = int(getattr(scan_result, "total_scanned", 0))
+        except Exception:
+            quarantined_count = 0
+            hits_count = 0
+            scanned_count = 0
+
+        if quarantined_count == 0 and hits_count == 0:
+            return 0
+
+        # 通知所有 kb_admin 角色用户
+        admins = await self._get_users_by_role("kb_admin")
+        if not admins:
+            logger.info(
+                "notification.injection_alert_no_admins",
+                quarantined=quarantined_count,
+            )
+            return 0
+
+        # 收集命中的模式 ID（用于通知正文）
+        try:
+            patterns_hit = sorted({
+                h.pattern_id
+                for h in scan_result.hits
+            })
+        except Exception:
+            patterns_hit = []
+
+        title = f"检测到 {quarantined_count} 份可疑注入文档"
+        content = (
+            f"检索结果扫描发现 {hits_count} 个注入命中，"
+            f"已隔离 {quarantined_count}/{scanned_count} 份文档。\n"
+            f"命中模式：{', '.join(patterns_hit) if patterns_hit else '未知'}\n"
+            f"请登录管理后台审计 quarantined 列表。"
+        )
+
+        for admin in admins:
+            await self._create_notification(
+                user_id=admin.id,
+                notification_type="injection_alert",
+                title=title,
+                content=content,
+            )
+
+        logger.info(
+            "notification.injection_alert_sent",
+            quarantined=quarantined_count,
+            hits=hits_count,
+            scanned=scanned_count,
+            admins=len(admins),
+        )
+        return len(admins)
+
+    # ------------------------------------------------------------------
     # 通知管理
     # ------------------------------------------------------------------
 

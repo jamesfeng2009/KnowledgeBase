@@ -23,7 +23,6 @@ import functools
 from typing import Any, Callable, TypeVar
 
 import httpx
-from httpx_retry import AsyncRetryTransport, RetryPolicy
 from tenacity import (
     RetryCallState,
     retry,
@@ -180,6 +179,16 @@ def build_retry_http_client(
         client = build_retry_http_client(timeout=30.0, base_url="http://milvus:19530")
         resp = await client.post("/v2/vectors/search", json=payload)
     """
+    # 延迟导入 httpx-retry — 仅在真正构建重试 HTTP 客户端时需要，
+    # 避免模块级导入失败阻断测试环境（httpx-retry 未安装时仍可导入本模块）
+    try:
+        from httpx_retry import AsyncRetryTransport, RetryPolicy
+    except ImportError as exc:  # pragma: no cover - 依赖缺失场景
+        raise ImportError(
+            "httpx-retry 未安装，无法构建重试 HTTP 客户端。"
+            "请执行 `pip install httpx-retry` 或在 requirements.txt 中确认该依赖。"
+        ) from exc
+
     settings = get_settings()
     _max_retries = max_retries if max_retries is not None else settings.RETRY_MAX_ATTEMPTS
     _retry_codes = retry_status_codes or [429, 500, 502, 503, 504]

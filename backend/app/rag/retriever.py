@@ -103,16 +103,21 @@ class HybridRetriever:
         query: str,
         kb_ids: list[str] | None = None,
         top_k: int = 20,
+        filters: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """多路检索知识库，返回合并去重后的候选文档列表。
 
         P2-T5: 新增图谱召回第四路 — 通过 EntityRegistry 实体识别 + Neo4j 多跳遍历。
         P2-T6: 检索前用 EntityRegistry 做同义词扩展，增强 BM25 召回。
+        P0 wiki 层级：filters 透传给向量/全文/跨模态三路（图谱路按实体检索，
+            层级过滤不适用，filters 仅记录日志不阻断）。
 
         Args:
             query: 用户查询文本。
             kb_ids: 可选，限定检索的知识库 ID 列表。
             top_k: 每路召回数量上限（合并前）。
+            filters: P0 wiki 层级过滤 — series_id/path_prefix/parent_id/
+                depth/version_of。由 filter_builder 转为各后端 filter 子句。
 
         Returns:
             候选文档列表，每项格式::
@@ -158,9 +163,10 @@ class HybridRetriever:
             cross_modal_results,
             graph_results,
         ) = await asyncio.gather(
-            self._vector_search(query, kb_ids, top_k),
-            self._fulltext_search(expanded_query, kb_ids, top_k),
-            self._cross_modal_search(query, kb_ids, top_k),
+            # P0 wiki 层级：filters 透传给三路（图谱路按实体检索，不走层级过滤）
+            self._vector_search(query, kb_ids, top_k, filters),
+            self._fulltext_search(expanded_query, kb_ids, top_k, filters),
+            self._cross_modal_search(query, kb_ids, top_k, filters),
             self._graph_search(graph_entity_names, kb_ids, top_k),
             return_exceptions=True,
         )
@@ -212,12 +218,16 @@ class HybridRetriever:
         query: str,
         kb_ids: list[str] | None,
         top_k: int,
+        filters: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """通过 VectorStoreBase 适配器执行向量检索。
 
         向量后端由 VECTOR_STORE 配置决定（默认 OpenSearch k-NN，可选 Milvus）。
         适配器的 search 经熔断器保护：后端故障时异常向上传播（熔断器
         记录失败，OPEN 后快速拒绝），此处捕获并降级为空列表。
+
+        P0 wiki 层级：filters 透传给 store.search，由适配器内部的
+        filter_builder 转为后端 filter 子句（OpenSearch filter 数组 / Milvus expr）。
         """
         embedder = await self._get_embedder()
         if embedder is None:
@@ -231,7 +241,9 @@ class HybridRetriever:
 
         store = self._get_vector_store()
         try:
-            return await store.search(query_vec, kb_ids=kb_ids, top_k=top_k)
+            return await store.search(
+                query_vec, kb_ids=kb_ids, top_k=top_k, filters=filters
+            )
         except Exception as exc:
             log.warning("retriever.vector.search_failed", error=str(exc))
             return []
@@ -245,12 +257,16 @@ class HybridRetriever:
         query: str,
         kb_ids: list[str] | None,
         top_k: int,
+        filters: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """跨模态检索 — 使用 jina-clip-v2 搜索独立图片向量索引。
 
         C1/C2 fix: 跨模态检索使用独立的索引（ekb_cross_modal）和独立的
         多模态 Embedder（jina-clip-v2, 1024 维），与文本向量检索完全隔离，
         避免维度/向量空间冲突。功能未启用时返回空列表。
+
+        P0 wiki 层级：filters 透传给 cm_store.search（跨模态索引同样写入
+        层级元数据字段，支持按系列/路径/父文档过滤图片所在文档）。
         """
         # 懒初始化跨模态 Embedder
         if self._multimodal_embedder is None:
@@ -280,7 +296,7 @@ class HybridRetriever:
             )
             try:
                 results = await cm_store.search(
-                    query_vec, kb_ids=kb_ids, top_k=top_k
+                    query_vec, kb_ids=kb_ids, top_k=top_k, filters=filters
                 )
             finally:
                 await cm_store.close()
@@ -301,12 +317,17 @@ class HybridRetriever:
         query: str,
         kb_ids: list[str] | None,
         top_k: int,
+        filters: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """通过 OpenSearch REST API 执行全文检索（BM25）。
 
         索引名取自统一配置 ``settings.OPENSEARCH_INDEX``，与写入方保持一致；
         失败后按 ``_OPENSEARCH_RETRY_INTERVAL`` 间隔重试探测，可自动恢复，
         不做一次性永久禁用。
+
+        P0 wiki 层级：``filters`` 通过 filter_builder.build_opensearch_combined_filter
+        与 kb_ids 合并构建 bool query 的 filter 数组（向量检索与全文检索共用同一构建器，
+        保证两路过滤语义一致）。filters 为 None 且无 kb_ids 时不加 filter 数组。
         """
         if self._opensearch_available is False:
             if time.monotonic() < self._opensearch_retry_at:
@@ -328,8 +349,12 @@ class HybridRetriever:
                 ],
             }
         }
-        if kb_ids:
-            query_clause["bool"]["filter"] = [{"terms": {"kb_id": kb_ids}}]
+        # P0 wiki 层级：合并 kb_ids（权限过滤）+ filters（层级过滤）为 filter 数组
+        from app.rag.filter_builder import build_opensearch_combined_filter
+
+        filter_clauses = build_opensearch_combined_filter(kb_ids, filters)
+        if filter_clauses:
+            query_clause["bool"]["filter"] = filter_clauses
 
         payload: dict[str, Any] = {
             "size": top_k,

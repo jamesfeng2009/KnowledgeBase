@@ -78,6 +78,8 @@ async def chat(
             query=body.query,
             conversation_id=body.conversation_id,
             agent_type=body.agent_type.value,
+            # P0 wiki 层级：scope 透传到 prepare_chat → stream_chat → engine.answer
+            scope=body.scope,
         )
     except PermissionError as exc:
         # 权限异常 → SSE error 事件（前端可收到友好错误，而非断流）

@@ -58,8 +58,9 @@ class FakeRetriever:
         query: str,
         kb_ids: list[str] | None = None,
         top_k: int = 20,
+        filters: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
-        self.search_calls.append({"query": query, "kb_ids": kb_ids, "top_k": top_k})
+        self.search_calls.append({"query": query, "kb_ids": kb_ids, "top_k": top_k, "filters": filters})
         return self.candidates
 
 

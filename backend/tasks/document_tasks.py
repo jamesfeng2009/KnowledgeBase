@@ -2215,7 +2215,7 @@ async def _build_indexes(
     # P2-Step3: 跨模态图片向量索引（CROSS_MODAL_ENABLED 时生效）
     if images:
         try:
-            await _build_cross_modal_index(doc_id, kb_id=kb_id, images=images)
+            await _build_cross_modal_index(doc_id, kb_id=kb_id, images=images, doc=doc)
         except Exception as exc:
             logger.warning("cross_modal.index_failed", doc_id=doc_id, error=str(exc))
 
@@ -2397,6 +2397,30 @@ async def _build_opensearch_index(
         raise
 
 
+def _build_doc_meta(doc: Any) -> dict[str, Any] | None:
+    """P0 wiki 层级：从 Document ORM 提取层级元数据，供向量索引写入。
+
+    字段映射：Document.parent_id → doc_parent_id（区别于 chunk 级 parent_id，
+    chunk 级 parent_id 指向父块用于父子回溯，两者语义不同不可混用）。
+    depth=0 是有效值（根文档），用 ``is not None`` 判断而非 truthy。
+    doc 为 None 或无层级字段时返回 None（向后兼容旧文档）。
+    """
+    if not doc:
+        return None
+    meta: dict[str, Any] = {}
+    if getattr(doc, "series_id", None):
+        meta["series_id"] = doc.series_id
+    if getattr(doc, "path", None):
+        meta["path"] = doc.path
+    if getattr(doc, "parent_id", None):
+        meta["doc_parent_id"] = str(doc.parent_id)
+    if getattr(doc, "depth", None) is not None:
+        meta["depth"] = int(doc.depth)
+    if getattr(doc, "version_of", None):
+        meta["version_of"] = str(doc.version_of)
+    return meta or None
+
+
 async def _build_vector_index(
     doc_id: str,
     chunk_objects: list[Chunk],
@@ -2438,6 +2462,9 @@ async def _build_vector_index(
         effective_from = _iso(getattr(doc, "effective_from", None)) if doc else None
         effective_to = _iso(getattr(doc, "effective_to", None)) if doc else None
 
+        # P0 wiki 层级：从 Document 提取层级元数据（helper 统一文本/跨模态注入）
+        doc_meta = _build_doc_meta(doc)
+
         store = get_vector_store()
         count = await store.upsert(
             doc_id,
@@ -2447,6 +2474,7 @@ async def _build_vector_index(
             doc_updated_at=doc_updated_at,
             effective_from=effective_from,
             effective_to=effective_to,
+            doc_meta=doc_meta,
         )
         logger.info(
             "vector.indexed",
@@ -2464,16 +2492,21 @@ async def _build_cross_modal_index(
     doc_id: str,
     kb_id: str | None = None,
     images: list[tuple[bytes, str]] | None = None,
+    doc: Any = None,
 ) -> int:
     """P2-Step3: 构建跨模态图片向量索引 — 将图片直接向量化入库。
 
     当 CROSS_MODAL_ENABLED=True 且文档包含图片时，使用 jina-clip-v2
     将图片嵌入到与文本相同的向量空间，实现文本→图片跨模态检索。
 
+    P0 wiki 层级：``doc`` 携带层级元数据，通过 _build_doc_meta 提取后
+    透传到 embed_and_store_images，写入跨模态索引支持层级过滤。
+
     Args:
         doc_id: 文档 ID。
         kb_id: 文档所属知识库 ID。
         images: 图片数据列表 [(图片二进制, VLM描述), ...]。
+        doc: Document 对象 — 提取层级元数据写入跨模态索引。
 
     Returns:
         成功写入的图片向量数量。
@@ -2487,7 +2520,11 @@ async def _build_cross_modal_index(
         service = CrossModalService()
         if not service.is_enabled():
             return 0
-        count = await service.embed_and_store_images(doc_id, kb_id, images)
+        # P0 wiki 层级：doc_meta 透传到跨模态索引（与文本索引同一 helper）
+        doc_meta = _build_doc_meta(doc)
+        count = await service.embed_and_store_images(
+            doc_id, kb_id, images, doc_meta=doc_meta
+        )
         logger.info("cross_modal.indexed", doc_id=doc_id, image_count=count)
         return count
     except Exception as exc:

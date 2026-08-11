@@ -62,14 +62,46 @@ class TestCircuitBreakerStateMachine:
         assert cb.state == CircuitState.OPEN
         assert cb.failure_count == 3
 
-    def test_success_resets_failure_count_in_closed(self):
-        """CLOSED 状态下成功调用重置失败计数。"""
+    def test_success_does_not_reset_window_failures_in_closed(self):
+        """CLOSED 状态下成功调用不重置窗口内失败计数（P2-8 滑动窗口语义）。
+
+        旧机制（连续失败计数）：成功立即清零 failure_count。
+        新机制（滑动窗口）：成功不抹除历史失败证据，窗口内未过期的失败
+        时间戳仍在 deque 中。只有 HALF_OPEN 探测成功才清空 deque
+        （见 test_half_open_to_closed_on_success）。
+        """
+        # failure_window 默认 60s，窗口内失败不会过期
         cb = CircuitBreaker(name="test_svc", failure_threshold=3, recovery_timeout=60.0)
 
         cb._record_failure()
         cb._record_failure()
         assert cb.failure_count == 2
 
+        cb._record_success()
+        # 滑动窗口语义：成功不重置，窗口内失败仍在
+        assert cb.failure_count == 2
+        assert cb.state == CircuitState.CLOSED
+
+    def test_success_evicts_expired_failures_in_closed(self):
+        """CLOSED 状态下成功调用清理窗口外过期时间戳（P2-8 滑动窗口语义）。
+
+        成功调用触发 _evict_expired_timestamps，窗口外（已过期）的失败
+        时间戳从 deque 左侧淘汰。
+        """
+        # failure_window=0.1s，快速过期
+        cb = CircuitBreaker(
+            name="test_svc", failure_threshold=3, recovery_timeout=60.0,
+            failure_window=0.1,
+        )
+
+        cb._record_failure()
+        cb._record_failure()
+        assert cb.failure_count == 2
+
+        # 等待窗口过期
+        time.sleep(0.15)
+
+        # 成功调用触发过期清理
         cb._record_success()
         assert cb.failure_count == 0
         assert cb.state == CircuitState.CLOSED

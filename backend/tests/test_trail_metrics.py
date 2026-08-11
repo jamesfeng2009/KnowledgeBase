@@ -229,6 +229,7 @@ class _FakeLLM:
 class _FakeRetriever:
     async def search(
         self, query: str, kb_ids: list[str] | None = None, top_k: int = 20,
+        filters: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         return []
 

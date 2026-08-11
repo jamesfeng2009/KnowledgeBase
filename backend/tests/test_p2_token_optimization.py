@@ -142,9 +142,9 @@ class TestEstimateTokens:
 
     def test_single_short_message(self) -> None:
         """单条短消息的 token 估算。"""
-        messages = [{"role": "user", "content": "hello world"}]  # 11 chars
+        messages = [{"role": "user", "content": "hello world"}]  # 11 chars（非 CJK）
         tokens = ContextBudgetManager.estimate_tokens(messages)
-        assert tokens == int(11 / 3.5)  # ≈ 3
+        assert tokens == int(11 / 4.0)  # 非 CJK 4.0 字符/token ≈ 2
 
     def test_multiple_messages(self) -> None:
         """多条消息的 token 估算为各消息字符数之和除以系数。"""
@@ -153,13 +153,13 @@ class TestEstimateTokens:
             {"role": "user", "content": "b" * 200},
         ]
         tokens = ContextBudgetManager.estimate_tokens(messages)
-        assert tokens == int(300 / 3.5)  # ≈ 85
+        assert tokens == int(300 / 4.0)  # 非 CJK 4.0 字符/token = 75
 
     def test_missing_content_field(self) -> None:
         """缺少 content 字段的消息按 0 字符处理。"""
         messages = [{"role": "user"}, {"role": "system", "content": "hello"}]
         tokens = ContextBudgetManager.estimate_tokens(messages)
-        assert tokens == int(5 / 3.5)
+        assert tokens == int(5 / 4.0)  # 非 CJK 4.0 字符/token = 1
 
 
 # ======================================================================
