@@ -188,16 +188,16 @@ _EXTERNAL_SERVICE_MAP: dict[str, str] = {
 def _replace_enterprise_with_external(text: str, rng: random.Random) -> str:
     """将企业系统名替换为外部服务，构造企业聚焦的 rejected 答案。
 
-    随机替换 2-4 个企业系统名，确保 rejected 与 chosen 有明显差异。
+    评审 #6：此前仅随机替换前 3 个命中键，rejected 中残留其余企业系统名
+    （外部+企业混合信号 = 偏好标签噪声）；且迭代顺序随机，短键可能嵌套
+    破坏长键。现按键长降序替换全部命中键，rejected 为纯外部服务版本。
+    rng 参数保留以兼容调用签名（替换已改为确定性）。
     """
+    del rng
     result = text
-    replaced = 0
-    keys = list(_EXTERNAL_SERVICE_MAP.keys())
-    rng.shuffle(keys)
-    for key in keys:
-        if key in result and replaced < 3:
+    for key in sorted(_EXTERNAL_SERVICE_MAP, key=len, reverse=True):
+        if key in result:
             result = result.replace(key, _EXTERNAL_SERVICE_MAP[key])
-            replaced += 1
     return result
 
 
@@ -253,21 +253,36 @@ def generate_rag_extraction_pairs(rng: random.Random) -> list[dict]:
         # 构造 context（含干扰文档，复用 SFT 数据的构造逻辑）
         context_parts = [f"【文档1】（来源：{scene}知识库）\n{answer}"]
         distractors = [q for q in _QA_TEMPLATES if q[2] != answer and q[0] != scene]
+        distractor_answer: str | None = None
         if distractors:
             d = rng.choice(distractors)
+            distractor_answer = d[2]
             context_parts.append(f"【文档2】（来源：{d[0]}知识库）\n{d[2]}")
         context = "\n\n".join(context_parts)
 
-        for variant in _query_variants(question):
+        for variant_idx, variant in enumerate(_query_variants(question)):
             user_msg = f"根据以下文档回答问题。\n\n{context}\n\n【问题】{variant}"
+            # 评审 #6：rejected 覆盖两类失败模式——偶数变体=照抄正确文档原文
+            # （冗长复述），奇数变体=照抄干扰文档（张冠李戴，答非所问）。
+            # 此前只有前者，模型学不到"答非所问"是更严重的错误。
+            if distractor_answer is not None and variant_idx % 2 == 1:
+                rejected_text = distractor_answer
+                rejected_kind = "wrong_document"
+            else:
+                rejected_text = rejected_answer
+                rejected_kind = "verbatim_copy"
+            # 变体级跳过：chosen 与该 rejected 相同则无偏好信号
+            if chosen_answer.strip() == rejected_text.strip():
+                continue
             pairs.append({
                 "prompt": [
                     {"role": "system", "content": SYSTEM_PROMPT_RAG},
                     {"role": "user", "content": user_msg},
                 ],
                 "chosen": [{"role": "assistant", "content": chosen_answer}],
-                "rejected": [{"role": "assistant", "content": rejected_answer}],
-                "meta": {"type": "rag_extraction", "scene": scene},
+                "rejected": [{"role": "assistant", "content": rejected_text}],
+                "meta": {"type": "rag_extraction", "scene": scene,
+                         "rejected_kind": rejected_kind},
             })
     return pairs
 
@@ -354,7 +369,12 @@ def generate_dpo_pairs(count: int = 600, seed: int = 42) -> list[dict]:
 
 
 def write_dpo_jsonl(pairs: list[dict], path: str | Path) -> int:
-    """写 dpo.jsonl（conversational 格式，不含 meta 字段）。"""
+    """写 dpo.jsonl（conversational 格式，保留 meta 字段）。
+
+    评审 #6：此前丢弃 meta，训练/审计侧无法追溯 type/category/scene/
+    rejected_kind 分布。train_dpo.load_dpo_jsonl 本就读取 meta（缺省 {}），
+    写入无副作用。
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
@@ -363,6 +383,7 @@ def write_dpo_jsonl(pairs: list[dict], path: str | Path) -> int:
                 "prompt": p["prompt"],
                 "chosen": p["chosen"],
                 "rejected": p["rejected"],
+                "meta": p.get("meta", {}),
             }
             f.write(json.dumps(out, ensure_ascii=False) + "\n")
     return len(pairs)

@@ -31,7 +31,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import random
 import sys
 from pathlib import Path
 
@@ -39,6 +38,11 @@ logger = logging.getLogger("prepare_mlx_data")
 
 #: 复用 train_lora 的 SFT 加载器（保持与 HF 链路校验逻辑一致，避免重复实现）
 _SCRIPTS_DIR = Path(__file__).resolve().parent
+
+# 保证 scripts/finetune 在 sys.path 上：以 importlib 方式加载本模块（单测）或
+# train_lora（其顶层 from finetune_utils import ...）时，目录内相互 import 可用
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
 
 
 def _import_loader():
@@ -63,28 +67,25 @@ def split_dataset(
     seed: int = 42,
     min_valid: int = 1,
 ) -> tuple[list[dict], list[dict]]:
-    """随机打乱后按比例拆分 train / valid。
+    """按基问题分组拆分 train / valid（评审 #2：变体不得跨集合）。
 
     Args:
         records: 已校验的 SFT 样本列表
         valid_ratio: 验证集比例（0~1），默认 0.1
         seed: 随机种子，保证可复现
-        min_valid: 验证集最少样本数（不足时从 train 借调，保证 valid 不为空）
+        min_valid: 验证集最少样本数（分组切分按组近似满足数量）
 
     Returns:
         (train_records, valid_records)
     """
     if not records:
         return [], []
-    rng = random.Random(seed)
-    shuffled = list(records)
-    rng.shuffle(shuffled)
+    from finetune_utils import grouped_split_indices, last_user_content, question_group_key
 
-    valid_count = max(min_valid, int(len(shuffled) * valid_ratio))
-    valid_count = min(valid_count, len(shuffled) - 1) if len(shuffled) > 1 else min(valid_count, len(shuffled))
-    valid = shuffled[:valid_count]
-    train = shuffled[valid_count:]
-    return train, valid
+    keys = [question_group_key(last_user_content(r["messages"])) for r in records]
+    valid_count = max(min_valid, int(len(records) * valid_ratio))
+    train_idx, valid_idx = grouped_split_indices(keys, test_size=valid_count, seed=seed)
+    return [records[i] for i in train_idx], [records[i] for i in valid_idx]
 
 
 def write_jsonl(records: list[dict], path: Path) -> int:

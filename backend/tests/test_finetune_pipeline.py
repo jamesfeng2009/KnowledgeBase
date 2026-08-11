@@ -218,6 +218,8 @@ class TestDedupAndLength:
             "too_short",
             "too_long",
             "pii_masked",
+            "golden_excluded",
+            "sft_reserved",
         }
         assert all(v == 0 for v in stats.values())
 
@@ -258,8 +260,9 @@ class TestBuildSftDataset:
     @pytest.mark.asyncio
     async def test_build_from_qa_adopted(self) -> None:
         """QA 社区已采纳答案 → SFT 样本（user=标题+详情，assistant=采纳回答）。"""
-        question = _question()
-        adopted = _answer("打开设置-账号安全-重置密码即可。", question_id=question.id)
+        # 标题/内容选取哈希落入 SFT 侧（非 Golden 桶）的文本（评审 #3 互斥）
+        question = _question(title="如何申请年假", content="入职满一年，想休年假")
+        adopted = _answer("在 OA 系统提交年假申请，主管审批后生效。", question_id=question.id)
         db = _db_with_execute([
             _exec_result(rows=[(adopted, question)]),  # 1. QA 采纳
             _exec_result(scalars=[]),  # 2. chat 好评反馈为空 → 提前返回
@@ -271,10 +274,27 @@ class TestBuildSftDataset:
         assert len(samples) == 1
         sample = samples[0]
         assert [m["role"] for m in sample["messages"]] == ["system", "user", "assistant"]
-        assert "如何重置密码" in sample["messages"][1]["content"]
-        assert sample["messages"][2]["content"] == "打开设置-账号安全-重置密码即可。"
+        assert "如何申请年假" in sample["messages"][1]["content"]
+        assert sample["messages"][2]["content"] == "在 OA 系统提交年假申请，主管审批后生效。"
         assert sample["meta"]["source"] == "qa_adopted"
         assert stats["classification"] == 0
+        assert stats["golden_excluded"] == 0
+
+    @pytest.mark.asyncio
+    async def test_golden_bucket_excluded_from_sft(self) -> None:
+        """评审 #3：落入 Golden 桶（哈希 % 10 == 0）的问答对不得进 SFT 训练集。"""
+        # 默认 _question 文本经 SHA-256 分桶恰好落入 Golden 桶（bucket 0）
+        question = _question()
+        adopted = _answer("打开设置-账号安全-重置密码即可。", question_id=question.id)
+        db = _db_with_execute([
+            _exec_result(rows=[(adopted, question)]),
+            _exec_result(scalars=[]),
+        ])
+
+        samples, stats = await build_sft_dataset(db, None)
+
+        assert samples == []
+        assert stats["golden_excluded"] == 1
 
     @pytest.mark.asyncio
     async def test_build_from_chat_rated(self) -> None:
@@ -540,11 +560,12 @@ class TestBuildGoldenSet:
 
     @pytest.mark.asyncio
     async def test_golden_limit(self) -> None:
-        """limit 上限生效：3 条采纳源仅产出 2 条。"""
+        """limit 上限生效：3 条 Golden 桶采纳源仅产出 2 条。"""
+        # 评测问题{0,2,4} 的标题+详情经 SHA-256 分桶均落入 Golden 桶（bucket 0）
         rows = []
-        for i in range(3):
-            q = _question(title=f"问题{i}标题内容", content=f"问题{i}的详细描述内容")
-            rows.append((_answer(f"问题{i}的采纳回答内容。", question_id=q.id), q))
+        for i in (0, 2, 4):
+            q = _question(title=f"评测问题{i}标题内容", content=f"评测问题{i}的详细描述内容")
+            rows.append((_answer(f"评测问题{i}的采纳回答内容。", question_id=q.id), q))
         db = _db_with_execute([
             _exec_result(rows=rows),
             _exec_result(scalars=[]),
@@ -553,6 +574,22 @@ class TestBuildGoldenSet:
         samples, _ = await build_golden_set(db, None, limit=2)
 
         assert len(samples) == 2
+
+    @pytest.mark.asyncio
+    async def test_sft_bucket_reserved_from_golden(self) -> None:
+        """评审 #3：非 Golden 桶的问答对不得进 Golden 评测集（留给 SFT）。"""
+        # "如何申请年假" 文本分桶落在 SFT 侧（bucket 7）
+        question = _question(title="如何申请年假", content="入职满一年，想休年假")
+        adopted = _answer("在 OA 系统提交年假申请，主管审批后生效。", question_id=question.id)
+        db = _db_with_execute([
+            _exec_result(rows=[(adopted, question)]),
+            _exec_result(scalars=[]),
+        ])
+
+        samples, stats = await build_golden_set(db, None)
+
+        assert samples == []
+        assert stats["sft_reserved"] == 1
 
 
 # ======================================================================

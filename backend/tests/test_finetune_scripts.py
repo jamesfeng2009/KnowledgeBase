@@ -21,10 +21,20 @@ import pytest
 
 FINETUNE_DIR = Path(__file__).parent.parent / "scripts" / "finetune"
 
+# 多个脚本顶层 from finetune_utils import ...（scripts/finetune 非 Python 包），
+# importlib 按路径加载时需目录在 sys.path 上才能解析目录内相互 import。
+if str(FINETUNE_DIR) not in sys.path:
+    sys.path.insert(0, str(FINETUNE_DIR))
+
+#: 无重依赖顶层引入、可离线 import 的脚本
 PY_SCRIPTS = [
+    "finetune_utils",
     "data_stats",
     "train_lora",
     "train_dpo",
+    "train_orpo",
+    "train_simpo",
+    "train_grpo",
     "train_embedding",
     "train_reranker",
     "eval_compare",
@@ -32,6 +42,18 @@ PY_SCRIPTS = [
     "seed_documents",
     "import_open_dataset",
     "synthesize_qa",
+    "generate_embedding_data",
+    "generate_sft_data",
+    "generate_dpo_data",
+    "generate_rlaif_data",
+    "generate_extractive_answers",
+    "bench_memory",
+]
+
+#: 顶层 import torch/transformers/peft 的评测脚本：仅做语法校验，跳过 import 测试
+COMPILE_ONLY_SCRIPTS = [
+    "eval_boundary_refusal",
+    "eval_dpo_7b",
 ]
 
 #: 顶层禁止出现的重依赖（必须延迟导入到函数内）
@@ -62,7 +84,7 @@ def _write_jsonl(path: Path, lines: list) -> Path:
 # ---------------------------------------------------------------------------
 
 class TestPyCompile:
-    @pytest.mark.parametrize("name", PY_SCRIPTS)
+    @pytest.mark.parametrize("name", PY_SCRIPTS + COMPILE_ONLY_SCRIPTS)
     def test_py_compile(self, name: str):
         py_compile.compile(str(FINETUNE_DIR / f"{name}.py"), doraise=True)
 
@@ -400,3 +422,149 @@ class TestLlamaFactoryConfig:
         assert docs[1]["dataset"] == "ekb_sft"
         assert docs[1]["lora_rank"] == 16
         assert docs[1]["val_size"] == pytest.approx(0.05)
+
+
+# ---------------------------------------------------------------------------
+# 8. finetune_utils 共享工具（边界词表 / 问题归一化 / 分组切分）
+# ---------------------------------------------------------------------------
+
+class TestFinetuneUtils:
+    # ---- 关键词表口径（评审 #1/#9）----
+
+    def test_boundary_keywords_reject_work_questions(self):
+        """工作问题不得命中边界词（旧版"怎么办/预订/出差"曾致 36% 误判）。"""
+        fu = _load_module("finetune_utils")
+        work_questions = [
+            "VPN 连接不上怎么办",
+            "出差申请怎么提交",
+            "会议室怎么预订",
+            "第三方组件安全扫描怎么做",
+            "年假怎么计算",
+            "企业邮箱怎么设置签名",
+            "怎么重置密码",
+            "报销流程是什么",
+            "劳动合同什么时候续签",
+            "最近生病了怎么请病假",
+        ]
+        for q in work_questions:
+            assert not any(kw in q for kw in fu.BOUNDARY_KEYWORDS), f"误判为边界: {q}"
+
+    def test_boundary_keywords_catch_real_boundary(self):
+        """真实边界问题必须命中边界词。"""
+        fu = _load_module("finetune_utils")
+        boundary_questions = [
+            "帮我写一首关于秋天的诗",
+            "今天股票行情怎么样",
+            "帮我预订明天去北京的机票",
+            "今天天气怎么样",
+            "帮我算一下我的八字",
+            "红烧肉怎么做",
+            "我最近总是失眠，该吃什么药",
+        ]
+        for q in boundary_questions:
+            assert any(kw in q for kw in fu.BOUNDARY_KEYWORDS), f"漏判边界: {q}"
+
+    def test_refusal_keywords_no_weak_signals(self):
+        """拒答词表只含强信号：不得含"建议/欢迎/服务台"等弱信号及单独"无法"。"""
+        fu = _load_module("finetune_utils")
+        for weak in ("建议", "欢迎", "服务台", "请使用", "无法"):
+            assert weak not in fu.REFUSAL_KEYWORDS, f"弱信号混入拒答词表: {weak}"
+        # 工作问题的正常回答（含礼貌结尾）不得误判为拒答
+        normal_answer = "年假按工龄计算：1-10 年 5 天。建议在 OA 系统提交申请，欢迎随时提问。"
+        assert not any(kw in normal_answer for kw in fu.REFUSAL_KEYWORDS)
+
+    def test_training_scripts_share_constants(self):
+        """训练/生成脚本与 finetune_utils 词表一致（单一来源，importlib 加载
+        产生独立模块实例，按值比较）。"""
+        fu = _load_module("finetune_utils")
+        grpo = _load_module("train_grpo")
+        assert grpo.BOUNDARY_KEYWORDS == fu.BOUNDARY_KEYWORDS
+        assert grpo.REFUSAL_KEYWORDS == fu.REFUSAL_KEYWORDS
+        rlaif = _load_module("generate_rlaif_data")
+        assert rlaif.BOUNDARY_KEYWORDS == fu.BOUNDARY_KEYWORDS
+        assert rlaif.REFUSAL_KEYWORDS == fu.REFUSAL_KEYWORDS
+
+    # ---- 问题文本提取与归一化（评审 #2）----
+
+    def test_extract_question_text(self):
+        fu = _load_module("finetune_utils")
+        # RAG prompt：只取【问题】之后的真实问题，context 中的边界词不参与匹配
+        rag = "根据以下文档回答问题。\n\n【文档1】股票期权制度\n\n【问题】年假怎么计算"
+        assert fu.extract_question_text(rag) == "年假怎么计算"
+        # 非 RAG 文本原样返回
+        assert fu.extract_question_text("今天天气怎么样") == "今天天气怎么样"
+
+    def test_normalize_question_collapses_variants(self):
+        """_query_variants 的全部改写规则归一化后必须收敛到同一基问题。"""
+        fu = _load_module("finetune_utils")
+        base_key = "怎么重置密码"
+        variants = [
+            "怎么重置密码？", "怎么重置密码", "如何重置密码？", "咋重置密码？",
+            "请问怎么重置密码？", "我想知道怎么重置密码", "麻烦问下怎么重置密码",
+            "怎么重置密码呢",
+        ]
+        for v in variants:
+            assert fu.normalize_question(v) == base_key, f"变体未收敛: {v}"
+
+    def test_normalize_question_distinguishes_different_questions(self):
+        fu = _load_module("finetune_utils")
+        assert fu.normalize_question("怎么重置密码") != fu.normalize_question("怎么申请年假")
+
+    def test_question_group_key_ignores_enterprise_modifier(self):
+        """"企业邮箱怎么设置签名" 与 "邮箱怎么设置签名"（去企业修饰变体）同组。"""
+        fu = _load_module("finetune_utils")
+        assert fu.question_group_key("企业邮箱怎么设置签名？") == \
+            fu.question_group_key("邮箱怎么设置签名")
+
+    def test_question_group_key_rag_prompt(self):
+        """RAG prompt 的分组键只取决于【问题】段，与 context 无关。"""
+        fu = _load_module("finetune_utils")
+        p1 = "根据以下文档回答问题。\n\n【文档1】内容甲\n\n【问题】年假怎么计算？"
+        p2 = "根据以下文档回答问题。\n\n【文档1】内容乙\n\n【文档2】内容丙\n\n【问题】请问年假怎么计算"
+        assert fu.question_group_key(p1) == fu.question_group_key(p2)
+
+    # ---- 分组切分（评审 #2：变体不得跨 train/test）----
+
+    def test_grouped_split_group_integrity(self):
+        """同组样本必须整体进同一侧。"""
+        fu = _load_module("finetune_utils")
+        # 10 个基问题 × 2 个变体
+        keys = [f"问题{i // 2}" for i in range(20)]
+        train_idx, test_idx = fu.grouped_split_indices(keys, test_size=4, seed=42)
+        assert len(train_idx) + len(test_idx) == 20
+        test_set, train_set = set(test_idx), set(train_idx)
+        assert not (test_set & train_set)
+        for g in range(10):
+            pair = {2 * g, 2 * g + 1}
+            assert pair <= test_set or pair <= train_set, f"组 {g} 被拆分"
+
+    def test_grouped_split_reproducible(self):
+        fu = _load_module("finetune_utils")
+        keys = [f"问题{i}" for i in range(30)]
+        a = fu.grouped_split_indices(keys, test_size=6, seed=7)
+        b = fu.grouped_split_indices(keys, test_size=6, seed=7)
+        assert a == b
+
+    def test_grouped_split_test_size_approx(self):
+        fu = _load_module("finetune_utils")
+        keys = [f"问题{i}" for i in range(100)]  # 每组 1 条 → 精确满足
+        train_idx, test_idx = fu.grouped_split_indices(keys, test_size=10, seed=1)
+        assert len(test_idx) == 10
+        assert len(train_idx) == 90
+
+    def test_grouped_split_single_group_fallback(self):
+        """全部样本同组时回退行级切分，保证两侧均非空。"""
+        fu = _load_module("finetune_utils")
+        train_idx, test_idx = fu.grouped_split_indices(["同组"] * 4, test_size=1, seed=3)
+        assert len(test_idx) == 1
+        assert len(train_idx) == 3
+
+    def test_grouped_split_last_user_content(self):
+        fu = _load_module("finetune_utils")
+        msgs = [{"role": "system", "content": "s"},
+                {"role": "user", "content": "第一句"},
+                {"role": "assistant", "content": "a"},
+                {"role": "user", "content": "最后一句"}]
+        assert fu.last_user_content(msgs) == "最后一句"
+        assert fu.last_user_content([]) == ""
+        assert fu.last_user_content("not a list") == ""

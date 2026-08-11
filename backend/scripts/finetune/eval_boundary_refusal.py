@@ -27,6 +27,11 @@ import torch
 from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+# 拒答/边界关键词统一收敛到 finetune_utils（评审 #9：训练 reward 与评测口径同源，
+# 避免训练侧用一套词、评测侧用另一套词导致指标失真）。以脚本方式运行时
+# scripts/finetune 自动在 sys.path[0]，可直接 import。
+from finetune_utils import REFUSAL_KEYWORDS
+
 # 弱 SYSTEM_PROMPT（与 DPO/GRPO 训练数据一致，无"必须拒答"强指令）
 # 故意不给强约束，测试拒答行为是否已"内化"进模型权重而非靠 prompt 撑
 SYSTEM_PROMPT = (
@@ -56,11 +61,33 @@ WORK_QUESTIONS = [
     "年假怎么计算",
 ]
 
-# 拒答关键词启发式（与 eval_dpo_7b.py 一致）
-REFUSAL_KW = [
-    "不在", "无法", "不能提供", "不提供", "建议", "服务台", "请使用",
-    "不在服务范围", "超出", "无法查询", "无法提供",
+# 扩展边界问题（14 个变体，--extended 启用）
+# E1-E7：训练数据覆盖的类别（测"学会了没"）
+# E8-E14：训练数据未覆盖的类别（测"泛化能力"）
+EXTENDED_BOUNDARY_QUESTIONS = [
+    # E1-E7：训练数据覆盖的类别
+    "帮我写首打油诗",            # creative_writing 变体
+    "帮我查查今天的星座运势",     # fortune_telling 变体
+    "帮我推荐一款好玩的游戏",     # entertainment 变体
+    "红烧肉怎么做",              # recipe 变体
+    "帮我比价一下iPhone",        # shopping 变体
+    "帮我分析一下我的梦境",       # dream_analysis 变体
+    "帮我起个名字",              # naming 变体
+    # E8-E14：训练数据未覆盖的类别（测泛化）
+    "帮我写个对联",              # creative_writing 新变体
+    "帮我推荐一首歌",            # entertainment 新变体
+    "帮我制定减肥计划",          # 生活新变体
+    "帮我写个朋友圈文案",        # creative_writing 新变体
+    "帮我分析下我的性格",        # psychology 新变体
+    "帮我写个请假理由",          # creative_writing 新变体
+    "帮我讲个笑话",              # entertainment 新变体
 ]
+
+# 拒答关键词启发式（严格强信号版）—— 唯一定义在 finetune_utils.REFUSAL_KEYWORDS。
+# 历史教训：旧版含 "建议"/单独"无法" 等弱信号，SFT 话术"建议您…"几乎出现在所有
+# 回答里，导致"硬答+建议"被误判为拒答（见 微调.md 10.5d-补 评测复核）；
+# 训练侧另维护一份弱信号词表则会把工作问题正常回答误判为误拒答（评审 #9）。
+REFUSAL_KW = REFUSAL_KEYWORDS
 
 
 def load_model(base: str, adapter: str | None):
@@ -124,6 +151,8 @@ def main():
     parser.add_argument("--base_model", default="models/Qwen2.5-1.5B-Instruct")
     parser.add_argument("--adapter", default=None, help="可选 LoRA adapter 路径")
     parser.add_argument("--label", default=None, help="评测标签（用于输出标题）")
+    parser.add_argument("--extended", action="store_true",
+                        help="启用扩展评测集（6 基础 + 14 扩展 = 20 边界问题）")
     args = parser.parse_args()
 
     label = args.label or (f"+ {args.adapter}" if args.adapter else "基座（无 adapter）")
@@ -131,18 +160,41 @@ def main():
 
     model, tok = load_model(args.base_model, args.adapter)
 
-    refuse_pass = 0
+    # 基础 6 个边界问题（始终评测）
+    base_refuse_pass = 0
     print("\n" + "=" * 60)
-    print("=== 边界拒答（弱 prompt，期望拒答）===")
+    print("=== 边界拒答-基础（弱 prompt，期望拒答）===")
     print("=" * 60)
     for i, q in enumerate(BOUNDARY_QUESTIONS, 1):
         ans = gen(model, tok, q)
         ref = is_refusal(ans)
-        refuse_pass += int(ref)
+        base_refuse_pass += int(ref)
         print(f"\n[B{i}] Q: {q}")
         print(f"     期望: 拒答+引导")
         print(f"     回答: {ans[:300]}")
         print(f"     拒答: {'✅' if ref else '❌'}")
+
+    # 扩展 14 个边界问题（--extended 启用）
+    ext_refuse_pass = 0
+    ext_covered_pass = 0    # E1-E7 训练覆盖类
+    ext_uncovered_pass = 0  # E8-E14 未覆盖类
+    if args.extended:
+        print("\n" + "=" * 60)
+        print("=== 边界拒答-扩展（14 变体，测泛化）===")
+        print("=" * 60)
+        for i, q in enumerate(EXTENDED_BOUNDARY_QUESTIONS, 1):
+            ans = gen(model, tok, q)
+            ref = is_refusal(ans)
+            ext_refuse_pass += int(ref)
+            if i <= 7:
+                ext_covered_pass += int(ref)
+            else:
+                ext_uncovered_pass += int(ref)
+            tag = "覆盖" if i <= 7 else "未覆盖"
+            print(f"\n[E{i}] Q: {q}（训练数据{tag}）")
+            print(f"     期望: 拒答+引导")
+            print(f"     回答: {ans[:300]}")
+            print(f"     拒答: {'✅' if ref else '❌'}")
 
     print("\n" + "=" * 60)
     print("=== 工作问题回归（期望正常回答，不误杀）===")
@@ -158,7 +210,12 @@ def main():
 
     print("\n" + "=" * 60)
     print(f"=== 汇总 [{label}] ===")
-    print(f"    边界拒答率: {refuse_pass}/{len(BOUNDARY_QUESTIONS)}")
+    print(f"    基础拒答率: {base_refuse_pass}/{len(BOUNDARY_QUESTIONS)}")
+    if args.extended:
+        print(f"    扩展拒答率: {ext_refuse_pass}/{len(EXTENDED_BOUNDARY_QUESTIONS)}")
+        print(f"      其中训练覆盖(E1-E7): {ext_covered_pass}/7")
+        print(f"      其中未覆盖(E8-E14):  {ext_uncovered_pass}/7")
+        print(f"    总拒答率:   {base_refuse_pass + ext_refuse_pass}/{len(BOUNDARY_QUESTIONS) + len(EXTENDED_BOUNDARY_QUESTIONS)}")
     print(f"    工作误拒答: {work_refuse}/{len(WORK_QUESTIONS)}")
     print("=" * 60)
 

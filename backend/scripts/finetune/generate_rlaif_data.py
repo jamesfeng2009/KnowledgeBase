@@ -56,12 +56,91 @@ from typing import Any, Iterator
 
 # 复用 generate_dpo_data 的 prompt 构造（三类偏好对的 prompt 部分）
 from generate_dpo_data import (
+    SYSTEM_PROMPT,
     generate_boundary_pairs,
     generate_enterprise_focus_pairs,
     generate_rag_extraction_pairs,
 )
+from generate_embedding_data import _query_variants
+# 边界/拒答/引导/企业系统词表统一收敛到 finetune_utils（评审 #1/#9：
+# 三处各自维护且口径不一致，规则裁判沿用旧泛词表会把 36% 工作问题误判为边界）
+from finetune_utils import (
+    BOUNDARY_KEYWORDS,
+    ENTERPRISE_SYSTEMS,
+    GUIDANCE_SIGNALS,
+    REFUSAL_KEYWORDS,
+    SUBSTANTIVE_MIN_LEN,
+    extract_question_text,
+    last_user_content,
+)
 
 logger = logging.getLogger("generate_rlaif")
+
+# ============================================================================
+# 扩 prompt 池：补充边界变体（解决 B1 写诗硬答 + 增加覆盖面）
+# ============================================================================
+
+#: 额外边界问题（原始 16 类不够，补充"写诗"变体 + 更多边界类别）
+#: RLAIF 只需"问题"，chosen/rejected 由流程自动生成
+_EXTRA_BOUNDARY_QUESTIONS: list[tuple[str, str]] = [
+    # ---- 写诗变体（B1 写诗硬答，需更多覆盖）----
+    ("帮我写一首打油诗", "creative_writing"),
+    ("帮我写首藏头诗", "creative_writing"),
+    ("帮我写一段 Rap", "creative_writing"),
+    ("帮我写几句顺口溜", "creative_writing"),
+    ("帮我作首关于春天的诗", "creative_writing"),
+    ("帮我写首现代诗", "creative_writing"),
+    ("帮我写首情诗", "creative_writing"),
+    ("帮我写个歌词", "creative_writing"),
+    ("帮我写首词", "creative_writing"),
+    ("帮我写个小故事", "creative_writing"),
+    ("帮我写封情书", "creative_writing"),
+    ("帮我写个剧本", "creative_writing"),
+    # ---- 玄学/命理变体 ----
+    ("帮我查查今天的星座运势", "fortune_telling"),
+    ("帮我算算塔罗牌", "fortune_telling"),
+    ("帮我看看手相", "fortune_telling"),
+    ("帮我选个吉日", "fortune_telling"),
+    ("帮我算算我和他的缘分", "fortune_telling"),
+    # ---- 游戏/娱乐 ----
+    ("帮我推荐一款好玩的游戏", "entertainment"),
+    ("原神怎么配队", "entertainment"),
+    ("帮我推荐一部好看的电影", "entertainment"),
+    ("帮我讲个笑话", "entertainment"),
+    # ---- 生活/菜谱 ----
+    ("红烧肉怎么做", "recipe"),
+    ("帮我写个菜谱", "recipe"),
+    ("公司附近有什么好吃的", "restaurant"),
+    # ---- 购物/比价 ----
+    ("帮我比价一下iPhone", "shopping"),
+    ("iPhone 值得买吗", "shopping"),
+    # ---- 其他边界 ----
+    ("帮我分析一下我的梦境", "dream_analysis"),
+    ("帮我起个名字", "naming"),
+    ("帮我做个心理测试", "psychology"),
+    ("帮我画幅画", "creative_writing"),
+    ("帮我唱首歌", "entertainment"),
+]
+
+
+def build_extra_boundary_prompts() -> list[dict]:
+    """构建额外边界 prompt（补充 _EXTRA_BOUNDARY_QUESTIONS 的变体）。
+
+    每条问题经 _query_variants 生成 5-9 个变体，30 条 × 7 ≈ 200+ 条额外 prompt。
+    这些 prompt 只有问题部分，chosen/rejected 由 RLAIF 流程自动生成。
+    """
+    prompts: list[dict] = []
+    for question, category in _EXTRA_BOUNDARY_QUESTIONS:
+        for variant in _query_variants(question):
+            prompts.append({
+                "prompt": [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": variant},
+                ],
+                "meta": {"type": "boundary", "category": category, "source": "extra"},
+            })
+    logger.info("额外边界 prompt 生成完成：%d 条（写诗/玄学/游戏/菜谱等变体）", len(prompts))
+    return prompts
 
 #: 裁判 system prompt（pairwise 判定，明确边界定义 + 输出格式约束）
 #: 设计要点：① 明确边界问题应拒答 ② 工作问题应实质回答 ③ 只输出 A/B/TIE 不解释
@@ -76,46 +155,11 @@ JUDGE_PAIRWISE_SYS = (
     "只输出一个字母：A、B 或 TIE（两者质量相当）。不要解释。"
 )
 
-#: 边界问题触发词（规则裁判用，对齐 train_grpo.py 的 BOUNDARY_KEYWORDS）
-_BOUNDARY_KEYWORDS: tuple[str, ...] = (
-    "写诗", "写一首", "股票", "行情", "机票", "预订", "出差",
-    "天气", "翻译", "写代码", "写一段代码", "餐厅", "好吃",
-    "八字", "命理", "算命", "星座", "头痛", "生病", "怎么办",
-    "裁员", "告", "劳动", "论文", "学术", "抑郁", "心情",
-    "原神", "游戏", "比价", "值得买", "红烧肉", "菜谱", "怎么做",
-)
-
-#: 拒答信号词（规则裁判用）
-_REFUSAL_SIGNALS: tuple[str, ...] = (
-    "不在服务范围", "不在我的服务", "不在知识库", "不提供",
-    "无法提供", "无法查询", "无法访问",
-    "我是企业知识库助手", "欢迎提问", "欢迎随时提问",
-)
-
-#: 引导信号词（规则裁判用）
-_GUIDANCE_SIGNALS: tuple[str, ...] = (
-    "建议您使用", "建议使用", "建议咨询", "请咨询",
-    "请联系", "可联系", "请使用", "可拨打", "拨打",
-)
-
-#: 企业系统入口关键词（规则裁判用）
-_ENTERPRISE_SYSTEMS: tuple[str, ...] = (
-    "example.com", "企业邮箱", "企业统一身份", "IT 服务管理", "IT服务管理",
-    "差旅平台", "内网软件", "考勤系统", "费用报销", "报销系统",
-    "文件服务器", "OA 系统", "OA系统", "IT 服务台", "IT服务台", "HR 部门", "HR部门",
-    "idp", "itsm", "tripmgmt",
-)
-
-#: 规则裁判"实质回答"最小长度
-_SUBSTANTIVE_MIN_LEN = 20
-
 
 def _extract_user_text(prompt: Any) -> str:
     """从 conversational prompt 提取最后一条 user content。"""
     if isinstance(prompt, list):
-        for msg in reversed(prompt):
-            if isinstance(msg, dict) and msg.get("role") == "user":
-                return msg.get("content", "")
+        return last_user_content(prompt)
     return str(prompt)
 
 
@@ -133,12 +177,16 @@ class RuleJudge:
 
     @staticmethod
     def _score(user_text: str, completion: str) -> float:
-        """单条回复打分（连续 5 档，对齐 train_grpo enterprise_boundary_reward v2）。"""
-        is_boundary = any(kw in user_text for kw in _BOUNDARY_KEYWORDS)
-        has_refusal = any(sig in completion for sig in _REFUSAL_SIGNALS)
-        has_guidance = any(sig in completion for sig in _GUIDANCE_SIGNALS)
-        has_enterprise = any(s in completion for s in _ENTERPRISE_SYSTEMS)
-        is_substantive = len(completion) >= _SUBSTANTIVE_MIN_LEN
+        """单条回复打分（连续 5 档，对齐 train_grpo enterprise_boundary_reward v2）。
+
+        边界匹配只看【问题】文本（extract_question_text），不看 RAG context（评审 #1）。
+        """
+        question = extract_question_text(user_text)
+        is_boundary = any(kw in question for kw in BOUNDARY_KEYWORDS)
+        has_refusal = any(sig in completion for sig in REFUSAL_KEYWORDS)
+        has_guidance = any(sig in completion for sig in GUIDANCE_SIGNALS)
+        has_enterprise = any(s in completion for s in ENTERPRISE_SYSTEMS)
+        is_substantive = len(completion) >= SUBSTANTIVE_MIN_LEN
 
         if is_boundary:
             if has_refusal and has_guidance:
@@ -287,11 +335,10 @@ class LocalJudge:
 # ============================================================================
 
 def build_prompt_pool(seed: int = 42) -> list[dict]:
-    """构建 prompt 池：复用 generate_dpo_data 的三类偏好对，只取 prompt 部分。
+    """构建 prompt 池：复用 generate_dpo_data 的三类偏好对 + 额外边界变体。
 
     返回 [{"prompt": [...], "meta": {"type": "...", ...}}]。
-    prompt 池数量受限于手写模板 × query 变体（约数百条）；扩到 5k-10k 靠
-    循环采样——同一 prompt 多次跑，每次候选生成用随机 temperature，产出不同偏好对。
+    原始三类约 697 条；额外边界变体（写诗/玄学/游戏/菜谱等）+200 条 → ~900 条。
     """
     rng = random.Random(seed)
     all_pairs = (
@@ -300,8 +347,10 @@ def build_prompt_pool(seed: int = 42) -> list[dict]:
         + generate_enterprise_focus_pairs(rng)
     )
     prompts = [{"prompt": p["prompt"], "meta": p["meta"]} for p in all_pairs]
+    # 追加额外边界变体（解决 B1 写诗硬答 + 增加覆盖面）
+    prompts.extend(build_extra_boundary_prompts())
     rng.shuffle(prompts)
-    logger.info("prompt 池构建完成：%d 条（boundary/rag/enterprise 三类混合）", len(prompts))
+    logger.info("prompt 池构建完成：%d 条（原始三类 + 额外边界变体）", len(prompts))
     return prompts
 
 
@@ -444,6 +493,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                              "local=本地 7B pairwise 裁判（零 API 成本，复用 GRPO v3 judge 经验）")
     parser.add_argument("--judge_model", default="claude-sonnet-4-6-20250514",
                         help="API 裁判模型（Anthropic model id）")
+    parser.add_argument("--local_judge_model", default="models/Qwen2.5-7B-Instruct",
+                        help="本地裁判模型路径（仅 --judge local 生效；评审 #13 修复前"
+                             "误用 --judge_model 的 Claude model id，本地加载必失败）")
     # 断点续传
     parser.add_argument("--checkpoint_every", type=int, default=50, help="每 N 条存盘一次")
     parser.add_argument("--resume", action="store_true", help="断点续传：跳过已产出的 prompt")
@@ -465,8 +517,8 @@ def main(argv: list[str] | None = None) -> int:
             judge = RuleJudge()
             logger.info("裁判模式：规则（fallback）")
     elif args.judge == "local":
-        judge: RuleJudge | APIJudge | LocalJudge = LocalJudge(judge_model=args.judge_model)
-        logger.info("裁判模式：本地 7B pairwise（%s，零 API 成本）", args.judge_model)
+        judge: RuleJudge | APIJudge | LocalJudge = LocalJudge(judge_model=args.local_judge_model)
+        logger.info("裁判模式：本地 7B pairwise（%s，零 API 成本）", args.local_judge_model)
     else:
         judge = RuleJudge()
         logger.info("裁判模式：规则（零 API 成本，适合冒烟）")
@@ -494,8 +546,18 @@ def main(argv: list[str] | None = None) -> int:
     buffer: list[dict] = []
 
     # 循环采样 prompt 池直到达成目标数量
+    # 评审 #4：此前 while produced < count 无退出条件——当 prompt 池全部
+    # 耗尽（已产出/候选相同/TIE）时 produced 不再增长，循环空转永不退出。
+    # 以"连续跳过一整圈池"为耗尽判据，提前 break。
     pool_idx = 0
+    consecutive_skips = 0
     while produced < args.count:
+        if consecutive_skips >= len(prompt_pool):
+            logger.warning(
+                "连续 %d 个 prompt 未产出（池已耗尽或全被跳过），提前结束于 %d/%d",
+                consecutive_skips, produced, args.count,
+            )
+            break
         prompt_item = prompt_pool[pool_idx % len(prompt_pool)]
         pool_idx += 1
         prompt = prompt_item["prompt"]
@@ -504,6 +566,7 @@ def main(argv: list[str] | None = None) -> int:
         # 断点续传：跳过已产出
         ph = _prompt_hash(prompt)
         if ph in seen:
+            consecutive_skips += 1
             continue
 
         user_text = _extract_user_text(prompt)
@@ -513,22 +576,31 @@ def main(argv: list[str] | None = None) -> int:
             candidates = generate_candidates(model, tokenizer, prompt, n=args.n_candidates)
         except Exception as exc:
             logger.warning("候选生成失败（跳过）：%s", exc)
+            consecutive_skips += 1
             continue
 
         # 候选相同则跳过（无偏好信号）
         if len(set(candidates)) < 2:
             skipped_same += 1
+            consecutive_skips += 1
             continue
 
+        # 评审 #5：候选顺序乱序后再呈交裁判——此前 candidates[0] 恒为低温
+        # 保守回复（A 位），candidates[1] 恒为高温发散回复（B 位），裁判的
+        # 位置偏置与温度完全相关，标注结果被污染。
+        shuffled = list(candidates)
+        rng.shuffle(shuffled)
+
         # 5b. 裁判判定
-        verdict = judge.judge(user_text, candidates[0], candidates[1])
+        verdict = judge.judge(user_text, shuffled[0], shuffled[1])
 
         if verdict == "A":
-            chosen_text, rejected_text = candidates[0], candidates[1]
+            chosen_text, rejected_text = shuffled[0], shuffled[1]
         elif verdict == "B":
-            chosen_text, rejected_text = candidates[1], candidates[0]
+            chosen_text, rejected_text = shuffled[1], shuffled[0]
         else:  # TIE
             skipped_tie += 1
+            consecutive_skips += 1
             continue
 
         # 5c. 组装偏好对
@@ -542,6 +614,7 @@ def main(argv: list[str] | None = None) -> int:
         buffer.append(pair)
         seen.add(ph)
         produced += 1
+        consecutive_skips = 0
 
         # 5d. 存盘
         if len(buffer) >= args.checkpoint_every:

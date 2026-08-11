@@ -39,6 +39,14 @@ from typing import Any, Iterator
 
 logger = logging.getLogger("train_dpo")
 
+# 分组切分与 MPS 缓存清理回调统一收敛到 finetune_utils（评审 #2/#10）
+from finetune_utils import (
+    grouped_split_indices,
+    last_user_content,
+    make_mps_cache_cleanup_callback,
+    question_group_key,
+)
+
 #: LoRA 注入的目标模块（与 train_lora.py 保持一致）
 DEFAULT_TARGET_MODULES = [
     "q_proj",
@@ -114,9 +122,11 @@ def build_hf_dataset(records: list[dict], eval_ratio: float, seed: int):
 
     trl DPOTrainer 自动检测 conversational 格式并通过 apply_chat_template 渲染，
     无需在此手动渲染 prompt。
+    切分按基问题分组（评审 #2）：数据生成侧每基问题产 8-10 个同义变体，行级随机
+    切分会让变体同时落入 train/eval（实测 95.5% 泄漏），指标全面虚高。
     重依赖 datasets 在此函数内延迟导入。
     """
-    from datasets import Dataset  # 延迟导入：无 GPU 环境也可 import 本模块
+    from datasets import Dataset, DatasetDict  # 延迟导入：无 GPU 环境也可 import 本模块
 
     rows = [
         {
@@ -129,8 +139,10 @@ def build_hf_dataset(records: list[dict], eval_ratio: float, seed: int):
     ds = Dataset.from_list(rows)
     if len(ds) < 2:
         raise ValueError(f"样本过少（{len(ds)} 条），无法划分训练/验证集")
+    keys = [question_group_key(last_user_content(r["prompt"])) for r in records]
     test_size = max(1, round(len(ds) * eval_ratio))
-    return ds.train_test_split(test_size=test_size, seed=seed)
+    train_idx, test_idx = grouped_split_indices(keys, test_size=test_size, seed=seed)
+    return DatasetDict({"train": ds.select(train_idx), "test": ds.select(test_idx)})
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -153,7 +165,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--grad_accum", type=int, default=16, help="梯度累积步数")
     parser.add_argument("--qlora", action="store_true", help="启用 4bit NF4 量化加载基座")
     parser.add_argument("--max_len", type=int, default=2048, help="prompt+completion 最大总长")
-    parser.add_argument("--max_prompt_len", type=int, default=1024, help="prompt 最大长度（超出左截断）")
     parser.add_argument("--eval_ratio", type=float, default=0.05, help="验证集比例")
     parser.add_argument("--seed", type=int, default=42, help="随机种子")
     parser.add_argument("--no_gradient_checkpointing", action="store_true",
@@ -269,6 +280,12 @@ def main(argv: list[str] | None = None) -> int:
         seed=args.seed,
     )
 
+    # ---- MPS 缓存清理回调（仅 MPS 设备启用，工厂来自 finetune_utils）----
+    mps_callbacks = []
+    if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+        mps_callbacks.append(make_mps_cache_cleanup_callback(every_n_steps=5))
+        logger.info("已添加 MPS 缓存清理回调（每 5 步 torch.mps.empty_cache()）")
+
     trainer = DPOTrainer(
         model=model,
         ref_model=None,  # peft 模式下自动以"禁用 adapter 的模型"作为参考模型
@@ -277,6 +294,7 @@ def main(argv: list[str] | None = None) -> int:
         eval_dataset=eval_ds,
         processing_class=tokenizer,
         peft_config=peft_config,
+        callbacks=mps_callbacks,  # MPS 缓存清理（防止 Swap 恶性增长）
     )
 
     repro_info = {
@@ -288,7 +306,6 @@ def main(argv: list[str] | None = None) -> int:
         "epochs": args.epochs,
         "effective_batch_size": args.batch_size * args.grad_accum,
         "max_len": args.max_len,
-        "max_prompt_len": args.max_prompt_len,
         "gradient_checkpointing": not args.no_gradient_checkpointing,
         "seed": args.seed,
         "num_train_samples": len(train_ds),

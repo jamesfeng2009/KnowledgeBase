@@ -30,6 +30,9 @@ from typing import Any, Iterator
 
 logger = logging.getLogger("train_reranker")
 
+# 分组切分工具（评审 #2：同一基问题的 query 变体不得跨 train/eval）
+from finetune_utils import grouped_split_indices, question_group_key
+
 
 def iter_jsonl(path: str | Path) -> Iterator[tuple[int, dict]]:
     """逐行读取 JSONL，跳过坏行（JSON 解析失败 / 非对象行）。Yields (行号, dict)。"""
@@ -126,12 +129,13 @@ def main(argv: list[str] | None = None) -> int:
 
     records = load_triplets(args.data)
 
-    # ---- 留出评估集（按三元组切分，避免同一 query 的正负例跨集合泄漏）----
-    rng = random.Random(args.seed)
-    shuffled = records[:]
-    rng.shuffle(shuffled)
-    n_eval = max(1, round(len(shuffled) * args.eval_ratio))
-    eval_records, train_records = shuffled[:n_eval], shuffled[n_eval:]
+    # ---- 留出评估集（评审 #2：按基问题分组切分——三元组级切分只保证同一 query 的
+    # 正负例不跨集合，但同基问题的 query 变体仍会跨集合泄漏，指标准确率虚高）----
+    keys = [question_group_key(r["query"]) for r in records]
+    n_eval = max(1, round(len(records) * args.eval_ratio))
+    train_idx, eval_idx = grouped_split_indices(keys, test_size=n_eval, seed=args.seed)
+    eval_records = [records[i] for i in eval_idx]
+    train_records = [records[i] for i in train_idx]
     eval_pairs, eval_labels = build_pairs(eval_records)
     logger.info("训练三元组 %d 条 / 评估三元组 %d 条（评估对 %d 个）",
                 len(train_records), len(eval_records), len(eval_pairs))

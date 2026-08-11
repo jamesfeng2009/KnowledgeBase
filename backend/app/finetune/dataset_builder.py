@@ -10,7 +10,8 @@
        点踩不足时回退"同 query 无反馈答案"，meta.pair_type 区分来源
 - Embedding：SearchLog（query + clicked_doc_id 点击行为）→ (query, pos, neg)，
        负例为同知识库内随机未点击文档（meta.neg_type="random"）
-- Golden：从高质量 SFT 源（采纳答案 + 好评问答）抽样冻结为评测集
+- Golden：从高质量 SFT 源（采纳答案 + 好评问答）抽样冻结为评测集，
+       与 SFT 按 user_text 哈希分桶严格互斥（见 _GOLDEN_HASH_MODULO）
 
 设计说明（与项目现状对齐）：
 - Feedback 模型无 rating 数值列，type → 分值映射见 FEEDBACK_RATING，
@@ -36,6 +37,7 @@ from app.finetune.data_cleaner import (
     MIN_SAMPLE_CHARS,
     DedupFilter,
     check_length,
+    content_hash,
     mask_pii,
     new_filtered_stats,
 )
@@ -80,6 +82,18 @@ CLASSIFICATION_WEIGHT: dict[str, int] = {
 _DOC_CONTENT_CHARS: int = 500
 #: Embedding 负例候选池大小（同租户随机抽）
 _NEG_POOL_SIZE: int = 200
+
+#: Golden/SFT 哈希分桶模数（评审 #3）：user_text 内容哈希 % 10 == 0 的问答对
+#: 仅可进 Golden 评测集，其余仅可进 SFT 训练集。此前两者共用
+#: _collect_sft_raw_pairs 且无隔离，评测题可原样出现在训练集中（指标虚高）；
+#: 且 Golden 按 created_at+limit 截取，新数据进入会导致评测集成员漂移。
+#: 哈希分桶后成员资格只取决于内容本身：互斥、稳定、可复现。
+_GOLDEN_HASH_MODULO: int = 10
+
+
+def _in_golden_bucket(user_text: str) -> bool:
+    """稳定哈希分桶：同一 user_text 永远落入同一侧（Golden 或 SFT），保证互斥。"""
+    return int(content_hash(user_text), 16) % _GOLDEN_HASH_MODULO == 0
 
 
 @dataclass
@@ -384,6 +398,10 @@ async def build_sft_dataset(
     for pair in raw_pairs:
         if len(samples) >= limit:
             break
+        # 0. Golden 互斥（评审 #3）：落入 Golden 桶的问答对不得进 SFT 训练集
+        if _in_golden_bucket(pair.user_text):
+            stats["golden_excluded"] += 1
+            continue
         # 1. 密级过滤（安全硬过滤，先于其他清洗）
         if _exceeds_classification(pair.doc_ids, cls_map, max_classification):
             stats["classification"] += 1
@@ -790,12 +808,18 @@ async def build_golden_set(
     来源与 SFT 相同（QA 采纳答案 + chat 好评问答），输出评测格式，
     上限默认 500 条（limit 参数）。
 
+    评审 #3：与 SFT 训练集严格互斥 —— 仅 user_text 哈希落入 Golden 桶
+    （约 1/10）的问答对可进本评测集，SFT 侧同步排除同桶样本；
+    桶成员资格只取决于内容哈希，评测集不随新数据进入而漂移。
+    采集上限相应放大 _GOLDEN_HASH_MODULO 倍以维持 limit 语义。
+
     输出格式：{"query", "expected_answer", "expected_doc_ids", "meta": {...}}
     """
     stats = new_filtered_stats()
     dedup = DedupFilter()
     raw_pairs = await _collect_sft_raw_pairs(
-        db, tenant_id, days=days, min_rating=min_rating, limit=limit
+        db, tenant_id, days=days, min_rating=min_rating,
+        limit=limit * _GOLDEN_HASH_MODULO,  # 哈希桶仅留 ~1/modulo，放大采集补足
     )
 
     all_doc_ids = {d for p in raw_pairs for d in p.doc_ids}
@@ -805,6 +829,11 @@ async def build_golden_set(
     for pair in raw_pairs:
         if len(samples) >= limit:
             break
+        # Golden 互斥（评审 #3）：仅哈希落入 Golden 桶的问答对可进评测集，
+        # 其余留给 SFT 训练集；桶成员资格只取决于内容，评测集不随新数据漂移
+        if not _in_golden_bucket(pair.user_text):
+            stats["sft_reserved"] += 1
+            continue
         if _exceeds_classification(pair.doc_ids, cls_map, max_classification):
             stats["classification"] += 1
             continue

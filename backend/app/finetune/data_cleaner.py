@@ -104,7 +104,9 @@ def new_filtered_stats() -> dict[str, int]:
     """初始化过滤统计字典 — key 为剔除/标记原因，value 为计数。
 
     - classification / duplicate / too_short / too_long：剔除类；
-    - pii_masked：标记类（样本保留，仅脱敏改写）。
+    - pii_masked：标记类（样本保留，仅脱敏改写）；
+    - golden_excluded / sft_reserved：Golden/SFT 哈希分桶互斥（评审 #3，
+      分别由 build_sft_dataset / build_golden_set 累加）。
     """
     return {
         "classification": 0,
@@ -112,4 +114,6 @@ def new_filtered_stats() -> dict[str, int]:
         "too_short": 0,
         "too_long": 0,
         "pii_masked": 0,
+        "golden_excluded": 0,
+        "sft_reserved": 0,
     }

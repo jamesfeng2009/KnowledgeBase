@@ -44,6 +44,13 @@ import sys
 
 # 复用 train_dpo 的数据加载 / bf16 检测（避免重复代码）
 from train_dpo import DEFAULT_TARGET_MODULES, _detect_bf16, load_dpo_jsonl
+# 分组切分与 MPS 缓存清理回调（评审 #2/#10）
+from finetune_utils import (
+    grouped_split_indices,
+    last_user_content,
+    make_mps_cache_cleanup_callback,
+    question_group_key,
+)
 
 logger = logging.getLogger("train_orpo")
 
@@ -68,15 +75,20 @@ def convert_to_orpo_format(records: list[dict], tokenizer) -> list[dict]:
     return rows
 
 
-def build_orpo_dataset(rows: list[dict], eval_ratio: float, seed: int):
-    """rows → DatasetDict(train/test)，列为 prompt/chosen/rejected（str 格式）。"""
-    from datasets import Dataset
+def build_orpo_dataset(rows: list[dict], keys: list[str], eval_ratio: float, seed: int):
+    """rows → DatasetDict(train/test)，列为 prompt/chosen/rejected（str 格式）。
+
+    keys 为每条样本的基问题分组键（由原始 conversational prompt 计算）：
+    切分按组整体进行（评审 #2），防同义变体跨 train/eval 泄漏。
+    """
+    from datasets import Dataset, DatasetDict
 
     ds = Dataset.from_list(rows)
     if len(ds) < 2:
         raise ValueError(f"样本过少（{len(ds)} 条），无法划分训练/验证集")
     test_size = max(1, round(len(ds) * eval_ratio))
-    return ds.train_test_split(test_size=test_size, seed=seed)
+    train_idx, test_idx = grouped_split_indices(keys, test_size=test_size, seed=seed)
+    return DatasetDict({"train": ds.select(train_idx), "test": ds.select(test_idx)})
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -130,14 +142,15 @@ def main(argv: list[str] | None = None) -> int:
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(args.seed)
 
-    # ---- 数据：conversational → ORPO str 格式 ----
+    # ---- 数据：conversational → ORPO str 格式（分组键在转换前从原始 prompt 计算）----
     records = load_dpo_jsonl(args.data)
     tokenizer = AutoTokenizer.from_pretrained(args.base_model, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
+    group_keys = [question_group_key(last_user_content(r["prompt"])) for r in records]
     orpo_rows = convert_to_orpo_format(records, tokenizer)
-    split = build_orpo_dataset(orpo_rows, eval_ratio=args.eval_ratio, seed=args.seed)
+    split = build_orpo_dataset(orpo_rows, group_keys, eval_ratio=args.eval_ratio, seed=args.seed)
     train_ds, eval_ds = split["train"], split["test"]
     logger.info("训练集 %d 条 / 验证集 %d 条", len(train_ds), len(eval_ds))
 
@@ -192,6 +205,12 @@ def main(argv: list[str] | None = None) -> int:
         trust_remote_code=True,
     )
 
+    # ---- MPS 缓存清理回调（评审 #10：ORPO 此前缺失，与 DPO/SimPO 对齐）----
+    mps_callbacks = []
+    if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+        mps_callbacks.append(make_mps_cache_cleanup_callback(every_n_steps=5))
+        logger.info("已添加 MPS 缓存清理回调（每 5 步 torch.mps.empty_cache()）")
+
     # ---- ORPOTrainer：单阶段 SFT+偏好，无 ref_model ----
     trainer = ORPOTrainer(
         model=model,
@@ -200,6 +219,7 @@ def main(argv: list[str] | None = None) -> int:
         eval_dataset=eval_ds,
         processing_class=tokenizer,
         peft_config=peft_config,
+        callbacks=mps_callbacks,
     )
 
     repro_info = {

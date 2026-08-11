@@ -46,6 +46,13 @@ from typing import Any, Iterator
 
 logger = logging.getLogger("train_lora")
 
+# 分组切分工具（评审 #2：同义变体不得跨 train/eval）
+from finetune_utils import (
+    grouped_split_indices,
+    last_user_content,
+    question_group_key,
+)
+
 #: LoRA 注入的目标模块（Qwen2.5 / Llama 系架构通用的全量线性层）
 DEFAULT_TARGET_MODULES = [
     "q_proj",
@@ -113,26 +120,50 @@ def render_chat(messages: list[dict], tokenizer: Any | None = None) -> str:
     """将 messages 渲染为单条训练文本。
 
     优先使用 tokenizer.apply_chat_template（与基座模型官方模板严格一致）；
-    tokenizer 缺失或无模板时回退为 ``<|role|>\\ncontent`` 纯文本拼接（便于离线单测）。
+    tokenizer 缺失或无模板时回退为 ``<|role|>\ncontent`` 纯文本拼接（便于离线单测）。
     """
     if tokenizer is not None and getattr(tokenizer, "chat_template", None):
         return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
     return "\n".join(f"<|{m['role']}|>\n{m['content']}" for m in messages)
 
 
-def build_hf_dataset(records: list[dict], tokenizer: Any, eval_ratio: float, seed: int):
-    """records -> datasets.DatasetDict(train/test)，文本列名为 ``text``。
+def render_prompt_completion(messages: list[dict], tokenizer: Any | None = None) -> tuple[str, str]:
+    """将 messages 拆为 (prompt, completion) —— 供 trl completion_only_loss 使用（评审 #7）。
 
+    prompt 渲染到最后一条 assistant 消息之前（add_generation_prompt=True，让模板
+    补上 assistant 起始标记）；completion 为 assistant 正文。trl SFTTrainer 对
+    prompt-completion 数据集分别 tokenize 并只对 completion 段计 loss，
+    避免全序列 loss 让模型浪费容量去"学用户提问"（且 user 文本含 RAG context，
+    对其计 loss 会教模型复述上下文）。
+    """
+    prompt_msgs, completion_msg = messages[:-1], messages[-1]
+    if tokenizer is not None and getattr(tokenizer, "chat_template", None):
+        prompt = tokenizer.apply_chat_template(
+            prompt_msgs, tokenize=False, add_generation_prompt=True)
+    else:
+        prompt = "\n".join(f"<|{m['role']}|>\n{m['content']}" for m in prompt_msgs) + "\n<|assistant|>\n"
+    return prompt, completion_msg["content"]
+
+
+def build_hf_dataset(records: list[dict], tokenizer: Any, eval_ratio: float, seed: int):
+    """records -> datasets.DatasetDict(train/test)，列为 ``prompt`` / ``completion``。
+
+    切分按基问题分组（评审 #2）：同义变体整体进同一侧，防跨集合泄漏。
     重依赖 datasets 在此函数内延迟导入。
     """
-    from datasets import Dataset  # 延迟导入：无 GPU 环境也可 import 本模块
+    from datasets import Dataset, DatasetDict  # 延迟导入：无 GPU 环境也可 import 本模块
 
-    rows = [{"text": render_chat(r["messages"], tokenizer)} for r in records]
+    rows = []
+    for r in records:
+        prompt, completion = render_prompt_completion(r["messages"], tokenizer)
+        rows.append({"prompt": prompt, "completion": completion})
     ds = Dataset.from_list(rows)
     if len(ds) < 2:
         raise ValueError(f"样本过少（{len(ds)} 条），无法划分训练/验证集，请至少提供数十条样本")
+    keys = [question_group_key(last_user_content(r["messages"])) for r in records]
     test_size = max(1, round(len(ds) * eval_ratio))
-    return ds.train_test_split(test_size=test_size, seed=seed)
+    train_idx, test_idx = grouped_split_indices(keys, test_size=test_size, seed=seed)
+    return DatasetDict({"train": ds.select(train_idx), "test": ds.select(test_idx)})
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -255,9 +286,11 @@ def main(argv: list[str] | None = None) -> int:
         gradient_checkpointing=not args.no_gradient_checkpointing,
         max_length=args.max_len,
         packing=False,
-        dataset_text_field="text",
-        # 注：trl>=0.16 支持 assistant_only_loss=True 仅对 assistant 段计 loss，
-        # 需基座 chat template 含 {% generation %} 标记；Qwen2.5 模板不支持，故用全序列 loss。
+        # 评审 #7：prompt-completion 数据集 + completion_only_loss=True，
+        # 只对 assistant 正文计 loss（Qwen2.5 模板无 {% generation %} 标记，
+        # assistant_only_loss 不可用；prompt-completion 是 trl 原生等价方案）。
+        # trl 会在 completion 末尾自动追加 eos（Qwen2.5 即 <|im_end|>）。
+        completion_only_loss=True,
         report_to=[],  # 面试作品集：默认不接 wandb/mlflow，需要时自行打开
         seed=args.seed,
     )

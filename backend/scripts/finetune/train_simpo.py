@@ -91,10 +91,25 @@ def main(argv: list[str] | None = None) -> int:
 
     import torch
     from peft import LoraConfig, PeftModel
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from transformers import AutoModelForCausalLM, AutoTokenizer, TrainerCallback
     from trl import DPOConfig, DPOTrainer
     from trl.trainer.utils import selective_log_softmax
     import torch.nn.functional as F
+
+    # ---- MPS 缓存清理回调：防止 Metal buffer 碎片化累积导致 swap 增长 ----
+    # PyTorch MPS 后端的 Metal buffer 不像 CUDA 积极回收临时张量内存。DPO/SimPO
+    # 每步产生 ~4.7GB 临时 logits（2×768×152064词表×2字节），Python 侧释放后
+    # GPU 侧仍缓存。18 步内可接受，42+ 步时碎片化导致系统用 swap 兜底→恶性循环。
+    # 每 5 步调 torch.mps.empty_cache() 强制回收，阻断碎片化累积。
+    class MPSCacheCleanupCallback(TrainerCallback):
+        """每隔 N 步清空 MPS Metal 缓存，防止碎片化累积。"""
+
+        def __init__(self, every_n_steps: int = 5):
+            self.every_n_steps = every_n_steps
+
+        def on_step_end(self, args, state, control, **kwargs):
+            if state.global_step % self.every_n_steps == 0:
+                torch.mps.empty_cache()
 
     # ---- SimPOTrainer：继承 DPOTrainer，重写 _compute_loss 实现 SimPO ----
     class SimPOTrainer(DPOTrainer):
@@ -225,6 +240,11 @@ def main(argv: list[str] | None = None) -> int:
     # ---- SimPOTrainer：ref_model=None，不传 ref（SimPO 无 ref）----
     # 注：DPOTrainer peft 模式 ref_model=None 时会用 disable_adapter 做 ref，
     # 但我们重写了 _compute_loss 跳过 ref 前向，所以 ref 逻辑不触发——真正省一份显存。
+    mps_callbacks = []
+    if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+        mps_callbacks.append(MPSCacheCleanupCallback(every_n_steps=5))
+        logger.info("已添加 MPS 缓存清理回调（每 5 步 torch.mps.empty_cache()）")
+
     trainer = SimPOTrainer(
         model=model,
         ref_model=None,  # SimPO 无 ref（_compute_loss 重写跳过 ref 前向）
@@ -234,6 +254,7 @@ def main(argv: list[str] | None = None) -> int:
         processing_class=tokenizer,
         peft_config=peft_config,
         simpo_gamma=args.simpo_gamma,
+        callbacks=mps_callbacks,
     )
 
     repro_info = {

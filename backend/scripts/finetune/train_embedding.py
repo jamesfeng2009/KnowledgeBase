@@ -32,6 +32,9 @@ from typing import Any, Iterator
 
 logger = logging.getLogger("train_embedding")
 
+# 分组切分工具（评审 #2：同一基问题的 query 变体不得跨 train/eval）
+from finetune_utils import grouped_split_indices, question_group_key
+
 
 def iter_jsonl(path: str | Path) -> Iterator[tuple[int, dict]]:
     """逐行读取 JSONL，跳过坏行（JSON 解析失败 / 非对象行）。Yields (行号, dict)。"""
@@ -154,12 +157,14 @@ def main(argv: list[str] | None = None) -> int:
     model.max_seq_length = args.max_len
 
     # ---- 数据拆分：train / eval（eval 不参与训练，独立评测泛化能力）----
-    rng = random.Random(args.seed)
-    indices = list(range(len(records)))
-    rng.shuffle(indices)
+    # 评审 #2：按基问题分组切分 —— 生成侧每基问题产 8-10 个 query 变体，
+    # 行级随机切分会让变体同时落入 train/eval，Recall 虚高。
+    keys = [question_group_key(r["query"]) for r in records]
     eval_size = max(1, min(args.eval_samples, int(len(records) * args.eval_ratio)))
-    eval_records = [records[i] for i in indices[:eval_size]]
-    train_records = [records[i] for i in indices[eval_size:]]
+    train_idx, eval_idx = grouped_split_indices(keys, test_size=eval_size, seed=args.seed)
+    eval_records = [records[i] for i in eval_idx]
+    train_records = [records[i] for i in train_idx]
+    rng = random.Random(args.seed)
 
     # ---- 干扰文档：从全部 pos + neg 中抽取非 eval 的 pos（模拟真实检索的干扰项）----
     # neg 也是文档片段，加入干扰池更贴近真实检索场景，拉低基线 Recall 留出提升空间

@@ -56,45 +56,27 @@ from typing import Any, Iterator
 
 logger = logging.getLogger("train_grpo")
 
+# 边界/拒答/引导/企业系统词表与分组切分统一收敛到 finetune_utils（评审 #1/#9/#2）：
+# - BOUNDARY_KEYWORDS 为强信号 v2 版，剔除"怎么办/怎么做/出差/预订/劳动"等泛词
+#   （旧版实测 36% 工作问题被误判为边界，实质回答反被 -1 惩罚）
+# - REFUSAL_KEYWORDS 与 eval_boundary_refusal 严格对齐（剔除"欢迎随时提问"等弱信号）
+from finetune_utils import (
+    BOUNDARY_KEYWORDS,
+    ENTERPRISE_SYSTEMS,
+    GUIDANCE_SIGNALS,
+    REFUSAL_KEYWORDS,
+    SUBSTANTIVE_MIN_LEN,
+    extract_question_text,
+    grouped_split_indices,
+    last_user_content,
+    question_group_key,
+)
+
 #: LoRA 注入目标模块（与 train_lora.py / train_dpo.py 保持一致）
 DEFAULT_TARGET_MODULES = [
     "q_proj", "k_proj", "v_proj", "o_proj",
     "gate_proj", "up_proj", "down_proj",
 ]
-
-#: 边界问题触发词（对齐 generate_dpo_data.py 的 16 类 _BOUNDARY_CASES_EXPANDED）
-#: 命中任一即判定为边界问题，reward 期望拒答
-BOUNDARY_KEYWORDS: tuple[str, ...] = (
-    "写诗", "写一首", "股票", "行情", "机票", "预订", "出差",
-    "天气", "翻译", "写代码", "写一段代码", "餐厅", "好吃",
-    "八字", "命理", "算命", "星座", "头痛", "生病", "怎么办",
-    "裁员", "告", "劳动", "论文", "学术", "抑郁", "心情",
-    "原神", "游戏", "比价", "值得买", "红烧肉", "菜谱", "怎么做",
-)
-
-#: 拒答信号词（纯"不回答"语义，不含引导）。命中即视为拒答
-REFUSAL_SIGNALS: tuple[str, ...] = (
-    "不在服务范围", "不在我的服务", "不在知识库", "不提供",
-    "无法提供", "无法查询", "无法访问",
-    "我是企业知识库助手", "欢迎提问", "欢迎随时提问",
-)
-
-#: 引导信号词（拒答后给出替代方案/联系入口）。拒答+引导 > 干拒答
-GUIDANCE_SIGNALS: tuple[str, ...] = (
-    "建议您使用", "建议使用", "建议咨询", "请咨询",
-    "请联系", "可联系", "请使用", "可拨打", "拨打",
-)
-
-#: 企业系统入口关键词（工作问题回答含这些=更高质量，对齐 generate_dpo_data 的企业系统名）
-ENTERPRISE_SYSTEMS: tuple[str, ...] = (
-    "example.com", "企业邮箱", "企业统一身份", "IT 服务管理", "IT服务管理",
-    "差旅平台", "内网软件", "考勤系统", "费用报销", "报销系统",
-    "文件服务器", "OA 系统", "OA系统", "IT 服务台", "IT服务台", "HR 部门", "HR部门",
-    "idp", "itsm", "tripmgmt",
-)
-
-#: 冒烟判定"实质回答"的最小长度（字符），低于此视为空话
-SUBSTANTIVE_MIN_LEN = 20
 
 
 def iter_jsonl(path: str | Path) -> Iterator[tuple[int, dict]]:
@@ -150,9 +132,7 @@ def load_grpo_prompts(path: str | Path, limit: int | None = None) -> list[list[d
 def _extract_user_text(prompt: Any) -> str:
     """从 conversational prompt 提取最后一条 user content（reward 判别用）。"""
     if isinstance(prompt, list):
-        for msg in reversed(prompt):
-            if isinstance(msg, dict) and msg.get("role") == "user":
-                return msg.get("content", "")
+        return last_user_content(prompt)
     return str(prompt)
 
 
@@ -181,10 +161,12 @@ def enterprise_boundary_reward_v1(prompts: list, completions: list, **kwargs) ->
     """
     rewards: list[float] = []
     for prompt, completion in zip(prompts, completions):
-        user_text = _extract_user_text(prompt)
+        # 只取【问题】之后的真实问题做边界匹配：RAG context 含"出差/报销"等企业
+        # 词汇，参与匹配会放大误判（评审 #1）
+        question = extract_question_text(_extract_user_text(prompt))
         comp_text = _completion_text(completion)
-        is_boundary = any(kw in user_text for kw in BOUNDARY_KEYWORDS)
-        has_refusal = any(sig in comp_text for sig in REFUSAL_SIGNALS)
+        is_boundary = any(kw in question for kw in BOUNDARY_KEYWORDS)
+        has_refusal = any(sig in comp_text for sig in REFUSAL_KEYWORDS)
         is_substantive = len(comp_text) >= SUBSTANTIVE_MIN_LEN
 
         if is_boundary:
@@ -208,10 +190,11 @@ def enterprise_boundary_reward(prompts: list, completions: list, **kwargs) -> li
     """
     rewards: list[float] = []
     for prompt, completion in zip(prompts, completions):
-        user_text = _extract_user_text(prompt)
+        # 同 v1：边界匹配只看【问题】文本，不看 RAG context（评审 #1）
+        question = extract_question_text(_extract_user_text(prompt))
         comp_text = _completion_text(completion)
-        is_boundary = any(kw in user_text for kw in BOUNDARY_KEYWORDS)
-        has_refusal = any(sig in comp_text for sig in REFUSAL_SIGNALS)
+        is_boundary = any(kw in question for kw in BOUNDARY_KEYWORDS)
+        has_refusal = any(sig in comp_text for sig in REFUSAL_KEYWORDS)
         has_guidance = any(sig in comp_text for sig in GUIDANCE_SIGNALS)
         has_enterprise = any(s in comp_text for s in ENTERPRISE_SYSTEMS)
         is_substantive = len(comp_text) >= SUBSTANTIVE_MIN_LEN
@@ -323,14 +306,18 @@ def build_hf_dataset(prompts: list[list[dict]], eval_ratio: float, seed: int):
     """prompts -> DatasetDict(train/test)，列名 ``prompt``（conversational）。
 
     trl GRPOTrainer 要求 dataset 含 "prompt" 列。重依赖 datasets 延迟导入。
+    切分按基问题分组（评审 #2）：同一问题的同义变体整体进同一侧，
+    防止行级随机切分导致变体跨 train/eval 泄漏、eval 指标虚高。
     """
-    from datasets import Dataset
+    from datasets import Dataset, DatasetDict
 
     ds = Dataset.from_list([{"prompt": p} for p in prompts])
     if len(ds) < 2:
         raise ValueError(f"样本过少（{len(ds)} 条），无法划分训练/验证集")
+    keys = [question_group_key(last_user_content(p)) for p in prompts]
     test_size = max(1, round(len(ds) * eval_ratio))
-    return ds.train_test_split(test_size=test_size, seed=seed)
+    train_idx, test_idx = grouped_split_indices(keys, test_size=test_size, seed=seed)
+    return DatasetDict({"train": ds.select(train_idx), "test": ds.select(test_idx)})
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -374,6 +361,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--grad_accum", type=int, default=1, help="梯度累积步数")
     parser.add_argument("--limit", type=int, default=None, help="冒烟：只取前 N 条 prompt")
     parser.add_argument("--eval_ratio", type=float, default=0.1, help="验证集比例")
+    parser.add_argument("--eval_steps", type=int, default=10,
+                        help="每隔 N 步在验证集上评估一次（reward 均值趋势，评审 #11 修复前 eval 从不生效）")
     parser.add_argument("--seed", type=int, default=42, help="随机种子")
     parser.add_argument("--no_gradient_checkpointing", action="store_true",
                         help="关闭梯度检查点（1.5B 可关提速；见微调.md 附录D）")
@@ -495,7 +484,11 @@ def main(argv: list[str] | None = None) -> int:
         bf16=use_bf16,
         fp16=(not use_bf16) and torch.cuda.is_available(),
         logging_steps=1,
-        eval_strategy="no",
+        # 评审 #11：此前 eval_strategy="no" 导致传入的 eval_dataset 从不被使用，
+        # 训练过程看不到 reward 在留出集上的趋势。改为按步评估。
+        eval_strategy="steps",
+        eval_steps=args.eval_steps,
+        per_device_eval_batch_size=args.generation_batch_size,
         save_strategy="no",
         report_to=[],
         seed=args.seed,
