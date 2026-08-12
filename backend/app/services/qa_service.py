@@ -20,6 +20,9 @@ from app.models.user import User
 from app.repositories.qa_repository import QaAnswerRepository, QaQuestionRepository
 from app.utils.pagination import PageResult, PaginationParams, paginate
 from app.utils.tenant import apply_tenant_filter
+from app.utils.logger import get_logger
+
+log = get_logger(__name__)
 
 
 class QaService:
@@ -205,6 +208,26 @@ class QaService:
 
         # 更新问题状态
         await self.question_repo.update(answer.question_id, status="answered")
+
+        # P0: 采纳答案 → 知识库 FAQ 回流触发（无 LLM 快路径）
+        # Celery 不可用时优雅降级（仅日志，不阻断采纳操作）。
+        try:
+            from tasks.compounding_tasks import (
+                trigger_accepted_answer_compounding,
+            )
+
+            trigger_accepted_answer_compounding.delay(
+                str(answer_id),
+                str(self._tenant_id) if self._tenant_id else None,
+            )
+            log.info("qa.compounding_triggered", answer_id=str(answer_id))
+        except Exception as exc:
+            log.warning(
+                "qa.compounding_trigger_failed",
+                answer_id=str(answer_id),
+                error=str(exc)[:200],
+            )
+
         return accepted
 
     async def list_answers(self, question_id: UUID) -> list[QaAnswer]:

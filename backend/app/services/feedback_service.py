@@ -98,6 +98,30 @@ class FeedbackService:
             type=type,
             doc_id=str(doc_id) if doc_id else None,
         )
+
+        # P0: 好评反馈 → 知识库 FAQ 回流触发
+        # 仅 praise 且关联了 message 时触发；Celery 不可用时优雅降级（仅日志，不阻断反馈创建）。
+        if feedback.type == "praise" and feedback.related_message_id is not None:
+            try:
+                from tasks.compounding_tasks import (
+                    trigger_chat_feedback_compounding,
+                )
+
+                trigger_chat_feedback_compounding.delay(
+                    str(feedback.id),
+                    str(self._tenant_id) if self._tenant_id else None,
+                )
+                log.info(
+                    "feedback.compounding_triggered",
+                    feedback_id=str(feedback.id),
+                )
+            except Exception as exc:
+                log.warning(
+                    "feedback.compounding_trigger_failed",
+                    feedback_id=str(feedback.id),
+                    error=str(exc)[:200],
+                )
+
         return feedback
 
     async def _resolve_doc_id_from_message(

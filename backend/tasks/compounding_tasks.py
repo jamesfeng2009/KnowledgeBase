@@ -172,6 +172,149 @@ async def _inject_for_reuse(
             }
 
 
+async def _trigger_chat_feedback_compounding(
+    feedback_id: str,
+    tenant_id: str | None = None,
+) -> dict:
+    """异步触发好评反馈 → FAQ 回流。
+
+    从配置读取 FAQ_KB_ID，调用 KnowledgeCompoundingService.extract_from_chat_feedback。
+    总开关关闭或 FAQ_KB_ID 未配置时跳过并告警。
+    """
+    from app.config import get_settings
+    from app.database import task_db_session
+    from app.llm.factory import get_llm_provider
+    from app.services.knowledge_compounding import KnowledgeCompoundingService
+
+    settings = get_settings()
+    if not settings.CHAT_FAQ_COMPOUNDING_ENABLED:
+        logger.info(
+            "compounding.chat_feedback_disabled",
+            feedback_id=feedback_id,
+        )
+        return {"feedback_id": feedback_id, "status": "skipped", "reason": "disabled"}
+
+    if not settings.FAQ_KB_ID:
+        logger.warning(
+            "compounding.faq_kb_id_not_configured",
+            feedback_id=feedback_id,
+        )
+        return {
+            "feedback_id": feedback_id,
+            "status": "skipped",
+            "reason": "faq_kb_id_not_configured",
+        }
+
+    tid = uuid.UUID(tenant_id) if tenant_id else None
+    feedback_uuid = uuid.UUID(feedback_id)
+    kb_uuid = uuid.UUID(settings.FAQ_KB_ID)
+
+    async with task_db_session() as db:
+        try:
+            llm = get_llm_provider()
+        except Exception as exc:
+            logger.warning("compounding.llm_unavailable", error=str(exc))
+            llm = None
+
+        service = KnowledgeCompoundingService(llm, db, tenant_id=tid)
+        try:
+            result = await service.extract_from_chat_feedback(
+                feedback_id=feedback_uuid,
+                target_kb_id=kb_uuid,
+            )
+            await db.commit()
+            logger.info(
+                "compounding.chat_feedback_task_done",
+                feedback_id=feedback_id,
+                status=result.get("status"),
+            )
+            return result
+        except Exception as exc:
+            await db.rollback()
+            logger.error(
+                "compounding.chat_feedback_task_failed",
+                feedback_id=feedback_id,
+                error=str(exc),
+            )
+            return {
+                "feedback_id": feedback_id,
+                "status": "failed",
+                "error": str(exc),
+            }
+
+
+async def _trigger_accepted_answer_compounding(
+    answer_id: str,
+    tenant_id: str | None = None,
+) -> dict:
+    """异步触发采纳答案 → FAQ 回流（无 LLM 快路径）。
+
+    从配置读取 FAQ_KB_ID，调用 KnowledgeCompoundingService.extract_from_accepted_answer。
+    总开关关闭或 FAQ_KB_ID 未配置时跳过并告警。
+    """
+    from app.config import get_settings
+    from app.database import task_db_session
+    from app.llm.factory import get_llm_provider
+    from app.services.knowledge_compounding import KnowledgeCompoundingService
+
+    settings = get_settings()
+    if not settings.CHAT_FAQ_COMPOUNDING_ENABLED:
+        logger.info(
+            "compounding.qa_accepted_disabled",
+            answer_id=answer_id,
+        )
+        return {"answer_id": answer_id, "status": "skipped", "reason": "disabled"}
+
+    if not settings.FAQ_KB_ID:
+        logger.warning(
+            "compounding.faq_kb_id_not_configured",
+            answer_id=answer_id,
+        )
+        return {
+            "answer_id": answer_id,
+            "status": "skipped",
+            "reason": "faq_kb_id_not_configured",
+        }
+
+    tid = uuid.UUID(tenant_id) if tenant_id else None
+    answer_uuid = uuid.UUID(answer_id)
+    kb_uuid = uuid.UUID(settings.FAQ_KB_ID)
+
+    async with task_db_session() as db:
+        # 采纳答案路径无 LLM，但保持 llm 传入以复用服务初始化（冲突检测可能用 LLM）
+        try:
+            llm = get_llm_provider()
+        except Exception as exc:
+            logger.warning("compounding.llm_unavailable", error=str(exc))
+            llm = None
+
+        service = KnowledgeCompoundingService(llm, db, tenant_id=tid)
+        try:
+            result = await service.extract_from_accepted_answer(
+                answer_id=answer_uuid,
+                target_kb_id=kb_uuid,
+            )
+            await db.commit()
+            logger.info(
+                "compounding.qa_accepted_task_done",
+                answer_id=answer_id,
+                status=result.get("status"),
+            )
+            return result
+        except Exception as exc:
+            await db.rollback()
+            logger.error(
+                "compounding.qa_accepted_task_failed",
+                answer_id=answer_id,
+                error=str(exc),
+            )
+            return {
+                "answer_id": answer_id,
+                "status": "failed",
+                "error": str(exc),
+            }
+
+
 # ======================================================================
 # Celery 任务定义 — 延迟导入 celery_app 避免循环依赖
 # ======================================================================
@@ -299,6 +442,96 @@ try:
             )
             return {
                 "requirement_id": requirement_id,
+                "status": "failed",
+                "error": str(exc),
+            }
+
+    @celery_app.task(name="tasks.compounding_tasks.trigger_chat_feedback_compounding")
+    def trigger_chat_feedback_compounding(
+        feedback_id: str,
+        tenant_id: str | None = None,
+    ) -> dict:
+        """异步从好评反馈提取 FAQ 资产并沉淀到知识库。
+
+        好评反馈（Feedback.type=praise + related_message_id）→ LLM 提取 Q-A
+        → KnowledgeAsset(chat_faq) + Document(FAQ) → 冲突检测。
+
+        幂等：(source_type=chat_feedback, source_id=feedback_id) 已存在则跳过。
+
+        Args:
+            feedback_id: 好评反馈 ID（UUID 字符串）。
+            tenant_id: 租户 ID（UUID 字符串），用于多租户数据隔离。
+
+        Returns:
+            处理结果摘要，含 status / asset_id / doc_id / conflicts。
+        """
+        logger.info(
+            "compounding.chat_feedback_task_started",
+            feedback_id=feedback_id,
+        )
+        try:
+            result = _run_async(
+                _trigger_chat_feedback_compounding(feedback_id, tenant_id)
+            )
+            logger.info(
+                "compounding.chat_feedback_task_completed",
+                feedback_id=feedback_id,
+                status=result.get("status"),
+            )
+            return result
+        except Exception as exc:
+            logger.error(
+                "compounding.chat_feedback_task_exception",
+                feedback_id=feedback_id,
+                error=str(exc),
+            )
+            return {
+                "feedback_id": feedback_id,
+                "status": "failed",
+                "error": str(exc),
+            }
+
+    @celery_app.task(name="tasks.compounding_tasks.trigger_accepted_answer_compounding")
+    def trigger_accepted_answer_compounding(
+        answer_id: str,
+        tenant_id: str | None = None,
+    ) -> dict:
+        """异步从被采纳的回答提取 FAQ 资产并沉淀到知识库（无 LLM 快路径）。
+
+        QaQuestion.title → Q，QaAnswer.content → A，直接沉淀为 FAQ 文档。
+        毫秒级完成，无 LLM 调用。
+
+        幂等：(source_type=qa_accepted, source_id=answer_id) 已存在则跳过。
+
+        Args:
+            answer_id: 被采纳的回答 ID（UUID 字符串）。
+            tenant_id: 租户 ID（UUID 字符串），用于多租户数据隔离。
+
+        Returns:
+            处理结果摘要，含 status / asset_id / doc_id / conflicts。
+        """
+        logger.info(
+            "compounding.qa_accepted_task_started",
+            answer_id=answer_id,
+        )
+        try:
+            result = _run_async(
+                _trigger_accepted_answer_compounding(answer_id, tenant_id)
+            )
+            logger.info(
+                "compounding.qa_accepted_task_completed",
+                answer_id=answer_id,
+                status=result.get("status"),
+            )
+            return result
+        except Exception as exc:
+            logger.error(
+                "compounding.qa_accepted_task_exception",
+                answer_id=answer_id,
+                error=str(exc),
+            )
+            return {
+                "answer_id": answer_id,
                 "status": "failed",
                 "error": str(exc),
             }

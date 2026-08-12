@@ -1411,3 +1411,616 @@ class KnowledgeCompoundingService:
             "resolution_note": conflict.resolution_note,
             "created_at": conflict.created_at.isoformat() if conflict.created_at else None,
         }
+
+    # ==================================================================
+    # P0: 聊天问答 → 知识库 FAQ 回流
+    #
+    # 扩展触发源：除 TestExecution 外，新增「好评反馈」与「采纳答案」两个入口。
+    # 复用现有 5 步框架（资产沉淀 + 冲突检测），沉淀目标为 KB FAQ Document。
+    #
+    # 两条路径：
+    #   1. extract_from_chat_feedback  — LLM 路径，从对话中提炼 Q-A
+    #   2. extract_from_accepted_answer — 无 LLM 快路径，title+content 直接入库
+    #
+    # 幂等：通过 (source_type, source_id) 唯一性保证，同一反馈/回答不重复沉淀。
+    # ==================================================================
+
+    async def extract_from_chat_feedback(
+        self,
+        feedback_id: uuid.UUID,
+        target_kb_id: uuid.UUID,
+    ) -> dict[str, Any]:
+        """从好评反馈提取 FAQ 资产（LLM 路径）。
+
+        流程：
+            1. 加载 Feedback(praise) + 关联 Message(assistant) + 同会话前一条 user 消息
+            2. LLM 从对话中提取结构化 Q-A（多轮时取独立化后的 Q，P1 接入 rewriter）
+            3. 沉淀为 KnowledgeAsset(asset_type=chat_faq, source_type=chat_feedback) + Document
+            4. 冲突检测（复用 _detect_conflicts_for_assets）
+
+        幂等保护：(source_type=chat_feedback, source_id=feedback_id) 已存在则跳过。
+
+        Args:
+            feedback_id: 好评反馈 ID。
+            target_kb_id: 目标 FAQ 知识库 ID。
+
+        Returns:
+            提取结果摘要，含 task_id / asset_count / status。
+        """
+        from app.models.feedback import Feedback
+
+        # 幂等检查
+        existing = await self._get_asset_by_source(
+            source_type="chat_feedback", source_id=feedback_id
+        )
+        if existing is not None:
+            log.info(
+                "compounding.chat_feedback_skipped",
+                feedback_id=str(feedback_id),
+                reason="already_processed",
+                asset_id=str(existing.id),
+            )
+            return {
+                "feedback_id": str(feedback_id),
+                "status": "skipped",
+                "reason": "already_processed",
+                "asset_id": str(existing.id),
+            }
+
+        # 加载反馈上下文
+        context = await self._load_chat_feedback_context(feedback_id)
+        if context is None:
+            return {
+                "feedback_id": str(feedback_id),
+                "status": "skipped",
+                "reason": "feedback_not_praise_or_no_message",
+            }
+
+        # 创建回流任务
+        task = CompoundingTask(
+            task_type="extraction",
+            status="running",
+            trigger_source="chat_feedback",
+            started_at=datetime.utcnow(),
+        )
+        self.db.add(task)
+        await self.db.flush()
+
+        try:
+            # LLM 提取 Q-A
+            extracted = await self._llm_extract_faq(context)
+            question = (extracted.get("question") or "").strip()
+            answer = (extracted.get("answer") or "").strip()
+
+            if not question or not answer:
+                task.status = "skipped"
+                task.completed_at = datetime.utcnow()
+                task.error_message = "llm_extracted_empty_qa"
+                await self.db.flush()
+                log.info(
+                    "compounding.chat_feedback_empty_qa",
+                    feedback_id=str(feedback_id),
+                )
+                return {
+                    "feedback_id": str(feedback_id),
+                    "task_id": str(task.id),
+                    "status": "skipped",
+                    "reason": "empty_qa",
+                }
+
+            # 沉淀为 KnowledgeAsset + Document
+            asset = await self._precipitate_faq_asset(
+                question=question,
+                answer=answer,
+                source_type="chat_feedback",
+                source_id=feedback_id,
+                owner_id=context["user_id"],
+                target_kb_id=target_kb_id,
+                task_id=task.id,
+                tags=extracted.get("tags", []),
+                confidence=extracted.get("confidence", 0.8),
+            )
+
+            # 冲突检测
+            conflicts = await self._detect_conflicts_for_assets([asset])
+
+            task.extracted_asset_ids = [str(asset.id)]
+            task.conflicts_detected = len(conflicts)
+            task.status = "completed"
+            task.completed_at = datetime.utcnow()
+            await self.db.flush()
+
+            log.info(
+                "compounding.chat_feedback_extracted",
+                feedback_id=str(feedback_id),
+                task_id=str(task.id),
+                asset_id=str(asset.id),
+                conflicts=len(conflicts),
+            )
+            return {
+                "feedback_id": str(feedback_id),
+                "task_id": str(task.id),
+                "status": "success",
+                "asset_id": str(asset.id),
+                "doc_id": str(asset.doc_id) if asset.doc_id else None,
+                "conflicts": len(conflicts),
+            }
+        except Exception as exc:
+            task.status = "failed"
+            task.error_message = str(exc)
+            task.completed_at = datetime.utcnow()
+            await self.db.flush()
+            log.error(
+                "compounding.chat_feedback_failed",
+                feedback_id=str(feedback_id),
+                error=str(exc),
+            )
+            return {
+                "feedback_id": str(feedback_id),
+                "task_id": str(task.id),
+                "status": "failed",
+                "error": str(exc),
+            }
+
+    async def extract_from_accepted_answer(
+        self,
+        answer_id: uuid.UUID,
+        target_kb_id: uuid.UUID,
+    ) -> dict[str, Any]:
+        """从被采纳的 QaAnswer 提取 FAQ 资产（无 LLM 快路径）。
+
+        QaQuestion.title → Q，QaAnswer.content → A，直接沉淀。
+        采纳答案已是结构化 Q-A，无需 LLM 提炼，毫秒级完成。
+
+        幂等保护：(source_type=qa_accepted, source_id=answer_id) 已存在则跳过。
+
+        Args:
+            answer_id: 被采纳的回答 ID。
+            target_kb_id: 目标 FAQ 知识库 ID。
+
+        Returns:
+            提取结果摘要，含 task_id / asset_count / status。
+        """
+        # 幂等检查
+        existing = await self._get_asset_by_source(
+            source_type="qa_accepted", source_id=answer_id
+        )
+        if existing is not None:
+            log.info(
+                "compounding.qa_accepted_skipped",
+                answer_id=str(answer_id),
+                reason="already_processed",
+                asset_id=str(existing.id),
+            )
+            return {
+                "answer_id": str(answer_id),
+                "status": "skipped",
+                "reason": "already_processed",
+                "asset_id": str(existing.id),
+            }
+
+        # 加载采纳答案上下文
+        context = await self._load_accepted_answer_context(answer_id)
+        if context is None:
+            return {
+                "answer_id": str(answer_id),
+                "status": "skipped",
+                "reason": "answer_not_accepted_or_not_found",
+            }
+
+        # 创建回流任务
+        task = CompoundingTask(
+            task_type="extraction",
+            status="running",
+            trigger_source="qa_accepted",
+            started_at=datetime.utcnow(),
+        )
+        self.db.add(task)
+        await self.db.flush()
+
+        try:
+            # 直接使用 title + content，无 LLM
+            question = context["question_title"]
+            answer = context["answer_content"]
+
+            # 沉淀为 KnowledgeAsset + Document
+            asset = await self._precipitate_faq_asset(
+                question=question,
+                answer=answer,
+                source_type="qa_accepted",
+                source_id=answer_id,
+                owner_id=context["user_id"],
+                target_kb_id=target_kb_id,
+                task_id=task.id,
+                tags=context.get("tags", []),
+                confidence=0.9,  # 采纳答案置信度高于 LLM 提取
+            )
+
+            # 冲突检测
+            conflicts = await self._detect_conflicts_for_assets([asset])
+
+            task.extracted_asset_ids = [str(asset.id)]
+            task.conflicts_detected = len(conflicts)
+            task.status = "completed"
+            task.completed_at = datetime.utcnow()
+            await self.db.flush()
+
+            log.info(
+                "compounding.qa_accepted_extracted",
+                answer_id=str(answer_id),
+                task_id=str(task.id),
+                asset_id=str(asset.id),
+                conflicts=len(conflicts),
+            )
+            return {
+                "answer_id": str(answer_id),
+                "task_id": str(task.id),
+                "status": "success",
+                "asset_id": str(asset.id),
+                "doc_id": str(asset.doc_id) if asset.doc_id else None,
+                "conflicts": len(conflicts),
+            }
+        except Exception as exc:
+            task.status = "failed"
+            task.error_message = str(exc)
+            task.completed_at = datetime.utcnow()
+            await self.db.flush()
+            log.error(
+                "compounding.qa_accepted_failed",
+                answer_id=str(answer_id),
+                error=str(exc),
+            )
+            return {
+                "answer_id": str(answer_id),
+                "task_id": str(task.id),
+                "status": "failed",
+                "error": str(exc),
+            }
+
+    # ------------------------------------------------------------------
+    # P0 内部：上下文加载
+    # ------------------------------------------------------------------
+
+    async def _load_chat_feedback_context(
+        self,
+        feedback_id: uuid.UUID,
+    ) -> dict[str, Any] | None:
+        """加载好评反馈的完整上下文。
+
+        加载 Feedback + 关联的 assistant Message + 同会话内前一条 user 消息。
+        校验反馈类型为 praise 且关联了 message，否则返回 None（不触发回流）。
+
+        Returns:
+            上下文字典 {feedback, assistant_msg, user_msg, user_id, conversation_id}，
+            或 None（不满足回流条件）。
+        """
+        from app.models.conversation import Message
+        from app.models.feedback import Feedback
+
+        stmt = select(Feedback).where(Feedback.id == feedback_id)
+        stmt = apply_tenant_filter(stmt, Feedback, self._tenant_id)
+        feedback = (await self.db.execute(stmt)).scalar_one_or_none()
+        if feedback is None:
+            return None
+
+        # 仅 praise 类型触发回流（与 CHAT_FAQ_MIN_PRAISE_RATING 默认 4 一致）
+        if feedback.type != "praise":
+            return None
+        if feedback.related_message_id is None:
+            return None
+
+        # 加载关联的 assistant 消息
+        msg_stmt = select(Message).where(Message.id == feedback.related_message_id)
+        msg_stmt = apply_tenant_filter(msg_stmt, Message, self._tenant_id)
+        assistant_msg = (await self.db.execute(msg_stmt)).scalar_one_or_none()
+        if assistant_msg is None or assistant_msg.role != "assistant":
+            return None
+
+        # 加载同会话内时间早于该 assistant 消息的最后一条 user 消息
+        # （与 dataset_builder 的 SFT 配对策略一致）
+        user_stmt = (
+            select(Message)
+            .where(
+                Message.conversation_id == assistant_msg.conversation_id,
+                Message.role == "user",
+                Message.created_at <= assistant_msg.created_at,
+            )
+            .order_by(Message.created_at.desc())
+            .limit(1)
+        )
+        user_stmt = apply_tenant_filter(user_stmt, Message, self._tenant_id)
+        user_msg = (await self.db.execute(user_stmt)).scalar_one_or_none()
+        if user_msg is None:
+            return None
+
+        return {
+            "feedback_id": str(feedback.id),
+            "user_id": feedback.user_id,
+            "conversation_id": str(assistant_msg.conversation_id),
+            "user_query": user_msg.content,
+            "assistant_answer": assistant_msg.content,
+            "feedback_content": feedback.content,
+        }
+
+    async def _load_accepted_answer_context(
+        self,
+        answer_id: uuid.UUID,
+    ) -> dict[str, Any] | None:
+        """加载被采纳回答的上下文。
+
+        加载 QaAnswer(is_accepted=True) + 关联的 QaQuestion。
+        校验回答已被采纳，否则返回 None。
+
+        Returns:
+            上下文字典 {question_title, answer_content, user_id, tags}，
+            或 None（不满足回流条件）。
+        """
+        from app.models.qa import QaAnswer, QaQuestion
+
+        stmt = select(QaAnswer).where(QaAnswer.id == answer_id)
+        stmt = apply_tenant_filter(stmt, QaAnswer, self._tenant_id)
+        answer = (await self.db.execute(stmt)).scalar_one_or_none()
+        if answer is None or not answer.is_accepted:
+            return None
+
+        q_stmt = select(QaQuestion).where(QaQuestion.id == answer.question_id)
+        q_stmt = apply_tenant_filter(q_stmt, QaQuestion, self._tenant_id)
+        question = (await self.db.execute(q_stmt)).scalar_one_or_none()
+        if question is None:
+            return None
+
+        # 标签：问答帖标签 + 是否 AI 生成标记
+        tags: list[str] = []
+        if question.tags:
+            tags.extend([t.strip() for t in question.tags.split(",") if t.strip()])
+        tags.append("ai_generated" if answer.is_ai_generated else "human")
+
+        return {
+            "question_id": str(question.id),
+            "question_title": question.title,
+            "answer_content": answer.content,
+            "user_id": answer.user_id,
+            "tags": tags,
+        }
+
+    # ------------------------------------------------------------------
+    # P0 内部：LLM 提取 Q-A
+    # ------------------------------------------------------------------
+
+    async def _llm_extract_faq(
+        self,
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        """调用 LLM 从好评对话中提取结构化 Q-A。
+
+        LLM 不可用时降级为直接使用原始 user_query + assistant_answer。
+
+        Returns:
+            {question, answer, tags, confidence}
+        """
+        user_query = context.get("user_query", "")
+        assistant_answer = context.get("assistant_answer", "")
+
+        # 降级：LLM 不可用时直接用原始 Q-A
+        if self.llm is None:
+            log.warning("compounding.faq_llm_unavailable_use_raw")
+            return {
+                "question": user_query,
+                "answer": assistant_answer,
+                "tags": [],
+                "confidence": 0.6,  # 降级置信度较低
+            }
+
+        prompt = self._build_faq_extraction_prompt(
+            user_query=user_query,
+            assistant_answer=assistant_answer,
+            feedback_content=context.get("feedback_content", ""),
+        )
+        messages = [Message(role="system", content=prompt)]
+
+        try:
+            response = await self._llm_generate(messages, max_tokens=1500)
+            extracted = _extract_json(response)
+            if isinstance(extracted, dict):
+                return {
+                    "question": extracted.get("question") or user_query,
+                    "answer": extracted.get("answer") or assistant_answer,
+                    "tags": extracted.get("tags") or [],
+                    "confidence": float(extracted.get("confidence", 0.8)),
+                }
+        except Exception as exc:
+            log.warning("compounding.faq_llm_extract_error", error=str(exc))
+
+        # JSON 解析失败 → 降级用原始 Q-A
+        return {
+            "question": user_query,
+            "answer": assistant_answer,
+            "tags": [],
+            "confidence": 0.6,
+        }
+
+    @staticmethod
+    def _build_faq_extraction_prompt(
+        user_query: str,
+        assistant_answer: str,
+        feedback_content: str,
+    ) -> str:
+        """构建 FAQ 提取的系统提示词。"""
+        return (
+            "你是企业知识库 FAQ 提取引擎。从一段被用户好评的对话中，"
+            "提取自包含、可独立检索的标准 Q-A 对，沉淀为企业知识库 FAQ 文档。\n\n"
+            "要求：\n"
+            "1. question 必须自包含 — 脱离对话上下文仍可理解（指代词具化，"
+            '如"它"→具体实体）；\n'
+            '2. answer 必须自包含 — 直接可用，不依赖"上述""如前所述"等指代；\n'
+            "3. 剔除寒暄/口语填充/重复解释，保留数字/约束/具体值；\n"
+            "4. confidence 评估 Q-A 质量（0.0~1.0），低质对话给低分；\n"
+            "5. tags 提取 1~3 个主题标签（如 报销/差旅/政策）。\n\n"
+            "以 JSON 返回：\n"
+            '{"question": "...", "answer": "...", "tags": ["..."], "confidence": 0.8}\n\n'
+            f"用户提问：{user_query[:500]}\n\n"
+            f"助手回答：{assistant_answer[:2000]}\n\n"
+            f"用户好评内容（参考）：{feedback_content[:200]}\n\n"
+            "提取结果（JSON）："
+        )
+
+    # ------------------------------------------------------------------
+    # P0 内部：资产沉淀 + Document 创建
+    # ------------------------------------------------------------------
+
+    async def _precipitate_faq_asset(
+        self,
+        question: str,
+        answer: str,
+        source_type: str,
+        source_id: uuid.UUID,
+        owner_id: uuid.UUID,
+        target_kb_id: uuid.UUID,
+        task_id: uuid.UUID,
+        tags: list[str] | None = None,
+        confidence: float = 0.8,
+    ) -> KnowledgeAsset:
+        """将 Q-A 沉淀为 KnowledgeAsset + KB Document。
+
+        流程：
+            1. 创建 Document（status=published，进入 RAG 检索）
+            2. 创建 KnowledgeAsset（asset_type=chat_faq，关联 doc_id）
+            3. 触发文档索引（process_document.delay）
+
+        Args:
+            question: 独立化后的问题文本。
+            answer: 自包含的回答文本。
+            source_type: chat_feedback / qa_accepted。
+            source_id: Feedback.id 或 QaAnswer.id。
+            owner_id: 文档所有者（反馈/回答的提交者）。
+            target_kb_id: 目标 FAQ 知识库 ID。
+            task_id: 关联的回流任务 ID。
+            tags: 标签列表。
+            confidence: AI 置信度。
+
+        Returns:
+            创建的 KnowledgeAsset 实例（已关联 doc_id）。
+        """
+        from app.config import get_settings
+
+        _settings = get_settings()
+        max_chars = _settings.CHAT_FAQ_MAX_CONTENT_CHARS
+
+        # 截断防超长
+        question = question[:500]
+        answer = answer[:max_chars]
+
+        # 1. 创建 Document — 直接 ORM 构造，绕过 KnowledgeService 的 user 权限校验
+        # （回流是系统行为，owner_id 用反馈/回答提交者，文档直接 published 进 RAG）
+        doc_id = await self._create_faq_document(
+            kb_id=target_kb_id,
+            title=question,
+            content=answer,
+            owner_id=owner_id,
+        )
+
+        # 2. 创建 KnowledgeAsset
+        asset = KnowledgeAsset(
+            asset_type="chat_faq",
+            source_type=source_type,
+            source_id=source_id,
+            title=question,
+            content=answer,
+            summary=answer[:200] if answer else None,
+            tags=tags or [],
+            doc_id=doc_id,
+            confidence_score=confidence,
+            status="active",  # P0 直接 active；P2 审批工作流接入后改为 pending_review
+            compounding_task_id=task_id,
+        )
+        self.db.add(asset)
+        await self.db.flush()
+
+        log.info(
+            "compounding.faq_precipitated",
+            asset_id=str(asset.id),
+            source_type=source_type,
+            doc_id=str(doc_id),
+            title=question[:80],
+        )
+        return asset
+
+    async def _create_faq_document(
+        self,
+        kb_id: uuid.UUID,
+        title: str,
+        content: str,
+        owner_id: uuid.UUID,
+    ) -> uuid.UUID:
+        """创建 FAQ Document 并触发索引。
+
+        直接构造 Document ORM（系统回流行为，绕过 KnowledgeService 的 user 权限校验）。
+        触发 process_document 异步任务重建索引，使新 FAQ 进入 RAG 检索。
+
+        Args:
+            kb_id: 目标知识库 ID。
+            title: 文档标题（独立化后的问题）。
+            content: 文档内容（自包含的回答）。
+            owner_id: 文档所有者 ID。
+
+        Returns:
+            新创建的 Document ID。
+        """
+        from app.models.knowledge import Document
+
+        doc = Document(
+            kb_id=kb_id,
+            title=title,
+            content_text=content,
+            doc_type="md",
+            status="published",  # P0 直接发布进 RAG；P2 改为 pending_review
+            owner_id=owner_id,
+            classification="internal",  # FAQ 默认内部可见，P2 审批时可调整
+            category="FAQ",
+            char_count=len(content),
+            page_count=1,
+        )
+        # 多租户隔离
+        if self._tenant_id is not None:
+            doc.tenant_id = self._tenant_id
+        self.db.add(doc)
+        await self.db.flush()
+
+        doc_id_str = str(doc.id)
+
+        # 触发索引重建（优雅降级 — Celery 不可用时仅日志，不影响沉淀）
+        try:
+            from tasks.document_tasks import process_document
+
+            process_document.delay(doc_id_str)
+            log.info(
+                "compounding.faq_doc_index_triggered",
+                doc_id=doc_id_str,
+                kb_id=str(kb_id),
+            )
+        except Exception as exc:
+            log.warning(
+                "compounding.faq_doc_index_trigger_failed",
+                doc_id=doc_id_str,
+                error=str(exc)[:200],
+            )
+
+        return doc.id
+
+    async def _get_asset_by_source(
+        self,
+        source_type: str,
+        source_id: uuid.UUID,
+    ) -> KnowledgeAsset | None:
+        """按 (source_type, source_id) 查询已有资产 — 幂等检查。
+
+        同一反馈/回答不重复沉淀。含软删除过滤，已废弃资产不阻断重新沉淀。
+        """
+        stmt = select(KnowledgeAsset).where(
+            KnowledgeAsset.source_type == source_type,
+            KnowledgeAsset.source_id == source_id,
+            KnowledgeAsset.deleted_at.is_(None),
+        )
+        stmt = apply_tenant_filter(stmt, KnowledgeAsset, self._tenant_id)
+        result = await self.db.execute(stmt)
+        return result.scalar_one_or_none()

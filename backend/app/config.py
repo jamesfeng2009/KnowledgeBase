@@ -461,6 +461,19 @@ class Settings(BaseSettings):
     INTENT_ROUTER_CONFIDENCE_THRESHOLD: float = 0.7  # LLM 意图置信度阈值
     INTENT_SHORTCUT_ENABLED: bool = True        # 是否启用快捷路径（False=全部走 Agent Loop）
 
+    # === 聊天问答 → 知识库回流（P0）===
+    # 好评反馈 / 采纳答案自动沉淀为 KB FAQ 文档，复用 KnowledgeCompoundingService 5 步框架。
+    # 详见 app/services/knowledge_compounding/compounding_service.py
+    #   extract_from_chat_feedback / extract_from_accepted_answer
+    CHAT_FAQ_COMPOUNDING_ENABLED: bool = True   # 总开关（False=不触发任何回流）
+    # 全局唯一 FAQ 知识库 ID（UUID 字符串）。空字符串表示未配置，回流任务将跳过并告警。
+    FAQ_KB_ID: str = ""
+    # 好评阈值：Feedback.type → 分值映射（praise=5/suggestion=3/complaint=2/bug=1），
+    # 分值 >= 此值才触发回流。默认 4 = 仅 praise 触发（与 dataset_builder FEEDBACK_RATING 口径一致）。
+    CHAT_FAQ_MIN_PRAISE_RATING: int = 4
+    # 单条 FAQ 内容最大字符数（防超长内容撑爆检索窗口）
+    CHAT_FAQ_MAX_CONTENT_CHARS: int = 4000
+
     # === P2 EntityRegistry 企业本体 ===
     ENTITY_REGISTRY_ENABLED: bool = True        # EntityRegistry 总开关
     GRAPH_SEARCH_ENABLED: bool = True           # 图谱召回开关（HybridRetriever 第四路）

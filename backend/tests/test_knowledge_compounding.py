@@ -1085,3 +1085,278 @@ class TestCompoundingAPIRegistration:
         assert any("/conflicts" in p for p in paths), f"conflicts endpoint not found: {paths}"
         assert any("/reuse" in p for p in paths), f"reuse endpoint not found: {paths}"
         assert any("/stats" in p for p in paths), f"stats endpoint not found: {paths}"
+
+
+# ======================================================================
+# P0: 聊天问答 → 知识库 FAQ 回流测试
+# ======================================================================
+
+
+class TestChatFaqCompounding:
+    """P0 聊天问答 → 知识库 FAQ 回流测试。
+
+    覆盖两条路径：
+    - extract_from_chat_feedback（LLM 路径）
+    - extract_from_accepted_answer（无 LLM 快路径）
+
+    核心场景：成功沉淀 / 幂等跳过 / LLM 降级 / 条件不满足跳过。
+    """
+
+    @pytest.mark.asyncio
+    async def test_extract_from_chat_feedback_success(self):
+        """好评反馈成功沉淀为 FAQ 资产（LLM 路径）。"""
+        from app.services.knowledge_compounding import KnowledgeCompoundingService
+
+        db = _make_mock_db()
+        llm = _make_mock_llm()
+        service = KnowledgeCompoundingService(llm, db)
+
+        feedback_id = uuid.uuid4()
+        kb_id = uuid.uuid4()
+        asset_mock = MagicMock(id=uuid.uuid4(), doc_id=uuid.uuid4())
+
+        with patch.object(
+            service, "_get_asset_by_source", new=AsyncMock(return_value=None)
+        ), patch.object(
+            service, "_load_chat_feedback_context",
+            new=AsyncMock(return_value={
+                "feedback_id": str(feedback_id),
+                "user_id": uuid.uuid4(),
+                "conversation_id": str(uuid.uuid4()),
+                "user_query": "公司差旅报销标准？",
+                "assistant_answer": "经济舱按实报销...",
+                "feedback_content": "回答很详细",
+            }),
+        ), patch.object(
+            service, "_llm_extract_faq",
+            new=AsyncMock(return_value={
+                "question": "公司差旅报销标准是什么？",
+                "answer": "经济舱按实报销...",
+                "tags": ["差旅", "报销"],
+                "confidence": 0.85,
+            }),
+        ), patch.object(
+            service, "_precipitate_faq_asset", new=AsyncMock(return_value=asset_mock)
+        ), patch.object(
+            service, "_detect_conflicts_for_assets", new=AsyncMock(return_value=[])
+        ):
+            result = await service.extract_from_chat_feedback(feedback_id, kb_id)
+
+        assert result["status"] == "success"
+        assert result["feedback_id"] == str(feedback_id)
+        assert "asset_id" in result
+        assert result["conflicts"] == 0
+
+    @pytest.mark.asyncio
+    async def test_extract_from_chat_feedback_idempotent(self):
+        """重复反馈跳过（幂等保护）。"""
+        from app.services.knowledge_compounding import KnowledgeCompoundingService
+
+        db = _make_mock_db()
+        service = KnowledgeCompoundingService(_make_mock_llm(), db)
+
+        feedback_id = uuid.uuid4()
+        kb_id = uuid.uuid4()
+        existing_asset = MagicMock(id=uuid.uuid4())
+
+        with patch.object(
+            service, "_get_asset_by_source",
+            new=AsyncMock(return_value=existing_asset),
+        ):
+            result = await service.extract_from_chat_feedback(feedback_id, kb_id)
+
+        assert result["status"] == "skipped"
+        assert result["reason"] == "already_processed"
+
+    @pytest.mark.asyncio
+    async def test_extract_from_chat_feedback_not_praise_skipped(self):
+        """非 praise 类型反馈跳过（_load_chat_feedback_context 返回 None）。"""
+        from app.services.knowledge_compounding import KnowledgeCompoundingService
+
+        db = _make_mock_db()
+        service = KnowledgeCompoundingService(_make_mock_llm(), db)
+
+        feedback_id = uuid.uuid4()
+        kb_id = uuid.uuid4()
+
+        with patch.object(
+            service, "_get_asset_by_source", new=AsyncMock(return_value=None),
+        ), patch.object(
+            service, "_load_chat_feedback_context", new=AsyncMock(return_value=None),
+        ):
+            result = await service.extract_from_chat_feedback(feedback_id, kb_id)
+
+        assert result["status"] == "skipped"
+        assert result["reason"] == "feedback_not_praise_or_no_message"
+
+    @pytest.mark.asyncio
+    async def test_extract_from_chat_feedback_empty_qa_skipped(self):
+        """LLM 提取为空 Q-A 时跳过沉淀。"""
+        from app.services.knowledge_compounding import KnowledgeCompoundingService
+
+        db = _make_mock_db()
+        service = KnowledgeCompoundingService(_make_mock_llm(), db)
+
+        feedback_id = uuid.uuid4()
+        kb_id = uuid.uuid4()
+
+        with patch.object(
+            service, "_get_asset_by_source", new=AsyncMock(return_value=None),
+        ), patch.object(
+            service, "_load_chat_feedback_context",
+            new=AsyncMock(return_value={
+                "feedback_id": str(feedback_id),
+                "user_id": uuid.uuid4(),
+                "conversation_id": str(uuid.uuid4()),
+                "user_query": "...",
+                "assistant_answer": "...",
+                "feedback_content": "",
+            }),
+        ), patch.object(
+            service, "_llm_extract_faq",
+            new=AsyncMock(return_value={
+                "question": "",  # 空 question
+                "answer": "有答案",
+                "tags": [],
+                "confidence": 0.5,
+            }),
+        ):
+            result = await service.extract_from_chat_feedback(feedback_id, kb_id)
+
+        assert result["status"] == "skipped"
+        assert result["reason"] == "empty_qa"
+
+    @pytest.mark.asyncio
+    async def test_extract_from_accepted_answer_success(self):
+        """采纳答案成功沉淀为 FAQ 资产（无 LLM 快路径）。"""
+        from app.services.knowledge_compounding import KnowledgeCompoundingService
+
+        db = _make_mock_db()
+        service = KnowledgeCompoundingService(_make_mock_llm(), db)
+
+        answer_id = uuid.uuid4()
+        kb_id = uuid.uuid4()
+        asset_mock = MagicMock(id=uuid.uuid4(), doc_id=uuid.uuid4())
+
+        with patch.object(
+            service, "_get_asset_by_source", new=AsyncMock(return_value=None),
+        ), patch.object(
+            service, "_load_accepted_answer_context",
+            new=AsyncMock(return_value={
+                "question_id": str(uuid.uuid4()),
+                "question_title": "如何申请年假？",
+                "answer_content": "在 OA 系统提交年假申请...",
+                "user_id": uuid.uuid4(),
+                "tags": ["人事", "年假", "human"],
+            }),
+        ), patch.object(
+            service, "_precipitate_faq_asset", new=AsyncMock(return_value=asset_mock)
+        ), patch.object(
+            service, "_detect_conflicts_for_assets", new=AsyncMock(return_value=[])
+        ):
+            result = await service.extract_from_accepted_answer(answer_id, kb_id)
+
+        assert result["status"] == "success"
+        assert result["answer_id"] == str(answer_id)
+        assert "asset_id" in result
+
+    @pytest.mark.asyncio
+    async def test_extract_from_accepted_answer_idempotent(self):
+        """重复采纳答案跳过（幂等保护）。"""
+        from app.services.knowledge_compounding import KnowledgeCompoundingService
+
+        db = _make_mock_db()
+        service = KnowledgeCompoundingService(_make_mock_llm(), db)
+
+        answer_id = uuid.uuid4()
+        kb_id = uuid.uuid4()
+        existing_asset = MagicMock(id=uuid.uuid4())
+
+        with patch.object(
+            service, "_get_asset_by_source",
+            new=AsyncMock(return_value=existing_asset),
+        ):
+            result = await service.extract_from_accepted_answer(answer_id, kb_id)
+
+        assert result["status"] == "skipped"
+        assert result["reason"] == "already_processed"
+
+    @pytest.mark.asyncio
+    async def test_extract_from_accepted_answer_not_accepted_skipped(self):
+        """未采纳的回答跳过（_load_accepted_answer_context 返回 None）。"""
+        from app.services.knowledge_compounding import KnowledgeCompoundingService
+
+        db = _make_mock_db()
+        service = KnowledgeCompoundingService(_make_mock_llm(), db)
+
+        answer_id = uuid.uuid4()
+        kb_id = uuid.uuid4()
+
+        with patch.object(
+            service, "_get_asset_by_source", new=AsyncMock(return_value=None),
+        ), patch.object(
+            service, "_load_accepted_answer_context",
+            new=AsyncMock(return_value=None),
+        ):
+            result = await service.extract_from_accepted_answer(answer_id, kb_id)
+
+        assert result["status"] == "skipped"
+        assert result["reason"] == "answer_not_accepted_or_not_found"
+
+    @pytest.mark.asyncio
+    async def test_llm_extract_faq_degraded_when_llm_none(self):
+        """LLM 不可用时降级用原始 Q-A。"""
+        from app.services.knowledge_compounding import KnowledgeCompoundingService
+
+        db = _make_mock_db()
+        service = KnowledgeCompoundingService(None, db)  # llm=None
+
+        context = {
+            "user_query": "原始问题",
+            "assistant_answer": "原始回答",
+            "feedback_content": "",
+        }
+        result = await service._llm_extract_faq(context)
+
+        assert result["question"] == "原始问题"
+        assert result["answer"] == "原始回答"
+        assert result["confidence"] == 0.6  # 降级置信度
+
+    @pytest.mark.asyncio
+    async def test_llm_extract_faq_json_parse_failed_degraded(self):
+        """LLM 返回非 JSON 时降级用原始 Q-A。"""
+        from app.services.knowledge_compounding import KnowledgeCompoundingService
+
+        db = _make_mock_db()
+        # LLM 返回非 JSON 文本
+        llm = _make_mock_llm(response_text="这不是有效的 JSON")
+        service = KnowledgeCompoundingService(llm, db)
+
+        context = {
+            "user_query": "原始问题",
+            "assistant_answer": "原始回答",
+            "feedback_content": "",
+        }
+        result = await service._llm_extract_faq(context)
+
+        assert result["question"] == "原始问题"
+        assert result["answer"] == "原始回答"
+        assert result["confidence"] == 0.6
+
+    def test_build_faq_extraction_prompt_contains_required_fields(self):
+        """FAQ 提取 prompt 包含必要字段指引。"""
+        from app.services.knowledge_compounding import KnowledgeCompoundingService
+
+        prompt = KnowledgeCompoundingService._build_faq_extraction_prompt(
+            user_query="测试问题",
+            assistant_answer="测试回答",
+            feedback_content="好评",
+        )
+        # 校验 prompt 包含关键指引
+        assert "question" in prompt
+        assert "answer" in prompt
+        assert "confidence" in prompt
+        assert "tags" in prompt
+        assert "自包含" in prompt
+        assert "测试问题" in prompt
+        assert "测试回答" in prompt
