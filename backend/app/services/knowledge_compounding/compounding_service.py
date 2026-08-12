@@ -1733,6 +1733,27 @@ class KnowledgeCompoundingService:
         if user_msg is None:
             return None
 
+        # P1: 加载同会话内 assistant 消息之前的最近 6 条消息（3 轮），
+        # 供 StandaloneQueryRewriter 多轮独立化改写使用。
+        hist_stmt = (
+            select(Message)
+            .where(
+                Message.conversation_id == assistant_msg.conversation_id,
+                Message.created_at <= assistant_msg.created_at,
+                Message.role.in_(["user", "assistant"]),
+            )
+            .order_by(Message.created_at.desc())
+            .limit(6)
+        )
+        hist_stmt = apply_tenant_filter(hist_stmt, Message, self._tenant_id)
+        hist_msgs = list((await self.db.execute(hist_stmt)).scalars().all())
+        # 按时间正序排列（旧→新），构造 history dicts 供 rewriter 使用
+        hist_msgs.reverse()
+        history: list[dict[str, str]] = [
+            {"role": m.role, "content": m.content or ""}
+            for m in hist_msgs
+        ]
+
         return {
             "feedback_id": str(feedback.id),
             "user_id": feedback.user_id,
@@ -1740,6 +1761,7 @@ class KnowledgeCompoundingService:
             "user_query": user_msg.content,
             "assistant_answer": assistant_msg.content,
             "feedback_content": feedback.content,
+            "history": history,
         }
 
     async def _load_accepted_answer_context(
@@ -1810,6 +1832,40 @@ class KnowledgeCompoundingService:
                 "tags": [],
                 "confidence": 0.6,  # 降级置信度较低
             }
+
+        # P1: 多轮对话独立化改写 — 把含指代/省略的 user_query 改写为独立标准 Q
+        # 复用 StandaloneQueryRewriter（CoreferenceResolver + TopicTracker），
+        # 使沉淀的 FAQ 问题脱离对话上下文仍可被独立检索。
+        history = context.get("history") or []
+        if len(history) >= 2:
+            try:
+                from app.context.coreference_resolver import CoreferenceResolver
+                from app.context.focus_tracker import TopicTracker
+                from app.context.standalone_query_rewriter import (
+                    StandaloneQueryRewriter,
+                )
+
+                rewriter = StandaloneQueryRewriter(
+                    llm=self.llm,
+                    coreference_resolver=CoreferenceResolver(self.llm),
+                    topic_tracker=TopicTracker(self.llm),
+                )
+                standalone_q = await rewriter.rewrite(
+                    current_query=user_query,
+                    history=history,
+                )
+                if standalone_q and standalone_q.strip():
+                    user_query = standalone_q.strip()
+                    log.info(
+                        "compounding.faq_standalone_rewritten",
+                        original=(context.get("user_query") or "")[:80],
+                        standalone=standalone_q[:80],
+                    )
+            except Exception as exc:
+                log.warning(
+                    "compounding.faq_standalone_rewrite_failed",
+                    error=str(exc)[:200],
+                )
 
         prompt = self._build_faq_extraction_prompt(
             user_query=user_query,
