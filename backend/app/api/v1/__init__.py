@@ -20,6 +20,8 @@ from app.api.v1.comments import router as comments_router
 from app.api.v1.connectors import router as connectors_router
 from app.api.v1.documents import router as documents_router
 from app.api.v1.experts import router as experts_router
+from app.api.v1.external_credentials import router as external_credentials_router
+from app.api.v1.external_webhooks import router as external_webhooks_router
 from app.api.v1.feedback import router as feedback_router
 from app.api.v1.finetune import router as finetune_router
 from app.api.v1.graph import router as graph_router
@@ -59,6 +61,8 @@ api_router.include_router(notifications_router)
 api_router.include_router(audit_router)
 api_router.include_router(search_router)
 api_router.include_router(connectors_router)
+api_router.include_router(external_credentials_router)
+api_router.include_router(external_webhooks_router)
 api_router.include_router(multimodal_router)
 api_router.include_router(agents_router)
 api_router.include_router(users_router)

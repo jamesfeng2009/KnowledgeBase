@@ -180,6 +180,49 @@ def cleanup_orphan_multipart_uploads() -> dict[str, Any]:
         raise
 
 
+@celery_app.task(name="tasks.scheduled_tasks.patrol_external_docs")
+def patrol_external_docs() -> dict[str, Any]:
+    """每日巡检过期外部文档 — P2 定时兜底安全网。
+
+    捕获 P0（检索时校验）+ P1（webhook）可能遗漏的更新：
+        - 从未被检索到的外部文档（P0 没机会检查）
+        - webhook 投递失败/未配置的文档（P1 没收到事件）
+
+    方案 A：单一阈值，所有外部文档无类别区分，无盲区。
+    last_checked_at 天然限流 — P0/P1 已校验的文档不会重复巡检。
+
+    Returns:
+        巡检摘要：total / fresh / updated / failed / skipped。
+    """
+    from app.config import get_settings
+
+    settings = get_settings()
+    if not settings.EXTERNAL_SYNC_PATROL_ENABLED:
+        logger.info("scheduled.patrol_disabled_by_config")
+        return {"total": 0, "skipped": 0, "message": "巡检已禁用"}
+
+    logger.info(
+        "scheduled.patrol_started",
+        max_staleness_hours=settings.EXTERNAL_SYNC_PATROL_MAX_STALENESS_HOURS,
+        batch_size=settings.EXTERNAL_SYNC_PATROL_BATCH_SIZE,
+        concurrency=settings.EXTERNAL_SYNC_PATROL_CONCURRENCY,
+    )
+    try:
+        result = asyncio.run(_patrol_external_docs_async(settings))
+        logger.info(
+            "scheduled.patrol_completed",
+            total=result.get("total", 0),
+            fresh=result.get("fresh", 0),
+            updated=result.get("updated", 0),
+            failed=result.get("failed", 0),
+            skipped=result.get("skipped", 0),
+        )
+        return result
+    except Exception as exc:
+        logger.error("scheduled.patrol_failed", error=str(exc)[:200])
+        raise
+
+
 # ------------------------------------------------------------------
 # 异步实现
 # ------------------------------------------------------------------
@@ -508,3 +551,19 @@ async def _cleanup_orphan_multipart_uploads_async() -> dict[str, Any]:
         "minio_cleaned": minio_cleaned,
         "cleaned_at": datetime.now(timezone.utc).isoformat(),
     }
+
+
+async def _patrol_external_docs_async(settings: Any) -> dict[str, Any]:
+    """异步巡检过期外部文档 — 委托 ExternalSyncService.patrol。
+
+    Args:
+        settings: 已加载的 Settings 实例（避免重复 IO 读取配置）。
+    """
+    from app.services.external_sync_service import get_external_sync_service
+
+    service = get_external_sync_service()
+    return await service.patrol(
+        max_age_hours=settings.EXTERNAL_SYNC_PATROL_MAX_STALENESS_HOURS,
+        batch_size=settings.EXTERNAL_SYNC_PATROL_BATCH_SIZE,
+        concurrency=settings.EXTERNAL_SYNC_PATROL_CONCURRENCY,
+    )

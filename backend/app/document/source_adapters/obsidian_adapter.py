@@ -25,6 +25,7 @@ from app.document.source_adapters.base import (
     AdapterError,
     DocumentSourceAdapter,
     FetchedDocument,
+    RevisionInfo,
     SourceDocumentInfo,
 )
 from app.utils.logger import get_logger
@@ -214,6 +215,50 @@ class ObsidianAdapter(DocumentSourceAdapter):
             return False
         vault = Path(vault_path).expanduser().resolve()
         return vault.is_dir()
+
+    async def get_revision(
+        self,
+        doc_url_or_id: str,
+        credentials: dict[str, Any],
+    ) -> RevisionInfo | None:
+        """轻量查询 Obsidian 文件版本指纹 — os.stat mtime_ns。
+
+        Obsidian 是本地文件，无需网络请求，零成本。
+        ``st_mtime_ns`` 是纳秒精度修改时间戳，文件被修改即变化。
+        """
+        vault_path = credentials.get("vault_path", "")
+        if not vault_path:
+            raise AdapterError(self.adapter_id, "缺少 vault_path 配置")
+
+        vault = Path(vault_path).expanduser().resolve()
+        if not vault.is_dir():
+            raise AdapterError(self.adapter_id, f"vault 目录不存在: {vault}")
+
+        file_rel = self._extract_file_path(doc_url_or_id)
+        # 安全检查：防止路径穿越（与 fetch 一致）
+        target = (vault / file_rel).resolve()
+        try:
+            target.relative_to(vault)
+        except ValueError:
+            raise AdapterError(
+                self.adapter_id,
+                f"路径越界，禁止访问 vault 外文件: {file_rel}",
+            ) from None
+
+        if not target.is_file():
+            raise AdapterError(
+                self.adapter_id, f"文件不存在: {file_rel}", status_code=404,
+            )
+
+        import os
+        from datetime import datetime, timezone
+
+        stat = target.stat()
+        last_modified = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
+        return RevisionInfo(
+            fingerprint=str(stat.st_mtime_ns),
+            last_modified=last_modified,
+        )
 
     # ------------------------------------------------------------------
     # 内部工具

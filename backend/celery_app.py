@@ -62,6 +62,7 @@ celery_app = Celery(
         "tasks.health_tasks",
         "tasks.recommendation_tasks",
         "tasks.finetune_tasks",
+        "tasks.webhook_tasks",
     ],
 )
 
@@ -110,6 +111,8 @@ celery_app.conf.update(
         "tasks.recommendation_tasks.*": {"queue": "scheduled"},
         # 微调数据集构建 — DB 密集 + 文件 IO，归入定时队列
         "tasks.finetune_tasks.*": {"queue": "scheduled"},
+        # 外部平台 Webhook 同步（飞书/Confluence 文档更新）— 复用文档解析队列
+        "tasks.webhook_tasks.*": {"queue": "documents"},
     },
 
     # 任务超时（秒）— 防止任务卡死
@@ -198,6 +201,12 @@ celery_app.conf.beat_schedule = {
     "check-expiration-daily": {
         "task": "tasks.scheduled_tasks.check_expiration",
         "schedule": crontab(minute=0, hour=3),  # 每天凌晨 3 点
+    },
+    # 每日 3:30 — 巡检过期外部文档（P2 兜底安全网）
+    # 捕获 P0/P1 遗漏的更新，方案 A 无盲区
+    "patrol-external-docs-daily": {
+        "task": "tasks.scheduled_tasks.patrol_external_docs",
+        "schedule": crontab(minute=30, hour=3),  # 每天凌晨 3:30
     },
     # 每日清理过期记忆事实
     "cleanup-expired-facts-daily": {

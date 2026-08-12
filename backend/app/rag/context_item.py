@@ -145,6 +145,11 @@ class ContextItemBuilder:
                         "title": title,
                         "title_path": title_path,
                         "index": idx,
+                        # P3: 外部文档时效元数据（由 engine._verify_external_docs 写入）
+                        # - sync_status: trusted_local / verified_fresh / updated_live / verify_failed
+                        # - source_url: 原始文档链接（用于 prompt 引导用户核对）
+                        "sync_status": doc.get("sync_status", ""),
+                        "source_url": doc.get("source_url", ""),
                     },
                 )
             )

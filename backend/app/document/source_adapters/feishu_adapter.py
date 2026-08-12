@@ -23,6 +23,7 @@ from app.document.source_adapters.base import (
     AdapterError,
     DocumentSourceAdapter,
     FetchedDocument,
+    RevisionInfo,
     SourceDocumentInfo,
 )
 from app.utils.logger import get_logger
@@ -160,6 +161,33 @@ class FeishuAdapter(DocumentSourceAdapter):
             return bool(token)
         except Exception:
             return False
+
+    async def get_revision(
+        self,
+        doc_url_or_id: str,
+        credentials: dict[str, Any],
+    ) -> RevisionInfo | None:
+        """轻量查询飞书文档版本指纹 — 复用 _get_document_info 拿 revision_id。
+
+        飞书 docx API ``GET /open-apis/docx/v1/documents/{doc_token}`` 返回的
+        document 对象含 ``revision_id`` 字段（int，每次编辑递增）。
+        若 API 未返回 revision_id（字段缺失），返回 None 触发降级 fetch。
+        """
+        app_id = credentials.get("app_id", "")
+        app_secret = credentials.get("app_secret", "")
+        if not app_id or not app_secret:
+            raise AdapterError(self.adapter_id, "缺少 app_id 或 app_secret")
+
+        doc_token = self._extract_doc_token(doc_url_or_id)
+        token = await self._get_tenant_token(app_id, app_secret)
+        doc_info = await self._get_document_info(doc_token, token)
+
+        revision = doc_info.get("revision_id")
+        if revision is None:
+            # 飞书 API 未返回 revision_id — 降级为 fetch 全文
+            log.debug("feishu.no_revision_id", doc_token=doc_token)
+            return None
+        return RevisionInfo(fingerprint=str(revision))
 
     # ------------------------------------------------------------------
     # API 调用

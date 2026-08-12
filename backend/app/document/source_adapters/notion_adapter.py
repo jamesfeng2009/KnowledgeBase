@@ -24,6 +24,7 @@ from app.document.source_adapters.base import (
     AdapterError,
     DocumentSourceAdapter,
     FetchedDocument,
+    RevisionInfo,
     SourceDocumentInfo,
 )
 from app.utils.logger import get_logger
@@ -216,6 +217,29 @@ class NotionAdapter(DocumentSourceAdapter):
                 return resp.status_code == 200
         except Exception:
             return False
+
+    async def get_revision(
+        self,
+        doc_url_or_id: str,
+        credentials: dict[str, Any],
+    ) -> RevisionInfo | None:
+        """轻量查询 Notion 版本指纹 — 复用 _get_page_info 拿 last_edited_time。
+
+        Notion API ``GET /v1/pages/{id}`` 返回 ``last_edited_time``
+        （ISO 8601 字符串，每次编辑更新）。
+        """
+        token = credentials.get("integration_token") or credentials.get("access_token", "")
+        if not token:
+            raise AdapterError(self.adapter_id, "缺少 integration_token 或 access_token")
+
+        page_id = self._extract_page_id(doc_url_or_id)
+        headers = self._build_headers(token)
+        page_info = await self._get_page_info(page_id, headers)
+
+        last_edited = page_info.get("last_edited_time", "")
+        if not last_edited:
+            return None
+        return RevisionInfo(fingerprint=last_edited, last_modified=last_edited)
 
     # ------------------------------------------------------------------
     # API 调用

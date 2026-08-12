@@ -5,7 +5,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, LargeBinary, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -129,6 +129,35 @@ class Document(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
         UUID(as_uuid=True), ForeignKey("documents.id"), nullable=True,
         comment="版本族主文档 ID（v2 的 version_of 指向 v1）"
     )
+    # === P0+P3 外部来源元数据（外部文档实时同步）===
+    # 文档首次从外部平台（飞书/Confluence/Notion/Obsidian）拉取入库时记录来源信息，
+    # 后续检索命中时可回源校验是否已更新（详见 ExternalSyncService）。
+    # 全部 nullable：本项目原生创建的文档无外部来源，向后兼容。
+    source: Mapped[str | None] = mapped_column(
+        String(30), nullable=True,
+        comment="来源适配器 ID: feishu/confluence/notion/obsidian"
+    )
+    source_doc_id: Mapped[str | None] = mapped_column(
+        String(200), nullable=True,
+        comment="外部平台文档 ID（飞书 doc_token / Confluence pageId 等）"
+    )
+    source_url: Mapped[str | None] = mapped_column(
+        String(500), nullable=True,
+        comment="原始文档 URL（引用展示 + P3 prompt 时效声明注入）"
+    )
+    source_revision: Mapped[str | None] = mapped_column(
+        String(100), nullable=True,
+        comment="外部版本指纹（飞书 revision_id / Confluence version.number / "
+                "Notion last_edited_time / Obsidian mtime_ns）"
+    )
+    last_synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+        comment="最后拉取全文时间（阶段 B 触发时间）"
+    )
+    last_checked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+        comment="最后轻量探测时间（阶段 A + 短窗口缓存）"
+    )
 
     knowledge_base: Mapped[KnowledgeBase] = relationship(back_populates="documents")
     versions: Mapped[list["DocumentVersion"]] = relationship(back_populates="document")
@@ -174,3 +203,40 @@ class DocumentVersion(UUIDMixin, TimestampMixin, Base):
     summary: Mapped[str | None] = mapped_column(String(255), nullable=True, comment="版本摘要")
 
     document: Mapped[Document] = relationship(back_populates="versions")
+
+
+class ExternalCredential(UUIDMixin, TimestampMixin, Base):
+    """外部平台凭证表 — 加密存储各租户的外部适配器凭证。
+
+    P0+P3 外部文档实时同步的凭证管理：
+    - 飞书 app_id/app_secret、Confluence api_token、Notion integration_token、Obsidian vault_path
+    - 用 AES-GCM 对称加密（详见 app.utils.crypto.encrypt_secret）
+    - 每租户每适配器一份凭证（UNIQUE 约束）
+    - 私有部署 tenant_id 为 NULL，由应用层限制单条
+
+    使用方式::
+
+        from app.utils.crypto import encrypt_secret, decrypt_secret
+        import json
+        # 存储
+        enc = encrypt_secret(json.dumps({"app_id": "cli_xxx", "app_secret": "xxx"}))
+        # 读取
+        credentials = json.loads(decrypt_secret(enc))
+    """
+
+    __tablename__ = "external_credentials"
+
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True, comment="租户 ID（NULL=私有部署）"
+    )
+    adapter_id: Mapped[str] = mapped_column(
+        String(30), nullable=False,
+        comment="适配器 ID: feishu/confluence/notion/obsidian"
+    )
+    credentials_encrypted: Mapped[bytes] = mapped_column(
+        LargeBinary, nullable=False,
+        comment="AES-GCM 加密的凭证 JSON（nonce + ciphertext + tag）"
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False, comment="是否启用"
+    )

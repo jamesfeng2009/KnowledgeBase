@@ -2264,6 +2264,21 @@ class AgenticRAGEngine:
                 # 优雅降级：recency 处理失败不影响已召回结果
                 log.warning("engine.retrieve.recency_error", error=str(exc))
 
+        # 4.5 P0 外部文档实时回源校验 — 仅对强时效外部文档做轻量探测 + 按需拉取
+        # 消除窗口期：用户检索命中外部文档时实时回源校验是否已更新。
+        # 策略：批量过滤需要校验的文档 → 逐个校验（最多 3 个）→ 用最新内容覆盖。
+        if state["retrieved_docs"]:
+            try:
+                state["retrieved_docs"] = await self._verify_external_docs(
+                    state["retrieved_docs"]
+                )
+            except Exception as exc:
+                # 优雅降级：外部同步失败不影响已召回结果
+                log.warning(
+                    "engine.retrieve.external_sync_error",
+                    error=str(exc)[:200],
+                )
+
         # P1-4 冲突裁决 — 同 key 文档按权威序取一，其余剔除。
         # 企业知识库多级制度（公司/部门/项目）冲突时，仅当文档携带
         # authority_key/conflict_key 与 authority 元数据才参与裁决；
@@ -2347,6 +2362,97 @@ class AgenticRAGEngine:
             final_count=len(state["retrieved_docs"]),
             iteration=state["iteration"],
         )
+
+    async def _verify_external_docs(
+        self,
+        docs: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """P0: 对召回的外部文档做实时回源校验。
+
+        策略（避免大量回源拖慢响应）：
+        - 批量查询所有 doc_id 的元数据（一次 DB 查询）
+        - 仅校验 source != NULL + category ∈ 强时效类 + 缓存过期 的文档
+        - 每次检索最多校验 3 个文档
+        - 校验后用最新内容覆盖 chunk content，并写入 sync_status 用于 P3 prompt
+        """
+        import uuid as _uuid
+
+        from app.services.external_sync_service import get_external_sync_service
+
+        sync_service = get_external_sync_service()
+
+        # 提取所有 doc_id（用于批量查询）
+        doc_ids: list[_uuid.UUID] = []
+        doc_id_to_doc: dict[str, dict[str, Any]] = {}
+
+        for doc in docs:
+            if not isinstance(doc, dict):
+                continue
+            doc_id = doc.get("doc_id")
+            if not doc_id:
+                continue
+            try:
+                uid = _uuid.UUID(str(doc_id))
+                doc_ids.append(uid)
+                doc_id_to_doc[str(doc_id)] = doc
+            except (ValueError, TypeError):
+                continue
+
+        if not doc_ids:
+            return docs
+
+        # 批量查询需要校验的文档 ID
+        try:
+            to_verify = await sync_service.filter_docs_to_verify(doc_ids)
+        except Exception as exc:
+            log.warning(
+                "engine.retrieve.external_filter_error",
+                error=str(exc)[:200],
+            )
+            return docs
+
+        if not to_verify:
+            return docs
+
+        # 逐个校验（最多 3 个，避免拖慢响应）
+        max_verify = 3
+        verified_count = 0
+
+        for doc_id in to_verify:
+            if verified_count >= max_verify:
+                break
+            doc = doc_id_to_doc.get(str(doc_id))
+            if not doc:
+                continue
+
+            try:
+                result = await sync_service.verify_and_refresh(doc_id)
+                verified_count += 1
+            except Exception as exc:
+                log.warning(
+                    "engine.retrieve.external_verify_error",
+                    doc_id=str(doc_id),
+                    error=str(exc)[:200],
+                )
+                doc["sync_status"] = "verify_failed"
+                continue
+
+            # 写入 sync_status 用于 P3 prompt 时效声明
+            doc["sync_status"] = result.sync_status
+            # 如果内容已更新，用最新内容覆盖本次回答
+            if result.status == "updated" and result.content:
+                doc["content"] = result.content
+            # 写入 source_url 用于 P3 prompt 引用展示
+            if result.source_url:
+                doc["source_url"] = result.source_url
+
+        log.info(
+            "engine.retrieve.external_sync_verified",
+            total_docs=len(docs),
+            candidates=len(to_verify),
+            verified=verified_count,
+        )
+        return docs
 
     @staticmethod
     def _apply_rerank_scores(

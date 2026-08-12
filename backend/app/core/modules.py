@@ -54,6 +54,13 @@ MODULE_REGISTRY: list[ModuleDef] = [
         category="basic",
         is_basic=True,
     ),
+    ModuleDef(
+        id="external_sync",
+        name="外部文档实时同步",
+        description="飞书/Confluence/Notion/Obsidian 文档回源校验、凭证管理、Webhook 同步",
+        category="basic",
+        is_basic=True,
+    ),
     # === 智能处理模块 ===
     ModuleDef(
         id="doc_intelligence",

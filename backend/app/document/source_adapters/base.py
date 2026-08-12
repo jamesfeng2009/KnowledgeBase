@@ -66,6 +66,29 @@ class SourceDocumentInfo:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass
+class RevisionInfo:
+    """外部文档版本指纹 — 用于回源前的轻量变更检测（P0 阶段 A）。
+
+    各适配器 get_revision 返回此对象，调用方对比 fingerprint 与
+    Document.source_revision 判断是否需要拉取全文：
+        - 一致 → 信任本地，不调 fetch（节省 API + 网络成本）
+        - 不一致 → 进入阶段 B（fetch 全文 + hash 对比）
+
+    Attributes:
+        fingerprint: 版本指纹字符串。各平台语义不同：
+            - 飞书: revision_id（数字字符串，如 ``"42"``）
+            - Confluence: version.number（数字字符串，如 ``"5"``）
+            - Notion: last_edited_time（ISO 8601，如 ``"2026-08-12T10:00:00.000Z"``）
+            - Obsidian: st_mtime_ns（纳秒时间戳字符串，如 ``"1786528000000000000"``）
+        last_modified: 最后修改时间（可选，用于 P3 prompt 时效声明）。
+            None 表示平台未返回。
+    """
+
+    fingerprint: str
+    last_modified: Any = None  # datetime | str | None
+
+
 class DocumentSourceAdapter(ABC):
     """文档来源适配器抽象基类 — 所有平台适配器实现此接口。
 
@@ -137,6 +160,31 @@ class DocumentSourceAdapter(ABC):
             连接是否成功。
         """
         ...
+
+    async def get_revision(
+        self,
+        doc_url_or_id: str,
+        credentials: dict[str, Any],
+    ) -> RevisionInfo | None:
+        """轻量查询文档版本指纹 — 不拉取内容，仅查元信息（P0 阶段 A）。
+
+        用于回源校验前的快速变更检测：调用方对比返回的 fingerprint 与
+        Document.source_revision 判断是否需要 fetch 全文。
+
+        默认实现返回 None，表示该适配器不支持轻量探测；
+        调用方应降级为直接 fetch 全文（仍能完成同步，仅多一次拉取成本）。
+
+        Args:
+            doc_url_or_id: 文档 URL 或 ID。
+            credentials: 平台凭证。
+
+        Returns:
+            RevisionInfo 或 None（不支持时）。
+
+        Raises:
+            AdapterError: 探测失败（网络错误/权限不足）— 调用方应降级信任本地。
+        """
+        return None
 
 
 class AdapterError(Exception):

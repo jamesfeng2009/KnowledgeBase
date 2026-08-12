@@ -178,16 +178,46 @@ class Generator:
         if memory_parts:
             parts.append(f"\n=== 用户偏好 / 历史上下文 ===\n{memory_parts[0].content}")
 
-        # 知识库来源（带编号）— P3: 包含 title_path 上下文锚点
+        # 知识库来源（带编号）— P3: 包含 title_path 上下文锚点 + 时效元数据
         if doc_items:
             parts.append("\n=== 知识库来源 ===")
+            has_stale_doc = False  # 是否存在可能过时的文档（用于追加时效规则）
             for idx, item in enumerate(doc_items, start=1):
                 title_path = item.meta.get("title_path", "")
                 title = item.meta.get("title", "")
-                if title_path:
-                    parts.append(f"[{idx}] {title_path}\n{item.content}")
-                else:
-                    parts.append(f"[{idx}] {title}\n{item.content}")
+                sync_status = item.meta.get("sync_status", "")
+                source_url = item.meta.get("source_url", "")
+
+                # P3: 时效标注 — 根据 sync_status 生成
+                freshness_note = ""
+                if sync_status == "updated_live":
+                    freshness_note = " （实时回源：已是最新版本）"
+                elif sync_status == "verified_fresh":
+                    freshness_note = " （实时回源：内容一致）"
+                elif sync_status == "verify_failed":
+                    freshness_note = " （校验失败，内容可能已过时）"
+                    has_stale_doc = True
+                elif sync_status == "trusted_local":
+                    # 信任本地缓存 — 未做实时校验，可能已过时
+                    has_stale_doc = True
+
+                # P3: 原始链接（供用户核对）
+                source_line = f"\n原始链接：{source_url}" if source_url else ""
+
+                header = title_path or title
+                parts.append(
+                    f"[{idx}] {header}{freshness_note}{source_line}\n{item.content}"
+                )
+
+            # P3: 时效规则 — 当存在可能过时的文档时，引导 LLM 主动声明
+            if has_stale_doc:
+                parts.append(
+                    "\n【时效性规则】\n"
+                    "当引用文档涉及政策/流程/费率/数字等时效性内容时，"
+                    "若文档标注为「信任本地缓存」或「校验失败」，"
+                    "请在回答末尾追加提示：\n"
+                    "「⚠️ 以上信息可能已更新，建议访问原始链接确认最新版本。」"
+                )
 
         # 工具结果
         if tool_items:

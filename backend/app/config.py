@@ -498,6 +498,14 @@ class Settings(BaseSettings):
     SCRATCHPAD_ENABLED: bool = True                   # P3-E Scratchpad 开关
     LLM_FACT_EXTRACTION_ENABLED: bool = True          # P3-F LLM 事实提取开关
 
+    # === 外部文档同步巡检（P2 定时兜底）===
+    # 方案 A：单一阈值，所有外部文档无类别区分，无盲区
+    # last_checked_at 天然限流 — P0/P1 已校验的文档不会重复巡检
+    EXTERNAL_SYNC_PATROL_ENABLED: bool = True           # 巡检总开关
+    EXTERNAL_SYNC_PATROL_MAX_STALENESS_HOURS: int = 24  # 最大滞后阈值（h）
+    EXTERNAL_SYNC_PATROL_BATCH_SIZE: int = 50           # 单批巡检文档数上限
+    EXTERNAL_SYNC_PATROL_CONCURRENCY: int = 2            # 并发上限（防 IP 封禁）
+
     # ================================================================
     # Pydantic V2 校验器 — 结构性校验硬失败，运营性校验发 warning
     # ================================================================

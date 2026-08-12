@@ -24,6 +24,7 @@ from app.document.source_adapters.base import (
     AdapterError,
     DocumentSourceAdapter,
     FetchedDocument,
+    RevisionInfo,
     SourceDocumentInfo,
 )
 from app.utils.logger import get_logger
@@ -241,6 +242,58 @@ class ConfluenceAdapter(DocumentSourceAdapter):
                 return resp.status_code == 200
         except Exception:
             return False
+
+    async def get_revision(
+        self,
+        doc_url_or_id: str,
+        credentials: dict[str, Any],
+    ) -> RevisionInfo | None:
+        """轻量查询 Confluence 版本指纹 — 仅 expand=version，不拉 body。
+
+        Confluence v1 API ``GET /rest/api/content/{id}?expand=version``
+        返回 ``version.number``（int，每次编辑递增）+ ``version.when``（ISO 时间）。
+        相比 fetch（expand=body.storage,version）只返回元信息，传输量小。
+        """
+        base_url = credentials.get("base_url", "").rstrip("/")
+        if not base_url:
+            raise AdapterError(self.adapter_id, "缺少 base_url 配置")
+
+        page_id = self._extract_page_id(doc_url_or_id)
+        headers = self._build_auth_headers(credentials)
+
+        try:
+            import httpx
+        except ImportError:
+            raise AdapterError(self.adapter_id, "httpx 未安装") from None
+
+        api_url = f"{base_url}/rest/api/content/{page_id}"
+        params = {"expand": "version"}  # 仅取 version，不取 body（更轻量）
+
+        try:
+            async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT) as client:
+                resp = await client.get(api_url, headers=headers, params=params)
+                if resp.status_code == 404:
+                    raise AdapterError(
+                        self.adapter_id,
+                        f"页面 {page_id} 不存在或无权访问",
+                        status_code=404,
+                    )
+                resp.raise_for_status()
+                data = resp.json()
+        except AdapterError:
+            raise
+        except Exception as exc:
+            raise AdapterError(
+                self.adapter_id,
+                f"获取版本信息失败: {exc}",
+            ) from exc
+
+        version = data.get("version", {})
+        number = version.get("number")
+        if number is None:
+            return None
+        when = version.get("when", "")
+        return RevisionInfo(fingerprint=str(number), last_modified=when)
 
     # ------------------------------------------------------------------
     # 内部工具
