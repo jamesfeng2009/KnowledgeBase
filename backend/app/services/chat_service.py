@@ -38,6 +38,7 @@ from app.repositories.conversation_repository import (
 )
 from app.utils.logger import get_logger
 from app.utils.sse import SSEEvent, SSEEventType
+from app.intent.router import IntentType
 
 logger = get_logger(__name__)
 
@@ -467,18 +468,33 @@ class ChatService:
                     agent_type=agent_type,
                 )
 
-                # 推送意图识别结果事件
+                # 推送意图识别结果事件（含缺失槽位与约束，供前端渲染澄清表单）
                 yield SSEEvent(
                     data={
                         "intent": intent_result.intent.value,
                         "confidence": intent_result.confidence,
                         "shortcut": intent_result.use_shortcut,
+                        "missing_slots": intent_result.missing_slots,
+                        "constraints": (
+                            {
+                                "hard": intent_result.constraints.hard,
+                                "soft": intent_result.constraints.soft,
+                            }
+                            if intent_result.constraints is not None
+                            else None
+                        ),
                     },
                     event=SSEEventType.INTENT,
                 )
 
-                if intent_result.use_shortcut:
-                    # 快捷路径 — 确定性检索 + 1 次 LLM 生成
+                # 快捷路径 / 终态出口（拒识+澄清）— 均走快捷处理器
+                if (
+                    intent_result.use_shortcut
+                    or intent_result.intent
+                    in (IntentType.UNSUPPORTED, IntentType.UNCLEAR)
+                ):
+                    # 快捷路径 — 确定性检索 + 1 次 LLM 生成；
+                    # 终态出口 — 拒识/澄清事件，直接返回
                     shortcut_handler = self._get_shortcut_handler()
                     async for chunk in shortcut_handler.handle(
                         intent=intent_result,
@@ -987,6 +1003,12 @@ class ChatService:
                         # 摘要非空时注入，recent_msgs 替换 history_dicts
                         if summary and summary != existing_summary:
                             parts.append(f"对话摘要：\n{summary}")
+                            # P1-3: 将压缩掉的旧消息段落落库，供"摘要后细节找回"
+                            old_count = len(history_dicts) - len(recent_msgs)
+                            if old_count > 0:
+                                await self._persist_recalled_details(
+                                    history_dicts[:old_count],
+                                )
                         history_dicts = recent_msgs
                 except Exception as exc:
                     logger.warning("chat.conversation_summarizer_failed", error=str(exc))
@@ -1012,6 +1034,24 @@ class ChatService:
                     logger.warning("chat.context_selector_failed", error=str(exc))
                     # 降级：使用原始历史
 
+                # P1-3: K 轮之前走检索召回细节 — 从已落库的旧消息中找回
+                # 与当前查询相关的细节，弥补摘要压缩丢失的旧细节（"摘要后细节找回"）
+                try:
+                    from app.config import get_settings
+
+                    _settings = get_settings()
+                    if _settings.DETAIL_RECALL_ENABLED:
+                        recalled = await self._recall_details(
+                            resolved_query,
+                            limit=_settings.DETAIL_RECALL_LIMIT,
+                            max_tokens=_settings.DETAIL_RECALL_MAX_TOKENS,
+                        )
+                        if recalled:
+                            parts.append("历史细节召回：\n" + "\n".join(recalled))
+                except Exception as exc:
+                    logger.warning("chat.detail_recall_failed", error=str(exc))
+                    # 降级：仅用摘要 + 近期原文
+
                 if history_dicts:
                     history_lines: list[str] = []
                     for msg_dict in history_dicts:
@@ -1021,3 +1061,63 @@ class ChatService:
                         parts.append("对话历史：\n" + "\n".join(history_lines))
 
         return "\n\n".join(parts)
+
+    # ------------------------------------------------------------------
+    # P1-3: 对话历史细节召回（"摘要后细节找回"）
+    # ------------------------------------------------------------------
+
+    async def _persist_recalled_details(
+        self,
+        old_messages: list[dict[str, str]],
+    ) -> None:
+        """把被摘要压缩掉的旧消息段落落库，供后续跨轮细节召回。
+
+        Args:
+            old_messages: 被摘要压缩掉的旧消息（按时间正序）。
+        """
+        try:
+            from app.context.detail_recall import DetailRecall
+
+            recall = DetailRecall(mem0=self.memory.mem0)
+            await recall.persist(user_id=self.user.id, old_messages=old_messages)
+        except Exception as exc:
+            logger.warning("chat.detail_persist_failed", error=str(exc))
+
+    async def _recall_details(
+        self,
+        query: str,
+        limit: int = 3,
+        max_tokens: int = 300,
+    ) -> list[str]:
+        """按当前查询从已落库的旧消息中召回相关细节。
+
+        Args:
+            query: 当前消解后的用户查询。
+            limit: 召回条数上限。
+            max_tokens: 注入 token 上限（超出则截断，避免挤占上下文）。
+
+        Returns:
+            可注入 memory_context 的细节文本列表。
+        """
+        try:
+            from app.context.detail_recall import DetailRecall
+
+            recall = DetailRecall(mem0=self.memory.mem0, limit=limit)
+            recalled = await recall.recall(user_id=self.user.id, query=query, limit=limit)
+        except Exception as exc:
+            logger.warning("chat.detail_recall_failed", error=str(exc))
+            return []
+
+        # 按 token 预算截断，避免挤占上下文窗口；估算字符数 ≈ token * 3
+        max_chars = max_tokens * 3
+        results: list[str] = []
+        used_chars = 0
+        for detail in recalled:
+            if used_chars >= max_chars:
+                break
+            text = detail.content
+            if used_chars + len(text) > max_chars:
+                text = text[: max_chars - used_chars] + "..."
+            results.append(text)
+            used_chars += len(text)
+        return results

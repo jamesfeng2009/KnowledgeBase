@@ -284,6 +284,10 @@ class KnowledgeService:
                 raise ValueError(f"文档 {doc_id} 不存在")
             # P1: 文档更新后主动失效关联的 Token 缓存，避免返回过期答案
             await self._invalidate_cache_for_doc(str(doc_id))
+            # P0-2: 文档更新后触发重建索引 — 消除"文本已更新但向量仍是旧版本"的混合状态。
+            # 异步触发 process_document 任务，先删除旧向量再重新解析+分块+向量化+索引。
+            # 优雅降级：Celery 不可用时仅记录日志，不影响文档更新操作本身。
+            await self._trigger_reindex(str(doc_id), str(updated.kb_id) if updated.kb_id else None)
             return updated
         return doc
 
@@ -373,3 +377,32 @@ class KnowledgeService:
         except Exception:
             # 缓存失效失败不影响文档操作本身
             pass
+
+    async def _trigger_reindex(self, doc_id: str, kb_id: str | None) -> None:
+        """P0-2: 文档更新后触发重建索引 — 消除混合状态。
+
+        先删除旧向量数据（防止旧 chunk 残留），再异步触发 process_document
+        重新解析+分块+向量化+索引。process_document 内部有幂等锁（Redis SETNX），
+        同一文档同时只被一个 worker 处理，无需调用方去重。
+
+        优雅降级：Celery / 向量存储不可用时仅记录日志，不影响文档更新操作。
+        """
+        from app.utils.logger import get_logger
+        logger = get_logger(__name__)
+
+        # ① 先删除旧向量 — 防止旧 chunk 残留导致混合状态
+        try:
+            from app.rag.vector_store import get_vector_store
+            store = get_vector_store()
+            await store.delete(doc_id)
+            logger.info("knowledge.reindex_old_vectors_deleted", doc_id=doc_id)
+        except Exception as exc:
+            logger.warning("knowledge.reindex_delete_failed", doc_id=doc_id, error=str(exc)[:200])
+
+        # ② 异步触发重建索引
+        try:
+            from tasks.document_tasks import process_document
+            process_document.delay(doc_id)
+            logger.info("knowledge.reindex_triggered", doc_id=doc_id, kb_id=kb_id)
+        except Exception as exc:
+            logger.warning("knowledge.reindex_trigger_failed", doc_id=doc_id, error=str(exc)[:200])

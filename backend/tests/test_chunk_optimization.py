@@ -428,8 +428,9 @@ class TestContextCliff:
         prompt = gen._build_system_prompt(docs, [], "")
         assert "普通文档" in prompt
 
-    def test_build_prompt_triggers_cliff_degradation(self) -> None:
-        """超长上下文应触发 Context Cliff 降级，prompt 中的文档数减少。"""
+    def test_build_prompt_budget_allocation(self) -> None:
+        """超长上下文时按预算择优注入 — 预算内能放下的片段全部保留，
+        放不下的被淘汰（P0-1 预算分配式注入，替代旧的砍到 Top-3）。"""
         gen = self._make_generator()
         big_content = "D" * 2000
         docs = [
@@ -437,12 +438,14 @@ class TestContextCliff:
             for i in range(6)
         ]
         prompt = gen._build_system_prompt(docs, [], "")
-        # 只应有 3 个文档编号（[1] [2] [3]）
+        # 每篇截断到 1500 字符 ≈ 429 token，预算 2500 可容纳 5 篇
         assert "[1]" in prompt
         assert "[2]" in prompt
         assert "[3]" in prompt
-        assert "[4]" not in prompt
-        assert "[5]" not in prompt
+        assert "[4]" in prompt
+        assert "[5]" in prompt
+        # 第 6 篇超出预算被淘汰
+        assert "[6]" not in prompt
 
 
 # ======================================================================

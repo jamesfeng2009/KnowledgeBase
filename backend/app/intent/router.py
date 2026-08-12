@@ -21,13 +21,22 @@ log = get_logger(__name__)
 
 
 class IntentType(str, Enum):
-    """意图类型 — 决定走快捷路径还是 Agent Loop。"""
+    """意图类型 — 决定走快捷路径还是 Agent Loop。
+
+    稳态/敏态分离的三类出口：
+    - 快捷路径（_SHORTCUT_INTENTS）：确定性检索 + 1 次 LLM 生成；
+    - 终态出口（_TERMINAL_INTENTS）：拒识（UNSUPPORTED）或澄清（UNCLEAR），
+      直接返回结果，不进入检索与 Agent Loop；
+    - Agent Loop：COMPLEX_QUERY / CREATE_DOCUMENT。
+    """
 
     RAG_SEARCH = "rag_search"            # 文档检索问答 → 快捷路径
     LIST_DOCUMENTS = "list_documents"    # 列出文档/知识库 → 快捷路径
     GET_DOCUMENT = "get_document"        # 查看文档详情 → 快捷路径
     CREATE_DOCUMENT = "create_document"  # 创建/上传文档 → Agent Loop（需 HITL）
     COMPLEX_QUERY = "complex_query"      # 复杂查询 → Agent Loop
+    UNSUPPORTED = "unsupported"          # 超出知识库服务范围 → 终态拒识
+    UNCLEAR = "unclear"                  # 参数缺失/歧义 → 终态澄清
 
 
 # 可走快捷路径的意图集合（确定性检索 + 1 次 LLM 生成）
@@ -36,6 +45,51 @@ _SHORTCUT_INTENTS: frozenset[IntentType] = frozenset({
     IntentType.LIST_DOCUMENTS,
     IntentType.GET_DOCUMENT,
 })
+
+# 终态出口意图集合（拒识 + 澄清）— 不进入检索与 Agent Loop，
+# 由快捷处理器直接返回 SSE 事件，防止越权/瞎猜回答。
+_TERMINAL_INTENTS: frozenset[IntentType] = frozenset({
+    IntentType.UNSUPPORTED,
+    IntentType.UNCLEAR,
+})
+
+
+class SlotName:
+    """Slot 槽位名常量 — 意图参数与澄清缺槽的统一命名。
+
+    命名对齐 RAG 检索参数，便于前端按槽位渲染补全表单。
+    """
+
+    SEARCH_QUERY = "search_query"      # 检索主题（必填核心槽）
+    TIME_RANGE = "time_range"          # 时间范围（软约束/可选槽）
+    CLASSIFICATION = "classification"  # 密级上限（硬约束/可选槽）
+    DOC_TYPE = "doc_type"              # 文档类型（软约束/可选槽）
+    SOURCE = "source"                  # 来源/系统（软约束/可选槽）
+    KB = "kb"                          # 限定知识库（硬约束/可选槽）
+
+
+@dataclass
+class IntentConstraints:
+    """意图约束 — 硬/软约束分离。
+
+    方案二核心：把"不要检索涉密文档"这类约束显式建模为结构化参数，
+    贯穿整个检索链路强制执行，而不是靠 LLM 每次重新判断。
+
+    Attributes:
+        hard: 硬约束（必须满足，不满足即过滤）。支持的键：
+            - classification_max: str — 密级上限（public/internal/confidential/secret）
+            - exclude_classifications: list[str] — 排除的密级集合
+            - kb_ids: list[str] — 限定知识库 ID 集合
+            - mandatory_keywords: list[str] — 必须包含的关键词
+        soft: 软约束（优先满足，作为生成提示偏好）。支持的键：
+            - time_range: str — 时间范围偏好
+            - doc_type: str — 文档类型偏好
+            - source: str — 来源偏好
+            - preferred_keywords: list[str] — 优先关键词
+    """
+
+    hard: dict[str, Any] = field(default_factory=dict)
+    soft: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -46,12 +100,17 @@ class IntentResult:
         intent: 识别到的意图类型。
         confidence: 置信度 [0.0, 1.0]。
         parameters: 意图参数（如搜索关键词、文档 ID 等）。
+        missing_slots: 缺失的槽位名列表（intent=UNCLEAR 时必须非空，
+            用于澄清出口提示用户补充）。
+        constraints: 结构化硬/软约束（方案二，检索链路强制执行）。
         use_shortcut: 是否走快捷路径（True=确定性检索+1次LLM，False=Agent Loop）。
     """
 
     intent: IntentType
     confidence: float
     parameters: dict[str, Any] = field(default_factory=dict)
+    missing_slots: list[str] = field(default_factory=list)
+    constraints: IntentConstraints | None = None
     use_shortcut: bool = False
 
 

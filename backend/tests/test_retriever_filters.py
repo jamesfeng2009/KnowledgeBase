@@ -118,7 +118,11 @@ class TestFulltextSearchFilters:
 
 
 class TestSearchPassesFilters:
-    """search() 整体透传 filters 给三路（图谱路不接收）。"""
+    """search() 整体透传 filters 给三路（图谱路不接收）。
+
+    P0-1: search() 现在会强制注入 doc_status=published 到 filters，
+    所以传给三路的 filters 会比调用方传入的多一个 doc_status 键。
+    """
 
     @pytest.mark.asyncio
     async def test_search_passes_filters_to_vector_and_fulltext(
@@ -126,6 +130,8 @@ class TestSearchPassesFilters:
     ) -> None:
         """验证 search() 把 filters 传给 _vector_search 和 _fulltext_search。"""
         filters = {"series_id": "s1"}
+        # P0-1: search() 会注入 doc_status=published
+        expected_filters = {"series_id": "s1", "doc_status": "published"}
         with patch.object(
             retriever_with_mocks, "_vector_search", new=AsyncMock(return_value=[])
         ) as mock_vec, patch.object(
@@ -137,12 +143,12 @@ class TestSearchPassesFilters:
         ) as mock_graph:
             await retriever_with_mocks.search("查询", ["kb1"], 20, filters)
 
-        # 向量/全文/跨模态三路应收到 filters
-        mock_vec.assert_called_once_with("查询", ["kb1"], 20, filters)
+        # 向量/全文/跨模态三路应收到含 doc_status 的 filters
+        mock_vec.assert_called_once_with("查询", ["kb1"], 20, expected_filters)
         mock_ft.assert_called_once()
         ft_args = mock_ft.call_args.args
-        assert ft_args[-1] == filters  # 最后一个位置参数是 filters
-        mock_cm.assert_called_once_with("查询", ["kb1"], 20, filters)
+        assert ft_args[-1] == expected_filters  # 最后一个位置参数是 filters
+        mock_cm.assert_called_once_with("查询", ["kb1"], 20, expected_filters)
         # 图谱路不接收 filters（只 3 个参数：entity_names, kb_ids, top_k）
         graph_args = mock_graph.call_args.args
         assert len(graph_args) == 3
@@ -151,7 +157,9 @@ class TestSearchPassesFilters:
     async def test_search_none_filters_backward_compatible(
         self, retriever_with_mocks: HybridRetriever
     ) -> None:
-        """filters=None 时三路都应收到 None（向后兼容）。"""
+        """filters=None 时三路都应收到含 doc_status=published 的 dict（P0-1 注入）。"""
+        # P0-1: filters=None 时 search() 也注入 doc_status=published
+        expected_filters = {"doc_status": "published"}
         with patch.object(
             retriever_with_mocks, "_vector_search", new=AsyncMock(return_value=[])
         ) as mock_vec, patch.object(
@@ -163,4 +171,4 @@ class TestSearchPassesFilters:
         ):
             await retriever_with_mocks.search("查询", ["kb1"], 20, None)
 
-        mock_vec.assert_called_once_with("查询", ["kb1"], 20, None)
+        mock_vec.assert_called_once_with("查询", ["kb1"], 20, expected_filters)

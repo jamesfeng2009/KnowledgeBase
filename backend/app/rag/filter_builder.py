@@ -42,6 +42,7 @@ SUPPORTED_FILTER_KEYS: frozenset[str] = frozenset({
     "parent_id",
     "depth",
     "version_of",
+    "doc_status",  # P0-1: 文档状态过滤（published/draft/pending_review/archived）
 })
 
 
@@ -68,6 +69,7 @@ _OS_FILTER_BUILDERS: dict[str, tuple[str, Any]] = {
     "parent_id": (DOC_PARENT_ID_FIELD, lambda v: _os_term(DOC_PARENT_ID_FIELD, str(v))),
     "depth": ("depth", lambda v: _os_term("depth", int(v))),
     "version_of": ("version_of", lambda v: _os_term("version_of", str(v))),
+    "doc_status": ("doc_status", lambda v: _os_term("doc_status", str(v))),
 }
 
 
@@ -148,6 +150,7 @@ _MILVUS_FILTER_BUILDERS: dict[str, tuple[str, Any]] = {
     "parent_id": (DOC_PARENT_ID_FIELD, lambda v: f"{DOC_PARENT_ID_FIELD} == {_milvus_str_literal(v)}"),
     "depth": ("depth", lambda v: f"depth == {int(v)}"),
     "version_of": ("version_of", lambda v: f"version_of == {_milvus_str_literal(v)}"),
+    "doc_status": ("doc_status", lambda v: f"doc_status == {_milvus_str_literal(v)}"),
 }
 
 

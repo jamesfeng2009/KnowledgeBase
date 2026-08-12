@@ -35,6 +35,7 @@ import json
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
+from datetime import datetime, timezone
 from typing import Any, TypedDict
 
 from app.eval.span_types import SpanType
@@ -678,6 +679,9 @@ class AgenticRAGEngine:
             "permission_filter": permission_filter,
             # P0 wiki 层级：检索层级过滤（透传到 _retrieve → retriever.search）
             "filters": filters,
+            # P1-4: 知识库版本快照 — 记录本次查询使用的 KB 版本时间戳，
+            # 写入 _span_evidence 供 trace 回放追溯"哪一版资料造成了这个答案"。
+            "kb_version_snapshot": datetime.now(timezone.utc).isoformat(),
         }
         # 重置检索重试计数
         self._retrieval_retry_count = 0
@@ -2090,11 +2094,14 @@ class AgenticRAGEngine:
             )
             state["retrieved_docs"] = []
             # P0-2: 短路路径同样产出选择证据（空纳入），避免上下文评分误判
+            # P1-4: 记录 kb_ids + 版本快照时间戳，支持回放追溯
             state["_span_evidence"] = {
                 "source": "knowledge_base",
                 "included_refs": [],
                 "excluded_refs": [],
                 "no_accessible_kb": True,
+                "kb_ids": kb_ids or [],
+                "kb_version_snapshot": state.get("kb_version_snapshot"),
             }
             return
 
@@ -2217,6 +2224,20 @@ class AgenticRAGEngine:
                         state["retrieved_docs"] = self._apply_rerank_scores(
                             filtered, reranked
                         )
+                        # P1-2: 重试后重新检查质量
+                        recheck = self._quality_guard.check_retrieval_quality(
+                            state["retrieved_docs"],
+                            threshold_override=_dyn_threshold,
+                        )
+                        if self._quality_guard.should_reject_after_retry(
+                            recheck, self._retrieval_retry_count
+                        ):
+                            state["retrieval_insufficient"] = True
+                    elif self._quality_guard.should_reject_after_retry(
+                        check_result, self._retrieval_retry_count
+                    ):
+                        # P1-2: 首次检查就低于阈值且已无重试次数 → 标记拒答
+                        state["retrieval_insufficient"] = True
             except Exception as exc:
                 log.warning("engine.retrieve.rerank_error", error=str(exc))
                 state["retrieved_docs"] = filtered[:_RERANK_TOP_K]
@@ -2242,6 +2263,17 @@ class AgenticRAGEngine:
             except Exception as exc:
                 # 优雅降级：recency 处理失败不影响已召回结果
                 log.warning("engine.retrieve.recency_error", error=str(exc))
+
+        # P1-4 冲突裁决 — 同 key 文档按权威序取一，其余剔除。
+        # 企业知识库多级制度（公司/部门/项目）冲突时，仅当文档携带
+        # authority_key/conflict_key 与 authority 元数据才参与裁决；
+        # 无冲突元数据的文档原样保留（不改变既有行为）。
+        try:
+            state["retrieved_docs"] = self._resolve_doc_conflicts(
+                state["retrieved_docs"]
+            )
+        except Exception as exc:
+            log.warning("engine.retrieve.conflict_resolve_error", error=str(exc))
 
         # P0-2: 上下文选择证据 — 写入 _span_evidence，由 @trace_node 装饰器
         # 在 Span 闭合时合并进 metadata，供 ContextTraceRecord.from_spans 聚合
@@ -2288,6 +2320,10 @@ class AgenticRAGEngine:
                 "context_load_tokens": sum(len(c) for c in included_contents) // 4
             },
             "permission_filtered_count": max(0, len(candidates) - len(filtered)),
+            # P1-4: 记录知识库版本号 — kb_ids + 版本快照时间戳，
+            # 支持回放"这次错误由哪一版资料造成"。
+            "kb_ids": kb_ids or [],
+            "kb_version_snapshot": state.get("kb_version_snapshot"),
             # P1-4: 注入扫描隔离记录 — 命中 prompt injection 的文档引用 + 命中模式
             # 仅记录引用 ID 与模式，不携带命中原文（避免敏感内容扩散到 trace）。
             "injection_quarantined_refs": [
@@ -2332,6 +2368,93 @@ class AgenticRAGEngine:
                 doc["score"] = item.get("score", doc.get("score", 0.0))
                 doc["rerank_content"] = item.get("content", doc.get("content", ""))
                 result.append(doc)
+        return result
+
+    @staticmethod
+    def _doc_ref(doc: dict[str, Any]) -> str:
+        """返回文档的唯一引用标识（用于冲突裁决回映射）。"""
+        rid = str(doc.get("doc_id") or doc.get("chunk_id") or doc.get("id") or "")
+        if rid:
+            return rid
+        return str(doc.get("title") or f"doc-{id(doc)}")
+
+    def _resolve_doc_conflicts(
+        self,
+        docs: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """P1-4 冲突裁决 — 同 key 文档按权威序取一，其余剔除。
+
+        企业知识库多级制度（公司/部门/项目）冲突时落地用法：文档上打标
+        ``conflict_key`` / ``authority_key``（冲突所在字段，如 "报销上限"）
+        与 ``authority``（来源权威，如 system_rule / tool_fact），同一
+        冲突键下多篇文档按 系统规则>用户输入>工具事实>已确认摘要>模型推测
+        裁决，保留权威者、剔除其余；同 key 同权威时按 last win（时间新旧）。
+
+        无冲突键 / 无法裁决的文档原样保留（不改变既有行为，保证零侵入）。
+
+        Args:
+            docs: 检索并重排后的文档列表。
+
+        Returns:
+            冲突裁决后的文档列表（顺序保持）。
+        """
+        if not docs:
+            return docs
+
+        # 收集携带冲突键的文档
+        keyed: list[tuple[int, dict[str, Any]]] = [
+            (i, d) for i, d in enumerate(docs)
+            if (d.get("conflict_key") or d.get("authority_key"))
+        ]
+        if not keyed:
+            return docs
+
+        from app.context.conflict_resolver import ConflictClaim, ConflictResolver
+
+        resolver = ConflictResolver()
+        groups: dict[str, list[tuple[int, dict[str, Any]]]] = {}
+        for i, d in keyed:
+            k = d.get("conflict_key") or d.get("authority_key")
+            groups.setdefault(str(k), []).append((i, d))
+
+        resolved_indices: set[int] = set(range(len(docs)))  # 默认全部保留
+        for k, group in groups.items():
+            if len(group) < 2:
+                continue
+            idx_list = [i for i, _ in group]
+            # 参与裁决的成员先全部剔除，再保留胜出者
+            for i in idx_list:
+                resolved_indices.discard(i)
+
+            claims = [
+                ConflictClaim(
+                    value=str(d.get("content") or "")[:200],
+                    authority=d.get("authority", "tool_fact"),
+                    source=self._doc_ref(d),
+                    timestamp=d.get("updated_at") or d.get("version_date"),
+                    key=k,
+                )
+                for _, d in group
+            ]
+            resolution = resolver.resolve(claims, same_key_only=True)
+            if resolution is None:
+                # 无法裁决（如权威未知）→ 全部保留
+                resolved_indices.update(idx_list)
+                continue
+            winner_idx = next(
+                (i for i, d in group if self._doc_ref(d) == resolution.winner_source),
+                idx_list[0],
+            )
+            resolved_indices.add(winner_idx)
+
+        result = [d for i, d in enumerate(docs) if i in resolved_indices]
+        if len(result) != len(docs):
+            log.info(
+                "engine.conflict_resolved",
+                original=len(docs),
+                after=len(result),
+                groups=len(groups),
+            )
         return result
 
     # ------------------------------------------------------------------
@@ -2854,6 +2977,47 @@ class AgenticRAGEngine:
 
         # --- 幻觉防护：引用强制校验 ---
         self._check_citations(state, answer, retrieved_docs)
+
+        # --- P1-3: Claim 内容级回溯核验 ---
+        # 引用存在 ≠ 引用支持答案。核验每个 [n] 引用的 chunk 内容是否
+        # 实际包含答案中声称的关键实体（金额/日期/百分比等）。
+        if self._quality_guard is not None and retrieved_docs:
+            try:
+                claim_result = (
+                    self._quality_guard.verify_claims_against_chunks(
+                        answer, retrieved_docs
+                    )
+                )
+                if claim_result["should_flag"]:
+                    state["claim_unverified"] = True
+                    state["claim_verification"] = claim_result
+                    log.warning(
+                        "engine.claim_verification_failed",
+                        total=claim_result["total_claims"],
+                        unverified=len(claim_result["unverified_claims"]),
+                        ratio=claim_result["unverified_ratio"],
+                    )
+            except Exception as exc:
+                log.warning("engine.claim_verification_error", error=str(exc))
+
+        # --- P1-2: 证据不足拒答门禁 ---
+        # 重排后仍低于阈值 → 不让模型继续生成，直接拒答或请求澄清
+        if state.get("retrieval_insufficient"):
+            log.warning(
+                "engine.reflect.retrieval_insufficient",
+                action="refuse_or_clarify",
+            )
+            refuse_answer = (
+                "抱歉，当前知识库中未找到与您问题高度相关的资料。\n"
+                "请尝试以下方式：\n"
+                "1. 重新表述问题，提供更多细节；\n"
+                "2. 确认相关文档已上传并发布到知识库；\n"
+                "3. 联系知识库管理员确认文档覆盖范围。"
+            )
+            state["answer"] = refuse_answer
+            state["low_confidence"] = True
+            state["retrieval_refused"] = True
+            return state.get("eval_result")
 
         # --- 幻觉防护：矛盾检测（check_answer_consistency 接线）---
         await self._check_contradiction(state, answer, retrieved_docs)

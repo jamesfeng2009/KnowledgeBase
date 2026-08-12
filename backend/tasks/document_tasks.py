@@ -2404,6 +2404,9 @@ def _build_doc_meta(doc: Any) -> dict[str, Any] | None:
     chunk 级 parent_id 指向父块用于父子回溯，两者语义不同不可混用）。
     depth=0 是有效值（根文档），用 ``is not None`` 判断而非 truthy。
     doc 为 None 或无层级字段时返回 None（向后兼容旧文档）。
+
+    P0-1: 同时提取 doc.status 写入 doc_status 字段，供检索端按
+    doc_status=published 过滤，杜绝半成品泄漏。
     """
     if not doc:
         return None
@@ -2418,6 +2421,10 @@ def _build_doc_meta(doc: Any) -> dict[str, Any] | None:
         meta["depth"] = int(doc.depth)
     if getattr(doc, "version_of", None):
         meta["version_of"] = str(doc.version_of)
+    # P0-1: 文档状态写入索引，供检索端按 doc_status=published 过滤
+    doc_status = getattr(doc, "status", None)
+    if doc_status is not None:
+        meta["doc_status"] = str(doc_status)
     return meta or None
 
 

@@ -47,3 +47,9 @@ docker-compose*.yml
 # 文档
 *.md
 docs/
+
+# 训练/开发产物（体积大，不进运行时镜像）
+# 模型权重由模型服务（vLLM/TEI）加载，不经后端镜像
+models/
+outputs/
+.hf_cache/

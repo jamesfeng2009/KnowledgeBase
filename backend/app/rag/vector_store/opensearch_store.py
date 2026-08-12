@@ -157,6 +157,8 @@ class OpenSearchVectorStore(VectorStoreBase):
                 "doc_parent_id",
                 "depth",
                 "version_of",
+                # P0-1: 文档状态字段（检索结果可携带，便于上层验证）
+                "doc_status",
             ],
         }
 
@@ -262,6 +264,10 @@ class OpenSearchVectorStore(VectorStoreBase):
                     hierarchy_fields["depth"] = int(depth_val)
                 except (ValueError, TypeError):
                     pass
+            # P0-1: 文档状态写入索引，供检索端按 doc_status=published 过滤
+            doc_status = doc_meta.get("doc_status")
+            if doc_status is not None:
+                hierarchy_fields["doc_status"] = str(doc_status)
 
         # 构建 bulk 请求体（NDJSON 格式）
         n = min(len(embeddings), len(chunks))
@@ -384,6 +390,8 @@ class OpenSearchVectorStore(VectorStoreBase):
                     "doc_parent_id": {"type": "keyword"},
                     "depth": {"type": "integer"},
                     "version_of": {"type": "keyword"},
+                    # P0-1: 文档状态过滤 — 检索时按 doc_status=published 过滤
+                    "doc_status": {"type": "keyword"},
                 }
             },
         }

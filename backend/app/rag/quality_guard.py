@@ -171,6 +171,43 @@ class QualityGuard:
         expand = getattr(self._settings, "RAG_RETRIEVAL_EXPAND_TOP_K", 10)
         return base + expand
 
+    def should_reject_after_retry(
+        self,
+        check_result: RetrievalQualityResult,
+        retry_count: int,
+    ) -> bool:
+        """P1-2: 重试后仍低于阈值时是否应拒答。
+
+        条件：质量未通过 + 已用尽重试次数 + 守卫已启用 + 有文档（空结果直接拒答）。
+        调用方据此设置 state["retrieval_insufficient"]，生成阶段据此产出拒答/澄清。
+
+        Args:
+            check_result: 最终的 check_retrieval_quality 返回值。
+            retry_count: 当前重试次数（已达上限时不再重试）。
+
+        Returns:
+            True 表示应拒答或触发澄清。
+        """
+        if not self.enabled:
+            return False
+
+        max_retries = getattr(self._settings, "RAG_RETRIEVAL_MAX_RETRIES", 1)
+        if retry_count < max_retries:
+            return False  # 还可以重试，不拒答
+
+        should = not check_result.passed
+
+        if should:
+            log.warning(
+                "quality_guard.retrieval_insufficient",
+                mean_score=check_result.mean_score,
+                threshold=getattr(self._settings, "RAG_RETRIEVAL_SCORE_THRESHOLD", 0.3),
+                retry_count=retry_count,
+                action="reject_or_clarify",
+            )
+
+        return should
+
     # ------------------------------------------------------------------
     # P2: 动态匹配阈值 — 基于查询频率自适应调节
     # ------------------------------------------------------------------
@@ -448,3 +485,155 @@ class QualityGuard:
         except Exception as exc:
             log.warning("quality_guard.judge_init_error", error=str(exc))
             return None
+
+    # ------------------------------------------------------------------
+    # P1-3: Claim 内容级回溯核验 — 引用存在 ≠ 引用支持答案
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def verify_claims_against_chunks(
+        answer: str,
+        retrieved_docs: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """P1-3: 核验答案中每个 [n] 引用的 chunk 内容是否实际支持对应 claim。
+
+        方法论要求：引用存在 ≠ 引用支持答案。金额/生效时间/例外条件必须
+        分别核对，不能只看 [n] 标注是否存在。
+
+        策略（零 LLM 调用，纯规则匹配）：
+            1. 从答案中提取 [n] 引用标注及其上下文句子（claim）；
+            2. 按 n 索引到 retrieved_docs[n-1] 的 content；
+            3. 检查 claim 中的关键实体（数字/日期/金额/百分比）是否在
+               chunk content 中出现；
+            4. 未匹配的 claim 标记为 unverified。
+
+        Args:
+            answer: 生成的答案文本（含 [n] 引用标注）。
+            retrieved_docs: 检索到的文档列表（按引用编号排序）。
+
+        Returns:
+            核验结果 dict:
+                - total_claims: 提取的 claim 总数
+                - verified_claims: 通过核验的 claim 数
+                - unverified_claims: 未通过核验的 claim 列表
+                - unverified_ratio: 未核验比例
+                - should_flag: 是否应标记（unverified_ratio > 阈值）
+        """
+        import re
+
+        if not answer or not retrieved_docs:
+            return {
+                "total_claims": 0,
+                "verified_claims": 0,
+                "unverified_claims": [],
+                "unverified_ratio": 0.0,
+                "should_flag": False,
+            }
+
+        # 1. 提取 [n] 引用及其所在句子（claim）
+        # 匹配模式：句子中包含 [n] 标注，提取整个句子作为 claim
+        citation_pattern = re.compile(r"\[(\d+)\]")
+        # 按句号/问号/感叹号/分号分句
+        sentences = re.split(r"[。.！!？?；;]\s*", answer)
+
+        claims: list[dict[str, Any]] = []
+        for sentence in sentences:
+            matches = citation_pattern.findall(sentence)
+            if not matches:
+                continue
+            for ref_num_str in matches:
+                ref_num = int(ref_num_str)
+                # 移除 [n] 标注后再提取实体，避免引用编号被误提取为数字
+                clean_sentence = citation_pattern.sub("", sentence)
+                # 提取关键实体：数字（含小数/百分比/金额）
+                numbers = re.findall(
+                    r"\d+\.?\d*\s*[%％]?", clean_sentence
+                )
+                # 提取日期
+                dates = re.findall(
+                    r"\d{4}[-/年]\d{1,2}[-/月]\d{1,2}日?|\d{4}[-/]\d{1,2}[-/]\d{1,2}",
+                    clean_sentence,
+                )
+                claims.append({
+                    "ref_num": ref_num,
+                    "sentence": sentence.strip()[:300],
+                    "numbers": numbers,
+                    "dates": dates,
+                })
+
+        if not claims:
+            return {
+                "total_claims": 0,
+                "verified_claims": 0,
+                "unverified_claims": [],
+                "unverified_ratio": 0.0,
+                "should_flag": False,
+            }
+
+        # 2. 逐 claim 核验：关键实体是否在引用的 chunk content 中出现
+        unverified: list[dict[str, Any]] = []
+        verified_count = 0
+
+        for claim in claims:
+            ref_idx = claim["ref_num"] - 1  # [1] → docs[0]
+            if ref_idx < 0 or ref_idx >= len(retrieved_docs):
+                # 引用越界 — 标记为未核验
+                unverified.append({
+                    "ref_num": claim["ref_num"],
+                    "reason": "引用编号越界",
+                    "sentence": claim["sentence"],
+                })
+                continue
+
+            chunk_content = str(retrieved_docs[ref_idx].get("content", ""))
+            if not chunk_content:
+                unverified.append({
+                    "ref_num": claim["ref_num"],
+                    "reason": "引用文档内容为空",
+                    "sentence": claim["sentence"],
+                })
+                continue
+
+            # 核验关键实体
+            all_entities = claim["numbers"] + claim["dates"]
+            if not all_entities:
+                # 无可核验实体（纯定性陈述）— 视为通过（规则无法判定）
+                verified_count += 1
+                continue
+
+            missing = [
+                entity for entity in all_entities
+                if entity.strip() and entity.strip() not in chunk_content
+            ]
+
+            if missing:
+                unverified.append({
+                    "ref_num": claim["ref_num"],
+                    "reason": f"关键实体未在引用内容中找到: {missing[:3]}",
+                    "sentence": claim["sentence"],
+                    "missing_entities": missing[:5],
+                })
+            else:
+                verified_count += 1
+
+        total = len(claims)
+        unverified_ratio = len(unverified) / total if total > 0 else 0.0
+        # 阈值：超过 30% 的 claim 未核验时应标记
+        should_flag = unverified_ratio > 0.3
+
+        log.info(
+            "quality_guard.claim_verification",
+            total_claims=total,
+            verified=verified_count,
+            unverified=len(unverified),
+            ratio=round(unverified_ratio, 4),
+            should_flag=should_flag,
+        )
+
+        return {
+            "total_claims": total,
+            "verified_claims": verified_count,
+            "unverified_claims": unverified,
+            "unverified_ratio": round(unverified_ratio, 4),
+            "should_flag": should_flag,
+        }

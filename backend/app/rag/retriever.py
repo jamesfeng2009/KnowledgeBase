@@ -135,6 +135,11 @@ class HybridRetriever:
         if not query.strip():
             return []
 
+        # P0-1: 强制注入 doc_status=published 过滤 — 半成品不能被在线检索看到。
+        # 调用方传入的 filters 中的 doc_status 会被覆盖（安全优先于灵活性）。
+        effective_filters: dict[str, Any] = dict(filters) if filters else {}
+        effective_filters["doc_status"] = "published"
+
         # P2-T6: 实体识别 + 同义词扩展（零 LLM，增强 BM25 召回）
         expanded_query = query
         graph_entity_names: list[str] = []
@@ -163,10 +168,11 @@ class HybridRetriever:
             cross_modal_results,
             graph_results,
         ) = await asyncio.gather(
+            # P0-1: effective_filters 含 doc_status=published，杜绝半成品泄漏
             # P0 wiki 层级：filters 透传给三路（图谱路按实体检索，不走层级过滤）
-            self._vector_search(query, kb_ids, top_k, filters),
-            self._fulltext_search(expanded_query, kb_ids, top_k, filters),
-            self._cross_modal_search(query, kb_ids, top_k, filters),
+            self._vector_search(query, kb_ids, top_k, effective_filters),
+            self._fulltext_search(expanded_query, kb_ids, top_k, effective_filters),
+            self._cross_modal_search(query, kb_ids, top_k, effective_filters),
             self._graph_search(graph_entity_names, kb_ids, top_k),
             return_exceptions=True,
         )

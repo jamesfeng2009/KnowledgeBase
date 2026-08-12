@@ -21,6 +21,7 @@ from typing import Any
 from app.llm.base import LLMProvider, Message
 from app.rag.citation import CitationExtractor
 from app.rag.chunker import estimate_tokens
+from app.rag.context_item import BudgetAllocator, ContextItemBuilder
 from app.utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -49,9 +50,14 @@ class Generator:
         self,
         llm: LLMProvider,
         citation_extractor: CitationExtractor | None = None,
+        context_budget: int | None = None,
     ) -> None:
         self.llm = llm
         self.citation_extractor = citation_extractor or CitationExtractor()
+        # P0-1: 预算分配式注入 — 窗口组装时按 token_cost 择优注入 ContextItem
+        self._allocator = BudgetAllocator(
+            budget=context_budget or _CONTEXT_CLIFF_THRESHOLD
+        )
         # P0-Stage2: 最近一次 generate 的真实 token 用量（由 LLM Provider yield）
         # 并发隔离修复：Generator 为引擎级共享实例，若用普通实例属性，
         # 并发请求会互相覆写/读取对方的 usage（A 请求重置 None 时 B 正在累加，
@@ -136,11 +142,24 @@ class Generator:
     ) -> str:
         """组装系统 prompt — 注入检索上下文、工具结果与引用指引。
 
-        P2 Context Cliff 监控：组装前计算上下文总 token 数，超过阈值时
-        自动降级为只保留 Top-3 文档，避免长上下文导致 LLM 退化。
+        P0-1 预算分配式注入：将文档 / 工具 / 记忆统一为带 token_cost 的
+        ContextItem，交给 BudgetAllocator 在窗口预算内"择优注入"。相比旧的
+        Context Cliff 一刀切（超阈值砍到 Top-3），这里让每个片段按
+        {优先级, 相关性, token_cost} 公平竞争预算：高相关片段公平入选，
+        低价值片段被预算淘汰，而非简单地按位置裁剪。
         """
-        # P2: Context Cliff 监控 — 计算原始上下文总 token 数
-        context_docs = self._check_context_cliff(retrieved_docs)
+        # P0-1: 构建统一 ContextItem 并按预算择优注入
+        items = ContextItemBuilder.build(
+            retrieved_docs=retrieved_docs,
+            tool_results=tool_results,
+            memory_context=memory_context,
+        )
+        selected = self._allocator.select(items)
+
+        # 从选中项中还原三类来源（供 prompt 分段组装）
+        memory_parts = [it for it in selected if it.kind == "memory"]
+        doc_items = [it for it in selected if it.kind == "document"]
+        tool_items = [it for it in selected if it.kind == "tool"]
 
         parts: list[str] = [
             "你是企业知识库助手。请基于以下检索到的上下文和企业工具结果回答用户问题。",
@@ -149,34 +168,32 @@ class Generator:
         ]
 
         # 引用指引
-        if context_docs:
+        if doc_items:
             parts.append(
                 "在引用知识库内容时，请使用 [n] 标注引用来源（n 从 1 开始，"
                 "对应下方「知识库来源」的编号）。"
             )
 
         # 记忆上下文
-        if memory_context:
-            parts.append(f"\n=== 用户偏好 / 历史上下文 ===\n{memory_context}")
+        if memory_parts:
+            parts.append(f"\n=== 用户偏好 / 历史上下文 ===\n{memory_parts[0].content}")
 
         # 知识库来源（带编号）— P3: 包含 title_path 上下文锚点
-        if context_docs:
+        if doc_items:
             parts.append("\n=== 知识库来源 ===")
-            for idx, doc in enumerate(context_docs, start=1):
-                title = doc.get("title") or "未命名文档"
-                # P3: 优先使用 title_path 作为上下文锚点
-                title_path = doc.get("title_path", "")
-                content = self._truncate(str(doc.get("content") or ""))
+            for idx, item in enumerate(doc_items, start=1):
+                title_path = item.meta.get("title_path", "")
+                title = item.meta.get("title", "")
                 if title_path:
-                    parts.append(f"[{idx}] {title_path}\n{content}")
+                    parts.append(f"[{idx}] {title_path}\n{item.content}")
                 else:
-                    parts.append(f"[{idx}] {title}\n{content}")
+                    parts.append(f"[{idx}] {title}\n{item.content}")
 
         # 工具结果
-        if tool_results:
+        if tool_items:
             parts.append("\n=== 企业工具结果 ===")
-            for idx, result in enumerate(tool_results, start=1):
-                parts.append(f"工具 {idx}：{self._stringify(result)}")
+            for idx, item in enumerate(tool_items, start=1):
+                parts.append(f"工具 {idx}：{item.content}")
 
         return "\n".join(parts)
 

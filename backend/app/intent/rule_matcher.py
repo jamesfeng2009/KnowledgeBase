@@ -11,7 +11,12 @@ from __future__ import annotations
 
 import re
 
-from app.intent.router import IntentResult, IntentType, _SHORTCUT_INTENTS
+from app.intent.router import (
+    IntentResult,
+    IntentType,
+    _SHORTCUT_INTENTS,
+    _TERMINAL_INTENTS,
+)
 
 
 class RuleMatcher:
@@ -25,7 +30,34 @@ class RuleMatcher:
     """
 
     # 规则定义：(意图类型, [正则模式列表], 置信度)
+    # 规则按优先级排序：终态出口（拒识）优先于检索意图，
+    # 确保"越界/闲聊"查询先被拦截，不被 RAG_SEARCH 兜住。
     _RULES: list[tuple[IntentType, list[re.Pattern[str]], float]] = [
+        # --- UNSUPPORTED: 超出知识库服务范围 → 拒识出口（优先级最高）---
+        # 仅覆盖明确非知识库的领域（订票/天气/行情/闲聊），保守匹配，
+        # 避免误伤企业范围内的工作流/业务查询。
+        (
+            IntentType.UNSUPPORTED,
+            [
+                re.compile(
+                    r"(订|买|抢|退).*(机票|火车票|高铁票|酒店|宾馆|外卖|门票|演唱会)",
+                    re.IGNORECASE,
+                ),
+                re.compile(
+                    r"(今天|明天|后天|周末|下周).*(天气|气温|降雨|台风|空气质量)",
+                    re.IGNORECASE,
+                ),
+                re.compile(
+                    r"(推荐|预测|帮我选|买哪只|买什么|该买).*(股票|基金|股价|行情)",
+                    re.IGNORECASE,
+                ),
+                re.compile(
+                    r"(讲个笑话|讲个故事|写一首诗|写作文|编个故事|闲聊|聊聊)",
+                    re.IGNORECASE,
+                ),
+            ],
+            0.9,
+        ),
         # --- LIST_DOCUMENTS: 列出/列表/有哪些 ---
         (
             IntentType.LIST_DOCUMENTS,
@@ -128,6 +160,9 @@ class RuleMatcher:
                         intent=intent,
                         confidence=confidence,
                         parameters=parameters,
-                        use_shortcut=intent in _SHORTCUT_INTENTS,
+                        use_shortcut=(
+                            intent in _SHORTCUT_INTENTS
+                            or intent in _TERMINAL_INTENTS
+                        ),
                     )
         return None

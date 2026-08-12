@@ -40,6 +40,12 @@ class SSEEventType:
     META = "meta"
     # 意图识别结果（P1 IntentRouter）
     INTENT = "intent"
+    # 意图拒识（方案三）— 用户问题超出知识库服务范围，直接返回；
+    # data: {"intent":"unsupported","message":"..."}
+    INTENT_REJECTED = "intent_rejected"
+    # 意图澄清（方案三）— 参数缺失/歧义，需用户补充；
+    # data: {"intent":"unclear","missing_slots":["search_query",...],"message":"..."}
+    CLARIFICATION_REQUIRED = "clarification_required"
     # 上下文工程结果（P3 焦点追踪 + 指代消解）
     CONTEXT_RESOLVED = "context_resolved"
     # P4-A: 话题漂移检测

@@ -127,6 +127,8 @@ class MilvusVectorStore(VectorStoreBase):
                 "doc_parent_id",
                 "depth",
                 "version_of",
+                # P0-1: 文档状态字段（检索结果可携带，便于上层验证）
+                "doc_status",
             ],
         }
 
@@ -244,6 +246,10 @@ class MilvusVectorStore(VectorStoreBase):
                     hierarchy_fields["depth"] = int(depth_val)
                 except (ValueError, TypeError):
                     pass
+            # P0-1: 文档状态写入索引，供检索端按 doc_status=published 过滤
+            doc_status = doc_meta.get("doc_status")
+            if doc_status is not None:
+                hierarchy_fields["doc_status"] = str(doc_status)
 
         # Milvus REST API 接收 data 数组，每项是一条记录
         records: list[dict[str, Any]] = []

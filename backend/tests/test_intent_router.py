@@ -158,7 +158,7 @@ class TestIntentRouter:
     async def test_fallback_to_complex_query(self):
         """规则未命中且无 LLM → 兜底 COMPLEX_QUERY。"""
         result = await self.router.route(
-            query="你好，帮我讲个故事",
+            query="你好，帮我分析一下量子计算的发展",
             memory_context="",
             agent_type="qa",
         )
@@ -187,6 +187,9 @@ class TestIntentResult:
         assert IntentType.GET_DOCUMENT in _SHORTCUT_INTENTS
         assert IntentType.CREATE_DOCUMENT not in _SHORTCUT_INTENTS
         assert IntentType.COMPLEX_QUERY not in _SHORTCUT_INTENTS
+        # 终态出口（拒识/澄清）不属于检索快捷集合
+        assert IntentType.UNSUPPORTED not in _SHORTCUT_INTENTS
+        assert IntentType.UNCLEAR not in _SHORTCUT_INTENTS
 
     def test_intent_result_defaults(self):
         """IntentResult 默认值正确。"""
@@ -196,9 +199,13 @@ class TestIntentResult:
         )
         assert result.parameters == {}
         assert result.use_shortcut is False
+        assert result.missing_slots == []
+        assert result.constraints is None
 
     def test_intent_type_enum_values(self):
         """IntentType 枚举值正确。"""
         assert IntentType.RAG_SEARCH.value == "rag_search"
         assert IntentType.LIST_DOCUMENTS.value == "list_documents"
         assert IntentType.COMPLEX_QUERY.value == "complex_query"
+        assert IntentType.UNSUPPORTED.value == "unsupported"
+        assert IntentType.UNCLEAR.value == "unclear"

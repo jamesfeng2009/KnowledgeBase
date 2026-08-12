@@ -492,6 +492,9 @@ class Settings(BaseSettings):
     CONVERSATION_SUMMARIZER_ENABLED: bool = True      # P3-C 滚动摘要开关
     CONVERSATION_SUMMARIZER_MAX_TOKENS: int = 600     # 摘要触发阈值
     CONVERSATION_SUMMARIZER_RETAINED_TOKENS: int = 200  # 摘要后保留的近期 token
+    DETAIL_RECALL_ENABLED: bool = True                # P1-3 历史细节召回开关
+    DETAIL_RECALL_LIMIT: int = 3                      # 细节召回条数上限
+    DETAIL_RECALL_MAX_TOKENS: int = 300               # 细节召回注入 token 上限
     SCRATCHPAD_ENABLED: bool = True                   # P3-E Scratchpad 开关
     LLM_FACT_EXTRACTION_ENABLED: bool = True          # P3-F LLM 事实提取开关
 
