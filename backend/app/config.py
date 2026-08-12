@@ -473,6 +473,11 @@ class Settings(BaseSettings):
     CHAT_FAQ_MIN_PRAISE_RATING: int = 4
     # 单条 FAQ 内容最大字符数（防超长内容撑爆检索窗口）
     CHAT_FAQ_MAX_CONTENT_CHARS: int = 4000
+    # P2 审批自动通过阈值 — quality_score >= 此值 且 无冲突 且 无 PII 时自动 approve。
+    # 默认 0.9（保守，优先人工审批）；设为 1.0 则全部人工审批。
+    CHAT_FAQ_AUTO_APPROVE_THRESHOLD: float = 0.9
+    # P2 审批过期时间（秒）— pending 状态超时后标记 expired。默认 7 天。
+    CHAT_FAQ_APPROVAL_TTL_SECONDS: int = 7 * 24 * 3600
 
     # === P2 EntityRegistry 企业本体 ===
     ENTITY_REGISTRY_ENABLED: bool = True        # EntityRegistry 总开关

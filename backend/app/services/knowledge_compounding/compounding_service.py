@@ -1524,6 +1524,13 @@ class KnowledgeCompoundingService:
             # 冲突检测
             conflicts = await self._detect_conflicts_for_assets([asset])
 
+            # P2: 提交审批（自动检测分流 — 高质量自动通过，否则人工审批）
+            await self._submit_faq_for_review(
+                asset=asset,
+                target_kb_id=target_kb_id,
+                conflict_count=len(conflicts),
+            )
+
             task.extracted_asset_ids = [str(asset.id)]
             task.conflicts_detected = len(conflicts)
             task.status = "completed"
@@ -1638,6 +1645,13 @@ class KnowledgeCompoundingService:
 
             # 冲突检测
             conflicts = await self._detect_conflicts_for_assets([asset])
+
+            # P2: 提交审批（自动检测分流 — 高质量自动通过，否则人工审批）
+            await self._submit_faq_for_review(
+                asset=asset,
+                target_kb_id=target_kb_id,
+                conflict_count=len(conflicts),
+            )
 
             task.extracted_asset_ids = [str(asset.id)]
             task.conflicts_detected = len(conflicts)
@@ -1986,7 +2000,7 @@ class KnowledgeCompoundingService:
             tags=tags or [],
             doc_id=doc_id,
             confidence_score=confidence,
-            status="active",  # P0 直接 active；P2 审批工作流接入后改为 pending_review
+            status="pending_review",  # P2: 审批工作流，由 KnowledgeApprovalService 流转
             compounding_task_id=task_id,
         )
         self.db.add(asset)
@@ -2029,7 +2043,7 @@ class KnowledgeCompoundingService:
             title=title,
             content_text=content,
             doc_type="md",
-            status="published",  # P0 直接发布进 RAG；P2 改为 pending_review
+            status="pending_review",  # P2: 审批通过后由 KnowledgeApprovalService 改为 published
             owner_id=owner_id,
             classification="internal",  # FAQ 默认内部可见，P2 审批时可调整
             category="FAQ",
@@ -2080,3 +2094,44 @@ class KnowledgeCompoundingService:
         stmt = apply_tenant_filter(stmt, KnowledgeAsset, self._tenant_id)
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
+
+    # ------------------------------------------------------------------
+    # P2 内部：审批工作流接入
+    # ------------------------------------------------------------------
+
+    async def _submit_faq_for_review(
+        self,
+        asset: KnowledgeAsset,
+        target_kb_id: uuid.UUID,
+        conflict_count: int,
+    ) -> None:
+        """P2: 提交 FAQ 资产到审批工作流（自动检测分流）。
+
+        复用 KnowledgeApprovalService.submit_for_review：
+        - 高质量(quality_score >= 阈值 且 无冲突 且 无 PII) → 自动 approve
+          （asset.status=active, doc.status=published）
+        - 否则 → pending（人工审批，asset.status=pending_review）
+
+        审批服务不可用时优雅降级（资产保持 pending_review，不阻断沉淀）。
+        """
+        try:
+            from app.services.knowledge_approval_service import (
+                KnowledgeApprovalService,
+            )
+
+            approval_service = KnowledgeApprovalService(
+                self.db, tenant_id=self._tenant_id
+            )
+            await approval_service.submit_for_review(
+                asset=asset,
+                doc_id=asset.doc_id,
+                kb_id=target_kb_id,
+                conflict_count=conflict_count,
+            )
+        except Exception as exc:
+            log.warning(
+                "compounding.faq_approval_submit_failed",
+                asset_id=str(asset.id),
+                error=str(exc)[:200],
+            )
+            # 降级：资产保持 pending_review，不阻断沉淀流程

@@ -27,6 +27,7 @@ from app.models.knowledge_compounding import (
     KnowledgeAsset,
     KnowledgeConflict,
 )
+from app.models.knowledge_approval import KnowledgeApproval
 from app.models.memory import EntityEvent, KnowledgeEntity, MemoryFact
 from app.models.notification import Notification
 from app.models.qa import QaAnswer, QaQuestion
@@ -126,4 +127,6 @@ __all__ = [
     "KnowledgeAsset",
     "CompoundingTask",
     "KnowledgeConflict",
+    # P2: 知识回流审批
+    "KnowledgeApproval",
 ]
