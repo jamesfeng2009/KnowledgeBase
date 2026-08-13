@@ -826,6 +826,52 @@ class KnowledgeBaseMCPServer:
         return json.dumps(result, ensure_ascii=False)
 
     @mcp_tool(
+        name="read_tool_result",
+        description=(
+            "读取已写盘的超大工具结果全文。"
+            "当某次工具调用返回内容过大被写盘（think 上下文只留 '已写盘 <path>' 占位符）时，"
+            "传入该相对路径即可读回完整原始结果。"
+            "适用场景：上下文中的工具结果被写盘、需要查看完整内容。"
+            "不适用于：搜索知识库（应改用 knowledge_search）；"
+            "读取未写盘的普通工具结果（其内容已在上下文中）。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "写盘占位符中的相对路径（如 tenant_id/tool_ab12cd34.txt）",
+                },
+            },
+            "required": ["path"],
+        },
+        category="general",
+        tags=["工具结果", "写盘", "读取", "spill", "read", "全文"],
+        skill_description=(
+            "读取被写盘的超大工具结果全文。传入上下文占位符中的相对路径即可。"
+            "负向边界：不要用于搜索知识库（用 knowledge_search），"
+            "不要用于读取未写盘的普通工具结果。"
+        ),
+    )
+    async def _tool_read_tool_result(self, path: str) -> str:
+        """读取已写盘的工具结果全文（SpillStore 按需读回）。
+
+        路径越界（路径穿越）或文件不存在时返回结构化错误，不抛出。
+        """
+        from app.rag.context_budget import SpillStore
+
+        try:
+            return SpillStore().read(path)
+        except FileNotFoundError:
+            return json.dumps(
+                {"error": "spill file not found", "path": path}, ensure_ascii=False
+            )
+        except ValueError as exc:
+            return json.dumps(
+                {"error": str(exc), "path": path}, ensure_ascii=False
+            )
+
+    @mcp_tool(
         name="batch_analyze_documents",
         description=(
             "批量分析知识库文档 — 对指定知识库中的文档执行摘要、标签提取和分类。"

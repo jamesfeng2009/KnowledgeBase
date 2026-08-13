@@ -264,6 +264,9 @@ class EvalCaseResult:
     compression_metrics: dict[str, Any] | None = None
     multi_turn_metrics: dict[str, Any] | None = None
     tool_selection_metrics: dict[str, Any] | None = None
+    # 审计视图：从 spans 重建的可读执行轨迹（保序/含重复调用与轮次，
+    # 非评分依据，仅用于失败 case 调试与审计输出）
+    trajectory: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def passed(self) -> bool:
@@ -306,6 +309,7 @@ class EvalCaseResult:
             "compression_metrics": self.compression_metrics,
             "multi_turn_metrics": self.multi_turn_metrics,
             "tool_selection_metrics": self.tool_selection_metrics,
+            "trajectory": self.trajectory,
         }
 
 
@@ -576,6 +580,11 @@ class EvalRunner:
             try:
                 collected = recorder.collect()
                 result.spans = [s.to_dict() for s in collected]
+
+                # 审计视图：从 spans 重建可读执行轨迹（保序/含重复调用与轮次）
+                from app.eval.trajectory import build_trajectory
+
+                result.trajectory = build_trajectory(result.spans)
                 # P1-5: 从 span 证据聚合 case 级延迟 / token 成本 / 迭代次数
                 cost_summary = extract_cost_from_spans(result.spans)
                 result.latency_ms = cost_summary["latency_ms"]

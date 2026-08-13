@@ -47,7 +47,8 @@ from app.observability.langfuse_tracer import (
     trace_node,
 )
 from app.rag.cache import TokenCache
-from app.rag.context_budget import ContextBudgetManager
+from app.rag.constitution import get_constraint_reminder, get_system_prompt
+from app.rag.context_budget import ContextBudgetManager, SpillStore, _SPILL_TOOL_RESULT_THRESHOLD
 from app.rag.context_dedup import CrossTurnDeduplicator
 from app.rag.generator import Generator
 from app.rag.tool_guard import DangerousToolGuard
@@ -95,6 +96,10 @@ _dedup_ctx: contextvars.ContextVar[Any] = contextvars.ContextVar(
 _budget_ctx: contextvars.ContextVar[Any] = contextvars.ContextVar(
     "rag_budget", default=None
 )
+# P1-1: 大工具结果写盘存储 —— 超大工具返回写盘，上下文只留 placeholder
+_spill_ctx: contextvars.ContextVar[Any] = contextvars.ContextVar(
+    "rag_spill_store", default=None
+)
 # P0-3: 四轴硬预算 —— turns/seconds/tokens/cost_usd 任一触顶即硬停
 _hard_budget_ctx: contextvars.ContextVar[HardBudget | None] = contextvars.ContextVar(
     "rag_hard_budget", default=None
@@ -112,16 +117,22 @@ _RETRIEVE_TOP_K: int = 20
 # P1-10: 在线回退双跑评估的召回 top_k（小样本对比，控成本）
 _FALLBACK_EVAL_TOP_K: int = 5
 
+# P1-2: 宪法独立成文件 — 核心约束从 CONSTITUTION.md 读取（人机共治、前缀稳定）。
+# 以下两个常量由宪法加载器派生，保持向后兼容（测试仍从本模块导入）。
+#
 # P0-Opt2: 稳定 system prompt — 不含动态内容（迭代计数/文档数/工具数），
 # 使前缀字节稳定以命中 Anthropic KV Cache。
 # 动态状态作为 "live zone" 消息在每轮 think 中追加，不嵌入 system prompt。
-_THINK_SYSTEM_STABLE: str = (
-    "你是企业知识库助手的决策大脑。分析用户问题和已有信息，决定下一步：\n"
-    '- 回复 "retrieve"：需要检索知识库补充信息；\n'
-    '- 回复 "tool_call"：需要调用企业系统工具（如查 OA/ERP/IT 工单）；\n'
-    '- 回复 "generate"：已有足够信息，可以生成最终答案。\n\n'
-    "只回复上述三个关键词之一，不要附加解释。"
-)
+#
+# P0-1: 尾部约束提醒（首尾三明治）— 追加到 think 上下文末尾，形成注意力尾部高地。
+# 对抗 Lost in the Middle：核心约束一旦被长历史/工具返回推到上下文中间位置，
+# 在注意力分布里就等于"看不见"（在 ≠ 被看见）。在末尾重放约束，保证模型在
+# 生成下一个决策前注意力必扫过它——就像考试前老师最后说一句"记得写名字"。
+# 设计要点：
+#   - 内容稳定、不随轮次变化、不参与压缩（L0 禁区），保证可复现；
+#   - 位于上下文尾部，不影响头部 KV Cache 前缀（前缀仍稳定命中缓存）。
+_THINK_SYSTEM_STABLE: str = get_system_prompt()
+_CONSTRAINT_REMINDER: str = get_constraint_reminder()
 
 # 权限过滤器类型 — 接收候选文档列表，返回过滤后的列表。
 # 由调用方注入（通常封装 PermissionService.filter_documents 对 dict 的适配）。
@@ -439,6 +450,19 @@ class AgenticRAGEngine:
     @_budget.setter
     def _budget(self, value: ContextBudgetManager) -> None:
         _budget_ctx.set(value)
+
+    @property
+    def _spill_store(self) -> SpillStore:
+        """P1-1: 大工具结果写盘存储 — 超大工具返回写盘，上下文只留 placeholder。"""
+        inst = _spill_ctx.get()
+        if inst is None:
+            inst = SpillStore()
+            _spill_ctx.set(inst)
+        return inst
+
+    @_spill_store.setter
+    def _spill_store(self, value: SpillStore) -> None:
+        _spill_ctx.set(value)
 
     @property
     def _hard_budget(self) -> HardBudget:
@@ -1679,6 +1703,32 @@ class AgenticRAGEngine:
                     latest = state["tool_results"][-1]
                     raw_summary = self._summarize(latest)
                     tool_name = latest.get("tool", "unknown") if isinstance(latest, dict) else "unknown"
+
+                    # P1-1: 大工具结果写盘 — 原始结果超阈值时写盘，上下文只留 placeholder。
+                    # 显著降低 L3（历史/工具日志）体量；Agent 需要全文时用
+                    # read_tool_result 按需读回。写盘失败静默降级为原摘要。
+                    raw_content = ""
+                    if isinstance(latest, dict):
+                        raw_content = str(
+                            latest.get("result") or latest.get("content") or ""
+                        )
+                    elif isinstance(latest, str):
+                        raw_content = latest
+                    if len(raw_content) > _SPILL_TOOL_RESULT_THRESHOLD:
+                        try:
+                            tenant_id = str(state.get("tenant_id") or "default")
+                            spill_ref = self._spill_store.spill(
+                                tenant_id, tool_name, raw_content
+                            )
+                            raw_summary = (
+                                f"已写盘 {spill_ref}（可用 read_tool_result 读取全文）"
+                            )
+                        except Exception as _spill_exc:
+                            log.warning(
+                                "engine.tool_result_spill_error",
+                                error=str(_spill_exc),
+                            )
+
                     # P1-Opt3: 跨轮去重 — 重复结果替换为指针引用
                     deduped = self._dedup.register(
                         turn=state["iteration"],
@@ -1988,6 +2038,14 @@ class AgenticRAGEngine:
         messages: list[Message] = list(base_messages) + [
             {"role": "user", "content": dynamic_context}
         ]
+
+        # P0-1: 尾部约束提醒（首尾三明治）— 追加到上下文末尾，形成注意力尾部高地。
+        # 无论中间历史/工具结果如何膨胀，模型生成下一个决策前注意力必扫过尾部，
+        # 保证"仅检索已发布文档/禁止越权/不虚构"等核心约束始终被看见。
+        if _CONSTRAINT_REMINDER:
+            messages = messages + [
+                {"role": "user", "content": _CONSTRAINT_REMINDER}
+            ]
 
         try:
             text = ""

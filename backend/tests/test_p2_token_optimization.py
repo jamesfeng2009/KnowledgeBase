@@ -235,7 +235,8 @@ class TestCompress:
 
     def test_preserves_tail_recent_messages(self) -> None:
         """压缩后保留最后 keep_recent 条消息。"""
-        manager = ContextBudgetManager(max_tokens=100, keep_recent=2)
+        # P0-2: max_tokens=300 使 ratio 落在 HISTORY_SUMMARY（三段式摘要）
+        manager = ContextBudgetManager(max_tokens=300, keep_recent=2)
         messages = _make_long_messages(count=5, content_size=500)
         result = manager.compress(messages)
 
@@ -244,7 +245,8 @@ class TestCompress:
 
     def test_middle_compressed_to_single_summary(self) -> None:
         """中间消息压缩为单条摘要消息。"""
-        manager = ContextBudgetManager(max_tokens=100, keep_recent=2)
+        # P0-2: max_tokens=300 使 ratio 落在 HISTORY_SUMMARY（三段式摘要）
+        manager = ContextBudgetManager(max_tokens=300, keep_recent=2)
         messages = _make_long_messages(count=5, content_size=500)
         result = manager.compress(messages)
 

@@ -12,6 +12,7 @@
 """
 
 import uuid
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -135,11 +136,35 @@ class MemoryManager:
         await memory.save_session(user_id, session_id, agent_state, summary)
     """
 
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession, sidecar: Any | None = None):
         self.db = db
         self.mem0 = Mem0Manager(db)
         self.graphiti = GraphitiManager(db)
         self.checkpoint = CheckpointManager(db)
+        # P2-1: 副车道检索器（可注入以便测试；为 None 时按需惰性创建）
+        self._sidecar = sidecar
+
+    def _get_sidecar(self) -> Any | None:
+        """返回副车道检索器；未注入且开关关闭时返回 None（走原逻辑）。
+
+        P2-1: 仅当显式注入 sidecar，或配置 MEMORY_SIDECAR_ENABLED=True 时启用。
+        默认关闭，保证零行为回归。
+        """
+        if self._sidecar is not None:
+            return self._sidecar
+        try:
+            from app.config import get_settings
+
+            if not get_settings().MEMORY_SIDECAR_ENABLED:
+                return None
+            from app.memory.sidecar import SidecarMemoryRetriever
+
+            return SidecarMemoryRetriever(
+                model_id=get_settings().MEMORY_SIDECAR_MODEL or None
+            )
+        except Exception as exc:
+            logger.warning("sidecar.init_failed", error=str(exc))
+            return None
 
     async def build_context(
         self,
@@ -175,31 +200,39 @@ class MemoryManager:
 
         # L3: Mem0 长期偏好 — 有 query 时做语义检索，无 query 时按时间排序
         # ORM 对象统一转为 dict（消费端均为 dict 式访问，见 _fact_to_dict）
-        try:
-            ctx.user_facts = [
-                _fact_to_dict(f)
-                for f in await self.mem0.search_facts(
-                    user_id=user_id,
-                    query=query,
-                    limit=10,
-                )
-            ]
-        except Exception as e:
-            logger.warning("mem0_search_failed", user_id=str(user_id), error=str(e))
+        # P2-1: 副车道检索开启时，L3/L4 走独立通道（轻量模型改写 + 召回），
+        # 不污染主对话 Prompt Cache 前缀；关闭时保持原逻辑（零回归）。
+        sidecar = self._get_sidecar()
+        if sidecar is not None:
+            recall = await sidecar.retrieve(user_id=user_id, query=query, mem0=self.mem0)
+            ctx.user_facts = recall.get("user_facts", [])
+            ctx.working_memory = recall.get("working_memory", [])
+        else:
+            try:
+                ctx.user_facts = [
+                    _fact_to_dict(f)
+                    for f in await self.mem0.search_facts(
+                        user_id=user_id,
+                        query=query,
+                        limit=10,
+                    )
+                ]
+            except Exception as e:
+                logger.warning("mem0_search_failed", user_id=str(user_id), error=str(e))
 
-        # L4: 工作记忆 — 获取当前任务相关事实（有 query 时也做语义检索）
-        try:
-            ctx.working_memory = [
-                _fact_to_dict(f)
-                for f in await self.mem0.search_facts(
-                    user_id=user_id,
-                    query=query,
-                    category="working",
-                    limit=5,
-                )
-            ]
-        except Exception as e:
-            logger.warning("working_memory_load_failed", error=str(e))
+            # L4: 工作记忆 — 获取当前任务相关事实（有 query 时也做语义检索）
+            try:
+                ctx.working_memory = [
+                    _fact_to_dict(f)
+                    for f in await self.mem0.search_facts(
+                        user_id=user_id,
+                        query=query,
+                        category="working",
+                        limit=5,
+                    )
+                ]
+            except Exception as e:
+                logger.warning("working_memory_load_failed", error=str(e))
 
         logger.info(
             "memory_context_built",

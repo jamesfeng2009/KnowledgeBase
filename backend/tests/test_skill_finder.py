@@ -609,7 +609,7 @@ class TestServerSkillIntegration:
         server = KnowledgeBaseMCPServer(db_factory=mock_db_factory)
 
         index = server.get_skill_index()
-        assert len(index) == 6
+        assert len(index) == 7  # P1-1: 新增 read_tool_result 工具
         names = [item["name"] for item in index]
         assert "knowledge_search" in names
         assert "document_create" in names
@@ -808,7 +808,7 @@ class TestMCPClientSkillIntegration:
         client = MCPClient(server)
 
         index = client.get_skill_index()
-        assert len(index) == 6
+        assert len(index) == 7  # P1-1: 新增 read_tool_result 工具
 
     @pytest.mark.asyncio
     async def test_client_get_tools_by_names(self) -> None:

@@ -20,6 +20,10 @@
 
 from __future__ import annotations
 
+import os
+import re
+import tempfile
+import uuid
 from typing import Any
 
 from app.utils.logger import get_logger
@@ -34,6 +38,114 @@ _KEEP_RECENT: int = 2
 
 # 压缩摘要中每条消息的最大保留长度
 _COMPRESSED_MSG_MAX_CHARS: int = 80
+
+# ======================================================================
+# P0-2: 五级渐进压缩 — 按 ratio 阈值分级触发，从"尽量保真"到"只保命"
+# ======================================================================
+#
+# 背景：原实现是"单级三段式一刀切压缩"（超预算即把中间消息全压成一条摘要）。
+# 粒度太粗——从"最近 N 轮原文"直接跳到"全部摘要"，中间没有过渡，且每次都
+# 牺牲全部中间信息。五级压缩让每一级只做最小的必要牺牲，最大限度保留有用信息。
+#
+# ratio = 当前总 token / 窗口预算（_WINDOW_BUDGET）
+#   窗口预算取 think 预算的 2 倍作为"满窗"参考，使原 2000 tok 触发点
+#   恰好落在 Level 2（50%）——保持向后兼容的触发时机，同时引入分级升级。
+#
+# 压缩黄金法则：永远从 L3（最老的历史/工具日志）开始压，L0（system+query）
+# 与 L1（当前状态）是禁区。级别只升不降，不会叠加。
+
+from enum import Enum
+
+
+class CompressionLevel(Enum):
+    """五级渐进压缩：0-4 从保真到保命。"""
+    NONE = 0            # < 50%：无压缩
+    TOOL_COMPRESS = 1   # 50-70%：工具结果压缩（首500+尾200+中间截断）
+    HISTORY_SUMMARY = 2 # 70-85%：历史摘要（关键动作轨迹）
+    TOPIC_SUMMARY = 3   # 85-92%：主题级摘要（更激进，保留更少近期）
+    EMERGENCY = 4       # > 92%：紧急模式（只留 system+query+最近1轮）
+
+
+# 五级压缩触发阈值（ratio = 当前 token / max_tokens）
+#   ratio < 1.0            → NONE（未超预算，should_compress 已拦截）
+#   1.0  <= ratio < 1.5    → TOOL_COMPRESS（刚超预算，轻触：仅压超长工具结果）
+#   1.5  <= ratio < 3.0    → HISTORY_SUMMARY（历史摘要，保留最近 keep_recent 轮）
+#   3.0  <= ratio < 5.0    → TOPIC_SUMMARY（主题级摘要，只保留最近 1 轮）
+#   ratio >= 5.0           → EMERGENCY（紧急模式，只留 system+query+最近 1 轮）
+_TOOL_COMPRESS_AT: float = 1.0
+_HISTORY_SUMMARY_AT: float = 1.5
+_TOPIC_SUMMARY_AT: float = 3.0
+_EMERGENCY_AT: float = 5.0
+
+# Level 2 工具结果压缩参数
+_TOOL_RESULT_COMPRESS_THRESHOLD: int = 2000  # 超过此字符数的工具结果才压缩
+_TOOL_RESULT_HEAD_CHARS: int = 500           # 保留首部（字段名/结构）
+_TOOL_RESULT_TAIL_CHARS: int = 200           # 保留尾部（状态码/结论）
+
+# ======================================================================
+# P1-1: 大工具结果写盘（Spill to Disk）
+# ======================================================================
+#
+# 背景：一次检索/查询可能返回数千 token 的工具结果，即使经 _summarize
+# 截断到 300 字，原始大结果仍会撑大 L3（历史/工具日志）体量。写盘机制把
+# 超大原始结果写到磁盘，think 上下文只留一个 placeholder + 相对路径，
+# Agent 需要全文时再通过 read_tool_result 工具按需读回。
+#
+# 安全：路径含 tenant_id 防跨租户泄漏；read 时校验解析后路径必须落在
+# 基础目录内，防止路径穿越读取任意文件。
+_SPILL_TOOL_RESULT_THRESHOLD: int = 2000  # 原始结果超过此字符数即写盘
+_DEFAULT_SPILL_DIR: str = os.path.join(tempfile.gettempdir(), "ekb_spill")
+
+
+class SpillStore:
+    """大工具结果写盘存储 — 超长内容写盘，上下文只留 placeholder。
+
+    写入本地临时目录（默认 ``{tempdir}/ekb_spill``），相对路径含
+    ``tenant_id`` 前缀防跨租户泄漏。``read`` 校验路径不越界。
+    """
+
+    def __init__(self, base_dir: str | None = None) -> None:
+        self._base_dir = base_dir or _DEFAULT_SPILL_DIR
+
+    def spill(self, tenant_id: str, key: str, content: str) -> str:
+        """写入内容并返回相对路径（含 tenant_id 前缀）。
+
+        Args:
+            tenant_id: 租户标识，用于路径隔离。
+            key: 内容标识（如工具名）。
+            content: 原始内容。
+
+        Returns:
+            相对路径（相对 base_dir），供上下文 placeholder 引用。
+        """
+        safe_tenant = re.sub(r"[^A-Za-z0-9_-]", "_", str(tenant_id)) or "default"
+        safe_key = re.sub(r"[^A-Za-z0-9_-]", "_", str(key)) or "result"
+        rel = os.path.join(safe_tenant, f"{safe_key}_{uuid.uuid4().hex[:8]}.txt")
+        abs_path = os.path.join(self._base_dir, rel)
+        os.makedirs(os.path.dirname(abs_path), exist_ok=True)
+        with open(abs_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        return rel
+
+    def read(self, rel_path: str) -> str:
+        """按相对路径读回内容，校验路径不越界。
+
+        Args:
+            rel_path: spill() 返回的相对路径。
+
+        Returns:
+            原始内容。
+
+        Raises:
+            ValueError: 路径越界（路径穿越攻击）。
+            FileNotFoundError: 文件不存在。
+        """
+        abs_path = os.path.realpath(os.path.join(self._base_dir, rel_path))
+        base = os.path.realpath(self._base_dir)
+        if not abs_path.startswith(base + os.sep):
+            raise ValueError("spill path escapes base dir")
+        with open(abs_path, "r", encoding="utf-8") as f:
+            return f.read()
 
 # ======================================================================
 # P1-5: CJK 感知的 token 估算
@@ -210,36 +322,135 @@ class ContextBudgetManager:
         messages: list[dict[str, Any]],
         scratchpad: str = "",
     ) -> list[dict[str, Any]]:
-        """压缩消息列表 — 三段式策略。
+        """按五级渐进压缩级别压缩消息列表。
 
-        保留前 2 条（system + query）和最后 keep_recent 条，
-        中间消息压缩为单条摘要消息。
+        P0-2: 由 ratio（当前 token / 窗口预算）决定压缩级别，从"尽量保真"
+        到"只保命"逐级升级，每一级只做最小的必要牺牲：
 
-        P3-E: Scratchpad 作为高密度信息追加到摘要末尾（截断到 200 字），
-        保证推理轨迹在压缩后仍可被 LLM 参考。
+        - Level 0 NONE（<50%）：不压缩
+        - Level 1 TOOL_COMPRESS（50-70%）：仅压缩超长工具结果（首500+尾200）
+        - Level 2 HISTORY_SUMMARY（70-85%）：历史摘要（三段式，保留最近 keep_recent 轮）
+        - Level 3 TOPIC_SUMMARY（85-92%）：主题级摘要（更激进，只保留最近 1 轮）
+        - Level 4 EMERGENCY（>92%）：只留 system+query+最近 1 轮
 
-        压缩后的消息结构::
-
-            [system, query, "[系统] 早期上下文摘要：...；推理轨迹:...", recent_msg1, recent_msg2]
+        压缩黄金法则：永远从 L3（最老历史/工具日志）开始压，L0（system+query）
+        与 L1（当前状态）是禁区。级别只升不降，不会叠加。
 
         Args:
             messages: 原始消息列表。
             scratchpad: P3-E Scratchpad 内容（可选）。
 
         Returns:
-            压缩后的消息列表（可能比原始列表短）。
+            压缩后的消息列表。
         """
         if len(messages) <= 2 + self._keep_recent:
             return messages
 
-        # 三段式切分
-        head = messages[:2]  # system + query（KV Cache 前缀，不动）
-        tail = messages[-self._keep_recent:]  # Live Zone（最近上下文，不动）
-        middle = messages[2:-self._keep_recent]  # 待压缩的中间消息
-
         before_tokens = self.estimate_tokens(messages)
+        level = self._compute_level(before_tokens)
 
-        # 将中间消息压缩为单条摘要
+        if level == CompressionLevel.NONE:
+            return messages
+        if level == CompressionLevel.TOOL_COMPRESS:
+            result = self._compress_tool_results(messages)
+        elif level == CompressionLevel.HISTORY_SUMMARY:
+            result = self._compress_history_summary(
+                messages, scratchpad, keep_recent=self._keep_recent
+            )
+        elif level == CompressionLevel.TOPIC_SUMMARY:
+            result = self._compress_history_summary(
+                messages, scratchpad, keep_recent=1
+            )
+        else:  # EMERGENCY
+            result = self._compress_emergency(messages)
+
+        after_tokens = self.estimate_tokens(result)
+        saved = before_tokens - after_tokens
+        self._compress_count += 1
+        self._total_tokens_saved += max(0, saved)
+
+        # P1-6: 记录压缩前后快照 — 压缩信息损耗评估（实体保留率 / 一致性双跑）
+        self._last_snapshot = {
+            "before": [dict(m) for m in messages],
+            "after": [dict(m) for m in result],
+            "before_tokens": before_tokens,
+            "after_tokens": after_tokens,
+            "level": level.name,
+        }
+
+        log.info(
+            "context_budget.compressed",
+            level=level.name,
+            ratio=round(before_tokens / self._max_tokens, 3),
+            before_msgs=len(messages),
+            after_msgs=len(result),
+            before_tokens=before_tokens,
+            after_tokens=after_tokens,
+            tokens_saved=saved,
+            compress_count=self._compress_count,
+        )
+
+        return result
+
+    def _compute_level(self, usage: int) -> CompressionLevel:
+        """根据当前 token 用量与 max_tokens 预算的 ratio 计算压缩级别。
+
+        ratio = usage / max_tokens，衡量"超出预算多少倍"：
+        刚超预算轻触（TOOL_COMPRESS），越超越激进，直至 EMERGENCY 只保命。
+        """
+        ratio = usage / self._max_tokens
+        if ratio < _TOOL_COMPRESS_AT:
+            return CompressionLevel.NONE
+        if ratio < _HISTORY_SUMMARY_AT:
+            return CompressionLevel.TOOL_COMPRESS
+        if ratio < _TOPIC_SUMMARY_AT:
+            return CompressionLevel.HISTORY_SUMMARY
+        if ratio < _EMERGENCY_AT:
+            return CompressionLevel.TOPIC_SUMMARY
+        return CompressionLevel.EMERGENCY
+
+    def _compress_tool_results(
+        self, messages: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Level 1: 工具结果压缩 — 仅压缩超长工具结果，其余消息原样保留。
+
+        保留首部（字段名/结构，前 500 字）+ 尾部（状态码/结论，后 200 字），
+        中间截断。这是最轻的一级，不触碰历史摘要，最大限度保真。
+        """
+        result: list[dict[str, Any]] = []
+        for msg in messages:
+            content = msg.get("content", "")
+            if (
+                isinstance(content, str)
+                and "[系统] 工具结果：" in content
+                and len(content) > _TOOL_RESULT_COMPRESS_THRESHOLD
+            ):
+                head = content[:_TOOL_RESULT_HEAD_CHARS]
+                tail = content[-_TOOL_RESULT_TAIL_CHARS:]
+                result.append(
+                    {**msg, "content": head + "\n…[中间已压缩]…\n" + tail}
+                )
+            else:
+                result.append(msg)
+        return result
+
+    def _compress_history_summary(
+        self,
+        messages: list[dict[str, Any]],
+        scratchpad: str,
+        keep_recent: int,
+    ) -> list[dict[str, Any]]:
+        """Level 2/3: 历史摘要 — 三段式（head + 摘要 + tail）。
+
+        head（system+query，L0 禁区）与 tail（最近 keep_recent 轮，Live Zone）
+        原样保留，中间历史压缩为单条摘要。keep_recent 越小越激进。
+
+        P3-E: Scratchpad 作为高密度信息追加到摘要末尾（截断到 200 字）。
+        """
+        head = messages[:2]  # system + query（KV Cache 前缀，不动）
+        tail = messages[-keep_recent:]  # Live Zone（最近上下文，不动）
+        middle = messages[2:-keep_recent]  # 待压缩的中间消息
+
         summary_parts: list[str] = []
         for msg in middle:
             compressed = self._compress_single_message(msg.get("content", ""))
@@ -261,32 +472,18 @@ class ContextBudgetManager:
             "content": "[系统] 早期上下文摘要：" + "；".join(summary_parts),
         }
 
-        result = head + [compressed_msg] + tail
+        return head + [compressed_msg] + tail
 
-        after_tokens = self.estimate_tokens(result)
-        saved = before_tokens - after_tokens
-        self._compress_count += 1
-        self._total_tokens_saved += max(0, saved)
+    def _compress_emergency(
+        self, messages: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Level 4: 紧急模式 — 只留 system+query（L0）+ 最近 1 轮（L1 状态）。
 
-        # P1-6: 记录压缩前后快照 — 压缩信息损耗评估（实体保留率 / 一致性双跑）
-        self._last_snapshot = {
-            "before": [dict(m) for m in messages],
-            "after": [dict(m) for m in result],
-            "before_tokens": before_tokens,
-            "after_tokens": after_tokens,
-        }
-
-        log.info(
-            "context_budget.compressed",
-            before_msgs=len(messages),
-            after_msgs=len(result),
-            before_tokens=before_tokens,
-            after_tokens=after_tokens,
-            tokens_saved=saved,
-            compress_count=self._compress_count,
-        )
-
-        return result
+        当 ratio > 92% 时触发，牺牲全部历史与工具日志，只保命。
+        """
+        head = messages[:2]  # system + query（L0 禁区）
+        tail = messages[-1:]  # 最近 1 轮（L1 当前状态）
+        return head + tail
 
     @staticmethod
     def _compress_single_message(content: str) -> str:
@@ -350,10 +547,14 @@ class ContextBudgetManager:
         Returns:
             包含 compress_count 和 total_tokens_saved 的字典。
         """
-        return {
+        stats: dict[str, int] = {
             "compress_count": self._compress_count,
             "total_tokens_saved": self._total_tokens_saved,
         }
+        # P0-2: 暴露最近一次压缩级别，便于观测分级切换
+        if self._last_snapshot and "level" in self._last_snapshot:
+            stats["last_level"] = self._last_snapshot["level"]
+        return stats
 
     def get_last_snapshot(self) -> dict[str, Any] | None:
         """返回最近一次压缩的前后快照（P1-6 压缩信息损耗评估）。

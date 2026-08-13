@@ -22,6 +22,7 @@ from typing import Any, TypedDict
 from app.llm.base import LLMProvider, Message
 from app.mcp.client import MCPClient
 from app.memory.memory_manager import MemoryManager
+from app.rag.constitution import get_system_prompt
 from app.utils.logger import get_logger
 from app.utils.sse import format_sse_event
 
@@ -75,7 +76,9 @@ class BaseAgent(ABC):
     agent_type: str = "base"
 
     #: Agent 系统提示词，子类覆盖。
-    system_prompt: str = "你是一个企业知识库 AI 助手。"
+    #: P1-2: 默认值取自宪法（CONSTITUTION.md 的「决策大脑」节），实现人机共治；
+    #: 子类可覆盖为 Agent 专属提示词。
+    system_prompt: str = get_system_prompt()
 
     #: 最大迭代次数，防止无限循环。
     max_iterations: int = 5

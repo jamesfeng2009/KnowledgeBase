@@ -201,6 +201,20 @@ class Settings(BaseSettings):
     # VLM 图片描述增强 — Docling 提取图片位置后用 VLM 生成描述注入 Markdown
     DOCLING_VLM_IMAGE_ENHANCE: bool = False
 
+    # === MinerU 扫描件 OCR 增强 ===
+    # 用 MinerU 替换 Docling 的 OCR 路径（仅扫描 PDF 与图片；Office/音频仍走 Docling）。
+    # MinerU 运行在独立 venv（避免与 docling/mlx-vlm 依赖冲突），通过子进程调用。
+    # 启用需配置 MINERU_PYTHON 指向 MinerU 独立 venv 的 python 绝对路径。
+    MINERU_ENABLED: bool = False
+    # MinerU 独立 venv 的 python 绝对路径（如 /path/to/mineru_test/venv/bin/python）
+    MINERU_PYTHON: str = ""
+    # 解析后端：pipeline / vlm-engine / hybrid-engine
+    MINERU_BACKEND: str = "vlm-engine"
+    # 文档语言（提升 OCR 精度，如 ch 中文 / en 英文）
+    MINERU_LANG: str = "ch"
+    # 单文件解析超时（秒）
+    MINERU_TIMEOUT: int = 600
+
     # === Find Skills 渐进式技能加载 ===
     # 启用后 Agent Loop 先匹配相关技能再按需加载完整 schema，
     # 避免工具数量增长后全量加载浪费 token。
@@ -308,6 +322,14 @@ class Settings(BaseSettings):
 
     # === 记忆引擎 ===
     MEM0_CONFIG_PATH: str = "./config/mem0.yaml"
+
+    # === P2-1 副车道检索（Sidecar Memory Retrieval）===
+    # 记忆召回（L3/L4）走独立"副车道"，不污染主对话 Prompt Cache 前缀。
+    #   - MEMORY_SIDECAR_ENABLED：总开关，默认关闭（零行为回归）；
+    #   - MEMORY_SIDECAR_MODEL：轻量模型 ID（models.json 中的 model_id），
+    #     用于记忆召回的 LLM 辅助步骤（记忆查询改写）；留空则回退默认 Provider。
+    MEMORY_SIDECAR_ENABLED: bool = False
+    MEMORY_SIDECAR_MODEL: str = ""
 
     # === LangFuse 可观测性 ===
     LANGFUSE_PUBLIC_KEY: str = ""

@@ -369,7 +369,7 @@ class TestEnginePlanWiring:
 
         await engine._think(state)
 
-        dynamic_msg = llm.last_messages[-1]["content"]
+        dynamic_msg = llm.last_messages[-2]["content"]
         assert "执行计划" in dynamic_msg
         assert "检索文档" in dynamic_msg
 

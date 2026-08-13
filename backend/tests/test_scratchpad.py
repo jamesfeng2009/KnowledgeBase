@@ -17,8 +17,11 @@ class TestContextBudgetScratchpad:
     """ContextBudgetManager.compress 的 Scratchpad 感知测试。"""
 
     def setup_method(self):
+        # P0-2: 五级压缩后 compress 按 token 压力分级。这些测试消息总 token 约
+        # 20-32，设 max_tokens=12 使 ratio 落在 HISTORY_SUMMARY（1.5-3.0），
+        # 保持"三段式摘要 + Scratchpad"的断言意图。
         self.budget = ContextBudgetManager(
-            max_tokens=100,
+            max_tokens=12,
             keep_recent=2,
         )
 

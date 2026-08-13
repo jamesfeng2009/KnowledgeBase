@@ -364,8 +364,8 @@ class TestIncrementalContext:
         await engine._think(state)
 
         sent_messages = llm.call_history[0]
-        # 最后一条应为动态上下文
-        last_msg = sent_messages[-1]
+        # 动态上下文在 [-2]（P0-1 尾部约束提醒占据 [-1]）
+        last_msg = sent_messages[-2]
         assert last_msg["role"] == "user"
         assert "迭代 2/5" in last_msg["content"]
         assert "文档 2 篇" in last_msg["content"]

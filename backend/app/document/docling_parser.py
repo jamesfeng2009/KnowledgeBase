@@ -20,6 +20,7 @@ Docling 统一文档解析器 — 基于 IBM Granite-Docling-258M 模型。
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from app.config import get_settings
@@ -102,6 +103,18 @@ class DoclingParser(DocumentParser):
         Returns:
             HTML 格式的文档内容。Docling 不可用或解析失败时返回空字符串。
         """
+        # 0. 扫描件/图片 OCR — 若启用 MinerU 且命中扫描 PDF / 图片，走 MinerU。
+        #    Office（docx/pptx/xlsx）与音频仍走 Docling，仅替换 OCR 路径。
+        if self._should_use_mineru(file_path):
+            html = await self._parse_with_mineru(file_path)
+            if html:
+                log.info(
+                    "mineru.parsed",
+                    file_path=file_path,
+                    html_len=len(html),
+                )
+                return html
+
         converter = self._get_converter()
         if converter is None:
             return ""
@@ -253,6 +266,158 @@ class DoclingParser(DocumentParser):
             log.debug("docling.extract_pictures_failed", error=str(exc))
 
         return pictures
+
+    #: 交由 MinerU 处理（替换 Docling OCR 路径）的图片类型
+    _MINERU_IMAGE_TYPES: set[str] = {
+        "png", "jpg", "jpeg", "gif", "webp", "tiff", "bmp",
+    }
+
+    def _mineru_python(self) -> str:
+        """读取 MinerU 独立 venv 的 python 路径（缓存，缺省返回空串）。"""
+        if getattr(self, "_mineru_python_path", None) is None:
+            settings = get_settings()
+            path = (getattr(settings, "MINERU_PYTHON", "") or "").strip()
+            self._mineru_python_path = path if path else ""
+        return self._mineru_python_path
+
+    def _should_use_mineru(self, file_path: str) -> bool:
+        """判断是否应走 MinerU 替换 Docling 的 OCR 路径。
+
+        规则：启用 MinerU 且配置了独立 venv 时，
+            - 图片类型 → MinerU；
+            - PDF 且为扫描件（无文本层）→ MinerU；
+            - Office（docx/pptx/xlsx）与音频 → 仍走 Docling。
+        """
+        settings = get_settings()
+        if not self._bool(getattr(settings, "MINERU_ENABLED", False), False):
+            return False
+        if not self._mineru_python():
+            log.debug("mineru.python_not_configured")
+            return False
+
+        ext = os.path.splitext(file_path)[1].lower().lstrip(".")
+        if ext in self._MINERU_IMAGE_TYPES:
+            return True
+        if ext == "pdf" and self._is_scanned_pdf(file_path):
+            return True
+        return False
+
+    @staticmethod
+    def _is_scanned_pdf(file_path: str) -> bool:
+        """用 PyMuPDF 检测 PDF 是否为扫描件（整份无文本层）。"""
+        try:
+            import fitz
+
+            with fitz.open(file_path) as doc:
+                if doc.page_count == 0:
+                    return False
+                for page in doc:
+                    if page.get_text().strip():
+                        return False
+                return True
+        except Exception:
+            # 无法读取文本层时保守返回 False（仍走 Docling）
+            return False
+
+    async def _parse_with_mineru(self, file_path: str) -> str:
+        """在独立 venv 中调用 MinerU CLI 解析扫描 PDF / 图片，返回 HTML。
+
+        采用子进程隔离：MinerU 依赖（transformers 5.15 + mlx-vlm）与
+        Docling 依赖存在版本冲突，独立 venv 可避免污染主后端环境。
+        """
+        import asyncio
+        import glob
+        import tempfile
+
+        settings = get_settings()
+        python = self._mineru_python()
+        backend = getattr(settings, "MINERU_BACKEND", "vlm-engine") or "vlm-engine"
+        lang = getattr(settings, "MINERU_LANG", "ch") or "ch"
+        timeout = int(getattr(settings, "MINERU_TIMEOUT", 600) or 600)
+
+        cmd = [
+            python, "-c",
+            "from mineru.cli.client import main; import sys; sys.exit(main())",
+            "-p", file_path, "-o", "{out_dir}",
+            "-b", backend, "-l", lang,
+        ]
+
+        try:
+            with tempfile.TemporaryDirectory() as out_dir:
+                cmd[cmd.index("{out_dir}")] = out_dir
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                try:
+                    _, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+                except asyncio.TimeoutError:
+                    proc.kill()
+                    log.warning("mineru.timeout", file_path=file_path)
+                    return ""
+
+                if proc.returncode != 0:
+                    log.warning(
+                        "mineru.failed",
+                        file_path=file_path,
+                        code=proc.returncode,
+                        stderr=(stderr or b"")[-800:].decode("utf-8", "ignore"),
+                    )
+                    return ""
+
+                md_files = glob.glob(
+                    os.path.join(out_dir, "**", "*.md"), recursive=True
+                )
+                if not md_files:
+                    log.warning("mineru.no_md_output", file_path=file_path)
+                    return ""
+
+                with open(md_files[0], "r", encoding="utf-8") as f:
+                    md = f.read()
+                if not md or not md.strip():
+                    return ""
+                return self._markdown_to_html(md)
+        except Exception as exc:
+            log.warning("mineru.error", file_path=file_path, error=str(exc))
+            return ""
+
+    @staticmethod
+    def _markdown_to_html(md: str) -> str:
+        """将 MinerU 输出的 Markdown 转 HTML（标题/表格/图片）。
+
+        优先用 markdown-it-py（Docling 依赖链已含），不可用时退化为段落包裹，
+        保证 chunker 能按 <h> 标签分块。
+        """
+        try:
+            from markdown_it import MarkdownIt
+
+            # html=True 让 MinerU 输出中的原生 <table> 原样透传，
+            # 否则会被转义成 &lt;table&gt; 导致表格结构丢失。
+            return MarkdownIt("js-default", {"html": True}).render(md)
+        except Exception:
+            # 极简降级：保留标题与表格，其余按行转 <p>
+            import re
+
+            lines = md.splitlines()
+            out: list[str] = []
+            in_code = False
+            for line in lines:
+                if line.strip().startswith("```"):
+                    in_code = not in_code
+                    continue
+                if in_code:
+                    out.append(f"<pre>{line}</pre>")
+                    continue
+                m = re.match(r"^(#{1,6})\s+(.*)$", line)
+                if m:
+                    level = len(m.group(1))
+                    out.append(f"<h{level}>{m.group(2)}</h{level}>")
+                elif line.strip().startswith("|") and line.strip().endswith("|"):
+                    out.append(line)  # 表格原样保留，交由上层处理
+                elif line.strip():
+                    out.append(f"<p>{line.strip()}</p>")
+            return "\n".join(out)
 
     @staticmethod
     def is_supported(doc_type: str) -> bool:

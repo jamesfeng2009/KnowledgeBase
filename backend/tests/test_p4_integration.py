@@ -194,7 +194,8 @@ class TestP4IntegrationFlow:
                 self.captured_dynamic = ""
 
             async def chat(self, messages, stream=False, **kwargs):
-                self.captured_dynamic = messages[-1].get("content", "") if messages else ""
+                # P0-1: 尾部约束提醒占用 [-1]，动态上下文在 [-2]
+                self.captured_dynamic = messages[-2].get("content", "") if len(messages) >= 2 else ""
                 yield "generate"
 
         class MockComp:

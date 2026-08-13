@@ -58,6 +58,9 @@ backend/.hf_cache/
 backend/outputs/
 backend/models/
 
+# MinerU 本地测试环境（独立 venv + 样本 PDF + OCR 输出，均为本地产物，不入库）
+mineru_test/
+
 # Personal resume / cover-letter / interview / review documents (keep local, do not publish to remote)
 resume.md
 resume_*.md

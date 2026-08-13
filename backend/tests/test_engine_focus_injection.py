@@ -99,7 +99,7 @@ class TestThinkFocusInjection:
         await engine._think(state)
 
         # 检查最后一条消息（dynamic context）包含焦点
-        dynamic_msg = llm.captured_messages[-1]["content"]
+        dynamic_msg = llm.captured_messages[-2]["content"]
         assert "限号政策" in dynamic_msg
         assert "北京" in dynamic_msg
         assert "查询" in dynamic_msg
@@ -112,7 +112,7 @@ class TestThinkFocusInjection:
 
         await engine._think(state)
 
-        dynamic_msg = llm.captured_messages[-1]["content"]
+        dynamic_msg = llm.captured_messages[-2]["content"]
         assert "对话焦点" not in dynamic_msg
 
     @pytest.mark.asyncio
@@ -125,7 +125,7 @@ class TestThinkFocusInjection:
 
         await engine._think(state)
 
-        dynamic_msg = llm.captured_messages[-1]["content"]
+        dynamic_msg = llm.captured_messages[-2]["content"]
         assert "切换了话题" in dynamic_msg
 
     @pytest.mark.asyncio
@@ -138,7 +138,7 @@ class TestThinkFocusInjection:
 
         await engine._think(state)
 
-        dynamic_msg = llm.captured_messages[-1]["content"]
+        dynamic_msg = llm.captured_messages[-2]["content"]
         assert "切换了话题" not in dynamic_msg
 
     @pytest.mark.asyncio
@@ -152,7 +152,7 @@ class TestThinkFocusInjection:
 
         await engine._think(state)
 
-        dynamic_msg = llm.captured_messages[-1]["content"]
+        dynamic_msg = llm.captured_messages[-2]["content"]
         assert "报销" in dynamic_msg
         assert "切换了话题" in dynamic_msg
 
@@ -164,7 +164,7 @@ class TestThinkFocusInjection:
 
         await engine._think(state)
 
-        dynamic_msg = llm.captured_messages[-1]["content"]
+        dynamic_msg = llm.captured_messages[-2]["content"]
         assert "切换了话题" not in dynamic_msg
 
     @pytest.mark.asyncio
@@ -177,5 +177,38 @@ class TestThinkFocusInjection:
 
         await engine._think(state)
 
-        dynamic_msg = llm.captured_messages[-1]["content"]
+        dynamic_msg = llm.captured_messages[-2]["content"]
         assert "对话焦点" in dynamic_msg
+
+
+class TestThinkConstraintReminder:
+    """P0-1 尾部约束提醒（首尾三明治）测试。"""
+
+    @pytest.mark.asyncio
+    async def test_constraint_reminder_appended_at_tail(self):
+        """_think 上下文末尾应追加约束提醒（尾部高地）。"""
+        from app.rag.engine import _CONSTRAINT_REMINDER
+
+        engine, llm = _make_engine()
+        state = _make_base_state()
+
+        await engine._think(state)
+
+        # 最后一条消息是约束提醒
+        tail_msg = llm.captured_messages[-1]["content"]
+        assert tail_msg == _CONSTRAINT_REMINDER
+        assert "必须遵守" in tail_msg
+        assert "仅检索已发布" in tail_msg
+
+    @pytest.mark.asyncio
+    async def test_constraint_reminder_after_dynamic_context(self):
+        """约束提醒位于动态上下文之后（动态上下文在 [-2]）。"""
+        engine, llm = _make_engine()
+        state = _make_base_state(iteration=3, max_iterations=5)
+
+        await engine._think(state)
+
+        dynamic_msg = llm.captured_messages[-2]["content"]
+        assert "当前状态" in dynamic_msg
+        # 尾部提醒独立成消息，不与动态上下文混在一起
+        assert "必须遵守" not in dynamic_msg

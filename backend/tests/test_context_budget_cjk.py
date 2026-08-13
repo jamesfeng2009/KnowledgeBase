@@ -284,7 +284,7 @@ class TestShouldCompressIntegration:
         需要足够多的中间消息才能让压缩真正减少消息数：
         原 7 条 → head(2) + summary(1) + tail(2) = 5 条。
         """
-        mgr = ContextBudgetManager(max_tokens=10, keep_recent=2)
+        mgr = ContextBudgetManager(max_tokens=40, keep_recent=2)
         msgs = [
             {"role": "system", "content": "你是助手"},
             {"role": "user", "content": "用户问题"},
