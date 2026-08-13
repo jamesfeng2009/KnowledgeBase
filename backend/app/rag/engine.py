@@ -77,6 +77,11 @@ except ImportError:
 
 log = get_logger(__name__)
 
+# 后台任务强引用集合 — 事件循环对 Task 仅持弱引用，不保存强引用任务可能
+# 被 GC 提前回收（CPython 官方文档明确警告）；加入本集合并通过
+# done_callback 自动移除，兼顾防 GC 与防泄漏。
+_background_tasks: set[asyncio.Task] = set()
+
 # P0 并发修复：引擎实例是进程级单例（factory.get_rag_engine 全局复用），
 # 请求级状态（token 用量/检索重试计数/去重器/预算管理器/LangFuse 追踪上下文）
 # 若保存在实例属性上，并发请求会互相覆盖 —— 用量串账、重试计数错乱、追踪串扰。
@@ -3370,6 +3375,9 @@ class AgenticRAGEngine:
                 )
                 return
             task.add_done_callback(_on_done)
+            # 持有强引用防止任务被 GC 提前回收，完成后自动从集合移除
+            _background_tasks.add(task)
+            task.add_done_callback(_background_tasks.discard)
         except Exception as exc:
             log.warning("engine.high_risk_audit_schedule_error", error=str(exc))
 

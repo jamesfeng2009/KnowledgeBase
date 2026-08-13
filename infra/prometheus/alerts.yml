@@ -1,0 +1,75 @@
+# Prometheus 告警规则 — 企业知识库（P1 可观测规模化）
+# 定义多租户运维核心告警，触发后由 Alertmanager 推送通知。
+
+groups:
+  - name: ekb_availability
+    rules:
+      # 核心引擎不可用（健康检查 5xx 持续 1 分钟）
+      - alert: CoreEngineDown
+        expr: sum(rate(http_requests_total{path="/health/db", status=~"5.."}[5m])) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "核心引擎健康检查持续失败"
+          description: "core-engine /health/db 返回 5xx 超过 1 分钟"
+
+      # 高 5xx 错误率
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(http_requests_total{status=~"5.."}[5m]))
+            / clamp_min(sum(rate(http_requests_total[5m])), 1)
+            > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "5xx 错误率超过 5%"
+          description: "最近 5 分钟 5xx 占比 > 5%，需立即排查"
+
+  - name: ekb_performance
+    rules:
+      # 高 P99 延迟
+      - alert: HighLatency
+        expr: histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le)) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "P99 延迟超过 5 秒"
+
+  - name: ekb_ratelimit
+    rules:
+      # 租户限流拒绝突增 — 可能为异常流量或配额过紧
+      - alert: TenantRateLimitBurst
+        expr: sum(increase(tenant_ratelimit_denied_total[5m])) > 1000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "租户限流拒绝数突增"
+          description: "最近 5 分钟租户限流拒绝 > 1000 次"
+
+  - name: ekb_llm
+    rules:
+      # LLM token 用量突增 — 成本告警
+      - alert: LLMUsageSpike
+        expr: sum(increase(llm_usage_tokens_total[1h])) > 50000000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "LLM token 用量突增"
+          description: "最近 1 小时 LLM token 用量 > 5000 万，注意成本"
+
+  - name: ekb_circuit_breaker
+    rules:
+      # 熔断器打开
+      - alert: CircuitBreakerOpen
+        expr: circuit_breaker_state == 1
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "熔断器 {{ $labels.name }} 已打开"
+          description: "下游依赖故障，流量被熔断保护"

@@ -1,0 +1,13 @@
+# Grafana 仪表盘自动加载配置
+apiVersion: 1
+
+providers:
+  - name: 'EKB'
+    orgId: 1
+    folder: '企业知识库'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards

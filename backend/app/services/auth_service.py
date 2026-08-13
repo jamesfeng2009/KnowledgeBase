@@ -78,14 +78,33 @@ class AuthService:
             raise ValueError(f"邮箱 {email} 已被注册")
 
         hashed = hash_password(password)
+        role = "viewer"
+
+        # P0-1 租户自助开通：未指定租户（开放注册 / 邀请链接）时自动建租户。
+        # 新建租户的首位用户成为该租户管理员；加入既有租户时保持 viewer 角色，
+        # 且由 BillingService 强制用户数配额。
+        effective_tenant_id = tenant_id
+        if tenant_id is None:
+            from app.services.billing_service import BillingService
+
+            billing = BillingService(self.db)
+            tenant = await billing.provision_tenant(name=name or email.split("@")[0])
+            effective_tenant_id = tenant.id
+            role = "admin"
+        else:
+            from app.services.billing_service import BillingService
+
+            billing = BillingService(self.db)
+            await billing.check_user_quota(tenant_id)
+
         user = await self.user_repo.create(
             email=email,
             hashed_password=hashed,
             name=name,
-            role="viewer",
+            role=role,
             clearance_level="internal",
             is_active=True,
-            tenant_id=tenant_id,
+            tenant_id=effective_tenant_id,
         )
         return user
 

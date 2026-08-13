@@ -324,6 +324,22 @@ async def upload_document_file(
     _check_content_length(request)
     content_bytes = await _read_upload_bounded(file)
 
+    # P0-2 存储配额强制：上传前基于租户已用存储预检，超限抛 403。
+    # tenant_id 为 None（私有部署/单租户）时跳过配额。
+    if tenant_id is not None:
+        from app.services.billing_service import BillingService, QuotaExceededError
+
+        billing = BillingService(db)
+        try:
+            await billing.check_storage_quota(
+                tenant_id, additional_bytes=len(content_bytes)
+            )
+        except QuotaExceededError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"存储配额不足：{exc}",
+            ) from exc
+
     # 尝试解码为文本（二进制格式如 docx/pdf 无法直接解码）
     try:
         content_text = content_bytes.decode("utf-8")

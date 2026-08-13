@@ -1,0 +1,30 @@
+# APISIX 边缘网关 — 多租户子域路由
+# 用法：
+#   TENANT_ROOT_DOMAIN=example.com docker compose -f infra/apisix/docker-compose.apisix.yml up -d
+#
+# 网关监听 9080，把 {workspace}.example.com 路由到 core-engine:8000，
+# 并注入 X-Tenant-Domain 供后端解析租户。客户端自带的 X-Tenant-Id 会被剥离。
+
+services:
+  apisix:
+    image: apache/apisix:3.9.0-debian
+    ports:
+      - "9080:9080"   # 边缘网关入口
+      - "9090:9090"   # control API（可选，默认关闭 admin key）
+    volumes:
+      - ./apisix.yml:/usr/local/apisix/conf/apisix.yaml:ro
+    environment:
+      # Standalone 模式无需 etcd，显式声明以禁用 etcd 依赖
+      - APISIX_STAND_ALONE=true
+    depends_on:
+      - core-engine
+    restart: unless-stopped
+
+  # 后端在网关配置中通过服务名 core-engine 访问。
+  # 若核心引擎不在本 compose，可把 apisix.yml 中 upstream nodes 改为真实地址。
+  core-engine:
+    image: ${CORE_ENGINE_IMAGE:-ekb-core-engine:latest}
+    restart: unless-stopped
+    expose:
+      - "8000"
+    env_file: ../../backend/.env

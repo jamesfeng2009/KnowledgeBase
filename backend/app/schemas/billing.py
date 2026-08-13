@@ -165,3 +165,42 @@ class SubscriptionResponse(BaseModel):
     price: int = Field(default=0, ge=0, description="价格（分）")
     created_at: datetime = Field(..., description="创建时间")
     updated_at: datetime = Field(..., description="更新时间")
+
+
+# ======================================================================
+# P0 计费 + 配额闭环 Schema
+# ======================================================================
+
+
+class PlanInfo(BaseModel):
+    """套餐信息 Schema — P0-3 套餐展示。"""
+
+    id: str = Field(..., description="套餐 ID: free/pro/enterprise")
+    name: str = Field(..., description="套餐名称")
+    max_users: int = Field(..., ge=0, description="最大用户数")
+    max_storage_bytes: int = Field(..., ge=0, description="最大存储（字节）")
+    max_llm_tokens_per_month: int = Field(..., ge=0, description="LLM 月配额（token）")
+    price_cents: int = Field(..., ge=0, description="价格（分/月）")
+
+
+class PlanStatus(BaseModel):
+    """租户计划状态 Schema — 到期/欠费停服判定与前端展示。"""
+
+    plan: str = Field(..., description="套餐 ID")
+    status: str = Field(..., description="订阅状态: active/cancelled/expired/past_due")
+    expired_at: datetime | None = Field(default=None, description="到期时间")
+    usable: bool = Field(..., description="是否可用（false 表示到期/欠费停服）")
+
+
+class UsageAggregate(BaseModel):
+    """用量/账单聚合 Schema — P0-4。"""
+
+    llm_tokens: int = Field(..., ge=0, description="当月 LLM token 用量")
+    llm_limit: int = Field(..., ge=0, description="LLM 月配额上限")
+    llm_used_pct: float = Field(..., ge=0, description="LLM 配额使用百分比")
+    cost_cents: int = Field(..., ge=0, description="估算成本（分）")
+    cost_limit: int = Field(..., ge=0, description="套餐价格（分/月）")
+    user_count: int = Field(..., ge=0, description="当前用户数")
+    user_limit: int = Field(..., ge=0, description="用户数上限")
+    storage_bytes: int = Field(..., ge=0, description="已用存储（字节）")
+    storage_limit: int = Field(..., ge=0, description="存储上限（字节）")

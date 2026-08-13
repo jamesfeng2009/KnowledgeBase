@@ -199,6 +199,20 @@ async def health_check() -> ApiResponse:
     )
 
 
+@app.get("/metrics", tags=["系统"])
+async def prometheus_metrics():
+    """Prometheus 指标端点（P1 可观测规模化）。
+
+    由 Prometheus 定期抓取，供 Grafana 展示与告警。
+    返回 Prometheus 文本格式指标（http_requests_total 等）。
+    """
+    from app.utils.metrics import metrics_response
+
+    response = metrics_response()
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 @app.get("/health/db", tags=["系统"])
 async def health_check_db() -> JSONResponse:
     """数据库健康检查 — 触 DB 连接，用于就绪探针。

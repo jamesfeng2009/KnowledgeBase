@@ -63,6 +63,11 @@ _STRONG_FRESHNESS_CATEGORIES: frozenset[str] = frozenset({
     "政策", "SOP", "合同模板", "规范", "制度",
 })
 
+# 后台任务强引用集合 — 事件循环对 Task 仅持弱引用，不保存强引用任务可能
+# 被 GC 提前回收（CPython 官方文档明确警告）；加入本集合并通过
+# done_callback 自动移除，兼顾防 GC 与防泄漏。
+_background_tasks: set[asyncio.Task] = set()
+
 
 @dataclass
 class RefreshResult:
@@ -533,7 +538,10 @@ class ExternalSyncService:
 
         # 异步触发重建索引（不阻塞当前检索）
         # 注意：不传 session，避免在 session 关闭后访问
-        asyncio.create_task(self._trigger_reindex_async(str(doc.id)))
+        # 持有强引用防止任务被 GC 提前回收，完成后自动从集合移除
+        task = asyncio.create_task(self._trigger_reindex_async(str(doc.id)))
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
 
         return RefreshResult(
             status="updated",

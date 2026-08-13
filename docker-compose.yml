@@ -131,6 +131,32 @@ services:
     depends_on:
       redis: { condition: service_healthy }
 
+  # === 定时 PostgreSQL 备份（数据库备份 — 硬约束）===
+  # 使用 postgres 官方镜像（自带 pg_dump/pg_restore），cron 每日备份 +
+  # 每周恢复演练。备份写入 pg_backup 卷；配置 BACKUP_S3_ENDPOINT 可同步到对象存储。
+  pg-backup:
+    image: postgres:16-alpine
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGUSER: ekb
+      PGPASSWORD: ekb
+      PGDATABASE: ekb
+      BACKUP_DIR: /backups
+      RETENTION_DAYS: 14
+      # BACKUP_S3_ENDPOINT: s3://ekb-backups   # 可选，同步到 S3/MinIO
+      # BACKUP_S3_ENDPOINT_URL: http://minio:9000
+      BACKUP_CRON: "0 3 * * *"
+      RESTORE_CRON: "0 5 * * 0"
+    volumes:
+      - ./infra/backup/backup.sh:/scripts/backup.sh:ro
+      - ./infra/backup/restore_drill.sh:/scripts/restore_drill.sh:ro
+      - ./infra/backup/entrypoint.sh:/scripts/entrypoint.sh:ro
+      - pg_backup:/backups
+    entrypoint: ["/bin/sh", "/scripts/entrypoint.sh"]
+    depends_on:
+      postgres: { condition: service_healthy }
+
   # === 全文检索（OpenSearch）===
   opensearch:
     image: opensearchproject/opensearch:2.18.0
@@ -275,6 +301,7 @@ services:
 
 volumes:
   pg_data:
+  pg_backup:
   redis_data:
   minio_data:
   os_data:

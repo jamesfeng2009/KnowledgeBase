@@ -1,0 +1,100 @@
+# APISIX 边缘网关 — 多租户子域路由（Standalone 模式，无需 etcd）
+#
+# 用法：
+#   docker compose -f infra/apisix/docker-compose.apisix.yml up -d
+#
+# 职责：
+#   1. 子域路由：{workspace}.<TENANT_ROOT_DOMAIN> → 同一 core-engine 后端，
+#      但注入 X-Tenant-Domain 供后端解析租户；
+#   2. 安全清洗：剥离客户端自带的 X-Tenant-Id 头（防止租户伪造），
+#      仅由网关注入可信租户标识；
+#   3. 租户级限流：按 X-Tenant-Domain 维度限流（配合后端 P1 租户限流）。
+#
+# 说明：APISIX 作为边缘网关，将子域中的 workspace 提取出来注入
+# X-Tenant-Domain 头；后端依据该头 + Tenant 表 domain 映射解析租户 ID。
+# 需要部署时把下方 {TENANT_ROOT_DOMAIN} 替换为真实根域名。
+
+apisix:
+  node_listen: 9080
+  enable_control: true
+  control:
+    ip: "0.0.0.0"
+    port: 9090
+
+  # Standalone 模式：配置全部内联于本文件，无需 etcd
+  config_provider: yaml
+
+  # 兼容 HTTP/1.1
+  proxy_mode: http
+
+deployment:
+  role: data_plane
+  role_data_plane:
+    config_provider: yaml
+  admin:
+    admin_key_required: false
+
+# 上游 — core-engine 后端服务
+upstreams:
+  - id: core-engine
+    nodes:
+      "core-engine:8000": 1
+    type: roundrobin
+
+# 路由
+routes:
+  # --- 主 API 路由（含子域）---
+  - id: api-main
+    # 匹配所有根域与子域请求
+    uri: /api/*
+    priority: 100
+    upstream_id: core-engine
+    plugins:
+      # 剥离客户端伪造的租户头
+      proxy-rewrite:
+        headers:
+          set:
+            - X-Tenant-Id: ""
+      # 子域 → X-Tenant-Domain 注入
+      serverless-pre-function:
+        functions:
+          - |
+            local host = ngx.var.host or ""
+            local root = "{TENANT_ROOT_DOMAIN}"
+            local dot = "." .. root
+            if host ~= "" and root ~= "" and host:find(dot, 1, true) then
+              local sub = host:sub(1, #host - #dot)
+              if sub ~= "" and not sub:find(".", 1, true) then
+                ngx.req.set_header("X-Tenant-Domain", sub)
+              end
+            end
+      # 租户级限流（按 X-Tenant-Domain）
+      limit-req:
+        key: "$http_x_tenant_domain"
+        rate: 10            # 每秒速率（rps）
+        burst: 100          # 突发
+        rejected_code: 429
+        header:
+          set:
+            X-RateLimit-Limit: "600"
+
+  # --- SSE 流式透传（chat）---
+  - id: chat-sse
+    uri: /api/v1/chat/*
+    priority: 200
+    upstream_id: core-engine
+    enable_websocket: false
+    plugins:
+      proxy-rewrite:
+        headers:
+          set:
+            - X-Tenant-Id: ""
+
+  # --- 健康检查（不经子域限流）---
+  - id: health
+    uri: /health*
+    priority: 300
+    upstream_id: core-engine
+
+# 全局默认 — 未匹配路由返回 404
+# (APISIX standalone 未命中路由默认返回 404)

@@ -1,0 +1,23 @@
+# Alertmanager 告警通知配置 — 对接钉钉/企业微信/邮件
+# 默认仅记录告警；配置 webhook 后即可推送。生产环境务必配置真实接收渠道。
+
+route:
+  receiver: default
+  group_by: ["alertname", "cluster"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+receivers:
+  - name: default
+    # 站内/日志兜底：告警写入 Alertmanager 自身日志
+  # 示例 — 钉钉 webhook（去掉注释并按需填写 URL）
+  # - name: dingtalk
+  #   webhook_configs:
+  #     - url: "https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN"
+  #       send_resolved: true
+  # 示例 — 企业微信
+  # - name: wecom
+  #   webhook_configs:
+  #     - url: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=YOUR_KEY"
+  #       send_resolved: true

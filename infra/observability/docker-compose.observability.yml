@@ -1,0 +1,70 @@
+# 可观测规模化基础设施 — Prometheus + Grafana + Alertmanager + Loki/Promtail
+#
+# 用法：
+#   docker compose -f infra/observability/docker-compose.observability.yml up -d
+#
+# 组件：
+#   - Prometheus    : 指标采集 + 告警规则（/metrics）
+#   - Grafana       : 可视化 + 告警通知（默认 3000）
+#   - Alertmanager  : 告警路由与通知（可选）
+#   - Loki+Promtail : 集中日志采集（可选，需在 Docker 上挂 docker.sock 采集容器日志）
+
+services:
+  prometheus:
+    image: prom/prometheus:v2.54.0
+    ports: ["9090:9090"]
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./alerts.yml:/etc/prometheus/alerts.yml:ro
+    depends_on:
+      core-engine: { condition: service_started }
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    ports: ["3001:3000"]
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin   # 生产环境务必修改
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    ports: ["9093:9093"]
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+    volumes:
+      - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    restart: unless-stopped
+
+  # 集中日志采集（可选）— 挂载 docker.sock 采集所有容器 stdout 日志
+  promtail:
+    image: grafana/promtail:3.1.0
+    volumes:
+      - ./promtail.yml:/etc/promtail/promtail.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: -config.file=/etc/promtail/promtail.yml
+    depends_on:
+      - loki
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki:3.1.0
+    ports: ["3100:3100"]
+    command: -config.file=/etc/loki/local-config.yaml
+    restart: unless-stopped
+
+  # 后端在 Prometheus 抓取指标时通过服务名 core-engine 访问
+  core-engine:
+    image: ${CORE_ENGINE_IMAGE:-ekb-core-engine:latest}
+    expose: ["8000"]
+    env_file: ../../backend/.env
+    restart: unless-stopped
+
+volumes:
+  grafana_data:

@@ -26,7 +26,6 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
-from app.utils.crypto import decode_access_token
 from app.utils.logger import get_logger
 from app.utils.request_context import set_request_id, reset_request_id
 
@@ -271,6 +270,9 @@ class RedisRateLimiter:
 # 全局限流器实例 — 在 setup_middleware 中初始化
 _rate_limiter: RateLimiter | RedisRateLimiter | None = None
 
+# P1: 租户维度限流器实例 — 按 tenant_id 隔离，与客户端级限流并存。
+_tenant_rate_limiter: RateLimiter | RedisRateLimiter | None = None
+
 # P2-12: 排队缓冲计数器 — 当前正在排队等待令牌的请求数。
 # 仅作上限闸门防止排队堆积拖垮进程；自增/自减发生在 await 之间的
 # 同步代码段，单事件循环内无竞态。
@@ -334,6 +336,24 @@ def get_rate_limiter() -> RateLimiter | RedisRateLimiter | None:
     return _rate_limiter
 
 
+def get_tenant_rate_limiter() -> RateLimiter | RedisRateLimiter | None:
+    """获取租户维度限流器实例（测试可访问）。"""
+    return _tenant_rate_limiter
+
+
+def _build_limiter(
+    per_minute: int, burst: int, redis_url: str | None
+) -> RateLimiter | RedisRateLimiter:
+    """按配置构建限流器 — Redis 可用时用分布式，否则内存令牌桶。"""
+    if redis_url:
+        return RedisRateLimiter(
+            per_minute=per_minute,
+            burst=burst,
+            redis_url=redis_url,
+        )
+    return RateLimiter(per_minute=per_minute, burst=burst)
+
+
 def _get_client_id(request: Request) -> str:
     """提取客户端标识 — 优先 API Key / 用户令牌，回退到 IP。
 
@@ -369,7 +389,7 @@ def setup_middleware(app: FastAPI) -> None:
     Args:
         app: FastAPI 应用实例。
     """
-    global _rate_limiter
+    global _rate_limiter, _tenant_rate_limiter
 
     settings = get_settings()
 
@@ -383,31 +403,31 @@ def setup_middleware(app: FastAPI) -> None:
     )
 
     # --- 初始化限流器 ---
+    redis_url = getattr(settings, "REDIS_URL", None)
     if settings.RATE_LIMIT_ENABLED:
-        # P0 分布式预备：优先使用 Redis-backed 限流器，多实例共享计数
-        # Redis 不可用时自动降级为内存令牌桶
-        redis_url = getattr(settings, "REDIS_URL", None)
-        if redis_url:
-            _rate_limiter = RedisRateLimiter(
-                per_minute=settings.RATE_LIMIT_PER_MINUTE,
-                burst=settings.RATE_LIMIT_BURST,
-                redis_url=redis_url,
-            )
-            log.info(
-                "ratelimit.enabled_redis",
-                per_minute=settings.RATE_LIMIT_PER_MINUTE,
-                burst=settings.RATE_LIMIT_BURST,
-            )
-        else:
-            _rate_limiter = RateLimiter(
-                per_minute=settings.RATE_LIMIT_PER_MINUTE,
-                burst=settings.RATE_LIMIT_BURST,
-            )
-            log.info(
-                "ratelimit.enabled_memory",
-                per_minute=settings.RATE_LIMIT_PER_MINUTE,
-                burst=settings.RATE_LIMIT_BURST,
-            )
+        _rate_limiter = _build_limiter(
+            per_minute=settings.RATE_LIMIT_PER_MINUTE,
+            burst=settings.RATE_LIMIT_BURST,
+            redis_url=redis_url,
+        )
+        log.info(
+            "ratelimit.enabled_client",
+            per_minute=settings.RATE_LIMIT_PER_MINUTE,
+            burst=settings.RATE_LIMIT_BURST,
+        )
+
+    # P1: 租户维度限流 — 独立于客户端级限流，按 tenant_id 隔离。
+    if settings.RATE_LIMIT_TENANT_ENABLED:
+        _tenant_rate_limiter = _build_limiter(
+            per_minute=settings.RATE_LIMIT_TENANT_PER_MINUTE,
+            burst=settings.RATE_LIMIT_TENANT_BURST,
+            redis_url=redis_url,
+        )
+        log.info(
+            "ratelimit.enabled_tenant",
+            per_minute=settings.RATE_LIMIT_TENANT_PER_MINUTE,
+            burst=settings.RATE_LIMIT_TENANT_BURST,
+        )
 
     # --- 请求日志 + 限流 + 租户上下文 + request_id 中间件 ---
     @app.middleware("http")
@@ -427,22 +447,17 @@ def setup_middleware(app: FastAPI) -> None:
         _rid_token = set_request_id(request_id)
 
         # --- 租户上下文注入（在限流之前，确保所有请求都有租户上下文） ---
-        tenant_id: UUID | None = None
         path = request.url.path
+        tenant_id: UUID | None = None
+        tenant_domain: str | None = None
         if not path.startswith(_EXEMPT_PATHS):
-            # 从 Authorization header 解析 JWT 提取 tenant_id
-            auth_header = request.headers.get("authorization", "")
-            token = auth_header.replace("Bearer ", "") if auth_header.startswith("Bearer ") else ""
-            if token:
-                try:
-                    payload = decode_access_token(token)
-                    tid_str = payload.get("tenant_id")
-                    if tid_str:
-                        tenant_id = UUID(tid_str)
-                except Exception:
-                    pass  # 无效 JWT 不阻断请求，后续 get_current_user 会处理 401
+            # 解析租户标识：JWT 优先 → 网关 X-Tenant-Id 头 → 子域。
+            # 中间件保持无 DB 访问（子域权威映射由需要时经 TenantService 完成）。
+            from app.core.tenant_resolver import resolve_tenant_id
 
+            tenant_id, tenant_domain = resolve_tenant_id(request, settings)
         request.state.tenant_id = tenant_id
+        request.state.tenant_domain = tenant_domain
 
         # 将 tenant_id 和 request_id 绑定到 structlog 上下文变量，
         # 使当前请求内所有日志条目自动携带 tenant_id 和 request_id
@@ -504,10 +519,60 @@ def setup_middleware(app: FastAPI) -> None:
                             },
                         )
 
+            # --- P1 租户维度限流：按 tenant_id 隔离，防止单租户合计流量打爆共享资源 ---
+            if (
+                _tenant_rate_limiter is not None
+                and tenant_id is not None
+                and not path.startswith(_EXEMPT_PATHS)
+            ):
+                tid_str = str(tenant_id)
+                if isinstance(_tenant_rate_limiter, RedisRateLimiter):
+                    tenant_allowed = await _tenant_rate_limiter.allow(f"tenant:{tid_str}")
+                else:
+                    tenant_allowed = _tenant_rate_limiter.allow(f"tenant:{tid_str}")
+                if not tenant_allowed:
+                    t_retry_after = max(
+                        1,
+                        math.ceil(_tenant_rate_limiter.estimate_wait(f"tenant:{tid_str}")),
+                    )
+                    log.warning(
+                        "ratelimit.tenant_exceeded",
+                        tenant_id=tid_str,
+                        path=path,
+                        retry_after=t_retry_after,
+                    )
+                    if settings.METRICS_ENABLED:
+                        from app.utils import metrics
+
+                        metrics.record_tenant_ratelimit_denied(tid_str)
+                    return JSONResponse(
+                        status_code=429,
+                        content={
+                            "code": 429,
+                            "message": "工作区请求过于频繁，请稍后再试",
+                            "retry_after_seconds": t_retry_after,
+                        },
+                        headers={
+                            "Retry-After": str(t_retry_after),
+                        },
+                    )
+
             # --- 请求日志 ---
             start_time = time.perf_counter()
             response = await call_next(request)
             duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
+
+            # P1: Prometheus 指标采集（HTTP 请求计数 + 耗时直方图）
+            if settings.METRICS_ENABLED:
+                from app.utils import metrics
+
+                metrics.record_http_request(
+                    request.method,
+                    request.url.path,
+                    response.status_code,
+                    duration_ms / 1000.0,
+                    str(tenant_id) if tenant_id else "",
+                )
 
             # P0-Stage3: 响应头回传 request_id，供客户端/前端关联追踪
             response.headers["X-Request-ID"] = request_id

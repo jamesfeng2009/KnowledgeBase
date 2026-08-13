@@ -49,6 +49,11 @@ _tenant_ctx: contextvars.ContextVar[uuid.UUID | None] = contextvars.ContextVar(
     "mcp_request_tenant_id", default=None
 )
 
+# 后台任务强引用集合 — 事件循环对 Task 仅持弱引用，不保存强引用任务可能
+# 被 GC 提前回收（CPython 官方文档明确警告）；加入本集合并通过
+# done_callback 自动移除，兼顾防 GC 与防泄漏。
+_background_tasks: set[asyncio.Task] = set()
+
 
 def _current_tenant() -> uuid.UUID | None:
     """读取当前请求上下文的租户 ID（未设置返回 None）。"""

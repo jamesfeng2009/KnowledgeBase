@@ -66,6 +66,8 @@ structlog>=24.4.0
 # === 可观测性 ===
 # langfuse v2 API: Langfuse().trace() / .flush() — v3+ 改用 OpenTelemetry API，不兼容现有 TraceContext
 langfuse>=2.45.0,<3.0.0
+# Prometheus 指标导出（/metrics 端点，供 Prometheus 抓取 + Grafana 告警）
+prometheus-client>=0.21.0
 
 # === TTS 语音合成 ===
 edge-tts>=6.1.0

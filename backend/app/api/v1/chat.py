@@ -71,6 +71,19 @@ async def chat(
     tenant_id = getattr(request.state, "tenant_id", None)
     service = ChatService(db, user, tenant_id=tenant_id)
 
+    # P0-2 LLM 月配额强制：chat 前基于 UsageRecord 当月累计 + 到期判定预检。
+    # 超限/停服以 SSE error 事件返回（前端可友好展示），而非裸 403 断流。
+    if tenant_id is not None:
+        from app.services.billing_service import BillingService, QuotaExceededError
+
+        billing = BillingService(db)
+        try:
+            await billing.require_usable(tenant_id)
+            await billing.check_llm_monthly_quota(tenant_id)
+        except QuotaExceededError as exc:
+            log.info("chat.quota_denied", error=str(exc), tenant_id=str(tenant_id))
+            return sse_response(_error_stream(str(exc)))
+
     # 准备阶段：完成全部必要 DB 读写（会话获取/创建、权限校验、
     # 用户消息持久化、记忆加载、模型解析）
     try:

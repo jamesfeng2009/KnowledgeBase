@@ -236,6 +236,37 @@ class Settings(BaseSettings):
     RATE_LIMIT_PER_MINUTE: int = 60  # 每分钟请求数上限
     RATE_LIMIT_BURST: int = 10  # 突发请求数（令牌桶容量）
 
+    # === P1 租户维度限流（多租户生产化）===
+    # 客户端级限流按 API Key/IP 隔离；租户级限流按 tenant_id 隔离，
+    # 防止某租户内大量用户/密钥合计打爆共享资源。租户级配额通常高于客户端级。
+    RATE_LIMIT_TENANT_ENABLED: bool = True
+    RATE_LIMIT_TENANT_PER_MINUTE: int = 600  # 每租户每分钟请求数上限
+    RATE_LIMIT_TENANT_BURST: int = 50  # 每租户突发请求数（令牌桶容量）
+
+    # === P1 多租户子域路由 ===
+    # 部署根域名，用于解析 {tenant}.root_domain 形式的工作区子域。
+    # 空表示未启用子域路由（仅走 JWT 租户上下文）。
+    TENANT_ROOT_DOMAIN: str = ""
+    # 网关透传租户域名的请求头名（APISIX 转发时注入），
+    # 供后端在未认证/API Key 场景下解析租户。
+    TENANT_DOMAIN_HEADER: str = "X-Tenant-Domain"
+
+    # === P1 可观测规模化 ===
+    # 启用 Prometheus 指标采集（/metrics 端点 + 中间件埋点）。
+    # 集中日志（structlog JSON）始终开启，此开关仅控制指标采集。
+    METRICS_ENABLED: bool = True
+
+    # === P1 机密管理（Secrets Manager 替代 .env）===
+    # 机密来源：env（默认，仅环境变量/.env）| file（SECRETS_FILE_DIR 目录）|
+    # aws（AWS Secrets Manager，前缀 SECRETS_AWS_PREFIX）。
+    # 外部机密源在 get_settings() 首次调用时注入环境变量，覆盖同名配置项。
+    SECRETS_PROVIDER: str = "env"
+    # file 提供方：机密文件目录（Docker/K8s 挂载，如 /run/secrets）。
+    SECRETS_FILE_DIR: str = ""
+    # aws 提供方：区域与 secret 名前缀（如 "prod/ekb/" → 变量名去掉前缀转大写）。
+    SECRETS_AWS_REGION: str = ""
+    SECRETS_AWS_PREFIX: str = ""
+
     # === RAG 质量守卫 ===
     # 检索参数（原硬编码常量，外置为配置）
     RAG_RETRIEVE_TOP_K: int = 20
@@ -741,5 +772,12 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    """单例模式获取配置实例 — 缓存避免重复解析环境变量。"""
+    """单例模式获取配置实例 — 缓存避免重复解析环境变量。
+
+    P1 机密管理：首次调用前先 apply_secrets()，将外部机密源
+    （Secrets Manager / 机密文件）注入环境变量，再构建 Settings。
+    """
+    from app.core.secrets import apply_secrets
+
+    apply_secrets()
     return Settings()

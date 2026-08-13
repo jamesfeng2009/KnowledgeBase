@@ -1,0 +1,37 @@
+# Prometheus 抓取配置 — 企业知识库可观测规模化（P1）
+# 用法：docker compose -f infra/prometheus/docker-compose.prometheus.yml up -d
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: ekb
+
+# 告警规则文件
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  # 核心引擎（FastAPI /metrics 端点）
+  - job_name: core-engine
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["core-engine:8000"]
+
+  # Celery worker 进程指标（通过 process 指标或自定义 /metrics）
+  - job_name: celery-worker
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["celery-worker:9100"]
+
+  # 对象存储（MinIO 自带 Prometheus 端点）
+  - job_name: minio
+    metrics_path: /minio/v2/metrics/cluster
+    static_configs:
+      - targets: ["minio:9000"]
+
+  # 数据库（若部署 postgres_exporter）
+  # - job_name: postgres
+  #   metrics_path: /metrics
+  #   static_configs:
+  #     - targets: ["postgres-exporter:9187"]

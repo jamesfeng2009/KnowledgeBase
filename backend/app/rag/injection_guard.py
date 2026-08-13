@@ -430,7 +430,10 @@ class InjectionGuard:
 
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(_safe_alert())
+            task = loop.create_task(_safe_alert())
+            # 持有强引用防止任务被 GC 提前回收，完成后自动从集合移除
+            _background_tasks.add(task)
+            task.add_done_callback(_background_tasks.discard)
         except RuntimeError:
             # 无运行中事件循环（测试场景）— 同步降级仅记录日志
             log.debug("injection_guard.no_event_loop_for_alert")
@@ -442,6 +445,11 @@ class InjectionGuard:
 
 
 _guard_instance: InjectionGuard | None = None
+
+# 后台任务强引用集合 — 事件循环对 Task 仅持弱引用，不保存强引用任务可能
+# 被 GC 提前回收（CPython 官方文档明确警告）；加入本集合并通过
+# done_callback 自动移除，兼顾防 GC 与防泄漏。
+_background_tasks: set[asyncio.Task] = set()
 
 
 def get_injection_guard(
