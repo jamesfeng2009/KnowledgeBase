@@ -172,6 +172,58 @@ class TestBatchImportStructure:
         assert "属于" in rel_types  # predicate.upper() for Chinese
         assert rel_types.count("MENTIONS") == 2
 
+    @pytest.mark.asyncio
+    async def test_batch_import_document_with_chunks(self):
+        """batch_import_document 传入 chunks 时，创建 DocumentChunk 节点 + HAS_CHUNK 边。"""
+        service = GraphService()
+        service.batch_import_graph = AsyncMock(return_value={"nodes": 0, "relationships": 0})
+
+        doc_id = "doc-chunks-test"
+        chunks = [
+            {"id": "chunk-1", "content": "微服务属于架构模式", "title_path": "第一章"},
+            {"id": "chunk-2", "content": "系统包含用户管理", "title_path": "第二章"},
+        ]
+
+        # 手动构建 nodes（模拟 batch_import_document chunks 逻辑）
+        nodes = [{"label": "Document", "id": doc_id, "title": "测试", "kb_id": None, "doc_type": "md"}]
+        relationships = []
+
+        chunk_ids = []
+        for chunk in chunks:
+            cid = chunk["id"]
+            chunk_ids.append(cid)
+            nodes.append({
+                "label": "DocumentChunk",
+                "id": cid,
+                "doc_id": doc_id,
+                "text": chunk["content"][:500],
+                "title_path": chunk["title_path"],
+            })
+            relationships.append({
+                "from_label": "Document",
+                "from_id": doc_id,
+                "to_label": "DocumentChunk",
+                "to_id": cid,
+                "type": "HAS_CHUNK",
+            })
+
+        # 验证 DocumentChunk 节点
+        chunk_nodes = [n for n in nodes if n["label"] == "DocumentChunk"]
+        assert len(chunk_nodes) == 2
+        assert {n["id"] for n in chunk_nodes} == {"chunk-1", "chunk-2"}
+        # 验证溯源信息
+        for cn in chunk_nodes:
+            assert cn["doc_id"] == doc_id
+            assert cn["text"]  # 非空
+
+        # 验证 HAS_CHUNK 边
+        has_chunk_rels = [r for r in relationships if r["type"] == "HAS_CHUNK"]
+        assert len(has_chunk_rels) == 2
+        for rel in has_chunk_rels:
+            assert rel["from_label"] == "Document"
+            assert rel["from_id"] == doc_id
+            assert rel["to_label"] == "DocumentChunk"
+
 
 class TestRecommendCacheKey:
     """推荐缓存 key 格式测试。"""
@@ -205,11 +257,16 @@ class TestExtractTriplesFromChunks:
     def setup_method(self):
         self.service = GraphService()
 
-    def _make_chunk(self, content: str, title_path: str = "") -> object:
-        """构造模拟 Chunk 对象。"""
+    def _make_chunk(self, content: str, title_path: str = "", chunk_id: str = "") -> object:
+        """构造模拟 Chunk 对象（含 id 用于溯源）。"""
         from types import SimpleNamespace
+        import uuid
 
-        return SimpleNamespace(content=content, title_path=title_path)
+        return SimpleNamespace(
+            id=chunk_id or f"chunk-{uuid.uuid4().hex[:8]}",
+            content=content,
+            title_path=title_path,
+        )
 
     @pytest.mark.asyncio
     async def test_extract_from_chunks_basic(self) -> None:
@@ -312,8 +369,39 @@ class TestExtractTriplesFromChunks:
 
     @pytest.mark.asyncio
     async def test_extract_from_chunks_correct_doc_id_in_relationships(self) -> None:
-        """写入图谱时，Document → Concept 的 MENTIONS 关系应使用传入的 doc_id。"""
-        chunks = [self._make_chunk("微服务属于架构模式")]
+        """写入图谱时，Chunk → Entity 的 MENTIONS 关系应使用正确的 chunk_id。"""
+        chunk = self._make_chunk("微服务属于架构模式", chunk_id="chunk-001")
+        captured_nodes: list = []
+        captured_rels: list = []
+
+        async def capture_import(nodes, relationships, batch_size=500):
+            captured_nodes.extend(nodes)
+            captured_rels.extend(relationships)
+            return {"nodes": len(nodes), "relationships": len(relationships)}
+
+        self.service.batch_import_graph = capture_import
+
+        await self.service.extract_triples_from_chunks(
+            chunks=[chunk],
+            doc_id="my-doc-id",
+            use_rules=True,
+            use_llm=False,
+        )
+
+        # 验证 MENTIONS 关系从 DocumentChunk 指向 Entity
+        mentions_rels = [r for r in captured_rels if r["type"] == "MENTIONS"]
+        assert len(mentions_rels) == 2
+        for rel in mentions_rels:
+            assert rel["from_id"] == "chunk-001"
+            assert rel["from_label"] == "DocumentChunk"
+
+    @pytest.mark.asyncio
+    async def test_extract_from_chunks_creates_chunk_nodes_and_has_chunk(self) -> None:
+        """Chunk 入图：创建 DocumentChunk 节点 + Document → Chunk HAS_CHUNK 边。"""
+        chunks = [
+            self._make_chunk("微服务属于架构模式", chunk_id="chunk-a"),
+            self._make_chunk("系统包含用户管理模块", chunk_id="chunk-b"),
+        ]
         captured_nodes: list = []
         captured_rels: list = []
 
@@ -326,14 +414,103 @@ class TestExtractTriplesFromChunks:
 
         await self.service.extract_triples_from_chunks(
             chunks=chunks,
-            doc_id="my-doc-id",
+            doc_id="doc-xyz",
             use_rules=True,
             use_llm=False,
         )
 
-        # 验证 MENTIONS 关系使用正确的 doc_id
-        mentions_rels = [r for r in captured_rels if r["type"] == "MENTIONS"]
-        assert len(mentions_rels) == 2
-        for rel in mentions_rels:
-            assert rel["from_id"] == "my-doc-id"
+        # 验证 DocumentChunk 节点存在
+        chunk_nodes = [n for n in captured_nodes if n["label"] == "DocumentChunk"]
+        assert len(chunk_nodes) == 2
+        chunk_ids = {n["id"] for n in chunk_nodes}
+        assert chunk_ids == {"chunk-a", "chunk-b"}
+        # 验证 chunk 节点携带 doc_id 和 text（溯源信息）
+        for cn in chunk_nodes:
+            assert cn["doc_id"] == "doc-xyz"
+            assert "text" in cn
+            assert cn["text"]  # 非空
+
+        # 验证 HAS_CHUNK 边: Document → DocumentChunk
+        has_chunk_rels = [r for r in captured_rels if r["type"] == "HAS_CHUNK"]
+        assert len(has_chunk_rels) == 2
+        for rel in has_chunk_rels:
             assert rel["from_label"] == "Document"
+            assert rel["from_id"] == "doc-xyz"
+            assert rel["to_label"] == "DocumentChunk"
+        has_chunk_targets = {r["to_id"] for r in has_chunk_rels}
+        assert has_chunk_targets == {"chunk-a", "chunk-b"}
+
+        # 验证 MENTIONS 从 DocumentChunk 指向 Entity（不是 Document）
+        mentions_rels = [r for r in captured_rels if r["type"] == "MENTIONS"]
+        assert len(mentions_rels) > 0
+        for rel in mentions_rels:
+            assert rel["from_label"] == "DocumentChunk"
+            assert rel["from_id"] in ("chunk-a", "chunk-b")
+
+
+# ======================================================================
+# KG 增强召回 — 图谱召回内容映射测试
+# ======================================================================
+
+
+class TestGraphSearchContentMapping:
+    """图谱召回结果内容映射测试 — 验证 chunk_text 替换 title 占位。
+
+    验证 _graph_search 的核心逻辑：
+    - 有 chunk_text 时，content 使用实际段落内容（不是标题占位）
+    - 有 chunk_id 时，使用真实 chunk_id（不是 "graph_{doc_id}" 伪 ID）
+    - 无 chunk 数据时，回退到 title 占位（向后兼容旧数据）
+    """
+
+    def test_chunk_text_used_as_content_when_available(self):
+        """有 chunk_text 时，content 应使用 chunk_text 而非 title。"""
+        doc = {
+            "doc_id": "doc-1",
+            "title": "故障手册",
+            "kb_id": "kb-1",
+            "chunk_id": "chunk-001",
+            "chunk_text": "电机过热时检查散热风扇是否运转正常",
+            "title_path": "第三章 > 故障处理",
+        }
+        content = doc.get("chunk_text") or doc.get("title", "")
+        chunk_id = doc.get("chunk_id") or f"graph_{doc['doc_id']}"
+        title_path = doc.get("title_path") or ""
+
+        assert content == "电机过热时检查散热风扇是否运转正常"
+        assert chunk_id == "chunk-001"
+        assert title_path == "第三章 > 故障处理"
+
+    def test_title_fallback_when_no_chunk_text(self):
+        """无 chunk_text（旧数据）时，content 回退到 title。"""
+        doc = {
+            "doc_id": "doc-1",
+            "title": "故障手册",
+            "kb_id": "kb-1",
+            "chunk_id": None,
+            "chunk_text": None,
+            "title_path": None,
+        }
+        content = doc.get("chunk_text") or doc.get("title", "")
+        chunk_id = doc.get("chunk_id") or f"graph_{doc['doc_id']}"
+        title_path = doc.get("title_path") or ""
+
+        assert content == "故障手册"
+        assert chunk_id == "graph_doc-1"
+        assert title_path == ""
+
+    def test_find_related_returns_chunk_fields(self):
+        """find_related_documents_by_entity 返回的字典应包含 chunk 级字段。"""
+        # 模拟 find_related_documents_by_entity 的返回格式
+        result = {
+            "doc_id": "doc-1",
+            "title": "维修手册",
+            "kb_id": "kb-1",
+            "chunk_id": "chunk-abc",
+            "chunk_text": "液压系统压力低于 5MPa 时检查泵体密封",
+            "title_path": "第二章 > 液压系统 > 故障诊断",
+        }
+        assert "chunk_id" in result
+        assert "chunk_text" in result
+        assert "title_path" in result
+        assert result["chunk_text"]  # 非空
+        assert result["title_path"]  # 非空

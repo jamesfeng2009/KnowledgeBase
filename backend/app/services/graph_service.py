@@ -837,17 +837,26 @@ class GraphService:
             提取的三元组列表 [(subject, predicate, object), ...]
         """
         all_triples: list[tuple[str, str, str]] = []
-        seen: set[tuple[str, str, str]] = set()  # 全局去重
+        seen: set[tuple[str, str, str]] = set()  # 全局去重（用于实体间关系去重）
+
+        # 逐 chunk 提取三元组，保留 chunk → triples 关联用于溯源
+        # chunk_data: [(chunk_id, chunk_content, chunk_title_path, chunk_triples), ...]
+        chunk_data: list[tuple[str, str, str, list[tuple[str, str, str]]]] = []
 
         for chunk in chunks:
             text = getattr(chunk, "content", "") or ""
             if not text.strip():
                 continue
 
+            chunk_id = getattr(chunk, "id", "") or ""
+            chunk_title_path = getattr(chunk, "title_path", "") or ""
+            chunk_triples: list[tuple[str, str, str]] = []
+
             # 规则提取（快速、免费）
             if use_rules:
                 rule_triples = self._extract_triples_by_rules(text)
                 for t in rule_triples:
+                    chunk_triples.append(t)
                     if t not in seen:
                         seen.add(t)
                         all_triples.append(t)
@@ -860,18 +869,23 @@ class GraphService:
             ):
                 llm_triples = await self._extract_triples_by_llm(text, llm_provider)
                 for t in llm_triples:
+                    chunk_triples.append(t)
                     if t not in seen:
                         seen.add(t)
                         all_triples.append(t)
+
+            if chunk_triples:
+                chunk_data.append((chunk_id, text, chunk_title_path, chunk_triples))
 
         if not all_triples:
             logger.info("graph.triples.empty_from_chunks", doc_id=doc_id)
             return []
 
-        # 批量写入图谱（复用 extract_triples_from_text 的写入逻辑）
+        # 批量写入图谱 — 传入 chunk_data 构建 DocumentChunk 节点和 Chunk → Entity MENTIONS 边
         # P2-T3: 使用 EntityRegistry 归一化实体类型和关系类型
+        # 溯源: Document → HAS_CHUNK → DocumentChunk → MENTIONS → KnowledgeEntity
         nodes, relationships = self._build_normalized_graph_data(
-            all_triples, doc_id
+            all_triples, doc_id, chunk_data=chunk_data
         )
 
         await self.batch_import_graph(nodes, relationships)
@@ -881,6 +895,7 @@ class GraphService:
             doc_id=doc_id,
             count=len(all_triples),
             chunk_count=len(chunks),
+            chunk_with_triples=len(chunk_data),
         )
         return all_triples
 
@@ -995,6 +1010,7 @@ class GraphService:
         self,
         triples: list[tuple[str, str, str]],
         doc_id: str,
+        chunk_data: list[tuple[str, str, str, list[tuple[str, str, str]]]] | None = None,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """构建归一化后的图谱数据 — 使用标准实体类型和关系类型。
 
@@ -1005,9 +1021,16 @@ class GraphService:
         - 谓词映射（"属于" → BELONGS_TO）
         - 节点属性增加 tenant_id（补齐图谱层租户隔离）
 
+        溯源链路: Document → HAS_CHUNK → DocumentChunk → MENTIONS → KnowledgeEntity
+        - 当 chunk_data 可用时，创建 DocumentChunk 节点和 HAS_CHUNK 边，
+          MENTIONS 边从 Chunk 指向 Entity（支持段落级溯源）。
+        - 当 chunk_data 为 None 时（如 API 手动触发），回退到 Document → Entity MENTIONS。
+
         Args:
             triples: 原始三元组列表 [(subject, predicate, object), ...]。
-            doc_id: 文档 ID（用于 Document → Entity MENTIONS 关系）。
+            doc_id: 文档 ID（用于 Document → Chunk / Entity 关联）。
+            chunk_data: 逐 chunk 提取数据 [(chunk_id, content, title_path, chunk_triples), ...]，
+                        用于构建 DocumentChunk 节点和段落级 MENTIONS 溯源。
 
         Returns:
             (nodes, relationships) 归一化后的节点和关系列表。
@@ -1016,11 +1039,37 @@ class GraphService:
             from app.ontology.entity_registry import EntityRegistry
         except ImportError:
             # EntityRegistry 不可用 → 降级到原有逻辑（硬编码 Concept）
-            return self._build_legacy_graph_data(triples, doc_id)
+            return self._build_legacy_graph_data(triples, doc_id, chunk_data=chunk_data)
 
         nodes: list[dict[str, Any]] = []
         relationships: list[dict[str, Any]] = []
         tenant_id_str = str(self._tenant_id) if self._tenant_id else None
+
+        # 构建 DocumentChunk 节点 + Document → Chunk HAS_CHUNK 边
+        chunk_node_ids: set[str] = set()
+        if chunk_data:
+            for chunk_id, chunk_text, chunk_title_path, _ in chunk_data:
+                if not chunk_id or chunk_id in chunk_node_ids:
+                    continue
+                chunk_node_ids.add(chunk_id)
+                chunk_node: dict[str, Any] = {
+                    "label": "DocumentChunk",
+                    "id": chunk_id,
+                    "doc_id": doc_id,
+                    "text": chunk_text[:500],  # 截断存储，支持溯源回看
+                    "title_path": chunk_title_path,
+                }
+                if tenant_id_str:
+                    chunk_node["tenant_id"] = tenant_id_str
+                nodes.append(chunk_node)
+                # Document → DocumentChunk HAS_CHUNK
+                relationships.append({
+                    "from_label": "Document",
+                    "from_id": doc_id,
+                    "to_label": "DocumentChunk",
+                    "to_id": chunk_id,
+                    "type": "HAS_CHUNK",
+                })
 
         for subject, predicate, obj in triples:
             # 归一化三元组
@@ -1059,21 +1108,46 @@ class GraphService:
                 "to_id": o_id,
                 "type": rel_type,
             })
-            # 文档 → 实体 MENTIONS 关系
-            relationships.append({
-                "from_label": "Document",
-                "from_id": doc_id,
-                "to_label": s_label,
-                "to_id": s_id,
-                "type": "MENTIONS",
-            })
-            relationships.append({
-                "from_label": "Document",
-                "from_id": doc_id,
-                "to_label": o_label,
-                "to_id": o_id,
-                "type": "MENTIONS",
-            })
+
+            # MENTIONS: Chunk → Entity（有 chunk 溯源）或 Document → Entity（无 chunk 回退）
+            if chunk_data:
+                for chunk_id, _, _, chunk_triples in chunk_data:
+                    # 该 chunk 是否提及此三元组的 subject 或 object
+                    triple_in_chunk = any(
+                        t[0] == subject and t[2] == obj
+                        for t in chunk_triples
+                    )
+                    if triple_in_chunk:
+                        relationships.append({
+                            "from_label": "DocumentChunk",
+                            "from_id": chunk_id,
+                            "to_label": s_label,
+                            "to_id": s_id,
+                            "type": "MENTIONS",
+                        })
+                        relationships.append({
+                            "from_label": "DocumentChunk",
+                            "from_id": chunk_id,
+                            "to_label": o_label,
+                            "to_id": o_id,
+                            "type": "MENTIONS",
+                        })
+            else:
+                # 回退: 无 chunk 信息时，Document → Entity MENTIONS
+                relationships.append({
+                    "from_label": "Document",
+                    "from_id": doc_id,
+                    "to_label": s_label,
+                    "to_id": s_id,
+                    "type": "MENTIONS",
+                })
+                relationships.append({
+                    "from_label": "Document",
+                    "from_id": doc_id,
+                    "to_label": o_label,
+                    "to_id": o_id,
+                    "type": "MENTIONS",
+                })
 
         return nodes, relationships
 
@@ -1081,10 +1155,38 @@ class GraphService:
         self,
         triples: list[tuple[str, str, str]],
         doc_id: str,
+        chunk_data: list[tuple[str, str, str, list[tuple[str, str, str]]]] | None = None,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        """降级构建 — EntityRegistry 不可用时使用原有逻辑。"""
+        """降级构建 — EntityRegistry 不可用时使用原有逻辑。
+
+        溯源链路与 _build_normalized_graph_data 一致:
+        Document → HAS_CHUNK → DocumentChunk → MENTIONS → Concept
+        """
         nodes: list[dict[str, Any]] = []
         relationships: list[dict[str, Any]] = []
+
+        # 构建 DocumentChunk 节点 + HAS_CHUNK 边
+        chunk_node_ids: set[str] = set()
+        if chunk_data:
+            for chunk_id, chunk_text, chunk_title_path, _ in chunk_data:
+                if not chunk_id or chunk_id in chunk_node_ids:
+                    continue
+                chunk_node_ids.add(chunk_id)
+                nodes.append({
+                    "label": "DocumentChunk",
+                    "id": chunk_id,
+                    "doc_id": doc_id,
+                    "text": chunk_text[:500],
+                    "title_path": chunk_title_path,
+                })
+                relationships.append({
+                    "from_label": "Document",
+                    "from_id": doc_id,
+                    "to_label": "DocumentChunk",
+                    "to_id": chunk_id,
+                    "type": "HAS_CHUNK",
+                })
+
         for subject, predicate, obj in triples:
             nodes.append({
                 "label": "Concept",
@@ -1106,20 +1208,43 @@ class GraphService:
                 "to_id": obj,
                 "type": rel_type,
             })
-            relationships.append({
-                "from_label": "Document",
-                "from_id": doc_id,
-                "to_label": "Concept",
-                "to_id": subject,
-                "type": "MENTIONS",
-            })
-            relationships.append({
-                "from_label": "Document",
-                "from_id": doc_id,
-                "to_label": "Concept",
-                "to_id": obj,
-                "type": "MENTIONS",
-            })
+            # MENTIONS: Chunk → Concept（有 chunk 溯源）或 Document → Concept（回退）
+            if chunk_data:
+                for chunk_id, _, _, chunk_triples in chunk_data:
+                    triple_in_chunk = any(
+                        t[0] == subject and t[2] == obj
+                        for t in chunk_triples
+                    )
+                    if triple_in_chunk:
+                        relationships.append({
+                            "from_label": "DocumentChunk",
+                            "from_id": chunk_id,
+                            "to_label": "Concept",
+                            "to_id": subject,
+                            "type": "MENTIONS",
+                        })
+                        relationships.append({
+                            "from_label": "DocumentChunk",
+                            "from_id": chunk_id,
+                            "to_label": "Concept",
+                            "to_id": obj,
+                            "type": "MENTIONS",
+                        })
+            else:
+                relationships.append({
+                    "from_label": "Document",
+                    "from_id": doc_id,
+                    "to_label": "Concept",
+                    "to_id": subject,
+                    "type": "MENTIONS",
+                })
+                relationships.append({
+                    "from_label": "Document",
+                    "from_id": doc_id,
+                    "to_label": "Concept",
+                    "to_id": obj,
+                    "type": "MENTIONS",
+                })
         return nodes, relationships
 
     # ------------------------------------------------------------------
@@ -1132,10 +1257,14 @@ class GraphService:
         max_depth: int = 2,
         max_results: int = 10,
     ) -> list[dict[str, Any]]:
-        """通过实体名查找关联文档 — 图谱召回专用。
+        """通过实体名查找关联文档和证据片段 — 图谱召回专用。
 
         P2-T5: HybridRetriever._graph_search() 调用此方法，
-        通过实体名在图谱中多跳遍历，找到关联的 Document 节点。
+        通过实体名在图谱中多跳遍历，找到关联的 DocumentChunk 和 Document 节点。
+
+        溯源链路: Entity ← MENTIONS ← DocumentChunk ← HAS_CHUNK ← Document
+        - 有 DocumentChunk 节点时返回 chunk 级证据内容（text + title_path）
+        - 无 DocumentChunk 时回退到 Document 级（仅返回 doc_id + title）
 
         Args:
             entity_names: 实体名列表（已归一化的 canonical_name）。
@@ -1143,45 +1272,50 @@ class GraphService:
             max_results: 最大返回结果数。
 
         Returns:
-            关联文档列表 [{"doc_id": ..., "title": ..., "kb_id": ...}, ...]。
-            kb_id 供召回侧按知识库权限过滤（可能为 None，表示节点未挂 kb）。
+            关联文档列表 [{"doc_id": ..., "title": ..., "kb_id": ...,
+            "chunk_id": ..., "chunk_text": ..., "title_path": ...}, ...]。
+            chunk_text 非空时为段落级证据内容，None 时仅有文档标题。
         """
         if not await self._ensure_connected() or not entity_names:
             return []
 
         results: list[dict[str, Any]] = []
         seen_doc_ids: set[str] = set()
-
-        # 构建租户过滤条件 — 全局节点（tenant_id IS NULL）对所有租户可见，
-        # 租户节点仅本租户可见。n 与 m 需分别过滤（不能复用同一条件串）。
-        n_tenant_cond = "n.tenant_id IS NULL"
-        m_tenant_cond = "m.tenant_id IS NULL"
-        if self._tenant_id:
-            n_tenant_cond = "(n.tenant_id IS NULL OR n.tenant_id = $tenant_id)"
-            m_tenant_cond = "(m.tenant_id IS NULL OR m.tenant_id = $tenant_id)"
-        # 防注入：深度强制为有限整数
         max_depth = max(1, min(int(max_depth), 10))
+
+        def tc(alias: str) -> str:
+            if self._tenant_id:
+                return f"({alias}.tenant_id IS NULL OR {alias}.tenant_id = $tenant_id)"
+            return f"{alias}.tenant_id IS NULL"
 
         for entity_name in entity_names:
             if len(results) >= max_results:
                 break
             try:
-                # 查找实体节点 → 多跳遍历 → 关联 Document 节点
-                query = (
+                params: dict[str, Any] = {
+                    "entity_name": entity_name,
+                    "limit": max_results - len(results),
+                }
+                if self._tenant_id:
+                    params["tenant_id"] = str(self._tenant_id)
+
+                # 1. Chunk 级遍历（新结构）:
+                #    Entity ← MENTIONS ← DocumentChunk ← HAS_CHUNK → Document
+                #    Entity-to-entity 多跳（undirected），扩展召回覆盖
+                chunk_query = (
                     "MATCH (n {name: $entity_name}) "
-                    f"WHERE {n_tenant_cond} "
-                    f"MATCH (n)-[r*1..{max_depth}]->(m:Document) "
-                    f"WHERE {m_tenant_cond} "
-                    "RETURN DISTINCT m.id as doc_id, m.title as title, m.kb_id as kb_id "
+                    f"WHERE {tc('n')} "
+                    f"MATCH (n)-[r*0..{max_depth}]-(e) "
+                    f"WHERE {tc('e')} "
+                    "MATCH (e)<-[:MENTIONS]-(c:DocumentChunk)-[:HAS_CHUNK]-(d:Document) "
+                    f"WHERE {tc('d')} "
+                    "RETURN DISTINCT "
+                    "  d.id as doc_id, d.title as title, d.kb_id as kb_id, "
+                    "  c.id as chunk_id, c.text as chunk_text, c.title_path as title_path "
                     "LIMIT $limit"
                 )
                 async with self._driver.session(database=settings.NEO4J_DATABASE) as session:
-                    result = await session.run(
-                        query,
-                        entity_name=entity_name,
-                        limit=max_results - len(results),
-                        **({"tenant_id": str(self._tenant_id)} if self._tenant_id else {}),
-                    )
+                    result = await session.run(chunk_query, **params)
                     records = await result.data()
 
                 for record in records:
@@ -1192,7 +1326,44 @@ class GraphService:
                             "doc_id": doc_id,
                             "title": record.get("title", ""),
                             "kb_id": record.get("kb_id"),
+                            "chunk_id": record.get("chunk_id"),
+                            "chunk_text": record.get("chunk_text"),
+                            "title_path": record.get("title_path"),
                         })
+
+                # 2. Document 级回退（旧结构无 DocumentChunk）:
+                #    Entity ← MENTIONS ← Document
+                if len(results) < max_results:
+                    params["limit"] = max_results - len(results)
+                    doc_query = (
+                        "MATCH (n {name: $entity_name}) "
+                        f"WHERE {tc('n')} "
+                        f"MATCH (n)-[r*0..{max_depth}]-(e) "
+                        f"WHERE {tc('e')} "
+                        "MATCH (e)<-[:MENTIONS]-(d:Document) "
+                        f"WHERE {tc('d')} "
+                        "AND NOT (d)-[:HAS_CHUNK]->() "
+                        "RETURN DISTINCT "
+                        "  d.id as doc_id, d.title as title, d.kb_id as kb_id "
+                        "LIMIT $limit"
+                    )
+                    async with self._driver.session(database=settings.NEO4J_DATABASE) as session:
+                        result = await session.run(doc_query, **params)
+                        records = await result.data()
+
+                    for record in records:
+                        doc_id = record.get("doc_id", "")
+                        if doc_id and doc_id not in seen_doc_ids:
+                            seen_doc_ids.add(doc_id)
+                            results.append({
+                                "doc_id": doc_id,
+                                "title": record.get("title", ""),
+                                "kb_id": record.get("kb_id"),
+                                "chunk_id": None,
+                                "chunk_text": None,
+                                "title_path": None,
+                            })
+
             except Exception as exc:
                 logger.warning(
                     "graph.find_related_docs_by_entity_error",
@@ -1349,13 +1520,15 @@ class GraphService:
         content: str,
         triples: list[tuple[str, str, str]] | None = None,
         kb_id: str | None = None,
+        chunks: list[dict[str, Any]] | None = None,
     ) -> dict[str, int]:
         """单文档批量建图 — 文档入库时的便捷入口。
 
         创建：
         1. Document 节点（含 doc_id, title, kb_id）
-        2. 三元组对应的 Concept 节点 + 关系
-        3. Document → Concept 的 MENTIONS 关系
+        2. DocumentChunk 节点 + HAS_CHUNK 边（当 chunks 提供时，支持段落级溯源）
+        3. 三元组对应的 Concept 节点 + 关系
+        4. MENTIONS 关系：Chunk → Concept（有 chunks 时）或 Document → Concept（无 chunks 时）
 
         Args:
             doc_id: 文档 ID。
@@ -1363,6 +1536,8 @@ class GraphService:
             content: 文档纯文本内容。
             triples: 预提取的三元组列表（None 则仅创建 Document 节点）。
             kb_id: 所属知识库 ID。
+            chunks: 预分块的 chunk 列表 [{"id": ..., "content": ..., "title_path": ...}, ...]，
+                    提供时构建 DocumentChunk 节点并使用段落级 MENTIONS 溯源。
 
         Returns:
             {"nodes_created": int, "relationships_created": int}。
@@ -1377,6 +1552,29 @@ class GraphService:
             }
         ]
         relationships: list[dict[str, Any]] = []
+
+        # 构建 DocumentChunk 节点 + HAS_CHUNK 边
+        chunk_ids: list[str] = []
+        if chunks:
+            for chunk in chunks:
+                chunk_id = chunk.get("id", "") or ""
+                if not chunk_id:
+                    continue
+                chunk_ids.append(chunk_id)
+                nodes.append({
+                    "label": "DocumentChunk",
+                    "id": chunk_id,
+                    "doc_id": doc_id,
+                    "text": (chunk.get("content", "") or "")[:500],
+                    "title_path": chunk.get("title_path", "") or "",
+                })
+                relationships.append({
+                    "from_label": "Document",
+                    "from_id": doc_id,
+                    "to_label": "DocumentChunk",
+                    "to_id": chunk_id,
+                    "type": "HAS_CHUNK",
+                })
 
         if triples:
             for subject, predicate, obj in triples:
@@ -1401,21 +1599,39 @@ class GraphService:
                     "to_id": obj,
                     "type": rel_type,
                 })
-                # 文档 → 概念的 MENTIONS 关系
-                relationships.append({
-                    "from_label": "Document",
-                    "from_id": doc_id,
-                    "to_label": "Concept",
-                    "to_id": subject,
-                    "type": "MENTIONS",
-                })
-                relationships.append({
-                    "from_label": "Document",
-                    "from_id": doc_id,
-                    "to_label": "Concept",
-                    "to_id": obj,
-                    "type": "MENTIONS",
-                })
+                # MENTIONS: Chunk → Concept（有 chunk 时）或 Document → Concept（无 chunk 时）
+                if chunk_ids:
+                    for chunk_id in chunk_ids:
+                        relationships.append({
+                            "from_label": "DocumentChunk",
+                            "from_id": chunk_id,
+                            "to_label": "Concept",
+                            "to_id": subject,
+                            "type": "MENTIONS",
+                        })
+                        relationships.append({
+                            "from_label": "DocumentChunk",
+                            "from_id": chunk_id,
+                            "to_label": "Concept",
+                            "to_id": obj,
+                            "type": "MENTIONS",
+                        })
+                else:
+                    # 无 chunk 信息时，Document → Concept MENTIONS
+                    relationships.append({
+                        "from_label": "Document",
+                        "from_id": doc_id,
+                        "to_label": "Concept",
+                        "to_id": subject,
+                        "type": "MENTIONS",
+                    })
+                    relationships.append({
+                        "from_label": "Document",
+                        "from_id": doc_id,
+                        "to_label": "Concept",
+                        "to_id": obj,
+                        "type": "MENTIONS",
+                    })
 
         return await self.batch_import_graph(nodes, relationships)
 

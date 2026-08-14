@@ -481,12 +481,13 @@ class HybridRetriever:
 
             results.append({
                 "doc_id": doc_id,
-                "chunk_id": f"graph_{doc_id}",  # 图谱召回无 chunk 级别，用 doc_id 标识
-                "content": doc.get("title", ""),  # 图谱召回无内容，用标题占位
-                "score": settings.GRAPH_SEARCH_SCORE,  # 固定分，合并时由去重逻辑处理
+                "chunk_id": doc.get("chunk_id") or f"graph_{doc_id}",
+                "content": doc.get("chunk_text") or doc.get("title", ""),
+                "score": settings.GRAPH_SEARCH_SCORE,
                 "source": "graph",
                 "kb_id": doc.get("kb_id"),
                 "title": doc.get("title", ""),
+                "title_path": doc.get("title_path") or "",
             })
             if len(results) >= top_k:
                 break
