@@ -110,26 +110,10 @@ class VLLMProvider(LLMProvider):
         """
         from app.utils.circuit_breaker import CircuitBreakerOpenError, CircuitState
 
-        # 熔断器检查 — OPEN 状态快速失败
-        if self._cb.state == CircuitState.OPEN:
-            if self._cb._should_transition_to_half_open():
-                self._cb.state = CircuitState.HALF_OPEN
-                self._cb.half_open_calls = 0
-                log.info("circuit_breaker.transition", name=self._cb.name,
-                         from_state="open", to_state="half_open")
-            else:
-                log.warning("circuit_breaker.rejected", name=self._cb.name, state="open")
-                raise CircuitBreakerOpenError(self._cb.name, self._cb.state)
-
-        # half-open 探测许可 — 获取后必须在 finally 中记录结果或释放，
-        # 否则流式中断会泄漏许可，half_open_calls 达到上限后永久拒绝请求。
-        half_open_probe = False
-        if self._cb.state == CircuitState.HALF_OPEN:
-            if self._cb.half_open_calls >= self._cb.half_open_max_calls:
-                log.warning("circuit_breaker.rejected", name=self._cb.name, state="half_open")
-                raise CircuitBreakerOpenError(self._cb.name, self._cb.state)
-            self._cb.half_open_calls += 1
-            half_open_probe = True
+        # 熔断器检查 — 使用 circuit_breaker 原子操作，避免 half_open_calls
+        # 检查与递增之间的竞态，防止高并发下半开探测数超过配置上限。
+        self._cb._check_and_enter()
+        half_open_probe = self._cb.state == CircuitState.HALF_OPEN
 
         import time
         t0 = time.monotonic()
@@ -148,8 +132,12 @@ class VLLMProvider(LLMProvider):
                 api_kwargs["stream_options"] = {"include_usage": True}
                 response = await self.client.chat.completions.create(**api_kwargs)
 
-                # tool_calls 在流中以增量分片到达，需按 index 缓冲装配。
-                tool_buffers: dict[int, dict[str, Any]] = {}
+                # tool_calls 在流中以增量分片到达，需按 tool_call id 缓冲装配。
+                # 优先用 tc.id 聚合；无 id 时回退到 index；均无则沿用上一个 tool key，
+                # 避免 index=None 时使用 len(tool_buffers) 导致同一 tool_call 被拆碎。
+                tool_buffers: dict[str, dict[str, Any]] = {}
+                tool_order: list[str] = []
+                last_tool_key: str | None = None
                 _stream_usage = None
                 async for chunk in response:
                     # 最后一个 chunk 可能 choices 为空但携带 usage 汇总
@@ -162,11 +150,25 @@ class VLLMProvider(LLMProvider):
                         yield delta.content
                     if delta.tool_calls:
                         for tc in delta.tool_calls:
-                            idx = tc.index if tc.index is not None else len(tool_buffers)
-                            buf = tool_buffers.setdefault(
-                                idx,
-                                {"type": "tool_use", "id": "", "name": "", "input": ""},
-                            )
+                            if tc.id:
+                                key = tc.id
+                            elif tc.index is not None:
+                                key = str(tc.index)
+                            elif last_tool_key is not None:
+                                key = last_tool_key
+                            else:
+                                key = f"__anon_{len(tool_buffers)}"
+
+                            if key not in tool_buffers:
+                                tool_buffers[key] = {
+                                    "type": "tool_use",
+                                    "id": tc.id or "",
+                                    "name": "",
+                                    "input": "",
+                                }
+                                tool_order.append(key)
+
+                            buf = tool_buffers[key]
                             if tc.id:
                                 buf["id"] = tc.id
                             if tc.function:
@@ -174,10 +176,11 @@ class VLLMProvider(LLMProvider):
                                     buf["name"] = tc.function.name
                                 if tc.function.arguments:
                                     buf["input"] += tc.function.arguments
+                            last_tool_key = key
 
-                # 流结束：解析装配好的 tool_calls，按 index 顺序输出。
-                for idx in sorted(tool_buffers):
-                    buf = tool_buffers[idx]
+                # 流结束：解析装配好的 tool_calls，按出现顺序输出。
+                for key in tool_order:
+                    buf = tool_buffers[key]
                     buf["input"] = _parse_json_object(buf["input"])
                     yield buf
 

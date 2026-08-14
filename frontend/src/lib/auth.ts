@@ -1,12 +1,9 @@
 /**
  * 认证工具
- * 管理 JWT Token 存储和用户认证状态
+ * 管理用户认证状态（JWT 已迁移到 HttpOnly Cookie，本模块不再直接操作 Token）。
  */
 
-import { get, ApiError } from './api';
-
-/** Token 在 localStorage 中的存储键名 */
-const TOKEN_KEY = 'ekb_access_token';
+import { get, post, ApiError } from './api';
 
 /** 用户信息接口 */
 export interface User {
@@ -26,54 +23,19 @@ export interface LoginResponse {
 }
 
 /**
- * 获取当前 Token
- * @returns 存储在 localStorage 中的 JWT Token，不存在则返回 null
- */
-export function getToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem(TOKEN_KEY);
-}
-
-/**
- * 移除 Token（登出时调用）
- */
-export function removeToken(): void {
-  if (typeof window === 'undefined') return;
-  localStorage.removeItem(TOKEN_KEY);
-}
-
-/**
- * 检查是否已认证（Token 是否存在）
- * 注意：此方法仅检查 Token 是否存在，不验证 Token 是否有效
- * @returns Token 是否存在
- */
-export function isAuthenticated(): boolean {
-  return !!getToken();
-}
-
-/**
- * 获取当前登录用户信息
- * 调用 /api/v1/auth/me 接口获取
- * @returns 用户信息，未登录或请求失败时返回 null
+ * 检查是否已认证（通过调用 /me 校验 Cookie）。
+ * 注意：SSR 阶段无法直接读取 HttpOnly Cookie，需由 Astro middleware 处理。
+ * @returns 服务端 /me 返回的用户信息，未登录时返回 null
  */
 export async function getCurrentUser(): Promise<User | null> {
-  if (!isAuthenticated()) {
-    console.log('[Auth] 未认证状态，无 tenant_id');
-    return null;
-  }
-
   try {
     const response = await get<{ data: User }>('/api/v1/auth/me');
-    console.log('[Auth] 获取用户信息成功:', { user_id: response.data.id, tenant_id: response.data.tenant_id || null, role: response.data.role });
     return response.data;
   } catch (err) {
-    // 仅 401（Token 过期/无效）才清除登录状态；
-    // 网络抖动、5xx 等临时故障保留 Token，避免用户被误登出
     if (err instanceof ApiError && err.status === 401) {
-      console.warn('[Auth] Token 已过期或无效，清除登录状态');
-      removeToken();
+      console.warn('[Auth] Cookie 认证已失效');
     } else {
-      console.warn('[Auth] 获取用户信息失败（网络或服务异常），保留登录状态:', err instanceof Error ? err.message : String(err));
+      console.warn('[Auth] 获取用户信息失败:', err instanceof Error ? err.message : String(err));
     }
     return null;
   }
@@ -81,14 +43,14 @@ export async function getCurrentUser(): Promise<User | null> {
 
 /**
  * 登出
- * 清除 Token 并跳转登录页
- *
- * NOTE: 当前 dead code。DefaultLayout.astro 在顶部栏内联实现了登出逻辑
- * （直接调用 localStorage.removeItem + location.href），
- * 未引用本封装。保留供 P5 统一认证流程对接使用。
+ * 调用后端 /logout 清除 HttpOnly Cookie，并跳转登录页。
  */
-export function logout(): void {
-  removeToken();
+export async function logout(): Promise<void> {
+  try {
+    await post('/api/v1/auth/logout');
+  } catch (err) {
+    console.warn('[Auth] 后端登出调用失败，继续跳转登录页:', err instanceof Error ? err.message : String(err));
+  }
   if (typeof window !== 'undefined') {
     window.location.href = '/auth/login';
   }
@@ -96,10 +58,7 @@ export function logout(): void {
 
 /**
  * 路由守卫：检查认证状态，未登录则跳转登录页
- * 在需要认证的页面客户端脚本中调用
- *
- * NOTE: 当前 dead code。各页面通过 middleware.ts + 内联 TOKEN_KEY 检查实现
- * 路由守卫，未引用本封装。保留供 P5 统一路由守卫改造使用。
+ * 在需要认证的页面客户端脚本中调用。
  *
  * @example
  * ```typescript
@@ -108,19 +67,14 @@ export function logout(): void {
  * requireAuth();
  * ```
  */
-export function requireAuth(): void {
-  if (!isAuthenticated()) {
-    if (typeof window !== 'undefined') {
-      window.location.href = '/auth/login';
-    }
-    return;
+export async function requireAuth(): Promise<void> {
+  const user = await getCurrentUser();
+  if (!user && typeof window !== 'undefined') {
+    window.location.href = '/auth/login';
   }
 }
 
 export default {
-  getToken,
-  removeToken,
-  isAuthenticated,
   getCurrentUser,
   logout,
   requireAuth,

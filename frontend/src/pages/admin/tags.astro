@@ -148,8 +148,6 @@ const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '标签�
 <script>
   import { API_BASE } from '@/lib/api';
 
-  const TOKEN_KEY = 'ekb_access_token';
-
   interface Tag {
     id: string;
     name: string;
@@ -163,18 +161,12 @@ const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '标签�
 
   /** 统一鉴权 fetch */
   async function authFetch(path: string, options: RequestInit = {}): Promise<Response> {
-    const token = localStorage.getItem(TOKEN_KEY);
-    if (!token) {
-      window.location.href = '/auth/login';
-      throw new Error('未登录');
-    }
-    const headers: Record<string, string> = {
-      Authorization: `Bearer ${token}`,
-      ...(options.headers as Record<string, string> | undefined),
-    };
-    const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+    // P0 安全修复：认证通过 HttpOnly Cookie 自动携带
+    const res = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      credentials: 'include',
+    });
     if (res.status === 401) {
-      localStorage.removeItem(TOKEN_KEY);
       window.location.href = '/auth/login';
       throw new Error('登录已过期，请重新登录');
     }

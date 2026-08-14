@@ -418,7 +418,6 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
   import { postData, ApiError } from '@/lib/api';
 
   const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
-  const TOKEN_KEY = 'ekb_access_token';
 
   /** 分片上传阈值：超过 100MB 走分片上传，否则走普通上传 */
   const MULTIPART_THRESHOLD = 100 * 1024 * 1024;
@@ -691,11 +690,6 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
   }
 
   async function uploadFile(item: UploadItem) {
-    const token = localStorage.getItem(TOKEN_KEY);
-    if (!token) {
-      window.location.href = '/auth/login';
-      return;
-    }
     const kbId = (document.getElementById('target-kb') as HTMLSelectElement).value;
     if (!kbId) {
       alert('请先选择目标知识库');
@@ -716,7 +710,8 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
       // 后端 /documents/upload 要求 kb_id/title 为 query 参数（与 multipart/init 一致）
       const params = new URLSearchParams({ kb_id: kbId, title: item.file.name });
       xhr.open('POST', `${API_BASE}/api/v1/documents/upload?${params.toString()}`);
-      xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+      // P0 安全修复：认证通过 HttpOnly Cookie 自动携带
+      xhr.withCredentials = true;
 
       xhr.upload.onprogress = (e) => {
         if (e.lengthComputable) {
@@ -780,11 +775,6 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
    * P0: complete 前自检 + 服务端对账 - verifyAndCompleteMultipart 确保分片完整性
    */
   async function startMultipartUpload(item: UploadItem) {
-    const token = localStorage.getItem(TOKEN_KEY);
-    if (!token) {
-      window.location.href = '/auth/login';
-      return;
-    }
     const kbId = (document.getElementById('target-kb') as HTMLSelectElement).value;
     if (!kbId) {
       alert('请先选择目标知识库');
@@ -797,7 +787,8 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
 
     try {
       // 1. 初始化分片上传（断点续传：uploadId 仍有效则跳过 init）
-      // P1: 跨会话断点续传 - 优先从 localStorage 恢复（item.uploadId 未设置时）
+      // P0 修复：从 localStorage 恢复 uploadId 后，必须调用 listUploadedParts
+      // 校验服务端会话是否仍有效；失效则清除并重新 init。
       if (!item.uploadId) {
         const saved = loadMultipartState(item.file);
         if (saved && saved.uploadId) {
@@ -809,22 +800,50 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
       }
       let uploadId = item.uploadId;
       let objectName = item.objectName || '';
+      let uploadedParts: number[] = item.uploadedParts || [];
+      let partEtags: Record<number, string> = { ...(item.partEtags || {}) };
+
+      if (uploadId) {
+        try {
+          const serverList = await listUploadedParts(uploadId, objectName);
+          const serverParts = serverList.parts || [];
+          // 服务端会话失效或无分片：废弃本地记录，重新 init
+          if (serverParts.length === 0 && uploadedParts.length > 0) {
+            throw new Error('upload session expired');
+          }
+          // 以服务端实际分片为准，重建本地进度
+          uploadedParts = serverParts.map((p) => p.part_number);
+          partEtags = {};
+          serverParts.forEach((p) => { partEtags[p.part_number] = p.etag; });
+          item.uploadedParts = uploadedParts;
+          item.partEtags = partEtags;
+        } catch {
+          clearMultipartState(item.file);
+          uploadId = undefined;
+          objectName = '';
+          item.uploadId = undefined;
+          item.objectName = undefined;
+          uploadedParts = [];
+          partEtags = {};
+          item.uploadedParts = [];
+          item.partEtags = {};
+        }
+      }
+
       if (!uploadId) {
         const init = await initMultipartUpload(kbId, item.file.name, item.file.name);
         uploadId = init.upload_id;
         objectName = init.object_name;
         item.uploadId = uploadId;
         item.objectName = objectName;
+        uploadedParts = [];
+        partEtags = {};
         item.uploadedParts = [];
         item.partEtags = {};
       }
 
       const totalParts = Math.ceil(item.file.size / PART_SIZE);
       item.totalParts = totalParts;
-      const uploadedParts: number[] = item.uploadedParts || [];
-      item.uploadedParts = uploadedParts;
-      const partEtags: Record<number, string> = { ...(item.partEtags || {}) };
-      item.partEtags = partEtags;
 
       // 初始进度（断点续传时可能 > 0）
       item.progress = Math.round((uploadedParts.length / totalParts) * 100);

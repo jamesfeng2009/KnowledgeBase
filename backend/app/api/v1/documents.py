@@ -864,18 +864,29 @@ async def update_document(
 ) -> ApiResponse[DocResponse]:
     """更新文档内容（支持协同编辑场景）。
 
-    更新前自动保存当前内容为版本快照（用于版本回溯）。
+    写权限校验通过后自动保存当前内容为版本快照（用于版本回溯），
+    避免无写权限时留下幽灵版本。
     """
     tenant_id = getattr(request.state, "tenant_id", None)
     service = KnowledgeService(db, user, tenant_id=tenant_id)
-
-    # 获取更新前的文档（用于版本快照）
-    old_doc = await service.get_document(doc_id)
-
-    # 保存版本快照
     from app.repositories.knowledge_repository import DocumentRepository
 
-    doc_repo = DocumentRepository(db)
+    doc_repo = DocumentRepository(db, tenant_id=tenant_id)
+
+    # 获取更新前的文档（用于版本快照）并校验读权限
+    old_doc = await service.get_document(doc_id)
+
+    # 先执行更新：service.update_document 内部校验知识库写权限与密级。
+    # 若权限不足会抛 PermissionError，此时不会留下幽灵版本快照。
+    update_fields = body.model_dump(exclude_unset=True)
+    doc = await service.update_document(
+        doc_id,
+        content_html=update_fields.get("content_html"),
+        content_json=update_fields.get("content_json"),
+        content_text=update_fields.get("content_text"),
+    )
+
+    # 写权限校验已通过，保存更新前快照
     await doc_repo.session.execute(
         DocumentVersion.__table__.insert().values(
             doc_id=old_doc.id,
@@ -886,15 +897,6 @@ async def update_document(
         )
     )
     await doc_repo.session.flush()
-
-    # 执行更新
-    update_fields = body.model_dump(exclude_unset=True)
-    doc = await service.update_document(
-        doc_id,
-        content_html=update_fields.get("content_html"),
-        content_json=update_fields.get("content_json"),
-        content_text=update_fields.get("content_text"),
-    )
 
     # 更新其他字段
     extra_fields = {
@@ -912,7 +914,6 @@ async def update_document(
         message="success",
     )
 
-
 @router.delete("/documents/{doc_id}", response_model=ApiResponse)
 async def delete_document(
     request: Request,
@@ -920,11 +921,19 @@ async def delete_document(
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse:
-    """软删除文档（仅所有者或 admin 可操作）。"""
+    """软删除文档（校验知识库写权限 + 所有者/admin 兜底）。"""
     tenant_id = getattr(request.state, "tenant_id", None)
     service = KnowledgeService(db, user, tenant_id=tenant_id)
     doc = await service.get_document(doc_id)
 
+    # P0: 统一校验知识库写权限，防止通过 owner 绕过协作成员删除限制
+    if not await service.permission.check_write(doc.kb_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="无权删除该文档",
+        )
+
+    # 所有者或 admin 兜底（防止非成员但知悉 doc_id 的猜测删除）
     if doc.owner_id != user.id and user.role != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -933,7 +942,7 @@ async def delete_document(
 
     from app.repositories.knowledge_repository import DocumentRepository
 
-    doc_repo = DocumentRepository(db)
+    doc_repo = DocumentRepository(db, tenant_id=tenant_id)
     await doc_repo.soft_delete(doc_id)
     # P1: 文档删除后主动失效关联的 Token 缓存
     try:
@@ -970,6 +979,13 @@ async def upload_document_image(
     tenant_id = getattr(request.state, "tenant_id", None)
     service = KnowledgeService(db, user, tenant_id=tenant_id)
     doc = await service.get_document(doc_id)
+
+    # P0: 图片上传属于写操作，必须校验知识库写权限（防止仅具备读权限的用户篡改文档）
+    if not await service.permission.check_write(doc.kb_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="无权向该文档上传图片",
+        )
 
     # 校验文件类型
     allowed_types = {"image/png", "image/jpeg", "image/gif", "image/webp"}
@@ -1032,16 +1048,22 @@ async def list_document_versions(
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse[list[DocVersionResponse]]:
-    """获取文档版本历史。"""
+    """获取文档版本历史（带租户隔离）。"""
     tenant_id = getattr(request.state, "tenant_id", None)
     service = KnowledgeService(db, user, tenant_id=tenant_id)
     await service.get_document(doc_id)
 
+    from app.repositories.knowledge_repository import DocumentRepository
+
+    doc_repo = DocumentRepository(db, tenant_id=tenant_id)
+    # 通过 Document 关联查询版本，确保不会返回其他租户同名 doc_id 的版本
     stmt = (
         select(DocumentVersion)
+        .join(Document, Document.id == DocumentVersion.doc_id)
         .where(DocumentVersion.doc_id == doc_id)
         .order_by(DocumentVersion.created_at.desc())
     )
+    stmt = doc_repo._apply_tenant_filter(stmt)
     result = await db.execute(stmt)
     versions = list(result.scalars().all())
 
@@ -1087,7 +1109,7 @@ async def restore_document_version(
     # 保存当前内容为版本快照
     from app.repositories.knowledge_repository import DocumentRepository
 
-    doc_repo = DocumentRepository(db)
+    doc_repo = DocumentRepository(db, tenant_id=tenant_id)
     await doc_repo.session.execute(
         DocumentVersion.__table__.insert().values(
             doc_id=doc.id,
@@ -1406,7 +1428,7 @@ async def import_document_from_source(
     # 5. 更新 file_path 和 classification
     from app.repositories.knowledge_repository import DocumentRepository
 
-    doc_repo = DocumentRepository(db)
+    doc_repo = DocumentRepository(db, tenant_id=tenant_id)
     await doc_repo.update(
         doc.id,
         file_path=fetched.source_url or f"{req.source}://{fetched.doc_id}",

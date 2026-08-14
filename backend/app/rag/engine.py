@@ -1031,6 +1031,7 @@ class AgenticRAGEngine:
                     db,
                     run_id=_http_request_id or session_id,
                     session_id=session_id,
+                    tenant_id=uuid.UUID(tenant_id) if tenant_id else None,
                 )
                 if _written:
                     await db.commit()

@@ -27,7 +27,7 @@ fi
 
 echo "$(date '+%F %T'): 开始运行弱 prompt 评测..." >> "$LOG"
 source .venv/bin/activate
-python scripts/finetune/eval_boundary_refusal.py \
+python scripts/finetune/eval_boundary_200.py \
   --base_model models/Qwen2.5-7B-Instruct --adapter "$ADAPTER" >> "$LOG" 2>&1
 EVAL_RC=$?
 

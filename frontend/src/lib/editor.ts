@@ -55,23 +55,22 @@ export function decodeYDoc(data: Uint8Array): Y.Doc {
  * @param editor - Tiptap 编辑器实例
  * @param ydoc - Yjs 文档
  * @param docId - 文档 ID
- * @param getToken - 获取认证 Token 的函数
  */
 export async function saveDocument(
   editor: Editor,
   ydoc: Y.Doc,
-  docId: string,
-  getToken: () => string
+  docId: string
 ): Promise<void> {
   const content = getEditorContent(editor);
   const update = encodeYDoc(ydoc);
 
+  // P0 安全修复：认证通过 HttpOnly Cookie 自动携带
   const response = await fetch(`${API_BASE}/api/v1/documents/${docId}`, {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${getToken()}`,
     },
+    credentials: 'include',
     body: JSON.stringify({
       content_html: content.html,
       content_json: content.json,
@@ -94,22 +93,17 @@ export async function saveDocument(
  * 上传图片到 R2 存储
  *
  * @param file - 图片文件
- * @param getToken - 获取认证 Token 的函数
  * @returns R2 公开访问 URL
  */
-export async function uploadImage(
-  file: File,
-  getToken: () => string
-): Promise<string> {
+export async function uploadImage(file: File): Promise<string> {
   const formData = new FormData();
   formData.append('file', file);
   formData.append('type', 'doc-image');
 
+  // P0 安全修复：认证通过 HttpOnly Cookie 自动携带
   const response = await fetch(`${API_BASE}/api/v1/documents/upload-image`, {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${getToken()}`,
-    },
+    credentials: 'include',
     body: formData,
   });
 
@@ -129,10 +123,9 @@ export async function uploadImage(
  * 移除已注册的监听器，防止重复注册导致同一图片被重复上传。
  *
  * @param editor - Tiptap 编辑器实例
- * @param getToken - 获取认证 Token 的函数
  * @returns 清理函数，调用后移除本函数注册的所有事件监听
  */
-export function setupImageHandlers(editor: Editor, getToken: () => string): () => void {
+export function setupImageHandlers(editor: Editor): () => void {
   const editorDom = editor.view.dom;
 
   // 拖拽图片自动上传
@@ -146,7 +139,7 @@ export function setupImageHandlers(editor: Editor, getToken: () => string): () =
     event.preventDefault();
     for (const file of imageFiles) {
       try {
-        const url = await uploadImage(file, getToken);
+        const url = await uploadImage(file);
         editor.chain().focus().setImage({ src: url, alt: file.name }).run();
       } catch (error) {
         alert(error instanceof Error ? error.message : '图片上传失败');
@@ -167,7 +160,7 @@ export function setupImageHandlers(editor: Editor, getToken: () => string): () =
       const file = item.getAsFile();
       if (!file) continue;
       try {
-        const url = await uploadImage(file, getToken);
+        const url = await uploadImage(file);
         editor.chain().focus().setImage({ src: url }).run();
       } catch (error) {
         alert(error instanceof Error ? error.message : '图片上传失败');

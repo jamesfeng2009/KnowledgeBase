@@ -166,20 +166,15 @@ const breadcrumb = [
 
 <script>
   const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
-  const TOKEN_KEY = 'ekb_access_token';
 
   let allConversations: any[] = [];
 
   async function loadHistory() {
-    const token = localStorage.getItem(TOKEN_KEY);
-    if (!token) {
-      window.location.href = '/auth/login';
-      return;
-    }
     showHistoryLoading();
     try {
+      // P0 安全修复：认证通过 HttpOnly Cookie 自动携带
       const res = await fetch(`${API_BASE}/api/v1/chat/conversations`, {
-        headers: { Authorization: `Bearer ${token}` },
+        credentials: 'include',
       });
       if (res.status === 401) {
         window.location.href = '/auth/login';

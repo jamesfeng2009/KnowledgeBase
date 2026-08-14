@@ -249,7 +249,7 @@ def main(argv: list[str] | None = None) -> int:
 
     eval_metrics = trainer.evaluate()
     logger.info("最终验证集指标: %s", eval_metrics)
-    logger.info("下一步: 用 eval_boundary_refusal.py 评测拒答率，对比 SFT+DPO 两阶段（见微调.md P3-18）")
+    logger.info("下一步: 用 eval_boundary_200.py 评测拒答率，对比 SFT+DPO 两阶段（见微调.md P3-18）")
     return 0
 
 

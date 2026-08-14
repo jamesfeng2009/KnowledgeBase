@@ -153,6 +153,8 @@ class TestUploadSizeGates:
         self, auth_client: httpx.AsyncClient
     ) -> None:
         """端点集成：声明超大 Content-Length → 413，且业务 service 未被调用。"""
+        # 使用 admin 角色跳过权限查询，确保只验证 Content-Length 预检逻辑
+        auth_client._ekb_user.role = "admin"  # type: ignore[attr-defined]
         with patch(
             "app.api.v1.documents.KnowledgeService"
         ) as mock_service_cls:
@@ -584,7 +586,7 @@ class TestChatStreamEndpoint:
             async def prepare_chat(self, **kwargs):
                 return SimpleNamespace(conversation_id=uuid4())
 
-            async def stream_chat(self, prepared):
+            async def stream_chat(self, prepared, db=None):
                 # 流式开始时连接必须已释放
                 assert release_state["committed"] and release_state["closed"]
                 yield "ok"

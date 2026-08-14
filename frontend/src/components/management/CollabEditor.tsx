@@ -28,7 +28,6 @@ import { ConnectionStatus } from './ConnectionStatus';
 interface CollabEditorProps {
   docId: string;
   user: { name: string; color: string };
-  wsToken: string;
   wsUrl: string;
 }
 
@@ -49,24 +48,21 @@ function dispatchSaveStatus(status: SaveStatus): void {
   );
 }
 
-export function CollabEditor({ docId, user, wsToken, wsUrl }: CollabEditorProps) {
+export function CollabEditor({ docId, user, wsUrl }: CollabEditorProps) {
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // 1. 创建 Yjs 文档 + WebSocket Provider + 离线缓存
+  // P0 安全修复：认证通过 HttpOnly Cookie 自动携带，不再经 URL query 传递 Token
   const { ydoc, provider } = useMemo(() => {
     const doc = new Y.Doc();
     const wsProvider = new WebsocketProvider(
       `${wsUrl}/ws/collab`,
       docId,
-      doc,
-      // 安全说明：浏览器 WebSocket 无法自定义请求头，wsToken 只能经 URL query
-      // 传递（collab-service 从 ?token= 读取）。待后端支持「POST 换取短时 ws ticket」
-      // 后改造（当前无 ticket 接口，暂保留）。
-      { params: { token: wsToken } }
+      doc
     );
     new IndexeddbPersistence(docId, doc);
     return { ydoc: doc, provider: wsProvider };
-  }, [docId, wsToken, wsUrl]);
+  }, [docId, wsUrl]);
 
   // 2. 初始化 Tiptap 编辑器
   const editor = useEditor({
@@ -103,8 +99,8 @@ export function CollabEditor({ docId, user, wsToken, wsUrl }: CollabEditorProps)
     // setupImageHandlers 返回清理函数：effect 重跑（依赖变化 / StrictMode 双调用）
     // 或组件卸载时先移除旧监听，确保同一 editor DOM 上只注册一次，
     // 避免重复注册导致同一图片被重复上传
-    return setupImageHandlers(editor, () => wsToken);
-  }, [editor, wsToken]);
+    return setupImageHandlers(editor);
+  }, [editor]);
 
   // 4. 自动保存（编辑器变化后 debounce 5 秒）
   useEffect(() => {
@@ -116,7 +112,7 @@ export function CollabEditor({ docId, user, wsToken, wsUrl }: CollabEditorProps)
       }
       saveTimerRef.current = setTimeout(() => {
         dispatchSaveStatus('saving');
-        saveDocument(editor, ydoc, docId, () => wsToken)
+        saveDocument(editor, ydoc, docId)
           .then(() => dispatchSaveStatus('saved'))
           .catch((error) => {
             dispatchSaveStatus('error');
@@ -131,7 +127,7 @@ export function CollabEditor({ docId, user, wsToken, wsUrl }: CollabEditorProps)
         clearTimeout(saveTimerRef.current);
       }
     };
-  }, [editor, ydoc, docId, wsToken]);
+  }, [editor, ydoc, docId]);
 
   // 5. 卸载时销毁 Provider 与文档，释放连接
   useEffect(() => {

@@ -1,6 +1,6 @@
 """微调脚本共享工具 — 边界信号词常量 + 防变体泄漏的分组切分 + MPS 回调工厂。
 
-三个训练/评测入口（train_grpo / generate_rlaif_data / eval_boundary_refusal）
+三个训练/评测入口（train_grpo / generate_rlaif_data / eval_boundary_200）
 曾各自维护一份边界/拒答关键词且口径不一致（评审 #1/#9）：
 - BOUNDARY_KEYWORDS 含"怎么办/怎么做/出差/预订/劳动"等泛词，实测 36% 工作
   问题被误判为边界问题，GRPO rule reward 反向训练（实质回答被给 -1）；

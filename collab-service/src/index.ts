@@ -5,7 +5,7 @@
  * 职责：
  *  - 在端口 8001 启动 HTTP + WebSocket 服务
  *  - 路由：/ws/collab → 协同编辑；/ws/comments → 评论通知；/health → 健康检查
- *  - 从 URL query 参数解析 JWT Token（仅解码，签名由 APISIX 验证）
+ *  - 从 WebSocket 握手 Cookie 中解析 JWT Token（仅解码，签名由 APISIX 验证）
  *  - 初始化 PostgreSQL 持久化（不可用时降级内存模式）
  *  - 优雅关闭处理
  */
@@ -63,7 +63,8 @@ async function main(): Promise<void> {
   // 4. 协同编辑连接处理
   collabWss.on('connection', (conn: WebSocket, req: IncomingMessage) => {
     const url = parseUrl(req);
-    const token = url.searchParams.get('token');
+    // P0 安全修复：Token 从 HttpOnly Cookie 读取，不再暴露在 URL query
+    const token = getCookieToken(req.headers.cookie);
     const docId = url.searchParams.get('doc') || 'default';
 
     const user = verifyToken(token);
@@ -76,8 +77,8 @@ async function main(): Promise<void> {
 
   // 5. 评论通知连接处理
   commentsWss.on('connection', (conn: WebSocket, req: IncomingMessage) => {
-    const url = parseUrl(req);
-    const token = url.searchParams.get('token');
+    // P0 安全修复：Token 从 HttpOnly Cookie 读取，不再暴露在 URL query
+    const token = getCookieToken(req.headers.cookie);
     const user = verifyToken(token);
     if (!user) {
       conn.close(4001, 'unauthorized: invalid or missing token');
@@ -131,8 +132,19 @@ function parseUrl(req: IncomingMessage): URL {
 }
 
 /**
+ * 从 Cookie 头中读取名为 access_token 的 JWT。
+ * @param cookieHeader HTTP Cookie 头内容
+ * @returns JWT 字符串；不存在时返回 null
+ */
+function getCookieToken(cookieHeader: string | undefined): string | null {
+  if (!cookieHeader) return null;
+  const match = cookieHeader.match(/(?:^|;\s*)access_token=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+/**
  * 解析 JWT Token。仅解码 payload，不验证签名（签名由 APISIX 网关完成）。
- * @param token JWT 字符串（来自 URL query 参数）
+ * @param token JWT 字符串（来自 Cookie）
  * @returns 解码后的用户信息；token 无效或过期返回 null
  */
 function verifyToken(token: string | null): JwtPayload | null {

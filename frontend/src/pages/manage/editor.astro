@@ -446,11 +446,6 @@ const docId =
   // === 文档加载（仅获取标题，文档内容由 Yjs 通过 WebSocket 自动同步） ===
   async function loadDoc(): Promise<void> {
     if (docId === 'new') return;
-    const token = localStorage.getItem('ekb_access_token');
-    if (!token) {
-      window.location.href = '/auth/login';
-      return;
-    }
     try {
       const doc = await getDocument(docId);
       const titleInput = document.getElementById('doc-title') as HTMLInputElement | null;

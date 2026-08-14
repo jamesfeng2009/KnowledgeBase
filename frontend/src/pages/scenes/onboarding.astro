@@ -648,7 +648,6 @@ const breadcrumb = [{ label: '场景应用', href: '/scenes/onboarding' }, { lab
   }
 
   // ===== 常量 =====
-  const TOKEN_KEY = 'ekb_access_token';
   const ONBOARDING_KEYWORDS = ['入职', '新员工', '手册', '制度', '培训', '新人', '规章', '员工手册'];
   const KB_ICONS = ['📋', '💼', '📅', '🔧', '📚', '🏢', '📌', '📄'];
 
@@ -1142,16 +1141,14 @@ const breadcrumb = [{ label: '场景应用', href: '/scenes/onboarding' }, { lab
 
   // ===== 初始化 =====
   async function init(): Promise<void> {
-    const token = localStorage.getItem(TOKEN_KEY);
-    if (!token) {
+    initQuickQuestion();
+
+    // 加载用户信息（认证通过 HttpOnly Cookie，/me 失败时会跳转登录页）
+    const user = await loadUser();
+    if (!user) {
       window.location.href = '/auth/login';
       return;
     }
-
-    initQuickQuestion();
-
-    // 加载用户信息
-    const user = await loadUser();
     renderWelcome(user);
 
     // 加载入职流程（内含知识库、文档、FAQ、团队）

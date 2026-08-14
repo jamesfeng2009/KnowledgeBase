@@ -729,12 +729,11 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_secret_key(self) -> "Settings":
-        """生产环境 (DEBUG=False) 不允许使用默认 SECRET_KEY — 仅警告。"""
+        """生产环境 (DEBUG=False) 不允许使用默认 SECRET_KEY — 强制启动失败。"""
         if self.SECRET_KEY == "change-me-in-production" and not self.DEBUG:
-            warnings.warn(
+            raise ValueError(
                 "生产环境 (DEBUG=False) 使用默认 SECRET_KEY 极不安全，"
-                "请立即通过环境变量设置随机密钥",
-                stacklevel=2,
+                "请通过环境变量设置强随机密钥"
             )
         return self
 

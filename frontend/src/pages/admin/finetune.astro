@@ -356,9 +356,8 @@ const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '微调�
 <script>
   import { exportDataset, getDatasets, getDataset, previewDataset } from '@/lib/apis/finetune';
   import { ApiError, API_BASE } from '@/lib/api';
+  import { getCurrentUser } from '@/lib/auth';
 
-  // Token 在 localStorage 中的存储键名（与 api.ts 保持一致，下载接口需手动带 Authorization 头）
-  const TOKEN_KEY = 'ekb_access_token';
   const POLL_INTERVAL = 5000;
   const PAGE_SIZE = 10;
 
@@ -402,22 +401,6 @@ const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '微调�
   /** 判断是否为 401/未登录错误（已在底层处理跳转，业务层需静默退出） */
   function isAuthError(err: unknown): boolean {
     return err instanceof ApiError && err.status === 401;
-  }
-
-  function getToken(): string | null {
-    return localStorage.getItem(TOKEN_KEY);
-  }
-
-  /** 从 JWT token 中解析角色（与 api.ts 的解析方式一致） */
-  function getRoleFromToken(): string | null {
-    const token = getToken();
-    if (!token) return null;
-    try {
-      const payload = JSON.parse(atob(token.split('.')[1]));
-      return typeof payload.role === 'string' ? payload.role : null;
-    } catch {
-      return null;
-    }
   }
 
   /** 非管理员：隐藏业务内容，展示无权限提示 */
@@ -769,23 +752,17 @@ const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '微调�
   // ===== 下载（接口要求 Authorization 头，需 fetch blob 后触发下载） =====
 
   async function downloadDataset(item: DatasetItem, btn: HTMLButtonElement): Promise<void> {
-    const token = getToken();
-    if (!token) {
-      window.location.href = '/auth/login';
-      return;
-    }
-
     const original = btn.textContent;
     btn.disabled = true;
     btn.textContent = '下载中';
     try {
+      // P0 安全修复：认证通过 HttpOnly Cookie 自动携带
       const res = await fetch(`${API_BASE}/api/v1/finetune/datasets/${encodeURIComponent(item.id)}/download`, {
         method: 'GET',
-        headers: { Authorization: `Bearer ${token}` },
+        credentials: 'include',
       });
       if (!res.ok) {
         if (res.status === 401) {
-          localStorage.removeItem(TOKEN_KEY);
           window.location.href = '/auth/login';
           return;
         }
@@ -859,13 +836,23 @@ const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '微调�
   // 页面卸载时清理轮询定时器
   window.addEventListener('beforeunload', stopPolling);
 
-  // 权限前置检查：token 中能解析出角色且不是 admin 时直接提示无权限；
-  // 无法解析角色（未登录等）时照常加载，由底层 401 逻辑跳转登录页
-  const role = getRoleFromToken();
-  if (role !== null && role !== 'admin') {
-    showNoPermission();
-  } else {
-    loadTypeCards();
-    loadDatasets();
-  }
+  // 权限前置检查：调用 /me 获取角色，不是 admin 时直接提示无权限；
+  // 未登录或 401 时跳转登录页
+  (async () => {
+    try {
+      const user = await getCurrentUser();
+      if (!user) {
+        window.location.href = '/auth/login';
+        return;
+      }
+      if (user.role !== 'admin') {
+        showNoPermission();
+        return;
+      }
+      loadTypeCards();
+      loadDatasets();
+    } catch {
+      window.location.href = '/auth/login';
+    }
+  })();
 </script>

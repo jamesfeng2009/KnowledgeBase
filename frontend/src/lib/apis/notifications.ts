@@ -70,7 +70,6 @@ export function createNotificationStream(
   onMessage: (notification: Notification) => void,
   onError?: (error: Event) => void
 ): { close: () => void } {
-  const token = localStorage.getItem('ekb_access_token');
   const apiBase = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
 
   // 通过 AbortController 实现 close()，中止进行中的流读取
@@ -78,17 +77,17 @@ export function createNotificationStream(
 
   void (async () => {
     try {
+      // P0 安全修复：认证通过 HttpOnly Cookie 自动携带
       const res = await fetch(`${apiBase}${BASE}/stream`, {
         headers: {
           Accept: 'text/event-stream',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
+        credentials: 'include',
         signal: abortController.signal,
       });
 
       if (res.status === 401) {
-        // 与 api.ts 行为对齐：401 清除 Token 并跳转登录页
-        localStorage.removeItem('ekb_access_token');
+        // 与 api.ts 行为对齐：401 跳转登录页，Token 由服务端 HttpOnly Cookie 管理
         if (window.location.pathname !== '/auth/login') {
           window.location.href = '/auth/login';
         }

@@ -108,7 +108,19 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
       import { synthesizeText } from '@/lib/apis/tts';
 
       const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
-      const TOKEN_KEY = 'ekb_access_token';
+
+      // P0 安全修复：认证改为 HttpOnly Cookie，前端不再直接读取 Token
+      async function checkAuthCookie(): Promise<boolean> {
+        try {
+          const res = await fetch(`${API_BASE}/api/v1/auth/me`, {
+            method: 'GET',
+            credentials: 'include',
+          });
+          return res.ok;
+        } catch {
+          return false;
+        }
+      }
 
       // 对话状态（后端 ConversationResponse 不含 messages 字段，历史消息需单独请求消息接口）
       let conversations: Array<{ id: string; title: string }> = [];
@@ -171,14 +183,13 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
 
       // P2-6: 加载可用模型列表
       async function loadModels() {
-        const token = localStorage.getItem(TOKEN_KEY);
         try {
           const sessionId = currentConvId || '';
           const url = sessionId
             ? `${API_BASE}/api/v1/models?session_id=${encodeURIComponent(sessionId)}`
             : `${API_BASE}/api/v1/models`;
           const res = await fetch(url, {
-            headers: { Authorization: `Bearer ${token}` },
+            credentials: 'include', // 必须：携带 HttpOnly Cookie
           });
           if (!res.ok) return;
           const data = await res.json();
@@ -208,14 +219,13 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
       // P2-6: 切换会话模型
       async function setSessionModel(modelId: string) {
         if (!currentConvId || !modelId) return;
-        const token = localStorage.getItem(TOKEN_KEY);
         try {
           const res = await fetch(`${API_BASE}/api/v1/models/session/${encodeURIComponent(currentConvId)}`, {
             method: 'PUT',
             headers: {
               'Content-Type': 'application/json',
-              Authorization: `Bearer ${token}`,
             },
+            credentials: 'include', // 必须：携带 HttpOnly Cookie
             body: JSON.stringify({ model_id: modelId }),
           });
           if (res.ok) {
@@ -238,15 +248,10 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
 
       // 加载会话列表
       async function loadConversations() {
-        const token = localStorage.getItem(TOKEN_KEY);
-        if (!token) {
-          window.location.href = '/auth/login';
-          return;
-        }
         showConvListLoading();
         try {
           const res = await fetch(`${API_BASE}/api/v1/chat/conversations`, {
-            headers: { Authorization: `Bearer ${token}` },
+            credentials: 'include', // 必须：携带 HttpOnly Cookie
           });
           if (res.status === 401) {
             window.location.href = '/auth/login';
@@ -349,11 +354,10 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
         renderConversationList();
         // 历史消息不在会话列表响应中，需调用消息接口加载
         messagesEl.innerHTML = '<div class="chat-empty-hint">历史消息加载中...</div>';
-        const token = localStorage.getItem(TOKEN_KEY);
         try {
           const res = await fetch(
             `${API_BASE}/api/v1/chat/conversations/${encodeURIComponent(id)}/messages`,
-            { headers: { Authorization: `Bearer ${token}` } },
+            { credentials: 'include' },
           );
           if (res.status === 401) {
             window.location.href = '/auth/login';
@@ -446,8 +450,9 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
         const query = inputEl.value.trim();
         if (!query || isStreaming) return;
 
-        const token = localStorage.getItem(TOKEN_KEY);
-        if (!token) {
+        // P0 安全修复：认证通过 HttpOnly Cookie 自动携带
+        const isAuthenticated = await checkAuthCookie();
+        if (!isAuthenticated) {
           window.location.href = '/auth/login';
           return;
         }
@@ -481,8 +486,8 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
             headers: {
               'Content-Type': 'application/json',
               Accept: 'text/event-stream',
-              Authorization: `Bearer ${token}`,
             },
+            credentials: 'include', // 必须：携带 HttpOnly Cookie
             signal: streamAbortController.signal,
             body: JSON.stringify({
               query,
@@ -493,7 +498,6 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
           });
 
           if (res.status === 401) {
-            localStorage.removeItem(TOKEN_KEY);
             window.location.href = '/auth/login';
             return;
           }
@@ -570,8 +574,12 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
           if (isNewConversation) {
             // 后端已自动创建会话，重新拉取列表以获取真实会话 ID，并保留当前已渲染的消息
             await loadConversations();
-            if (conversations.length > 0) {
+            // P0 修复：优先使用 SSE meta 事件返回的真实 conversation_id，
+            // 避免 loadConversations 列表排序后覆盖为新会话列表首项。
+            if (!currentConvId && conversations.length > 0) {
               currentConvId = conversations[0].id;
+            }
+            if (currentConvId) {
               const newConv = conversations.find((c) => c.id === currentConvId);
               if (newConv) {
                 newConv.title = newConv.title || query.slice(0, 20);
@@ -947,10 +955,10 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
                     ${irreversibleBadge}
                   </div>
                   <div class="approval-actions">
-                    <button class="btn btn-sm btn-primary approval-btn-approve" data-approval-id="${approvalId}">
+                    <button class="btn btn-sm btn-primary approval-btn-approve" data-approval-id="${escapeHtml(approvalId)}">
                       批准执行
                     </button>
-                    <button class="btn btn-sm btn-ghost approval-btn-reject" data-approval-id="${approvalId}">
+                    <button class="btn btn-sm btn-ghost approval-btn-reject" data-approval-id="${escapeHtml(approvalId)}">
                       拒绝
                     </button>
                   </div>
@@ -1001,7 +1009,6 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
 
       // P1-6: 处理审批操作 — 调用 REST API 批准/拒绝危险工具
       async function handleApproval(approvalId: string, approved: boolean, card: Element) {
-        const token = localStorage.getItem(TOKEN_KEY);
         const action = approved ? 'approve' : 'reject';
         const actionText = approved ? '批准' : '拒绝';
         const actionsEl = card.querySelector('.approval-actions') as HTMLElement;
@@ -1013,8 +1020,8 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              ...(token ? { Authorization: `Bearer ${token}` } : {}),
             },
+            credentials: 'include', // 必须：携带 HttpOnly Cookie
             body: JSON.stringify({}),
           });
           if (!res.ok) {
@@ -1039,8 +1046,8 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
           if (actionsEl) {
             actionsEl.innerHTML = `
               <span class="approval-error">${escapeHtml(err.message || '审批失败')}</span>
-              <button class="btn btn-sm btn-primary approval-btn-approve" data-approval-id="${approvalId}">重试批准</button>
-              <button class="btn btn-sm btn-ghost approval-btn-reject" data-approval-id="${approvalId}">拒绝</button>`;
+              <button class="btn btn-sm btn-primary approval-btn-approve" data-approval-id="${escapeHtml(approvalId)}">重试批准</button>
+              <button class="btn btn-sm btn-ghost approval-btn-reject" data-approval-id="${escapeHtml(approvalId)}">拒绝</button>`;
             const approveBtn = actionsEl.querySelector('.approval-btn-approve') as HTMLElement;
             const rejectBtn = actionsEl.querySelector('.approval-btn-reject') as HTMLElement;
             if (approveBtn) {

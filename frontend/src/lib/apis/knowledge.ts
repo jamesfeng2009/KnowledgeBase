@@ -172,13 +172,11 @@ export async function uploadPart(
   partNumber: number,
   data: Blob,
   signal?: AbortSignal
-): Promise<MultipartPartResult> {
-  const token =
-    typeof window !== 'undefined' ? localStorage.getItem('ekb_access_token') : null;
+) {
   const url = `${API_BASE}${BASE}/documents/multipart/${uploadId}/parts/${partNumber}`;
   const response = await fetch(url, {
     method: 'PUT',
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    credentials: 'include', // 必须：携带 HttpOnly Cookie
     body: data,
     signal,
   });
@@ -194,7 +192,8 @@ export async function uploadPart(
     }
     throw new ApiError(message, response.status);
   }
-  const result = await response.json();
+  // S3 空响应体时 .json() 会抛 SyntaxError，兜底返回空对象
+  const result = await response.json().catch(() => ({}));
   // 兼容后端统一响应格式 { code, data, message }
   if (result && typeof result === 'object' && 'data' in result && 'code' in result) {
     return result.data as MultipartPartResult;

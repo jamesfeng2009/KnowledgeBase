@@ -382,8 +382,6 @@ const breadcrumb = [{ label: '知识', href: '/knowledge' }, { label: '知识搜
   import { unifiedSearch, searchKnowledge, getKnowledgeBases, type ExternalSearchResult, type SearchResult } from '@/lib/apis/knowledge';
   import { logSearch, getSearchHotwords } from '@/lib/apis/analytics';
 
-  const TOKEN_KEY = 'ekb_access_token';
-
   let searchType = 'hybrid';
   let searchMode: 'knowledge' | 'unified' = 'knowledge';
   const selectedSources = new Set<string>(['knowledge', 'oa', 'erp', 'crm', 'mail']);
@@ -468,12 +466,6 @@ const breadcrumb = [{ label: '知识', href: '/knowledge' }, { label: '知识搜
   async function doSearch() {
     const query = (document.getElementById('search-input') as HTMLInputElement).value.trim();
     if (!query) return;
-
-    const token = localStorage.getItem(TOKEN_KEY);
-    if (!token) {
-      window.location.href = '/auth/login';
-      return;
-    }
 
     // 统一搜索模式：走跨系统统一搜索
     if (searchMode === 'unified') {

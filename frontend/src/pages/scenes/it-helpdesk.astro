@@ -349,7 +349,7 @@ const breadcrumb = [{ label: '场景应用', href: '/scenes/it-helpdesk' }, { la
   import { getTickets, createTicket, updateTicket } from '@/lib/apis/tickets';
   import { createSSEStream } from '@/lib/sse';
   import { ApiError } from '@/lib/api';
-  import { removeToken } from '@/lib/auth';
+  import { logout } from '@/lib/auth';
 
   const categoryMap: Record<string, { label: string; badge: string }> = {
     hardware: { label: '硬件设备', badge: 'badge-primary' },
@@ -535,8 +535,7 @@ const breadcrumb = [{ label: '场景应用', href: '/scenes/it-helpdesk' }, { la
       const msg = err instanceof Error ? err.message : String(err);
       // createSSEStream 未内置 401 跳转，此处补充处理
       if (msg.includes('(401)')) {
-        removeToken();
-        window.location.href = '/auth/login';
+        await logout();
         return;
       }
       contentBox.innerHTML =

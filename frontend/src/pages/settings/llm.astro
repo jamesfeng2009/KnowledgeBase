@@ -163,7 +163,7 @@ const breadcrumb = [{ label: '设置', href: '/settings/tenant' }, { label: 'LLM
   import { getLlmConfig, updateLlmConfig } from '@/lib/apis/settings';
   import { ApiError } from '@/lib/api';
   import { streamChat } from '@/lib/sse';
-  import { removeToken } from '@/lib/auth';
+  import { logout } from '@/lib/auth';
 
   const providers = [
     { id: 'openai', name: 'OpenAI', desc: 'GPT 系列模型', logo: '🤖' },
@@ -529,10 +529,9 @@ const breadcrumb = [{ label: '设置', href: '/settings/tenant' }, { label: 'LLM
         errMsg = err instanceof Error ? err.message : '网络异常';
       }
       if (errMsg) {
-        // 401 时清除 Token 并跳转登录页
+        // 401 时清除 Cookie 并跳转登录页
         if (errMsg.includes('(401)')) {
-          removeToken();
-          window.location.href = '/auth/login';
+          await logout();
           return;
         }
         alert(`连接测试失败：${errMsg}`);

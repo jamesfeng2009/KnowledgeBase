@@ -405,7 +405,6 @@ const reports = [
   } from '@/lib/apis/analytics';
   import { API_BASE } from '@/lib/api';
 
-  const TOKEN_KEY = 'ekb_access_token';
   const HISTORY_KEY = 'ekb_export_history';
 
   type ExportFormat = 'csv' | 'xlsx';
@@ -616,22 +615,12 @@ const reports = [
 
   // ===== 导出逻辑 =====
 
-  function getToken(): string | null {
-    return localStorage.getItem(TOKEN_KEY);
-  }
-
   async function exportReport(
     reportType: string,
     format: ExportFormat,
     range: TimeRange,
     btn: HTMLButtonElement
   ): Promise<void> {
-    const token = getToken();
-    if (!token) {
-      window.location.href = '/auth/login';
-      return;
-    }
-
     const originalHtml = btn.innerHTML;
     btn.classList.add('is-loading');
     btn.innerHTML = '导出中';
@@ -641,14 +630,14 @@ const reports = [
       const url =
         `${API_BASE}/api/v1/analytics/reports/${encodeURIComponent(reportType)}` +
         `?format=${encodeURIComponent(format)}&time_range=${encodeURIComponent(range)}`;
+      // P0 安全修复：认证通过 HttpOnly Cookie 自动携带
       const res = await fetch(url, {
         method: 'GET',
-        headers: { Authorization: `Bearer ${token}` },
+        credentials: 'include',
       });
 
       if (!res.ok) {
         if (res.status === 401) {
-          localStorage.removeItem(TOKEN_KEY);
           window.location.href = '/auth/login';
           return;
         }

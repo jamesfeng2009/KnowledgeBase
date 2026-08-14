@@ -32,7 +32,11 @@ deployment:
   role_data_plane:
     config_provider: yaml
   admin:
-    admin_key_required: false
+    admin_key_required: true
+    admin_key:
+      - name: admin
+        key: ${APISIX_ADMIN_KEY:-change-me-in-production}
+        role: admin
 
 # 上游 — core-engine 后端服务
 upstreams:
@@ -50,15 +54,11 @@ routes:
     priority: 100
     upstream_id: core-engine
     plugins:
-      # 剥离客户端伪造的租户头
-      proxy-rewrite:
-        headers:
-          set:
-            - X-Tenant-Id: ""
-      # 子域 → X-Tenant-Domain 注入
+      # 子域 → X-Tenant-Domain 注入，并剥离客户端伪造的租户头
       serverless-pre-function:
         functions:
           - |
+            ngx.req.clear_header("X-Tenant-Id")
             local host = ngx.var.host or ""
             local root = "{TENANT_ROOT_DOMAIN}"
             local dot = "." .. root
@@ -74,9 +74,6 @@ routes:
         rate: 10            # 每秒速率（rps）
         burst: 100          # 突发
         rejected_code: 429
-        header:
-          set:
-            X-RateLimit-Limit: "600"
 
   # --- SSE 流式透传（chat）---
   - id: chat-sse
@@ -85,10 +82,10 @@ routes:
     upstream_id: core-engine
     enable_websocket: false
     plugins:
-      proxy-rewrite:
-        headers:
-          set:
-            - X-Tenant-Id: ""
+      serverless-pre-function:
+        functions:
+          - |
+            ngx.req.clear_header("X-Tenant-Id")
 
   # --- 健康检查（不经子域限流）---
   - id: health

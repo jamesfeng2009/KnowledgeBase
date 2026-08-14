@@ -33,12 +33,6 @@ export function IntelligencePanelMount({ docId }: IntelligencePanelMountProps) {
   useEffect(() => {
     let cancelled = false;
 
-    const token = localStorage.getItem('ekb_access_token');
-    if (!token) {
-      window.location.href = '/auth/login';
-      return;
-    }
-
     // 新文档无智能处理数据，直接以空值渲染面板
     if (!docId || docId === 'new') {
       setData({ summary: '', tags: [], category: '' });

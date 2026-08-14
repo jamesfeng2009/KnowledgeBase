@@ -70,18 +70,40 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             log.warning("app.table_creation_failed", error=str(exc))
 
     # P1-5: 服务重启恢复 — 扫描 pending 审批，标记过期，加载活跃审批
+    # P0 修复：按租户隔离恢复，避免一次性加载所有租户的 pending 审批。
     try:
         from app.database import async_session_factory
+        from app.models.billing import Tenant
         from app.services.approval_service import ApprovalService
+        from sqlalchemy import select
 
         async with async_session_factory() as session:
-            approval_service = ApprovalService(session)
-            restored_count = await approval_service.restore_pending_approvals()
+            tenant_ids: list[uuid.UUID] = []
+            try:
+                result = await session.execute(
+                    select(Tenant.id).where(Tenant.deleted_at.is_(None))
+                )
+                tenant_ids = list(result.scalars().all())
+            except Exception:
+                # 租户表尚未初始化时降级为单租户恢复
+                pass
+
+            total_restored = 0
+            # 多租户场景：逐个租户恢复
+            for tenant_id in tenant_ids:
+                approval_service = ApprovalService(session, tenant_id=tenant_id)
+                total_restored += await approval_service.restore_pending_approvals()
+
+            # 单租户兜底 / 无租户归属的 pending 审批
+            if not tenant_ids:
+                approval_service = ApprovalService(session, tenant_id=None)
+                total_restored += await approval_service.restore_pending_approvals()
+
             await session.commit()
-            if restored_count > 0:
+            if total_restored > 0:
                 log.info(
                     "app.approval_restored",
-                    active_count=restored_count,
+                    active_count=total_restored,
                 )
     except Exception as exc:
         log.warning("app.approval_restore_failed", error=str(exc))

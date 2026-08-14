@@ -49,16 +49,17 @@ services:
     environment:
       # 数据库 — 指向上方 postgres 服务
       DATABASE_URL: postgresql://langfuse:langfuse@postgres:5432/langfuse
-      # NextAuth 签名密钥（已用 openssl rand -base64 32 生成）
-      NEXTAUTH_SECRET: op7+TwjwuD6AieinffHX44uV0WFnxjT/a/QB+u0bqkk=
+      # NextAuth 签名密钥：必须通过环境变量注入，禁止在仓库保留真实值。
+      # 生成方式：openssl rand -base64 32
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-change-me-in-production}
       # NextAuth 回调 URL（必须与实际访问地址一致）
       NEXTAUTH_URL: http://localhost:3100
-      # 密码加盐（已用 openssl rand -base64 32 生成，独立值）
-      SALT: a3sdJO20APEKe+zXRURovzhNxWWIeXcmF1pbkPD6RL0=
+      # 密码加盐：必须通过环境变量注入，且需与 NEXTAUTH_SECRET 不同。
+      SALT: ${LANGFUSE_SALT:-change-me-in-production}
       # 时区（与主项目 Asia/Shanghai 对齐）
       TZ: Asia/Shanghai
-      # 关闭注册开关：首次创建管理员后建议设 true 防止陌生人注册
-      DISABLE_SIGNUP: "false"
+      # 关闭公开注册：首次创建管理员后保持关闭，防止陌生人注册。
+      DISABLE_SIGNUP: "true"
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/"]
       interval: 10s

@@ -22,11 +22,30 @@ from app.models.user import User
 from app.services.auth_service import AuthService
 
 # OAuth2 Bearer scheme — tokenUrl 指向登录端点，供 Swagger UI 使用。
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=False)
+
+
+def _extract_token(request: Request, token: str | None) -> str:
+    """从 Authorization 头或 HttpOnly Cookie 中提取 JWT Token。
+
+    优先使用 Bearer Token（兼容 Swagger / 第三方客户端），
+    未提供时回退到名为 ``access_token`` 的 HttpOnly Cookie。
+    """
+    if token:
+        return token
+    cookie_token = request.cookies.get("access_token")
+    if cookie_token:
+        return cookie_token
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="未提供认证凭据",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
 
 
 async def get_current_user(
-    token: str = Depends(oauth2_scheme),
+    request: Request,
+    token: str | None = Depends(oauth2_scheme),
     db: AsyncSession = Depends(get_db_session),
 ) -> User:
     """从 JWT 令牌解析当前登录用户。
@@ -46,7 +65,8 @@ async def get_current_user(
         HTTPException(401): 令牌无效 / 用户不存在 / 账号禁用。
     """
     try:
-        return await AuthService(db).get_current_user(token)
+        effective_token = _extract_token(request, token)
+        return await AuthService(db).get_current_user(effective_token)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

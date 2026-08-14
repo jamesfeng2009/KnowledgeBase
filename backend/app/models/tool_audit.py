@@ -15,7 +15,7 @@ import uuid
 from typing import Any
 
 from sqlalchemy import Integer, String, Text
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin, UUIDMixin
@@ -73,6 +73,9 @@ class ToolAuditLog(UUIDMixin, TimestampMixin, Base):
     status: Mapped[str] = mapped_column(
         String(20), default="success", comment="success/error/timeout/blocked"
     )
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True, comment="租户 ID（多租户隔离）"
+    )
 
 
 async def persist_tool_spans(
@@ -80,6 +83,7 @@ async def persist_tool_spans(
     session: Any,
     run_id: str,
     session_id: str,
+    tenant_id: uuid.UUID | None = None,
 ) -> int:
     """将关键 Span 持久化到 tool_audit_log（best-effort）。
 
@@ -118,6 +122,7 @@ async def persist_tool_spans(
                     or 0
                 ),
                 status="success" if raw_status == "ok" else raw_status,
+                tenant_id=tenant_id,
             )
             session.add(record)
             written += 1

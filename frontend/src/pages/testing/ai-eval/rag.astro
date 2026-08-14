@@ -146,16 +146,13 @@ const breadcrumb = [
 <script>
   const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
 
-  function getToken(): string {
-    return localStorage.getItem('ekb_access_token') || '';
-  }
-
   async function api<T = any>(path: string, options: RequestInit = {}): Promise<T> {
+    // P0 安全修复：认证通过 HttpOnly Cookie 自动携带
     const res = await fetch(`${API_BASE}${path}`, {
       ...options,
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${getToken()}`,
         ...options.headers,
       },
     });

@@ -317,21 +317,12 @@ const currentPath = Astro.url.pathname;
         }
       }
 
-      // 加载用户信息
+      // 加载用户信息（P0 安全修复：使用 HttpOnly Cookie）
       async function loadUser() {
-        const token = localStorage.getItem('ekb_access_token');
-        if (!token) {
-          // 未登录，跳转登录页
-          if (!window.location.pathname.startsWith('/auth/')) {
-            window.location.href = '/auth/login';
-          }
-          return;
-        }
-
         try {
           const apiBase = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
           const response = await fetch(`${apiBase}/api/v1/auth/me`, {
-            headers: { Authorization: `Bearer ${token}` },
+            credentials: 'include',
           });
 
           if (response.ok) {
@@ -349,7 +340,6 @@ const currentPath = Astro.url.pathname;
             renderAvatar(avatarEl, user.name, user.avatar);
             renderAvatar(dropdownAvatarEl, user.name, user.avatar);
           } else if (response.status === 401) {
-            localStorage.removeItem('ekb_access_token');
             if (!window.location.pathname.startsWith('/auth/')) {
               window.location.href = '/auth/login';
             }
@@ -392,16 +382,22 @@ const currentPath = Astro.url.pathname;
         if (e.key === 'Escape') toggleUserDropdown(false);
       });
 
-      // 退出登录：直接执行，不再弹 confirm
-      document.getElementById('logout-btn')?.addEventListener('click', () => {
-        localStorage.removeItem('ekb_access_token');
+      // 退出登录：调用后端 /logout 清除 HttpOnly Cookie
+      document.getElementById('logout-btn')?.addEventListener('click', async () => {
+        try {
+          const apiBase = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
+          await fetch(`${apiBase}/api/v1/auth/logout`, {
+            method: 'POST',
+            credentials: 'include',
+          });
+        } catch (err) {
+          console.warn('[Layout] 后端登出失败:', err instanceof Error ? err.message : String(err));
+        }
         window.location.href = '/auth/login';
       });
 
       // 加载未读通知数量（右上角红点）
       async function loadUnreadCount() {
-        const token = localStorage.getItem('ekb_access_token');
-        if (!token) return; // 未登录时跳过，避免 401 → ERR_ABORTED
         try {
           const { getUnreadCount } = await import('@/lib/apis/notifications');
           const count = await getUnreadCount();

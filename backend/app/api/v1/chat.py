@@ -15,9 +15,10 @@ from collections.abc import AsyncIterator
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_db_session
+from app.database import async_session_factory, get_db_session
 from app.deps import get_current_active_user
 from app.models.user import User
 from app.schemas.common import ApiResponse
@@ -105,11 +106,18 @@ async def chat(
 
     # 流式开始前：提交准备阶段写入并释放 DB 连接回池 —
     # SSE 长连接期间不持有连接池连接（防高并发时池耗尽）；
-    # 流式结束后的持久化由 service 内短事务完成。
+    # 流式阶段重新获取短会话，并在内部设置租户上下文。
     await db.commit()
     await db.close()
 
-    generator = service.stream_chat(prepared)
+    stream_db = async_session_factory()
+    if tenant_id is not None:
+        # 与新会话重新设置 RLS 租户上下文（准备阶段会话已关闭）
+        await stream_db.execute(
+            text(f"SET LOCAL app.tenant_id = '{tenant_id}'")
+        )
+
+    generator = service.stream_chat(prepared, db=stream_db)
     return sse_response(generator)
 
 

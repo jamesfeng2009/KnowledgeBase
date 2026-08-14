@@ -6,9 +6,6 @@
 // API 基础地址，从环境变量读取
 export const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
 
-// Token 在 localStorage 中的存储键名
-const TOKEN_KEY = 'ekb_access_token';
-
 /** API 错误类型 */
 export class ApiError extends Error {
   status: number;
@@ -33,25 +30,12 @@ interface RequestOptions {
   contentType?: string;
 }
 
-/** 从 localStorage 读取认证 Token */
-function getToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem(TOKEN_KEY);
-}
-
-/** 构建请求头，自动添加 Authorization */
+/** 构建请求头（认证改为 HttpOnly Cookie，不再从 localStorage 读取 Token）。 */
 function buildHeaders(options: RequestOptions): Record<string, string> {
   const headers: Record<string, string> = {
     'Content-Type': options.contentType || 'application/json',
     ...options.headers,
   };
-
-  if (!options.skipAuth) {
-    const token = getToken();
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-  }
 
   return headers;
 }
@@ -69,29 +53,12 @@ function buildUrl(path: string, params?: Record<string, string | number | boolea
   return url.toString();
 }
 
-/** 从 JWT token 中解析 tenant_id（用于日志） */
-function logTenantContext(): void {
-  const token = getToken();
-  if (!token) return;
-  try {
-    const payload = JSON.parse(atob(token.split('.')[1]));
-    if (payload.tenant_id) {
-      console.log('[Tenant] 当前租户上下文:', { tenant_id: payload.tenant_id, user_id: payload.sub, role: payload.role });
-    }
-  } catch {
-    // Token 格式无效，忽略
-  }
-}
-
-/** 统一请求方法 */
+/** 统一请求方法（认证通过 HttpOnly Cookie 自动携带）。 */
 async function request<T = unknown>(
   path: string,
   options: RequestOptions = {}
 ): Promise<T> {
   const { method = 'GET', body, skipAuth, contentType } = options;
-
-  // 日志：打印当前租户上下文（tenant_id / user_id / role）
-  logTenantContext();
 
   const headers = buildHeaders({ ...options, skipAuth, contentType });
 
@@ -103,26 +70,17 @@ async function request<T = unknown>(
   const config: RequestInit = {
     method,
     headers,
+    credentials: 'include', // 必须：携带 HttpOnly Cookie
     body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined,
   };
 
   try {
-    // 日志：记录 API 请求（带租户上下文）
-    const token = getToken();
-    let tenantId: string | undefined;
-    if (token) {
-      try {
-        const payload = JSON.parse(atob(token.split('.')[1]));
-        tenantId = payload.tenant_id;
-      } catch { /* ignore */ }
-    }
-    console.log('[API Request]', { method, path, tenant_id: tenantId || null });
+    console.log('[API Request]', { method, path });
 
     const response = await fetch(buildUrl(path), config);
 
-    // 401 未授权：清除 Token 并跳转登录页
+    // 401 未授权：跳转登录页（Token 在 HttpOnly Cookie 中，由服务端清除）
     if (response.status === 401 && !skipAuth) {
-      localStorage.removeItem(TOKEN_KEY);
       if (typeof window !== 'undefined' && window.location.pathname !== '/auth/login') {
         window.location.href = '/auth/login';
       }
@@ -133,7 +91,7 @@ async function request<T = unknown>(
     const data = await response.json().catch(() => null);
 
     if (!response.ok) {
-      console.warn('[API Error]', { method, path, status: response.status, tenant_id: tenantId || null });
+      console.warn('[API Error]', { method, path, status: response.status });
       const message = (data as { message?: string })?.message || `请求失败 (${response.status})`;
       throw new ApiError(message, response.status, data);
     }

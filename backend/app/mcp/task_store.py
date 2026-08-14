@@ -169,6 +169,8 @@ class TaskStore:
             )
             await redis.expire(key, self._ttl_seconds)
         else:
+            # 内存降级：创建前清理过期任务，防止字典无界增长
+            self._cleanup_expired_fallback_tasks()
             _fallback_store[task_id] = task_data
 
         log.info(
@@ -197,7 +199,12 @@ class TaskStore:
                 return None
             return {k: json.loads(v) for k, v in raw.items()}
 
-        return _fallback_store.get(task_id)
+        # 内存降级：TTL 过期清理，防止无界增长与状态长期不一致
+        task = _fallback_store.get(task_id)
+        if task is not None and self._is_fallback_expired(task):
+            del _fallback_store[task_id]
+            return None
+        return task
 
     async def complete_task(self, task_id: str, result: Any) -> None:
         """标记任务为已完成，写入最终结果。
@@ -251,6 +258,31 @@ class TaskStore:
     def _key(self, task_id: str) -> str:
         return f"{_REDIS_KEY_PREFIX}{task_id}"
 
+    def _is_fallback_expired(self, task: dict[str, Any]) -> bool:
+        """判断内存降级存储中的任务是否已过期。
+
+        Args:
+            task: 任务状态字典。
+
+        Returns:
+            True 如果任务创建时间超过 TTL。
+        """
+        created_at = task.get("created_at")
+        if created_at is None:
+            return False
+        return time.time() - created_at > self._ttl_seconds
+
+    def _cleanup_expired_fallback_tasks(self) -> None:
+        """清理内存降级存储中已过期的任务，防止无界增长。"""
+        now = time.time()
+        expired_ids = [
+            task_id
+            for task_id, task in _fallback_store.items()
+            if now - task.get("created_at", now) > self._ttl_seconds
+        ]
+        for task_id in expired_ids:
+            del _fallback_store[task_id]
+
     async def _update_task(
         self,
         task_id: str,
@@ -280,12 +312,14 @@ class TaskStore:
         else:
             task = _fallback_store.get(task_id)
             if task is not None:
-                task["status"] = status
-                task["updated_at"] = now
-                if result is not None:
-                    task["result"] = result
-                if error is not None:
-                    task["error"] = error
+                # 内存降级：不更新已过期任务（get_task 下次访问会清理）
+                if not self._is_fallback_expired(task):
+                    task["status"] = status
+                    task["updated_at"] = now
+                    if result is not None:
+                        task["result"] = result
+                    if error is not None:
+                        task["error"] = error
 
 
 #: 全局单例 — 进程内复用，避免每次调用都创建 Redis 连接

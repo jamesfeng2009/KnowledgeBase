@@ -1,16 +1,17 @@
 ---
 /**
  * Webhook 订阅管理页面
- * 功能：可订阅事件展示 + 创建订阅 + 已有订阅管理（localStorage）+ 测试事件
+ * 功能：可订阅事件展示 + 创建订阅 + 已有订阅管理 + 测试事件
  * 数据来源：
  *   - GET  /api/v1/openapi/webhooks/events
  *   - POST /api/v1/openapi/webhooks/subscribe
+ *   - GET  /api/v1/openapi/webhooks/subscriptions
  *   - DELETE /api/v1/openapi/webhooks/subscribe/{sub_id}
  *   - POST /api/v1/openapi/webhooks/test
  *
  * 注意：openapi 端点使用 API Key（X-API-Key）认证，需 scope: webhook:manage。
- * 后端使用内存存储，无"列出已有订阅"端点，订阅记录由前端持久化到 localStorage
- * （key: ekb_webhook_subs）。
+ * 订阅记录由后端维护，前端通过 GET /subscriptions 拉取，避免换浏览器/清缓存后
+ * 产生孤儿订阅。
  */
 import DefaultLayout from '@/layouts/DefaultLayout.astro';
 import { PageHeader } from '@/components/common';
@@ -96,7 +97,7 @@ const breadcrumb = [{ label: '设置', href: '/settings/tenant' }, { label: 'Web
   <div class="card" style="margin-bottom: var(--space-5);">
     <div class="card-header">
       <h3>已有订阅</h3>
-      <span class="text-muted" style="font-size: var(--text-sm);">订阅记录保存在本地浏览器</span>
+      <span class="text-muted" style="font-size: var(--text-sm);">订阅记录由后端统一维护</span>
     </div>
     <div id="subs-list">
       <div class="loading-state">加载中...</div>
@@ -286,6 +287,7 @@ const breadcrumb = [{ label: '设置', href: '/settings/tenant' }, { label: 'Web
   import {
     getWebhookEvents,
     subscribeWebhook,
+    getSubscriptions,
     unsubscribeWebhook,
     sendTestEvent,
     getOpenApiKey,
@@ -294,9 +296,6 @@ const breadcrumb = [{ label: '设置', href: '/settings/tenant' }, { label: 'Web
   } from '@/lib/apis/webhooks';
   import type { WebhookEvent, WebhookSubscription } from '@/lib/apis/webhooks';
   import { ApiError } from '@/lib/api';
-
-  /** localStorage 存储已创建订阅的 key */
-  const SUBS_STORAGE_KEY = 'ekb_webhook_subs';
 
   let events: WebhookEvent[] = [];
   let subs: WebhookSubscription[] = [];
@@ -322,23 +321,6 @@ const breadcrumb = [{ label: '设置', href: '/settings/tenant' }, { label: 'Web
     const d = new Date(iso);
     if (isNaN(d.getTime())) return iso;
     return d.toLocaleString('zh-CN');
-  }
-
-  /** 从 localStorage 读取已保存的订阅列表 */
-  function loadSubsFromStorage(): WebhookSubscription[] {
-    try {
-      const raw = localStorage.getItem(SUBS_STORAGE_KEY);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? (parsed as WebhookSubscription[]) : [];
-    } catch {
-      return [];
-    }
-  }
-
-  /** 将订阅列表写入 localStorage */
-  function saveSubsToStorage(list: WebhookSubscription[]): void {
-    localStorage.setItem(SUBS_STORAGE_KEY, JSON.stringify(list));
   }
 
   /** 渲染 API Key 配置状态 */
@@ -432,13 +414,36 @@ const breadcrumb = [{ label: '设置', href: '/settings/tenant' }, { label: 'Web
       .join('');
   }
 
+  /** 从后端拉取当前 API Key 的订阅列表 */
+  async function loadSubs(): Promise<void> {
+    const container = document.getElementById('subs-list');
+    if (container) container.innerHTML = '<div class="loading-state">加载中...</div>';
+    try {
+      subs = await getSubscriptions();
+    } catch (err) {
+      if (isAuthError(err)) {
+        if (container) {
+          container.innerHTML = '<div class="empty-state">请先配置 API Key</div>';
+        }
+        return;
+      }
+      const msg = err instanceof Error ? err.message : '网络异常';
+      if (container) {
+        container.innerHTML =
+          `<div class="error-state">加载订阅列表失败：${escapeHtml(msg)}</div>`;
+      }
+      return;
+    }
+    renderSubs();
+  }
+
   /** 渲染已有订阅列表 */
   function renderSubs(): void {
     const container = document.getElementById('subs-list');
     if (!container) return;
     if (subs.length === 0) {
       container.innerHTML =
-        '<div class="empty-state">暂无订阅记录。创建订阅后，订阅信息会保存在本地以便管理。</div>';
+        '<div class="empty-state">暂无订阅记录。创建订阅后，可在此管理。</div>';
       return;
     }
     container.innerHTML = subs
@@ -498,14 +503,12 @@ const breadcrumb = [{ label: '设置', href: '/settings/tenant' }, { label: 'Web
     }
   }
 
-  /** 取消订阅并从本地移除 */
+  /** 取消订阅并刷新列表 */
   async function handleUnsubscribe(id: string): Promise<void> {
     if (!confirm('确定取消此订阅？取消后将不再向该 URL 推送事件。')) return;
     try {
       await unsubscribeWebhook(id);
-      subs = subs.filter((s) => s.id !== id);
-      saveSubsToStorage(subs);
-      renderSubs();
+      await loadSubs();
       alert('已取消订阅');
     } catch (err) {
       if (isAuthError(err)) {
@@ -530,14 +533,17 @@ const breadcrumb = [{ label: '设置', href: '/settings/tenant' }, { label: 'Web
       renderApiKeyStatus();
       alert('API Key 已保存');
       void loadEvents();
+      void loadSubs();
     });
     document.getElementById('clear-apikey-btn')?.addEventListener('click', () => {
       if (!confirm('确定清除已保存的 API Key？')) return;
       clearOpenApiKey();
       renderApiKeyStatus();
       events = [];
+      subs = [];
       renderEventsGrid();
       renderEventCheckboxes();
+      renderSubs();
     });
   }
 
@@ -561,15 +567,12 @@ const breadcrumb = [{ label: '设置', href: '/settings/tenant' }, { label: 'Web
         return;
       }
       try {
-        const sub = await subscribeWebhook({
+        await subscribeWebhook({
           url,
           events: eventList,
           secret: secret || undefined,
         });
-        sub.created_at = new Date().toISOString();
-        subs.unshift(sub);
-        saveSubsToStorage(subs);
-        renderSubs();
+        await loadSubs();
         alert('订阅创建成功');
         form.reset();
         renderEventCheckboxes();
@@ -616,7 +619,6 @@ const breadcrumb = [{ label: '设置', href: '/settings/tenant' }, { label: 'Web
   bindApiKeySection();
   bindSubscribeForm();
   bindTestForm();
-  subs = loadSubsFromStorage();
-  renderSubs();
   void loadEvents();
+  void loadSubs();
 </script>

@@ -34,12 +34,17 @@ except ImportError:
     CrewBaseTool = object  # 降级为 object 基类
     CREWAI_AVAILABLE = False
 
-# P1: 写操作工具集 — 仅 Action Agent 可用
-# 来源：tool_guard.py 的 _DEFAULT_DANGEROUS_TOOLS
-_WRITE_TOOLS: set[str] = {
+# P1: 高风险/写操作工具集 — 仅 Action Agent 可用，ReviewerAgent 同步引用。
+# 单一来源：新增高风险工具只需在此注册，agent 权限过滤与审查自动同步。
+_HIGH_RISK_TOOLS: set[str] = {
     "document_create",
+    "document_delete",
     "create_it_ticket",
+    "system_config_change",
 }
+
+# 向后兼容别名
+_WRITE_TOOLS: set[str] = _HIGH_RISK_TOOLS
 
 # P1: 常驻只读工具 — 所有 Agent 类型均可使用
 _READ_ONLY_TOOLS: set[str] = {
@@ -59,12 +64,19 @@ class MCPToolWrapper(CrewBaseTool):
     name: str = ""
     description: str = ""
 
-    def __init__(self, tool_name: str, tool_description: str, mcp_client: MCPClient):
+    def __init__(
+        self,
+        tool_name: str,
+        tool_description: str,
+        mcp_client: MCPClient,
+        tenant_id: str | None = None,
+    ):
         # CrewAI BaseTool 使用 Pydantic，需要通过 __init__ 设置属性
         super().__init__()
         self.name = tool_name
         self.description = tool_description
         self._mcp_client = mcp_client
+        self._tenant_id = tenant_id
 
     def _run(self, **kwargs: Any) -> str:
         """CrewAI 同步调用入口（内部转异步）。
@@ -87,14 +99,19 @@ class MCPToolWrapper(CrewBaseTool):
     async def _arun(self, **kwargs: Any) -> str:
         """CrewAI 异步调用入口。"""
         try:
-            result = await self._mcp_client.call_tool(self.name, kwargs)
+            result = await self._mcp_client.call_tool(
+                self.name, kwargs, tenant_id=self._tenant_id
+            )
             return result
         except Exception as e:
             logger.error("mcp_tool_wrapper.error", tool=self.name, error=str(e))
             return json.dumps({"error": str(e)}, ensure_ascii=False)
 
 
-async def get_mcp_tools_for_crewai(mcp_client: MCPClient) -> list[MCPToolWrapper]:
+async def get_mcp_tools_for_crewai(
+    mcp_client: MCPClient,
+    tenant_id: str | None = None,
+) -> list[MCPToolWrapper]:
     """获取所有 MCP 工具的 CrewAI 适配列表。
 
     通过 MCPClient.get_tools_for_llm() 获取工具定义（list[Tool]），
@@ -106,6 +123,7 @@ async def get_mcp_tools_for_crewai(mcp_client: MCPClient) -> list[MCPToolWrapper
 
     Args:
         mcp_client: MCP 客户端实例。
+        tenant_id: 租户 ID，透传给 MCP 工具调用。
 
     Returns:
         MCPToolWrapper 列表（空列表表示无可用工具或 CrewAI 未安装）。
@@ -123,6 +141,7 @@ async def get_mcp_tools_for_crewai(mcp_client: MCPClient) -> list[MCPToolWrapper
                 tool_name=tool_info.get("name", ""),
                 tool_description=tool_info.get("description", ""),
                 mcp_client=mcp_client,
+                tenant_id=tenant_id,
             )
             wrappers.append(wrapper)
         logger.info("mcp_tools.loaded", count=len(wrappers))
@@ -135,6 +154,7 @@ async def get_mcp_tools_for_crewai(mcp_client: MCPClient) -> list[MCPToolWrapper
 async def get_mcp_tools_for_agent_type(
     mcp_client: MCPClient,
     agent_type: str,
+    tenant_id: str | None = None,
 ) -> list[MCPToolWrapper]:
     """按 Agent 类型筛选工具 — P1 工具分层注入。
 
@@ -152,6 +172,7 @@ async def get_mcp_tools_for_agent_type(
     Args:
         mcp_client: MCP 客户端实例。
         agent_type: Agent 类型标识（qa / workflow / action）。
+        tenant_id: 租户 ID，透传给 MCP 工具调用。
 
     Returns:
         筛选后的 MCPToolWrapper 列表。
@@ -167,7 +188,7 @@ async def get_mcp_tools_for_agent_type(
         if agent_type == "action":
             allowed_names = {t.get("name", "") for t in tools_info}
         else:
-            # QA / Workflow / 未知类型 → 只读工具（排除写操作）
+            # QA / Workflow / 未知类型 → 只读工具（排除高风险/写操作）
             allowed_names = _READ_ONLY_TOOLS
 
         wrappers = []
@@ -179,6 +200,7 @@ async def get_mcp_tools_for_agent_type(
                 tool_name=tool_name,
                 tool_description=tool_info.get("description", ""),
                 mcp_client=mcp_client,
+                tenant_id=tenant_id,
             )
             wrappers.append(wrapper)
 

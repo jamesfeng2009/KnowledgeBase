@@ -160,19 +160,10 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
             successMsg.textContent = '注册成功！正在跳转到登录页...';
             successMsg.style.display = 'block';
 
-            // 尝试自动登录
-            const accessToken = result.data?.access_token || result.access_token;
-            if (accessToken) {
-              localStorage.setItem('ekb_access_token', accessToken);
-              setTimeout(() => {
-                window.location.href = '/';
-              }, 1000);
-            } else {
-              // 未返回 Token，跳转登录页
-              setTimeout(() => {
-                window.location.href = '/auth/login';
-              }, 1500);
-            }
+            // P0 安全修复：不再把 Token 写入 localStorage；注册成功后跳转登录页
+            setTimeout(() => {
+              window.location.href = '/auth/login';
+            }, 1500);
           } else {
             const message = result.detail || result.message || '注册失败，该邮箱可能已被注册';
             errorMsg.textContent = message;

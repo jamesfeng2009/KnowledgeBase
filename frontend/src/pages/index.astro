@@ -209,7 +209,6 @@ const features = [
   import { ApiError } from '@/lib/api';
 
   const API_BASE = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
-  const TOKEN_KEY = 'ekb_access_token';
 
   const STAT_IDS = ['stat-docs', 'stat-kbs', 'stat-chats', 'stat-users'] as const;
 
@@ -257,19 +256,14 @@ const features = [
   }
 
   async function loadStats(): Promise<void> {
-    const token = localStorage.getItem(TOKEN_KEY);
-    if (!token) {
-      window.location.href = '/auth/login';
-      return;
-    }
     showStatsSkeleton();
     hideStatsError();
     try {
+      // P0 安全修复：认证通过 HttpOnly Cookie 自动携带
       const response = await fetch(`${API_BASE}/api/v1/stats/overview`, {
-        headers: { Authorization: `Bearer ${token}` },
+        credentials: 'include',
       });
       if (response.status === 401) {
-        localStorage.removeItem(TOKEN_KEY);
         window.location.href = '/auth/login';
         return;
       }

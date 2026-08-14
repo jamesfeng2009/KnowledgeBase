@@ -148,26 +148,10 @@ class AnthropicProvider(LLMProvider):
         """
         from app.utils.circuit_breaker import CircuitBreakerOpenError, CircuitState
 
-        # 熔断器检查 — OPEN 状态快速失败
-        if self._cb.state == CircuitState.OPEN:
-            if self._cb._should_transition_to_half_open():
-                self._cb.state = CircuitState.HALF_OPEN
-                self._cb.half_open_calls = 0
-                log.info("circuit_breaker.transition", name=self._cb.name,
-                         from_state="open", to_state="half_open")
-            else:
-                log.warning("circuit_breaker.rejected", name=self._cb.name, state="open")
-                raise CircuitBreakerOpenError(self._cb.name, self._cb.state)
-
-        # half-open 探测许可 — 获取后必须在 finally 中记录结果或释放，
-        # 否则流式中断会泄漏许可，half_open_calls 达到上限后永久拒绝请求。
-        half_open_probe = False
-        if self._cb.state == CircuitState.HALF_OPEN:
-            if self._cb.half_open_calls >= self._cb.half_open_max_calls:
-                log.warning("circuit_breaker.rejected", name=self._cb.name, state="half_open")
-                raise CircuitBreakerOpenError(self._cb.name, self._cb.state)
-            self._cb.half_open_calls += 1
-            half_open_probe = True
+        # 熔断器检查 — 使用 circuit_breaker 原子操作，避免 half_open_calls
+        # 检查与递增之间的竞态，防止高并发下半开探测数超过配置上限。
+        self._cb._check_and_enter()
+        half_open_probe = self._cb.state == CircuitState.HALF_OPEN
 
         import time
         t0 = time.monotonic()

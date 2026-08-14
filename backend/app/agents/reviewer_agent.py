@@ -14,7 +14,7 @@ ReviewerAgent — 高风险操作的角色对抗审查 Agent。
     4. 上下文一致性：操作是否与用户原始意图一致
 
 遵循单一职责：本模块只负责审查决策，不执行任何实际操作。
-遵循优雅降级：LLM 不可用时默认放行（不阻断业务流程）。
+遵循安全默认：LLM 不可用或审查异常时，高风险操作默认拒绝。
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from app.agents.mcp_tools import _HIGH_RISK_TOOLS
 from app.llm.base import LLMProvider, Message
 from app.utils.logger import get_logger
 
@@ -73,7 +74,7 @@ class ReviewerAgent:
     设计要点：
         - 独立于 ActionAgent，不共享执行逻辑
         - 审查视角与执行视角对立（对抗性设计）
-        - LLM 不可用时默认放行（不阻断业务）
+        - LLM 不可用或审查异常时默认拒绝高风险操作
         - 审查维度：权限/参数/不可逆性/上下文一致性
     """
 
@@ -95,19 +96,14 @@ class ReviewerAgent:
         "审查结果："
     )
 
-    #: 需要审查的高风险工具
-    _HIGH_RISK_TOOLS: set[str] = {
-        "create_it_ticket",
-        "document_create",
-        "document_delete",
-        "system_config_change",
-    }
+    #: 需要审查的高风险工具 — 与 mcp_tools.py 单一来源同步
+    _HIGH_RISK_TOOLS: set[str] = _HIGH_RISK_TOOLS
 
     def __init__(self, llm: LLMProvider | None = None) -> None:
         """初始化审查 Agent。
 
         Args:
-            llm: LLM Provider，为 None 时跳过 LLM 审查（默认放行）。
+            llm: LLM Provider，为 None 时跳过 LLM 审查（默认拒绝高风险操作）。
         """
         self._llm = llm
 
@@ -148,16 +144,16 @@ class ReviewerAgent:
                 risk_level="low",
             )
 
-        # LLM 不可用时默认放行（不阻断业务）
+        # LLM 不可用时默认拒绝高风险操作，避免 document_delete 等不可逆工具被放行
         if self._llm is None:
             log.warning(
-                "reviewer.llm_unavailable_default_approve",
+                "reviewer.llm_unavailable_default_reject",
                 tool_name=tool_name,
             )
             return ReviewResult(
-                approved=True,
-                reason="审查 Agent LLM 不可用，默认放行",
-                risk_level="medium",
+                approved=False,
+                reason="审查 Agent LLM 不可用，默认拒绝高风险操作",
+                risk_level="high",
             )
 
         prompt = self._REVIEW_PROMPT.format(
@@ -197,12 +193,16 @@ class ReviewerAgent:
                 concerns=concerns,
             )
         except Exception as exc:
-            log.warning("reviewer.review_failed", error=str(exc), tool_name=tool_name)
-            # 审查失败时默认放行（不阻断业务）
+            log.warning(
+                "reviewer.review_failed",
+                error=str(exc),
+                tool_name=tool_name,
+            )
+            # 审查失败时默认拒绝高风险操作，防止 LLM 异常时放行不可逆工具
             return ReviewResult(
-                approved=True,
-                reason=f"审查异常，默认放行：{exc}",
-                risk_level="medium",
+                approved=False,
+                reason=f"审查异常，默认拒绝高风险操作：{exc}",
+                risk_level="high",
             )
 
     async def _call_llm_json(self, prompt: str) -> dict[str, Any]:

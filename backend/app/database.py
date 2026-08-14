@@ -5,6 +5,7 @@
 遵循开闭原则：新增数据源只需添加新的 engine 和 session 工厂。
 """
 
+import uuid
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -113,6 +114,15 @@ async def get_db_session(request: Request) -> AsyncGenerator[AsyncSession, None]
         # tenant_id 已由中间件从 JWT 解析为 UUID，可安全拼接。
         tenant_id = getattr(request.state, "tenant_id", None)
         if tenant_id is not None:
+            # 强制校验为 UUID，防止 f-string 拼接导致 SQL 注入。
+            # tenant_id 正常应由 TenantContextMiddleware 解析为 uuid.UUID，
+            # 此处保留防御性校验，避免任何绕过中间件的路径被利用。
+            try:
+                tenant_id = uuid.UUID(str(tenant_id))
+            except (ValueError, TypeError) as exc:
+                raise ValueError(
+                    f"Invalid tenant_id format: {tenant_id!r}"
+                ) from exc
             await session.execute(
                 text(f"SET LOCAL app.tenant_id = '{tenant_id}'")
             )

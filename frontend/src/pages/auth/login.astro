@@ -85,11 +85,19 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
       const btnText = document.getElementById('btn-text') as HTMLElement;
       const btnSpinner = document.getElementById('btn-spinner') as HTMLElement;
 
-      // 已登录则跳转首页
-      const token = localStorage.getItem('ekb_access_token');
-      if (token) {
-        window.location.href = '/';
-      }
+      // 已登录则跳转首页（通过 /me 校验 Cookie）
+      (async () => {
+        try {
+          const apiBase = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
+          const res = await fetch(`${apiBase}/api/v1/auth/me`, {
+            method: 'GET',
+            credentials: 'include',
+          });
+          if (res.ok) {
+            window.location.href = '/';
+          }
+        } catch { /* ignore */ }
+      })();
 
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -112,22 +120,16 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
           const response = await fetch(`${apiBase}/api/v1/auth/login`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            credentials: 'include', // 必须：接收并携带 HttpOnly Cookie
             body: new URLSearchParams({ username: email, password }),
           });
 
           const result = await response.json();
 
           if (response.ok) {
-            // 存储 Token
-            const accessToken = result.data?.access_token || result.access_token;
-            if (accessToken) {
-              const userData = result.data?.user || result.user;
-              console.log('[Auth] 登录成功:', { user_id: userData?.id, tenant_id: userData?.tenant_id || null, role: userData?.role });
-              localStorage.setItem('ekb_access_token', accessToken);
-              window.location.href = '/';
-            } else {
-              throw new Error('登录响应格式异常');
-            }
+            const userData = result.data?.user || result.user;
+            console.log('[Auth] 登录成功:', { user_id: userData?.id, tenant_id: userData?.tenant_id || null, role: userData?.role });
+            window.location.href = '/';
           } else {
             const message = result.detail || result.message || '登录失败，请检查邮箱和密码';
             console.warn('[Auth] 登录失败:', { email, error: message });

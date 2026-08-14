@@ -35,16 +35,10 @@ export interface CircuitBreakerResponse {
  * 对接 GET /health/circuit-breakers
  */
 export async function getCircuitBreakerStatus(): Promise<CircuitBreakerResponse> {
-  const token = typeof window !== 'undefined'
-    ? localStorage.getItem('ekb_access_token')
-    : null;
-
-  const headers: Record<string, string> = {};
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-
-  const resp = await fetch(`${API_BASE}/health/circuit-breakers`, { headers });
+  // P0 安全修复：认证通过 HttpOnly Cookie 自动携带
+  const resp = await fetch(`${API_BASE}/health/circuit-breakers`, {
+    credentials: 'include',
+  });
   if (!resp.ok) {
     throw new Error(`熔断器状态查询失败: ${resp.status}`);
   }
@@ -106,16 +100,10 @@ export interface ProviderHealthResponse {
  * 对接 GET /health/providers（幂等，Redis 缓存优先）
  */
 export async function getProviderHealth(): Promise<ProviderHealthResponse> {
-  const token = typeof window !== 'undefined'
-    ? localStorage.getItem('ekb_access_token')
-    : null;
-
-  const headers: Record<string, string> = {};
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-
-  const resp = await fetch(`${API_BASE}/health/providers`, { headers });
+  // P0 安全修复：认证通过 HttpOnly Cookie 自动携带
+  const resp = await fetch(`${API_BASE}/health/providers`, {
+    credentials: 'include',
+  });
   if (!resp.ok) {
     throw new Error(`Provider 健康状态查询失败: ${resp.status}`);
   }

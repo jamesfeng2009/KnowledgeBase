@@ -7,10 +7,11 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.database import get_db_session
 from app.deps import get_current_active_user
 from app.models.user import User
@@ -62,9 +63,9 @@ async def register(
         message="success",
     )
 
-
 @router.post("/login", response_model=ApiResponse[TokenResponse])
 async def login(
+    response: Response,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse[TokenResponse]:
@@ -72,6 +73,10 @@ async def login(
 
     使用 OAuth2PasswordRequestForm 接收表单数据（username 即邮箱），
     经 AuthService 校验密码后签发 JWT 令牌。
+
+    P0 安全修复：登录成功后通过 ``Set-Cookie`` 返回 HttpOnly Cookie，
+    前端浏览器请求自动携带，避免 JWT 落入 localStorage 被 XSS 读取。
+    响应体中仍保留 access_token，供移动应用 / 第三方客户端使用。
 
     业务异常：
     - 邮箱不存在 / 密码错误 / 账号禁用 → 401 Unauthorized
@@ -86,7 +91,32 @@ async def login(
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
 
+    settings = get_settings()
+    max_age = settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+    response.set_cookie(
+        key="access_token",
+        value=token.access_token,
+        httponly=True,
+        secure=not settings.DEBUG,  # 生产环境强制 HTTPS
+        samesite="lax",
+        max_age=max_age,
+    )
+
     return ApiResponse(code=0, data=token, message="success")
+
+
+@router.post("/logout", response_model=ApiResponse)
+async def logout(
+    response: Response,
+    user: User = Depends(get_current_active_user),
+) -> ApiResponse:
+    """用户登出 — 清除 HttpOnly Cookie。
+
+    P0 安全修复：服务端清除 cookie，确保浏览器端 token 失效，
+    不再依赖前端 localStorage.removeItem。
+    """
+    response.delete_cookie(key="access_token")
+    return ApiResponse(code=0, message="success")
 
 
 @router.get("/me", response_model=ApiResponse[UserResponse])

@@ -457,18 +457,11 @@ const docId = Astro.url.searchParams.get('id') || 'new';
   import { getComments, createComment, resolveComment } from '@/lib/apis/comments';
   import { sanitizeHtml } from '@/lib/markdown';
 
-  const TOKEN_KEY = 'ekb_access_token';
-
   // 从 URL 查询参数获取文档 ID
   const urlParams = new URLSearchParams(window.location.search);
   const docId = urlParams.get('id') || 'new';
 
   async function loadDoc() {
-    const token = localStorage.getItem(TOKEN_KEY);
-    if (!token) {
-      window.location.href = '/auth/login';
-      return;
-    }
     const container = document.getElementById('doc-content')!;
     container.innerHTML = '<div class="loading-state">加载中...</div>';
     try {

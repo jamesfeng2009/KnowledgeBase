@@ -186,14 +186,12 @@ class TestDeployModeValidator:
 
 
 class TestSecretKeyValidator:
-    """SECRET_KEY 校验 — 默认值 + 非 DEBUG 发 warning。"""
+    """SECRET_KEY 校验 — 生产环境禁止使用默认密钥。"""
 
-    def test_default_secret_in_production_warns(self):
-        """生产环境使用默认 SECRET_KEY 发 warning。"""
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
+    def test_default_secret_in_production_raises(self):
+        """生产环境 (DEBUG=False) 使用默认 SECRET_KEY 必须启动失败。"""
+        with pytest.raises(ValidationError, match="默认 SECRET_KEY"):
             Settings(SECRET_KEY="change-me-in-production", DEBUG=False)
-            assert any("SECRET_KEY" in str(x.message) for x in w)
 
     def test_custom_secret_no_warn(self):
         """自定义 SECRET_KEY 不发 warning。"""

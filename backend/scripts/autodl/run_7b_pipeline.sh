@@ -105,10 +105,10 @@ for STAGE in "base:none" "sft:$SFT_7B" "dpo:$DPO_7B" "grpo:$GRPO_7B"; do
     echo ""
     echo "======== 7B $LABEL ========"
     if [ "$ADAPTER" = "none" ]; then
-        $PY /root/KnowledgeBase/backend/scripts/finetune/eval_boundary_refusal.py \
+        $PY /root/KnowledgeBase/backend/scripts/finetune/eval_boundary_200.py \
             --base_model "$MODEL_7B" --label "7B-$LABEL" 2>&1 | grep -E "^\[|^=|拒答|误拒答|汇总"
     else
-        $PY /root/KnowledgeBase/backend/scripts/finetune/eval_boundary_refusal.py \
+        $PY /root/KnowledgeBase/backend/scripts/finetune/eval_boundary_200.py \
             --base_model "$MODEL_7B" --adapter "$ADAPTER" --label "7B-$LABEL" 2>&1 | grep -E "^\[|^=|拒答|误拒答|汇总"
     fi
 done

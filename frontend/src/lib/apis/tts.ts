@@ -37,17 +37,13 @@ export async function synthesizeText(
   rate?: string,
   volume?: string,
 ): Promise<string> {
-  const token = localStorage.getItem('ekb_access_token');
-  if (!token) {
-    throw new Error('未登录，请先登录');
-  }
-
+  // P0 安全修复：认证通过 HttpOnly Cookie 自动携带
   const response = await fetch(`${API_BASE}/api/v1/tts/synthesize`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
     },
+    credentials: 'include',
     body: JSON.stringify({ text, voice, rate, volume }),
   });
 
@@ -64,15 +60,9 @@ export async function synthesizeText(
  * 获取可用的 TTS 语音列表。
  */
 export async function getVoices(): Promise<VoiceItem[]> {
-  const token = localStorage.getItem('ekb_access_token');
-  if (!token) {
-    throw new Error('未登录，请先登录');
-  }
-
+  // P0 安全修复：认证通过 HttpOnly Cookie 自动携带
   const response = await fetch(`${API_BASE}/api/v1/tts/voices`, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
+    credentials: 'include',
   });
 
   if (!response.ok) {

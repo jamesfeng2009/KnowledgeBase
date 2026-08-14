@@ -116,8 +116,6 @@ const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '知识�
   import { getCoverage, getFreshness, getDashboard } from '@/lib/apis/analytics';
   import { API_BASE } from '@/lib/api';
 
-  const TOKEN_KEY = 'ekb_access_token';
-
   interface HealthData {
     score: number;
     good: number;
@@ -134,17 +132,12 @@ const breadcrumb = [{ label: '治理后台', href: '/admin' }, { label: '知识�
     low_quality?: Array<Record<string, unknown>>;
     lowQuality?: Array<Record<string, unknown>>;
   } | null> {
-    const token = localStorage.getItem(TOKEN_KEY);
-    if (!token) {
-      window.location.href = '/auth/login';
-      return null;
-    }
     try {
+      // P0 安全修复：认证通过 HttpOnly Cookie 自动携带
       const res = await fetch(`${API_BASE}/api/v1/admin/health`, {
-        headers: { Authorization: `Bearer ${token}` },
+        credentials: 'include',
       });
       if (res.status === 401) {
-        localStorage.removeItem(TOKEN_KEY);
         window.location.href = '/auth/login';
         return null;
       }

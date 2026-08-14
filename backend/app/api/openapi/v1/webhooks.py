@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from uuid import UUID, uuid4
 from typing import Any
 
@@ -119,6 +120,7 @@ async def subscribe(
         "secret": body.secret,
         "key_id": api_key_info.get("key_id"),
         "is_active": True,
+        "created_at": datetime.now(timezone.utc).isoformat(),
     }
     _subscriptions[sub_id] = subscription
 
@@ -132,6 +134,24 @@ async def subscribe(
     return ApiResponse(
         code=0,
         data=subscription,
+        message="success",
+    )
+
+
+@router.get("/subscriptions", response_model=ApiResponse[list[dict]])
+async def list_subscriptions(
+    api_key_info: dict = Depends(require_scope("webhook:manage")),
+) -> ApiResponse[list[dict]]:
+    """列出当前 API Key 创建的 Webhook 订阅。"""
+    key_id = api_key_info.get("key_id")
+    data = [
+        sub
+        for sub in _subscriptions.values()
+        if sub.get("key_id") == key_id
+    ]
+    return ApiResponse(
+        code=0,
+        data=data,
         message="success",
     )
 

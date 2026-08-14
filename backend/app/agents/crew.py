@@ -59,11 +59,13 @@ class KnowledgeBaseCrew:
         mcp_client: MCPClient,
         memory: MemoryManager,
         permission: PermissionService,
+        tenant_id: str | None = None,
     ) -> None:
         self.llm = llm
         self.mcp = mcp_client
         self.memory = memory
         self.permission = permission
+        self._tenant_id = tenant_id
         self._crew_agents: dict[str, Any] = {}
 
     async def should_use_crew(self, query: str) -> bool:
@@ -118,6 +120,7 @@ class KnowledgeBaseCrew:
         self,
         query: str,
         user_id: str,
+        tenant_id: str | None = None,
     ) -> str | None:
         """执行复杂任务 — CrewAI 拆分 → 多 Agent 协同 → 汇总。
 
@@ -129,6 +132,7 @@ class KnowledgeBaseCrew:
         Args:
             query: 用户请求。
             user_id: 用户 ID。
+            tenant_id: 租户 ID，覆盖构造时传入的默认值；MCP 工具调用透传该值。
 
         Returns:
             汇总后的最终回复。如 CrewAI 不可用返回 None。
@@ -136,6 +140,9 @@ class KnowledgeBaseCrew:
         if not CREWAI_AVAILABLE:
             logger.warning("crew.not_available_fallback")
             return None
+
+        # 租户 ID 优先级：本次调用 > 构造时默认值
+        effective_tenant_id = tenant_id or self._tenant_id
 
         try:
             # 1. 任务拆分
@@ -153,7 +160,7 @@ class KnowledgeBaseCrew:
                 sub_task.setdefault("original_query", query)
 
             # 2. 构建 CrewAI Agent 和 Task
-            agents = await self._build_crew_agents()
+            agents = await self._build_crew_agents(tenant_id=effective_tenant_id)
             tasks = self._build_crew_tasks(sub_tasks, agents, original_query=query)
 
             # 3. 创建 Crew 并执行
@@ -173,6 +180,7 @@ class KnowledgeBaseCrew:
                 inputs={
                     "user_query": query,
                     "user_id": user_id,
+                    "tenant_id": effective_tenant_id,  # 透传租户上下文
                     "original_query": query,  # 必须透传字段，下游 Agent 可读取
                 },
             )
@@ -269,13 +277,19 @@ class KnowledgeBaseCrew:
             logger.error("crew.decompose_error", error=str(e))
             return []
 
-    async def _build_crew_agents(self) -> dict[str, Any]:
+    async def _build_crew_agents(
+        self,
+        tenant_id: str | None = None,
+    ) -> dict[str, Any]:
         """构建 CrewAI Agent 角色实例。
 
         P1: 按 Agent 类型筛选工具，避免 QA Agent 拿到写操作工具：
             - QA Agent → 只读工具（knowledge_search / document_get / query_oa_approval）
             - Workflow Agent → 只读工具
             - Action Agent → 全部工具（含 document_create / create_it_ticket）
+
+        Args:
+            tenant_id: 租户 ID，透传给 MCP 工具调用。
 
         Returns:
             {"qa": CrewAgent, "workflow": CrewAgent, "action": CrewAgent}
@@ -287,9 +301,9 @@ class KnowledgeBaseCrew:
         from app.agents.mcp_tools import get_mcp_tools_for_agent_type
 
         # P1: 按 Agent 类型分别加载工具（而非全量塞入）
-        qa_tools = await get_mcp_tools_for_agent_type(self.mcp, "qa")
-        workflow_tools = await get_mcp_tools_for_agent_type(self.mcp, "workflow")
-        action_tools = await get_mcp_tools_for_agent_type(self.mcp, "action")
+        qa_tools = await get_mcp_tools_for_agent_type(self.mcp, "qa", tenant_id=tenant_id)
+        workflow_tools = await get_mcp_tools_for_agent_type(self.mcp, "workflow", tenant_id=tenant_id)
+        action_tools = await get_mcp_tools_for_agent_type(self.mcp, "action", tenant_id=tenant_id)
 
         qa_agent = CrewAgent(
             role="知识库问答专家",

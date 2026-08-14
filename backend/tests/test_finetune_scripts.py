@@ -52,8 +52,7 @@ PY_SCRIPTS = [
 
 #: 顶层 import torch/transformers/peft 的评测脚本：仅做语法校验，跳过 import 测试
 COMPILE_ONLY_SCRIPTS = [
-    "eval_boundary_refusal",
-    "eval_dpo_7b",
+    "eval_boundary_200",
 ]
 
 #: 顶层禁止出现的重依赖（必须延迟导入到函数内）

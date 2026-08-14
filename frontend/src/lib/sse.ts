@@ -9,9 +9,6 @@
 
 import { API_BASE } from './api';
 
-/** Token 在 localStorage 中的存储键名 */
-const TOKEN_KEY = 'ekb_access_token';
-
 /** SSE 事件数据 */
 export interface SSEEvent {
   /** 事件类型（如 token, sources, done, error） */
@@ -20,18 +17,15 @@ export interface SSEEvent {
   data: unknown;
 }
 
-/** 从 localStorage 读取 Token */
-function getToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem(TOKEN_KEY);
-}
-
 /**
  * 创建 SSE 流式读取
- * 通过 POST 请求发送数据，并以 SSE 方式读取流式响应
+ * 通过 POST 请求发送数据，并以 SSE 方式读取流式响应。
+ *
+ * P0 安全修复：认证通过 HttpOnly Cookie 自动携带，不再从 localStorage 读取 Token。
  *
  * @param url - 请求路径（相对路径会拼接 API_BASE）
  * @param body - 请求体数据
+ * @param signal - 可选 AbortSignal，用于中止 SSE 连接
  * @returns AsyncGenerator，yield 解析后的 SSE 事件
  *
  * @example
@@ -47,34 +41,29 @@ function getToken(): string | null {
  */
 export async function* createSSEStream(
   url: string,
-  body: unknown
+  body: unknown,
+  signal?: AbortSignal
 ): AsyncGenerator<SSEEvent, void, unknown> {
   const fullUrl = url.startsWith('http') ? url : `${API_BASE}${url}`;
-  const token = getToken();
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     Accept: 'text/event-stream',
   };
 
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-
   const response = await fetch(fullUrl, {
     method: 'POST',
     headers,
+    credentials: 'include', // 必须：携带 HttpOnly Cookie
     body: JSON.stringify(body),
+    signal,
   });
 
-  // 401 未授权：清除 Token 并跳转登录页（与 api.ts 的 request() 行为对齐）
+  // 401 未授权：跳转登录页（Token 在 HttpOnly Cookie 中，由服务端清除）
   if (response.status === 401) {
-    console.warn('[SSE] 401 未授权，清除 Token 并跳转登录页');
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem(TOKEN_KEY);
-      if (window.location.pathname !== '/auth/login') {
-        window.location.href = '/auth/login';
-      }
+    console.warn('[SSE] 401 未授权，跳转登录页');
+    if (typeof window !== 'undefined' && window.location.pathname !== '/auth/login') {
+      window.location.href = '/auth/login';
     }
     throw new Error('登录已过期，请重新登录');
   }
@@ -233,7 +222,8 @@ export async function streamChat(
     }) => void;
     onDone?: () => void;
     onError?: (error: Error) => void;
-  }
+  },
+  signal?: AbortSignal
 ): Promise<void> {
   // 防止 onDone 被调用两次：服务端 'done' 事件触发一次，流结束兜底一次
   let doneFired = false;
@@ -244,7 +234,7 @@ export async function streamChat(
     }
   };
   try {
-    for await (const event of createSSEStream(url, body)) {
+    for await (const event of createSSEStream(url, body, signal)) {
       switch (event.type) {
         case 'token':
         case 'chunk':

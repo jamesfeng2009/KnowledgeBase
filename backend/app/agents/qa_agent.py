@@ -75,10 +75,18 @@ class QAAgent(BaseAgent):
         # 2. 构建上下文并追加到消息列表
         context = self._build_context(retrieved_docs)
         if context:
-            # 在用户消息前插入检索上下文（作为 system 补充）
-            state["messages"].append(
-                {"role": "system", "content": f"知识库检索结果：\n{context}"}
+            # reflect 重试时避免重复追加检索上下文，防止消息数组膨胀与 token 激增
+            already_has_context = any(
+                msg.get("role") == "system"
+                and isinstance(msg.get("content", ""), str)
+                and msg.get("content", "").startswith("知识库检索结果：")
+                for msg in state["messages"]
             )
+            if not already_has_context:
+                # 在用户消息前插入检索上下文（作为 system 补充）
+                state["messages"].append(
+                    {"role": "system", "content": f"知识库检索结果：\n{context}"}
+                )
 
         # 3. 流式生成答案
         answer_parts: list[str] = []

@@ -166,8 +166,19 @@ class StreamableHTTPTransport:
                     code=METHOD_NOT_FOUND,
                     request_id=request.id,
                 )
-        except JSONRPCError:
-            raise
+        except JSONRPCError as exc:
+            log.warning(
+                "mcp.streamable_http.jsonrpc_error",
+                method=request.method,
+                code=exc.code,
+                message=exc.message,
+            )
+            return make_error_response(
+                code=exc.code,
+                message=exc.message,
+                data=exc.data,
+                request_id=request.id,
+            )
         except Exception as exc:
             log.error(
                 "mcp.streamable_http.handler_error",

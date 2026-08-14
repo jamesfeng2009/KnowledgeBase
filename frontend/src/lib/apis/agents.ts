@@ -60,20 +60,18 @@ export async function* invokeAgent(
   agentId: string,
   request: AgentInvokeRequest
 ): AsyncGenerator<string> {
-  const token = localStorage.getItem('ekb_access_token');
   const apiBase = import.meta.env.PUBLIC_API_BASE || 'http://localhost:8000';
 
   const response = await fetch(`${apiBase}${BASE}/${agentId}/invoke`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
+    credentials: 'include', // 必须：携带 HttpOnly Cookie
     body: JSON.stringify(request),
   });
 
   if (response.status === 401) {
-    localStorage.removeItem('ekb_access_token');
     window.location.href = '/auth/login';
     throw new Error('登录已过期');
   }

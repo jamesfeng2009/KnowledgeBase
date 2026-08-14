@@ -4,9 +4,9 @@ ReviewerAgent 测试 — app/agents/reviewer_agent.py。
 覆盖范围：
     - needs_review 高风险工具判定
     - 非高风险工具自动放行
-    - LLM 不可用时默认放行（优雅降级）
+    - LLM 不可用时高风险操作默认拒绝
     - LLM 审查通过/拒绝
-    - LLM 异常时默认放行（不阻断业务）
+    - LLM 异常时高风险操作默认拒绝
     - JSON 解析兼容 markdown 代码块包裹
     - ReviewResult 序列化
 """
@@ -87,8 +87,8 @@ class TestReview:
         assert "无需审查" in result.reason
 
     @pytest.mark.asyncio
-    async def test_llm_unavailable_default_approve(self) -> None:
-        """LLM 不可用时高风险工具默认放行。"""
+    async def test_llm_unavailable_default_reject(self) -> None:
+        """LLM 不可用时高风险工具默认拒绝。"""
         from app.agents.reviewer_agent import ReviewerAgent
 
         reviewer = ReviewerAgent(llm=None)
@@ -97,8 +97,8 @@ class TestReview:
             tool_args={"title": "服务器扩容"},
             user_query="创建工单",
         )
-        assert result.approved is True
-        assert result.risk_level == "medium"
+        assert result.approved is False
+        assert result.risk_level == "high"
         assert "不可用" in result.reason
 
     @pytest.mark.asyncio
@@ -149,8 +149,8 @@ class TestReview:
         assert len(result.concerns) == 2
 
     @pytest.mark.asyncio
-    async def test_llm_exception_default_approve(self) -> None:
-        """LLM 调用异常时默认放行（不阻断业务）。"""
+    async def test_llm_exception_default_reject(self) -> None:
+        """LLM 调用异常时高风险工具默认拒绝。"""
         from app.agents.reviewer_agent import ReviewerAgent
 
         mock_llm = MagicMock()
@@ -162,8 +162,8 @@ class TestReview:
             tool_args={"title": "测试"},
             user_query="测试",
         )
-        assert result.approved is True
-        assert result.risk_level == "medium"
+        assert result.approved is False
+        assert result.risk_level == "high"
         assert "异常" in result.reason
 
     @pytest.mark.asyncio

@@ -15,12 +15,14 @@ task_db_session()（任务级独立引擎，用完即 dispose）统一工具函�
 from __future__ import annotations
 
 import asyncio
+import uuid
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from sqlalchemy.pool import NullPool
 
-from app.database import create_task_engine, engine, task_db_session
+from app.database import create_task_engine, engine, get_db_session, task_db_session
 
 
 # ======================================================================
@@ -96,3 +98,81 @@ class TestTaskDbSession:
 
         results = [asyncio.run(_use_session()) for _ in range(3)]
         assert results == [True, True, True]
+
+
+# ======================================================================
+# get_db_session 租户 ID 校验测试（防御 SQL 注入）
+# ======================================================================
+
+
+class TestTenantIdValidation:
+    """验证 get_db_session 在拼接 SET LOCAL 前强制校验 tenant_id 为 UUID。"""
+
+    @pytest.fixture
+    def _mock_session_factory(self, monkeypatch):
+        """替换 async_session_factory 为返回固定 mock session 的工厂。"""
+        session_mock = AsyncMock(spec=AsyncSession)
+        factory_mock = MagicMock()
+        factory_mock.return_value.__aenter__ = AsyncMock(return_value=session_mock)
+        factory_mock.return_value.__aexit__ = AsyncMock(return_value=False)
+        monkeypatch.setattr("app.database.async_session_factory", factory_mock)
+        return session_mock
+
+    @pytest.mark.asyncio
+    async def test_valid_uuid_tenant_id_sets_rls(self, _mock_session_factory):
+        """合法 UUID 正常设置 RLS 会话变量。"""
+        request = MagicMock()
+        request.state.tenant_id = uuid.uuid4()
+
+        gen = get_db_session(request)
+        try:
+            await gen.__anext__()
+        finally:
+            await gen.aclose()
+
+        _mock_session_factory.execute.assert_called_once()
+        sql = str(_mock_session_factory.execute.call_args[0][0])
+        assert "SET LOCAL app.tenant_id" in sql
+
+    @pytest.mark.asyncio
+    async def test_string_uuid_tenant_id_sets_rls(self, _mock_session_factory):
+        """字符串形式的合法 UUID 也会被正确转换并设置。"""
+        tid = uuid.uuid4()
+        request = MagicMock()
+        request.state.tenant_id = str(tid)
+
+        gen = get_db_session(request)
+        try:
+            await gen.__anext__()
+        finally:
+            await gen.aclose()
+
+        _mock_session_factory.execute.assert_called_once()
+        sql = str(_mock_session_factory.execute.call_args[0][0])
+        assert str(tid) in sql
+
+    @pytest.mark.asyncio
+    async def test_invalid_tenant_id_raises_value_error(self, _mock_session_factory):
+        """非法 tenant_id 触发 ValueError，不会执行任何 SQL。"""
+        request = MagicMock()
+        request.state.tenant_id = "'; DROP TABLE users; --"
+
+        gen = get_db_session(request)
+        with pytest.raises(ValueError, match="Invalid tenant_id format"):
+            await gen.__anext__()
+
+        _mock_session_factory.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_none_tenant_id_skips_rls(self, _mock_session_factory):
+        """tenant_id 为 None 时跳过 SET LOCAL。"""
+        request = MagicMock()
+        request.state.tenant_id = None
+
+        gen = get_db_session(request)
+        try:
+            await gen.__anext__()
+        finally:
+            await gen.aclose()
+
+        _mock_session_factory.execute.assert_not_called()

@@ -10,6 +10,10 @@
 from __future__ import annotations
 
 import os
+from types import SimpleNamespace
+from uuid import uuid4
+
+import pytest
 
 # 必须在 import app.* 之前设置
 os.environ.setdefault("SECRET_KEY", "pytest-secret-key-do-not-use-in-prod")
@@ -19,3 +23,17 @@ os.environ.setdefault(
 )
 os.environ.setdefault("AUTO_MIGRATE", "false")
 os.environ.setdefault("AUTO_CREATE_TABLES", "false")
+
+
+@pytest.fixture
+def mock_user():
+    """认证用户替身 — 被 api_endpoints / api_service_security_fixes 等复用。"""
+    return SimpleNamespace(
+        id=uuid4(),
+        email="test@ekb.local",
+        name="测试用户",
+        role="editor",
+        clearance_level="internal",
+        dept_id=None,
+        is_active=True,
+    )

@@ -59,7 +59,7 @@ logger = logging.getLogger("train_grpo")
 # 边界/拒答/引导/企业系统词表与分组切分统一收敛到 finetune_utils（评审 #1/#9/#2）：
 # - BOUNDARY_KEYWORDS 为强信号 v2 版，剔除"怎么办/怎么做/出差/预订/劳动"等泛词
 #   （旧版实测 36% 工作问题被误判为边界，实质回答反被 -1 惩罚）
-# - REFUSAL_KEYWORDS 与 eval_boundary_refusal 严格对齐（剔除"欢迎随时提问"等弱信号）
+# - REFUSAL_KEYWORDS 与 eval_boundary_200 严格对齐（剔除"欢迎随时提问"等弱信号）
 from finetune_utils import (
     BOUNDARY_KEYWORDS,
     ENTERPRISE_SYSTEMS,
@@ -330,6 +330,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="基座模型（HF repo 或本地路径）")
     parser.add_argument("--sft_adapter", default=None,
                         help="可选：SFT LoRA adapter 路径；提供时先 merge 进基座再做 GRPO")
+    parser.add_argument("--dpo_adapter", default=None,
+                        help="可选：DPO LoRA adapter 路径；在 SFT 合并后继续合并，作为 GRPO 起点")
     parser.add_argument("--output_dir", default="outputs/grpo-v1", help="GRPO LoRA adapter 输出目录")
     # GRPO 生成参数
     parser.add_argument("--num_generations", type=int, default=4,
@@ -420,6 +422,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.sft_adapter:
         logger.info("加载 SFT adapter 并合并进基座: %s", args.sft_adapter)
         model = PeftModel.from_pretrained(model, args.sft_adapter)
+        model = model.merge_and_unload()
+
+    if args.dpo_adapter:
+        logger.info("加载 DPO adapter 并合并进基座: %s", args.dpo_adapter)
+        model = PeftModel.from_pretrained(model, args.dpo_adapter)
         model = model.merge_and_unload()
 
     peft_config = LoraConfig(
@@ -513,6 +520,7 @@ def main(argv: list[str] | None = None) -> int:
     repro_info = {
         "base_model": args.base_model,
         "sft_adapter": args.sft_adapter,
+        "dpo_adapter": args.dpo_adapter,
         "method": "GRPO",
         "reward": reward_name,
         "reward_version": args.reward_version,

@@ -333,12 +333,18 @@ class ChatService:
     async def stream_chat(
         self,
         prepared: PreparedChat,
+        db: AsyncSession | None = None,
     ) -> AsyncIterator[SSEEvent | str]:
         """流式阶段 — SSE 长连接期间不持有 DB 连接池连接。
 
         进入本方法前调用方应已完成 ``prepare_chat`` 并释放连接；
         引擎仅在危险工具审批等极少数路径才按需短暂重新获取连接；
         流式结束后的持久化使用短事务，写完即释放。
+
+        Args:
+            prepared: ``prepare_chat`` 返回的上下文。
+            db: 可选，外部传入的流式阶段专用短会话。提供时会替换内部
+                repos / memory，使其在该会话上执行 DB 操作。
 
         权限异常统一转为 SSE error 事件 — 前端可收到友好错误，
         而不是裸断流 / HTTP 500。
@@ -347,6 +353,13 @@ class ChatService:
             SSEEvent | str: SSE 事件对象（meta/thinking/retrieve/tool_call/
             sources/quality/done）或 token 字符串。
         """
+        # P0: 若调用方重新获取了短会话（如 SSE 路由），替换内部依赖以使用新会话。
+        if db is not None:
+            self.db = db
+            self.conv_repo = ConversationRepository(db, tenant_id=self._tenant_id)
+            self.msg_repo = MessageRepository(db, tenant_id=self._tenant_id)
+            self.memory = MemoryManager(db)
+
         query = prepared.query
         conversation_id = prepared.conversation_id
         agent_type = prepared.agent_type
@@ -555,87 +568,90 @@ class ChatService:
 
             contra_pushed = False
             try:
-                async for chunk in engine.answer(
-                    query=query,
-                    user_id=str(self.user.id),
-                    session_id=str(conversation_id),
-                    memory_context=memory_context,
-                    tenant_id=prepared.tenant_id,
-                    db=self.db,
-                    user_uuid=self.user.id,
-                    # P4-E: 传入对话焦点和漂移信息
-                    conversation_focus=prepared.conversation_focus,
-                    drift_info=prepared.drift_info,
-                    # B2-5: 请求级 ABAC 权限下推（kb_ids 召回层过滤 +
-                    # permission_filter 重排前密级过滤）
-                    kb_ids=accessible_kb_id_strs,
-                    permission_filter=permission_filter,
-                    # Bug3: 缓存 key 加入权限视图维度，跨权限视图互不可见
-                    cache_scope=cache_scope,
-                    # P0 wiki 层级：scope 作为 filters 下推到 retriever
-                    # （filters 指纹已并入 cache_scope，防跨层级缓存泄漏）
-                    filters=prepared.scope,
-                ):
-                    # P4-B: 在 token 流中检查后台矛盾检测是否完成
-                    if contra_task and not contra_pushed and contra_task.done():
-                        try:
-                            contra_result = contra_task.result()
-                            if contra_result.has_contradiction:
-                                yield SSEEvent(
-                                    data=contra_result.to_dict(),
-                                    event=SSEEventType.CONTRADICTION_DETECTED,
-                                )
-                        except Exception:
-                            pass  # 优雅降级
-                        contra_pushed = True
-
-                    # B2-5: 忠实度拦截重生成答案 — 已流出的旧答案作废，
-                    # 持久化内容替换为完整新答案（与客户端展示一致）。
-                    if (
-                        isinstance(chunk, SSEEvent)
-                        and chunk.event == SSEEventType.ANSWER_REGENERATED
-                        and isinstance(chunk.data, dict)
-                        and chunk.data.get("answer")
+                try:
+                    async for chunk in engine.answer(
+                        query=query,
+                        user_id=str(self.user.id),
+                        session_id=str(conversation_id),
+                        memory_context=memory_context,
+                        tenant_id=prepared.tenant_id,
+                        db=self.db,
+                        user_uuid=self.user.id,
+                        # P4-E: 传入对话焦点和漂移信息
+                        conversation_focus=prepared.conversation_focus,
+                        drift_info=prepared.drift_info,
+                        # B2-5: 请求级 ABAC 权限下推（kb_ids 召回层过滤 +
+                        # permission_filter 重排前密级过滤）
+                        kb_ids=accessible_kb_id_strs,
+                        permission_filter=permission_filter,
+                        # Bug3: 缓存 key 加入权限视图维度，跨权限视图互不可见
+                        cache_scope=cache_scope,
+                        # P0 wiki 层级：scope 作为 filters 下推到 retriever
+                        # （filters 指纹已并入 cache_scope，防跨层级缓存泄漏）
+                        filters=prepared.scope,
                     ):
-                        full_response_parts = [chunk.data["answer"]]
-                        yield chunk
-                        continue
+                        # P4-B: 在 token 流中检查后台矛盾检测是否完成
+                        if contra_task and not contra_pushed and contra_task.done():
+                            try:
+                                contra_result = contra_task.result()
+                                if contra_result.has_contradiction:
+                                    yield SSEEvent(
+                                        data=contra_result.to_dict(),
+                                        event=SSEEventType.CONTRADICTION_DETECTED,
+                                    )
+                            except Exception:
+                                pass  # 优雅降级
+                            contra_pushed = True
 
-                    if isinstance(chunk, str):
-                        full_response_parts.append(chunk)
-                    yield chunk
-            except PermissionError as exc:
-                # 权限异常 → SSE error 事件（前端可友好展示，而非断流）
-                logger.info(
-                    "chat.stream_permission_denied",
-                    error=str(exc),
-                    conversation_id=str(conversation_id),
-                )
-                # 取消后台矛盾检测任务 — 避免 fire-and-forget 泄漏
-                # （任务继续占用 LLM 资源且异常永不回收）
-                if contra_task is not None and not contra_task.done():
-                    contra_task.cancel()
+                        # B2-5: 忠实度拦截重生成答案 — 已流出的旧答案作废，
+                        # 持久化内容替换为完整新答案（与客户端展示一致）。
+                        if (
+                            isinstance(chunk, SSEEvent)
+                            and chunk.event == SSEEventType.ANSWER_REGENERATED
+                            and isinstance(chunk.data, dict)
+                            and chunk.data.get("answer")
+                        ):
+                            full_response_parts = [chunk.data["answer"]]
+                            yield chunk
+                            continue
+
+                        if isinstance(chunk, str):
+                            full_response_parts.append(chunk)
+                        yield chunk
+
+                    # P4-B: 引擎流结束后，检查矛盾检测是否已完成且尚未推送
+                    if contra_task and not contra_pushed:
+                        try:
+                            await asyncio.wait_for(contra_task, timeout=2.0)
+                            if contra_task.done():
+                                contra_result = contra_task.result()
+                                if contra_result.has_contradiction:
+                                    yield SSEEvent(
+                                        data=contra_result.to_dict(),
+                                        event=SSEEventType.CONTRADICTION_DETECTED,
+                                    )
+                        except Exception:
+                            pass  # 超时或异常 — 优雅降级
+                except PermissionError as exc:
+                    # 权限异常 → SSE error 事件（前端可友好展示，而非断流）
+                    logger.info(
+                        "chat.stream_permission_denied",
+                        error=str(exc),
+                        conversation_id=str(conversation_id),
+                    )
+                    yield SSEEvent(
+                        data={"type": "error", "message": str(exc)},
+                        event=SSEEventType.ERROR,
+                    )
+                    return
+            finally:
+                # 外层 try/finally 确保 contra_task 始终被取消或 await，
+                # 避免非 PermissionError 异常路径下后台任务继续运行泄漏。
+                if contra_task is not None:
+                    if not contra_task.done():
+                        contra_task.cancel()
                     with contextlib.suppress(asyncio.CancelledError, Exception):
                         await contra_task
-                yield SSEEvent(
-                    data={"type": "error", "message": str(exc)},
-                    event=SSEEventType.ERROR,
-                )
-                return
-
-            # P4-B: 引擎流结束后，检查矛盾检测是否已完成且尚未推送
-            if contra_task and not contra_pushed:
-                try:
-                    await asyncio.wait_for(contra_task, timeout=2.0)
-                    if contra_task.done():
-                        contra_result = contra_task.result()
-                        if contra_result.has_contradiction:
-                            yield SSEEvent(
-                                data=contra_result.to_dict(),
-                                event=SSEEventType.CONTRADICTION_DETECTED,
-                            )
-                except Exception:
-                    pass  # 超时或异常 — 优雅降级
 
         # 7-8. 流式结束后的持久化 — 短事务，写完即释放连接回池
         await self._persist_assistant_result(

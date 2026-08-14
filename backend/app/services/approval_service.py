@@ -74,6 +74,7 @@ class ApprovalService:
         Returns:
             ToolApproval ORM 实例。
         """
+        effective_tenant_id = tenant_id or self._tenant_id
         approval = ToolApproval(
             user_id=user_id,
             session_id=session_id,
@@ -85,7 +86,7 @@ class ApprovalService:
             agent_state_snapshot=agent_state_snapshot,
             status="pending",
             expire_at=datetime.now(timezone.utc) + timedelta(seconds=_APPROVAL_TTL_SECONDS),
-            tenant_id=tenant_id,
+            tenant_id=effective_tenant_id,
         )
         self.db.add(approval)
         await self.db.flush()

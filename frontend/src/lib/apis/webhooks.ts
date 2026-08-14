@@ -1,6 +1,6 @@
 /**
  * Webhook 订阅管理封装
- * 对接后端 openapi/webhooks 路由（事件列表 / 订阅 / 取消订阅 / 测试）
+ * 对接后端 openapi/webhooks 路由（事件列表 / 订阅 / 列表 / 取消订阅 / 测试）
  *
  * 这些端点使用 API Key（X-API-Key header）认证，需要 scope: webhook:manage。
  * 与常规业务接口不同：常规接口走 Bearer Token（Authorization），
@@ -8,9 +8,8 @@
  *   1. 通过 skipAuth 跳过 Authorization 注入
  *   2. 通过 headers 注入 X-API-Key
  *
- * 重要：后端使用内存存储，没有"列出已有订阅"的 GET 端点。
- * 前端需要将已创建的订阅 ID 持久化到 localStorage（key: ekb_webhook_subs），
- * 以便用户管理（取消订阅）。本封装仅负责网络请求，localStorage 读写由页面层完成。
+ * 后端已提供 GET /subscriptions 列表端点，订阅记录由服务端维护，
+ * 不再依赖前端 localStorage 持久化，避免换浏览器/清缓存后产生孤儿订阅。
  */
 import { getData, postData, delData, ApiError } from '../api';
 
@@ -111,6 +110,14 @@ export async function subscribeWebhook(data: {
   secret?: string;
 }): Promise<WebhookSubscription> {
   return postData<WebhookSubscription>(`${BASE}/subscribe`, data, buildAuthOptions());
+}
+
+/**
+ * 列出当前 API Key 的订阅
+ * GET /api/v1/openapi/webhooks/subscriptions
+ */
+export async function getSubscriptions(): Promise<WebhookSubscription[]> {
+  return getData<WebhookSubscription[]>(`${BASE}/subscriptions`, undefined, buildAuthOptions());
 }
 
 /**
