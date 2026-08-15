@@ -160,11 +160,14 @@ class VectorStoreBase(ABC):
         updated_at: Any = None,
         effective_from: Any = None,
         effective_to: Any = None,
+        doc_role: str | None = None,
     ) -> dict[str, Any]:
         """格式化搜索结果为统一字典格式。
 
         ``updated_at`` / ``effective_from`` / ``effective_to`` 为检索层
         recency 加权与生效窗口过滤字段，仅在写入侧提供时出现（向后兼容）。
+        ``doc_role`` 为 P2 文档角色粗标（normal/constraint_source），
+        供运营在普通召回路径识别约束文档。
         """
         result: dict[str, Any] = {
             "doc_id": doc_id,
@@ -182,6 +185,8 @@ class VectorStoreBase(ABC):
             result["effective_from"] = effective_from
         if effective_to is not None:
             result["effective_to"] = effective_to
+        if doc_role is not None:
+            result["doc_role"] = doc_role
         return result
 
     @property

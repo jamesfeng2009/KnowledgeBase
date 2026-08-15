@@ -54,6 +54,12 @@ _CLASSIFICATION_WEIGHT: dict[str, int] = {
 # 拒识通用话术
 _UNSUPPORTED_MESSAGE = "该问题超出企业知识库服务范围，无法在知识库中作答，请联系对应业务服务台。"
 
+# 法律咨询专属拒答话术 — 引导到法务部/12348，比通用话术更精准
+_LEGAL_UNSUPPORTED_MESSAGE = (
+    "该问题属于法律咨询范畴，不在企业知识库服务范围内。"
+    "建议联系公司法务部（分机8001）或拨打12348法律服务热线获取专业法律意见。"
+)
+
 # 澄清缺槽提示文案（槽位名 → 提示语）
 _SLOT_HINTS: dict[str, str] = {
     SlotName.SEARCH_QUERY: "请说明您想检索的主题或内容",
@@ -128,7 +134,7 @@ class ShortcutHandler:
                 )
             elif intent.intent == IntentType.UNSUPPORTED:
                 # 方案三：拒识出口 — 超出知识库范围，直接拒绝，不进检索/Agent Loop
-                async for event in self._handle_unsupported():
+                async for event in self._handle_unsupported(intent.parameters):
                     yield event
             elif intent.intent == IntentType.UNCLEAR:
                 # 方案三：澄清出口 — 参数缺失，先澄清再回答，不瞎猜
@@ -336,16 +342,28 @@ class ShortcutHandler:
     # 方案三：拒识 + 澄清出口
     # ------------------------------------------------------------------
 
-    async def _handle_unsupported(self) -> AsyncIterator[SSEEvent | str]:
+    async def _handle_unsupported(
+        self, parameters: dict[str, Any] | None = None,
+    ) -> AsyncIterator[SSEEvent | str]:
         """拒识出口 — 用户问题超出知识库服务范围，直接拒绝。
 
         与生成层拒识不同，此处是路由层决策：明确识别为越界问题，
         不进入检索，也不调用 Agent Loop，避免越权/无关回答。
+
+        Args:
+            parameters: 意图参数，可含 refusal_type="legal" 用于法律专属话术。
         """
+        refusal_type = (parameters or {}).get("refusal_type")
+        message = (
+            _LEGAL_UNSUPPORTED_MESSAGE
+            if refusal_type == "legal"
+            else _UNSUPPORTED_MESSAGE
+        )
         yield SSEEvent(
             data={
                 "intent": IntentType.UNSUPPORTED.value,
-                "message": _UNSUPPORTED_MESSAGE,
+                "refusal_type": refusal_type,
+                "message": message,
             },
             event=SSEEventType.INTENT_REJECTED,
         )

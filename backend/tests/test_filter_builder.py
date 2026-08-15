@@ -90,6 +90,16 @@ class TestOpenSearchFilterClauses:
         clauses = build_opensearch_filter_clauses({"parent_id": 12345})
         assert clauses == [{"term": {DOC_PARENT_ID_FIELD: "12345"}}]
 
+    def test_doc_role_term(self) -> None:
+        """P2: doc_role 精确过滤（运营检索 constraint_source 文档）。"""
+        clauses = build_opensearch_filter_clauses({"doc_role": "constraint_source"})
+        assert clauses == [{"term": {"doc_role": "constraint_source"}}]
+
+    def test_doc_role_stringified(self) -> None:
+        """P2: doc_role 值应转为字符串。"""
+        clauses = build_opensearch_filter_clauses({"doc_role": "normal"})
+        assert clauses == [{"term": {"doc_role": "normal"}}]
+
 
 # ======================================================================
 # build_opensearch_combined_filter
@@ -164,6 +174,11 @@ class TestMilvusExpr:
         expr = build_milvus_expr(None, {"version_of": "master"})
         assert expr == "version_of == 'master'"
 
+    def test_doc_role_expr(self) -> None:
+        """P2: doc_role 精确过滤。"""
+        expr = build_milvus_expr(None, {"doc_role": "constraint_source"})
+        assert expr == "doc_role == 'constraint_source'"
+
     def test_kb_ids_and_filters_joined_by_and(self) -> None:
         expr = build_milvus_expr(["kb1"], {"series_id": "s1"})
         assert " and " in expr
@@ -216,7 +231,15 @@ class TestValidateFilters:
         assert set(unknown) == {"foo", "bar"}
 
     def test_supported_keys_constant(self) -> None:
-        """SUPPORTED_FILTER_KEYS 应包含全部 5 个标准 key。"""
+        """SUPPORTED_FILTER_KEYS 应包含全部标准 key（P0 层级 5 个 + P0-1 doc_status + P2 doc_role）。"""
         assert SUPPORTED_FILTER_KEYS == frozenset(
-            {"series_id", "path_prefix", "parent_id", "depth", "version_of"}
+            {
+                "series_id",
+                "path_prefix",
+                "parent_id",
+                "depth",
+                "version_of",
+                "doc_status",
+                "doc_role",
+            }
         )

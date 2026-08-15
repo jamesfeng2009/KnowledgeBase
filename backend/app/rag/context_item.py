@@ -32,9 +32,11 @@ log = get_logger(__name__)
 _DEFAULT_BUDGET: int = 2500
 
 # 各来源的默认优先级（越高越先注入）
+# constraint：强制约束红线（block 级 mandatory 全量保留），压过全部基准值
 # memory：用户约束/偏好会左右答案方向，优先保留
 # tool：工具事实在冲突裁决中权威性高于文档，次优先
 # document：检索片段按相关性排序，作为主体注入
+_PRIORITY_CONSTRAINT: int = 120
 _PRIORITY_MEMORY: int = 100
 _PRIORITY_TOOL: int = 80
 _PRIORITY_DOCUMENT_BASE: int = 60
@@ -154,6 +156,80 @@ class ContextItemBuilder:
                 )
             )
 
+        return items
+
+    @classmethod
+    def build_constraint_items(
+        cls,
+        constraints: list[dict[str, Any]] | None,
+        budget_max_tokens: int = 600,
+    ) -> list[ContextItem]:
+        """构建约束注入条目 — 确定性红线，独立于 document/tool/memory。
+
+        severity 分槽（设计 §7）：
+            block    mandatory=True — 预算不足时无条件全量保留
+                     （BudgetAllocator 对 mandatory 绕过预算检查，
+                     必要时挤占语义预算 — 安全优先于效果）
+            confirm  参与预算，按 severity → confidence 排序截断到
+            warn     CONSTRAINT_BUDGET_MAX_TOKENS 硬上限
+
+        Args:
+            constraints: ConstraintChannel.fetch 输出（source=constraint，
+                含 rule_text / severity / normalized / triggers）。
+            budget_max_tokens: confirm/warn 级合计 token 硬上限。
+
+        Returns:
+            kind="constraint" 的 ContextItem 列表（block 在前）。
+        """
+        if not constraints:
+            return []
+
+        severity_order = {"block": 0, "confirm": 1, "warn": 2}
+        ordered = sorted(
+            constraints,
+            key=lambda c: (
+                severity_order.get(c.get("severity", ""), 9),
+                -(c.get("normalized", {}).get("confidence", 0) or 0),
+            ),
+        )
+
+        items: list[ContextItem] = []
+        soft_budget = 0
+        for idx, constraint in enumerate(ordered, start=1):
+            severity = constraint.get("severity", "warn")
+            text = str(constraint.get("rule_text") or "").strip()
+            if not text:
+                continue
+            cost = estimate_tokens(text)
+            is_block = severity == "block"
+            # confirm/warn 超出硬上限时停止追加（block 不受限）
+            if not is_block and soft_budget + cost > budget_max_tokens:
+                log.info(
+                    "context.constraint_budget_truncated",
+                    kept=len(items),
+                    skipped_after=idx,
+                )
+                break
+            if not is_block:
+                soft_budget += cost
+            items.append(
+                ContextItem(
+                    kind="constraint",
+                    content=text,
+                    token_cost=cost,
+                    priority=_PRIORITY_CONSTRAINT,
+                    relevance=1.0,
+                    source="强制约束",
+                    mandatory=is_block,
+                    meta={
+                        "role": "constraint",
+                        "severity": severity,
+                        "rule_id": constraint.get("rule_id", ""),
+                        "triggers": constraint.get("triggers", []),
+                        "index": idx,
+                    },
+                )
+            )
         return items
 
     @staticmethod

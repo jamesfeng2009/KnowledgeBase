@@ -462,7 +462,10 @@ class ChatService:
             cache_scope = None  # 计算失败时退化为仅 tenant_id 隔离
 
         # P1: IntentRouter 稳态/敏态分离 — 简单查询走快捷路径，复杂查询走 Agent Loop
+        # T3 意图触发：Agent Loop 路径把 IntentResult 透传给 engine.answer
+        # （约束通道零 LLM 复用）；IntentRouter 关闭/失败时保持 None，T3 跳过
         shortcut_taken = False
+        intent_result = None
         try:
             from app.config import get_settings
 
@@ -577,6 +580,8 @@ class ChatService:
                         tenant_id=prepared.tenant_id,
                         db=self.db,
                         user_uuid=self.user.id,
+                        # T3 意图触发：IntentResult 透传给约束通道（零 LLM 复用）
+                        intent=intent_result,
                         # P4-E: 传入对话焦点和漂移信息
                         conversation_focus=prepared.conversation_focus,
                         drift_info=prepared.drift_info,

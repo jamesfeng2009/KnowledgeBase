@@ -241,6 +241,15 @@ async def build_graph_from_document(
     if not doc:
         return ApiResponse(code=404, data=None, message="文档不存在")
 
+    # 检索不变量 I1：半成品不建图 — draft / pending_review 文档建图后，
+    # 图谱节点会被检索路径召回（Cypher 只认 published），从源头杜绝。
+    if doc.status != "published":
+        return ApiResponse(
+            code=400,
+            data=None,
+            message=f"仅已发布文档可建图（当前状态: {doc.status}）",
+        )
+
     content = doc.content_text or ""
     if not content:
         return ApiResponse(code=400, data=None, message="文档无文本内容")
@@ -275,5 +284,38 @@ async def build_graph_from_document(
             "used_rules": use_rules,
             "used_llm": use_llm and len(triples) < 3,
         },
+        message="success",
+    )
+
+
+@router.post("/backfill-doc-status")
+async def backfill_doc_status(
+    batch_size: int = Query(500, ge=1, le=5000),
+    user: User = Depends(require_module("knowledge_graph")),
+    db: AsyncSession = Depends(get_db_session),
+) -> ApiResponse:
+    """回填存量 Document 节点的 doc_status 属性 — 检索不变量 I1 上线后的迁移入口。
+
+    图谱召回的 Cypher 以 ``d.doc_status = 'published'`` 过滤（fail-closed），
+    存量节点缺该属性会被过滤（召回升零，不泄漏）。本端点从 DB 查全量
+    文档真实状态，批量写入图谱节点属性，恢复已发布文档的图谱召回。
+
+    需要 admin 权限。幂等，可重复执行。
+    """
+    if user.role != "admin":
+        return ApiResponse(code=403, data=None, message="需要管理员权限")
+
+    from sqlalchemy import select
+
+    from app.models.knowledge import Document
+
+    result = await db.execute(select(Document.id, Document.status))
+    status_map = {str(row[0]): row[1] for row in result.all() if row[1]}
+
+    service = get_graph_service()
+    updated = await service.sync_doc_status(status_map, batch_size=batch_size)
+    return ApiResponse(
+        code=0,
+        data={"total_docs": len(status_map), "nodes_updated": updated},
         message="success",
     )

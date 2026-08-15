@@ -2425,6 +2425,11 @@ def _build_doc_meta(doc: Any) -> dict[str, Any] | None:
     doc_status = getattr(doc, "status", None)
     if doc_status is not None:
         meta["doc_status"] = str(doc_status)
+    # P2: 文档角色粗标（normal/constraint_source）— 运营检索与日志标注用，
+    # 不用于必召回（必召回走 constraint_rules，确定域）
+    doc_role = getattr(doc, "doc_role", None)
+    if doc_role:
+        meta["doc_role"] = str(doc_role)
     return meta or None
 
 

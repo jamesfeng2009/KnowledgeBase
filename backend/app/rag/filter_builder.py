@@ -43,6 +43,7 @@ SUPPORTED_FILTER_KEYS: frozenset[str] = frozenset({
     "depth",
     "version_of",
     "doc_status",  # P0-1: 文档状态过滤（published/draft/pending_review/archived）
+    "doc_role",    # P2: 文档角色粗标过滤（normal/constraint_source，运营用）
 })
 
 
@@ -70,6 +71,7 @@ _OS_FILTER_BUILDERS: dict[str, tuple[str, Any]] = {
     "depth": ("depth", lambda v: _os_term("depth", int(v))),
     "version_of": ("version_of", lambda v: _os_term("version_of", str(v))),
     "doc_status": ("doc_status", lambda v: _os_term("doc_status", str(v))),
+    "doc_role": ("doc_role", lambda v: _os_term("doc_role", str(v))),
 }
 
 
@@ -151,6 +153,7 @@ _MILVUS_FILTER_BUILDERS: dict[str, tuple[str, Any]] = {
     "depth": ("depth", lambda v: f"depth == {int(v)}"),
     "version_of": ("version_of", lambda v: f"version_of == {_milvus_str_literal(v)}"),
     "doc_status": ("doc_status", lambda v: f"doc_status == {_milvus_str_literal(v)}"),
+    "doc_role": ("doc_role", lambda v: f"doc_role == {_milvus_str_literal(v)}"),
 }
 
 

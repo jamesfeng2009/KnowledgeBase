@@ -319,48 +319,76 @@ def _detect_bf16() -> bool:
     return False
 
 
-def load_model(base: str, adapter: str | None, sft_adapter: str | None, dpo_adapter: str | None, grpo_adapter: str | None = None):
+def load_model(base: str, adapter: str | None, sft_adapter: str | None, dpo_adapter: str | None, grpo_adapter: str | None = None, qlora: bool = False):
     """加载模型 + adapter。
 
       - 单 adapter（--adapter）：直接 merge
       - 双 adapter（--sft_adapter + --dpo_adapter）：先 SFT merge 再 DPO merge
       - 三层 adapter（--sft_adapter + --dpo_adapter + --grpo_adapter）：SFT+DPO merge 后再 GRPO merge
+      - qlora=True：4-bit 量化加载，不 merge adapter（PeftModel 直接推理）
     """
     tok = AutoTokenizer.from_pretrained(base, trust_remote_code=True)
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
     use_bf16 = _detect_bf16()
     dtype = torch.bfloat16 if use_bf16 else torch.float16
-    print(f"[加载] 基座 {base} (bf16={use_bf16}) ...", flush=True)
+    print(f"[加载] 基座 {base} (bf16={use_bf16}, qlora={qlora}) ...", flush=True)
 
     if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
         model = AutoModelForCausalLM.from_pretrained(
             base, torch_dtype=dtype, trust_remote_code=True,
         ).to("mps")
+    elif qlora:
+        from transformers import BitsAndBytesConfig
+        bnb_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=dtype,
+            bnb_4bit_use_double_quant=True,
+        )
+        model = AutoModelForCausalLM.from_pretrained(
+            base, quantization_config=bnb_config, device_map="auto",
+            trust_remote_code=True,
+        )
     else:
         model = AutoModelForCausalLM.from_pretrained(
             base, torch_dtype=dtype, device_map="auto", trust_remote_code=True,
         )
 
-    # 单 adapter 模式（兼容旧 shell 脚本 --adapter 用法）
-    if adapter:
-        print(f"[加载] 合并 adapter {adapter} ...", flush=True)
-        model = PeftModel.from_pretrained(model, adapter)
-        model = model.merge_and_unload()
+    # qlora 模式：不 merge，直接用 PeftModel 推理（省显存）
+    if qlora:
+        if adapter:
+            print(f"[加载] 加载 adapter {adapter}（不 merge）...", flush=True)
+            model = PeftModel.from_pretrained(model, adapter)
+        else:
+            if sft_adapter:
+                print(f"[加载] 加载 SFT adapter {sft_adapter}（不 merge）...", flush=True)
+                model = PeftModel.from_pretrained(model, sft_adapter)
+            if dpo_adapter:
+                print(f"[加载] 叠加 DPO adapter {dpo_adapter}（不 merge）...", flush=True)
+                model = PeftModel.from_pretrained(model, dpo_adapter)
+            if grpo_adapter:
+                print(f"[加载] 叠加 GRPO adapter {grpo_adapter}（不 merge）...", flush=True)
+                model = PeftModel.from_pretrained(model, grpo_adapter)
     else:
-        # 双 adapter 模式（SFT + DPO）
-        if sft_adapter:
-            print(f"[加载] 合并 SFT adapter {sft_adapter} ...", flush=True)
-            model = PeftModel.from_pretrained(model, sft_adapter)
+        # 非 qlora 模式：merge adapter 进基座
+        if adapter:
+            print(f"[加载] 合并 adapter {adapter} ...", flush=True)
+            model = PeftModel.from_pretrained(model, adapter)
             model = model.merge_and_unload()
-        if dpo_adapter:
-            print(f"[加载] 叠加 DPO adapter {dpo_adapter} ...", flush=True)
-            model = PeftModel.from_pretrained(model, dpo_adapter)
-            model = model.merge_and_unload()
-        if grpo_adapter:
-            print(f"[加载] 叠加 GRPO adapter {grpo_adapter} ...", flush=True)
-            model = PeftModel.from_pretrained(model, grpo_adapter)
-            model = model.merge_and_unload()
+        else:
+            if sft_adapter:
+                print(f"[加载] 合并 SFT adapter {sft_adapter} ...", flush=True)
+                model = PeftModel.from_pretrained(model, sft_adapter)
+                model = model.merge_and_unload()
+            if dpo_adapter:
+                print(f"[加载] 叠加 DPO adapter {dpo_adapter} ...", flush=True)
+                model = PeftModel.from_pretrained(model, dpo_adapter)
+                model = model.merge_and_unload()
+            if grpo_adapter:
+                print(f"[加载] 叠加 GRPO adapter {grpo_adapter} ...", flush=True)
+                model = PeftModel.from_pretrained(model, grpo_adapter)
+                model = model.merge_and_unload()
 
     model.eval()
     print("[加载] 完成", flush=True)
@@ -515,6 +543,7 @@ def main():
     parser.add_argument("--sft_adapter", default=None, help="SFT adapter（双 adapter 模式）")
     parser.add_argument("--dpo_adapter", default=None, help="DPO adapter（双 adapter 模式）")
     parser.add_argument("--grpo_adapter", default=None, help="GRPO adapter（三层 adapter 模式：SFT+DPO+GRPO）")
+    parser.add_argument("--qlora", action="store_true", help="4-bit 量化加载（14B+ 模型在 24G 显存上必须开启）")
     parser.add_argument("--label", default="model")
     parser.add_argument("--output", default=None, help="JSON 结果输出路径")
     parser.add_argument("--judge_model", default=None,
@@ -541,7 +570,7 @@ def main():
     print(f"    边界题 {n_boundary} + 工作题 {n_work} = {n_boundary + n_work} 题")
     print(f"{'=' * 70}\n", flush=True)
 
-    model, tok = load_model(args.base_model, args.adapter, args.sft_adapter, args.dpo_adapter, args.grpo_adapter)
+    model, tok = load_model(args.base_model, args.adapter, args.sft_adapter, args.dpo_adapter, args.grpo_adapter, qlora=args.qlora)
     if use_llm:
         if args.judge_model == "self":
             is_peft = isinstance(model, PeftModel)

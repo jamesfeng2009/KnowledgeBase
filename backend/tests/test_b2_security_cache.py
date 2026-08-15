@@ -244,22 +244,37 @@ class TestGetAccessibleKbIds:
 
 
 class TestFilterRetrievalCandidates:
-    """filter_retrieval_candidates：kb 归属 + 密级双重过滤。"""
+    """filter_retrieval_candidates：Final Gate 三项复检（I1 状态 + I3 密级 + I4 归属）。
+
+    execute 调用序列（Phase 0 升级后）：
+        1. _load_doc_meta → [(doc_id, classification, status), ...]（全部角色）
+        2. get_accessible_kb_ids → [(kb_id,), ...]（非 admin）
+    """
 
     @pytest.mark.asyncio
-    async def test_admin_passes_all(self) -> None:
-        """admin 放行全部候选（不查 DB）。"""
+    async def test_admin_passes_published_only(self) -> None:
+        """admin 放行 kb / 密级维度，但 I1 状态复检对 admin 同样生效。"""
         user = SimpleNamespace(role="admin", clearance_level="internal", id=uuid4())
-        service = PermissionService(db=AsyncMock(), user=user)
+        doc_ok, doc_draft = uuid4(), uuid4()
+
+        db = AsyncMock()
+        meta_result = MagicMock()
+        # secret 密级 admin 放行；draft 状态任何角色剔除
+        meta_result.all.return_value = [
+            (doc_ok, "secret", "published"),
+            (doc_draft, "public", "draft"),
+        ]
+        db.execute = AsyncMock(side_effect=[meta_result])
+        service = PermissionService(db=db, user=user)
 
         candidates = [
-            {"doc_id": str(uuid4()), "kb_id": str(uuid4()), "content": "a"},
-            {"doc_id": str(uuid4()), "kb_id": str(uuid4()), "content": "b"},
+            {"doc_id": str(doc_ok), "kb_id": str(uuid4()), "content": "a"},
+            {"doc_id": str(doc_draft), "kb_id": str(uuid4()), "content": "b"},
         ]
 
         result = await service.filter_retrieval_candidates(candidates)
 
-        assert result == candidates
+        assert [r["doc_id"] for r in result] == [str(doc_ok)]
 
     @pytest.mark.asyncio
     async def test_empty_accessible_set_returns_empty(self) -> None:
@@ -289,13 +304,17 @@ class TestFilterRetrievalCandidates:
 
         db = AsyncMock()
 
-        # 第一次 execute：get_accessible_kb_ids → 返回 kb_allowed
+        # 第一次 execute：_load_doc_meta → doc_ok=internal/published,
+        # doc_secret=secret/published（另两个候选 doc_id 查不到 → fail-closed）
+        meta_result = MagicMock()
+        meta_result.all.return_value = [
+            (doc_ok, "internal", "published"),
+            (doc_secret, "secret", "published"),
+        ]
+        # 第二次 execute：get_accessible_kb_ids → 返回 kb_allowed
         kb_result = MagicMock()
         kb_result.all.return_value = [(kb_allowed,)]
-        # 第二次 execute：classification 批量查询 → doc_ok=internal, doc_secret=secret
-        cls_result = MagicMock()
-        cls_result.all.return_value = [(doc_ok, "internal"), (doc_secret, "secret")]
-        db.execute = AsyncMock(side_effect=[kb_result, cls_result])
+        db.execute = AsyncMock(side_effect=[meta_result, kb_result])
 
         service = PermissionService(db=db, user=user)
 
@@ -313,28 +332,28 @@ class TestFilterRetrievalCandidates:
 
     @pytest.mark.asyncio
     async def test_missing_doc_classification_fail_closed(self) -> None:
-        """DB 查不到 classification 时保守剔除（fail-closed）。
+        """DB 查不到文档记录时保守剔除（fail-closed）。
 
         索引中残留的已删除/越权文档分块若按 internal 默认放行，
         会对低密级用户泄漏高密级内容 — 必须与 kb 维度一致 fail-closed。
+        Phase 0 升级后 _load_doc_meta 首查（先于 kb 集合查询），
+        记录查不到 → I1 状态未知 → 全部剔除，不再进入后续维度。
         """
         kb_allowed = uuid4()
         doc_id = uuid4()
         user = SimpleNamespace(role="editor", clearance_level="internal", id=uuid4())
 
         db = AsyncMock()
-        kb_result = MagicMock()
-        kb_result.all.return_value = [(kb_allowed,)]
-        cls_result = MagicMock()
-        cls_result.all.return_value = []  # 查不到 → 保守剔除
-        db.execute = AsyncMock(side_effect=[kb_result, cls_result])
+        meta_result = MagicMock()
+        meta_result.all.return_value = []  # 查不到 → 保守剔除
+        db.execute = AsyncMock(side_effect=[meta_result])
 
         service = PermissionService(db=db, user=user)
         candidates = [{"doc_id": str(doc_id), "kb_id": str(kb_allowed), "content": "x"}]
 
         result = await service.filter_retrieval_candidates(candidates)
 
-        # 密级未知 → fail-closed 剔除
+        # 文档记录未知（含状态/密级）→ fail-closed 剔除
         assert len(result) == 0
 
 

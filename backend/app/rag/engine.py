@@ -48,10 +48,16 @@ from app.observability.langfuse_tracer import (
 )
 from app.rag.cache import TokenCache
 from app.rag.constitution import get_constraint_reminder, get_system_prompt
+from app.rag.constraint_verifier import (
+    ConstraintViolation,
+    ConstraintVerifier,
+    ToolGate,
+    ToolGateDecision,
+)
 from app.rag.context_budget import ContextBudgetManager, SpillStore, _SPILL_TOOL_RESULT_THRESHOLD
 from app.rag.context_dedup import CrossTurnDeduplicator
 from app.rag.generator import Generator
-from app.rag.tool_guard import DangerousToolGuard
+from app.rag.tool_guard import DangerousToolGuard, GuardAction, GuardResult
 from app.core.budget import HardBudget, RunBudget, check_budget, get_budget_status
 from app.core.exceptions import BudgetExceeded
 from app.observability.trail_aggregator import get_trail_aggregator
@@ -218,6 +224,12 @@ class AgentState(TypedDict, total=False):
     plan_steps: list[dict[str, Any]]
     # P1-9: 本会话已发生的重规划次数（上限由 PlanManager.max_replans 控制）
     replan_count: int
+    # P1: 约束注入通道输出（ConstraintChannel.fetch）— 确定性红线条款，
+    # 由 _retrieve 与检索并行获取，generate 透传给 generator 红线段。
+    constraint_context: list[dict[str, Any]]
+    # P1: 注入约束的机器可执行定义（rule_id/severity/normalized/triggers），
+    # 供 L2 post_verify / L3 tool_gate 消费（Phase 3 接入）。
+    injected_constraints: list[dict[str, Any]]
 
 
 class AgenticRAGEngine:
@@ -392,6 +404,17 @@ class AgenticRAGEngine:
                 log.warning("engine.injection_guard_init_failed", error=str(exc))
                 self._injection_guard = None
 
+        # P1: 约束注入通道 — 确定性红线条款（ConstraintChannel，零相似度）。
+        # CONSTRAINT_ENABLED=False 时工厂返回 None（通道关闭即回到现状，
+        # 一键回滚）；未初始化约束表（迁移未跑）时首次 fetch 报错仅记日志。
+        self._constraint_channel: Any = None
+        try:
+            from app.rag.constraint_channel import get_constraint_channel
+            self._constraint_channel = get_constraint_channel()
+        except Exception as exc:
+            log.warning("engine.constraint_channel_init_failed", error=str(exc))
+            self._constraint_channel = None
+
     # ------------------------------------------------------------------
     # 请求级状态（ContextVar 隔离，并发安全）
     #
@@ -513,6 +536,7 @@ class AgenticRAGEngine:
         permission_filter: PermissionFilter | None = None,
         cache_scope: str | None = None,
         filters: dict[str, Any] | None = None,
+        intent: Any = None,
     ) -> AsyncIterator[SSEEvent | str]:
         """Agentic RAG 主入口 — 返回 SSE 事件流供前端实时消费。
 
@@ -554,6 +578,9 @@ class AgenticRAGEngine:
                 （如"只在某系列/子 wiki 下检索"）。filters 指纹自动并入
                 cache_scope，防止不同层级视图的用户互读缓存（如
                 series_id=X 的答案不应命中无 filters 的查询）。
+            intent: IntentRouter 已算好的 IntentResult（chat_service
+                透传）— 约束通道 T3 意图触发零 LLM 复用。None（Intent
+                Router 关闭/失败/非 Agent Loop 路径）时 T3 跳过。
 
         Yields:
             SSEEvent | str: SSE 事件对象（thinking/retrieve/tool_call/sources/
@@ -708,6 +735,9 @@ class AgenticRAGEngine:
             "permission_filter": permission_filter,
             # P0 wiki 层级：检索层级过滤（透传到 _retrieve → retriever.search）
             "filters": filters,
+            # T3 意图触发：IntentRouter 已算好的 IntentResult（零 LLM 复用）；
+            # None（IntentRouter 关闭/失败）时约束通道 T3 整路跳过
+            "intent": intent,
             # P1-4: 知识库版本快照 — 记录本次查询使用的 KB 版本时间戳，
             # 写入 _span_evidence 供 trace 回放追溯"哪一版资料造成了这个答案"。
             "kb_version_snapshot": datetime.now(timezone.utc).isoformat(),
@@ -826,6 +856,7 @@ class AgenticRAGEngine:
             retrieved_docs=state["retrieved_docs"],
             tool_results=state["tool_results"],
             memory_context=state.get("memory_context", ""),
+            constraint_context=state.get("constraint_context"),
         ):
             answer_parts.append(token)
             yield token
@@ -940,6 +971,10 @@ class AgenticRAGEngine:
             quality_data["contradiction_blocked"] = True
         if state.get("high_risk_blocked"):
             quality_data["high_risk_blocked"] = True
+        if state.get("constraint_blocked"):
+            quality_data["constraint_blocked"] = True
+        if state.get("constraint_warnings"):
+            quality_data["constraint_warnings"] = state["constraint_warnings"]
         if state.get("contradiction_result"):
             quality_data["contradiction"] = state["contradiction_result"]
         if state.get("high_risk_result"):
@@ -964,6 +999,7 @@ class AgenticRAGEngine:
             state.get("low_confidence")
             or state.get("contradiction_blocked")
             or state.get("high_risk_blocked")
+            or state.get("constraint_blocked")
         )
         if self.cache is not None and _cacheable:
             try:
@@ -985,6 +1021,7 @@ class AgenticRAGEngine:
                 low_confidence=bool(state.get("low_confidence")),
                 contradiction_blocked=bool(state.get("contradiction_blocked")),
                 high_risk_blocked=bool(state.get("high_risk_blocked")),
+                constraint_blocked=bool(state.get("constraint_blocked")),
             )
 
         # 9. 结束 Trace（含质量评分上报）
@@ -1371,6 +1408,7 @@ class AgenticRAGEngine:
             final_values.get("low_confidence")
             or final_values.get("contradiction_blocked")
             or final_values.get("high_risk_blocked")
+            or final_values.get("constraint_blocked")
         )
         if self.cache is not None and _cacheable:
             try:
@@ -1392,6 +1430,7 @@ class AgenticRAGEngine:
                 low_confidence=bool(final_values.get("low_confidence")),
                 contradiction_blocked=bool(final_values.get("contradiction_blocked")),
                 high_risk_blocked=bool(final_values.get("high_risk_blocked")),
+                constraint_blocked=bool(final_values.get("constraint_blocked")),
             )
 
     # ------------------------------------------------------------------
@@ -1449,6 +1488,7 @@ class AgenticRAGEngine:
             retrieved_docs=state.get("retrieved_docs", []),
             tool_results=state.get("tool_results", []),
             memory_context=state.get("memory_context", ""),
+            constraint_context=state.get("constraint_context"),
         ):
             tokens.append(token)
 
@@ -2131,6 +2171,31 @@ class AgenticRAGEngine:
 
         return _evaluate
 
+    @trace_node("retrieve_constraint")
+    async def _safe_fetch_constraints(
+        self,
+        state: AgentState,
+        kb_ids: list[str] | None,
+    ) -> list[dict[str, Any]]:
+        """约束通道安全包装 — 任何异常降级为空列表，不影响检索主链路。
+
+        权限过滤器与 Final Gate 同源（请求级 permission_filter 优先）—
+        规则候选经 I1 状态 + I3 密级 + I4 归属三项复检（fail-closed）。
+        """
+        try:
+            return await self._constraint_channel.fetch(
+                query=state.get("rewritten_query") or state["query"],
+                kb_ids=kb_ids,
+                tenant_id=state.get("tenant_id"),
+                session_id=str(state.get("session_id") or ""),
+                user_id=state.get("user_id"),
+                perm_filter=state.get("permission_filter") or self.permission_filter,
+                intent=state.get("intent"),
+            )
+        except Exception as exc:
+            log.warning("engine.constraint_fetch_failed", error=str(exc))
+            return []
+
     @trace_node("retrieve")
     async def _retrieve(
         self,
@@ -2169,19 +2234,52 @@ class AgenticRAGEngine:
             }
             return
 
-        # 1. 多路检索召回候选
+        # 1. 多路检索召回候选 + 约束通道并行获取（P1）
         # P0 wiki 层级：filters 从 state 取（answer 初始化时写入），透传给
         # retriever.search，由 filter_builder 转为后端 filter 子句。
         hierarchy_filters = state.get("filters")
-        candidates = await self.retriever.search(
-            query, kb_ids=kb_ids, top_k=_RETRIEVE_TOP_K, filters=hierarchy_filters
-        )
+
+        # P1: 约束注入通道与检索并行 — 通道查 PG（规则表 + 审计），
+        # 检索查向量库 / OpenSearch，互不阻塞；通道内部已做
+        # 总开关短路 / fail-closed / 异常降级，任何失败不影响检索。
+        constraint_task = None
+        if self._constraint_channel is not None:
+            constraint_task = asyncio.create_task(
+                self._safe_fetch_constraints(state, kb_ids)
+            )
+        try:
+            candidates = await self.retriever.search(
+                query, kb_ids=kb_ids, top_k=_RETRIEVE_TOP_K,
+                filters=hierarchy_filters,
+            )
+        finally:
+            if constraint_task is not None:
+                try:
+                    state["constraint_context"] = await constraint_task
+                except Exception:
+                    state["constraint_context"] = []
+            else:
+                state["constraint_context"] = []
+        # 供 L2 消费（post_verify）/ L3（tool_gate）— actions 声明消费层，
+        # normalized 含 required_mentions / forbidden_patterns / amount_limits
+        state["injected_constraints"] = [
+            {
+                "rule_id": c.get("rule_id"),
+                "rule_text": c.get("rule_text", ""),
+                "severity": c.get("severity"),
+                "normalized": c.get("normalized", {}),
+                "actions": c.get("actions") or ["inject"],
+                "triggers": c.get("triggers", []),
+            }
+            for c in state["constraint_context"]
+        ]
         log.info(
             "engine.retrieve.candidates",
             count=len(candidates),
             iteration=state["iteration"],
             query_used=query[:100],
             is_rewritten=query != original_query,
+            constraint_count=len(state["constraint_context"]),
         )
 
         # 1.5 P1-4: 检索结果注入扫描 — HybridRetriever 返回后扫描 prompt injection
@@ -2214,9 +2312,13 @@ class AgenticRAGEngine:
                     error_type=type(exc).__name__,
                 )
 
-        # 2. ABAC 权限过滤（必须在重排之前！）
+        # 2. Final Gate — ABAC 权限过滤（必须在重排之前！）
         # 请求级过滤器（携带当前用户上下文）优先于构造级注入 —
         # 引擎为全局单例，构造级过滤器无法区分请求用户。
+        # 过滤器通常为 PermissionService.filter_retrieval_candidates 的封装：
+        # 检索不变量三项复检（I1 doc_status + I3 密级 + I2/I4 归属与租户，
+        # 以 DB 为权威源，fail-closed）。任何一路召回（含图谱路）的实现
+        # 疏漏都在此注入前被拦 — 参见 app/rag/retrieval_invariants.py。
         active_filter = state.get("permission_filter") or self.permission_filter
         filtered = candidates
         if active_filter is not None:
@@ -2229,7 +2331,7 @@ class AgenticRAGEngine:
                 )
             except Exception as exc:
                 log.error("engine.retrieve.permission_error", error=str(exc))
-                # 权限过滤出错时保守处理：返回空，避免泄露越权文档
+                # Final Gate 失败时保守处理：返回空，避免泄露越权文档
                 filtered = []
 
         # 3. 重排 — 使用原始用户查询（非重写查询）进行重排
@@ -2879,6 +2981,71 @@ class AgenticRAGEngine:
         guard_result = self._tool_guard.check(
             tool_name, tool_input, session_id=state.get("session_id")
         )
+
+        # L3 约束工具门（§8.2）— 注入约束中 actions 含 tool_gate 的规则
+        # 在执行前校验（工具名 / 参数 / amount_limits）：block → 阻断 +
+        # 审计；confirm → 并入守卫确认分支走既有人工审批流。
+        gate = self._constraint_tool_gate(state, tool_name, tool_input)
+        if gate is not None and gate.action == "block":
+            log.warning(
+                "engine.tool_call.blocked_by_constraint",
+                tool=tool_name,
+                rule_id=gate.rule_id,
+                reason=gate.reason,
+            )
+            self._schedule_constraint_audit(
+                state, [gate.violation], action="tool_gate_block"
+            )
+            blocked_msg = json.dumps(
+                {
+                    "error": f"工具 {tool_name} 被约束条款阻断：{gate.reason}",
+                    "tool": tool_name,
+                    "rule_id": gate.rule_id,
+                    "reason": gate.reason,
+                    "action_required": (
+                        "该操作违反企业制度约束，请调整参数或联系制度负责人"
+                    ),
+                },
+                ensure_ascii=False,
+            )
+            state["tool_results"].append(
+                {
+                    "tool": tool_name,
+                    "arguments": tool_input,
+                    "result": blocked_msg,
+                    "content": blocked_msg,
+                }
+            )
+            _audit["status"] = "blocked"
+            _audit["output"] = blocked_msg
+            self._end_tool_audit_span(_audit_span_id, tool_name, _audit)
+            return
+
+        if gate is not None and gate.action == "warn":
+            log.info(
+                "engine.tool_call.constraint_warn",
+                tool=tool_name,
+                rule_id=gate.rule_id,
+                reason=gate.reason,
+            )
+
+        if (
+            gate is not None
+            and gate.action == "confirm"
+            and not guard_result.needs_confirmation
+            and not guard_result.blocked
+        ):
+            # confirm 级约束 → 转守卫 CONFIRM 决策，复用下方审批记录 +
+            # approval_required 事件的人工审批流（置 high_risk_confirm
+            # 供 SSE 透出，语义与高风险核验的中风险档一致）
+            state["high_risk_confirm"] = True
+            guard_result = GuardResult(
+                action=GuardAction.CONFIRM,
+                tool_name=tool_name,
+                reason=gate.reason,
+                irreversible=True,
+            )
+
         if guard_result.needs_confirmation:
             log.warning(
                 "engine.tool_call.blocked_by_guard",
@@ -3056,6 +3223,30 @@ class AgenticRAGEngine:
             },
         )
 
+    def _constraint_tool_gate(
+        self,
+        state: AgentState,
+        tool_name: str,
+        tool_input: Any,
+    ) -> ToolGateDecision | None:
+        """L3 工具门入口 — 开关关闭 / 无注入规则 / 异常时返回 None 放行。
+
+        仅校验本会话已注入的约束（actions 含 tool_gate）— 与 L1 同源，
+        未被触发器命中的规则不参与工具拦截（约束在场性由注入层保证）。
+        """
+        from app.config import get_settings
+
+        if not get_settings().CONSTRAINT_TOOL_GATE_ENABLED:
+            return None
+        rules = state.get("injected_constraints") or []
+        if not rules:
+            return None
+        try:
+            return ToolGate.check(rules, tool_name, tool_input)
+        except Exception as exc:
+            log.warning("engine.constraint.tool_gate_error", error=str(exc))
+            return None
+
     def _serialize_state_for_snapshot(self, state: AgentState) -> dict[str, Any]:
         """将 AgentState 序列化为 JSONB 兼容的快照字典 — 审批恢复时使用。
 
@@ -3103,7 +3294,9 @@ class AgenticRAGEngine:
             3. 矛盾检测：调用 ContradictionDetector.check_answer_consistency，
                检测答案与知识库文档矛盾（_check_contradiction）；
             4. 高风险核验：调用 HighRiskDetector.verify_against_sources，
-               核验金额/日期/法律条款一致性（_check_high_risk）。
+               核验金额/日期/法律条款一致性（_check_high_risk）；
+            5. 约束核验（L2 post_verify）：ConstraintVerifier 零 LLM 核验
+               注入约束的禁词/必提词/金额上限（_check_constraints）。
 
         降级：LLMJudgeService 不可用时走原有内联 prompt（_reflect_inline），
         仅记录日志，不阻断流程。
@@ -3194,6 +3387,9 @@ class AgenticRAGEngine:
 
         # --- 幻觉防护：高风险信息二次核验 ---
         self._check_high_risk(state, answer, retrieved_docs)
+
+        # --- L2 post_verify：约束条款零 LLM 核验（§8.1，与高风险核验并列）---
+        await self._check_constraints(state)
 
         # 如果质量守卫不可用，降级到内联反思
         if self._quality_guard is None:
@@ -3381,6 +3577,199 @@ class AgenticRAGEngine:
             task.add_done_callback(_background_tasks.discard)
         except Exception as exc:
             log.warning("engine.high_risk_audit_schedule_error", error=str(exc))
+
+    # ------------------------------------------------------------------
+    # L2 post_verify：约束条款零 LLM 核验（constraint-recall-design §8.1）
+    # ------------------------------------------------------------------
+
+    async def _check_constraints(self, state: AgentState) -> None:
+        """L2 post_verify — 注入约束对最终答案的零 LLM 核验。
+
+        actions 含 post_verify 的规则逐条核验（ConstraintVerifier）：
+            - block 级违规 → strict prompt 重生成一次，仅当重生成通过
+              核验才采用（对标 check_and_regenerate 的"新答案严格更优才
+              采用"语义）；仍违规 → constraint_blocked 拒答话术 +
+              引导联系制度负责人；
+            - warn 级违规 → constraint_warnings（SSE quality 事件透出）。
+        违规均落 constraint_audit_records（fire-and-forget）。
+        """
+        from app.config import get_settings
+
+        if not get_settings().CONSTRAINT_VERIFY_ON_GENERATION:
+            return
+        rules = state.get("injected_constraints") or []
+        answer = state.get("answer", "")
+        if not rules or not answer:
+            return
+
+        try:
+            violations = [
+                v
+                for r in rules
+                if "post_verify" in (r.get("actions") or [])
+                for v in ConstraintVerifier.verify(answer, r)
+            ]
+        except Exception as exc:
+            log.warning("engine.constraint.verify_error", error=str(exc))
+            return
+        if not violations:
+            return
+
+        if any(v.severity == "block" for v in violations):
+            final = await self._regenerate_with_constraints(
+                state, answer, violations
+            )
+            if ConstraintVerifier.still_violates(final, violations):
+                log.warning(
+                    "engine.constraint.blocked",
+                    violations=len(violations),
+                    rule_ids=[v.rule_id for v in violations],
+                )
+                state["constraint_blocked"] = True
+                state["low_confidence"] = True
+                # 拒答话术 — 通过 ANSWER_REGENERATED 事件整体替换已流式
+                # 推送的旧答案（与忠实度重生成的推送机制一致）
+                state["answer"] = (
+                    "抱歉，该问题涉及企业制度约束条款，"
+                    "我无法在遵守约束的前提下作答。\n"
+                    "建议：请联系该制度的负责人确认后再处理，"
+                    "或调整问题范围后重试。"
+                )
+                state["answer_regenerated"] = True
+                self._schedule_constraint_audit(
+                    state, violations, action="post_verify_block"
+                )
+            else:
+                self._schedule_constraint_audit(
+                    state, violations, action="post_verify_regenerate"
+                )
+        else:
+            state["constraint_warnings"] = [v.to_dict() for v in violations]
+            self._schedule_constraint_audit(
+                state, violations, action="post_verify_warn"
+            )
+
+    async def _regenerate_with_constraints(
+        self,
+        state: AgentState,
+        answer: str,
+        violations: list[ConstraintViolation],
+    ) -> str:
+        """block 级违规 → 违规条款注入 strict prompt 重生成一次。
+
+        仅当重生成结果通过核验（不再有 block 级违规）才采用并置
+        answer_regenerated；否则返回原答案，由调用方决定拒答。
+        """
+        violated_ids = {v.rule_id for v in violations}
+        rule_lines = "\n".join(
+            f"- {r.get('rule_text') or r.get('rule_id')}"
+            for r in state.get("injected_constraints") or []
+            if r.get("rule_id") in violated_ids
+        )
+        strict_prompt = (
+            "你是企业知识库助手。请严格基于以下强制约束重新回答用户问题。\n"
+            "重要规则：\n"
+            "1. 必须遵守下方全部约束条款（红线）；\n"
+            "2. 约束要求的必提词必须在答案中明确出现；\n"
+            "3. 约束禁止的表述不得出现在答案中；\n"
+            "4. 无法在遵守约束的前提下回答时，请如实说明并建议联系制度负责人。\n\n"
+            f"=== 强制约束（红线，必须遵守）===\n{rule_lines}"
+        )
+        try:
+            parts: list[str] = []
+            async for token in self.generator.generate(
+                query=state["query"],
+                retrieved_docs=[],  # 约束已注入 prompt
+                tool_results=[],
+                memory_context=strict_prompt,
+            ):
+                if isinstance(token, str):
+                    parts.append(token)
+            regenerated = "".join(parts).strip()
+        except Exception as exc:
+            log.warning("engine.constraint.regen_failed", error=str(exc))
+            return answer
+        if not regenerated:
+            return answer
+        if ConstraintVerifier.still_violates(regenerated, violations):
+            log.info(
+                "engine.constraint.regen_still_violates",
+                regenerated_len=len(regenerated),
+            )
+            return answer
+        state["answer"] = regenerated
+        state["answer_regenerated"] = True
+        log.info(
+            "engine.constraint.answer_regenerated",
+            original_len=len(answer),
+            new_len=len(regenerated),
+        )
+        return regenerated
+
+    def _schedule_constraint_audit(
+        self,
+        state: AgentState,
+        violations: list[ConstraintViolation],
+        action: str,
+    ) -> None:
+        """L2/L3 违规审计 — fire-and-forget 异步写库（仿高风险审计）。
+
+        action: post_verify_block | post_verify_regenerate | post_verify_warn |
+                tool_gate_block
+        审计失败仅记日志，不影响问答主流程；无运行中事件循环时跳过。
+        """
+
+        async def _write() -> None:
+            from app.database import async_session_factory
+            from app.models.constraint import ConstraintAuditRecord
+
+            def _uuid(value: Any) -> uuid.UUID | None:
+                try:
+                    return uuid.UUID(str(value)) if value else None
+                except (ValueError, TypeError):
+                    return None
+
+            records = []
+            for v in violations:
+                rule_uuid = _uuid(v.rule_id)
+                if rule_uuid is None:
+                    continue
+                records.append(
+                    ConstraintAuditRecord(
+                        tenant_id=_uuid(state.get("tenant_id")),
+                        session_id=state.get("session_id") or "",
+                        user_id=_uuid(state.get("user_id")),
+                        query=(state.get("query") or "")[:500],
+                        kb_ids=[str(k) for k in (state.get("kb_ids") or [])],
+                        rule_id=rule_uuid,
+                        action=action,
+                        severity=v.severity,
+                        triggers=[f"check:{v.check}"],
+                    )
+                )
+            if not records:
+                return
+            async with async_session_factory() as session:
+                session.add_all(records)
+                await session.commit()
+
+        def _on_done(task: asyncio.Task) -> None:
+            if not task.cancelled() and task.exception():
+                log.warning(
+                    "engine.constraint.audit_task_error",
+                    error=str(task.exception()),
+                )
+
+        try:
+            task = asyncio.create_task(_write())
+        except RuntimeError:
+            log.debug(
+                "engine.constraint.audit_skipped", reason="no running event loop"
+            )
+            return
+        task.add_done_callback(_on_done)
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
 
     async def _reflect_inline(self, state: AgentState) -> None:
         """内联简单反思 — LLMJudgeService 不可用时的降级路径。

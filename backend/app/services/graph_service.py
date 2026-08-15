@@ -1302,13 +1302,16 @@ class GraphService:
                 # 1. Chunk 级遍历（新结构）:
                 #    Entity ← MENTIONS ← DocumentChunk ← HAS_CHUNK → Document
                 #    Entity-to-entity 多跳（undirected），扩展召回覆盖
+                #    检索不变量 I1：d.doc_status = 'published' 在源头过滤半成品
+                #    （节点属性缺失的存量节点不匹配 — fail-closed，通过
+                #    backfill_doc_status() 回填后恢复召回）
                 chunk_query = (
                     "MATCH (n {name: $entity_name}) "
                     f"WHERE {tc('n')} "
                     f"MATCH (n)-[r*0..{max_depth}]-(e) "
                     f"WHERE {tc('e')} "
                     "MATCH (e)<-[:MENTIONS]-(c:DocumentChunk)-[:HAS_CHUNK]-(d:Document) "
-                    f"WHERE {tc('d')} "
+                    f"WHERE {tc('d')} AND d.doc_status = 'published' "
                     "RETURN DISTINCT "
                     "  d.id as doc_id, d.title as title, d.kb_id as kb_id, "
                     "  c.id as chunk_id, c.text as chunk_text, c.title_path as title_path "
@@ -1333,6 +1336,7 @@ class GraphService:
 
                 # 2. Document 级回退（旧结构无 DocumentChunk）:
                 #    Entity ← MENTIONS ← Document
+                #    检索不变量 I1：与 chunk 级遍历同构的 published 过滤
                 if len(results) < max_results:
                     params["limit"] = max_results - len(results)
                     doc_query = (
@@ -1341,7 +1345,7 @@ class GraphService:
                         f"MATCH (n)-[r*0..{max_depth}]-(e) "
                         f"WHERE {tc('e')} "
                         "MATCH (e)<-[:MENTIONS]-(d:Document) "
-                        f"WHERE {tc('d')} "
+                        f"WHERE {tc('d')} AND d.doc_status = 'published' "
                         "AND NOT (d)-[:HAS_CHUNK]->() "
                         "RETURN DISTINCT "
                         "  d.id as doc_id, d.title as title, d.kb_id as kb_id "
@@ -1373,6 +1377,57 @@ class GraphService:
                 continue
 
         return results[:max_results]
+
+    async def sync_doc_status(
+        self,
+        status_map: dict[str, str],
+        batch_size: int = 500,
+    ) -> int:
+        """批量回填 / 同步 Document 节点的 doc_status 属性 — 存量数据迁移入口。
+
+        检索不变量 I1 上线后，find_related_documents_by_entity 的 Cypher
+        以 ``d.doc_status = 'published'`` 过滤（fail-closed）。存量
+        Document 节点缺少该属性 → 不匹配 → 图谱召回升零。本方法将
+        DB 权威状态批量写入节点属性，恢复已发布文档的图谱召回。
+
+        DB→图的映射由调用方完成（graph_service 不持有 DB session）：
+        调用方从 Document 表查 (id, status) 构造 status_map 后调用。
+
+        Args:
+            status_map: {doc_id: status} — DB 真实状态（draft/published/...）。
+            batch_size: 每批写入数量（默认 500）。
+
+        Returns:
+            更新的节点数（属性写入失败返回 0 并记录日志，不抛异常）。
+        """
+        if not status_map or not await self._ensure_connected():
+            return 0
+
+        updated = 0
+        items = [{"doc_id": did, "status": str(status)} for did, status in status_map.items()]
+        for i in range(0, len(items), batch_size):
+            batch = items[i : i + batch_size]
+            try:
+                query = (
+                    "UNWIND $batch AS item "
+                    "MATCH (d:Document {id: item.doc_id}) "
+                    "SET d.doc_status = item.status "
+                    "RETURN count(d) as updated"
+                )
+                async with self._driver.session(database=settings.NEO4J_DATABASE) as session:
+                    result = await session.run(query, batch=batch)
+                    record = await result.single()
+                    if record:
+                        updated += record["updated"]
+            except Exception as exc:
+                logger.error(
+                    "graph.sync_doc_status_error",
+                    batch_size=len(batch),
+                    error=str(exc),
+                )
+        if updated:
+            logger.info("graph.sync_doc_status", updated=updated, total=len(items))
+        return updated
 
     # ------------------------------------------------------------------
     # 批量导入 — 文档入库时批量建图（UNWIND 高效写入）
@@ -1521,11 +1576,12 @@ class GraphService:
         triples: list[tuple[str, str, str]] | None = None,
         kb_id: str | None = None,
         chunks: list[dict[str, Any]] | None = None,
+        doc_status: str = "published",
     ) -> dict[str, int]:
         """单文档批量建图 — 文档入库时的便捷入口。
 
         创建：
-        1. Document 节点（含 doc_id, title, kb_id）
+        1. Document 节点（含 doc_id, title, kb_id, doc_status）
         2. DocumentChunk 节点 + HAS_CHUNK 边（当 chunks 提供时，支持段落级溯源）
         3. 三元组对应的 Concept 节点 + 关系
         4. MENTIONS 关系：Chunk → Concept（有 chunks 时）或 Document → Concept（无 chunks 时）
@@ -1538,6 +1594,9 @@ class GraphService:
             kb_id: 所属知识库 ID。
             chunks: 预分块的 chunk 列表 [{"id": ..., "content": ..., "title_path": ...}, ...]，
                     提供时构建 DocumentChunk 节点并使用段落级 MENTIONS 溯源。
+            doc_status: 文档业务状态（draft/published/...）— 写入节点属性，
+                    供 find_related_documents_by_entity 的 Cypher 过滤
+                    （检索不变量 I1）。默认 published；调用方应传 DB 真实状态。
 
         Returns:
             {"nodes_created": int, "relationships_created": int}。
@@ -1549,6 +1608,7 @@ class GraphService:
                 "title": title,
                 "kb_id": kb_id,
                 "doc_type": "md",
+                "doc_status": doc_status,
             }
         ]
         relationships: list[dict[str, Any]] = []

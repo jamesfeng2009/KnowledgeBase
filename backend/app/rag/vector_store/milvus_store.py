@@ -129,6 +129,8 @@ class MilvusVectorStore(VectorStoreBase):
                 "version_of",
                 # P0-1: 文档状态字段（检索结果可携带，便于上层验证）
                 "doc_status",
+                # P2: 文档角色粗标（normal/constraint_source，运营标注）
+                "doc_role",
             ],
         }
 
@@ -193,6 +195,7 @@ class MilvusVectorStore(VectorStoreBase):
                     updated_at=row.get("doc_updated_at") or None,
                     effective_from=row.get("effective_from") or None,
                     effective_to=row.get("effective_to") or None,
+                    doc_role=row.get("doc_role") or None,
                 )
             )
             if len(results) >= top_k:
@@ -250,6 +253,10 @@ class MilvusVectorStore(VectorStoreBase):
             doc_status = doc_meta.get("doc_status")
             if doc_status is not None:
                 hierarchy_fields["doc_status"] = str(doc_status)
+            # P2: 文档角色粗标（normal/constraint_source，运营标注）
+            doc_role = doc_meta.get("doc_role")
+            if doc_role is not None:
+                hierarchy_fields["doc_role"] = str(doc_role)
 
         # Milvus REST API 接收 data 数组，每项是一条记录
         records: list[dict[str, Any]] = []

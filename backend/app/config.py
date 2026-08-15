@@ -231,6 +231,58 @@ class Settings(BaseSettings):
     # 向量通道权重 — 余弦相似度 × 此值折算加分（对齐 name 命中权重 +10）
     SKILL_VECTOR_WEIGHT: float = 10.0
 
+    # === P1 约束注入通道（ConstraintRouter / ConstraintChannel）===
+    # 确定性注入通道总开关 — 一键回滚（关闭即回到现状，检索链路零改动）。
+    # 设计：constraint-recall-design §6；灰度期建议 observe 模式先跑一周。
+    CONSTRAINT_ENABLED: bool = False
+    # 注入模式：observe（只审计不注入，灰度对比）| enforce（实际注入 prompt）
+    CONSTRAINT_INJECT_MODE: str = "observe"
+    # T4 高风险域默认注入 — kb.category 命中以下任一域时，
+    # 该 KB 全部 active 规则无条件进候选（零 LLM 兜底）
+    CONSTRAINT_HIGH_RISK_DOMAINS: list[str] = ["finance", "legal", "security", "hr"]
+    # warn/confirm 级约束的 token 硬上限（block 级不受此限，全量注入）
+    CONSTRAINT_BUDGET_MAX_TOKENS: int = 600
+
+    # === P2 写入打标（GAP-3 · 两级流水线 + 人审闭环）===
+    # 设计：constraint-recall-design §5。Stage A 正则预筛零 LLM，Stage B
+    # 轻量 LLM 结构化抽取；置信度三分流：≥AUTO 直接 active / 两阈值间
+    # pending_review 人审 / <REVIEW 丢弃。关闭即回到无自动打标现状。
+    CONSTRAINT_CLASSIFIER_ENABLED: bool = True
+    # 轻量抽取模型（models.json 的 model_id）；空则回退 MEMORY_SIDECAR_MODEL
+    # 再回退主模型（沿用 sidecar.py 的解析链，控制打标成本）
+    CONSTRAINT_MODEL: str = ""
+    # ≥ 此值自动生效（status=active）；误判率统计反哺此阈值
+    CONSTRAINT_AUTO_CONFIDENCE: float = 0.9
+    # [REVIEW, AUTO) 进人审队列（pending_review 照常注入，安全优先）；
+    # < REVIEW 丢弃
+    CONSTRAINT_REVIEW_CONFIDENCE: float = 0.6
+    # 单文档最多送 Stage B 的候选段数（防长文档打标成本失控）
+    CONSTRAINT_MAX_CANDIDATE_CHUNKS: int = 30
+
+    # === P3 约束路由 · T1 域分类器（Phase 3 · 五重触发唯一用 LLM 的一重）===
+    # 设计：constraint-recall-design §6.1。T1 只缩小范围、无否决权 —
+    # 多标签输出 domains[] + 置信度；conf < FLOOR 时本路不出任何结论
+    # （既不注入新规则也不排除），由 T4 KB 级默认注入兜底（fail-open）。
+    # 词汇表自适应：范围内规则实际使用的 trigger_domains — 无域标签规则
+    # 的 KB 零 LLM 成本（T1 直接跳过）。
+    # T1 域分类模型（models.json 的 model_id）；空则回退 CONSTRAINT_MODEL
+    # 再回退 MEMORY_SIDECAR_MODEL 再回退主模型
+    CONSTRAINT_DOMAIN_MODEL: str = ""
+    # T1 置信度地板 — 低于此值不出结论（多标签整体置信度，非单域）
+    CONSTRAINT_DOMAIN_CONFIDENCE_FLOOR: float = 0.5
+
+    # === P3 三层消费 · L2 post_verify / L3 tool_gate（Phase 3）===
+    # 设计：constraint-recall-design §8。L1 inject 已在检索阶段完成；
+    # L2 post_verify 挂 _reflect：对最终答案零 LLM 核验 normalized
+    # （forbidden_patterns / required_mentions / amount_limits），
+    # block 级违规 strict prompt 重生成一次，仍违规则拒答（constraint_blocked）；
+    # L3 tool_gate 挂 tool_call 分支：执行前按工具名 / 参数 / 金额上限拦截，
+    # block 阻断 + 审计，confirm 并入 DangerousToolGuard 确认分支走既有
+    # 人工审批流。两开关独立于 CONSTRAINT_ENABLED（通道关则无注入规则，
+    # 此处天然短路），任一关闭即回到现状。
+    CONSTRAINT_VERIFY_ON_GENERATION: bool = True
+    CONSTRAINT_TOOL_GATE_ENABLED: bool = True
+
     # === API 限流 ===
     RATE_LIMIT_ENABLED: bool = True
     RATE_LIMIT_PER_MINUTE: int = 60  # 每分钟请求数上限

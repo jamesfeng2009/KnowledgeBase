@@ -48,6 +48,70 @@ async def _process_intelligence(
         return result
 
 
+async def _backfill_constraints(
+    kb_id: str, tenant_id: str | None = None, batch_size: int = 50
+) -> dict:
+    """异步执行存量文档约束补标 — 逐批处理 KB 内已发布文档。
+
+    只跑 extract_constraints（不重跑摘要/标签，省 LLM 成本）；
+    幂等：重跑时旧规则走版本链 retire（superseded_by 回填）。
+    """
+    from sqlalchemy import select
+
+    from app.database import task_db_session
+    from app.llm.factory import get_llm_provider
+    from app.models.knowledge import Document
+    from app.services.doc_intelligence_service import DocIntelligenceService
+
+    tid = uuid.UUID(tenant_id) if tenant_id else None
+    kb_uuid = uuid.UUID(kb_id)
+    stats = {"kb_id": kb_id, "processed": 0, "docs_with_rules": 0, "failed": 0}
+
+    async with task_db_session() as db:
+        try:
+            llm = get_llm_provider()
+        except Exception as exc:
+            logger.warning("backfill.llm_unavailable", error=str(exc))
+            return {**stats, "status": "skipped", "reason": "llm_unavailable"}
+
+        service = DocIntelligenceService(llm, db, tenant_id=tid)
+        stmt = (
+            select(Document.id)
+            .where(Document.kb_id == kb_uuid, Document.status == "published")
+            .order_by(Document.created_at)
+        )
+        doc_ids = list((await db.execute(stmt)).scalars())
+
+        for start in range(0, len(doc_ids), batch_size):
+            batch = doc_ids[start : start + batch_size]
+            for doc_id in batch:
+                doc = await db.get(Document, doc_id)
+                if doc is None:
+                    continue
+                try:
+                    saved = await service.extract_constraints(doc)
+                    await db.commit()
+                    stats["processed"] += 1
+                    if saved:
+                        stats["docs_with_rules"] += 1
+                except Exception as exc:
+                    await db.rollback()
+                    stats["failed"] += 1
+                    logger.warning(
+                        "backfill.doc_failed",
+                        doc_id=str(doc_id),
+                        error=str(exc)[:200],
+                    )
+            logger.info(
+                "backfill.progress",
+                kb_id=kb_id,
+                processed=stats["processed"],
+                total=len(doc_ids),
+            )
+    stats["status"] = "completed"
+    return stats
+
+
 # 延迟导入 celery_app，避免循环依赖
 try:
     from celery_app import celery_app
@@ -86,6 +150,36 @@ try:
         except Exception as exc:
             logger.error("intelligence.task_failed", doc_id=doc_id, error=str(exc))
             return {"doc_id": doc_id, "status": "failed", "error": str(exc)}
+
+    @celery_app.task(
+        name="tasks.intelligence_tasks.backfill_constraints",
+        **make_celery_retry_kwargs(),
+    )
+    def backfill_constraints(
+        kb_id: str, tenant_id: str | None = None, batch_size: int = 50
+    ) -> dict:
+        """存量文档约束补标（P2 · GAP-3）— 按 KB 批量重跑约束抽取。
+
+        只跑 extract_constraints（不重跑摘要/标签，省 LLM 成本）；
+        Stage A 正则预筛保证无约束语言的文档零 LLM 调用。
+        幂等：重跑时旧规则走版本链 retire（superseded_by 回填，禁 DELETE）。
+
+        Args:
+            kb_id: 知识库 ID（UUID 字符串）。
+            tenant_id: 租户 ID（UUID 字符串），多租户隔离。
+            batch_size: 每批文档数（批间 commit，防长事务）。
+
+        Returns:
+            统计摘要 {processed/docs_with_rules/failed/status}。
+        """
+        logger.info("backfill.task_started", kb_id=kb_id)
+        try:
+            result = _run_async(_backfill_constraints(kb_id, tenant_id, batch_size))
+            logger.info("backfill.task_completed", kb_id=kb_id, result=result)
+            return result
+        except Exception as exc:
+            logger.error("backfill.task_failed", kb_id=kb_id, error=str(exc))
+            return {"kb_id": kb_id, "status": "failed", "error": str(exc)}
 
 except ImportError:
     logger.warning("intelligence.celery_not_available")

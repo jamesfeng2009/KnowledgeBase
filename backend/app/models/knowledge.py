@@ -29,6 +29,11 @@ class KnowledgeBase(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
         UUID(as_uuid=True), ForeignKey("departments.id"), nullable=True, comment="部门 ID"
     )
     tags: Mapped[list | None] = mapped_column(JSONB, nullable=True, comment="标签列表")
+    # KB 领域属性 — T4 高风险域默认注入的判定依据（finance/legal/security/hr）
+    # 存量 KB 为 NULL 不命中 T4，行为不变
+    category: Mapped[str | None] = mapped_column(
+        String(32), nullable=True, comment="领域分类: finance/legal/security/hr/..."
+    )
     # 多租户隔离 — SaaS 模式下按租户隔离知识库，私有部署为 NULL
     tenant_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), nullable=True, comment="租户 ID（多租户隔离）"
@@ -128,6 +133,13 @@ class Document(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     version_of: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("documents.id"), nullable=True,
         comment="版本族主文档 ID（v2 的 version_of 指向 v1）"
+    )
+    # === P2 约束文档粗标（GAP-3）===
+    # normal | constraint_source — 文档级粗标，仅供运营检索/日志标注与
+    # 向量索引透传；不用于必召回（必召回走 constraint_rules，确定域）
+    doc_role: Mapped[str] = mapped_column(
+        String(16), default="normal", nullable=False,
+        comment="文档角色: normal/constraint_source"
     )
     # === P0+P3 外部来源元数据（外部文档实时同步）===
     # 文档首次从外部平台（飞书/Confluence/Notion/Obsidian）拉取入库时记录来源信息，

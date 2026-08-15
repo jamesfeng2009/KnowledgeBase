@@ -19,6 +19,7 @@ from app.api.v1.billing import router as billing_router
 from app.api.v1.chat import router as chat_router
 from app.api.v1.comments import router as comments_router
 from app.api.v1.connectors import router as connectors_router
+from app.api.v1.constraints import router as constraints_router
 from app.api.v1.documents import router as documents_router
 from app.api.v1.experts import router as experts_router
 from app.api.v1.external_credentials import router as external_credentials_router
@@ -84,5 +85,6 @@ api_router.include_router(knowledge_approvals_router)
 api_router.include_router(manage_router)
 api_router.include_router(admin_router)
 api_router.include_router(observability_router)
+api_router.include_router(constraints_router)
 api_router.include_router(tts_router)
 api_router.include_router(finetune_router)

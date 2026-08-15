@@ -18,6 +18,7 @@ from collections.abc import AsyncIterator
 from contextvars import ContextVar
 from typing import Any
 
+from app.config import get_settings
 from app.llm.base import LLMProvider, Message
 from app.rag.citation import CitationExtractor
 from app.rag.chunker import estimate_tokens
@@ -34,6 +35,12 @@ _CONTEXT_CLIFF_THRESHOLD: int = 2500
 _CONTEXT_CLIFF_FALLBACK_TOP_K: int = 3
 # P2: 单个文档内容的最大截断字符数（防止单个 chunk 过长）
 _DOC_MAX_CHARS: int = 1500
+# P1: 约束 severity → prompt 标签（红线段渲染）
+_CONSTRAINT_LABELS: dict[str, str] = {
+    "block": "【红线·必须遵守】",
+    "confirm": "【需人工确认】",
+    "warn": "【提醒】",
+}
 
 
 class Generator:
@@ -83,6 +90,7 @@ class Generator:
         retrieved_docs: list[dict[str, Any]],
         tool_results: list[dict[str, Any]],
         memory_context: str = "",
+        constraint_context: list[dict[str, Any]] | None = None,
     ) -> AsyncIterator[str]:
         """流式生成答案，逐 token yield 供 SSE 消费。
 
@@ -91,6 +99,8 @@ class Generator:
             retrieved_docs: 检索并重排后的文档列表。
             tool_results: MCP 工具调用结果列表。
             memory_context: 记忆引擎提供的上下文（用户偏好、历史事实等）。
+            constraint_context: 约束注入通道输出（ConstraintChannel.fetch，
+                source=constraint）— 确定性红线条款，block 级全量注入。
 
         Yields:
             str: 答案文本片段。
@@ -99,7 +109,12 @@ class Generator:
             Exception: LLM 调用失败时原样抛出（错误不作为答案产出，
                 上层因此不会将错误文本写入缓存或持久化）。
         """
-        system_prompt = self._build_system_prompt(retrieved_docs, tool_results, memory_context)
+        system_prompt = self._build_system_prompt(
+            retrieved_docs,
+            tool_results,
+            memory_context,
+            constraint_context,
+        )
         messages: list[Message] = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": query},
@@ -110,6 +125,7 @@ class Generator:
             query_len=len(query),
             doc_count=len(retrieved_docs),
             tool_count=len(tool_results),
+            constraint_count=len(constraint_context or []),
         )
 
         # P0-Stage2: 重置用量记录
@@ -139,6 +155,7 @@ class Generator:
         retrieved_docs: list[dict[str, Any]],
         tool_results: list[dict[str, Any]],
         memory_context: str,
+        constraint_context: list[dict[str, Any]] | None = None,
     ) -> str:
         """组装系统 prompt — 注入检索上下文、工具结果与引用指引。
 
@@ -147,14 +164,32 @@ class Generator:
         Context Cliff 一刀切（超阈值砍到 Top-3），这里让每个片段按
         {优先级, 相关性, token_cost} 公平竞争预算：高相关片段公平入选，
         低价值片段被预算淘汰，而非简单地按位置裁剪。
+
+        P1 约束先行配额（设计 §7）：block 级约束全量注入、不受预算约束，
+        先占预算后其余来源竞争剩余额度 — 安全优先于效果，约束超量时
+        宁可挤占语义预算也不丢红线。
         """
-        # P0-1: 构建统一 ContextItem 并按预算择优注入
+        # P1: 约束专段先行 — block 全量保留（mandatory），confirm/warn
+        # 在 CONSTRAINT_BUDGET_MAX_TOKENS 内排序截断（build_constraint_items）
+        constraint_items = ContextItemBuilder.build_constraint_items(
+            constraint_context,
+            budget_max_tokens=get_settings().CONSTRAINT_BUDGET_MAX_TOKENS,
+        )
+        constraint_tokens = sum(it.token_cost for it in constraint_items)
+
+        # P0-1: 构建统一 ContextItem 并按剩余预算择优注入
         items = ContextItemBuilder.build(
             retrieved_docs=retrieved_docs,
             tool_results=tool_results,
             memory_context=memory_context,
         )
-        selected = self._allocator.select(items)
+        # 约束已占额度从预算中扣除（约束不足时挤掉最低优先级 document 项）
+        remaining_budget = (
+            None
+            if constraint_tokens == 0
+            else max(1, self._allocator._budget - constraint_tokens)
+        )
+        selected = self._allocator.select(items, budget=remaining_budget)
 
         # 从选中项中还原三类来源（供 prompt 分段组装）
         memory_parts = [it for it in selected if it.kind == "memory"]
@@ -177,6 +212,16 @@ class Generator:
         # 记忆上下文
         if memory_parts:
             parts.append(f"\n=== 用户偏好 / 历史上下文 ===\n{memory_parts[0].content}")
+
+        # P1: 强制约束红线段 — 位于知识库来源之前（注意力前部高地），
+        # 与 think 末尾的宪法提醒（engine._CONSTRAINT_REMINDER）构成
+        # "首尾三明治"双高地；确定性注入，不依赖相似度召回。
+        if constraint_items:
+            parts.append("\n=== 强制约束（红线，必须遵守）===")
+            for item in constraint_items:
+                severity = item.meta.get("severity", "warn")
+                label = _CONSTRAINT_LABELS.get(severity, "提醒")
+                parts.append(f"{label} {item.content}")
 
         # 知识库来源（带编号）— P3: 包含 title_path 上下文锚点 + 时效元数据
         if doc_items:

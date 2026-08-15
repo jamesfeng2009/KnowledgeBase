@@ -15,6 +15,7 @@ from app.models.behavior import UserBehavior
 from app.models.billing import Subscription, Tenant, UsageRecord
 from app.models.checkpoint import AgentCheckpoint
 from app.models.comment import DocumentComment
+from app.models.constraint import ConstraintAuditRecord, ConstraintRule
 from app.models.conversation import Conversation, Message
 from app.models.event_log import AgentEventLog
 from app.models.feedback import Feedback
@@ -65,6 +66,8 @@ __all__ = [
     "Document",
     "DocumentVersion",
     "Conversation",
+    "ConstraintAuditRecord",
+    "ConstraintRule",
     "Message",
     "QaQuestion",
     "QaAnswer",

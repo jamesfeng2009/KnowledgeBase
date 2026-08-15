@@ -135,10 +135,15 @@ class HybridRetriever:
         if not query.strip():
             return []
 
-        # P0-1: 强制注入 doc_status=published 过滤 — 半成品不能被在线检索看到。
-        # 调用方传入的 filters 中的 doc_status 会被覆盖（安全优先于灵活性）。
-        effective_filters: dict[str, Any] = dict(filters) if filters else {}
-        effective_filters["doc_status"] = "published"
+        # 第 1 层防御 · Pushdown — doc_status=published 由 RetrievalInvariants
+        # 统一注入（单一事实来源）：调用方传入的 doc_status 会被覆盖
+        # （安全优先于灵活性）。向量 / 全文 / 跨模态三路共用本子句；
+        # 图谱路由 graph_service.py 的 Cypher WHERE 在源头过滤。
+        from app.rag.retrieval_invariants import RetrievalInvariants
+
+        effective_filters: dict[str, Any] = RetrievalInvariants.pushdown(
+            "hybrid", kb_ids, filters
+        )
 
         # P2-T6: 实体识别 + 同义词扩展（零 LLM，增强 BM25 召回）
         expanded_query = query
@@ -168,8 +173,8 @@ class HybridRetriever:
             cross_modal_results,
             graph_results,
         ) = await asyncio.gather(
-            # P0-1: effective_filters 含 doc_status=published，杜绝半成品泄漏
-            # P0 wiki 层级：filters 透传给三路（图谱路按实体检索，不走层级过滤）
+            # Pushdown: effective_filters 含 doc_status=published（RetrievalInvariants
+            # 注入），杜绝半成品泄漏；三路共用同一子句（图谱路在 Cypher 源头过滤）
             self._vector_search(query, kb_ids, top_k, effective_filters),
             self._fulltext_search(expanded_query, kb_ids, top_k, effective_filters),
             self._cross_modal_search(query, kb_ids, top_k, effective_filters),
@@ -476,6 +481,8 @@ class HybridRetriever:
             # kb_ids 权限过滤：图谱节点现携带 kb_id（find_related_documents_by_entity
             # 已返回），限定了知识库范围时，跳过不在授权列表中的文档，
             # 防止其他知识库的文档标题泄漏进生成上下文。
+            # doc_status 过滤由 graph_service.py 的 Cypher WHERE 在源头执行
+            # （第 1 层），本方法无需重复；Final Gate 复检兜底（第 2 层）。
             if kb_id_set is not None and doc.get("kb_id") not in kb_id_set:
                 continue
 
