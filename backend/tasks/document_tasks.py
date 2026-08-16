@@ -2174,6 +2174,56 @@ async def _publish_document(doc_id: str) -> None:
         await session.commit()
         logger.info("document.published", doc_id=doc_id)
 
+        # P0-1 fix: 同步索引 doc_status（confidential/secret 文档入库时索引
+        # 写入的是预判终态 pending_review，审核通过后必须刷新为 published，
+        # 否则检索端 doc_status=published 过滤仍会排除该文档）
+        try:
+            await _refresh_index_doc_status(doc_id)
+        except Exception as exc:
+            logger.warning(
+                "document.publish_index_refresh_failed", doc_id=doc_id, error=str(exc)
+            )
+
+
+async def _refresh_index_doc_status(doc_id: str) -> None:
+    """刷新两个索引中该文档全部 chunk 的 doc_status → published。
+
+    使用 _update_by_query 按 doc_id 精确匹配，幂等且无需重建向量。
+    """
+    import httpx
+
+    from app.config import get_settings
+
+    settings = get_settings()
+    payload = {
+        "query": {"term": {"doc_id": doc_id}},
+        "script": {"source": "ctx._source.doc_status = 'published'"},
+    }
+    headers = {"Content-Type": "application/json"}
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        for index in ("ekb_documents", "ekb_knn_vectors"):
+            try:
+                resp = await client.post(
+                    f"{settings.OPENSEARCH_URL}/{index}/_update_by_query?refresh=true",
+                    json=payload,
+                    headers=headers,
+                )
+                resp.raise_for_status()
+                updated = resp.json().get("updated", 0)
+                logger.info(
+                    "document.index_status_refreshed",
+                    doc_id=doc_id,
+                    index=index,
+                    updated=updated,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "document.index_status_refresh_failed",
+                    doc_id=doc_id,
+                    index=index,
+                    error=str(exc)[:200],
+                )
+
 
 async def _build_indexes(
     doc_id: str,
@@ -2200,7 +2250,7 @@ async def _build_indexes(
     """
     # 构建全文索引（OpenSearch）— 传入 Chunk 元数据
     try:
-        await _build_opensearch_index(doc_id, chunk_objects, kb_id=kb_id)
+        await _build_opensearch_index(doc_id, chunk_objects, kb_id=kb_id, doc=doc)
     except Exception as exc:
         logger.warning("opensearch.index_failed", doc_id=doc_id, error=str(exc))
 
@@ -2274,10 +2324,19 @@ async def _build_knowledge_graph(
         pass  # LLM 不可用时仅用规则提取
 
     # 方向二：从 chunk_objects 提取三元组（计算复用）
+    # Bug fix: 传文档元数据构建 Document 节点（HAS_CHUNK 端点）+ doc_status
+    # 预判终态与 _build_doc_meta 同源（internal → published，需审核 → pending_review）
+    classification = (getattr(doc, "classification", None) or "internal") if doc else "internal"
+    graph_doc_status = (
+        "pending_review" if classification in _REQUIRES_REVIEW else "published"
+    )
     triples = await service.extract_triples_from_chunks(
         chunks=chunk_objects,
         doc_id=doc_id,
         llm_provider=llm_provider,
+        doc_title=(getattr(doc, "title", "") or "") if doc else "",
+        kb_id=str(doc.kb_id) if doc is not None and doc.kb_id else None,
+        doc_status=graph_doc_status,
     )
 
     # 失效推荐缓存（文档图谱已更新）
@@ -2313,7 +2372,10 @@ async def _build_knowledge_graph(
 
 
 async def _build_opensearch_index(
-    doc_id: str, chunk_objects: list[Chunk], kb_id: str | None = None
+    doc_id: str,
+    chunk_objects: list[Chunk],
+    kb_id: str | None = None,
+    doc: Any = None,
 ) -> None:
     """构建 OpenSearch 全文索引 — 延迟导入。
 
@@ -2321,6 +2383,8 @@ async def _build_opensearch_index(
     检索时按内容类型过滤和标题路径展示。
 
     P2-Step1: 写入 kb_id 字段，与检索端 kb_id 过滤对齐。
+    P0-1 fix: 写入 doc_status 字段（按密级预判终态，与 _build_doc_meta
+    同源），否则检索端 doc_status=published 过滤将排除全部文档。
 
     库未安装或服务不可用时优雅降级。
     """
@@ -2330,6 +2394,10 @@ async def _build_opensearch_index(
 
         settings = get_settings()
         client = AsyncOpenSearch(hosts=[settings.OPENSEARCH_URL])
+
+        # P0-1 fix: 与向量索引同源的预判终态（索引写入早于状态翻转）
+        classification = (getattr(doc, "classification", None) or "internal") if doc else "internal"
+        doc_status = "pending_review" if classification in _REQUIRES_REVIEW else "published"
 
         index_name = "ekb_documents"
         # 确保索引存在
@@ -2348,6 +2416,7 @@ async def _build_opensearch_index(
                             "content_type": {"type": "keyword"},
                             "chunk_strategy": {"type": "keyword"},
                             "token_count": {"type": "integer"},
+                            "doc_status": {"type": "keyword"},
                         }
                     }
                 },
@@ -2373,6 +2442,7 @@ async def _build_opensearch_index(
                     "content_type": chunk.content_type,
                     "chunk_strategy": chunk.chunk_strategy,
                     "token_count": chunk.token_count,
+                    "doc_status": doc_status,
                 }
                 ndjson_lines.append(json.dumps(doc_body, ensure_ascii=False))
             response = await client.bulk(body="\n".join(ndjson_lines) + "\n")
@@ -2421,10 +2491,15 @@ def _build_doc_meta(doc: Any) -> dict[str, Any] | None:
         meta["depth"] = int(doc.depth)
     if getattr(doc, "version_of", None):
         meta["version_of"] = str(doc.version_of)
-    # P0-1: 文档状态写入索引，供检索端按 doc_status=published 过滤
-    doc_status = getattr(doc, "status", None)
-    if doc_status is not None:
-        meta["doc_status"] = str(doc_status)
+    # P0-1: 文档状态写入索引，供检索端按 doc_status=published 过滤。
+    # 时序修复：索引写入发生在 doc.status 翻转为 published/pending_review
+    # 之前（此时仍为 processing），若直接读 doc.status，检索端的
+    # doc_status=published 过滤将永久排除该文档（发布路径不重建索引）。
+    # 因此按密级预判终态：需审核 → pending_review，否则 → published。
+    classification = getattr(doc, "classification", None) or "internal"
+    meta["doc_status"] = (
+        "pending_review" if classification in _REQUIRES_REVIEW else "published"
+    )
     # P2: 文档角色粗标（normal/constraint_source）— 运营检索与日志标注用，
     # 不用于必召回（必召回走 constraint_rules，确定域）
     doc_role = getattr(doc, "doc_role", None)

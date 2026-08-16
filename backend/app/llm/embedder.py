@@ -130,6 +130,9 @@ class DashScopeEmbedder(EmbeddingProvider):
         # 动态读取维度配置（text-embedding-v3=1024, v2=1536）
         self.dim = settings.DASHSCOPE_EMBED_DIM
 
+    # DashScope text-embedding 系列单请求批量上限（超出返回 400 batch size invalid）
+    _BATCH_LIMIT: int = 10
+
     @circuit_call("embedder_dashscope")
     async def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:
@@ -138,10 +141,21 @@ class DashScopeEmbedder(EmbeddingProvider):
         t0 = time.monotonic()
         log.info("embedder.dashscope.start", text_count=len(texts))
         try:
-            resp = await self.client.embeddings.create(input=texts, model=self.model)
+            vectors: list[list[float]] = []
+            for i in range(0, len(texts), self._BATCH_LIMIT):
+                batch = texts[i : i + self._BATCH_LIMIT]
+                resp = await self.client.embeddings.create(
+                    input=batch, model=self.model
+                )
+                vectors.extend(item.embedding for item in resp.data)
             elapsed_ms = round((time.monotonic() - t0) * 1000, 2)
-            log.info("embedder.dashscope.success", dim=self.dim, latency_ms=elapsed_ms)
-            return [item.embedding for item in resp.data]
+            log.info(
+                "embedder.dashscope.success",
+                dim=self.dim,
+                latency_ms=elapsed_ms,
+                batches=(len(texts) + self._BATCH_LIMIT - 1) // self._BATCH_LIMIT,
+            )
+            return vectors
         except Exception as exc:
             elapsed_ms = round((time.monotonic() - t0) * 1000, 2)
             log.warning("embedder.dashscope.error", error=str(exc), latency_ms=elapsed_ms)

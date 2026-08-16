@@ -1,0 +1,16 @@
+{"query": "容器编排和普通部署有什么区别？", "expected_doc_ids": ["b926449b-9134-4f8e-b54a-1d0bc6cbc7ee"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_hard", "Docker Compose"]}
+{"query": "怎么进行容器编排部署的步骤？", "expected_doc_ids": ["b926449b-9134-4f8e-b54a-1d0bc6cbc7ee"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_hard", "Docker Compose"]}
+{"query": "K8s/集群调度怎么影响系统运行效率？", "expected_doc_ids": ["eac7cf9b-c31d-4c17-a00e-1c075250c734"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_hard", "Kubernetes"]}
+{"query": "K8s/集群调度能不能自动处理服务器故障？", "expected_doc_ids": ["eac7cf9b-c31d-4c17-a00e-1c075250c734"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_hard", "Kubernetes"]}
+{"query": "可视化面板能不能显示实时数据？", "expected_doc_ids": ["eac7cf9b-c31d-4c17-a00e-1c075250c734"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_hard", "Grafana"]}
+{"query": "怎么在可视化面板里添加新的图表？", "expected_doc_ids": ["eac7cf9b-c31d-4c17-a00e-1c075250c734"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_hard", "Grafana"]}
+{"query": "消息中间件和消息管道有什么区别啊？", "expected_doc_ids": ["eac7cf9b-c31d-4c17-a00e-1c075250c734"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_hard", "Kafka"]}
+{"query": "我们系统里用的消息中间件/消息管道是哪个呢？", "expected_doc_ids": ["eac7cf9b-c31d-4c17-a00e-1c075250c734"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_hard", "Kafka"]}
+{"query": "构建发版和自动发版有什么区别吗？", "expected_doc_ids": ["94a11e25-7f19-413a-94af-a3f8aab1fe49"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_hard", "CI/CD 流水线"]}
+{"query": "怎么操作才能实现自动发版？", "expected_doc_ids": ["94a11e25-7f19-413a-94af-a3f8aab1fe49"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_hard", "CI/CD 流水线"]}
+{"query": "大模型在实际应用中会遇到哪些常见问题？", "expected_doc_ids": ["4deb5d73-1d79-4a59-853d-ff8fbb4e9386"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_hard", "LLM"]}
+{"query": "生成式模型是怎么理解用户输入的指令的？", "expected_doc_ids": ["4deb5d73-1d79-4a59-853d-ff8fbb4e9386"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_hard", "LLM"]}
+{"query": "迁库的时候会不会把原来的库弄坏啊？", "expected_doc_ids": ["d344ac72-2c82-457c-9709-3b383bde4bce"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_hard", "数据迁移"]}
+{"query": "搬库需要停机吗？", "expected_doc_ids": ["d344ac72-2c82-457c-9709-3b383bde4bce"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_hard", "数据迁移"]}
+{"query": "值班告警的时候怎么处理？", "expected_doc_ids": ["94a11e25-7f19-413a-94af-a3f8aab1fe49"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_hard", "监控告警"]}
+{"query": "值班告警是不是必须有人看着？", "expected_doc_ids": ["94a11e25-7f19-413a-94af-a3f8aab1fe49"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_hard", "监控告警"]}

@@ -813,6 +813,9 @@ class GraphService:
         use_rules: bool = True,
         use_llm: bool = True,
         llm_fallback_threshold: int = 3,
+        doc_title: str = "",
+        kb_id: str | None = None,
+        doc_status: str = "published",
     ) -> list[tuple[str, str, str]]:
         """从已分块的 Chunk 对象列表中提取三元组（计算复用优化）。
 
@@ -885,7 +888,12 @@ class GraphService:
         # P2-T3: 使用 EntityRegistry 归一化实体类型和关系类型
         # 溯源: Document → HAS_CHUNK → DocumentChunk → MENTIONS → KnowledgeEntity
         nodes, relationships = self._build_normalized_graph_data(
-            all_triples, doc_id, chunk_data=chunk_data
+            all_triples,
+            doc_id,
+            chunk_data=chunk_data,
+            doc_title=doc_title,
+            kb_id=kb_id,
+            doc_status=doc_status,
         )
 
         await self.batch_import_graph(nodes, relationships)
@@ -1011,6 +1019,9 @@ class GraphService:
         triples: list[tuple[str, str, str]],
         doc_id: str,
         chunk_data: list[tuple[str, str, str, list[tuple[str, str, str]]]] | None = None,
+        doc_title: str = "",
+        kb_id: str | None = None,
+        doc_status: str = "published",
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """构建归一化后的图谱数据 — 使用标准实体类型和关系类型。
 
@@ -1022,6 +1033,11 @@ class GraphService:
         - 节点属性增加 tenant_id（补齐图谱层租户隔离）
 
         溯源链路: Document → HAS_CHUNK → DocumentChunk → MENTIONS → KnowledgeEntity
+
+        Bug fix（图谱第四路召回全灭）: 必须创建 Document 节点 —
+        batch_import_graph 的关系写入用 MATCH（非 MERGE）匹配端点节点，
+        Document 节点缺失时 HAS_CHUNK 边全部静默丢弃，
+        find_related_documents_by_entity 的 Cypher 永远返回空。
         - 当 chunk_data 可用时，创建 DocumentChunk 节点和 HAS_CHUNK 边，
           MENTIONS 边从 Chunk 指向 Entity（支持段落级溯源）。
         - 当 chunk_data 为 None 时（如 API 手动触发），回退到 Document → Entity MENTIONS。
@@ -1044,6 +1060,18 @@ class GraphService:
         nodes: list[dict[str, Any]] = []
         relationships: list[dict[str, Any]] = []
         tenant_id_str = str(self._tenant_id) if self._tenant_id else None
+
+        # Bug fix: 创建 Document 节点（HAS_CHUNK 边的端点，缺失则边全部被丢弃）
+        doc_node: dict[str, Any] = {
+            "label": "Document",
+            "id": doc_id,
+            "title": doc_title,
+            "kb_id": kb_id,
+            "doc_status": doc_status,
+        }
+        if tenant_id_str:
+            doc_node["tenant_id"] = tenant_id_str
+        nodes.append(doc_node)
 
         # 构建 DocumentChunk 节点 + Document → Chunk HAS_CHUNK 边
         chunk_node_ids: set[str] = set()
@@ -1305,6 +1333,8 @@ class GraphService:
                 #    检索不变量 I1：d.doc_status = 'published' 在源头过滤半成品
                 #    （节点属性缺失的存量节点不匹配 — fail-closed，通过
                 #    backfill_doc_status() 回填后恢复召回）
+                #    相关性排序：按跳数升序（直接提及的文档优先于二跳邻居），
+                #    否则枢纽概念（如 README）会占满 LIMIT 挤掉目标文档。
                 chunk_query = (
                     "MATCH (n {name: $entity_name}) "
                     f"WHERE {tc('n')} "
@@ -1312,9 +1342,14 @@ class GraphService:
                     f"WHERE {tc('e')} "
                     "MATCH (e)<-[:MENTIONS]-(c:DocumentChunk)-[:HAS_CHUNK]-(d:Document) "
                     f"WHERE {tc('d')} AND d.doc_status = 'published' "
-                    "RETURN DISTINCT "
+                    "WITH d, c, size(r) AS hops "
+                    "ORDER BY hops ASC, d.id ASC, c.id ASC "
+                    "WITH d, collect(c)[0] AS c1, min(hops) AS best_hops "
+                    "ORDER BY best_hops ASC, d.id ASC "
+                    "RETURN "
                     "  d.id as doc_id, d.title as title, d.kb_id as kb_id, "
-                    "  c.id as chunk_id, c.text as chunk_text, c.title_path as title_path "
+                    "  c1.id as chunk_id, c1.text as chunk_text, c1.title_path as title_path, "
+                    "  best_hops as hops "
                     "LIMIT $limit"
                 )
                 async with self._driver.session(database=settings.NEO4J_DATABASE) as session:
@@ -1332,6 +1367,7 @@ class GraphService:
                             "chunk_id": record.get("chunk_id"),
                             "chunk_text": record.get("chunk_text"),
                             "title_path": record.get("title_path"),
+                            "hops": record.get("hops", max_depth),
                         })
 
                 # 2. Document 级回退（旧结构无 DocumentChunk）:

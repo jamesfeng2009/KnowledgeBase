@@ -1,0 +1,38 @@
+{"query": "初始化数据库的时候需要修改哪些配置项？", "expected_doc_ids": ["389fbf31-1908-4958-ab41-6acc3038cdde"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_ablation", "01_README快速开始指南"]}
+{"query": "EnterpriseKB 主要适合哪些角色使用，各自关注点是什么？", "expected_doc_ids": ["389fbf31-1908-4958-ab41-6acc3038cdde"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_ablation", "01_README快速开始指南"]}
+{"query": "混合检索接口的参数中，filters 是怎么使用的？能举个例子吗？", "expected_doc_ids": ["ec6a2e10-9fac-48f2-a3f7-28af825fcf87"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_ablation", "02_API接口文档检索服务"]}
+{"query": "这个接口文档里提到的鉴权方式有哪些区别？", "expected_doc_ids": ["ec6a2e10-9fac-48f2-a3f7-28af825fcf87"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_ablation", "02_API接口文档检索服务"]}
+{"query": "部署时需要哪些具体的环境变量？", "expected_doc_ids": ["b926449b-9134-4f8e-b54a-1d0bc6cbc7ee"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_ablation", "03_部署指南DockerCompose"]}
+{"query": "Docker Compose 部署 EnterpriseKB 需要哪些主要的服务组件？", "expected_doc_ids": ["b926449b-9134-4f8e-b54a-1d0bc6cbc7ee"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_ablation", "03_部署指南DockerCompose"]}
+{"query": "这个插件的配置文件是放在哪里的？", "expected_doc_ids": ["c8514008-a605-41d9-aa11-69a8da19fa66"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_ablation", "04_开发者指南插件开发"]}
+{"query": "插件开发中提到的钩子点具体有什么作用？", "expected_doc_ids": ["c8514008-a605-41d9-aa11-69a8da19fa66"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_ablation", "04_开发者指南插件开发"]}
+{"query": "文档入库流程中，Worker任务具体是通过什么方式投递的？", "expected_doc_ids": ["eac7cf9b-c31d-4c17-a00e-1c075250c734"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_ablation", "05_架构说明文档"]}
+{"query": "系统架构中提到的四层结构分别承担了哪些主要功能？", "expected_doc_ids": ["eac7cf9b-c31d-4c17-a00e-1c075250c734"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_ablation", "05_架构说明文档"]}
+{"query": "租户表里的status字段默认值是什么？", "expected_doc_ids": ["2c7c769f-0472-4b49-a38b-b900c921ae35"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_ablation", "06_数据库设计文档"]}
+{"query": "文档表和文档分块表之间是怎么关联的？", "expected_doc_ids": ["2c7c769f-0472-4b49-a38b-b900c921ae35"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_ablation", "06_数据库设计文档"]}
+{"query": "服务监听的端口默认是多少？", "expected_doc_ids": ["f970d348-0710-4b6c-b0d9-1aa0dc6adb2d"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_ablation", "07_配置参数说明"]}
+{"query": "配置参数的加载顺序是怎样的？", "expected_doc_ids": ["f970d348-0710-4b6c-b0d9-1aa0dc6adb2d"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_ablation", "07_配置参数说明"]}
+{"query": "安装时提示权限不足该怎么解决？", "expected_doc_ids": ["0a0f824a-673e-4460-863f-fe62690bc4bd"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_ablation", "08_常见问题FAQ"]}
+{"query": "如何切换多租户模式？", "expected_doc_ids": ["0a0f824a-673e-4460-863f-fe62690bc4bd"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_ablation", "08_常见问题FAQ"]}
+{"query": "POST /retrieve 接口的响应字段改成了 items，那原来的 results 字段还能用吗？", "expected_doc_ids": ["543d1a0d-f733-4772-9b83-0f5cd77ae9d2"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_ablation", "09_变更日志CHANGELOG"]}
+{"query": "2.3.0 版本中提到的破坏性变更有哪些，需要特别注意什么？", "expected_doc_ids": ["543d1a0d-f733-4772-9b83-0f5cd77ae9d2"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_ablation", "09_变更日志CHANGELOG"]}
+{"query": "提交代码前需要运行哪些检查？", "expected_doc_ids": ["63bbfdc2-4f04-45ab-8da7-e42aba9c95c2"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_ablation", "10_贡献指南CONTRIBUTING"]}
+{"query": "贡献流程中提到的 Code Review 是什么？", "expected_doc_ids": ["63bbfdc2-4f04-45ab-8da7-e42aba9c95c2"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_ablation", "10_贡献指南CONTRIBUTING"]}
+{"query": "单元测试占70%，具体用什么工具？", "expected_doc_ids": ["21e4718a-fb8b-4cac-901d-005b42c73dbb"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_ablation", "11_测试策略文档"]}
+{"query": "测试金字塔的结构是怎样的，各层级的作用是什么？", "expected_doc_ids": ["21e4718a-fb8b-4cac-901d-005b42c73dbb"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_ablation", "11_测试策略文档"]}
+{"query": "ekb_api_down 告警的触发条件具体是什么？", "expected_doc_ids": ["7ec09486-de2b-4675-9132-835ad78cf9f4"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_ablation", "12_监控告警配置"]}
+{"query": "监控系统中有哪些主要的组件和它们的作用分别是什么？", "expected_doc_ids": ["7ec09486-de2b-4675-9132-835ad78cf9f4"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_ablation", "12_监控告警配置"]}
+{"query": "密码策略中要求的密码长度和特殊字符是哪些？", "expected_doc_ids": ["5f82870f-e8ec-4836-b0f3-bcbcc07b13ff"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_ablation", "13_安全加固指南"]}
+{"query": "安全加固指南里提到的权限设置主要有哪些方面？", "expected_doc_ids": ["5f82870f-e8ec-4836-b0f3-bcbcc07b13ff"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_ablation", "13_安全加固指南"]}
+{"query": "环境间迁移需要停机吗？具体怎么评估停机时间？", "expected_doc_ids": ["d344ac72-2c82-457c-9709-3b383bde4bce"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_ablation", "14_数据迁移手册"]}
+{"query": "版本升级迁移和存储迁移有什么区别，各自需要注意什么？", "expected_doc_ids": ["d344ac72-2c82-457c-9709-3b383bde4bce"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_ablation", "14_数据迁移手册"]}
+{"query": "在中规模数据下，向量+关键词混合检索的P95延迟是多少？", "expected_doc_ids": ["6677882c-5d0c-4cbe-990a-72c1aaa12e21"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_ablation", "15_性能基准测试报告"]}
+{"query": "根据测试结果，系统在什么并发数范围内可以保持稳定性能？", "expected_doc_ids": ["6677882c-5d0c-4cbe-990a-72c1aaa12e21"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_ablation", "15_性能基准测试报告"]}
+{"query": "如何设置会话上下文来隔离不同租户的数据？", "expected_doc_ids": ["cf5cbae5-f6a9-43ea-bd78-8bae6b1c0e0b"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_ablation", "17_多租户架构说明"]}
+{"query": "EnterpriseKB 为什么选择共享数据库加行级隔离的多租户模型？", "expected_doc_ids": ["cf5cbae5-f6a9-43ea-bd78-8bae6b1c0e0b"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_ablation", "17_多租户架构说明"]}
+{"query": "HNSW 索引的 m 参数调大一点会不会影响查询速度？", "expected_doc_ids": ["effc226a-67c5-4efa-8101-cf5224b10ae5"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_ablation", "18_向量索引优化指南"]}
+{"query": "根据文档，怎么选择适合我们数据规模的索引和参数配置？", "expected_doc_ids": ["effc226a-67c5-4efa-8101-cf5224b10ae5"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_ablation", "18_向量索引优化指南"]}
+{"query": "这个模板里的{context}具体是怎么拼接的？", "expected_doc_ids": ["4deb5d73-1d79-4a59-853d-ff8fbb4e9386"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_ablation", "19_LLM提示词工程手册"]}
+{"query": "根据手册内容，Prompt 结构设计的主要目的是什么？", "expected_doc_ids": ["4deb5d73-1d79-4a59-853d-ff8fbb4e9386"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_ablation", "19_LLM提示词工程手册"]}
+{"query": "服务不可用时，具体应该怎么做排查？", "expected_doc_ids": ["5777df8c-f324-48f4-8a99-823f2397eab1"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_ablation", "20_故障排查手册"]}
+{"query": "根据手册内容，故障分类主要分为哪些类型？", "expected_doc_ids": ["5777df8c-f324-48f4-8a99-823f2397eab1"], "kb_ids": ["946bf199-eb91-4276-8a45-cdcc74cf65e2"], "tags": ["kg_ablation", "20_故障排查手册"]}

@@ -490,7 +490,13 @@ class HybridRetriever:
                 "doc_id": doc_id,
                 "chunk_id": doc.get("chunk_id") or f"graph_{doc_id}",
                 "content": doc.get("chunk_text") or doc.get("title", ""),
-                "score": settings.GRAPH_SEARCH_SCORE,
+                # 按跳数衰减评分（图检索标准做法）：直接提及（0 跳）置信度最高，
+                # 随跳数递减，下限为 GRAPH_SEARCH_SCORE。原固定 0.5 使实体直连
+                # 文档在混合排序中被向量路归一化分数系统性压出 Top5。
+                "score": max(
+                    settings.GRAPH_SEARCH_SCORE,
+                    0.9 - 0.2 * int(doc.get("hops", 2)),
+                ),
                 "source": "graph",
                 "kb_id": doc.get("kb_id"),
                 "title": doc.get("title", ""),
