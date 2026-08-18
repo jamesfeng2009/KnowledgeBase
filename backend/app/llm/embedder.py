@@ -144,8 +144,10 @@ class DashScopeEmbedder(EmbeddingProvider):
             vectors: list[list[float]] = []
             for i in range(0, len(texts), self._BATCH_LIMIT):
                 batch = texts[i : i + self._BATCH_LIMIT]
+                # dimensions 必须显式传：text-embedding-v3 API 默认 1024，
+                # 与 ORM Vector(1536) 不一致时 INSERT 直接失败
                 resp = await self.client.embeddings.create(
-                    input=batch, model=self.model
+                    input=batch, model=self.model, dimensions=self.dim
                 )
                 vectors.extend(item.embedding for item in resp.data)
             elapsed_ms = round((time.monotonic() - t0) * 1000, 2)

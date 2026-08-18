@@ -34,13 +34,18 @@ _EVERGREEN_CATEGORIES = frozenset({"preference", "fact", "entity"})
 
 
 def _as_datetime(value: Any) -> datetime | None:
-    """容错转换时间值（datetime / ISO 字符串 / None）。"""
+    """容错转换时间值（datetime / ISO 字符串 / None），统一为 UTC naive。
+
+    TIMESTAMPTZ 列经 asyncpg 读回是 tz-aware（UTC），与调用方的
+    datetime.utcnow()（naive）直接相减会抛 TypeError — 统一剥离 tzinfo。
+    """
     if value is None:
         return None
     if isinstance(value, datetime):
-        return value
+        return value.replace(tzinfo=None) if value.tzinfo else value
     try:
-        return datetime.fromisoformat(str(value))
+        parsed = datetime.fromisoformat(str(value))
+        return parsed.replace(tzinfo=None) if parsed.tzinfo else parsed
     except (TypeError, ValueError):
         return None
 

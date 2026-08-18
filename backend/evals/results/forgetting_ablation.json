@@ -1,0 +1,992 @@
+{
+  "experiment1": {
+    "control": {
+      "n": 50,
+      "dep_inject_rate": 1.0,
+      "dep_inject_ci": [
+        0.9286499658256813,
+        1.0
+      ],
+      "bad_rate": 0.26,
+      "bad_rate_ci": [
+        0.15871379651367384,
+        0.3955342198899992
+      ],
+      "answer_correct_rate": 0.78
+    },
+    "treatment": {
+      "n": 50,
+      "dep_inject_rate": 0.04,
+      "dep_inject_ci": [
+        0.011038652660826577,
+        0.13460337877954667
+      ],
+      "bad_rate": 0.04,
+      "bad_rate_ci": [
+        0.011038652660826577,
+        0.13460337877954667
+      ],
+      "answer_correct_rate": 0.96
+    },
+    "mcnemar": {
+      "b_control_bad_treatment_good": 12,
+      "c_control_good_treatment_bad": 1,
+      "chi2": 7.6923076923076925,
+      "significant_at_0.05": true
+    }
+  },
+  "experiment1_rows": {
+    "control": [
+      {
+        "scenario": "手机换号",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "分机变更",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "传真迁移",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": false,
+        "cites_deprecated": true,
+        "bad": true
+      },
+      {
+        "scenario": "热线变更",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "客服更换",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "办公搬迁",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "工位调整",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "会议室变更",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "档案室搬迁",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": true,
+        "bad": true
+      },
+      {
+        "scenario": "仓库迁移",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "上级变更",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "审批人变更",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "HR对接变更",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "IT对接变更",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": false,
+        "cites_deprecated": true,
+        "bad": true
+      },
+      {
+        "scenario": "接口人变更",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "代码仓库迁移",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "任务管理迁移",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "文档平台迁移",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "监控平台切换",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "CI系统迁移",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": false,
+        "cites_deprecated": true,
+        "bad": true
+      },
+      {
+        "scenario": "云供应商更换",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "短信通道切换",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": false,
+        "cites_deprecated": true,
+        "bad": true
+      },
+      {
+        "scenario": "快递合作更换",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "耗材供应商更换",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "差旅平台更换",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "周会改期",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "上班时间调整",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "报销截止变更",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": false,
+        "cites_deprecated": true,
+        "bad": true
+      },
+      {
+        "scenario": "值班调整",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "团建改期",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": false,
+        "cites_deprecated": true,
+        "bad": true
+      },
+      {
+        "scenario": "偏好详细到简洁",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": false,
+        "cites_deprecated": true,
+        "bad": true
+      },
+      {
+        "scenario": "语言切换",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "沟通方式变更",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "语气偏好变更",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "通知方式变更",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": false,
+        "cites_deprecated": true,
+        "bad": true
+      },
+      {
+        "scenario": "套餐降级",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "车位制度变更",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": false,
+        "cites_deprecated": true,
+        "bad": true
+      },
+      {
+        "scenario": "私教福利取消",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": true,
+        "bad": true
+      },
+      {
+        "scenario": "餐补下调",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "授权降级",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "wiki迁移",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "OA升级",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "VPN迁移",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "测试环境合并",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": false,
+        "cites_deprecated": false,
+        "bad": true
+      },
+      {
+        "scenario": "报表迁移",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "区域调整",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": false,
+        "cites_deprecated": true,
+        "bad": true
+      },
+      {
+        "scenario": "产品线转岗",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "客户群调整",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "项目组调动",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "团队重组",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      }
+    ],
+    "treatment": [
+      {
+        "scenario": "手机换号",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "分机变更",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "传真迁移",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "热线变更",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "客服更换",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "办公搬迁",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "工位调整",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "会议室变更",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "档案室搬迁",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "仓库迁移",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "上级变更",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "审批人变更",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "HR对接变更",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "IT对接变更",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "接口人变更",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "代码仓库迁移",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "任务管理迁移",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "文档平台迁移",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "监控平台切换",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "CI系统迁移",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": false,
+        "cites_deprecated": true,
+        "bad": true
+      },
+      {
+        "scenario": "云供应商更换",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "短信通道切换",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "快递合作更换",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "耗材供应商更换",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "差旅平台更换",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "周会改期",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "上班时间调整",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "报销截止变更",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "值班调整",
+        "dep_in_context": true,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "团建改期",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "偏好详细到简洁",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "语言切换",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "沟通方式变更",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "语气偏好变更",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "通知方式变更",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "套餐降级",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": false,
+        "cites_deprecated": false,
+        "bad": true
+      },
+      {
+        "scenario": "车位制度变更",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "私教福利取消",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "餐补下调",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "授权降级",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "wiki迁移",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "OA升级",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "VPN迁移",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "测试环境合并",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "报表迁移",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "区域调整",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "产品线转岗",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "客户群调整",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "项目组调动",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      },
+      {
+        "scenario": "团队重组",
+        "dep_in_context": false,
+        "new_in_context": true,
+        "answer_correct": true,
+        "cites_deprecated": false,
+        "bad": false
+      }
+    ]
+  },
+  "experiment2": {
+    "cold_avg_chars": {
+      "control": 116.375,
+      "treatment": 94.95
+    },
+    "cold_compression": 0.1841031149301826,
+    "cold_hit_rate": {
+      "control": 1.0,
+      "treatment": 0.0
+    },
+    "hot_retention": {
+      "control": 1.0,
+      "treatment": 0.7
+    },
+    "evergreen_retention": {
+      "control": 1.0,
+      "treatment": 1.0
+    },
+    "sample_sizes": {
+      "cold": 40,
+      "hot": 20,
+      "evergreen": 20
+    }
+  },
+  "experiment3": {
+    "strong_hit_revived": true,
+    "weak_hit_stays_out": true
+  },
+  "experiment4": {
+    "pairs": [
+      {
+        "name": "双区域职责",
+        "reason": "llm_unrelated",
+        "killed": false
+      },
+      {
+        "name": "偏好双维度",
+        "reason": "llm_unrelated",
+        "killed": false
+      },
+      {
+        "name": "混合办公",
+        "reason": "llm_unrelated",
+        "killed": false
+      },
+      {
+        "name": "并行项目",
+        "reason": "llm_unrelated",
+        "killed": false
+      },
+      {
+        "name": "报销双材料",
+        "reason": "llm_unrelated",
+        "killed": false
+      },
+      {
+        "name": "技能拓展",
+        "reason": "no_similar_candidates",
+        "killed": false
+      },
+      {
+        "name": "门禁扩展",
+        "reason": "llm_unrelated",
+        "killed": false
+      },
+      {
+        "name": "双代号项目",
+        "reason": "llm_unrelated",
+        "killed": false
+      },
+      {
+        "name": "双设备",
+        "reason": "llm_unrelated",
+        "killed": false
+      },
+      {
+        "name": "双客户群",
+        "reason": "llm_unrelated",
+        "killed": false
+      },
+      {
+        "name": "双汇报线",
+        "reason": "llm_unrelated",
+        "killed": false
+      },
+      {
+        "name": "双会议场地",
+        "reason": "no_similar_candidates",
+        "killed": false
+      },
+      {
+        "name": "双通勤方式",
+        "reason": "llm_unrelated",
+        "killed": false
+      },
+      {
+        "name": "双城市",
+        "reason": "llm_unrelated",
+        "killed": false
+      },
+      {
+        "name": "发票细节",
+        "reason": "llm_unrelated",
+        "killed": false
+      },
+      {
+        "name": "周会细节",
+        "reason": "llm_unrelated",
+        "killed": false
+      },
+      {
+        "name": "提交规范",
+        "reason": "no_similar_candidates",
+        "killed": false
+      },
+      {
+        "name": "到岗习惯",
+        "reason": "llm_unrelated",
+        "killed": false
+      },
+      {
+        "name": "偏好例外",
+        "reason": "llm_unrelated",
+        "killed": false
+      },
+      {
+        "name": "账号细节",
+        "reason": "llm_unrelated",
+        "killed": false
+      },
+      {
+        "name": "模块细节",
+        "reason": "llm_unrelated",
+        "killed": false
+      }
+    ],
+    "wrongful_supersede_rate": 0.0,
+    "rate_ci": [
+      0.0,
+      0.15464382326420195
+    ]
+  },
+  "meta": {
+    "conflict_scenarios": 50,
+    "memory_bank": 80,
+    "complementary_pairs": 21,
+    "finished_at": "2026-08-18T07:07:06.168012"
+  }
+}
