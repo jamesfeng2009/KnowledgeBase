@@ -60,7 +60,14 @@ class FakeGenerator:
     def __init__(self, tokens=None):
         self.tokens = tokens or ["这是", "答案"]
 
-    async def generate(self, query, retrieved_docs, tool_results, memory_context=""):
+    async def generate(
+        self,
+        query,
+        retrieved_docs,
+        tool_results,
+        memory_context="",
+        constraint_context=None,
+    ):
         for token in self.tokens:
             yield token
 

@@ -17,8 +17,9 @@ from __future__ import annotations
 import json
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
-from typing import Any, TypedDict
+from typing import Any
 
+from app.agents.state import AgentState
 from app.llm.base import LLMProvider, Message
 from app.mcp.client import MCPClient
 from app.memory.memory_manager import MemoryManager
@@ -28,31 +29,7 @@ from app.utils.sse import format_sse_event
 
 logger = get_logger(__name__)
 
-
-class AgentState(TypedDict, total=False):
-    """Agent 运行时状态 — 在 think / action / reflect 之间传递。
-
-    使用 total=False 允许字段可选，初始状态只需提供 query / user_id / session_id。
-
-    Attributes:
-        query: 用户原始查询。
-        user_id: 用户 ID。
-        session_id: 会话 ID。
-        messages: 发送给 LLM 的消息列表（含历史上下文）。
-        retrieved_docs: 检索到的文档列表。
-        tool_results: 工具调用结果列表。
-        answer: 当前生成的答案。
-        iteration: 当前迭代轮次。
-    """
-
-    query: str
-    user_id: str
-    session_id: str
-    messages: list[Message]
-    retrieved_docs: list[dict[str, Any]]
-    tool_results: list[dict[str, Any]]
-    answer: str
-    iteration: int
+__all__ = ["AgentState", "BaseAgent"]
 
 
 class BaseAgent(ABC):

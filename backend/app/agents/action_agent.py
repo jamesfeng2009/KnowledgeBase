@@ -46,6 +46,15 @@ class ActionAgent(BaseAgent):
 
     agent_type: str = "action"
 
+    #: IT 工单创建意图的关键词表 — 启发式匹配，命中即建单。
+    #: 上游 IntentRouter（app.intent.router）已有 LLM 兜底分类，
+    #: 此处保持零成本规则匹配即可。
+    _IT_TICKET_KEYWORDS: tuple[str, ...] = (
+        "工单", "故障", "报修", "报错", "无法访问",
+        "系统异常", "系统崩溃", "网络问题", "密码重置",
+        "账号锁定", "权限不足",
+    )
+
     system_prompt: str = (
         "你是一个行动执行助手。请将用户的指令转化为具体可执行的步骤，"
         "并协助用户完成操作。\n"
@@ -75,7 +84,12 @@ class ActionAgent(BaseAgent):
 
         # 1. 识别操作意图并执行对应工具
         action_context = await self._try_execute_action(query, state)
-        if action_context:
+        if action_context and not any(
+            m.get("role") == "system" and m.get("content") == action_context
+            for m in state["messages"]
+        ):
+            # 幂等注入：reflect 重试会重新执行 execute()，已存在的
+            # 同内容 system 消息不重复 append，避免上下文膨胀。
             state["messages"].append(
                 {"role": "system", "content": action_context}
             )
@@ -128,15 +142,7 @@ class ActionAgent(BaseAgent):
         Returns:
             True 表示检测到 IT 工单意图。
         """
-        keywords = [
-            "工单", "故障", "报修", "报错", "无法访问",
-            "系统异常", "系统崩溃", "网络问题", "密码重置",
-            "账号锁定", "权限不足",
-        ]
-        query_lower = query.lower()
-        return any(kw in query for kw in keywords) or any(
-            kw in query_lower for kw in keywords
-        )
+        return any(kw in query for kw in self._IT_TICKET_KEYWORDS)
 
     async def _create_it_ticket(
         self,

@@ -266,7 +266,8 @@ LiteRAG/
 │   │   │
 │   │   ├── agents/                    # Agent Loop 层（智能体核心）
 │   │   │   ├── __init__.py            # 导出 + 触发自动注册
-│   │   │   ├── base.py                # BaseAgent + AgentState（LangGraph StateGraph 编排）
+│   │   │   ├── base.py                # BaseAgent 主循环（AgentState 定义在 state.py）
+│   │   │   ├── state.py               # AgentState 唯一权威定义（engine 与 base 共享）
 │   │   │   ├── qa_agent.py            # QAAgent — Agentic RAG 问答
 │   │   │   └── registry.py            # AgentRegistry 注册表
 │   │   │
@@ -1763,7 +1764,8 @@ class AgentState(TypedDict, total=False):
 
 
 class BaseAgent(ABC):
-    """Agent 抽象基类 — 用 LangGraph StateGraph 编排 think→execute→reflect。"""
+    """Agent 抽象基类 — think→execute→reflect 命令式主循环
+    （LangGraph StateGraph 为引擎层可选声明式路径，见 rag/engine.py）。"""
 
     agent_type: str = "base"
     system_prompt: str = "你是一个企业知识库 AI 助手。"
@@ -3166,7 +3168,7 @@ pytest tests/ -v
 | 混合检索（向量 + 全文） | 单路向量检索会漏掉精确匹配，BM25 补全召回 | 完整保留 |
 | 重排器 | 让最相关的结果排到前面，直接影响用户体验 | 完整保留 |
 | 流式生成 + 引用标注 | 这是 RAG 区别于"直接问 GPT"的核心价值 | 完整保留 |
-| **Agent Loop** | 智能体的核心组件——让系统具备自我纠错能力 | 简化版：LangGraph StateGraph 编排、think 省略、reflect 简化、仅 QA Agent |
+| **Agent Loop** | 智能体的核心组件——让系统具备自我纠错能力 | 简化版：纯 Python while 循环、think 省略、reflect 简化、仅 QA Agent（LangGraph 为可选声明式路径） |
 | **记忆引擎** | 智能体的核心组件——让系统记住用户偏好和对话上下文 | 简化版：两级记忆（L1+L2）、关键词提取、SQL 检索 |
 | **上下文工程** | 智能体的核心组件——让系统理解省略句和指代 | 简化版：规则版焦点追踪 + 规则版指代消解 |
 | 抽象基类 + 工厂模式 | 让代码可扩展、可测试、可替换 | 完整保留 |

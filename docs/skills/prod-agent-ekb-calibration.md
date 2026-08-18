@@ -24,14 +24,18 @@
 
 ### 1. Agent Loop 层职责边界（架构决策）
 
-> **EKB 硬约束**：Agent Loop 层必须使用 LangGraph StateGraph 编排状态图（think→execute→reflect 循环）；RAG 核心层（chunker/retriever/reranker/generator）必须手写实现，不使用框架。
+> **EKB 硬约束**（2026-08-18 修订，与实现对齐）：Agent Loop 层采用双路径 —— **纯 Python while 循环为生产默认路径**（承载四轴硬预算闸门 turns/seconds/tokens/cost_usd、SSE 进度事件、上下文压缩、超时与原地打转防护）；**LangGraph StateGraph 为声明式实现**（`answer_with_graph` + 可选 PostgresSaver checkpointer，用于断点恢复场景）。RAG 核心层（chunker/retriever/reranker/generator）必须手写实现，不使用框架。
+>
+> **图路径转正触发条件**：出现长任务（分钟级以上）、interrupt-based HITL 审批恢复、或跨会话断点续跑的真实需求时再立项；届时需先将上述 5 类护栏移植进图节点。`BaseAgent.think()` 为 no-op 是记录在案的成本决策（原实现每轮白调一次 LLM）。
 
 **对应 prod-agent**：[architecture-decisions.md](file:///Users/fengyu/.trae-cn/skills/prod-agent/checklists/architecture-decisions.md)
 
 **EKB 落地**：
-- LangGraph 只用在 Agent Loop（状态机编排），不渗透到 RAG / 文档解析 / 上下文工程
-- LangGraph 也用于记忆引擎 Checkpointer
-- RAG 核心层手写，禁用 LangChain RAG / LlamaIndex 等框架
+- 生产默认路径：[backend/app/rag/engine.py](file:///Users/fengyu/Downloads/myproject/workspace/EnterpriseKnowledge/backend/app/rag/engine.py) 的 `answer()` / `_run_decision_loop_streaming`（纯 Python while）
+- 声明式路径：同文件 `build_graph()` / `answer_with_graph()`（LangGraph StateGraph，节点返回增量 dict 合并进通道）
+- AgentState 唯一权威定义：[backend/app/agents/state.py](file:///Users/fengyu/Downloads/myproject/workspace/EnterpriseKnowledge/backend/app/agents/state.py)（engine 与 base 均从此导入）
+- LangGraph 只用在 Agent Loop（状态机编排）与记忆引擎 Checkpointer，不渗透到 RAG / 文档解析 / 上下文工程
+- RAG 核心层手写，禁用 LangChain RAG / LlamaIndex 等框架（LlamaIndex 仅数据管道可选路径）
 - EKB 实现：[backend/app/agents/](file:///Users/fengyu/Downloads/myproject/workspace/EnterpriseKnowledge/backend/app/agents/)、[backend/app/memory/checkpoint.py](file:///Users/fengyu/Downloads/myproject/workspace/EnterpriseKnowledge/backend/app/memory/checkpoint.py)
 
 ### 2. PostgreSQL-only（后端端口）

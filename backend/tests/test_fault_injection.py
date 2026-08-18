@@ -90,6 +90,11 @@ def _make_mock_engine(
     engine.permission_filter = None
     engine._quality_guard = None
     engine._injection_guard = None
+    # _constraint_channel 为 __init__ 设置的普通实例属性（约束通道，
+    # None 表示禁用）；__new__ 绕过构造时需手动补齐，否则 _retrieve
+    # 触发 AttributeError。其余 _trace_ctx / _retrieval_retry_count 等
+    # 为 ContextVar 属性，有默认值无需设置。
+    engine._constraint_channel = None
     return engine
 
 
@@ -256,8 +261,17 @@ class TestEmbeddingTimeout:
         reset_all_circuit_breakers()
 
     def _make_embedder_with_timeout(self) -> OpenAIEmbedder:
-        """创建 client.embeddings.create 超时的 OpenAIEmbedder。"""
-        embedder = OpenAIEmbedder()
+        """创建 client.embeddings.create 超时的 OpenAIEmbedder。
+
+        测试环境无真实 OPENAI_API_KEY（settings 默认空串，新版 openai SDK
+        会在构造 AsyncOpenAI 时抛 Missing credentials），构造期间 patch
+        settings 注入占位密钥 — embed 的 client 随即被 mock，密钥不会
+        发起真实请求。
+        """
+        from app.config import get_settings
+
+        with patch.object(get_settings(), "OPENAI_API_KEY", "test-key-for-circuit"):
+            embedder = OpenAIEmbedder()
         embedder.client.embeddings.create = AsyncMock(
             side_effect=asyncio.TimeoutError("Embedding 请求超时")
         )

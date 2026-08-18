@@ -201,3 +201,77 @@ class TestBaseAgentRun:
 
         # 记忆失败不影响主流程
         assert any("done" in e for e in events)
+
+
+class TestActionAgentIdempotentInjection:
+    """ActionAgent 重试幂等性 — 消息不重复注入、工单不重复创建。"""
+
+    def _make_agent(self) -> tuple[ActionAgent, AsyncMock]:
+        mcp = AsyncMock()
+        mcp.call_tool.return_value = json.dumps(
+            {"ticket_id": "T-001", "priority": "normal", "status": "open"}
+        )
+        agent = ActionAgent(
+            llm=_FakeLLM("IT 工单已创建，工单号 T-001，请记录以便查询进度。"),
+            mcp_client=mcp,
+            memory=_make_mock_memory(),
+        )
+        return agent, mcp
+
+    @pytest.mark.asyncio
+    async def test_retry_does_not_duplicate_system_message(self) -> None:
+        """reflect 重试第二次 execute() 时，工单上下文 system 消息只保留一条。"""
+        agent, mcp = self._make_agent()
+        state: AgentState = AgentState(
+            query="帮我报修电脑，屏幕碎了",
+            messages=[],
+            tool_results=[],
+        )
+
+        for _ in range(2):  # 模拟 Agent Loop 的两轮 execute（reflect 重试）
+            async for _ in agent.execute(state):
+                pass
+
+        context_msgs = [
+            m
+            for m in state["messages"]
+            if m.get("role") == "system" and "T-001" in m.get("content", "")
+        ]
+        assert len(context_msgs) == 1, "重试后工单上下文 system 消息应恰好一条"
+        assert mcp.call_tool.await_count == 1, "工单工具应只被真实调用一次"
+
+    @pytest.mark.asyncio
+    async def test_first_execution_injects_once(self) -> None:
+        """正常单轮执行：注入一次、创建一次。"""
+        agent, mcp = self._make_agent()
+        state: AgentState = AgentState(
+            query="系统故障，无法访问后台",
+            messages=[],
+            tool_results=[],
+        )
+
+        async for _ in agent.execute(state):
+            pass
+
+        assert mcp.call_tool.await_count == 1
+        assert len(state["tool_results"]) == 1
+        assert state["tool_results"][0]["tool"] == "create_it_ticket"
+
+
+class TestActionAgentIntentDetection:
+    """IT 工单意图关键词检测（类常量 + 无冗余小写判断）。"""
+
+    def test_keyword_hit(self) -> None:
+        agent = ActionAgent(_FakeLLM(), AsyncMock(), _make_mock_memory())
+        for kw in ("帮我报修打印机", "系统异常了", "密码重置怎么弄", "权限不足"):
+            assert agent._detect_it_ticket_intent(kw), f"关键词 {kw} 应命中"
+
+    def test_no_keyword_miss(self) -> None:
+        agent = ActionAgent(_FakeLLM(), AsyncMock(), _make_mock_memory())
+        for q in ("公司报销流程是什么", "Cannot access manual", ""):
+            assert not agent._detect_it_ticket_intent(q), f"查询 {q!r} 不应命中"
+
+    def test_keywords_are_class_constant(self) -> None:
+        """关键词表应为类常量元组，便于扩展新操作类型。"""
+        assert isinstance(ActionAgent._IT_TICKET_KEYWORDS, tuple)
+        assert "工单" in ActionAgent._IT_TICKET_KEYWORDS
