@@ -9,14 +9,14 @@ ORM 模型定义在 app.models.memory.MemoryFact，避免循环导入。
 """
 
 import math
-import time
 import uuid
 from datetime import datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
+from app.memory.forgetting import DefaultActivation
 from app.models.memory import MemoryFact
 from app.utils.logger import get_logger
 
@@ -89,6 +89,13 @@ class Mem0Manager:
     def __init__(self, db: AsyncSession):
         self.db = db
         self._embedder = None  # 延迟初始化
+        # 机制一：召回时实时算激活值（ACT-R 三因子，纯函数）
+        self._activation = DefaultActivation()
+
+    @property
+    def activation_policy(self) -> DefaultActivation:
+        """激活值策略（测试与上层可替换）。"""
+        return self._activation
 
     @property
     def embedder(self):
@@ -267,17 +274,22 @@ class Mem0Manager:
         similarity_threshold: float = 0.3,
         half_life_days: float = _DEFAULT_HALF_LIFE_DAYS,
         fallback_to_latest: bool = True,
+        update_access_stats: bool = True,
     ) -> list[MemoryFact]:
-        """检索用户事实 — 支持向量语义检索 + 时间衰减 + 关键词降级。
+        """检索用户事实 — 语义检索 + 激活值闸门 + 命中写回。
 
         检索策略（优先级降级）：
             1. 语义检索：query 非空时，生成 query 向量，与已存储的 embedding
                做余弦相似度排序，返回 top-k。仅取相似度 >= threshold 的事实。
-            2. 时间衰减：语义得分乘以时间衰减因子（exp(-age/half_life)），
-               使近期事实优先于远期事实。
-            3. 关键词降级：Embedder 不可用或事实无 embedding 时，回退到
+            2. 激活值闸门（机制一）：排序分 = 相似度 × 激活值（ACT-R 三因子：
+               时间衰减 + 频率增益 + 近期增益）。激活值低于地板值的当场跳过 —
+               老且无人问津的记忆不再上场。
+            3. 复活窗口（P2）：被冲突整合 superseded 的记忆保留 N 天，
+               窗口期内若被强命中（相似度 >= 复活阈值）自动复活。
+            4. 关键词降级：Embedder 不可用或事实无 embedding 时，回退到
                关键词包含匹配。
-            4. 时间排序：query 为 None 时，按 created_at 降序返回最近事实。
+            5. 时间排序：query 为 None 时，按 created_at 降序返回最近事实
+               （仅活跃记忆，不触发写回）。
 
         Args:
             user_id: 用户 ID
@@ -285,14 +297,30 @@ class Mem0Manager:
             category: 类别过滤
             limit: 返回数量
             similarity_threshold: 语义相似度阈值（低于此值不返回）
-            half_life_days: 时间衰减半衰期（天），0 表示禁用衰减
+            half_life_days: 已废弃 — 衰减尺度由激活值策略接管，保留签名兼容
             fallback_to_latest: 语义/关键词均无命中时是否兜底返回最新 N 条
                 （与 query 无关）。记忆上下文注入场景保持 True；判重场景
                 必须传 False，否则只要有任意同类别事实就会被误判为重复。
+            update_access_stats: 命中后是否写回访问统计（access_count +1、
+                最近访问刷新、偏好滚动续命）。内部判重/冲突检测必须传 False —
+                检索 ≠ 用户真实召回。
         """
+        revival_cutoff = datetime.utcnow() - timedelta(
+            days=settings.MEMORY_REVIVAL_WINDOW_DAYS
+        )
         stmt = (
             select(MemoryFact)
-            .where(MemoryFact.user_id == user_id, MemoryFact.is_active == True)
+            .where(
+                MemoryFact.user_id == user_id,
+                # 活跃记忆 + 复活窗口内被 superseded 的记忆（P2 软删除窗口）
+                or_(
+                    MemoryFact.is_active == True,
+                    and_(
+                        MemoryFact.superseded_at.is_not(None),
+                        MemoryFact.superseded_at > revival_cutoff,
+                    ),
+                ),
+            )
             .order_by(MemoryFact.created_at.desc())
             .limit(limit * 3 if query else limit)  # 语义检索时多取候选再排序
         )
@@ -309,7 +337,8 @@ class Mem0Manager:
         db_facts = result.scalars().all()
 
         if not query or not db_facts:
-            return db_facts
+            # 无 query 的浏览路径：只返回活跃记忆，不触发复活与写回
+            return [f for f in db_facts if f.is_active]
 
         # --- 语义检索：使用 embedding 做余弦相似度排序 ---
         query_vec = None
@@ -331,45 +360,136 @@ class Mem0Manager:
                     half_life_days=half_life_days,
                 )
                 if pgvector_results is not None:
-                    return pgvector_results
+                    return await self._finalize_results(
+                        pgvector_results,
+                        update_stats=update_access_stats,
+                        query=query,
+                    )
             except Exception as e:
                 logger.debug("pgvector_search_fallback_jsonb", error=str(e))
 
             # --- JSONB 降级：Python 内存余弦相似度 ---
-            now_ts = time.time()
             scored: list[tuple[float, MemoryFact]] = []
             for fact in db_facts:
                 if fact.embedding:
                     sim = _cosine_similarity(query_vec, fact.embedding)
                     if sim >= similarity_threshold:
-                        decay = _time_decay(fact.created_at, now_ts, half_life_days)
-                        effective_score = sim * decay
-                        scored.append((effective_score, fact))
+                        scored.append((sim, fact))
                 else:
                     if query.lower() in fact.fact_text.lower():
                         scored.append((0.0, fact))
 
-            scored.sort(key=lambda x: x[0], reverse=True)
-            semantic_results = [f for _, f in scored[:limit]]
+            semantic_results, revived = self._rank_candidates(scored)
+            if revived:
+                await self.db.flush()
+                logger.info("memory_revived_in_recall", count=len(revived))
 
             if semantic_results:
                 logger.debug(
                     "semantic_search_done",
                     query=query[:50],
                     candidates=len(semantic_results),
-                    top_score=scored[0][0] if scored else 0.0,
                 )
-                return semantic_results
+                return await self._finalize_results(
+                    semantic_results[:limit],
+                    update_stats=update_access_stats,
+                    query=query,
+                )
 
             logger.debug("semantic_search_no_match_fallback_keyword")
 
         # --- 关键词降级（在原始 DB 结果上操作） ---
         query_lower = query.lower()
-        keyword_matched = [f for f in db_facts if query_lower in f.fact_text.lower()]
+        keyword_matched = [
+            f
+            for f in db_facts
+            if f.is_active and query_lower in f.fact_text.lower()
+        ]
         if keyword_matched:
-            return keyword_matched[:limit]
-        # 无命中时按调用方意图决定是否兜底返回最新 N 条
-        return db_facts[:limit] if fallback_to_latest else []
+            return await self._finalize_results(
+                keyword_matched[:limit],
+                update_stats=update_access_stats,
+                query=query,
+            )
+        # 无命中时按调用方意图决定是否兜底返回最新 N 条（仅活跃记忆）
+        latest = [f for f in db_facts if f.is_active]
+        results = latest[:limit] if fallback_to_latest else []
+        return await self._finalize_results(
+            results, update_stats=update_access_stats, query=query
+        )
+
+    def _rank_candidates(
+        self, scored: list[tuple[float, MemoryFact]]
+    ) -> tuple[list[MemoryFact], list[MemoryFact]]:
+        """按 相似度 × 激活值 排序，并应用两道闸门。
+
+        闸门一（机制一）：激活值低于地板值的当场跳过 — 老且无人问津
+        的记忆不再上场。
+        闸门二（P2 复活窗口）：被 superseded 的窗口期记忆，强命中
+        （相似度 >= 复活阈值）则复活并上场，否则继续挡在门外。
+
+        Returns:
+            (排序后的最终结果, 被复活的记忆列表)。
+        """
+        if not settings.MEMORY_ACTIVATION_ENABLED:
+            ranked = sorted(scored, key=lambda x: x[0], reverse=True)
+            return [f for _, f in ranked], []
+
+        now = datetime.utcnow()
+        floor = settings.MEMORY_ACTIVATION_FLOOR
+        revival_threshold = settings.MEMORY_REVIVAL_THRESHOLD
+        effective: list[tuple[float, MemoryFact]] = []
+        revived: list[MemoryFact] = []
+
+        for sim, fact in scored:
+            if not getattr(fact, "is_active", True):
+                # 窗口期内被 superseded：强命中复活，弱命中继续退场
+                if sim >= revival_threshold:
+                    fact.is_active = True
+                    fact.superseded_by = None
+                    fact.superseded_at = None
+                    revived.append(fact)
+                else:
+                    continue
+            activation = self._activation.activation(fact, now)
+            if activation < floor:
+                continue  # 时间衰减到地板以下 — 跳过
+            effective.append((sim * activation, fact))
+
+        effective.sort(key=lambda x: x[0], reverse=True)
+        return [f for _, f in effective], revived
+
+    async def _record_access(self, facts: list[MemoryFact]) -> None:
+        """召回命中写回 — 访问次数 +1、最近访问刷新（激活值频率/近期因子的数据源）。
+
+        偏好滚动续命：被召回即说明该偏好仍在使用，延长其 TTL —
+        天天用的偏好十年不忘，长期不用则自然过期。
+        """
+        now = datetime.utcnow()
+        for fact in facts:
+            fact.access_count = (getattr(fact, "access_count", 0) or 0) + 1
+            fact.last_accessed_at = now
+            if fact.category == "preference" and fact.expires_at is not None:
+                fact.expires_at = now + timedelta(hours=24 * 90)
+        await self.db.flush()
+
+    async def _finalize_results(
+        self,
+        results: list[MemoryFact],
+        *,
+        update_stats: bool,
+        query: str | None,
+    ) -> list[MemoryFact]:
+        """统一收尾：真实语义召回（带 query）才写回访问统计。
+
+        内部判重 / 冲突候选检索 / 管理查询由调用方传 update_stats=False。
+        """
+        if update_stats and query and results:
+            try:
+                await self._record_access(results)
+            except Exception as e:
+                logger.warning("access_stats_write_failed", error=str(e))
+        return results
 
     async def _search_by_pgvector(
         self,
@@ -386,8 +506,9 @@ class Mem0Manager:
         避免将所有 embedding 加载到 Python 内存。
 
         流程：
-            1. pgvector 按余弦距离排序取候选
-            2. Python 侧做时间衰减重排
+            1. pgvector 按余弦距离排序取候选（含复活窗口内被
+               superseded 的记忆）
+            2. Python 侧做激活值重排 + 闸门过滤（_rank_candidates）
             3. 返回 top-k
 
         Returns:
@@ -409,17 +530,27 @@ class Mem0Manager:
         if vec_count == 0:
             return None  # 无 pgvector 数据，回退 JSONB
 
+        revival_cutoff = datetime.utcnow() - timedelta(
+            days=settings.MEMORY_REVIVAL_WINDOW_DAYS
+        )
         # pgvector 余弦距离检索（距离越小越相似）
         distance_col = MemoryFact.embedding_vec.cosine_distance(query_vec)
         stmt = (
             select(MemoryFact, distance_col.label("distance"))
             .where(
                 MemoryFact.user_id == user_id,
-                MemoryFact.is_active == True,
+                # 活跃记忆 + 复活窗口内被 superseded 的记忆（P2 软删除窗口）
+                or_(
+                    MemoryFact.is_active == True,
+                    and_(
+                        MemoryFact.superseded_at.is_not(None),
+                        MemoryFact.superseded_at > revival_cutoff,
+                    ),
+                ),
                 MemoryFact.embedding_vec.is_not(None),
             )
             .order_by(distance_col)
-            .limit(limit * 3)  # 多取候选再做时间衰减
+            .limit(limit * 3)  # 多取候选再做激活值重排
         )
 
         if category:
@@ -436,27 +567,25 @@ class Mem0Manager:
             return None
 
         # 余弦距离 → 相似度（similarity = 1 - distance）
-        now_ts = time.time()
         scored: list[tuple[float, MemoryFact]] = []
         for row in rows:
             fact = row[0]
             distance = row[1]
             similarity = 1.0 - distance
             if similarity >= similarity_threshold:
-                decay = _time_decay(fact.created_at, now_ts, half_life_days)
-                effective_score = similarity * decay
-                scored.append((effective_score, fact))
+                scored.append((similarity, fact))
 
-        scored.sort(key=lambda x: x[0], reverse=True)
-        results = [f for _, f in scored[:limit]]
+        results, revived = self._rank_candidates(scored)
+        if revived:
+            await self.db.flush()
+            logger.info("memory_revived_in_recall", count=len(revived))
 
         if results:
             logger.debug(
                 "pgvector_search_done",
                 candidates=len(results),
-                top_score=scored[0][0] if scored else 0.0,
             )
-            return results
+            return results[:limit]
 
         return None  # 无满足阈值的结果，让上层走关键词降级
 
@@ -563,6 +692,101 @@ class Mem0Manager:
             count += 1
         if count:
             await self.db.flush()
+        return count
+
+    async def search_similar_with_scores(
+        self,
+        user_id: uuid.UUID,
+        fact_text: str,
+        limit: int = 10,
+        similarity_threshold: float = 0.0,
+        exclude_ids: list[uuid.UUID] | None = None,
+    ) -> list[tuple[MemoryFact, float]]:
+        """检索相似记忆（带相似度分数）— 冲突整合的候选来源（机制二）。
+
+        与 search_facts 的差异：
+            - 返回 (fact, similarity) 对，供仲裁器按相似度分层决策
+            - 跨类别检索（冲突可能发生在偏好与情节之间，如
+              "喜欢VIP权益" vs "降级为基础版"）
+            - 不做激活值闸门（整合关注"对不对"，不是"老不老"）
+            - 不写回访问统计（检索 ≠ 用户真实召回）
+
+        Returns:
+            [(fact, similarity)] 按相似度降序；embedder 不可用时返回 []。
+        """
+        try:
+            embeddings = await self.embedder.embed([fact_text])
+            query_vec = embeddings[0] if embeddings else None
+        except Exception as e:
+            logger.warning("similar_search_embedding_failed", error=str(e))
+            return []
+        if query_vec is None:
+            return []
+
+        stmt = (
+            select(MemoryFact)
+            .where(
+                MemoryFact.user_id == user_id,
+                MemoryFact.is_active == True,
+                MemoryFact.embedding.is_not(None),
+            )
+            .order_by(MemoryFact.created_at.desc())
+            .limit(200)
+        )
+        stmt = stmt.where(
+            (MemoryFact.expires_at.is_(None)) | (MemoryFact.expires_at > func.now())
+        )
+        if exclude_ids:
+            stmt = stmt.where(MemoryFact.id.not_in(exclude_ids))
+
+        result = await self.db.execute(stmt)
+        scored: list[tuple[MemoryFact, float]] = []
+        for fact in result.scalars():
+            sim = _cosine_similarity(query_vec, fact.embedding or [])
+            if sim >= similarity_threshold:
+                scored.append((fact, sim))
+
+        scored.sort(key=lambda x: x[1], reverse=True)
+        return scored[:limit]
+
+    async def mark_superseded(
+        self,
+        fact_ids: list[uuid.UUID],
+        superseded_by: uuid.UUID,
+    ) -> int:
+        """标记旧记忆退场（机制二裁决的败者）。
+
+        与 is_active=False 的普通软删除不同，superseded_* 专指
+        "被新记忆语义覆写"，P2 软删除窗口依赖 superseded_at 判定
+        窗口期内是否可复活。
+
+        Args:
+            fact_ids: 败者记忆 ID 列表。
+            superseded_by: 取而代之的新记忆 ID。
+
+        Returns:
+            标记数量。
+        """
+        if not fact_ids:
+            return 0
+        stmt = select(MemoryFact).where(
+            MemoryFact.id.in_(fact_ids), MemoryFact.is_active == True
+        )
+        result = await self.db.execute(stmt)
+        now = datetime.utcnow()
+        count = 0
+        for fact in result.scalars():
+            fact.is_active = False
+            fact.superseded_by = superseded_by
+            fact.superseded_at = now
+            count += 1
+        if count:
+            await self.db.flush()
+            logger.info(
+                "memory_superseded",
+                count=count,
+                superseded_by=str(superseded_by),
+            )
         return count
 
     async def cleanup_expired(self) -> int:

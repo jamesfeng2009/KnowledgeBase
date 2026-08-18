@@ -92,6 +92,10 @@ class TestSearchFactsSemantic:
         fact.fact_value = None
         fact.created_at = datetime.utcnow()
         fact.expires_at = None
+        fact.access_count = 0
+        fact.last_accessed_at = None
+        fact.superseded_by = None
+        fact.superseded_at = None
         return fact
 
     @pytest.mark.asyncio
@@ -395,6 +399,7 @@ class TestTimeDecaySearch:
         text: str,
         embedding: list[float] | None = None,
         created_at: datetime | None = None,
+        access_count: int = 0,
     ) -> MagicMock:
         fact = MagicMock()
         fact.fact_text = text
@@ -405,43 +410,19 @@ class TestTimeDecaySearch:
         fact.fact_value = None
         fact.created_at = created_at or datetime.utcnow()
         fact.expires_at = None
+        fact.access_count = access_count
+        fact.last_accessed_at = None
+        fact.superseded_by = None
+        fact.superseded_at = None
         return fact
 
     @pytest.mark.asyncio
     async def test_recent_fact_ranks_higher(self) -> None:
-        """相同语义相似度下，近期事实排名更高。"""
-        from app.memory.mem0_manager import Mem0Manager
+        """相同语义相似度下，近期事实排名更高。
 
-        mock_db = MagicMock()
-        mock_db.execute = AsyncMock()
-
-        now = datetime.utcnow()
-        old_date = now - timedelta(days=90)  # 3 个半衰期前
-
-        fact_old = self._make_fact("用户偏好简洁", embedding=[1.0, 0.0], created_at=old_date)
-        fact_new = self._make_fact("用户偏好简洁", embedding=[1.0, 0.0], created_at=now)
-
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = [fact_old, fact_new]
-        mock_db.execute.return_value = mock_result
-
-        manager = Mem0Manager(mock_db)
-        manager._embedder = MagicMock()
-        manager._embedder.embed = AsyncMock(return_value=[[1.0, 0.0]])
-
-        results = await manager.search_facts(
-            user_id=uuid.uuid4(),
-            query="偏好",
-            limit=10,
-        )
-
-        # 相同相似度，但新事实衰减更少 → 排前面
-        assert results[0] == fact_new
-        assert results[1] == fact_old
-
-    @pytest.mark.asyncio
-    async def test_decay_disabled_when_zero(self) -> None:
-        """half_life_days=0 时禁用衰减，纯按相似度排序。"""
+        老事实（90 天）靠频率增益（access_count）活过激活值地板，
+        但时间衰减仍让它排在后面 — ACT-R 三因子综合排序。
+        """
         from app.memory.mem0_manager import Mem0Manager
 
         mock_db = MagicMock()
@@ -450,7 +431,12 @@ class TestTimeDecaySearch:
         now = datetime.utcnow()
         old_date = now - timedelta(days=90)
 
-        fact_old = self._make_fact("用户偏好简洁", embedding=[1.0, 0.0], created_at=old_date)
+        fact_old = self._make_fact(
+            "用户偏好简洁",
+            embedding=[1.0, 0.0],
+            created_at=old_date,
+            access_count=10,
+        )
         fact_new = self._make_fact("用户偏好简洁", embedding=[1.0, 0.0], created_at=now)
 
         mock_result = MagicMock()
@@ -465,8 +451,79 @@ class TestTimeDecaySearch:
             user_id=uuid.uuid4(),
             query="偏好",
             limit=10,
-            half_life_days=0,  # 禁用衰减
         )
 
-        # 禁用衰减时，相同相似度按原始顺序（DB 返回顺序）
+        # 相同相似度：新事实满激活排前，老事实靠频率增益存活但排后
+        assert results[0] == fact_new
+        assert results[1] == fact_old
+
+    @pytest.mark.asyncio
+    async def test_old_and_cold_fact_filtered_by_floor(self) -> None:
+        """老且无人问津的事实：激活值跌破地板，当场跳过（机制一闸门）。"""
+        from app.memory.mem0_manager import Mem0Manager
+
+        mock_db = MagicMock()
+        mock_db.execute = AsyncMock()
+
+        now = datetime.utcnow()
+        old_date = now - timedelta(days=90)
+
+        fact_old = self._make_fact(
+            "用户偏好简洁", embedding=[1.0, 0.0], created_at=old_date
+        )
+        fact_new = self._make_fact("用户偏好简洁", embedding=[1.0, 0.0], created_at=now)
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [fact_old, fact_new]
+        mock_db.execute.return_value = mock_result
+
+        manager = Mem0Manager(mock_db)
+        manager._embedder = MagicMock()
+        manager._embedder.embed = AsyncMock(return_value=[[1.0, 0.0]])
+
+        results = await manager.search_facts(
+            user_id=uuid.uuid4(),
+            query="偏好",
+            limit=10,
+        )
+
+        assert results == [fact_new]
+
+    @pytest.mark.asyncio
+    async def test_decay_disabled_when_zero(self, monkeypatch) -> None:
+        """激活值闸门关闭时纯按相似度排序（退回旧行为的逃生门）。"""
+        from app.config import get_settings
+        from app.memory.mem0_manager import Mem0Manager
+
+        settings = get_settings()
+        monkeypatch.setattr(
+            settings, "MEMORY_ACTIVATION_ENABLED", False, raising=False
+        )
+
+        mock_db = MagicMock()
+        mock_db.execute = AsyncMock()
+
+        now = datetime.utcnow()
+        old_date = now - timedelta(days=90)
+
+        fact_old = self._make_fact(
+            "用户偏好简洁", embedding=[1.0, 0.0], created_at=old_date
+        )
+        fact_new = self._make_fact("用户偏好简洁", embedding=[1.0, 0.0], created_at=now)
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [fact_old, fact_new]
+        mock_db.execute.return_value = mock_result
+
+        manager = Mem0Manager(mock_db)
+        manager._embedder = MagicMock()
+        manager._embedder.embed = AsyncMock(return_value=[[1.0, 0.0]])
+
+        results = await manager.search_facts(
+            user_id=uuid.uuid4(),
+            query="偏好",
+            limit=10,
+        )
+
+        # 闸门关闭时，相同相似度按原始顺序（DB 返回顺序）
         assert len(results) == 2

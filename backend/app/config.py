@@ -624,8 +624,25 @@ class Settings(BaseSettings):
     DETAIL_RECALL_ENABLED: bool = True                # P1-3 历史细节召回开关
     DETAIL_RECALL_LIMIT: int = 3                      # 细节召回条数上限
     DETAIL_RECALL_MAX_TOKENS: int = 300               # 细节召回注入 token 上限
-    SCRATCHPAD_ENABLED: bool = True                   # P3-E Scratchpad 开关
+    SCRATCHPAD_ENABLED: bool = True                     # P3-E Scratchpad 开关
     LLM_FACT_EXTRACTION_ENABLED: bool = True          # P3-F LLM 事实提取开关
+
+    # === 记忆遗忘 — 记忆的第三种动作（课程07） ===
+    # 机制一：召回时实时算激活值（ACT-R 三因子 = 时间衰减 + 频率增益 + 近期增益）
+    MEMORY_ACTIVATION_ENABLED: bool = True              # 激活值闸门总开关（关闭则退回纯相似度排序）
+    MEMORY_ACTIVATION_FLOOR: float = 0.05               # 激活值地板（低于此值召回时当场跳过）
+    MEMORY_ACTIVATION_FREQ_WEIGHT: float = 0.2          # 频率增益权重：log(1+n) * w
+    MEMORY_ACTIVATION_RECENCY_WINDOW_DAYS: int = 7      # 近期增益窗口（天）：窗口内被召回过额外续命
+    MEMORY_ACTIVATION_RECENCY_BOOST: float = 0.3        # 近期增益最大加成（窗口内线性衰减）
+    # 机制二：写入时增量冲突整合（Top-K 检索找候选，LLM 裁决，败者退场）
+    MEMORY_CONSOLIDATION_ENABLED: bool = True           # 冲突整合总开关
+    MEMORY_CONSOLIDATION_LLM_ENABLED: bool = True       # LLM 裁决开关（关闭降级为纯规则短路）
+    MEMORY_CONSOLIDATION_TOP_K: int = 10                # 冲突候选检索数（冲突是局部的，不做全库扫描）
+    MEMORY_CONSOLIDATION_CONFLICT_FLOOR: float = 0.55   # 相似度下限（低于此值与新旧记忆语义无关）
+    MEMORY_CONSOLIDATION_DUPLICATE_THRESHOLD: float = 0.90  # 相似度上限（高于此值规则短路判等价，省 LLM）
+    # P2 软删除窗口：被 superseded 的记忆保留 N 天，窗口期内强命中自动复活（防 LLM 误判）
+    MEMORY_REVIVAL_WINDOW_DAYS: int = 7                 # 复活窗口（天）
+    MEMORY_REVIVAL_THRESHOLD: float = 0.90              # 复活所需相似度（强命中才复活，防误复活）
 
     # === 外部文档同步巡检（P2 定时兜底）===
     # 方案 A：单一阈值，所有外部文档无类别区分，无盲区

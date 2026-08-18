@@ -62,6 +62,18 @@ class MemoryFact(UUIDMixin, TimestampMixin, Base):
     expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, comment="过期时间（NULL=永不过期）"
     )
+    access_count: Mapped[int] = mapped_column(
+        default=0, comment="召回命中次数（激活值频率增益数据源）"
+    )
+    last_accessed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, comment="最近召回命中时间（激活值近期增益数据源）"
+    )
+    superseded_by: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), nullable=True, comment="被哪条新记忆语义覆写（冲突整合败者标记）"
+    )
+    superseded_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, comment="退场时间（软删除窗口内可复活）"
+    )
     # 多租户隔离
     tenant_id: Mapped[uuid.UUID | None] = mapped_column(
         PGUUID(as_uuid=True), nullable=True, comment="租户 ID（多租户隔离）"

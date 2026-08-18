@@ -18,6 +18,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.llm.factory import get_llm_provider
 from app.memory.checkpoint import CheckpointManager
+from app.memory.conflict_arbiter import (
+    ACTION_DISCARD,
+    MemoryConflictArbiter,
+)
 from app.memory.graphiti_manager import GraphitiManager
 from app.memory.mem0_manager import Mem0Manager
 from app.utils.logger import get_logger
@@ -141,6 +145,8 @@ class MemoryManager:
         self.mem0 = Mem0Manager(db)
         self.graphiti = GraphitiManager(db)
         self.checkpoint = CheckpointManager(db)
+        # 机制二：写入时增量冲突整合（仲裁器复用 mem0 的检索能力）
+        self.arbiter = MemoryConflictArbiter(self.mem0)
         # P2-1: 副车道检索器（可注入以便测试；为 None 时按需惰性创建）
         self._sidecar = sidecar
 
@@ -506,17 +512,13 @@ class MemoryManager:
                     continue
 
                 if category in ("preference", "fact") and content:
-                    # 去重：检查是否已有语义相似的活跃事实
-                    is_dup = await self._check_duplicate(user_id, content, category)
-                    if is_dup:
-                        logger.debug("fact_skipped_duplicate", content=content[:50])
+                    # 机制二：写入时增量整合 — 等价丢弃 / 冲突旧退场
+                    written = await self._consolidated_add(user_id, content, category)
+                    if written is None:
+                        logger.debug(
+                            "fact_skipped_consolidation", content=content[:50]
+                        )
                         continue
-
-                    await self.mem0.add_fact(
-                        user_id=user_id,
-                        fact_text=content,
-                        category=category,
-                    )
                     extracted.append(content)
 
             if extracted:
@@ -532,6 +534,45 @@ class MemoryManager:
             logger.warning("fact_extraction_llm_failed", error=str(exc))
             # 降级为关键词启发式
             return await self._keyword_extract_facts(user_id, messages)
+
+    async def _consolidated_add(
+        self,
+        user_id: uuid.UUID,
+        fact_text: str,
+        category: str,
+    ):
+        """机制二：写入时增量整合 — 先裁决，后落盘，败者回填退场。
+
+        流程（整理和写入在同一个步骤里完成）：
+            1. 仲裁器检索 Top-K 相似旧记忆并裁决：
+               - 等价 → 新记忆丢弃（旧胜新弃，去重）
+               - 冲突 → 新记忆落盘，旧记忆标记 superseded（新胜旧退场）
+               - 无关 → 正常落盘
+            2. 仲裁器异常时降级为规则判重（_check_duplicate），fail-open
+               不阻塞写入主流程。
+
+        Returns:
+            新落盘的 MemoryFact；被裁决丢弃时返回 None。
+        """
+        try:
+            verdict = await self.arbiter.consolidate(user_id, fact_text, category)
+        except Exception as exc:
+            logger.warning("consolidation_failed_fallback_dedup", error=str(exc))
+            if await self._check_duplicate(user_id, fact_text, category):
+                return None
+            return await self.mem0.add_fact(
+                user_id=user_id, fact_text=fact_text, category=category
+            )
+
+        if verdict.action == ACTION_DISCARD:
+            return None
+
+        new_fact = await self.mem0.add_fact(
+            user_id=user_id, fact_text=fact_text, category=category
+        )
+        if verdict.superseded_ids:
+            await self.mem0.mark_superseded(verdict.superseded_ids, new_fact.id)
+        return new_fact
 
     async def _check_duplicate(
         self,
@@ -556,7 +597,8 @@ class MemoryManager:
         """
         try:
             # 判重只认真实相似命中：关闭"无命中返回最新 N 条"兜底，
-            # 否则用户已有任意同类别事实后新事实会永远被判重复
+            # 否则用户已有任意同类别事实后新事实会永远被判重复；
+            # 判重是内部检索，不写回访问统计
             existing = await self.mem0.search_facts(
                 user_id=user_id,
                 query=content,
@@ -564,6 +606,7 @@ class MemoryManager:
                 limit=3,
                 similarity_threshold=similarity_threshold,
                 fallback_to_latest=False,
+                update_access_stats=False,
             )
             return len(existing) > 0
         except Exception as exc:
@@ -585,12 +628,11 @@ class MemoryManager:
             for keyword in ["我喜欢", "我偏好", "请用", "请使用", "我希望"]:
                 if keyword in content:
                     fact = content[content.index(keyword):content.index(keyword) + 100]
-                    await self.mem0.add_fact(
-                        user_id=user_id,
-                        fact_text=fact,
-                        category="preference",
+                    written = await self._consolidated_add(
+                        user_id, fact, "preference"
                     )
-                    extracted.append(fact)
+                    if written is not None:
+                        extracted.append(fact)
                     break
 
         if extracted:
