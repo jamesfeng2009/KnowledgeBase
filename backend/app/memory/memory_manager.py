@@ -591,6 +591,7 @@ class MemoryManager:
             user_id=user_id, fact_text=fact_text, category=category,
             source_type=source_type, source_ref_id=source_ref_id,
             raw_excerpt=raw_excerpt,
+            verdict_reason=verdict.reason or None,
         )
         if verdict.superseded_ids:
             await self.mem0.mark_superseded(verdict.superseded_ids, new_fact.id)

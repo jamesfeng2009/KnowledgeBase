@@ -16,6 +16,7 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     Boolean,
     DateTime,
+    Float,
     ForeignKey,
     String,
     Text,
@@ -88,6 +89,17 @@ class MemoryFact(UUIDMixin, TimestampMixin, Base):
     )
     raw_excerpt: Mapped[str | None] = mapped_column(
         Text, nullable=True, comment="原始摘录文本（用于溯源核验，截断500字符）"
+    )
+    # P1 记忆层「为什么」审计：仲裁理由 + 遗忘原因 + 退场激活值快照
+    verdict_reason: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, comment="写入时仲裁理由（ConsolidateVerdict.reason）"
+    )
+    forgotten_reason: Mapped[str | None] = mapped_column(
+        String(64), nullable=True,
+        comment="退场原因: superseded_conflict/dedup/corrected/expired",
+    )
+    activation_value: Mapped[float | None] = mapped_column(
+        Float, nullable=True, comment="退场瞬间 ACT-R 激活值快照"
     )
 
 

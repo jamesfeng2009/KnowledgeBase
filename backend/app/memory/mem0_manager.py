@@ -116,6 +116,7 @@ class Mem0Manager:
         source_type: str | None = None,
         source_ref_id: uuid.UUID | None = None,
         raw_excerpt: str | None = None,
+        verdict_reason: str | None = None,
     ) -> MemoryFact:
         """添加一条用户事实。
 
@@ -132,6 +133,7 @@ class Mem0Manager:
             source_type: P0-1 来源类型（message/document/tool/feedback）
             source_ref_id: P0-1 来源引用 ID
             raw_excerpt: P0-1 原始摘录文本（溯源核验用）
+            verdict_reason: P1 写入时仲裁理由（ConsolidateVerdict.reason）
         """
         if category not in FACT_CATEGORIES:
             logger.warning("unknown_fact_category", category=category)
@@ -178,6 +180,7 @@ class Mem0Manager:
             source_type=source_type,
             source_ref_id=source_ref_id,
             raw_excerpt=raw_excerpt,
+            verdict_reason=verdict_reason,
         )
         self.db.add(fact)
         await self.db.flush()
@@ -211,9 +214,13 @@ class Mem0Manager:
         )
         result = await self.db.execute(stmt)
         conflicts = result.scalars().all()
+        now = datetime.utcnow()
 
         for old in conflicts:
             old.is_active = False
+            # P1: 退场原因 + 激活值快照（同一记忆被后续事实去重/覆写退场）
+            old.forgotten_reason = "dedup"
+            old.activation_value = self._activation.activation(old, now)
             logger.info(
                 "conflict_deactivated",
                 old_fact=old.fact_text[:80],
@@ -251,6 +258,11 @@ class Mem0Manager:
 
         # 停用旧事实
         old_fact.is_active = False
+        # P1: 退场原因 + 激活值快照（用户纠错 → 旧事实被纠正退场）
+        old_fact.forgotten_reason = "corrected"
+        old_fact.activation_value = self._activation.activation(
+            old_fact, datetime.utcnow()
+        )
         await self.db.flush()
 
         logger.info(
@@ -788,6 +800,9 @@ class Mem0Manager:
             fact.is_active = False
             fact.superseded_by = superseded_by
             fact.superseded_at = now
+            # P1: 退场原因 + 激活值快照（语义覆写 → 败者退场）
+            fact.forgotten_reason = "superseded_conflict"
+            fact.activation_value = self._activation.activation(fact, now)
             count += 1
         if count:
             await self.db.flush()
@@ -806,9 +821,13 @@ class Mem0Manager:
             MemoryFact.expires_at < func.now(),
         )
         result = await self.db.execute(stmt)
+        now = datetime.utcnow()
         count = 0
         for fact in result.scalars():
             fact.is_active = False
+            # P1: 退场原因 + 激活值快照（TTL 到期 → 自然遗忘退场）
+            fact.forgotten_reason = "expired"
+            fact.activation_value = self._activation.activation(fact, now)
             count += 1
         if count:
             await self.db.flush()
