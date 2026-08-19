@@ -188,9 +188,11 @@ class ChatService:
                 raise PermissionError("无权访问该对话")
 
         # 2. 持久化用户消息
-        await self.msg_repo.create_message(
+        user_msg = await self.msg_repo.create_message(
             conversation_id, "user", query
         )
+        # P0-1 记忆溯源：保存用户消息 ID，供记忆提取时绑定来源
+        self._last_user_message_id = user_msg.id
 
         # 3. 加载记忆上下文（四级记忆：短期窗口 + Checkpoint + Mem0 偏好 + 工作记忆）
         memory_ctx = await self.memory.build_context(
@@ -709,6 +711,11 @@ class ChatService:
             await self.memory.extract_and_save_facts(
                 self.user.id,
                 [{"role": "user", "content": query}],
+                message_ids=(
+                    [self._last_user_message_id]
+                    if getattr(self, "_last_user_message_id", None) is not None
+                    else None
+                ),
             )
             # P1-2: 跨轮关键决策显式持久化到 working memory
             # 防中间遗忘：关键决策不依赖模型从历史中"找回"

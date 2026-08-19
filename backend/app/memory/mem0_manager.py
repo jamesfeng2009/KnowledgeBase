@@ -113,6 +113,9 @@ class Mem0Manager:
         fact_key: str | None = None,
         fact_value: str | None = None,
         ttl_hours: int | None = None,
+        source_type: str | None = None,
+        source_ref_id: uuid.UUID | None = None,
+        raw_excerpt: str | None = None,
     ) -> MemoryFact:
         """添加一条用户事实。
 
@@ -126,6 +129,9 @@ class Mem0Manager:
             fact_key: 结构化键（可选，用于精确查询）
             fact_value: 结构化值（可选）
             ttl_hours: 过期时间（小时），None 表示永不过期
+            source_type: P0-1 来源类型（message/document/tool/feedback）
+            source_ref_id: P0-1 来源引用 ID
+            raw_excerpt: P0-1 原始摘录文本（溯源核验用）
         """
         if category not in FACT_CATEGORIES:
             logger.warning("unknown_fact_category", category=category)
@@ -169,6 +175,9 @@ class Mem0Manager:
             embedding=embedding,
             embedding_vec=embedding,  # pgvector 列（同时写入）
             expires_at=expires_at,
+            source_type=source_type,
+            source_ref_id=source_ref_id,
+            raw_excerpt=raw_excerpt,
         )
         self.db.add(fact)
         await self.db.flush()

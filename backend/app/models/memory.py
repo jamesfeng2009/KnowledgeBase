@@ -78,6 +78,17 @@ class MemoryFact(UUIDMixin, TimestampMixin, Base):
     tenant_id: Mapped[uuid.UUID | None] = mapped_column(
         PGUUID(as_uuid=True), nullable=True, comment="租户 ID（多租户隔离）"
     )
+    # P0-1 溯源绑定：记录事实的来源，支撑纠偏与审计
+    source_type: Mapped[str | None] = mapped_column(
+        String(50), nullable=True, comment="来源类型: message/document/tool/feedback"
+    )
+    source_ref_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), nullable=True, index=True,
+        comment="来源引用ID（消息/文档/工具结果ID）",
+    )
+    raw_excerpt: Mapped[str | None] = mapped_column(
+        Text, nullable=True, comment="原始摘录文本（用于溯源核验，截断500字符）"
+    )
 
 
 class KnowledgeEntity(UUIDMixin, TimestampMixin, Base):

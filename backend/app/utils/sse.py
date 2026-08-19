@@ -72,6 +72,8 @@ class SSEEventType:
     # 生成
     TOKEN = "token"
     SOURCES = "sources"
+    # P0-2: 结构化引用卡片（可点击回原文档）
+    CITATIONS = "citations"
     # 忠实度拦截后重生成的完整答案 — 前端收到后应替换已展示的流式答案；
     # data: {"answer": "<完整新答案>"}
     ANSWER_REGENERATED = "answer_regenerated"

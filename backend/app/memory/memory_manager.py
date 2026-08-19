@@ -418,11 +418,16 @@ class MemoryManager:
         self,
         user_id: uuid.UUID,
         messages: list[dict],
+        message_ids: list[uuid.UUID] | None = None,
     ) -> list[str]:
         """从对话中提取值得记住的事实。
 
         P3-F: 优先使用 LLM 提取（更准确），失败时降级为关键词启发式。
         LLM 提取通过配置项 LLM_FACT_EXTRACTION_ENABLED 控制。
+
+        Args:
+            message_ids: P0-1 与 messages 一一对应的消息 ID，用于事实溯源。
+                长度不足或缺省时，无来源的事实 source_type 落 NULL（不阻断）。
         """
         # P3-F: 尝试 LLM 提取
         try:
@@ -430,17 +435,20 @@ class MemoryManager:
 
             _settings = get_settings()
             if _settings.LLM_FACT_EXTRACTION_ENABLED:
-                return await self._llm_extract_facts(user_id, messages)
+                return await self._llm_extract_facts(
+                    user_id, messages, message_ids
+                )
         except Exception as exc:
             logger.warning("llm_fact_extraction_skipped", error=str(exc))
 
         # 降级：关键词启发式提取
-        return await self._keyword_extract_facts(user_id, messages)
+        return await self._keyword_extract_facts(user_id, messages, message_ids)
 
     async def _llm_extract_facts(
         self,
         user_id: uuid.UUID,
         messages: list[dict],
+        message_ids: list[uuid.UUID] | None = None,
     ) -> list[str]:
         """P3-F: LLM 驱动的事实提取。
 
@@ -513,7 +521,14 @@ class MemoryManager:
 
                 if category in ("preference", "fact") and content:
                     # 机制二：写入时增量整合 — 等价丢弃 / 冲突旧退场
-                    written = await self._consolidated_add(user_id, content, category)
+                    written = await self._consolidated_add(
+                        user_id,
+                        content,
+                        category,
+                        source_type="message",
+                        source_ref_id=self._source_ref(message_ids, messages),
+                        raw_excerpt=self._source_excerpt(messages),
+                    )
                     if written is None:
                         logger.debug(
                             "fact_skipped_consolidation", content=content[:50]
@@ -533,13 +548,16 @@ class MemoryManager:
         except Exception as exc:
             logger.warning("fact_extraction_llm_failed", error=str(exc))
             # 降级为关键词启发式
-            return await self._keyword_extract_facts(user_id, messages)
+            return await self._keyword_extract_facts(user_id, messages, message_ids)
 
     async def _consolidated_add(
         self,
         user_id: uuid.UUID,
         fact_text: str,
         category: str,
+        source_type: str | None = None,
+        source_ref_id: uuid.UUID | None = None,
+        raw_excerpt: str | None = None,
     ):
         """机制二：写入时增量整合 — 先裁决，后落盘，败者回填退场。
 
@@ -561,14 +579,18 @@ class MemoryManager:
             if await self._check_duplicate(user_id, fact_text, category):
                 return None
             return await self.mem0.add_fact(
-                user_id=user_id, fact_text=fact_text, category=category
+                user_id=user_id, fact_text=fact_text, category=category,
+                source_type=source_type, source_ref_id=source_ref_id,
+                raw_excerpt=raw_excerpt,
             )
 
         if verdict.action == ACTION_DISCARD:
             return None
 
         new_fact = await self.mem0.add_fact(
-            user_id=user_id, fact_text=fact_text, category=category
+            user_id=user_id, fact_text=fact_text, category=category,
+            source_type=source_type, source_ref_id=source_ref_id,
+            raw_excerpt=raw_excerpt,
         )
         if verdict.superseded_ids:
             await self.mem0.mark_superseded(verdict.superseded_ids, new_fact.id)
@@ -617,11 +639,12 @@ class MemoryManager:
         self,
         user_id: uuid.UUID,
         messages: list[dict],
+        message_ids: list[uuid.UUID] | None = None,
     ) -> list[str]:
         """关键词启发式事实提取（降级策略）。"""
         extracted: list[str] = []
 
-        for msg in messages:
+        for idx, msg in enumerate(messages):
             content = msg.get("content", "").lower()
 
             # 偏好检测：包含"我喜欢"/"请用"/"偏好"等
@@ -629,7 +652,12 @@ class MemoryManager:
                 if keyword in content:
                     fact = content[content.index(keyword):content.index(keyword) + 100]
                     written = await self._consolidated_add(
-                        user_id, fact, "preference"
+                        user_id,
+                        fact,
+                        "preference",
+                        source_type="message",
+                        source_ref_id=self._msg_id(message_ids, idx),
+                        raw_excerpt=self._msg_excerpt(msg),
                     )
                     if written is not None:
                         extracted.append(fact)
@@ -639,6 +667,37 @@ class MemoryManager:
             logger.info("facts_extracted", user_id=str(user_id), count=len(extracted))
 
         return extracted
+
+    # ------------------------------------------------------------------
+    # P0-1 溯源辅助：取消息来源
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _msg_id(message_ids: list[uuid.UUID] | None, idx: int) -> uuid.UUID | None:
+        """返回第 idx 条消息对应的来源 ID；越界或缺省时返回 None。"""
+        if not message_ids or idx >= len(message_ids):
+            return None
+        return message_ids[idx]
+
+    @staticmethod
+    def _msg_excerpt(msg: dict) -> str | None:
+        """从单条消息生成原始摘录文本（截断 500 字符）。"""
+        excerpt = str(msg.get("content", ""))
+        return excerpt[:500] or None
+
+    @staticmethod
+    def _source_ref(message_ids: list[uuid.UUID] | None, messages: list[dict]) -> uuid.UUID | None:
+        """LLM 路径：整段对话提取的事实统一绑定到最近一条消息。"""
+        if not message_ids or not messages:
+            return None
+        return message_ids[-1]
+
+    @staticmethod
+    def _source_excerpt(messages: list[dict]) -> str | None:
+        """LLM 路径：摘录取最近一条消息内容。"""
+        if not messages:
+            return None
+        return MemoryManager._msg_excerpt(messages[-1])
 
     async def update_working_memory(
         self,

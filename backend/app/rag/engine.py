@@ -887,6 +887,24 @@ class AgenticRAGEngine:
                 event=SSEEventType.SOURCES,
             )
 
+        # 6.5 P0-2: 结构化引用卡片 — 在 SOURCES 之后、QUALITY 之前下发。
+        # 复用懒加载的 CitationExtractor；答案含 [n] 标注时产出卡片写入 state
+        # 并下发，无标注时静默跳过（引用卡片是参考答案，非强制拦截）。
+        try:
+            if state.get("retrieved_docs") and state.get("answer"):
+                extractor = self._get_citation_extractor()
+                extracted_citations = extractor.extract(
+                    state["answer"], state["retrieved_docs"]
+                )
+                state["citations"] = extracted_citations
+                if extracted_citations:
+                    yield SSEEvent(
+                        data={"citations": extracted_citations},
+                        event=SSEEventType.CITATIONS,
+                    )
+        except Exception as exc:
+            log.warning("engine.citation_extract_error", error=str(exc))
+
         # 7. yield quality 事件（质量评分 + 低置信度标记 + 幻觉防护结果）
         quality_data: dict[str, Any] = {
             "low_confidence": state.get("low_confidence", False),
