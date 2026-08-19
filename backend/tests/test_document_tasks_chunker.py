@@ -241,7 +241,9 @@ class TestBuildIndexes:
             return_value=len(embeddings),
         ) as mock_vec:
             await _build_indexes("doc-001", chunk_objects, chunks_text, embeddings)
-            mock_os.assert_called_once_with("doc-001", chunk_objects, kb_id=None)
+            mock_os.assert_called_once_with(
+                "doc-001", chunk_objects, kb_id=None, doc=None
+            )
             mock_vec.assert_called_once_with(
                 "doc-001", chunk_objects, embeddings, kb_id=None, doc=None
             )

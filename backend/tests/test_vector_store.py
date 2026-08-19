@@ -1275,7 +1275,9 @@ class TestDocumentTasksVectorIndex:
             return_value=2,
         ) as mock_vec:
             await _build_indexes("doc-001", chunks, chunks_text, embeddings)
-            mock_os.assert_called_once_with("doc-001", chunks, kb_id=None)
+            mock_os.assert_called_once_with(
+                "doc-001", chunks, kb_id=None, doc=None
+            )
             mock_vec.assert_called_once_with(
                 "doc-001", chunks, embeddings, kb_id=None, doc=None
             )

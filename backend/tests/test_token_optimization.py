@@ -88,6 +88,7 @@ class FakeGenerator:
         retrieved_docs: list[dict[str, Any]],
         tool_results: list[dict[str, Any]],
         memory_context: str = "",
+        constraint_context: Any = None,
     ) -> AsyncIterator[str]:
         for token in self.tokens:
             yield token

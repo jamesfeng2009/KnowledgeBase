@@ -248,6 +248,7 @@ class _FakeGenerator:
         retrieved_docs: list[dict[str, Any]],
         tool_results: list[dict[str, Any]],
         memory_context: str = "",
+        constraint_context: Any = None,
     ) -> AsyncIterator[str]:
         yield "答案"
 

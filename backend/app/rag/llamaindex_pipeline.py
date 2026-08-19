@@ -40,9 +40,13 @@ try:
     from llama_index.core.storage.docstore import SimpleDocumentStore
 
     LLAMAINDEX_AVAILABLE = True
-except ImportError:
+except (ImportError, SyntaxError, AttributeError, TypeError):
+    # 容错不仅限 ImportError：测试会把 pymilvus 整体 mock，导致 llama_index
+    # 的 milvus 类型别名在 typing.Union 解析时报 SyntaxError / AttributeError /
+    # TypeError。这些在"可选重依赖被 mock/缺失"时都应收敛为 fallback 模式，
+    # 而不是炸穿 app.rag 包导入。
     LLAMAINDEX_AVAILABLE = False
-    logger.warning("llama_index not installed, LlamaIndexPipeline will use fallback mode")
+    logger.warning("llama_index or milvus unavailable, LlamaIndexPipeline will use fallback mode")
 
 
 class LlamaIndexPipeline:
