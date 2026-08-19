@@ -818,6 +818,7 @@ class AgenticRAGEngine:
                     "included_refs": _gen_included,
                     "trust_levels": {rid: "internal" for rid in _gen_included},
                 },
+                evidence_ref=_gen_included[0] if _gen_included else None,
             )
 
         # P0-Stage2: 累加 generate 用量到引擎用量记录
@@ -2463,6 +2464,8 @@ class AgenticRAGEngine:
             "included_contents": included_contents,
             "excluded_refs": excluded_ids,
             "trust_levels": {rid: "internal" for rid in included_ids},
+            # P3: 检索节点实体引用 — 证据贯穿的 retrieve 锚点
+            "evidence_ref": included_ids[0] if included_ids else None,
             "token_cost": {
                 "context_load_tokens": sum(len(c) for c in included_contents) // 4
             },
@@ -2940,6 +2943,7 @@ class AgenticRAGEngine:
                     ),
                     "tool_use_id": tool_use_id,
                 },
+                evidence_ref=f"tool_use:{tool_use_id}",
             )
         _audit: dict[str, Any] = {"status": "success", "output": "", "error": None}
 
@@ -3360,6 +3364,18 @@ class AgenticRAGEngine:
         # 如果质量守卫不可用，降级到内联反思
         if self._quality_guard is None:
             await self._reflect_inline(state)
+
+        # P3: reflect 节点实体引用 — 答案引用的文档作为证据锚点
+        cited_docs = [
+            str(d.get("doc_id") or d.get("chunk_id"))
+            for d in retrieved_docs
+            if isinstance(d, dict) and (d.get("doc_id") or d.get("chunk_id"))
+        ]
+        state["_span_evidence"] = {
+            "source": "reflect",
+            "answer_regenerated": state.get("answer_regenerated", False),
+            "evidence_ref": cited_docs[0] if cited_docs else None,
+        }
 
         return state.get("eval_result")
 

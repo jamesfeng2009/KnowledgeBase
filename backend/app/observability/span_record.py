@@ -216,6 +216,7 @@ class SpanRecorder:
         error: str | None = None,
         cost: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
+        evidence_ref: str | None = None,
     ) -> None:
         """记录一个已完成的 Span（由 TraceContext 双写调用）。
 
@@ -234,6 +235,7 @@ class SpanRecorder:
             output_ref=output_ref,
             error=error,
             cost=dict(cost or {}),
+            evidence_ref=evidence_ref,
             metadata=dict(metadata or {}),
         )
         self._spans.append(record)

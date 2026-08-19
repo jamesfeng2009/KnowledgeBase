@@ -237,6 +237,9 @@ class TraceContext:
         self._spans: list[Any] = []
         # task run 根 Span ID（recorder 压栈，使节点 Span 形成树而非扁平序列）
         self._root_span_id: str | None = None
+        # P3: span_id → evidence_ref 暂存（start_span 记录、end_span 消费），
+        # 避免把内部键 _evidence_ref 泄漏进 recorder 的公开 metadata
+        self._evidence_stash: dict[str, str] = {}
         # 标准 Span 收集器（双写目标）— 显式传入或从 contextvar 拾取，
         # 使 EvalRunner 注入的 recorder 对 engine 零改动生效
         if recorder is None:
@@ -297,12 +300,16 @@ class TraceContext:
         span_type: str | None = None,
         input_data: Any = None,
         metadata: dict[str, Any] | None = None,
+        evidence_ref: str | None = None,
     ) -> str | None:
         """开始一个节点 Span（压栈，with 块/try-finally 内配对 end_span）。
 
         与 ``span()``（事后一次性记录）不同，本方法将 Span 压入栈，
         其间记录的子 Span（如 retrieve 内的 permission.decision、
         think 前的 compaction_event）自动以本 Span 为父节点。
+
+        evidence_ref 暂存于内部 stash，由对应的 end_span 取出写入
+        SpanRecord.evidence_ref（P3 证据贯穿）。
 
         Returns:
             span_id；recorder 不可用时返回 None（调用方需容忍）。
@@ -311,12 +318,16 @@ class TraceContext:
             return None
         self._ensure_root_span()
         try:
-            return self.recorder.start_span(
+            span_id = self.recorder.start_span(
                 span_type=span_type or name,
                 name=name,
                 input_ref=str(input_data)[:500] if input_data is not None else None,
                 metadata=dict(metadata or {}),
             )
+            # P3: evidence_ref 暂存于 stash（span_id → ref），end_span 消费
+            if evidence_ref is not None and span_id is not None:
+                self._evidence_stash[span_id] = evidence_ref
+            return span_id
         except Exception as exc:  # pragma: no cover - 防御性降级
             logger.warning("span_record.start_error", name=name, error=str(exc))
             return None
@@ -328,6 +339,7 @@ class TraceContext:
         output_data: Any = None,
         metadata: dict[str, Any] | None = None,
         langfuse_input: Any = None,
+        evidence_ref: str | None = None,
     ) -> None:
         """结束 start_span 开启的节点 Span，并双写 LangFuse。
 
@@ -337,9 +349,14 @@ class TraceContext:
             output_data: 节点输出摘要。
             metadata: 结束时可得的元数据（latency_ms / error / 证据键）。
             langfuse_input: LangFuse 侧展示的输入（与本地 input_ref 分离）。
+            evidence_ref: 证据引用（doc_id / artifact ID 等）；None 时
+                回退到 start_span 暂存的 stash 值（P3 证据贯穿）。
         """
         meta = dict(metadata or {})
         error = meta.get("error")
+        # P3: 结束时的显式证据优先；缺省时取 start_span 暂存的 stash 并弹出
+        if evidence_ref is None and span_id is not None:
+            evidence_ref = self._evidence_stash.pop(span_id, None)
 
         # P1-6: PII 脱敏 — span export 前对 input/output/metadata 递归 scrub
         # 本地 SpanRecord 和 LangFuse 双写使用相同的脱敏后数据，
@@ -361,6 +378,7 @@ class TraceContext:
                     output_ref=str(scrub_output)[:500] if scrub_output is not None else None,
                     error=str(error) if error else None,
                     cost=cost,
+                    evidence_ref=str(evidence_ref)[:500] if evidence_ref is not None else None,
                     metadata=scrub_meta,
                 )
             except Exception as exc:  # pragma: no cover - 防御性降级
@@ -390,6 +408,7 @@ class TraceContext:
         output_data: Any = None,
         metadata: dict[str, Any] | None = None,
         span_type: str | None = None,
+        evidence_ref: str | None = None,
     ) -> None:
         """记录一个已完成的节点 Span（事后闭合记录）。
 
@@ -424,6 +443,7 @@ class TraceContext:
                     output_ref=str(scrub_output)[:500] if scrub_output is not None else None,
                     error=str(error) if error else None,
                     cost=cost,
+                    evidence_ref=str(evidence_ref)[:500] if evidence_ref is not None else None,
                     metadata=scrub_meta,
                 )
             except Exception as exc:  # pragma: no cover - 防御性降级
@@ -571,6 +591,8 @@ def trace_node(node_name: str) -> Callable[[Callable[..., Awaitable[T]]], Callab
                         raw_evidence = state.pop("_span_evidence", None)
                         if isinstance(raw_evidence, dict):
                             evidence = raw_evidence
+                    # P3: 节点证据（若带 evidence_ref）单独透传，不混进 metadata
+                    node_evidence_ref = evidence.get("evidence_ref")
                     trace_ctx.end_span(
                         span_id,
                         name=span_name,
@@ -583,8 +605,12 @@ def trace_node(node_name: str) -> Callable[[Callable[..., Awaitable[T]]], Callab
                             "error": error,
                             "retrieved_docs": len(state.get("retrieved_docs", [])) if state else 0,
                             "tool_results": len(state.get("tool_results", [])) if state else 0,
-                            **evidence,
+                            **{
+                                k: v for k, v in evidence.items()
+                                if k != "evidence_ref"
+                            },
                         },
+                        evidence_ref=str(node_evidence_ref)[:500] if node_evidence_ref is not None else None,
                         langfuse_input={
                             "iteration": iteration,
                             "session_id": session_id,
