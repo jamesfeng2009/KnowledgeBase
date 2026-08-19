@@ -351,6 +351,7 @@ class TestPersistToolSpans:
         span.status = status
         span.metadata = {"arg": 1}
         span.output_ref = "result"
+        span.evidence_ref = None
         span.error = "err" if status != "ok" else None
         span.latency_ms = latency_ms
         span.cost = {}

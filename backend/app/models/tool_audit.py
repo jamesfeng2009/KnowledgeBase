@@ -5,7 +5,9 @@
     - 参考 EvalResultRecord 的 ORM 模式（UUIDMixin + TimestampMixin + Base）；
     - 只持久化关键 span（tool.call / permission.decision / failure.recover），
       避免全量 span 写入膨胀；
-    - result_summary 截断存储（500 字符），完整内容通过 evidence_ref 引用；
+    - result_summary 截断存储（500 字符），完整内容通过 result_ref 引用
+      （对象存储），关键审计事件另以 result_full JSONB 兜底原文；
+    - evidence_ref：P3 贯穿的工具/文档证据引用；
     - 数据库不可用时优雅降级（仅记日志，不抛异常）。
 """
 
@@ -30,6 +32,12 @@ _AUDITED_SPAN_TYPES: frozenset[str] = frozenset(
 
 #: 结果摘要最大长度
 _SUMMARY_MAX_CHARS: int = 500
+
+#: 关键审计事件 — 低频率高价值，额外以 result_full JSONB 存原文吊底，
+#: 保证"证据与行永不分离"、可逐年离线回溯（P2 对象存储为主 + JSONB 兜底）。
+_KEY_EVENT_SPAN_TYPES: frozenset[str] = frozenset(
+    {"permission.decision", "failure.recover"}
+)
 
 
 class ToolAuditLog(UUIDMixin, TimestampMixin, Base):
@@ -76,6 +84,24 @@ class ToolAuditLog(UUIDMixin, TimestampMixin, Base):
     tenant_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), nullable=True, comment="租户 ID（多租户隔离）"
     )
+    # P2: 完整结果引用 — 对象存储引用为主，关键事件 JSONB 兜底
+    result_ref: Mapped[str | None] = mapped_column(
+        String(500), nullable=True,
+        comment="完整结果的对象存储引用（artifact ID/路径/URL）",
+    )
+    result_full: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True,
+        comment="关键事件原文兜底（permission.decision/failure.recover）",
+    )
+    evidence_ref: Mapped[str | None] = mapped_column(
+        String(500), nullable=True,
+        comment="证据引用（P3 贯穿，doc_id/artifact ID）",
+    )
+
+
+def _audit_arguments(meta: dict[str, Any]) -> dict[str, Any]:
+    """从 span metadata 提取 arguments — 排除落专列的大字段，避免冗余存储。"""
+    return {k: v for k, v in meta.items() if k not in ("result_ref", "result_full")}
 
 
 async def persist_tool_spans(
@@ -106,15 +132,25 @@ async def persist_tool_spans(
             continue
         try:
             raw_status = str(getattr(span, "status", "ok"))
+            meta = getattr(span, "metadata", {}) or {}
+            # P2 三级降级：关键事件 → result_full 原文；普通 → result_ref
+            # 对象存储引用；皆无 → 仅截断摘要 result_summary。
+            is_key_event = span_type in _KEY_EVENT_SPAN_TYPES
+            result_full = meta.get("result_full") if is_key_event else None
+            result_ref = meta.get("result_ref") if not is_key_event else None
             record = ToolAuditLog(
                 run_id=run_id,
                 session_id=session_id,
                 span_id=str(getattr(span, "span_id", uuid.uuid4().hex[:16])),
                 tool_name=str(getattr(span, "name", "")),
-                arguments=dict(getattr(span, "metadata", {}) or {}),
+                arguments=_audit_arguments(meta),
                 result_summary=str(getattr(span, "output_ref", "") or "")[
                     :_SUMMARY_MAX_CHARS
                 ],
+                result_ref=result_ref,
+                result_full=result_full,
+                evidence_ref=str(getattr(span, "evidence_ref", None) or "")[:500]
+                or None,
                 error=getattr(span, "error", None),
                 duration_ms=int(
                     getattr(span, "latency_ms", None)

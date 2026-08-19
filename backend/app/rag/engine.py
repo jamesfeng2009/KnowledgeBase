@@ -170,6 +170,20 @@ def _safe_serialize(obj: Any) -> Any:
         return str(obj)
 
 
+def _state_fingerprint(state: AgentState) -> dict[str, Any]:
+    """AgentState 的标量指纹快照 — 供 span 记录 state.update 差分。
+
+    仅取键集合不变的标量（iteration / 长度计数），键序固定可 diff。
+    状态缺键（首轮 / 异常中间态）时返回 0 或 None，不抛异常。
+    """
+    return {
+        "iteration": state.get("iteration"),
+        "answer_len": len(state.get("answer") or ""),
+        "retrieved_docs": len(state.get("retrieved_docs") or []),
+        "tool_results": len(state.get("tool_results") or []),
+    }
+
+
 class AgenticRAGEngine:
     """Agentic RAG 引擎 — 纯 Python Agent Loop 实现（可选 LangGraph 状态图）。
 
@@ -789,6 +803,8 @@ class AgenticRAGEngine:
         # 4. 流式生成答案（plain str token，_to_sse_stream 自动包装为 data:）
         answer_parts: list[str] = []
         _gen_t0 = time.perf_counter()
+        # M2: 生成前捕获 state 差分基线（决策循环结束、generate 前）
+        _state_before = _state_fingerprint(state)
         async for token in self.generator.generate(
             query=state["query"],
             retrieved_docs=state["retrieved_docs"],
@@ -817,6 +833,9 @@ class AgenticRAGEngine:
                     "token_count": len("".join(answer_parts)) // 4,
                     "included_refs": _gen_included,
                     "trust_levels": {rid: "internal" for rid in _gen_included},
+                    # P2: state.update span 双向差分 — 生成前后的标量指纹
+                    "state_before": _state_before,
+                    "state_after": _state_fingerprint(state),
                 },
                 evidence_ref=_gen_included[0] if _gen_included else None,
             )
