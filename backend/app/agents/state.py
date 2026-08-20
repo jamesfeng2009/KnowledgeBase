@@ -73,11 +73,25 @@ class AgentState(TypedDict, total=False):
     _decision: str
     # generate 节点产出的逐 token 片段，供 answer_with_graph 流式回放。
     _stream_tokens: list[str]
+    # P0: 规则级出口标记 — 决策循环触发 Clarify / Interrupt 时置位，
+    # answer 据此跳过 LLM 生成直接产出固定文案。
+    _clarify_exit: bool
+    _interrupt_exit: bool
     # P1-9: 显式计划状态清单 — [{step_id, action, description, status}]
     # status: pending / done / skipped（app.agents.planner 常量）
     plan_steps: list[dict[str, Any]]
     # P1-9: 本会话已发生的重规划次数（上限由 PlanManager.max_replans 控制）
     replan_count: int
+    # P1: 成功标准显式化 — 循环开始前由 PlanManager 产出（Goal State），
+    # _reflect 对照其判定 Finish（而非仅看答案长度）。
+    success_criteria: list[str]
+    # P1: 成功标准满足度判定结果 — _reflect 对照 success_criteria 判定后写入。
+    criteria_satisfied: bool
+    # P1: 未满足的成功标准列表（LLM 判定后写入，供日志 / 评测观测）。
+    unmet_criteria: list[str]
+    # P2: 结构化观察记录 — 每轮 success/failure/anomaly/progress，
+    # 由 _retrieve / _tool_call 写入，think 动态上下文与评测 span 复用。
+    observations: list[dict[str, Any]]
     # P1: 约束注入通道输出（ConstraintChannel.fetch）— 确定性红线条款，
     # 由 _retrieve 与检索并行获取，generate 透传给 generator 红线段。
     constraint_context: list[dict[str, Any]]

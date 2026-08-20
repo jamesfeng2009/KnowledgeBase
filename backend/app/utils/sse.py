@@ -79,6 +79,12 @@ class SSEEventType:
     ANSWER_REGENERATED = "answer_regenerated"
     # 审批（P1 预留）
     APPROVAL_REQUIRED = "approval_required"
+    # P0: 规则级出口 — 连续空检索 → 请求澄清（关键信息缺失）；
+    # data: {"reason":"empty_retrieval","iteration":N}
+    CLARIFY = "clarify"
+    # P0: 规则级出口 — 无可行路径 → 中断；
+    # data: {"reason":"repeated_decision|repeated_tool_result","iteration":N}
+    INTERRUPT = "interrupt"
     # 结束
     QUALITY = "quality"
     DONE = "done"

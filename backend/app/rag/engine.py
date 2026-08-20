@@ -32,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import json
+import re
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -128,6 +129,49 @@ _RERANK_TOP_K: int = 5
 _RETRIEVE_TOP_K: int = 20
 # P1-10: 在线回退双跑评估的召回 top_k（小样本对比，控成本）
 _FALLBACK_EVAL_TOP_K: int = 5
+
+# P0: 规则级出口阈值 — 连续空检索触发 Clarify，同一决策/重复工具结果触发 Interrupt
+_CLARIFY_EMPTY_RETRIEVAL_THRESHOLD: int = 2
+_INTERRUPT_REPEATED_DECISION_THRESHOLD: int = 3
+_INTERRUPT_DEDUP_HITS_THRESHOLD: int = 3
+# P2: think 动态上下文注入的最近观察条数 — 只取尾部 N 条，避免观察列表膨胀
+_OBSERVATIONS_IN_THINK: int = 5
+
+# P0: 规则级出口文案 — 零 LLM 成本直接产出（Clarify / Interrupt 不进入生成）
+_CLARIFY_ANSWER: str = (
+    "抱歉，当前知识库中未找到与您问题相关的资料，可能缺少关键信息。\n"
+    "请尝试以下方式：\n"
+    "1. 重新表述问题，提供更多细节或具体关键词；\n"
+    "2. 确认相关文档已上传并发布到知识库；\n"
+    "3. 联系知识库管理员确认文档覆盖范围。"
+)
+_INTERRUPT_ANSWER: str = (
+    "抱歉，当前无法继续推进该任务：多次尝试后仍未取得有效进展。\n"
+    "建议：\n"
+    "1. 检查问题是否包含相互矛盾或无法满足的条件；\n"
+    "2. 尝试将问题拆分为更小的子问题；\n"
+    "3. 联系知识库管理员确认所需资料是否完整。"
+)
+
+# P1: 成功标准判定 prompt — _reflect 对照 success_criteria 判定 Finish。
+# 低增量 LLM：仅当 PlanManager 产出了成功标准时调用一次。
+_CRITERIA_CHECK_PROMPT: str = """你是任务完成度评估专家。判断以下答案是否满足全部成功标准。
+
+用户问题：{query}
+
+成功标准：
+{criteria}
+
+答案摘要：
+{answer}
+
+逐条判断每条标准是否被答案满足，以 JSON 输出：
+```json
+{{"satisfied": true, "unmet": [], "reason": "答案完整覆盖全部标准"}}
+```
+
+satisfied 为 true 表示全部满足；unmet 列出未满足的标准原文。
+只输出 JSON，不要其他内容。"""
 
 # P1-2: 宪法独立成文件 — 核心约束从 CONSTITUTION.md 读取（人机共治、前缀稳定）。
 # 以下两个常量由宪法加载器派生，保持向后兼容（测试仍从本模块导入）。
@@ -805,15 +849,28 @@ class AgenticRAGEngine:
         _gen_t0 = time.perf_counter()
         # M2: 生成前捕获 state 差分基线（决策循环结束、generate 前）
         _state_before = _state_fingerprint(state)
-        async for token in self.generator.generate(
-            query=state["query"],
-            retrieved_docs=state["retrieved_docs"],
-            tool_results=state["tool_results"],
-            memory_context=state.get("memory_context", ""),
-            constraint_context=state.get("constraint_context"),
-        ):
-            answer_parts.append(token)
-            yield token
+        # P0: 规则级出口（Clarify / Interrupt）— 跳过 LLM 生成，直接产出固定文案
+        _exit_kind: str | None = None
+        if state.get("_clarify_exit"):
+            _exit_kind = "clarify"
+        elif state.get("_interrupt_exit"):
+            _exit_kind = "interrupt"
+        if _exit_kind is not None:
+            _fixed_answer = (
+                _CLARIFY_ANSWER if _exit_kind == "clarify" else _INTERRUPT_ANSWER
+            )
+            answer_parts.append(_fixed_answer)
+            yield _fixed_answer
+        else:
+            async for token in self.generator.generate(
+                query=state["query"],
+                retrieved_docs=state["retrieved_docs"],
+                tool_results=state["tool_results"],
+                memory_context=state.get("memory_context", ""),
+                constraint_context=state.get("constraint_context"),
+            ):
+                answer_parts.append(token)
+                yield token
         # 记录 generate 节点 Span（trace_node 装饰器无法作用于内联流式调用）
         # P0-2: metadata 携带 included_refs — 生成阶段实际使用的上下文引用，
         # 与 retrieve span 证据互证（P0-1: 使用标准 SpanType）。
@@ -841,8 +898,9 @@ class AgenticRAGEngine:
             )
 
         # P0-Stage2: 累加 generate 用量到引擎用量记录
+        # P0: 规则级出口未调用 generate，跳过用量累加（避免复用上一次的 last_usage）
         _gen_usage = getattr(self.generator, "last_usage", None)
-        if _gen_usage:
+        if _gen_usage and _exit_kind is None:
             self._accumulated_usage["input_tokens"] += _gen_usage.get("input_tokens", 0)
             self._accumulated_usage["output_tokens"] += _gen_usage.get("output_tokens", 0)
             if _gen_usage.get("model"):
@@ -877,7 +935,11 @@ class AgenticRAGEngine:
         # 5. 反思（非流式，返回结构化评测结果）
         answer = "".join(answer_parts)
         state["answer"] = answer
-        eval_result = await self._reflect(state)
+        # P0: 规则级出口（Clarify / Interrupt）无检索上下文可校验，跳过质量守卫
+        if _exit_kind is not None:
+            eval_result = None
+        else:
+            eval_result = await self._reflect(state)
 
         # 5.5 忠实度拦截重生成答案处理：
         # _reflect 内部 check_and_regenerate 可能产出新答案（state["answer"]），
@@ -976,6 +1038,7 @@ class AgenticRAGEngine:
             or state.get("contradiction_blocked")
             or state.get("high_risk_blocked")
             or state.get("constraint_blocked")
+            or _exit_kind is not None
         )
         if self.cache is not None and _cacheable:
             try:
@@ -1543,11 +1606,14 @@ class AgenticRAGEngine:
         ]
 
         # P1-9: 生成初始计划状态清单（失败降级为默认两步计划，不阻塞循环）
+        # P1: 同时产出成功标准（Goal State），供 _reflect 对照判定 Finish
         if self._planner is not None and "plan_steps" not in state:
             try:
-                state["plan_steps"] = await self._planner.build_initial_plan(
+                plan_result = await self._planner.build_initial_plan(
                     state["query"]
                 )
+                state["plan_steps"] = plan_result.steps
+                state["success_criteria"] = plan_result.criteria
                 state["replan_count"] = 0
             except Exception as exc:
                 log.warning("engine.plan_init_failed", error=str(exc))
@@ -1556,6 +1622,8 @@ class AgenticRAGEngine:
         # P1-9: 同一决策连续重复计数（偏离检测启发式触发器之一）
         _last_decision: str | None = None
         _same_decision_count: int = 0
+        # P0: 连续空检索计数（Clarify 出口触发器）
+        _empty_retrieval_count: int = 0
 
         while True:
             # P0-3: 四轴硬预算前置闸门 —— turns/seconds/tokens/cost_usd 任一触顶即硬停。
@@ -1639,6 +1707,29 @@ class AgenticRAGEngine:
                 _same_decision_count = 0
             _last_decision = decision
 
+            # P0: Interrupt 出口 — 同一决策连续重复 ≥ 阈值 → 无可行路径，直接中断
+            # （替代"硬跑满 max_iterations 再兜底"，避免原地兜圈浪费 token）
+            if _same_decision_count >= _INTERRUPT_REPEATED_DECISION_THRESHOLD:
+                state["_interrupt_exit"] = True
+                log.info(
+                    "engine.interrupt_exit",
+                    alert=True,
+                    alert_type="agent_loop_interrupt",
+                    reason="repeated_decision",
+                    decision=decision,
+                    iteration=state["iteration"],
+                    session_id=state["session_id"],
+                )
+                yield SSEEvent(
+                    data={
+                        "reason": "repeated_decision",
+                        "decision": decision,
+                        "iteration": state["iteration"],
+                    },
+                    event=SSEEventType.INTERRUPT,
+                )
+                break
+
             if decision == "retrieve":
                 # yield retrieve_start 事件
                 yield SSEEvent(
@@ -1659,6 +1750,33 @@ class AgenticRAGEngine:
                     },
                     event=SSEEventType.RETRIEVE_END,
                 )
+
+                # P0: Clarify 出口 — 连续空检索 ≥ 阈值 → 关键信息缺失，请求澄清
+                # （检索为空且无重写/换库可救时，直接澄清而非继续 think 兜圈）
+                if len(state["retrieved_docs"]) == 0:
+                    _empty_retrieval_count += 1
+                else:
+                    _empty_retrieval_count = 0
+                if _empty_retrieval_count >= _CLARIFY_EMPTY_RETRIEVAL_THRESHOLD:
+                    state["_clarify_exit"] = True
+                    log.info(
+                        "engine.clarify_exit",
+                        alert=True,
+                        alert_type="agent_loop_clarify",
+                        reason="empty_retrieval",
+                        empty_count=_empty_retrieval_count,
+                        iteration=state["iteration"],
+                        session_id=state["session_id"],
+                    )
+                    yield SSEEvent(
+                        data={
+                            "reason": "empty_retrieval",
+                            "empty_count": _empty_retrieval_count,
+                            "iteration": state["iteration"],
+                        },
+                        event=SSEEventType.CLARIFY,
+                    )
+                    break
 
                 # P0-Opt2: 追加增量结果摘要（非重建），前缀保持稳定
                 state["messages"].append(
@@ -1781,6 +1899,29 @@ class AgenticRAGEngine:
                                 iteration=state["iteration"],
                                 session_id=state["session_id"],
                             )
+                        # P0: Interrupt 出口 — 重复工具结果 ≥ 阈值 → 无可行路径，中断
+                        if state["_dedup_hits"] >= _INTERRUPT_DEDUP_HITS_THRESHOLD:
+                            state["_interrupt_exit"] = True
+                            log.info(
+                                "engine.interrupt_exit",
+                                alert=True,
+                                alert_type="agent_loop_interrupt",
+                                reason="repeated_tool_result",
+                                dedup_hits=state["_dedup_hits"],
+                                tool=tool_name,
+                                iteration=state["iteration"],
+                                session_id=state["session_id"],
+                            )
+                            yield SSEEvent(
+                                data={
+                                    "reason": "repeated_tool_result",
+                                    "tool": tool_name,
+                                    "dedup_hits": state["_dedup_hits"],
+                                    "iteration": state["iteration"],
+                                },
+                                event=SSEEventType.INTERRUPT,
+                            )
+                            break
                     state["messages"].append(
                         {
                             "role": "user",
@@ -2064,6 +2205,17 @@ class AgenticRAGEngine:
                 "注意：用户可能切换了话题，请关注当前问题的独立完整性。"
             )
 
+        # P2: 注入最近结构化观察 — LLM 感知最近一轮执行结果（成功/失败/异常/进度），
+        # 避免对已失败/已阻断的动作重复决策（如反复重试被约束阻断的工具）。
+        observations = state.get("observations") or []
+        if observations:
+            recent_obs = observations[-_OBSERVATIONS_IN_THINK:]
+            obs_brief = "；".join(
+                f"轮{o['iteration']} {o['kind']}({o['detail']})"
+                for o in recent_obs
+            )
+            dynamic_parts.append(f"最近观察：{obs_brief}")
+
         dynamic_parts.append("请决定下一步。")
         dynamic_context = "，".join(dynamic_parts)
 
@@ -2135,6 +2287,35 @@ class AgenticRAGEngine:
     # ------------------------------------------------------------------
     # retrieve：检索 → 权限过滤 → 重排（关键：权限过滤在重排之前！）
     # ------------------------------------------------------------------
+
+    def _record_observation(
+        self,
+        state: AgentState,
+        kind: str,
+        detail: str,
+        iteration: int | None = None,
+    ) -> None:
+        """P2: 写入结构化观察记录 — 每轮 success/failure/anomaly/progress。
+
+        观察记录供两处复用：
+        - think 动态上下文：LLM 感知最近一轮执行结果（成功/失败/异常）；
+        - 评测 span：_span_evidence 携带观察列表，离线评测可回溯执行轨迹。
+
+        Args:
+            state: Agent Loop 状态。
+            kind: 观察类型（success / failure / anomaly / progress）。
+            detail: 观察详情（简短文本）。
+            iteration: 迭代轮次（默认取 state["iteration"]）。
+        """
+        obs = state.get("observations") or []
+        obs.append({
+            "iteration": (
+                state.get("iteration", 0) if iteration is None else iteration
+            ),
+            "kind": kind,
+            "detail": detail,
+        })
+        state["observations"] = obs
 
     def _build_recall_evaluator(
         self, kb_ids: list[str] | None
@@ -2208,6 +2389,10 @@ class AgenticRAGEngine:
                 iteration=state["iteration"],
             )
             state["retrieved_docs"] = []
+            # P2: 结构化观察 — 无可用知识库（异常）
+            self._record_observation(
+                state, "anomaly", "无可用知识库，检索短路返回空"
+            )
             # P0-2: 短路路径同样产出选择证据（空纳入），避免上下文评分误判
             # P1-4: 记录 kb_ids + 版本快照时间戳，支持回放追溯
             state["_span_evidence"] = {
@@ -2217,6 +2402,8 @@ class AgenticRAGEngine:
                 "no_accessible_kb": True,
                 "kb_ids": kb_ids or [],
                 "kb_version_snapshot": state.get("kb_version_snapshot"),
+                # P2: 结构化观察列表 — 短路路径同样随 span 落盘
+                "observations": state.get("observations", []),
             }
             return
 
@@ -2266,6 +2453,13 @@ class AgenticRAGEngine:
             query_used=query[:100],
             is_rewritten=query != original_query,
             constraint_count=len(state["constraint_context"]),
+        )
+        # P2: 结构化观察 — 候选召回进度
+        self._record_observation(
+            state,
+            "progress",
+            f"检索到 {len(candidates)} 篇候选文档"
+            + ("（重写查询）" if query != original_query else ""),
         )
 
         # 1.5 P1-4: 检索结果注入扫描 — HybridRetriever 返回后扫描 prompt injection
@@ -2319,6 +2513,13 @@ class AgenticRAGEngine:
                 log.error("engine.retrieve.permission_error", error=str(exc))
                 # Final Gate 失败时保守处理：返回空，避免泄露越权文档
                 filtered = []
+        # P2: 结构化观察 — 权限过滤进度
+        if len(filtered) != len(candidates):
+            self._record_observation(
+                state,
+                "progress",
+                f"权限过滤后保留 {len(filtered)}/{len(candidates)} 篇",
+            )
 
         # 3. 重排 — 使用原始用户查询（非重写查询）进行重排
         # HyDE 生成的是文档而非查询，不适合做重排输入
@@ -2385,16 +2586,32 @@ class AgenticRAGEngine:
                             recheck, self._retrieval_retry_count
                         ):
                             state["retrieval_insufficient"] = True
+                            # P2: 结构化观察 — 检索质量不足（失败）
+                            self._record_observation(
+                                state, "failure", "检索质量不足，判定拒答"
+                            )
                     elif self._quality_guard.should_reject_after_retry(
                         check_result, self._retrieval_retry_count
                     ):
                         # P1-2: 首次检查就低于阈值且已无重试次数 → 标记拒答
                         state["retrieval_insufficient"] = True
+                        # P2: 结构化观察 — 检索质量不足（失败）
+                        self._record_observation(
+                            state, "failure", "检索质量不足，判定拒答"
+                        )
             except Exception as exc:
                 log.warning("engine.retrieve.rerank_error", error=str(exc))
                 state["retrieved_docs"] = filtered[:_RERANK_TOP_K]
         else:
             state["retrieved_docs"] = []
+
+        # P2: 结构化观察 — 重排结果（成功 / 空检索异常）
+        if state["retrieved_docs"]:
+            self._record_observation(
+                state, "success", f"重排后保留 {len(state['retrieved_docs'])} 篇文档"
+            )
+        else:
+            self._record_observation(state, "anomaly", "检索为空，未获得可用文档")
 
         # 4. P0-4 时间新鲜度 — 生效窗口硬过滤 + 平局组按 updated_at 裁决
         # 新旧规范冲突场景：已过失效时间的旧规范不再进入上下文；
@@ -2509,6 +2726,9 @@ class AgenticRAGEngine:
                 for h in (d.get("injection_hits") or [])
                 if h.get("pattern_id")
             }),
+            # P2: 结构化观察列表 — 检索阶段写入的观察（Clarify/Interrupt 提前
+            # 退出时 reflect 不执行，此处保证观察仍随 retrieve span 落盘）。
+            "observations": state.get("observations", []),
         }
 
         log.info(
@@ -3007,6 +3227,10 @@ class AgenticRAGEngine:
             )
             _audit["status"] = "blocked"
             _audit["output"] = blocked_msg
+            # P2: 结构化观察 — 工具被约束条款阻断（异常）
+            self._record_observation(
+                state, "anomaly", f"工具 {tool_name} 被约束条款阻断"
+            )
             self._end_tool_audit_span(_audit_span_id, tool_name, _audit)
             return
 
@@ -3120,6 +3344,10 @@ class AgenticRAGEngine:
             )
             _audit["status"] = "blocked"
             _audit["output"] = blocked_msg
+            # P2: 结构化观察 — 工具需要用户确认（异常）
+            self._record_observation(
+                state, "anomaly", f"工具 {tool_name} 需要用户确认"
+            )
             self._end_tool_audit_span(_audit_span_id, tool_name, _audit)
             return
 
@@ -3174,6 +3402,10 @@ class AgenticRAGEngine:
             )
             _audit["output"] = str(result)[:200]
             log.info("engine.tool_call.done", tool=tool_name, result_len=len(result))
+            # P2: 结构化观察 — 工具执行成功
+            self._record_observation(
+                state, "success", f"工具 {tool_name} 执行成功"
+            )
         except Exception as exc:
             log.error("engine.tool_call.execute_error", tool=tool_name, error=str(exc))
             error_result = json.dumps(
@@ -3191,6 +3423,10 @@ class AgenticRAGEngine:
             _audit["status"] = "error"
             _audit["error"] = str(exc)
             _audit["output"] = error_result
+            # P2: 结构化观察 — 工具执行失败
+            self._record_observation(
+                state, "failure", f"工具 {tool_name} 执行失败：{str(exc)[:100]}"
+            )
         self._end_tool_audit_span(_audit_span_id, tool_name, _audit)
 
     def _end_tool_audit_span(
@@ -3384,6 +3620,9 @@ class AgenticRAGEngine:
         if self._quality_guard is None:
             await self._reflect_inline(state)
 
+        # P1: 对照成功标准判定 Finish — 答案是否满足显式成功标准
+        await self._check_success_criteria(state)
+
         # P3: reflect 节点实体引用 — 答案引用的文档作为证据锚点
         cited_docs = [
             str(d.get("doc_id") or d.get("chunk_id"))
@@ -3394,6 +3633,11 @@ class AgenticRAGEngine:
             "source": "reflect",
             "answer_regenerated": state.get("answer_regenerated", False),
             "evidence_ref": cited_docs[0] if cited_docs else None,
+            "criteria_satisfied": state.get("criteria_satisfied"),
+            "unmet_criteria": state.get("unmet_criteria", []),
+            # P2: 结构化观察列表 — 离线评测可回溯完整执行轨迹
+            # （每轮 success/failure/anomaly/progress 事件序列）
+            "observations": state.get("observations", []),
         }
 
         return state.get("eval_result")
@@ -3771,6 +4015,84 @@ class AgenticRAGEngine:
         task.add_done_callback(_on_done)
         _background_tasks.add(task)
         task.add_done_callback(_background_tasks.discard)
+
+    async def _check_success_criteria(self, state: AgentState) -> None:
+        """P1: 对照成功标准判定 Finish — 答案是否满足显式成功标准。
+
+        无成功标准 / 判定失败时保守视为满足（不阻断正常答案）。
+        结果写入 ``state["criteria_satisfied"]`` / ``state["unmet_criteria"]``，
+        供日志与评测观测（_span_evidence 同步携带）。
+        """
+        criteria = state.get("success_criteria") or []
+        if not criteria:
+            state["criteria_satisfied"] = True
+            return
+        answer = state.get("answer", "")
+        if not answer:
+            state["criteria_satisfied"] = False
+            return
+        try:
+            text = ""
+            messages: list[Message] = [
+                {
+                    "role": "system",
+                    "content": _CRITERIA_CHECK_PROMPT.format(
+                        query=state["query"],
+                        criteria="\n".join(f"- {c}" for c in criteria),
+                        answer=self._summarize_for_reflect(answer),
+                    ),
+                },
+            ]
+            async for chunk in self.llm.chat(messages, stream=False):
+                if isinstance(chunk, str):
+                    text += chunk
+            data = self._extract_json_object(text)
+            if data is None:
+                state["criteria_satisfied"] = True
+                return
+            unmet = [str(c) for c in data.get("unmet", []) if str(c).strip()]
+            state["criteria_satisfied"] = bool(data.get("satisfied", True))
+            state["unmet_criteria"] = unmet
+            log.info(
+                "engine.criteria_check",
+                satisfied=state["criteria_satisfied"],
+                unmet=unmet,
+                criteria_count=len(criteria),
+                session_id=state["session_id"],
+            )
+        except Exception as exc:
+            log.warning("engine.criteria_check_error", error=str(exc))
+            state["criteria_satisfied"] = True
+
+    @staticmethod
+    def _extract_json_object(text: str) -> dict[str, Any] | None:
+        """从文本中提取 JSON 对象（支持 markdown 代码块包裹）。
+
+        Returns:
+            解析出的 dict，无法解析时返回 None。
+        """
+        text = text.strip()
+        candidates = [text]
+        if "```" in text:
+            for match in re.finditer(r"```(?:json)?\s*(.*?)```", text, re.DOTALL):
+                candidates.insert(0, match.group(1).strip())
+        for candidate in candidates:
+            try:
+                data = json.loads(candidate)
+                if isinstance(data, dict):
+                    return data
+            except (json.JSONDecodeError, ValueError):
+                continue
+        first = text.find("{")
+        last = text.rfind("}")
+        if first != -1 and last > first:
+            try:
+                data = json.loads(text[first : last + 1])
+                if isinstance(data, dict):
+                    return data
+            except (json.JSONDecodeError, ValueError):
+                pass
+        return None
 
     async def _reflect_inline(self, state: AgentState) -> None:
         """内联简单反思 — LLMJudgeService 不可用时的降级路径。

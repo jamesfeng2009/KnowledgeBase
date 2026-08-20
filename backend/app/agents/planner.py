@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass
 from typing import Any
 
 from app.utils.logger import get_logger
@@ -47,8 +48,8 @@ DEVIATION_THRESHOLD = 0.6
 #: 默认最大重规划次数（每会话）
 DEFAULT_MAX_REPLANS = 2
 
-#: 初始计划生成 prompt
-_PLAN_PROMPT = """你是任务规划专家。为用户问题制定一个 2-4 步的执行计划。
+#: 初始计划生成 prompt — 一次 LLM 调用同时产出步骤清单与成功标准
+_PLAN_PROMPT = """你是任务规划专家。为用户问题制定一个 2-4 步的执行计划，并给出成功标准。
 
 可用动作：
 - retrieve：检索知识库文档
@@ -57,14 +58,22 @@ _PLAN_PROMPT = """你是任务规划专家。为用户问题制定一个 2-4 步
 
 用户问题：{query}
 
-以 JSON 数组输出，每步含 action 和 description：
+以 JSON 对象输出，包含 steps 数组和 criteria 数组：
 ```json
-[
-  {{"action": "retrieve", "description": "检索报销政策文档"}},
-  {{"action": "generate", "description": "整理政策要点生成答案"}}
-]
+{{
+  "steps": [
+    {{"action": "retrieve", "description": "检索报销政策文档"}},
+    {{"action": "generate", "description": "整理政策要点生成答案"}}
+  ],
+  "criteria": [
+    "答案应明确报销流程与所需材料",
+    "答案应基于检索到的政策文档"
+  ]
+}}
 ```
 
+criteria 是判断任务是否成功的可验证标准（2-4 条），
+每条应具体、可被答案满足性核对。
 只输出 JSON，不要其他内容。"""
 
 #: 偏离度判定 prompt
@@ -105,6 +114,26 @@ _REPLAN_PROMPT = """你是任务规划专家。当前执行遇到偏离，需要
 只输出 JSON，不要其他内容。"""
 
 
+#: 默认成功标准 — LLM 无法产出时的降级（与默认两步计划配套）
+_DEFAULT_CRITERIA: list[str] = [
+    "答案应直接回答用户问题",
+    "答案应基于检索到的文档内容",
+]
+
+
+@dataclass
+class PlanResult:
+    """初始计划结果 — 步骤清单 + 成功标准（一次 LLM 调用同时产出）。
+
+    Attributes:
+        steps: 步骤清单 [{step_id, action, description, status}]。
+        criteria: 成功标准列表 — 判断任务是否成功的可验证标准。
+    """
+
+    steps: list[dict[str, Any]]
+    criteria: list[str]
+
+
 class PlanManager:
     """显式计划管理器 — plan 状态清单的生命周期管理。
 
@@ -124,47 +153,85 @@ class PlanManager:
     # 计划生成
     # ------------------------------------------------------------------
 
-    async def build_initial_plan(self, query: str) -> list[dict[str, Any]]:
-        """生成初始计划步骤清单。
+    async def build_initial_plan(self, query: str) -> PlanResult:
+        """生成初始计划步骤清单与成功标准。
 
-        LLM 生成失败时降级为默认两步计划（retrieve → generate），
+        LLM 生成失败时降级为默认两步计划 + 默认成功标准，
         保证计划机制始终可用且零阻塞。
 
         Args:
             query: 用户问题。
 
         Returns:
-            步骤清单 [{step_id, action, description, status}]。
+            PlanResult（steps 步骤清单 + criteria 成功标准）。
         """
         try:
             text = await self._chat(_PLAN_PROMPT.format(query=query))
-            steps = self._parse_steps(text)
+            data = self._extract_json(text)
+            steps, criteria = self._parse_plan_result(data)
             if steps:
-                log.info("planner.initial_plan", steps=len(steps))
-                return steps
+                log.info(
+                    "planner.initial_plan",
+                    steps=len(steps),
+                    criteria=len(criteria),
+                )
+                return PlanResult(steps=steps, criteria=criteria)
         except Exception as exc:
             log.warning("planner.initial_plan_error", error=str(exc))
 
-        # 降级：默认两步计划
+        # 降级：默认两步计划 + 默认成功标准
         return self._fallback_plan()
 
     @staticmethod
-    def _fallback_plan() -> list[dict[str, Any]]:
-        """默认两步计划 — LLM 不可用时的降级。"""
-        return [
-            {
-                "step_id": 1,
-                "action": "retrieve",
-                "description": "检索知识库文档",
-                "status": STEP_PENDING,
-            },
-            {
-                "step_id": 2,
-                "action": "generate",
-                "description": "基于检索结果生成答案",
-                "status": STEP_PENDING,
-            },
+    def _parse_plan_result(data: Any) -> tuple[list[dict[str, Any]], list[str]]:
+        """从 LLM 响应解析步骤清单与成功标准。
+
+        兼容两种格式：
+        - 对象：{"steps": [...], "criteria": [...]}（当前 prompt）
+        - 数组：[...]（旧格式，criteria 为空列表）
+
+        Args:
+            data: 已解析的 JSON 数据。
+
+        Returns:
+            (steps, criteria) 二元组。
+        """
+        if isinstance(data, dict):
+            steps_data = data.get("steps", [])
+            criteria_data = data.get("criteria", [])
+        elif isinstance(data, list):
+            steps_data = data
+            criteria_data = []
+        else:
+            return [], []
+        steps = PlanManager._steps_from_data(steps_data)
+        criteria = [
+            str(c).strip()[:200]
+            for c in criteria_data
+            if isinstance(c, str) and c.strip()
         ]
+        return steps, criteria
+
+    @staticmethod
+    def _fallback_plan() -> PlanResult:
+        """默认两步计划 + 默认成功标准 — LLM 不可用时的降级。"""
+        return PlanResult(
+            steps=[
+                {
+                    "step_id": 1,
+                    "action": "retrieve",
+                    "description": "检索知识库文档",
+                    "status": STEP_PENDING,
+                },
+                {
+                    "step_id": 2,
+                    "action": "generate",
+                    "description": "基于检索结果生成答案",
+                    "status": STEP_PENDING,
+                },
+            ],
+            criteria=list(_DEFAULT_CRITERIA),
+        )
 
     # ------------------------------------------------------------------
     # 状态推进
@@ -337,8 +404,15 @@ class PlanManager:
     def _parse_steps(
         text: str, start_id: int = 1
     ) -> list[dict[str, Any]]:
-        """从 LLM 响应解析步骤清单，过滤非法动作。"""
+        """从 LLM 响应文本解析步骤清单，过滤非法动作。"""
         data = PlanManager._extract_json(text)
+        return PlanManager._steps_from_data(data, start_id)
+
+    @staticmethod
+    def _steps_from_data(
+        data: Any, start_id: int = 1
+    ) -> list[dict[str, Any]]:
+        """从已解析 JSON 数据解析步骤清单，过滤非法动作。"""
         if not isinstance(data, list):
             return []
         steps: list[dict[str, Any]] = []

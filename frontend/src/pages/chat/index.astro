@@ -855,6 +855,18 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
             // 2 秒后淡出
             setTimeout(() => { if (statusEl) statusEl.innerHTML = ''; }, 2000);
           }
+        } else if (evtType === 'clarify') {
+          // P0: 规则级出口 — 关键信息缺失，请求澄清
+          if (statusEl) {
+            statusEl.innerHTML = '<div class="chat-status-item chat-status-clarify"><span class="chat-status-dot"></span>未找到相关资料，请补充信息</div>';
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+          }
+        } else if (evtType === 'interrupt') {
+          // P0: 规则级出口 — 无可行路径，中断
+          if (statusEl) {
+            statusEl.innerHTML = '<div class="chat-status-item chat-status-interrupt"><span class="chat-status-dot"></span>无法继续推进，已中断</div>';
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+          }
         } else if (evtType === 'tool_call_start') {
           // P0-7: 工具调用开始 — 渲染 ToolCallCard
           if (toolsEl) {
@@ -1925,6 +1937,13 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
       }
       .chat-status-quality-ok .chat-status-dot {
         background: var(--success);
+      }
+      /* P0: 规则级出口 — Clarify（关键信息缺失） / Interrupt（无可行路径） */
+      .chat-status-clarify .chat-status-dot {
+        background: var(--warning);
+      }
+      .chat-status-interrupt .chat-status-dot {
+        background: var(--danger);
       }
       @keyframes pulse {
         0%, 100% { opacity: 1; transform: scale(1); }

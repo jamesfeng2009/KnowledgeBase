@@ -81,12 +81,14 @@ class TestBuildInitialPlan:
     @pytest.mark.asyncio
     async def test_parse_llm_plan(self) -> None:
         llm = QueueLLM([
-            '[{"action": "retrieve", "description": "检索政策"},'
-            ' {"action": "generate", "description": "生成答案"}]'
+            '{"steps": [{"action": "retrieve", "description": "检索政策"},'
+            ' {"action": "generate", "description": "生成答案"}],'
+            ' "criteria": ["答案应明确报销流程", "答案应基于政策文档"]}'
         ])
         planner = PlanManager(llm)
 
-        plan = await planner.build_initial_plan("报销政策是什么")
+        result = await planner.build_initial_plan("报销政策是什么")
+        plan = result.steps
 
         assert len(plan) == 2
         assert plan[0]["action"] == "retrieve"
@@ -96,47 +98,78 @@ class TestBuildInitialPlan:
         assert plan[1]["step_id"] == 2
 
     @pytest.mark.asyncio
-    async def test_invalid_actions_filtered(self) -> None:
+    async def test_criteria_parsed(self) -> None:
         llm = QueueLLM([
-            '[{"action": "retrieve", "description": "检索"},'
-            ' {"action": "hack", "description": "非法动作"},'
-            ' {"action": "generate", "description": "生成"}]'
+            '{"steps": [{"action": "retrieve", "description": "检索"},'
+            ' {"action": "generate", "description": "生成"}],'
+            ' "criteria": ["答案应明确报销流程", "答案应基于政策文档"]}'
         ])
         planner = PlanManager(llm)
 
-        plan = await planner.build_initial_plan("q")
+        result = await planner.build_initial_plan("q")
 
-        assert [s["action"] for s in plan] == ["retrieve", "generate"]
+        assert result.criteria == ["答案应明确报销流程", "答案应基于政策文档"]
+
+    @pytest.mark.asyncio
+    async def test_criteria_empty_when_missing(self) -> None:
+        """LLM 未产出 criteria 时返回空列表（不阻断计划）。"""
+        llm = QueueLLM([
+            '{"steps": [{"action": "retrieve", "description": "检索"},'
+            ' {"action": "generate", "description": "生成"}]}'
+        ])
+        planner = PlanManager(llm)
+
+        result = await planner.build_initial_plan("q")
+
+        assert result.criteria == []
+
+    @pytest.mark.asyncio
+    async def test_invalid_actions_filtered(self) -> None:
+        llm = QueueLLM([
+            '{"steps": [{"action": "retrieve", "description": "检索"},'
+            ' {"action": "hack", "description": "非法动作"},'
+            ' {"action": "generate", "description": "生成"}],'
+            ' "criteria": ["标准1"]}'
+        ])
+        planner = PlanManager(llm)
+
+        result = await planner.build_initial_plan("q")
+
+        assert [s["action"] for s in result.steps] == ["retrieve", "generate"]
 
     @pytest.mark.asyncio
     async def test_markdown_wrapped_json(self) -> None:
         llm = QueueLLM([
-            '```json\n[{"action": "retrieve", "description": "检索"},'
-            ' {"action": "generate", "description": "生成"}]\n```'
+            '```json\n{"steps": [{"action": "retrieve", "description": "检索"},'
+            ' {"action": "generate", "description": "生成"}],'
+            ' "criteria": ["标准1"]}\n```'
         ])
         planner = PlanManager(llm)
 
-        plan = await planner.build_initial_plan("q")
+        result = await planner.build_initial_plan("q")
 
-        assert len(plan) == 2
+        assert len(result.steps) == 2
+        assert result.criteria == ["标准1"]
 
     @pytest.mark.asyncio
     async def test_invalid_json_falls_back(self) -> None:
         llm = QueueLLM(["这不是 JSON"])
         planner = PlanManager(llm)
 
-        plan = await planner.build_initial_plan("q")
+        result = await planner.build_initial_plan("q")
 
-        # 降级默认两步计划
-        assert [s["action"] for s in plan] == ["retrieve", "generate"]
+        # 降级默认两步计划 + 默认成功标准
+        assert [s["action"] for s in result.steps] == ["retrieve", "generate"]
+        assert len(result.criteria) >= 1
 
     @pytest.mark.asyncio
     async def test_llm_error_falls_back(self) -> None:
         planner = PlanManager(ErrorLLM())
 
-        plan = await planner.build_initial_plan("q")
+        result = await planner.build_initial_plan("q")
 
-        assert [s["action"] for s in plan] == ["retrieve", "generate"]
+        assert [s["action"] for s in result.steps] == ["retrieve", "generate"]
+        assert len(result.criteria) >= 1
 
 
 # ======================================================================

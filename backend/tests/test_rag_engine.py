@@ -18,7 +18,13 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.rag.engine import AgentState, AgenticRAGEngine
+from app.rag.engine import (
+    _CLARIFY_ANSWER,
+    _INTERRUPT_ANSWER,
+    AgentState,
+    AgenticRAGEngine,
+)
+from app.utils.sse import SSEEvent, SSEEventType
 
 
 # ======================================================================
@@ -111,9 +117,41 @@ class FakeMCPClient:
         return "{}"
 
 
+class FakeQueryRewriter:
+    """Mock QueryRewriter — 返回原查询，避免测试触发真实 LLM 重写调用。"""
+
+    async def rewrite(self, query: str, context: str = "", **kwargs: Any) -> Any:
+        from app.rag.query_rewriter import QueryRewriteResult
+
+        return QueryRewriteResult(original=query, strategy=[])
+
+
+class SequenceLLM:
+    """Mock LLM Provider — 按预设序列逐次响应 chat 调用（超出后复用最后一个）。"""
+
+    def __init__(self, responses: list[str]) -> None:
+        self.responses = list(responses)
+        self.i = 0
+
+    async def chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        stream: bool = False,
+        **kwargs: Any,
+    ) -> AsyncIterator[str | dict]:
+        resp = self.responses[min(self.i, len(self.responses) - 1)]
+        self.i += 1
+        yield resp
+
+
 # ======================================================================
 # 测试
 # ======================================================================
+
+
+# 哨兵 — 区分「默认注入 FakeQueryRewriter」与「显式传 None 走 engine 自动初始化」
+_NO_REWRITER = object()
 
 
 def _make_engine(
@@ -121,7 +159,7 @@ def _make_engine(
     candidates: list[dict[str, Any]] | None = None,
     permission_filter=None,
     max_iterations: int = 5,
-    query_rewriter=None,
+    query_rewriter: Any = _NO_REWRITER,
 ) -> tuple[AgenticRAGEngine, FakeLLM, FakeRetriever, FakeReranker]:
     """构造带 Mock 组件的 RAG 引擎。"""
     llm = FakeLLM(llm_response)
@@ -137,7 +175,11 @@ def _make_engine(
         cache=None,
         permission_filter=permission_filter,
         max_iterations=max_iterations,
-        query_rewriter=query_rewriter,
+        # 默认注入假重写器，避免测试触发真实 LLM 重写调用；
+        # 显式传 None 时透传给 engine（走自动初始化路径）
+        query_rewriter=(
+            FakeQueryRewriter() if query_rewriter is _NO_REWRITER else query_rewriter
+        ),
     )
     return engine, llm, retriever, reranker
 
@@ -370,3 +412,352 @@ class TestAnswerStream:
                 tokens.append(chunk)
 
         assert "".join(tokens) == "这是答案"
+
+
+class TestRuleLevelExits:
+    """P0: 规则级出口（Clarify / Interrupt）测试。"""
+
+    @pytest.mark.asyncio
+    async def test_clarify_exit_on_empty_retrieval(self) -> None:
+        """连续两次空检索 → Clarify 出口：产出澄清文案，不进入 LLM 生成。"""
+        engine, _, _, _ = _make_engine(llm_response="retrieve", candidates=[])
+
+        events: list[SSEEvent] = []
+        tokens: list[str] = []
+        async for chunk in engine.answer("test query", "user-1", "session-1"):
+            if isinstance(chunk, SSEEvent):
+                events.append(chunk)
+            elif isinstance(chunk, str):
+                tokens.append(chunk)
+
+        # 应产出 clarify 事件
+        assert any(e.event == SSEEventType.CLARIFY for e in events)
+        # 答案应为固定澄清文案（未调用 LLM 生成）
+        assert "".join(tokens) == _CLARIFY_ANSWER
+        # 不应产出普通生成结果
+        assert "这是答案" not in "".join(tokens)
+
+    @pytest.mark.asyncio
+    async def test_interrupt_exit_on_repeated_decision(self) -> None:
+        """同一决策连续重复 ≥ 3 → Interrupt 出口：产出中断文案。"""
+        engine, _, _, _ = _make_engine(
+            llm_response="retrieve", candidates=[{"content": "文档内容"}]
+        )
+
+        events: list[SSEEvent] = []
+        tokens: list[str] = []
+        async for chunk in engine.answer("test query", "user-1", "session-1"):
+            if isinstance(chunk, SSEEvent):
+                events.append(chunk)
+            elif isinstance(chunk, str):
+                tokens.append(chunk)
+
+        # 应产出 interrupt 事件
+        assert any(e.event == SSEEventType.INTERRUPT for e in events)
+        # 答案应为固定中断文案
+        assert "".join(tokens) == _INTERRUPT_ANSWER
+
+    @pytest.mark.asyncio
+    async def test_single_empty_retrieval_does_not_clarify(self) -> None:
+        """仅一次空检索不应触发 Clarify — 允许 Agent 换查询/换库再试。"""
+        # 第一次 retrieve 返回空，第二次返回文档，随后 generate → 正常继续
+        class _TwoPhaseRetriever:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def search(self, query, kb_ids=None, top_k=20, filters=None):
+                self.calls += 1
+                if self.calls == 1:
+                    return []
+                return [{"content": "文档内容"}]
+
+        llm = SequenceLLM(["retrieve", "retrieve", "generate"])
+        retriever = _TwoPhaseRetriever()
+        reranker = FakeReranker()
+        generator = FakeGenerator()
+        engine = AgenticRAGEngine(
+            llm=llm,
+            mcp_client=FakeMCPClient(),
+            retriever=retriever,  # type: ignore[arg-type]
+            reranker=reranker,
+            generator=generator,
+            cache=None,
+            max_iterations=5,
+            query_rewriter=FakeQueryRewriter(),
+        )
+
+        events: list[SSEEvent] = []
+        tokens: list[str] = []
+        async for chunk in engine.answer("test query", "user-1", "session-1"):
+            if isinstance(chunk, SSEEvent):
+                events.append(chunk)
+            elif isinstance(chunk, str):
+                tokens.append(chunk)
+
+        # 不应触发 Clarify / Interrupt
+        assert not any(e.event == SSEEventType.CLARIFY for e in events)
+        assert not any(e.event == SSEEventType.INTERRUPT for e in events)
+        # 正常生成
+        assert "".join(tokens) == "这是答案"
+
+
+class TestSuccessCriteria:
+    """P1: 成功标准显式化（Goal State）测试。"""
+
+    @pytest.mark.asyncio
+    async def test_criteria_satisfied_when_met(self) -> None:
+        """答案满足全部成功标准 → criteria_satisfied=True。"""
+        llm = SequenceLLM([
+            '{"satisfied": true, "unmet": [], "reason": "完整覆盖"}'
+        ])
+        engine, _, _, _ = _make_engine(llm_response="generate")
+        engine.llm = llm
+        state = _make_state(
+            answer="报销流程是提交申请后 3 个工作日内审批。",
+            success_criteria=["答案应明确报销流程", "答案应基于政策文档"],
+        )
+
+        await engine._check_success_criteria(state)
+
+        assert state["criteria_satisfied"] is True
+        assert state["unmet_criteria"] == []
+
+    @pytest.mark.asyncio
+    async def test_criteria_not_satisfied_when_unmet(self) -> None:
+        """答案未满足部分成功标准 → criteria_satisfied=False，记录 unmet。"""
+        llm = SequenceLLM([
+            '{"satisfied": false, "unmet": ["答案应明确报销流程"],'
+            ' "reason": "缺少流程细节"}'
+        ])
+        engine, _, _, _ = _make_engine(llm_response="generate")
+        engine.llm = llm
+        state = _make_state(
+            answer="报销需要提交申请。",
+            success_criteria=["答案应明确报销流程", "答案应基于政策文档"],
+        )
+
+        await engine._check_success_criteria(state)
+
+        assert state["criteria_satisfied"] is False
+        assert state["unmet_criteria"] == ["答案应明确报销流程"]
+
+    @pytest.mark.asyncio
+    async def test_no_criteria_skips_llm(self) -> None:
+        """无成功标准 → 视为满足且不调用 LLM。"""
+        llm = SequenceLLM(["unused"])
+        engine, _, _, _ = _make_engine(llm_response="generate")
+        engine.llm = llm
+        state = _make_state(answer="答案")
+
+        await engine._check_success_criteria(state)
+
+        assert state["criteria_satisfied"] is True
+        assert llm.i == 0  # 未调用 LLM
+
+    @pytest.mark.asyncio
+    async def test_invalid_json_conservative_satisfied(self) -> None:
+        """LLM 返回非法 JSON → 保守视为满足（不阻断正常答案）。"""
+        llm = SequenceLLM(["无法解析"])
+        engine, _, _, _ = _make_engine(llm_response="generate")
+        engine.llm = llm
+        state = _make_state(
+            answer="答案",
+            success_criteria=["标准1"],
+        )
+
+        await engine._check_success_criteria(state)
+
+        assert state["criteria_satisfied"] is True
+
+    @pytest.mark.asyncio
+    async def test_reflect_sets_criteria_satisfied(self) -> None:
+        """_reflect 对照成功标准判定 Finish — 结果写入 state 与 _span_evidence。"""
+        # 第一个响应给 _reflect_inline，第二个给 _check_success_criteria
+        llm = SequenceLLM([
+            "satisfied",
+            '{"satisfied": true, "unmet": [], "reason": "ok"}',
+        ])
+        engine, _, _, _ = _make_engine(llm_response="generate")
+        engine.llm = llm
+        state = _make_state(
+            answer="报销流程是提交申请后 3 个工作日内审批。",
+            retrieved_docs=[{"content": "报销政策文档内容"}],
+            success_criteria=["答案应明确报销流程"],
+        )
+
+        await engine._reflect(state)
+
+        assert state["criteria_satisfied"] is True
+        assert state["_span_evidence"]["criteria_satisfied"] is True
+
+
+class RecordingLLM:
+    """Mock LLM — 记录最近一次 chat 的 messages，返回预设响应。"""
+
+    def __init__(self, response: str = "generate") -> None:
+        self.response = response
+        self.last_messages: list[dict[str, Any]] = []
+
+    async def chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        stream: bool = False,
+        **kwargs: Any,
+    ) -> AsyncIterator[str | dict]:
+        self.last_messages = list(messages)
+        yield self.response
+
+
+class TestObservations:
+    """P2: 结构化观察记录 — 写入 / think 动态上下文复用 / span 复用。"""
+
+    @pytest.mark.asyncio
+    async def test_record_observation_writes_structured_entry(self) -> None:
+        """_record_observation 写入带 iteration/kind/detail 的结构化条目。"""
+        engine, _, _, _ = _make_engine()
+        state = _make_state(iteration=2)
+
+        engine._record_observation(state, "success", "重排后保留 3 篇文档")
+
+        assert state["observations"] == [
+            {"iteration": 2, "kind": "success", "detail": "重排后保留 3 篇文档"}
+        ]
+
+    @pytest.mark.asyncio
+    async def test_record_observation_accumulates(self) -> None:
+        """多次写入按序累积，且 iteration 缺省取当前轮次。"""
+        engine, _, _, _ = _make_engine()
+        state = _make_state(iteration=1)
+
+        engine._record_observation(state, "progress", "检索到 5 篇候选文档")
+        state["iteration"] = 2
+        engine._record_observation(state, "success", "重排后保留 3 篇文档")
+
+        assert [o["kind"] for o in state["observations"]] == ["progress", "success"]
+        assert state["observations"][0]["iteration"] == 1
+        assert state["observations"][1]["iteration"] == 2
+
+    @pytest.mark.asyncio
+    async def test_retrieve_records_observations(self) -> None:
+        """_retrieve 写入候选召回 progress 与重排成功 success 观察。"""
+        engine, _, _, _ = _make_engine(
+            candidates=[{"content": "文档1"}, {"content": "文档2"}]
+        )
+        state = _make_state(iteration=1)
+
+        await engine._retrieve(state, kb_ids=None)
+
+        kinds = [o["kind"] for o in state["observations"]]
+        assert "progress" in kinds  # 候选召回
+        assert "success" in kinds  # 重排后保留
+        assert all(o["iteration"] == 1 for o in state["observations"])
+
+    @pytest.mark.asyncio
+    async def test_retrieve_empty_records_anomaly(self) -> None:
+        """检索为空 → 写入 anomaly 观察。"""
+        engine, _, _, _ = _make_engine(candidates=[])
+        state = _make_state(iteration=1)
+
+        await engine._retrieve(state, kb_ids=None)
+
+        assert any(
+            o["kind"] == "anomaly" and "检索为空" in o["detail"]
+            for o in state["observations"]
+        )
+
+    @pytest.mark.asyncio
+    async def test_think_dynamic_context_includes_observations(self) -> None:
+        """_think 动态上下文注入最近观察，且只取尾部 N 条。"""
+        llm = RecordingLLM("retrieve")
+        engine, _, _, _ = _make_engine(llm_response="generate")
+        engine.llm = llm
+        state = _make_state(iteration=1)
+        state["observations"] = [
+            {"iteration": 1, "kind": "progress", "detail": f"观察{i}"}
+            for i in range(10)
+        ]
+
+        await engine._think(state)
+
+        joined = "".join(
+            m.get("content", "") for m in llm.last_messages if m.get("role") == "user"
+        )
+        assert "最近观察" in joined
+        # 只注入尾部 _OBSERVATIONS_IN_THINK 条
+        assert "观察9" in joined
+        assert "观察0" not in joined
+
+    @pytest.mark.asyncio
+    async def test_think_skips_observations_when_empty(self) -> None:
+        """无观察记录时动态上下文不出现"最近观察"段。"""
+        llm = RecordingLLM("retrieve")
+        engine, _, _, _ = _make_engine(llm_response="generate")
+        engine.llm = llm
+        state = _make_state(iteration=1)
+
+        await engine._think(state)
+
+        joined = "".join(
+            m.get("content", "") for m in llm.last_messages if m.get("role") == "user"
+        )
+        assert "最近观察" not in joined
+
+    @pytest.mark.asyncio
+    async def test_reflect_span_evidence_carries_observations(self) -> None:
+        """_reflect 的 _span_evidence 携带完整观察列表供离线评测回溯。"""
+        llm = SequenceLLM([
+            "satisfied",
+            '{"satisfied": true, "unmet": [], "reason": "ok"}',
+        ])
+        engine, _, _, _ = _make_engine(llm_response="generate")
+        engine.llm = llm
+        state = _make_state(
+            answer="报销流程是提交申请后 3 个工作日内审批。",
+            retrieved_docs=[{"content": "报销政策文档内容"}],
+            observations=[
+                {"iteration": 1, "kind": "success", "detail": "重排后保留 1 篇文档"}
+            ],
+        )
+
+        await engine._reflect(state)
+
+        assert state["_span_evidence"]["observations"] == [
+            {"iteration": 1, "kind": "success", "detail": "重排后保留 1 篇文档"}
+        ]
+
+    @pytest.mark.asyncio
+    async def test_tool_call_records_success_observation(self) -> None:
+        """工具执行成功 → 写入 success 观察。"""
+
+        class _ToolMCPClient:
+            async def get_tools_for_llm(self) -> list[dict[str, Any]]:
+                return []
+
+            async def call_tool(
+                self, tool_name: str, arguments: dict, tenant_id: str | None = None
+            ) -> str:
+                return '{"ok": true}'
+
+        from app.rag.engine import ToolUse
+
+        engine = AgenticRAGEngine(
+            llm=FakeLLM("generate"),
+            mcp_client=_ToolMCPClient(),  # type: ignore[arg-type]
+            retriever=FakeRetriever(),
+            reranker=FakeReranker(),
+            generator=FakeGenerator(),
+            cache=None,
+            max_iterations=5,
+            query_rewriter=FakeQueryRewriter(),
+        )
+        state = _make_state(iteration=1)
+        tool_use: ToolUse = {"name": "knowledge_search", "input": {}, "id": "t1"}
+
+        async for _ in engine._execute_tool_use(state, tool_use):
+            pass
+
+        assert any(
+            o["kind"] == "success" and "knowledge_search" in o["detail"]
+            for o in state["observations"]
+        )

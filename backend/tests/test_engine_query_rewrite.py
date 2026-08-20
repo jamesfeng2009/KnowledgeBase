@@ -95,8 +95,10 @@ class FakePlanner:
 
     max_replans: int = 2
 
-    async def build_initial_plan(self, query: str) -> list[dict[str, Any]]:
-        return []
+    async def build_initial_plan(self, query: str) -> Any:
+        from app.agents.planner import PlanResult
+
+        return PlanResult(steps=[], criteria=[])
 
 
 # ======================================================================
@@ -154,7 +156,7 @@ class TestEngineQueryRewriterInjection:
     def test_engine_without_query_rewriter(self):
         """未传入 query_rewriter 时 engine 正常创建。"""
         with patch("app.rag.query_rewriter.get_query_rewriter", return_value=None):
-            engine, _, _, _ = _make_engine()
+            engine, _, _, _ = _make_engine(query_rewriter=None)
             assert engine._query_rewriter is None
 
     def test_engine_auto_inits_query_rewriter(self):
@@ -165,7 +167,7 @@ class TestEngineQueryRewriterInjection:
         with patch(
             "app.rag.query_rewriter.get_query_rewriter", return_value=mock_rewriter
         ):
-            engine, _, _, _ = _make_engine()
+            engine, _, _, _ = _make_engine(query_rewriter=None)
             assert engine._query_rewriter is mock_rewriter
 
 
