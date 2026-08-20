@@ -18,11 +18,14 @@ Deep Research 服务 — P2-11：目标拆解 → 子课题证据卡片 → 矛�
 
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass, field
 from typing import Any
 
 from app.llm.base import LLMProvider, Message
+from app.rag.merge_rank import merge_and_rank
+from app.rag.web_search import dedup_web_by_url
 from app.utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -132,6 +135,25 @@ class DeepResearchService:
         "分析结果："
     )
 
+    # P4 双源取证：内部文档已明确回答时优先引用内部，网络仅补充/提供最新信息。
+    # 关键论点后用 [内部] / [网络] 标注来源，保证引用可溯源。
+    _CONCLUDE_HYBRID_PROMPT = (
+        "你是研究分析专家。基于以下资料片段（已标注来源：internal=内部文档，"
+        "web=网络搜索），针对子课题归纳结论。\n"
+        "要求：\n"
+        "1. 内部文档已清晰回答时，优先基于内部文档作答；网络来源仅在内部不足"
+        "或需补充最新信息时引用\n"
+        "2. 结论必须严格基于资料片段，不得编造\n"
+        "3. 输出 JSON："
+        '{{"conclusion": "100字内结论，关键论点后用[内部]或[网络]标注来源",'
+        ' "confidence": 0.0-1.0}}\n'
+        "4. confidence 反映资料对子课题的支撑程度（信息少/间接则给低分）\n"
+        "5. 只输出 JSON\n\n"
+        "子课题：{topic}\n\n"
+        "资料片段：\n{context}\n\n"
+        "分析结果："
+    )
+
     _SUMMARY_PROMPT = (
         "你是研究报告撰写专家。基于各子课题的结论，为研究目标写一段"
         "150字内的总体摘要，点明主要发现、矛盾点与信息缺口。\n\n"
@@ -145,15 +167,31 @@ class DeepResearchService:
         llm: LLMProvider,
         retriever: Any,
         contradiction_detector: Any = None,
+        web_provider: Any = None,
+        merge_config: dict[str, Any] | None = None,
     ) -> None:
         """
         Args:
             llm: LLM Provider
             retriever: 混合检索器（需有 async search(query, kb_ids, top_k)）
             contradiction_detector: 矛盾检测器；None 时自动尝试创建
+            web_provider: 公网搜索提供商；None 则走纯内部检索（关闭公网）
+            merge_config: 双源合并参数；None 时从 config 读取默认值
         """
         self._llm = llm
         self._retriever = retriever
+        self._web_provider = web_provider
+        from app.config import get_settings
+
+        s = get_settings()
+        self._merge_config = merge_config or {
+            "k_internal": s.MERGE_K_INTERNAL,
+            "k_web": s.MERGE_K_WEB,
+            "boost": s.INTERNAL_KB_BOOST_FACTOR,
+            "min_internal": s.MERGE_MIN_INTERNAL,
+            "min_web": s.MERGE_MIN_WEB,
+            "total_budget": s.MERGE_TOTAL_BUDGET,
+        }
         if contradiction_detector is not None:
             self._detector = contradiction_detector
         else:
@@ -208,13 +246,23 @@ class DeepResearchService:
     # ------------------------------------------------------------------
 
     async def _gather_evidence(
-        self, topic: str, kb_ids: list[str] | None
+        self, topic: str, kb_ids: list[str] | None, tenant_id: str | None = None
     ) -> EvidenceCard:
-        """对单个子课题检索 + 归纳，产出证据卡片。"""
-        docs = await self._retriever.search(
+        """对单个子课题检索 + 归纳，产出证据卡片。
+
+        双源取证（P4）：注入 web_provider 时，内部 + 公网并发检索、
+        归一化合并排序、引用带 source_type；单源失败降级不阻塞。
+        未注入 web_provider 时维持纯内部检索（行为不变）。
+        tenant_id 透传给公网提供商用于按租户隔离搜索配额。
+        """
+        internal_docs = await self._retriever.search(
             topic, kb_ids=kb_ids, top_k=_TOPIC_RETRIEVE_TOP_K
         )
-        if not docs:
+
+        if self._web_provider is not None:
+            return await self._gather_evidence_hybrid(topic, internal_docs, tenant_id)
+
+        if not internal_docs:
             log.info("deep_research.topic_gap", topic=topic[:80])
             return EvidenceCard(topic=topic, status="gap")
 
@@ -224,16 +272,90 @@ class DeepResearchService:
                 "title": (d.get("metadata") or {}).get("title", ""),
                 "snippet": (d.get("content") or "")[:200],
                 "score": float(d.get("score", 0.0)),
+                "source_type": "internal",
             }
-            for d in docs
+            for d in internal_docs
         ]
 
         context = "\n---\n".join(
-            (d.get("content") or "")[:_DOC_SNIPPET_CHARS] for d in docs
+            (d.get("content") or "")[:_DOC_SNIPPET_CHARS] for d in internal_docs
         )
         try:
             raw = await self._call_llm(
                 self._CONCLUDE_PROMPT.format(topic=topic, context=context)
+            )
+            parsed = self._parse_json_object(raw)
+            conclusion = str(parsed.get("conclusion", "")).strip()
+            confidence = float(parsed.get("confidence", 0.0))
+            confidence = max(0.0, min(1.0, confidence))
+        except Exception as exc:
+            log.warning(
+                "deep_research.conclude_failed", topic=topic[:80], error=str(exc)
+            )
+            conclusion, confidence = "", 0.0
+
+        if not conclusion:
+            status = "gap"
+        elif confidence >= _CONFIRMED_CONFIDENCE_THRESHOLD:
+            status = "confirmed"
+        else:
+            status = "uncertain"
+
+        return EvidenceCard(
+            topic=topic,
+            conclusion=conclusion,
+            citations=citations,
+            confidence=round(confidence, 3),
+            status=status,
+        )
+
+    async def _gather_evidence_hybrid(
+        self,
+        topic: str,
+        internal_docs: list[Any],
+        tenant_id: str | None = None,
+    ) -> EvidenceCard:
+        """P4 双源取证：内部 + 公网并发 → merge_rank → 带 source_type 的引用。
+
+        内部检索为同步前置（与 retriever 共同位于主路径），公网外包并发；
+        单路异常/无结果降级为空，不阻塞整体研究流程。
+        """
+        mc = self._merge_config
+        try:
+            web_hits = dedup_web_by_url(
+                await self._web_provider.search(
+                    topic, max_results=mc["k_web"], tenant_id=tenant_id
+                )
+            )
+        except Exception as exc:
+            log.warning(
+                "deep_research.web_search_failed", topic=topic[:80], error=str(exc)
+            )
+            web_hits = []
+
+        if not internal_docs and not web_hits:
+            log.info("deep_research.topic_gap", topic=topic[:80])
+            return EvidenceCard(topic=topic, status="gap")
+
+        merged = merge_and_rank(internal_docs, web_hits, **mc)
+
+        citations = [
+            {
+                "doc_id": m["url_or_doc_path"],
+                "title": m["title"],
+                "snippet": m["snippet"],
+                "score": m["score"],
+                "source_type": m["source_type"],
+            }
+            for m in merged
+        ]
+        # 带来源标签的上下文（内部 internal / 网络 web），供 LLM 内部优先引用
+        context = "\n---\n".join(
+            f"[{m['source_type']}] {m['title']}\n{m['snippet']}" for m in merged
+        )
+        try:
+            raw = await self._call_llm(
+                self._CONCLUDE_HYBRID_PROMPT.format(topic=topic, context=context)
             )
             parsed = self._parse_json_object(raw)
             conclusion = str(parsed.get("conclusion", "")).strip()
@@ -338,6 +460,8 @@ class DeepResearchService:
         kb_ids: list[str] | None = None,
         checkpoint_manager: Any = None,
         task_id: str | None = None,
+        tenant_id: str | None = None,
+        progress: "Any | None" = None,
     ) -> ResearchReport:
         """执行课题调研，返回结构化报告。
 
@@ -346,8 +470,14 @@ class DeepResearchService:
             kb_ids: 限定知识库范围
             checkpoint_manager: 可选，注入后逐课题取证走里程碑 checkpoint
             task_id: 可选，里程碑 checkpoint key（Celery 任务 ID）
+            tenant_id: 可选，透传给公网提供商用于按租户隔离搜索配额
+            progress: 可选异步进度回调 ``await progress({"type": ..., ...})``，
+                依次触发 decomposed / subtopic / overview 事件（供 SSE 实时流）。
         """
         topics = await self._decompose_goal(goal)
+        total = len(topics)
+        if progress is not None:
+            await progress({"type": "decomposed", "topics": topics})
 
         # 逐课题取证 — 有 checkpoint 时按里程碑执行（P2-13 断点恢复）；
         # 阶段返回可 JSON 序列化的 dict，被跳过阶段的结果由里程碑还原
@@ -358,7 +488,25 @@ class DeepResearchService:
             )
 
             async def _gather_dict(topic: str) -> dict[str, Any]:
-                return (await self._gather_evidence(topic, kb_ids)).to_dict()
+                return (await self._gather_evidence(
+                    topic, kb_ids, tenant_id
+                )).to_dict()
+
+            async def _on_stage(name: str, detail: dict[str, Any]) -> None:
+                if progress is None or not name.startswith("topic_"):
+                    return
+                try:
+                    idx = int(name.split("_", 1)[1])
+                except (IndexError, ValueError):
+                    return
+                status = (detail.get("result") or {}).get("status", "running")
+                await progress({
+                    "type": "subtopic",
+                    "index": idx,
+                    "total": total,
+                    "subtopic": topics[idx],
+                    "status": status,
+                })
 
             stage_results = await run_stages_with_milestones(
                 [
@@ -370,13 +518,25 @@ class DeepResearchService:
                 ],
                 task_id=task_id,
                 checkpoint_manager=checkpoint_manager,
+                on_stage=_on_stage,
             )
             cards = [
                 EvidenceCard(**stage_results[f"topic_{i}"])
                 for i in range(len(topics))
             ]
         else:
-            cards = [await self._gather_evidence(t, kb_ids) for t in topics]
+            cards = []
+            for i, topic in enumerate(topics):
+                card = await self._gather_evidence(topic, kb_ids, tenant_id)
+                if progress is not None:
+                    await progress({
+                        "type": "subtopic",
+                        "index": i,
+                        "total": total,
+                        "subtopic": topic,
+                        "status": card.status,
+                    })
+                cards.append(card)
 
         contradictions = await self._detect_contradictions(cards)
         summary = await self._summarize(goal, cards)
@@ -385,6 +545,13 @@ class DeepResearchService:
             "uncertain": sum(1 for c in cards if c.status == "uncertain"),
             "gap": sum(1 for c in cards if c.status == "gap"),
         }
+
+        if progress is not None:
+            await progress({
+                "type": "overview",
+                "summary": summary,
+                "distribution": distribution,
+            })
 
         report = ResearchReport(
             goal=goal,

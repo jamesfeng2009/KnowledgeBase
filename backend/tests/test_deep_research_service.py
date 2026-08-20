@@ -16,21 +16,22 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-# Mock celery
-if "celery" not in sys.modules:
-    mock_celery = MagicMock()
-    mock_celery.Celery = MagicMock
-    sys.modules["celery"] = mock_celery
-if "celery_app" not in sys.modules:
-    mock_celery_app = MagicMock()
-    mock_celery_app.celery_app = MagicMock()
-    sys.modules["celery_app"] = mock_celery_app
-
-from app.services.deep_research_service import (  # noqa: E402
+from app.services.deep_research_service import (
     DeepResearchService,
     EvidenceCard,
     ResearchReport,
 )
+
+
+@pytest.fixture(autouse=True)
+def _mock_celery(monkeypatch):
+    """测试内隔离 celery，避免模块级 mock 污染 sys.modules 影响其它测试。"""
+    mock_celery = MagicMock()
+    mock_celery.Celery = MagicMock
+    monkeypatch.setitem(sys.modules, "celery", mock_celery)
+    mock_celery_app = MagicMock()
+    mock_celery_app.celery_app = MagicMock()
+    monkeypatch.setitem(sys.modules, "celery_app", mock_celery_app)
 
 
 class _FakeLLM:

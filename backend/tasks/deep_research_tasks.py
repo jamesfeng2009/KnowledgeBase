@@ -31,16 +31,33 @@ async def _deep_research_async(
     task_id: str,
     goal: str,
     kb_ids: list[str] | None,
+    tenant_id: str | None = None,
 ) -> dict[str, Any]:
-    """异步执行课题调研（带里程碑 checkpoint）。"""
+    """异步执行课题调研（带里程碑 checkpoint）。
+
+    tenant_id 透传给公网提供商，用于按租户隔离 Tavily 搜索配额；
+    progress 回调将进度事件发布到 Redis，供 /research/{task_id}/stream 的 SSE 消费。
+    """
+    from app.config import get_settings
     from app.llm.factory import get_llm_provider
     from app.rag.retriever import HybridRetriever
+    from app.rag.web_search import build_provider
     from app.services.deep_research_service import DeepResearchService
+    from app.services.research_progress import EVENT_DONE, publish_progress
     from tasks.milestone_runner import milestone_checkpoint_manager
 
     llm = get_llm_provider()
     retriever = HybridRetriever()
-    service = DeepResearchService(llm, retriever)
+    s = get_settings()
+    web_provider = None
+    if s.WEB_SEARCH_ENABLED:
+        # 缺 Key / provider 未知时 build_provider 自动回落 MockProvider（不阻塞）
+        web_provider = build_provider(s.WEB_SEARCH_PROVIDER, s.WEB_SEARCH_API_KEY)
+
+    async def _progress(event: dict) -> None:
+        await publish_progress(task_id, event)
+
+    service = DeepResearchService(llm, retriever, web_provider=web_provider)
 
     async with milestone_checkpoint_manager() as mgr:
         report = await service.research(
@@ -48,7 +65,10 @@ async def _deep_research_async(
             kb_ids=kb_ids,
             checkpoint_manager=mgr,
             task_id=task_id,
+            tenant_id=tenant_id,
+            progress=_progress,
         )
+    await publish_progress(task_id, {"type": EVENT_DONE, "task_id": task_id})
     return report.to_dict()
 
 
@@ -64,11 +84,12 @@ try:
         self,
         goal: str,
         kb_ids: list[str] | None = None,
+        tenant_id: str | None = None,
     ) -> dict[str, Any]:
         """课题调研长任务 — 里程碑断点恢复 + Celery 重试。"""
         try:
             return _run_async(
-                _deep_research_async(self.request.id, goal, kb_ids)
+                _deep_research_async(self.request.id, goal, kb_ids, tenant_id)
             )
         except Exception as exc:
             logger.warning(

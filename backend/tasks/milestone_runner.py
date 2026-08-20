@@ -91,6 +91,7 @@ async def run_stages_with_milestones(
     checkpoint_manager: CheckpointManager,
     step_timeout_s: float | None = None,
     resume: bool = True,
+    on_stage: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None,
 ) -> dict[str, Any]:
     """按序执行阶段并逐阶段写里程碑，支持断点恢复与单步超时。
 
@@ -100,6 +101,9 @@ async def run_stages_with_milestones(
         checkpoint_manager: 注入的 CheckpointManager（测试可传 Fake）
         step_timeout_s: 单步骤超时秒数；None 时读配置 TASK_STEP_TIMEOUT_SECONDS
         resume: True 时跳过已有 done 里程碑的阶段（失败重试场景）
+        on_stage: 可选进度回调，每阶段收尾时调用
+            ``await on_stage(stage_name, {"status": ..., ...})``；
+            status ∈ "skip_done" | "done" | "timeout"。None 时不触发（默认）。
 
     Returns:
         {阶段名: 阶段返回值} — 含断点恢复时从里程碑还原的已跳过阶段结果
@@ -142,12 +146,14 @@ async def run_stages_with_milestones(
             )
             if stage.name in persisted:
                 results[stage.name] = persisted[stage.name]
+            if on_stage is not None:
+                await on_stage(stage.name, {"status": "skip_done"})
             continue
 
         t0 = time.monotonic()
         try:
             result = await asyncio.wait_for(stage.run(), timeout=step_timeout_s)
-        except TimeoutError:
+        except (TimeoutError, asyncio.TimeoutError):
             # 单步超时 — 记录 timeout 里程碑（非 done，重试时会重跑）后抛出
             await checkpoint_manager.save_milestone(
                 checkpoint_key,
@@ -163,6 +169,11 @@ async def run_stages_with_milestones(
                 stage=stage.name,
                 step_timeout_s=step_timeout_s,
             )
+            if on_stage is not None:
+                await on_stage(
+                    stage.name,
+                    {"status": "timeout", "step_timeout_s": step_timeout_s},
+                )
             raise
 
         duration_ms = round((time.monotonic() - t0) * 1000, 2)
@@ -185,5 +196,10 @@ async def run_stages_with_milestones(
             stage=stage.name,
             duration_ms=duration_ms,
         )
+        if on_stage is not None:
+            await on_stage(
+                stage.name,
+                {"status": "done", "duration_ms": duration_ms, "result": result},
+            )
 
     return results

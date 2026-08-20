@@ -351,6 +351,29 @@ class Settings(BaseSettings):
     RAG_THRESHOLD_MIN: float = 0.1  # 动态阈值下限
     RAG_THRESHOLD_MAX: float = 0.6  # 动态阈值上限
 
+    # === P4 公网混合检索（Deep Research 双路取证）===
+    # 总开关；关则回落纯内部检索
+    WEB_SEARCH_ENABLED: bool = False
+    # 提供商：mock / tavily / bing（无 Key 时按 mock 降级，不阻塞）
+    WEB_SEARCH_PROVIDER: str = "mock"
+    WEB_SEARCH_API_KEY: str = ""
+    # 双源合并：每源配额上限 + 保底 + 总预算 + 内部可信加权
+    MERGE_K_INTERNAL: int = 5
+    MERGE_K_WEB: int = 5
+    INTERNAL_KB_BOOST_FACTOR: float = 1.2
+    MERGE_MIN_INTERNAL: int = 2
+    MERGE_MIN_WEB: int = 2
+    MERGE_TOTAL_BUDGET: int = 6
+    # 外部搜索并发上限（防 IP 屏蔽，对齐爬虫约束）
+    WEB_SEARCH_CONCURRENCY: int = 2
+    # 公网搜索限速：令牌桶速率（次/秒）与突发容量
+    WEB_SEARCH_RATE_PER_SECOND: float = 2.0
+    WEB_SEARCH_RATE_BURST: int = 3
+    # 每日配额（次）；<=0 表示不限。跨实例用 Redis 计数，Redis 不可用降级为进程内计数
+    WEB_SEARCH_DAILY_QUOTA: int = 0
+    # 配额按租户维度隔离（True 时 key 带上 tenant_id，避免跨租户打爆配额）
+    WEB_SEARCH_QUOTA_PER_TENANT: bool = True
+
     # === 检索时间新鲜度（recency）===
     # 新旧规范冲突场景：分数相近时新版本优先 + 生效窗口硬过滤
     RECENCY_BOOST_ENABLED: bool = True  # 重排后对平局组按 updated_at 裁决

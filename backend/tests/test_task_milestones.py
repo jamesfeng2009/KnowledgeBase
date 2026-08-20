@@ -14,25 +14,26 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-# Mock celery（测试环境未安装）
-if "celery" not in sys.modules:
-    mock_celery = MagicMock()
-    mock_celery.Celery = MagicMock
-    sys.modules["celery"] = mock_celery
-if "celery_app" not in sys.modules:
-    mock_celery_app = MagicMock()
-    mock_celery_app.celery_app = MagicMock()
-    sys.modules["celery_app"] = mock_celery_app
-
-from app.memory.checkpoint import (  # noqa: E402
+from app.memory.checkpoint import (
     MILESTONES_FIELD,
     CheckpointManager,
     append_milestone_to_state,
 )
-from tasks.milestone_runner import (  # noqa: E402
+from tasks.milestone_runner import (
     MilestoneStage,
     run_stages_with_milestones,
 )
+
+
+@pytest.fixture(autouse=True)
+def _mock_celery(monkeypatch):
+    """测试内隔离 celery，避免模块级 mock 污染 sys.modules 影响其它测试。"""
+    mock_celery = MagicMock()
+    mock_celery.Celery = MagicMock
+    monkeypatch.setitem(sys.modules, "celery", mock_celery)
+    mock_celery_app = MagicMock()
+    mock_celery_app.celery_app = MagicMock()
+    monkeypatch.setitem(sys.modules, "celery_app", mock_celery_app)
 
 
 # ======================================================================
@@ -319,7 +320,7 @@ class TestRunStagesWithMilestones:
         async def _slow() -> None:
             await asyncio.sleep(5)
 
-        with pytest.raises(TimeoutError):
+        with pytest.raises((TimeoutError, asyncio.TimeoutError)):
             await run_stages_with_milestones(
                 [MilestoneStage("slow_stage", _slow)],
                 task_id="t1",
