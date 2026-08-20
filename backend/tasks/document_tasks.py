@@ -2185,10 +2185,11 @@ async def _publish_document(doc_id: str) -> None:
             )
 
 
-async def _refresh_index_doc_status(doc_id: str) -> None:
-    """刷新两个索引中该文档全部 chunk 的 doc_status → published。
+async def _refresh_index_doc_status(doc_id: str, doc_status: str = "published") -> None:
+    """刷新两个索引中该文档全部 chunk 的 doc_status。
 
     使用 _update_by_query 按 doc_id 精确匹配，幂等且无需重建向量。
+    默认将 doc_status 刷新为 published；P1 驳回场景可传入 draft。
     """
     import httpx
 
@@ -2197,7 +2198,7 @@ async def _refresh_index_doc_status(doc_id: str) -> None:
     settings = get_settings()
     payload = {
         "query": {"term": {"doc_id": doc_id}},
-        "script": {"source": "ctx._source.doc_status = 'published'"},
+        "script": {"source": f"ctx._source.doc_status = '{doc_status}'"},
     }
     headers = {"Content-Type": "application/json"}
     async with httpx.AsyncClient(timeout=10.0) as client:
@@ -2223,6 +2224,180 @@ async def _refresh_index_doc_status(doc_id: str) -> None:
                     index=index,
                     error=str(exc)[:200],
                 )
+
+
+async def _delete_document_from_indexes(doc_id: str) -> None:
+    """从全文/向量索引中删除该文档全部 chunk（归档、下架时清理旧索引）。
+
+    使用 _delete_by_query 按 doc_id 精确匹配删除，幂等且无需重建向量。
+    两个索引均尽力执行，单个失败仅记录告警，不影响主流程。
+    """
+    import httpx
+
+    from app.config import get_settings
+
+    settings = get_settings()
+    payload = {"query": {"term": {"doc_id": doc_id}}}
+    headers = {"Content-Type": "application/json"}
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        for index in ("ekb_documents", "ekb_knn_vectors"):
+            try:
+                resp = await client.post(
+                    f"{settings.OPENSEARCH_URL}/{index}/_delete_by_query?refresh=true",
+                    json=payload,
+                    headers=headers,
+                )
+                resp.raise_for_status()
+                deleted = resp.json().get("deleted", 0)
+                logger.info(
+                    "document.index_deleted",
+                    doc_id=doc_id,
+                    index=index,
+                    deleted=deleted,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "document.index_delete_failed",
+                    doc_id=doc_id,
+                    index=index,
+                    error=str(exc)[:200],
+                )
+
+
+@celery_app.task(
+    name="tasks.document_tasks.cleanup_document_indexes",
+    queue="indexing",
+    ignore_result=True,
+)
+def cleanup_document_indexes(doc_id: str) -> None:
+    """异步清理文档索引 — 归档/下架后由 worker 执行，避免阻塞请求。
+
+    与索引构建同队列（indexing），保证串行顺序；Celery 未下发时降级为
+    同步执行，保证索引最终一致。
+    """
+    try:
+        asyncio.run(_delete_document_from_indexes(doc_id))
+    except Exception as exc:
+        logger.warning(
+            "document.index_cleanup_task_failed",
+            doc_id=doc_id,
+            error=str(exc)[:200],
+        )
+
+
+def _dispatch_index_cleanup(doc_id: str) -> None:
+    """下发异步索引清理任务；Celery 不可用或下发失败时降级同步执行。"""
+    try:
+        cleanup_document_indexes.delay(doc_id)
+    except Exception as exc:
+        logger.warning(
+            "document.index_cleanup_dispatch_failed",
+            doc_id=doc_id,
+            error=str(exc),
+        )
+        try:
+            asyncio.run(_delete_document_from_indexes(doc_id))
+        except Exception:
+            logger.warning("document.index_cleanup_sync_failed", doc_id=doc_id)
+
+
+async def _revert_document_to_draft(doc_id: str) -> None:
+    """驳回文档复位 — 从 pending_review 回到 draft，并同步索引 doc_status。
+
+    审核驳回后调用，将文档状态从待审核复位为草稿，允许作者修改后重新提交。
+    待审核文档本就不参与检索，仅将索引 doc_status 同步为 draft 保持一致。
+    """
+    from app.database import task_db_session
+    from app.repositories.knowledge_repository import DocumentRepository
+
+    doc_uuid = uuid.UUID(doc_id)
+
+    async with task_db_session() as session:
+        repo = DocumentRepository(session)
+        doc = await repo.get_by_id(doc_uuid)
+        if doc is None:
+            logger.warning("document.revert_not_found", doc_id=doc_id)
+            return
+        repo = DocumentRepository(session, tenant_id=doc.tenant_id)
+
+        doc.status = "draft"
+        await session.commit()
+        logger.info("document.reverted_to_draft", doc_id=doc_id)
+
+        try:
+            await _refresh_index_doc_status(doc_id, doc_status="draft")
+        except Exception as exc:
+            logger.warning(
+                "document.revert_index_refresh_failed", doc_id=doc_id, error=str(exc)
+            )
+
+
+async def _archive_document(doc_id: str) -> None:
+    """归档文档 — Published → Archived，异步清理旧索引。
+
+    仅允许已发布文档归档；归档后索引异步删除（不参与检索）。
+    """
+    from app.database import task_db_session
+    from app.repositories.knowledge_repository import DocumentRepository
+
+    doc_uuid = uuid.UUID(doc_id)
+
+    async with task_db_session() as session:
+        repo = DocumentRepository(session)
+        doc = await repo.get_by_id(doc_uuid)
+        if doc is None:
+            logger.warning("document.archive_not_found", doc_id=doc_id)
+            return
+        repo = DocumentRepository(session, tenant_id=doc.tenant_id)
+
+        if doc.status != "published":
+            logger.warning(
+                "document.archive_not_published",
+                doc_id=doc_id,
+                current_status=doc.status,
+            )
+            return
+
+        doc.status = "archived"
+        await session.commit()
+        logger.info("document.archived", doc_id=doc_id)
+
+    # 归档后异步清理旧索引
+    _dispatch_index_cleanup(doc_id)
+
+
+async def _down_publish_document(doc_id: str) -> None:
+    """下架文档 — Published → Draft（save-draft 下架编辑），清理旧索引。
+
+    仅允许已发布文档下架；下架后索引异步删除，编辑完成重新提交后再建索引。
+    """
+    from app.database import task_db_session
+    from app.repositories.knowledge_repository import DocumentRepository
+
+    doc_uuid = uuid.UUID(doc_id)
+
+    async with task_db_session() as session:
+        repo = DocumentRepository(session)
+        doc = await repo.get_by_id(doc_uuid)
+        if doc is None:
+            logger.warning("document.downpublish_not_found", doc_id=doc_id)
+            return
+        repo = DocumentRepository(session, tenant_id=doc.tenant_id)
+
+        if doc.status != "published":
+            logger.warning(
+                "document.downpublish_not_published",
+                doc_id=doc_id,
+                current_status=doc.status,
+            )
+            return
+
+        doc.status = "draft"
+        await session.commit()
+        logger.info("document.down_published_to_draft", doc_id=doc_id)
+
+    # 下架后清理旧索引（draft 不参与检索）
+    _dispatch_index_cleanup(doc_id)
 
 
 async def _build_indexes(

@@ -14,6 +14,7 @@ P1 增强：解析摘要响应（/documents/{doc_id}/summary）— 返回 previe
 
 from __future__ import annotations
 
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status, Request
@@ -952,6 +953,93 @@ async def delete_document(
     except Exception:
         pass
     return ApiResponse(code=0, message="success")
+
+
+async def _require_doc_manager(
+    service: Any, doc: Document, user: User
+) -> None:
+    """文档管理权限校验 — 知识库写权限 + 所有者/admin 兜底（归档/下架共用）。"""
+    # 校验知识库写权限
+    if not await service.permission.check_write(doc.kb_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="无权管理该文档",
+        )
+
+    # 所有者或 admin 兜底（防止非成员但知悉 doc_id 的猜测操作）
+    if doc.owner_id != user.id and user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="仅所有者或管理员可管理文档",
+        )
+
+
+@router.post("/documents/{doc_id}/archive", response_model=ApiResponse[DocResponse])
+async def archive_document(
+    request: Request,
+    doc_id: UUID,
+    db: AsyncSession = Depends(get_db_session),
+    user: User = Depends(get_current_active_user),
+) -> ApiResponse[DocResponse]:
+    """归档文档 — Published → Archived，归档后异步清理旧索引。
+
+    仅允许已发布（published）文档归档；归档后文档退出检索。
+    """
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = KnowledgeService(db, user, tenant_id=tenant_id)
+    doc = await service.get_document(doc_id)
+
+    await _require_doc_manager(service, doc, user)
+
+    if doc.status != "published":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="仅已发布文档可归档，当前状态: {doc.status}".format(doc=doc),
+        )
+
+    from tasks.document_tasks import _archive_document
+
+    await _archive_document(str(doc.id))
+    updated = await service.get_document(doc_id)
+    return ApiResponse(
+        code=0,
+        data=DocResponse.model_validate(updated),
+        message="success",
+    )
+
+
+@router.post("/documents/{doc_id}/down-publish", response_model=ApiResponse[DocResponse])
+async def down_publish_document(
+    request: Request,
+    doc_id: UUID,
+    db: AsyncSession = Depends(get_db_session),
+    user: User = Depends(get_current_active_user),
+) -> ApiResponse[DocResponse]:
+    """下架文档（save-draft）— Published → Draft，下架后清理旧索引。
+
+    仅允许已发布文档下架；下架后文档退回草稿可编辑，重新提交后再建索引。
+    """
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = KnowledgeService(db, user, tenant_id=tenant_id)
+    doc = await service.get_document(doc_id)
+
+    await _require_doc_manager(service, doc, user)
+
+    if doc.status != "published":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="仅已发布文档可下架，当前状态: {doc.status}".format(doc=doc),
+        )
+
+    from tasks.document_tasks import _down_publish_document
+
+    await _down_publish_document(str(doc.id))
+    updated = await service.get_document(doc_id)
+    return ApiResponse(
+        code=0,
+        data=DocResponse.model_validate(updated),
+        message="success",
+    )
 
 
 # ======================================================================

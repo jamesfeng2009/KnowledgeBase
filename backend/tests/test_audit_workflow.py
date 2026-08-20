@@ -463,16 +463,86 @@ class TestAuditServiceApprovePublish:
 
 
 # ======================================================================
-# AuditService.reject 不触发发布测试
+# AuditService.reject 驳回：不发布 + 文档复位草稿
 # ======================================================================
 
 
-class TestAuditServiceRejectNoPublish:
-    """AuditService.reject() 驳回不触发文档发布。"""
+class TestAuditServiceReject:
+    """AuditService.reject() 驳回 — 不触发发布，document 类型复位为草稿。"""
 
     @pytest.mark.asyncio
-    async def test_reject_does_not_trigger_publish(self) -> None:
-        """驳回审核不触发 _publish_document。"""
+    async def test_reject_document_reverts_to_draft(self) -> None:
+        """驳回 document 类型审核时触发 _revert_document_to_draft。"""
+        from app.services.audit_service import AuditService
+
+        mock_audit = MagicMock()
+        mock_audit.status = "pending"
+        mock_audit.resource_type = "document"
+        mock_audit.resource_id = _uuid.UUID(_TEST_UUID)
+
+        mock_updated = MagicMock()
+        mock_updated.status = "rejected"
+        mock_updated.resource_type = "document"
+        mock_updated.resource_id = _uuid.UUID(_TEST_UUID)
+
+        mock_repo = MagicMock()
+        mock_repo.get_by_id = AsyncMock(return_value=mock_audit)
+        mock_repo.update = AsyncMock(return_value=mock_updated)
+
+        mock_user = MagicMock()
+        mock_user.id = _uuid.UUID(_TEST_UUID)
+
+        service = AuditService(MagicMock(), mock_user)
+        service._repo = mock_repo
+
+        with patch(
+            "app.services.audit_service.AuditService._revert_document_after_reject",
+            new_callable=AsyncMock,
+        ) as mock_revert, patch(
+            "tasks.document_tasks._publish_document",
+            new_callable=AsyncMock,
+        ) as mock_publish:
+            result = await service.reject(_uuid.UUID(_TEST_UUID), comment="内容不合规")
+
+        mock_publish.assert_not_called()
+        mock_revert.assert_called_once_with(str(_TEST_UUID))
+        assert result.status == "rejected"
+
+    @pytest.mark.asyncio
+    async def test_reject_non_document_does_not_revert(self) -> None:
+        """驳回非 document 类型审核时不触发文档复位。"""
+        from app.services.audit_service import AuditService
+
+        mock_audit = MagicMock()
+        mock_audit.status = "pending"
+        mock_audit.resource_type = "kb"
+        mock_audit.resource_id = _uuid.UUID(_TEST_UUID)
+
+        mock_updated = MagicMock()
+        mock_updated.status = "rejected"
+        mock_updated.resource_type = "kb"
+
+        mock_repo = MagicMock()
+        mock_repo.get_by_id = AsyncMock(return_value=mock_audit)
+        mock_repo.update = AsyncMock(return_value=mock_updated)
+
+        mock_user = MagicMock()
+        mock_user.id = _uuid.UUID(_TEST_UUID)
+
+        service = AuditService(MagicMock(), mock_user)
+        service._repo = mock_repo
+
+        with patch(
+            "app.services.audit_service.AuditService._revert_document_after_reject",
+            new_callable=AsyncMock,
+        ) as mock_revert:
+            await service.reject(_uuid.UUID(_TEST_UUID))
+
+        mock_revert.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_reject_revert_failure_does_not_affect_rejection(self) -> None:
+        """驳回后文档复位失败不影响驳回状态。"""
         from app.services.audit_service import AuditService
 
         mock_audit = MagicMock()
@@ -494,13 +564,105 @@ class TestAuditServiceRejectNoPublish:
         service._repo = mock_repo
 
         with patch(
-            "tasks.document_tasks._publish_document",
+            "app.services.audit_service.AuditService._revert_document_after_reject",
             new_callable=AsyncMock,
-        ) as mock_publish:
-            result = await service.reject(_uuid.UUID(_TEST_UUID), comment="内容不合规")
+            side_effect=Exception("DB connection lost"),
+        ):
+            # 不应抛出异常 — 驳回已生效
+            result = await service.reject(_uuid.UUID(_TEST_UUID))
 
-        mock_publish.assert_not_called()
         assert result.status == "rejected"
+
+
+# ======================================================================
+# _revert_document_to_draft 测试
+# ======================================================================
+
+
+class TestRevertDocumentToDraft:
+    """_revert_document_to_draft() 函数测试 — 驳回后文档复位为草稿。"""
+
+    @pytest.mark.asyncio
+    async def test_reverts_status_to_draft(self) -> None:
+        """驳回后文档状态从 pending_review 复位为 draft 并提交。"""
+        from tasks.document_tasks import _revert_document_to_draft
+
+        mock_doc = MagicMock()
+        mock_doc.status = "pending_review"
+
+        mock_repo = MagicMock()
+        mock_repo.get_by_id = AsyncMock(return_value=mock_doc)
+
+        mock_session = MagicMock()
+        mock_session.commit = AsyncMock()
+
+        mock_session_cm = MagicMock()
+        mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_cm.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("app.database.task_db_session", return_value=mock_session_cm), \
+             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo), \
+             patch("tasks.document_tasks._refresh_index_doc_status", new_callable=AsyncMock) as mock_refresh:
+
+            await _revert_document_to_draft(_TEST_UUID)
+
+        assert mock_doc.status == "draft"
+        mock_session.commit.assert_called_once()
+        mock_refresh.assert_awaited_once()
+        call_kwargs = mock_refresh.call_args
+        assert call_kwargs.args[0] == _TEST_UUID
+        assert call_kwargs.kwargs["doc_status"] == "draft"
+
+    @pytest.mark.asyncio
+    async def test_revert_nonexistent_doc_logs_warning(self) -> None:
+        """驳回不存在的文档时记录警告，不抛异常、不提交。"""
+        from tasks.document_tasks import _revert_document_to_draft
+
+        mock_repo = MagicMock()
+        mock_repo.get_by_id = AsyncMock(return_value=None)
+
+        mock_session = MagicMock()
+        mock_session.commit = AsyncMock()
+
+        mock_session_cm = MagicMock()
+        mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_cm.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("app.database.task_db_session", return_value=mock_session_cm), \
+             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo), \
+             patch("tasks.document_tasks._refresh_index_doc_status", new_callable=AsyncMock) as mock_refresh:
+
+            await _revert_document_to_draft(_TEST_UUID)
+
+        mock_session.commit.assert_not_called()
+        mock_refresh.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_revert_index_refresh_failure_is_swallowed(self) -> None:
+        """复位成功后索引刷新失败仅记录告警，不影响复位结果。"""
+        from tasks.document_tasks import _revert_document_to_draft
+
+        mock_doc = MagicMock()
+        mock_doc.status = "pending_review"
+
+        mock_repo = MagicMock()
+        mock_repo.get_by_id = AsyncMock(return_value=mock_doc)
+
+        mock_session = MagicMock()
+        mock_session.commit = AsyncMock()
+
+        mock_session_cm = MagicMock()
+        mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_cm.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("app.database.task_db_session", return_value=mock_session_cm), \
+             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo), \
+             patch("tasks.document_tasks._refresh_index_doc_status", new_callable=AsyncMock,
+                   side_effect=Exception("OS unavailable")):
+            await _revert_document_to_draft(_TEST_UUID)
+
+        assert mock_doc.status == "draft"
+        mock_session.commit.assert_called_once()
 
 
 # ======================================================================

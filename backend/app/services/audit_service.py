@@ -234,5 +234,29 @@ class AuditService:
             "audit.rejected",
             audit_id=str(audit_id),
             reviewer=str(self._user.id),
+            resource_type=audit.resource_type,
         )
+
+        # 文档类型驳回后复位为草稿（pending_review → draft），允许作者修改后重新提交
+        if audit.resource_type == "document":
+            try:
+                await self._revert_document_after_reject(str(audit.resource_id))
+            except Exception as exc:
+                log.warning(
+                    "audit.revert_failed",
+                    audit_id=str(audit_id),
+                    resource_id=str(audit.resource_id),
+                    error=str(exc),
+                )
+
         return audit
+
+    async def _revert_document_after_reject(self, doc_id: str) -> None:
+        """驳回后复位文档为草稿 — 延迟导入避免循环依赖。
+
+        将文档状态从 pending_review 更新为 draft，
+        由 document_tasks._revert_document_to_draft 执行实际复位逻辑。
+        """
+        from tasks.document_tasks import _revert_document_to_draft
+
+        await _revert_document_to_draft(doc_id)
