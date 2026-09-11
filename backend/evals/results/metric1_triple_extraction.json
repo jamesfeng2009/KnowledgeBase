@@ -1,0 +1,24 @@
+{
+  "metric": "M1",
+  "title": "三元组抽取「规则优先 + LLM 兜底」混合策略收益",
+  "source_script": "backend/scripts/eval_metric1_triples.py",
+  "run_at": "2026-08-21",
+  "status": "confirmed",
+  "methodology": "使用种子KB「简历指标评测库」的已发布文档重新分块（468 chunk），A/B 对比同批文档下混合策略（llm_fallback_threshold=3，生产默认）与「每 chunk 纯 LLM」的调用次数；mock 计数 LLM 调用，零 API 成本",
+  "results": {
+    "rule_coverage": {
+      "hit_chunks": null,
+      "note": "规则覆盖率口径见脚本 [M1-A]，本次落盘以 LLM 调用节省为主指标"
+    },
+    "llm_call_saving": {
+      "docs": 20,
+      "chunks": 468,
+      "hybrid_strategy_calls": 308,
+      "pure_llm_calls": 468,
+      "reduction": 0.342,
+      "calls_per_doc_hybrid": 15.4,
+      "calls_per_doc_pure": 23.4,
+      "display": "混合策略 308 次 vs 纯 LLM 468 次 → 减少 34.2%（23.4 → 15.4 次/文档）"
+    }
+  }
+}

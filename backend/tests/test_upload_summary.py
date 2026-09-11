@@ -71,7 +71,17 @@ async def auth_client(mock_user):
         return mock_user
 
     async def override_db():
-        yield AsyncMock()
+        # 不能 yield 裸 AsyncMock：其 execute 的返回值仍是 AsyncMock，
+        # 同步调用链 result.scalars() 会拿到 coroutine，check_write 里
+        # .first() 直接 AttributeError。配置 execute 返回 MagicMock 结果链，
+        # 且 kb 归 mock_user 所有（owner 命中 → check_write 放行）。
+        db = AsyncMock()
+        kb_row = SimpleNamespace(owner_id=mock_user.id, visibility="private")
+        result = MagicMock()
+        result.scalars.return_value.first.return_value = kb_row
+        result.scalars.return_value.all.return_value = [kb_row]
+        db.execute = AsyncMock(return_value=result)
+        yield db
 
     app.dependency_overrides[get_current_active_user] = override_user
     app.dependency_overrides[get_db_session] = override_db

@@ -1,0 +1,33 @@
+{
+  "metric": "M2",
+  "title": "知识图谱第四路召回对 Recall@5 的增量贡献（A/B 对比）",
+  "source_script": "backend/scripts/eval_metric2_recall.py",
+  "run_at": "2026-08-21",
+  "status": "confirmed",
+  "methodology": "同一批查询/同一索引下 A/B 两组：A 臂=四路（向量+BM25含同义词扩展+跨模态+图谱多跳，GRAPH_SEARCH_ENABLED=true+ENTITY_REGISTRY_ENABLED=true）；B 臂=双路基线（向量+BM25 原始查询，图谱功能上线前基线）。常规集由 LLM 从 20 个种子文档生成自然问题；难题集构造词汇鸿沟（同义词不出现在文档全文中，BM25/向量双路天然失效）",
+  "results": {
+    "easy_set": {
+      "arm_b_recall5": null,
+      "arm_a_recall5": null,
+      "note": "常规集文档术语可直接命中，增量不显著，主指标取难题集"
+    },
+    "hard_set": {
+      "label": "难题集（词汇鸿沟，仅口语同义词）",
+      "arm_b": {
+        "label": "B·双路基线(向量+BM25)",
+        "recall_at_5": 0.6875,
+        "mrr": 0.5517,
+        "graph_in_top5": 0.0
+      },
+      "arm_a": {
+        "label": "A·四路(+实体扩展+图谱)",
+        "recall_at_5": 1.0,
+        "mrr": 0.8438,
+        "graph_in_top5": 0.8125
+      },
+      "recall_delta": 0.3125,
+      "relative_improvement": 0.455,
+      "display": "Recall@5: 0.6875 → 1.0000（+0.3125，相对提升 +45.5%）；MRR 0.5517 → 0.8438；图谱命中Top5占比 0% → 81.25%"
+    }
+  }
+}

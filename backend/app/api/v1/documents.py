@@ -325,6 +325,28 @@ async def upload_document_file(
     _check_content_length(request)
     content_bytes = await _read_upload_bounded(file)
 
+    # P0 文件类型嗅探：按二进制魔数校验真实类型，防"改后缀"误分发与伪装文件。
+    # 在存储/建记录等任何写操作前执行，拒绝时不产生任何副作用。
+    from app.document.sniff import resolve_upload_doc_type
+
+    final_doc_type, reject_reason = resolve_upload_doc_type(content_bytes, doc_type)
+    if reject_reason:
+        log.warning(
+            "拒绝上传 %s：声明 %s，实际 %s (kb_id=%s)",
+            filename, doc_type, reject_reason, kb_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"文件类型不被支持：{reject_reason}（声明为 {doc_type}）。"
+            "请上传 md/html/txt/csv/docx/pdf/pptx/xlsx 格式的文档。",
+        )
+    if final_doc_type != doc_type:
+        log.info(
+            "文件类型纠正：%s 声明为 %s，实际为 %s，已按实际类型入库",
+            filename, doc_type, final_doc_type,
+        )
+        doc_type = final_doc_type
+
     # P0-2 存储配额强制：上传前基于租户已用存储预检，超限抛 403。
     # tenant_id 为 None（私有部署/单租户）时跳过配额。
     if tenant_id is not None:

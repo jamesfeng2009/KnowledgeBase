@@ -11,10 +11,16 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import pytest_asyncio
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.orm import sessionmaker
+
+from app.models.base import Base
 
 # Mock celery 模块（测试环境未安装 celery，参考 test_document_parser.py）
 if "celery" not in sys.modules:
@@ -25,6 +31,23 @@ if "celery_app" not in sys.modules:
     mock_celery_app = MagicMock()
     mock_celery_app.celery_app = MagicMock()
     sys.modules["celery_app"] = mock_celery_app
+
+
+@pytest_asyncio.fixture
+async def db_session():
+    """持久化测试用 PostgreSQL 会话（同 test_analytics 模式）。"""
+    engine = create_async_engine(os.environ["DATABASE_URL"], echo=False)
+    async with engine.begin() as conn:
+        # 先 drop 再 create — 清理前次测试残留数据，保证隔离
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+    async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    session = async_session()
+    try:
+        yield session
+    finally:
+        await session.close()
+        await engine.dispose()
 
 
 # ======================================================================

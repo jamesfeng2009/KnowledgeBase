@@ -1,10 +1,15 @@
-"""add doc parse and ai judge eval tables (6 tables)
+"""add rag/doc parse and ai judge eval tables (9 tables)
 
 Revision ID: e1f2a3b4c5d6
 Revises: d1e2f3a4b5c6
 Create Date: 2026-07-24 10:00:00.000000
 
-阶段三/四 AI 评测扩展 — 6 张新表：
+AI 评测扩展 — 9 张新表：
+
+RAG 检索质量评测（阶段二）：
+- ai_eval_rag_datasets:  RAG 评测数据集（顶层容器）
+- ai_eval_rag_queries:   评测查询（ground truth 人工标注）
+- ai_eval_rag_results:   检索结果（Recall@K / MRR / NDCG 指标）
 
 文档解析评测（阶段三）：
 - ai_eval_doc_parse_datasets:  解析评测数据集（顶层容器）
@@ -17,16 +22,19 @@ AI Judge 自动评测（阶段四）：
 - ai_eval_judge_results:        Judge 结果（LLM 裁判多维评分 + 评语）
 
 表间依赖（创建顺序）：
-    datasets → cases → results
+    datasets → queries/cases → results
 
 所有表复用：
     - UUID 主键（UUIDMixin）
     - created_at / updated_at 时间戳（TimestampMixin）
-    - deleted_at 软删除（仅 datasets 表，cases/results 物理删除随父级 cascade）
+    - deleted_at 软删除（datasets 表 + rag_queries；其余 cases/results
+      由 2026_07_27 迁移补充——rag_queries 建表时即含 deleted_at，
+      无需后续迁移再补）
     - tenant_id 多租户隔离（仅 datasets 表）
     - created_by 关联 users 表（仅 datasets 表）
 
 指标体系参考 test.md：
+    - RAG：Recall@K / MAP / MRR / NDCG（第四部分）
     - 文档解析：编辑距离/CER + 表格匹配 + 公式匹配 + 版面还原（第六部分）
     - AI Judge：LLM 裁判多维评分（第七部分）
 """
@@ -45,7 +53,236 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """创建文档解析评测 + AI Judge 评测共 6 张表。"""
+    """创建 RAG 评测 + 文档解析评测 + AI Judge 评测共 9 张表。"""
+
+    # ==================================================================
+    # 0a. ai_eval_rag_datasets — RAG 检索质量评测数据集
+    # ==================================================================
+    op.create_table(
+        "ai_eval_rag_datasets",
+        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column("name", sa.String(255), nullable=False, comment="数据集名称"),
+        sa.Column("description", sa.Text(), nullable=True, comment="数据集描述"),
+        sa.Column(
+            "kb_ids",
+            postgresql.JSONB(astext_type=sa.Text()),
+            nullable=True,
+            comment="关联知识库 ID 列表（限定检索范围）",
+        ),
+        sa.Column(
+            "top_k",
+            sa.Integer(),
+            nullable=False,
+            server_default=sa.text("5"),
+            comment="默认检索 top_k",
+        ),
+        sa.Column(
+            "status",
+            sa.String(20),
+            nullable=False,
+            server_default=sa.text("'created'"),
+            comment="状态: created/running/completed/failed",
+        ),
+        sa.Column(
+            "total_queries",
+            sa.Integer(),
+            nullable=False,
+            server_default=sa.text("0"),
+            comment="评测查询总数",
+        ),
+        sa.Column(
+            "hit_count",
+            sa.Integer(),
+            nullable=False,
+            server_default=sa.text("0"),
+            comment="命中的查询数（top_k 内含相关文档）",
+        ),
+        sa.Column(
+            "metrics",
+            postgresql.JSONB(astext_type=sa.Text()),
+            nullable=True,
+            comment="聚合检索质量指标",
+        ),
+        sa.Column(
+            "duration_seconds",
+            sa.Integer(),
+            nullable=False,
+            server_default=sa.text("0"),
+            comment="执行耗时（秒）",
+        ),
+        sa.Column(
+            "created_by",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("users.id"),
+            nullable=False,
+            comment="创建者 ID",
+        ),
+        sa.Column(
+            "tenant_id",
+            postgresql.UUID(as_uuid=True),
+            nullable=True,
+            comment="租户 ID（多租户隔离）",
+        ),
+        sa.Column(
+            "deleted_at",
+            sa.DateTime(timezone=True),
+            nullable=True,
+            comment="软删除时间",
+        ),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
+    )
+
+    # ==================================================================
+    # 0b. ai_eval_rag_queries — 评测查询（ground truth 人工标注）
+    #     建表时即含 deleted_at（项目约束：禁止物理删除数据）
+    # ==================================================================
+    op.create_table(
+        "ai_eval_rag_queries",
+        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "dataset_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("ai_eval_rag_datasets.id"),
+            nullable=False,
+            comment="所属数据集 ID",
+        ),
+        sa.Column("query", sa.Text(), nullable=False, comment="查询文本"),
+        sa.Column(
+            "query_type",
+            sa.String(30),
+            nullable=False,
+            server_default=sa.text("'semantic'"),
+            comment="查询类型: exact_match/semantic/synonym/"
+            "cross_lingual/fuzzy/multi_constraint",
+        ),
+        sa.Column(
+            "difficulty",
+            sa.String(20),
+            nullable=False,
+            server_default=sa.text("'medium'"),
+            comment="难度: easy/medium/hard",
+        ),
+        sa.Column(
+            "ground_truth_doc_ids",
+            postgresql.JSONB(astext_type=sa.Text()),
+            nullable=True,
+            comment="人工标注的相关文档 ID 列表",
+        ),
+        sa.Column(
+            "expected_answer",
+            sa.Text(),
+            nullable=True,
+            comment="期望答案（可选）",
+        ),
+        sa.Column(
+            "source",
+            sa.String(20),
+            nullable=False,
+            server_default=sa.text("'custom'"),
+            comment="来源: preset/custom",
+        ),
+        sa.Column(
+            "deleted_at",
+            sa.DateTime(timezone=True),
+            nullable=True,
+            comment="软删除时间（NULL=未删除）",
+        ),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
+    )
+
+    # ==================================================================
+    # 0c. ai_eval_rag_results — 检索结果与质量指标
+    # ==================================================================
+    op.create_table(
+        "ai_eval_rag_results",
+        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "query_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("ai_eval_rag_queries.id"),
+            nullable=False,
+            comment="关联查询 ID",
+        ),
+        sa.Column(
+            "dataset_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("ai_eval_rag_datasets.id"),
+            nullable=False,
+            comment="所属数据集 ID",
+        ),
+        sa.Column(
+            "retrieved",
+            postgresql.JSONB(astext_type=sa.Text()),
+            nullable=True,
+            comment="检索结果列表（按 rank 排序）",
+        ),
+        sa.Column(
+            "metrics",
+            postgresql.JSONB(astext_type=sa.Text()),
+            nullable=True,
+            comment="检索质量指标",
+        ),
+        sa.Column(
+            "retrieved_count",
+            sa.Integer(),
+            nullable=False,
+            server_default=sa.text("0"),
+            comment="检索返回文档数",
+        ),
+        sa.Column(
+            "response_time_ms",
+            sa.Integer(),
+            nullable=False,
+            server_default=sa.text("0"),
+            comment="响应耗时（毫秒）",
+        ),
+        sa.Column(
+            "error_message",
+            sa.Text(),
+            nullable=True,
+            comment="错误信息（执行异常时）",
+        ),
+        sa.Column(
+            "executed_at",
+            sa.DateTime(timezone=True),
+            nullable=True,
+            comment="执行时间",
+        ),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
+    )
 
     # ==================================================================
     # 1. ai_eval_doc_parse_datasets — 文档解析评测数据集
@@ -502,7 +739,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """回滚文档解析 + AI Judge 评测迁移。"""
+    """回滚 RAG 评测 + 文档解析 + AI Judge 评测迁移。"""
     # Judge 结果/用例/数据集
     op.drop_index("ix_ai_eval_judge_results_case_id", table_name="ai_eval_judge_results")
     op.drop_table("ai_eval_judge_results")
@@ -516,3 +753,8 @@ def downgrade() -> None:
     op.drop_index("ix_ai_eval_doc_parse_cases_dataset_id", table_name="ai_eval_doc_parse_cases")
     op.drop_table("ai_eval_doc_parse_cases")
     op.drop_table("ai_eval_doc_parse_datasets")
+
+    # RAG 评测 结果/查询/数据集（FK 依赖逆序）
+    op.drop_table("ai_eval_rag_results")
+    op.drop_table("ai_eval_rag_queries")
+    op.drop_table("ai_eval_rag_datasets")

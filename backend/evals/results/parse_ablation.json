@@ -1,0 +1,107 @@
+{
+  "corpus_dir": "/Users/fengyu/Downloads/myproject/workspace/EnterpriseKnowledge/backend/evals/eval_datasets/parse_corpus",
+  "n_docs": 4,
+  "selfcheck": true,
+  "variants": {
+    "docling": {
+      "availability": {
+        "engines": [
+          "identity_selfcheck"
+        ],
+        "identity_fallback": true,
+        "note": "当前环境未提供真实 Docling/MinerU（或 --selfcheck 强制），指标来自真值回退自检，仅验证链路。"
+      },
+      "n_docs": 4,
+      "text_extraction": {
+        "n": 3,
+        "avg_f1": 0.640566037735849,
+        "avg_precision": 0.5725776281331837,
+        "avg_recall": 0.8333333333333334
+      },
+      "table_restoration": {
+        "n": 2,
+        "avg_f1": 0.9583333333333333,
+        "avg_header_recall": 0.9,
+        "span_recovered_docs": 2
+      },
+      "formula": {
+        "n": 1,
+        "block_hit_rate": 1.0,
+        "avg_string_sim": 1.0
+      },
+      "ocr": {
+        "n": 1,
+        "avg_cer": 0.0
+      }
+    },
+    "docling+mineru": {
+      "availability": {
+        "engines": [
+          "identity_selfcheck"
+        ],
+        "identity_fallback": true,
+        "note": "当前环境未提供真实 Docling/MinerU（或 --selfcheck 强制），指标来自真值回退自检，仅验证链路。"
+      },
+      "n_docs": 4,
+      "text_extraction": {
+        "n": 3,
+        "avg_f1": 0.640566037735849,
+        "avg_precision": 0.5725776281331837,
+        "avg_recall": 0.8333333333333334
+      },
+      "table_restoration": {
+        "n": 2,
+        "avg_f1": 0.9583333333333333,
+        "avg_header_recall": 0.9,
+        "span_recovered_docs": 2
+      },
+      "formula": {
+        "n": 1,
+        "block_hit_rate": 1.0,
+        "avg_string_sim": 1.0
+      },
+      "ocr": {
+        "n": 1,
+        "avg_cer": 0.0
+      }
+    }
+  },
+  "route_recommendation": {
+    "recommended_route": "docling_default_conditional_mineru",
+    "recommended_threshold": 0.6,
+    "n_docs": 4,
+    "n_beneficial": 0,
+    "n_high_complexity": 0,
+    "rationale": "未观测到 MinerU 在复杂文档上的显著质量增益（当前为自检/无真实 MinerU 数据），维持 Docling 默认条件路由。",
+    "per_doc_gains": [
+      {
+        "doc_id": "fin_report",
+        "complexity": 0.45,
+        "docling_q": 0.0,
+        "mineru_q": 0.0,
+        "delta": 0.0
+      },
+      {
+        "doc_id": "contract_scan",
+        "complexity": 0.45,
+        "docling_q": 1.0,
+        "mineru_q": 1.0,
+        "delta": 0.0
+      },
+      {
+        "doc_id": "statements",
+        "complexity": 0.45,
+        "docling_q": 0.9166666666666666,
+        "mineru_q": 0.9166666666666666,
+        "delta": 0.0
+      },
+      {
+        "doc_id": "whitepaper",
+        "complexity": 0.47000000000000003,
+        "docling_q": 1.0,
+        "mineru_q": 1.0,
+        "delta": 0.0
+      }
+    ]
+  }
+}

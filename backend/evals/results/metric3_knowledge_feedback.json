@@ -1,0 +1,22 @@
+{
+  "metric": "M3",
+  "title": "知识回流量评测（好评反馈 → FAQ 沉淀 → 审批管线）",
+  "source_script": "backend/scripts/eval_metric3_feedback.py",
+  "run_at": "2026-08-21",
+  "status": "confirmed",
+  "methodology": "构造 7 天×多种质量档位（clean/multi/noisy/dup/lowq）的真实形态对话 16 条，每条创建 praise 反馈并走真实回流管线：LLM 提取 Q-A → 沉淀 KnowledgeAsset+Document → LLM 冲突检测 → 自动审批分流（confidence>=0.9 自动通过）→ pending 模拟人工审批（>=0.75 通过）。反馈/对话为模拟数据，回流管线为真实代码路径",
+  "results": {
+    "sim_days": 7,
+    "dialogs_total": 16,
+    "faq_success": 16,
+    "faq_skipped": 0,
+    "faq_failed": 0,
+    "daily_faq": 2.3,
+    "approval_total": 16,
+    "auto_approved": 14,
+    "auto_approval_rate": 0.875,
+    "manual_approvals": 2,
+    "approval_pass_rate": 0.875,
+    "display": "FAQ 成功沉淀 16（跳过 0，失败 0）；日均回流 2.3 条/天；审批记录 16，自动通过 14（自动通过率 87.5%），人工审批 2；审批通过率 87.5%（通过 14 / 拒绝 2）"
+  }
+}

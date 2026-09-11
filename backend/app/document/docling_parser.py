@@ -267,10 +267,8 @@ class DoclingParser(DocumentParser):
 
         return pictures
 
-    #: 交由 MinerU 处理（替换 Docling OCR 路径）的图片类型
-    _MINERU_IMAGE_TYPES: set[str] = {
-        "png", "jpg", "jpeg", "gif", "webp", "tiff", "bmp",
-    }
+    #: 交由 MinerU 处理（替换 Docling OCR 路径）的图片类型与普通配置不在此维护，
+    #  图片类型判定统一收敛在 app.document.parse_router（IMAGE_TYPES / choose_engine）。
 
     def _mineru_python(self) -> str:
         """读取 MinerU 独立 venv 的 python 路径（缓存，缺省返回空串）。"""
@@ -281,12 +279,12 @@ class DoclingParser(DocumentParser):
         return self._mineru_python_path
 
     def _should_use_mineru(self, file_path: str) -> bool:
-        """判断是否应走 MinerU 替换 Docling 的 OCR 路径。
+        """判断是否应走 MinerU 替换 Docling 的 OCR 路径（DOC_PARSER_ROUTE 决策）。
 
-        规则：启用 MinerU 且配置了独立 venv 时，
-            - 图片类型 → MinerU；
-            - PDF 且为扫描件（无文本层）→ MinerU；
-            - Office（docx/pptx/xlsx）与音频 → 仍走 Docling。
+        委托给 parse_router.choose_engine：
+            - 默认 docling_default_conditional_mineru：图片、纯扫描 PDF → MinerU；
+            - mineru_by_doc_complexity：复杂度达到阈值也升级 MinerU。
+        MinerU 未启用 / 未配置独立 venv / 不可用时返回 False（回落 Docling）。
         """
         settings = get_settings()
         if not self._bool(getattr(settings, "MINERU_ENABLED", False), False):
@@ -295,12 +293,39 @@ class DoclingParser(DocumentParser):
             log.debug("mineru.python_not_configured")
             return False
 
+        route = getattr(
+            settings, "DOC_PARSER_ROUTE", "docling_default_conditional_mineru"
+        )
+        try:
+            threshold = float(
+                getattr(settings, "DOC_PARSER_COMPLEXITY_THRESHOLD", 0.6) or 0.6
+            )
+        except (TypeError, ValueError):
+            threshold = 0.6
+
+        from app.document.parse_router import ParseSignals, choose_engine
+
         ext = os.path.splitext(file_path)[1].lower().lstrip(".")
-        if ext in self._MINERU_IMAGE_TYPES:
-            return True
-        if ext == "pdf" and self._is_scanned_pdf(file_path):
-            return True
-        return False
+        signals = ParseSignals(doc_type=ext)
+        if ext == "pdf":
+            # 文本层占比：整份无文本层 → 0（扫描件），有文本层 → 1（数字 PDF）
+            signals.text_layer_ratio = 0.0 if self._is_scanned_pdf(file_path) else 1.0
+
+        decision = choose_engine(
+            route,
+            signals,
+            mineru_available=True,
+            threshold=threshold,
+        )
+        log.debug(
+            "mineru.route_decision",
+            file_path=file_path,
+            route=route,
+            ext=ext,
+            threshold=threshold,
+            decision=decision,
+        )
+        return decision == "mineru"
 
     @staticmethod
     def _is_scanned_pdf(file_path: str) -> bool:

@@ -1,0 +1,34 @@
+{
+  "metric": "M4",
+  "title": "约束注入命中率 / 误报率评测（observe 灰度模式）",
+  "source_script": "backend/scripts/eval_metric4_constraint.py",
+  "run_at": "2026-08-21",
+  "status": "confirmed",
+  "methodology": "种子 3 条约束规则到评测 KB（category=NULL，纯测 T1/T2）+ 1 条到高风险域 KB（category=finance，T4 无条件注入兜底）。标注评测集：7 正例（应注入）+ 7 负例（不应注入）。Phase A 走真实 ConstraintChannel.fetch，命中行为由 constraint_audit_records（action=skipped_observe）还原，与生产灰度观察口径一致；Phase B 切 enforce 验证实际注入载荷",
+  "results": {
+    "hit_rate": {
+      "hits": 7,
+      "positives": 7,
+      "rate": 1.0,
+      "display": "7/7 = 100.0%"
+    },
+    "false_positive_rate": {
+      "fps": 0,
+      "negatives_seed": 6,
+      "rate": 0.0,
+      "note": "高风险域 KB 的 T4 保守注入 1/1 为设计内行为，不计误报",
+      "display": "0/6 = 0.0%"
+    },
+    "trigger_distribution": {
+      "t2_entities": 4,
+      "t1_domain_classification": 6,
+      "t4_domain_fallback": 2,
+      "zero_llm_trigger_ratio": 0.67,
+      "note": "T2/T4 为零 LLM 确定性触发，T1 为轻量分类兜底"
+    },
+    "phase_b_enforce": {
+      "injected_probe_cases": 3,
+      "note": "severity 排序 + triggers 证据链注入载荷验证通过"
+    }
+  }
+}

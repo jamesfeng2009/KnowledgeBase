@@ -170,6 +170,118 @@ class TestUploadSizeGates:
 
 
 # ======================================================================
+# 1b. 上传文件类型嗅探 — 伪装/改后缀文件在上传入口被拦截
+# ======================================================================
+
+
+class TestUploadFileTypeSniff:
+    """文件类型魔数校验：非文档/伪装文件应在任何写操作前被 400 拒绝。"""
+
+    async def _upload(self, client, filename: str, body: bytes):
+        return await client.post(
+            "/api/v1/documents/upload",
+            params={"kb_id": str(uuid4()), "title": "审计取证"},
+            files={"file": (filename, body)},
+        )
+
+    @pytest.mark.asyncio
+    async def test_masked_image_under_pdf_name_rejected(
+        self, auth_client: httpx.AsyncClient
+    ) -> None:
+        """把 PNG 改名为 .pdf → 400，且未触发任何业务/存储侧写操作。"""
+        auth_client._ekb_user.role = "admin"  # type: ignore[attr-defined]
+        png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
+        with patch(
+            "app.api.v1.documents.KnowledgeService"
+        ) as mock_service_cls, patch(
+            "app.utils.minio_client.upload_file"
+        ) as mock_minio:
+            resp = await self._upload(auth_client, "report.pdf", png)
+        assert resp.status_code == 400
+        assert "文件类型不被支持" in resp.json()["detail"]
+        mock_service_cls.return_value.upload_document.assert_not_called()
+        mock_minio.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_executable_masquerade_rejected(
+        self, auth_client: httpx.AsyncClient
+    ) -> None:
+        """伪装成文档的 ELF/Linux 可执行文件 → 400。"""
+        auth_client._ekb_user.role = "admin"  # type: ignore[attr-defined]
+        elf = b"\x7fELF" + b"\x02\x01\x01\x00" + b"\x00" * 16
+        with patch(
+            "app.api.v1.documents.KnowledgeService"
+        ) as mock_service_cls, patch(
+            "app.utils.minio_client.upload_file"
+        ) as mock_minio:
+            resp = await self._upload(auth_client, "说明.docx", elf)
+        assert resp.status_code == 400
+        mock_service_cls.return_value.upload_document.assert_not_called()
+        mock_minio.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_archive_under_text_name_rejected(
+        self, auth_client: httpx.AsyncClient
+    ) -> None:
+        """把 7z 压缩包改名为 .txt → 400。"""
+        auth_client._ekb_user.role = "admin"  # type: ignore[attr-defined]
+        seven_z = b"7z\xbc\xaf\x27\x1c" + b"\x00" * 16
+        with patch(
+            "app.api.v1.documents.KnowledgeService"
+        ) as mock_service_cls, patch(
+            "app.utils.minio_client.upload_file"
+        ) as mock_minio:
+            resp = await self._upload(auth_client, "notes.txt", seven_z)
+        assert resp.status_code == 400
+        mock_service_cls.return_value.upload_document.assert_not_called()
+        mock_minio.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_masked_docx_under_pdf_name_passes_and_corrects(
+        self, auth_client: httpx.AsyncClient
+    ) -> None:
+        """把 docx 改名为 .pdf → 不拒绝，并按实际类型纠正确认给 service。"""
+        auth_client._ekb_user.role = "admin"  # type: ignore[attr-defined]
+        fake_pk = b"PK\x03\x04" + b"\x14\x00\x00\x00" + b"\x00" * 22
+        docx = fake_pk + b"word/document.xml"
+
+        created = SimpleNamespace(id=uuid4(), file_path=None)
+        doc_repo = MagicMock()
+        doc_repo.update = AsyncMock()
+        with patch(
+            "app.api.v1.documents.KnowledgeService"
+        ) as mock_service_cls, patch(
+            "app.utils.minio_client.upload_file",
+            new=AsyncMock(return_value="minio://ekb-documents/kb/x"),
+        ), patch(
+            "tasks.document_tasks.process_document"
+        ), patch(
+            "app.repositories.knowledge_repository.DocumentRepository",
+            return_value=doc_repo,
+        ), patch(
+            "app.api.v1.documents.DocResponse.model_validate",
+            return_value={
+                "id": created.id,
+                "kb_id": str(uuid4()),
+                "title": "审计取证",
+                "doc_type": "docx",
+                "status": "draft",
+                "owner_id": str(uuid4()),
+                "classification": "internal",
+                "created_at": "2026-08-22T00:00:00Z",
+                "updated_at": "2026-08-22T00:00:00Z",
+            },
+        ):
+            mock_service_cls.return_value.upload_document = AsyncMock(
+                return_value=created
+            )
+            resp = await self._upload(auth_client, "report.pdf", docx)
+        assert resp.status_code == 201
+        called_kwargs = mock_service_cls.return_value.upload_document.call_args.kwargs
+        assert called_kwargs["doc_type"] == "docx"
+
+
+# ======================================================================
 # 2. multipart 会话 — redis.asyncio（不阻塞事件循环）
 # ======================================================================
 
