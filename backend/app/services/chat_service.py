@@ -434,6 +434,9 @@ class ChatService:
         # 空集合表示用户无任何可访问知识库（两条路径均短路，不检索）。
         permission_filter = None
         accessible_kb_id_strs: list[str] | None = None
+        # P0 密级下推：用户可见密级白名单（同步、零 DB）— 透传两条
+        # 检索路径做召回层过滤；构建失败时保守置空（fail-closed）。
+        allowed_classifications: list[str] | None = None
         try:
             from app.services.permission_service import PermissionService
 
@@ -442,11 +445,13 @@ class ChatService:
             if accessible_kb_ids is not None:
                 accessible_kb_id_strs = [str(k) for k in accessible_kb_ids]
             permission_filter = permission_svc.filter_retrieval_candidates
+            allowed_classifications = permission_svc.allowed_classifications()
         except Exception as exc:
             # 权限上下文构建失败 — 保守处理：视为无可访问知识库，
             # 避免权限服务异常时回落为全库检索造成越权泄漏。
             logger.error("chat.permission_context_failed", error=str(exc))
             accessible_kb_id_strs = []
+            allowed_classifications = []
 
         # Bug3 修复：答案缓存的权限视图指纹 — 可访问 kb_ids（排序）+ 用户密级
         # 参与缓存 key 计算，不同权限视图的用户互不可见，防止缓存跨权限泄漏。
@@ -523,6 +528,9 @@ class ChatService:
                         memory_context=prepared.memory_context,
                         kb_ids=accessible_kb_id_strs,
                         permission_filter=permission_filter,
+                        # P0 密级下推：召回层密级白名单（与 permission_filter
+                        # 同源，Final Gate 仍为 DB 权威兜底）
+                        allowed_classifications=allowed_classifications,
                     ):
                         if isinstance(chunk, str):
                             full_response_parts.append(chunk)
@@ -596,6 +604,9 @@ class ChatService:
                         # P0 wiki 层级：scope 作为 filters 下推到 retriever
                         # （filters 指纹已并入 cache_scope，防跨层级缓存泄漏）
                         filters=prepared.scope,
+                        # P0 密级下推：召回层密级白名单（与 permission_filter
+                        # 同源，Final Gate 仍为 DB 权威兜底）
+                        allowed_classifications=allowed_classifications,
                     ):
                         # P4-B: 在 token 流中检查后台矛盾检测是否完成
                         if contra_task and not contra_pushed and contra_task.done():

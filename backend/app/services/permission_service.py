@@ -10,9 +10,10 @@
 
 from __future__ import annotations
 
+from typing import Any
 from uuid import UUID
 
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.knowledge import Document, KnowledgeBase
@@ -70,6 +71,41 @@ class PermissionService:
         return [name for name, level in _CLEARANCE_ORDER.items() if level <= user_level]
 
     # ------------------------------------------------------------------
+    # 可见性辅助（P1：激活 KB.visibility 字段）
+    # ------------------------------------------------------------------
+
+    def _visibility_conditions(self) -> list[Any]:
+        """构建非 admin 用户的知识库可见性 OR 条件（单一事实来源）。
+
+        P1 激活 KB.visibility 字段（模型层已有 public/private/dept，
+        此前未被权限引擎消费，字段形同虚设）：
+
+            - owner：知识库所有者；
+            - member：kb_members 成员；
+            - public：全员公开库（无需加入成员即可检索/阅读）；
+            - dept：部门库且用户属于该部门（dept_id 精确匹配）。
+
+        保守语义：``user.dept_id`` 为 NULL 时跳过 dept 分支（否则
+        ``kb.dept_id == NULL`` 会被 SQLAlchemy 渲染为 IS NULL，误匹配
+        未设置部门的 dept 库）。
+        """
+        member_subq = select(KbMember.kb_id).where(KbMember.user_id == self.user.id)
+        member_subq = apply_tenant_filter(member_subq, KbMember, self._tenant_id)
+        conditions: list[Any] = [
+            KnowledgeBase.owner_id == self.user.id,
+            KnowledgeBase.id.in_(member_subq),
+            KnowledgeBase.visibility == "public",
+        ]
+        if self.user.dept_id is not None:
+            conditions.append(
+                and_(
+                    KnowledgeBase.visibility == "dept",
+                    KnowledgeBase.dept_id == self.user.dept_id,
+                )
+            )
+        return conditions
+
+    # ------------------------------------------------------------------
     # 功能权限校验
     # ------------------------------------------------------------------
 
@@ -79,7 +115,10 @@ class PermissionService:
         可访问条件（OR 逻辑）：
         1. 用户角色为 admin（全局管理员，放行所有知识库）；
         2. 用户是知识库的所有者（owner_id）；
-        3. 用户是知识库的成员（kb_members 关联表）。
+        3. 用户是知识库的成员（kb_members 关联表）；
+        4. P1: 知识库 visibility=public（全员公开，无需成员关系）；
+        5. P1: 知识库 visibility=dept 且用户属于该部门（读权限；
+           写权限仍限 owner/成员，见 check_write）。
 
         知识库不存在或已软删除时返回 False。
 
@@ -106,6 +145,17 @@ class PermissionService:
 
         # 所有者可直接访问
         if kb.owner_id == self.user.id:
+            return True
+
+        # P1: KB 级可见性 — public 全员可读；dept 库同部门可读。
+        # 注意：此处只放行读权限，check_write 不包含 visibility 分支。
+        if kb.visibility == "public":
+            return True
+        if (
+            kb.visibility == "dept"
+            and self.user.dept_id is not None
+            and kb.dept_id == self.user.dept_id
+        ):
             return True
 
         # 成员关系校验
@@ -164,7 +214,8 @@ class PermissionService:
         """过滤出当前用户可访问的文档列表。
 
         过滤维度：
-        1. 文档所属知识库对用户可见（所有者 / 成员 / admin）；
+        1. 文档所属知识库对用户可见（owner/member/public/dept，
+           P1 起复用 get_accessible_kb_ids 单一事实来源）；
         2. 文档密级不超过用户密级 clearance_level。
 
         适用于检索结果、推荐列表等内存中文档集合的后置过滤。
@@ -183,22 +234,10 @@ class PermissionService:
         if self.user.role == "admin":
             return documents
 
-        # 普通用户：先查出可访问的知识库 ID 集合
-        member_subq = select(KbMember.kb_id).where(KbMember.user_id == self.user.id)
-        member_subq = apply_tenant_filter(member_subq, KbMember, self._tenant_id)
-        accessible_stmt = (
-            select(KnowledgeBase.id)
-            .where(
-                KnowledgeBase.deleted_at.is_(None),
-                or_(
-                    KnowledgeBase.owner_id == self.user.id,
-                    KnowledgeBase.id.in_(member_subq),
-                ),
-            )
-        )
-        accessible_stmt = apply_tenant_filter(accessible_stmt, KnowledgeBase, self._tenant_id)
-        result = await self.db.execute(accessible_stmt)
-        accessible_kb_ids: set[UUID] = {row[0] for row in result.all()}
+        # P1 重构：可访问知识库集合复用 get_accessible_kb_ids()
+        # （owner/member/public/dept 四分支），替代此前内联的
+        # owner OR member 查询 —— 两者曾存在语义漂移风险。
+        accessible_kb_ids = await self.get_accessible_kb_ids()
 
         # 按知识库归属 + 密级双重过滤
         return [
@@ -218,6 +257,10 @@ class PermissionService:
         用于 RAG 检索层下推过滤（OpenSearch terms filter / 向量检索 kb_ids），
         在召回阶段就限定知识库范围，避免越权文档进入重排与生成上下文。
 
+        P1: 可访问范围由 ``_visibility_conditions`` 单一事实来源定义
+        （owner / member / public / dept），检索下推、Final Gate、
+        filter_documents 三处共用，避免语义漂移。
+
         Returns:
             - admin：返回 None（表示不限制，检索全部知识库）；
             - 普通用户：返回可访问的 kb_id 集合（可能为空集合，
@@ -226,17 +269,9 @@ class PermissionService:
         if self.user.role == "admin":
             return None
 
-        member_subq = select(KbMember.kb_id).where(KbMember.user_id == self.user.id)
-        member_subq = apply_tenant_filter(member_subq, KbMember, self._tenant_id)
-        accessible_stmt = (
-            select(KnowledgeBase.id)
-            .where(
-                KnowledgeBase.deleted_at.is_(None),
-                or_(
-                    KnowledgeBase.owner_id == self.user.id,
-                    KnowledgeBase.id.in_(member_subq),
-                ),
-            )
+        accessible_stmt = select(KnowledgeBase.id).where(
+            KnowledgeBase.deleted_at.is_(None),
+            or_(*self._visibility_conditions()),
         )
         accessible_stmt = apply_tenant_filter(accessible_stmt, KnowledgeBase, self._tenant_id)
         result = await self.db.execute(accessible_stmt)

@@ -104,6 +104,7 @@ class HybridRetriever:
         kb_ids: list[str] | None = None,
         top_k: int = 20,
         filters: dict[str, Any] | None = None,
+        classifications: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """多路检索知识库，返回合并去重后的候选文档列表。
 
@@ -111,6 +112,9 @@ class HybridRetriever:
         P2-T6: 检索前用 EntityRegistry 做同义词扩展，增强 BM25 召回。
         P0 wiki 层级：filters 透传给向量/全文/跨模态三路（图谱路按实体检索，
             层级过滤不适用，filters 仅记录日志不阻断）。
+        P0 密级下推：classifications（用户可见密级白名单）经
+            RetrievalInvariants.pushdown 注入 filters，随向量/全文/跨模态
+            三路下推到后端；None 表示不做密级下推（Final Gate 兜底）。
 
         Args:
             query: 用户查询文本。
@@ -118,6 +122,9 @@ class HybridRetriever:
             top_k: 每路召回数量上限（合并前）。
             filters: P0 wiki 层级过滤 — series_id/path_prefix/parent_id/
                 depth/version_of。由 filter_builder 转为各后端 filter 子句。
+            classifications: P0 密级下推 — 用户可见密级白名单
+                （如 ``["public", "internal"]``），由 PermissionService
+                .allowed_classifications() 产出。None = 不下推。
 
         Returns:
             候选文档列表，每项格式::
@@ -139,10 +146,11 @@ class HybridRetriever:
         # 统一注入（单一事实来源）：调用方传入的 doc_status 会被覆盖
         # （安全优先于灵活性）。向量 / 全文 / 跨模态三路共用本子句；
         # 图谱路由 graph_service.py 的 Cypher WHERE 在源头过滤。
+        # P0 密级下推：classifications 非 None 时同步注入密级白名单。
         from app.rag.retrieval_invariants import RetrievalInvariants
 
         effective_filters: dict[str, Any] = RetrievalInvariants.pushdown(
-            "hybrid", kb_ids, filters
+            "hybrid", kb_ids, filters, classifications=classifications
         )
 
         # P2-T6: 实体识别 + 同义词扩展（零 LLM，增强 BM25 召回）

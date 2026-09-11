@@ -13,6 +13,9 @@ P0 wiki 层级改造：向量检索（OpenSearch k-NN / Milvus）和全文检索
         "parent_id":   "<uuid>",          # 父文档精确匹配
         "depth":       2,                 # 层级深度精确匹配
         "version_of":  "<uuid>",          # 版本族主文档匹配
+        # P0 密级下推：用户可见密级白名单（多值 list），由
+        # RetrievalInvariants.pushdown 统一注入 — 调用方勿手工传。
+        "classification": ["public", "internal"],
     }
 
 字段命名说明：
@@ -44,6 +47,7 @@ SUPPORTED_FILTER_KEYS: frozenset[str] = frozenset({
     "version_of",
     "doc_status",  # P0-1: 文档状态过滤（published/draft/pending_review/archived）
     "doc_role",    # P2: 文档角色粗标过滤（normal/constraint_source，运营用）
+    "classification",  # P0 密级下推：用户可见密级白名单（多值 list）
 })
 
 
@@ -62,6 +66,42 @@ def _os_prefix(field: str, value: Any) -> dict[str, Any]:
     return {"prefix": {field: str(value)}}
 
 
+def _os_classification_clause(value: Any) -> dict[str, Any]:
+    """构建 OpenSearch classification 过滤子句（P0 密级下推，多值白名单）。
+
+    行为由 CLASSIFICATION_PUSHDOWN_STRICT 开关控制（config.py）：
+
+        - 容忍模式（False，默认 — 回填完成前）：``should [terms, must_not
+          exists]`` 子句 — 索引中无 classification 字段的存量旧文档放行到
+          Final Gate（PermissionService 以 DB 为权威复检，安全性不变），
+          避免 strict 切换前旧文档被召回层静默排除；
+        - strict 模式（True — ``scripts/backfill_index_classification.py``
+          回填完成后开启）：纯 ``terms`` 白名单 — 字段缺失的文档不再放行。
+
+    Args:
+        value: 用户可见密级列表（如 ``["public", "internal"]``），
+            单个字符串也兼容（内部归一化为单元素列表）。
+
+    Returns:
+        OpenSearch filter 子句 dict。
+    """
+    values = [value] if isinstance(value, str) else [str(v) for v in value]
+    terms_clause: dict[str, Any] = {"terms": {"classification": values}}
+    from app.config import get_settings
+
+    if get_settings().CLASSIFICATION_PUSHDOWN_STRICT:
+        return terms_clause
+    return {
+        "bool": {
+            "should": [
+                terms_clause,
+                {"bool": {"must_not": {"exists": {"field": "classification"}}}},
+            ],
+            "minimum_should_match": 1,
+        }
+    }
+
+
 #: OpenSearch filter 构建器映射：key → (索引字段名, 构建函数)
 #: 每个构建器接收 value，返回一个 OpenSearch filter 子句 dict。
 _OS_FILTER_BUILDERS: dict[str, tuple[str, Any]] = {
@@ -72,6 +112,7 @@ _OS_FILTER_BUILDERS: dict[str, tuple[str, Any]] = {
     "version_of": ("version_of", lambda v: _os_term("version_of", str(v))),
     "doc_status": ("doc_status", lambda v: _os_term("doc_status", str(v))),
     "doc_role": ("doc_role", lambda v: _os_term("doc_role", str(v))),
+    "classification": ("classification", _os_classification_clause),
 }
 
 
@@ -144,6 +185,30 @@ def _milvus_str_literal(value: Any) -> str:
     return f"'{s}'"
 
 
+def _milvus_classification_expr(value: Any) -> str | None:
+    """构建 Milvus classification expr（P0 密级下推，仅 strict 模式生效）。
+
+    容忍模式返回 None（跳过下推）：Milvus 无法可靠表达「字段缺失」语义
+    （缺失字段与空串不可区分），下推会静默排除存量旧文档 — 密级过滤由
+    Final Gate（PermissionService 以 DB 为权威复检）兜底。strict 模式
+    （``scripts/backfill_index_classification.py`` 回填完成后开启）用
+    ``classification in [...]`` 纯白名单过滤。
+
+    Args:
+        value: 用户可见密级列表（如 ``["public", "internal"]``）。
+
+    Returns:
+        Milvus expr 片段；容忍模式返回 None（调用方跳过）。
+    """
+    from app.config import get_settings
+
+    if not get_settings().CLASSIFICATION_PUSHDOWN_STRICT:
+        return None
+    values = [value] if isinstance(value, str) else [str(v) for v in value]
+    literals = ", ".join(_milvus_str_literal(v) for v in values)
+    return f"classification in [{literals}]"
+
+
 #: Milvus filter 构建器映射：key → (字段名, 构建函数)
 #: Milvus expr 语法：``field == 'value'`` 或 ``field like 'prefix%'``
 _MILVUS_FILTER_BUILDERS: dict[str, tuple[str, Any]] = {
@@ -154,6 +219,7 @@ _MILVUS_FILTER_BUILDERS: dict[str, tuple[str, Any]] = {
     "version_of": ("version_of", lambda v: f"version_of == {_milvus_str_literal(v)}"),
     "doc_status": ("doc_status", lambda v: f"doc_status == {_milvus_str_literal(v)}"),
     "doc_role": ("doc_role", lambda v: f"doc_role == {_milvus_str_literal(v)}"),
+    "classification": ("classification", _milvus_classification_expr),
 }
 
 
@@ -191,9 +257,14 @@ def build_milvus_expr(
                 continue
             _, build_fn = builder
             try:
-                parts.append(build_fn(value))
+                expr = build_fn(value)
             except (ValueError, TypeError) as exc:
                 log.warning("filter_builder.milvus.build_error", key=key, value=value, error=str(exc))
+                continue
+            # 构建器可返回 None 表示「该模式下不构建子句」（如容忍模式下
+            # Milvus 路跳过密级下推，Final Gate 兜底）
+            if expr is not None:
+                parts.append(expr)
 
     return " and ".join(parts)
 

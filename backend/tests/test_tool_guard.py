@@ -290,9 +290,9 @@ class TestEngineToolGuardIntegration:
 
         events = await _drain_tool_use(engine, state, tool_use)
 
-        # 引擎调用时透传请求级租户 ID（本场景未设置，为 None）
+        # 引擎调用时透传请求级租户 ID 与用户 ID（本场景均未设置，为 None）
         mock_mcp.call_tool.assert_called_once_with(
-            "knowledge_search", {"query": "test"}, tenant_id=None
+            "knowledge_search", {"query": "test"}, tenant_id=None, user_id=None
         )
         assert len(state["tool_results"]) == 1
         assert state["tool_results"][0]["tool"] == "knowledge_search"

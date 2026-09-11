@@ -59,8 +59,9 @@ class FakeRetriever:
         kb_ids: list[str] | None = None,
         top_k: int = 20,
         filters: dict[str, Any] | None = None,
+        classifications: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        self.search_calls.append({"query": query, "kb_ids": kb_ids, "top_k": top_k, "filters": filters})
+        self.search_calls.append({"query": query, "kb_ids": kb_ids, "top_k": top_k, "filters": filters, "classifications": classifications})
         return self.candidates
 
 
@@ -211,7 +212,7 @@ class TestGetAccessibleKbIds:
     async def test_normal_user_returns_set(self) -> None:
         """普通用户返回 DB 查询到的可访问 kb_id 集合。"""
         kb_id = uuid4()
-        user = SimpleNamespace(role="editor", clearance_level="internal", id=uuid4())
+        user = SimpleNamespace(role="editor", clearance_level="internal", id=uuid4(), dept_id=None)
 
         db = AsyncMock()
         exec_result = MagicMock()
@@ -226,7 +227,7 @@ class TestGetAccessibleKbIds:
     @pytest.mark.asyncio
     async def test_normal_user_empty_set(self) -> None:
         """普通用户无可访问知识库时返回空集合（而非 None）。"""
-        user = SimpleNamespace(role="viewer", clearance_level="public", id=uuid4())
+        user = SimpleNamespace(role="viewer", clearance_level="public", id=uuid4(), dept_id=None)
 
         db = AsyncMock()
         exec_result = MagicMock()
@@ -280,7 +281,7 @@ class TestFilterRetrievalCandidates:
     @pytest.mark.asyncio
     async def test_empty_accessible_set_returns_empty(self) -> None:
         """可访问集合为空时，所有候选被剔除。"""
-        user = SimpleNamespace(role="viewer", clearance_level="public", id=uuid4())
+        user = SimpleNamespace(role="viewer", clearance_level="public", id=uuid4(), dept_id=None)
 
         db = AsyncMock()
         exec_result = MagicMock()
@@ -301,7 +302,7 @@ class TestFilterRetrievalCandidates:
         kb_other = uuid4()
         doc_ok = uuid4()
         doc_secret = uuid4()
-        user = SimpleNamespace(role="editor", clearance_level="internal", id=uuid4())
+        user = SimpleNamespace(role="editor", clearance_level="internal", id=uuid4(), dept_id=None)
 
         db = AsyncMock()
 
@@ -342,7 +343,7 @@ class TestFilterRetrievalCandidates:
         """
         kb_allowed = uuid4()
         doc_id = uuid4()
-        user = SimpleNamespace(role="editor", clearance_level="internal", id=uuid4())
+        user = SimpleNamespace(role="editor", clearance_level="internal", id=uuid4(), dept_id=None)
 
         db = AsyncMock()
         meta_result = MagicMock()

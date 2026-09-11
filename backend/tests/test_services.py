@@ -81,7 +81,7 @@ class TestPermissionService:
 
         kb_accessible = uuid4()
         kb_other = uuid4()
-        user = SimpleNamespace(role="editor", clearance_level="internal", id=uuid4())
+        user = SimpleNamespace(role="editor", clearance_level="internal", id=uuid4(), dept_id=None)
 
         # mock db.execute → 返回可访问知识库 ID 集合
         db = AsyncMock()
@@ -112,7 +112,7 @@ class TestPermissionService:
         from app.services.permission_service import PermissionService
 
         kb_accessible = uuid4()
-        user = SimpleNamespace(role="editor", clearance_level="internal", id=uuid4())
+        user = SimpleNamespace(role="editor", clearance_level="internal", id=uuid4(), dept_id=None)
 
         db = AsyncMock()
         exec_result = MagicMock()
@@ -146,7 +146,7 @@ class TestPermissionService:
         """非 admin（editor）的 allowed_classifications 仍按 clearance_level 截断。"""
         from app.services.permission_service import PermissionService
 
-        user = SimpleNamespace(role="editor", clearance_level="internal", id=uuid4())
+        user = SimpleNamespace(role="editor", clearance_level="internal", id=uuid4(), dept_id=None)
         service = PermissionService(db=AsyncMock(), user=user)
 
         allowed = service.allowed_classifications()

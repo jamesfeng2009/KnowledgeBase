@@ -57,6 +57,7 @@ class FakeRetriever:
         query: str,
         kb_ids: list[str] | None = None,
         top_k: int = 20,
+        classifications: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         return []
 

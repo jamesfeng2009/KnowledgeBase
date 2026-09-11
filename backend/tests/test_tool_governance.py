@@ -236,7 +236,8 @@ class TestCrewAgentToolAssignment:
             crew.mcp = MagicMock()
 
             # Mock get_mcp_tools_for_agent_type 返回不同工具集
-            async def mock_get_tools(mcp, agent_type):
+            # （P1 起新增 tenant_id 关键字参数，mock 需兼容）
+            async def mock_get_tools(mcp, agent_type, tenant_id=None):
                 if agent_type == "qa":
                     return [MagicMock(name="ks"), MagicMock(name="dg")]
                 elif agent_type == "workflow":

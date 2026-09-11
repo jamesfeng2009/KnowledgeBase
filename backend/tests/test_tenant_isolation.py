@@ -69,8 +69,9 @@ def _create_middleware_test_app() -> FastAPI:
     import app.middleware as mw
     from app.middleware import setup_middleware
 
-    # 重置全局限流器，防止跨测试污染
+    # 重置全局限流器，防止跨测试污染（client 级 + 租户级）
     mw._rate_limiter = None
+    mw._tenant_rate_limiter = None
 
     settings = MagicMock()
     settings.CORS_ORIGINS = ["*"]
@@ -78,6 +79,9 @@ def _create_middleware_test_app() -> FastAPI:
     settings.RATE_LIMIT_PER_MINUTE = 60
     settings.RATE_LIMIT_BURST = 2
     settings.REDIS_URL = None
+    # P1 租户级限流开关 — MagicMock 自动属性为真值会让限流器带着
+    # MagicMock 参数启动（min(MagicMock) → TypeError），必须显式关闭
+    settings.RATE_LIMIT_TENANT_ENABLED = False
 
     app = FastAPI()
     with patch("app.middleware.get_settings", return_value=settings):

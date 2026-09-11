@@ -71,6 +71,10 @@ class AgentState(TypedDict, total=False):
     # version_of。透传到 retriever.search，由 filter_builder 转为后端 filter。
     # None 表示不做层级过滤（向后兼容旧调用）。
     filters: dict[str, Any] | None
+    # P0 密级下推：用户可见密级白名单（PermissionService.allowed_classifications
+    # 产出）。透传到 _retrieve → retriever.search 做召回层过滤；
+    # None 表示不下推（Final Gate DB 复检兜底）。
+    allowed_classifications: list[str] | None
     # --- LangGraph 专用字段（纯 Python 路径不使用）---
     # think 节点产出的路由信号：retrieve / tool_call / generate。
     _decision: str

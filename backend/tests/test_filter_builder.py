@@ -10,6 +10,9 @@ None 值跳过、depth=0 边界、path_prefix 前缀语义、validate_filters。
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
+from app.config import get_settings
 from app.rag.filter_builder import (
     DOC_PARENT_ID_FIELD,
     SUPPORTED_FILTER_KEYS,
@@ -207,6 +210,87 @@ class TestMilvusExpr:
 
 
 # ======================================================================
+# P0 密级下推 — classification 多值白名单子句
+# ======================================================================
+
+
+class TestOpenSearchClassificationClause:
+    """P0 密级下推：OpenSearch classification 子句（容忍 / strict 双模式）。"""
+
+    def test_tolerant_mode_allows_missing_field(self) -> None:
+        """容忍模式（默认，回填完成前）：should [terms, must_not exists] —
+        存量索引中无 classification 字段的旧文档放行到 Final Gate。"""
+        assert get_settings().CLASSIFICATION_PUSHDOWN_STRICT is False
+        clauses = build_opensearch_filter_clauses(
+            {"classification": ["public", "internal"]}
+        )
+        assert len(clauses) == 1
+        clause = clauses[0]
+        assert clause["bool"]["minimum_should_match"] == 1
+        should = clause["bool"]["should"]
+        assert {"terms": {"classification": ["public", "internal"]}} in should
+        assert {
+            "bool": {"must_not": {"exists": {"field": "classification"}}}
+        } in should
+
+    def test_strict_mode_pure_terms(self) -> None:
+        """strict 模式（回填完成后开启）：纯 terms 白名单 —
+        字段缺失的文档不再放行。"""
+        with patch.object(
+            get_settings(), "CLASSIFICATION_PUSHDOWN_STRICT", True
+        ):
+            clauses = build_opensearch_filter_clauses(
+                {"classification": ["public", "internal"]}
+            )
+        assert clauses == [{"terms": {"classification": ["public", "internal"]}}]
+
+    def test_single_string_value_normalized(self) -> None:
+        """单字符串值归一化为单元素列表（防御性兼容）。"""
+        clauses = build_opensearch_filter_clauses({"classification": "public"})
+        assert (
+            {"terms": {"classification": ["public"]}}
+            in clauses[0]["bool"]["should"]
+        )
+
+    def test_combined_with_kb_ids(self) -> None:
+        """kb_ids 与 classification 白名单在同一 filter 数组（AND 语义）。"""
+        clauses = build_opensearch_combined_filter(
+            ["kb1"], {"classification": ["public"]}
+        )
+        assert {"terms": {"kb_id": ["kb1"]}} in clauses
+        assert len(clauses) == 2
+
+
+class TestMilvusClassificationExpr:
+    """P0 密级下推：Milvus expr（仅 strict 模式下推，容忍模式跳过）。"""
+
+    def test_tolerant_mode_skips_pushdown(self) -> None:
+        """容忍模式：Milvus 无法表达字段缺失语义，跳过下推（Final Gate 兜底）。"""
+        expr = build_milvus_expr(["kb1"], {"classification": ["public"]})
+        assert "classification" not in expr
+        assert expr == "kb_id in ['kb1']"
+
+    def test_strict_mode_in_clause(self) -> None:
+        """strict 模式（回填完成后开启）：``classification in [...]`` 白名单。"""
+        with patch.object(
+            get_settings(), "CLASSIFICATION_PUSHDOWN_STRICT", True
+        ):
+            expr = build_milvus_expr(["kb1"], {"classification": ["public", "internal"]})
+        assert expr == "kb_id in ['kb1'] and classification in ['public', 'internal']"
+
+    def test_strict_mode_combined_with_other_filters(self) -> None:
+        with patch.object(
+            get_settings(), "CLASSIFICATION_PUSHDOWN_STRICT", True
+        ):
+            expr = build_milvus_expr(
+                None, {"classification": ["public"], "doc_status": "published"}
+            )
+        assert " and " in expr
+        assert "classification in ['public']" in expr
+        assert "doc_status == 'published'" in expr
+
+
+# ======================================================================
 # validate_filters
 # ======================================================================
 
@@ -231,7 +315,7 @@ class TestValidateFilters:
         assert set(unknown) == {"foo", "bar"}
 
     def test_supported_keys_constant(self) -> None:
-        """SUPPORTED_FILTER_KEYS 应包含全部标准 key（P0 层级 5 个 + P0-1 doc_status + P2 doc_role）。"""
+        """SUPPORTED_FILTER_KEYS 应包含全部标准 key（P0 层级 5 个 + P0-1 doc_status + P2 doc_role + P0 密级下推 classification）。"""
         assert SUPPORTED_FILTER_KEYS == frozenset(
             {
                 "series_id",
@@ -241,5 +325,6 @@ class TestValidateFilters:
                 "version_of",
                 "doc_status",
                 "doc_role",
+                "classification",
             }
         )

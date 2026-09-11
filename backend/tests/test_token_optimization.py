@@ -51,6 +51,7 @@ class FakeRetriever:
         kb_ids: list[str] | None = None,
         top_k: int = 20,
         filters: dict[str, Any] | None = None,
+        classifications: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         return self.candidates
 

@@ -525,6 +525,7 @@ class AgenticRAGEngine:
         cache_scope: str | None = None,
         filters: dict[str, Any] | None = None,
         intent: Any = None,
+        allowed_classifications: list[str] | None = None,
     ) -> AsyncIterator[SSEEvent | str]:
         """Agentic RAG 主入口 — 返回 SSE 事件流供前端实时消费。
 
@@ -569,6 +570,11 @@ class AgenticRAGEngine:
             intent: IntentRouter 已算好的 IntentResult（chat_service
                 透传）— 约束通道 T3 意图触发零 LLM 复用。None（Intent
                 Router 关闭/失败/非 Agent Loop 路径）时 T3 跳过。
+            allowed_classifications: P0 密级下推 — 当前用户可见密级白名单
+                （PermissionService.allowed_classifications() 产出，如
+                ``["public", "internal"]``）。透传到 _retrieve →
+                retriever.search 做召回层过滤；None = 不下推（存量
+                行为，Final Gate 兜底）。
 
         Yields:
             SSEEvent | str: SSE 事件对象（thinking/retrieve/tool_call/sources/
@@ -725,6 +731,9 @@ class AgenticRAGEngine:
             "permission_filter": permission_filter,
             # P0 wiki 层级：检索层级过滤（透传到 _retrieve → retriever.search）
             "filters": filters,
+            # P0 密级下推：用户可见密级白名单（透传到 _retrieve →
+            # retriever.search，召回层过滤；Final Gate 仍为权威兜底）
+            "allowed_classifications": allowed_classifications,
             # T3 意图触发：IntentRouter 已算好的 IntentResult（零 LLM 复用）；
             # None（IntentRouter 关闭/失败）时约束通道 T3 整路跳过
             "intent": intent,
@@ -2418,6 +2427,9 @@ class AgenticRAGEngine:
             candidates = await self.retriever.search(
                 query, kb_ids=kb_ids, top_k=_RETRIEVE_TOP_K,
                 filters=hierarchy_filters,
+                # P0 密级下推：用户可见密级白名单（请求级）随 filters
+                # 注入三路召回；None 时不下推（Final Gate DB 复检兜底）
+                classifications=state.get("allowed_classifications"),
             )
         finally:
             if constraint_task is not None:
@@ -3384,9 +3396,15 @@ class AgenticRAGEngine:
         )
         try:
             # 透传请求级租户 ID — MCP Server 按租户过滤工具内查询，
-            # 不信任 LLM 在 tool_input 中自封的租户标识（防跨租户泄漏）
+            # 不信任 LLM 在 tool_input 中自封的租户标识（防跨租户泄漏）。
+            # P1: 透传请求级用户 ID — knowledge_search / document_get 等
+            # 文档读取工具按用户 ABAC（知识库可见性 + 密级）过滤，
+            # 杜绝工具路径绕过检索链路的权限模型。
             result = await self.mcp.call_tool(
-                tool_name, tool_input, tenant_id=state.get("tenant_id")
+                tool_name,
+                tool_input,
+                tenant_id=state.get("tenant_id"),
+                user_id=state.get("user_id"),
             )
             state["tool_results"].append(
                 {

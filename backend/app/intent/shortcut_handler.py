@@ -96,6 +96,7 @@ class ShortcutHandler:
         kb_ids: list[str] | None = None,
         memory_context: str = "",
         permission_filter: Any = None,
+        allowed_classifications: list[str] | None = None,
     ) -> AsyncIterator[SSEEvent | str]:
         """处理快捷路径意图，返回 SSE 流。
 
@@ -109,6 +110,9 @@ class ShortcutHandler:
             memory_context: 记忆上下文。
             permission_filter: 可选，请求级 ABAC 权限过滤器（密级维度，
                 在重排前应用）。签名为 ``async (list[dict]) -> list[dict]``。
+            allowed_classifications: P0 密级下推 — 用户可见密级白名单
+                （与 permission_filter 同源），随检索下推到召回层；
+                None = 不下推（Final Gate 兜底）。
 
         Yields:
             SSEEvent | str: SSE 事件和 token 字符串。
@@ -118,6 +122,7 @@ class ShortcutHandler:
                 async for event in self._handle_search(
                     query, user, db, tenant_id, kb_ids, memory_context,
                     permission_filter, intent.constraints,
+                    allowed_classifications,
                 ):
                     yield event
             elif intent.intent == IntentType.LIST_DOCUMENTS:
@@ -164,6 +169,7 @@ class ShortcutHandler:
         memory_context: str,
         permission_filter: Any = None,
         constraints: IntentConstraints | None = None,
+        allowed_classifications: list[str] | None = None,
     ) -> AsyncIterator[SSEEvent | str]:
         """快捷搜索路径 — 检索 → 硬约束过滤 → 权限过滤 → 重排 → 生成（1 次 LLM）。
 
@@ -179,7 +185,12 @@ class ShortcutHandler:
             event=SSEEventType.RETRIEVE_START,
         )
 
-        candidates = await retriever.search(query, kb_ids=kb_ids, top_k=_SHORTCUT_TOP_K)
+        # P0 密级下推：召回层注入用户可见密级白名单（与 Agent Loop 路径
+        # 同一约束）；None = 不下推（Final Gate DB 复检兜底）
+        candidates = await retriever.search(
+            query, kb_ids=kb_ids, top_k=_SHORTCUT_TOP_K,
+            classifications=allowed_classifications,
+        )
 
         # 1.2 硬约束过滤（用户显式约束 — 必须在权限过滤前）
         if constraints is not None and candidates:

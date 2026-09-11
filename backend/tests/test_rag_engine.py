@@ -61,6 +61,7 @@ class FakeRetriever:
         kb_ids: list[str] | None = None,
         top_k: int = 20,
         filters: dict[str, Any] | None = None,
+        classifications: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         self.search_query = query
         return self.candidates
@@ -113,7 +114,13 @@ class FakeMCPClient:
     async def get_tools_for_llm(self) -> list[dict[str, Any]]:
         return []
 
-    async def call_tool(self, tool_name: str, arguments: dict) -> str:
+    async def call_tool(
+        self,
+        tool_name: str,
+        arguments: dict,
+        tenant_id: str | None = None,
+        user_id: str | None = None,
+    ) -> str:
         return "{}"
 
 
@@ -465,7 +472,7 @@ class TestRuleLevelExits:
             def __init__(self) -> None:
                 self.calls = 0
 
-            async def search(self, query, kb_ids=None, top_k=20, filters=None):
+            async def search(self, query, kb_ids=None, top_k=20, filters=None, classifications=None):
                 self.calls += 1
                 if self.calls == 1:
                     return []
@@ -735,7 +742,11 @@ class TestObservations:
                 return []
 
             async def call_tool(
-                self, tool_name: str, arguments: dict, tenant_id: str | None = None
+                self,
+                tool_name: str,
+                arguments: dict,
+                tenant_id: str | None = None,
+                user_id: str | None = None,
             ) -> str:
                 return '{"ok": true}'
 

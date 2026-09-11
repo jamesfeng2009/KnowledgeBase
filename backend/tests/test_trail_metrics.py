@@ -227,18 +227,28 @@ class _FakeLLM:
 
 
 class _FakeRetriever:
+    def __init__(self, candidates: list[dict[str, Any]] | None = None) -> None:
+        self.candidates = candidates if candidates is not None else []
+
     async def search(
         self, query: str, kb_ids: list[str] | None = None, top_k: int = 20,
         filters: dict[str, Any] | None = None,
+        classifications: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        return []
+        return self.candidates
 
 
 class _FakeReranker:
     async def rerank(
         self, query: str, documents: list[dict[str, Any]], top_k: int = 5,
     ) -> list[dict[str, Any]]:
-        return []
+        # 回显 index+score（对齐 HybridReranker 契约）— 返回空会让
+        # _apply_rerank_scores 清空 retrieved_docs，进而触发 P0 Clarify
+        # 规则出口（连续 2 次空检索），导致 max_iterations 永远不可达。
+        return [
+            {"index": i, "score": 0.9, "content": d.get("content", "")}
+            for i, d in enumerate(documents[:top_k])
+        ]
 
 
 class _FakeGenerator:
@@ -264,11 +274,12 @@ class _FakeMCPClient:
 def _make_engine(
     llm_response: str = "generate",
     max_iterations: int = 5,
+    candidates: list[dict[str, Any]] | None = None,
 ) -> AgenticRAGEngine:
     return AgenticRAGEngine(
         llm=_FakeLLM(llm_response),
         mcp_client=_FakeMCPClient(),
-        retriever=_FakeRetriever(),
+        retriever=_FakeRetriever(candidates),
         reranker=_FakeReranker(),
         generator=_FakeGenerator(),
         cache=None,
@@ -316,9 +327,17 @@ class TestEngineTrailRecording:
 
     @pytest.mark.asyncio
     async def test_max_iterations_recorded(self) -> None:
-        """think 始终返回 retrieve → 触发 max_iterations，轨迹记录兜圈。"""
+        """think 始终返回 retrieve → 触发 max_iterations，轨迹记录兜圈。
+
+        注入非空候选：连续空检索会先触发 P0 Clarify 规则出口（阈值 2），
+        为保持本测试原意（验证 max_iterations 轨迹），检索需有结果。
+        """
         reset_trail_aggregator()
-        engine = _make_engine(llm_response="retrieve", max_iterations=2)
+        engine = _make_engine(
+            llm_response="retrieve",
+            max_iterations=2,
+            candidates=[{"doc_id": "d1", "content": "内容", "score": 0.9}],
+        )
 
         async for _ in engine.answer("测试", "user-1", "session-max-iter"):
             pass
@@ -374,8 +393,16 @@ class TestStuckProtection:
 
     @pytest.mark.asyncio
     async def test_max_iterations_sets_alert_flag(self) -> None:
-        """超过最大迭代 → 标记 _max_iter_hit。"""
-        engine = _make_engine(llm_response="retrieve", max_iterations=2)
+        """超过最大迭代 → 标记 _max_iter_hit。
+
+        注入非空候选（同 test_max_iterations_recorded）：空检索会先触发
+        P0 Clarify 规则出口（阈值 2），无法到达 max_iterations。
+        """
+        engine = _make_engine(
+            llm_response="retrieve",
+            max_iterations=2,
+            candidates=[{"doc_id": "d1", "content": "内容", "score": 0.9}],
+        )
         state = _make_state(max_iterations=2)
 
         async for _ in engine._run_decision_loop_streaming(state):

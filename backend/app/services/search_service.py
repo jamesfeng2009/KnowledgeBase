@@ -130,6 +130,9 @@ class SearchService:
                     kb_ids=accessible_kb_ids,
                     top_k=page * page_size,
                     filters=filters,
+                    # P0 密级下推：召回层注入用户可见密级白名单，
+                    # 降低无效召回；下方密级过滤仍保留（双保险）
+                    classifications=self.permission.allowed_classifications(),
                 )
                 results = self._format_rag_results(raw_results)
             except Exception:

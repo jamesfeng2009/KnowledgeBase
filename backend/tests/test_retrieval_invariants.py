@@ -93,7 +93,8 @@ def _make_perm_svc(
         accessible_kbs = [KB_ID]
 
     user = SimpleNamespace(
-        id=uuid4(), role=role, clearance_level=clearance
+        id=uuid4(), role=role, clearance_level=clearance,
+        dept_id=None,  # P1 visibility：None 跳过 dept 可见性分支
     )
     db = AsyncMock()
 
@@ -135,6 +136,35 @@ class TestPushdown:
         )
         assert filters["series_id"] == "s1"
         assert filters["depth"] == 2
+
+    # ------------------------------------------------------------------
+    # P0 密级下推 — I3 召回层白名单注入
+    # ------------------------------------------------------------------
+
+    def test_injects_classification_whitelist(self) -> None:
+        """classifications 非 None 时注入密级白名单（与 I1 子句共存）。"""
+        filters = RetrievalInvariants.pushdown(
+            "vector", ["kb1"], None, classifications=["public", "internal"]
+        )
+        assert filters["doc_status"] == "published"
+        assert filters["classification"] == ["public", "internal"]
+
+    def test_none_classifications_no_pushdown(self) -> None:
+        """classifications=None（无权限上下文 / 向后兼容）不注入密级维度。"""
+        filters = RetrievalInvariants.pushdown("vector", ["kb1"], None)
+        assert "classification" not in filters
+
+    def test_empty_classifications_fail_closed(self) -> None:
+        """空白名单同样注入（OpenSearch terms 空数组匹配不到任何文档）。"""
+        filters = RetrievalInvariants.pushdown(
+            "vector", ["kb1"], None, classifications=[]
+        )
+        assert filters["classification"] == []
+
+    def test_classification_does_not_mutate_base(self) -> None:
+        base = {"series_id": "s1"}
+        RetrievalInvariants.pushdown("vector", None, base, classifications=["public"])
+        assert "classification" not in base  # 原 dict 不被污染
 
 
 # ======================================================================
@@ -215,6 +245,33 @@ class TestPushdownChannelContract:
         )
         kwargs = retriever._vector_store.search.call_args.kwargs
         assert kwargs.get("filters", {}).get("doc_status") == "published"
+
+    @pytest.mark.asyncio
+    async def test_classification_pushdown_reaches_all_channels(self) -> None:
+        """P0 密级下推 — search(classifications=...) 必须随 effective_filters
+        下推到向量 / 全文 / 跨模态三路召回通道（图谱路 Final Gate 兜底）。"""
+        retriever = _make_retriever()
+        with patch.object(
+            retriever, "_vector_search", new=AsyncMock(return_value=[])
+        ) as vec, patch.object(
+            retriever, "_fulltext_search", new=AsyncMock(return_value=[])
+        ) as ft, patch.object(
+            retriever, "_cross_modal_search", new=AsyncMock(return_value=[])
+        ) as cm, patch.object(
+            retriever, "_graph_search", new=AsyncMock(return_value=[])
+        ):
+            await retriever.search(
+                "查询", [KB_ID], 20, {"series_id": "s1"},
+                classifications=["public", "internal"],
+            )
+
+        expected = {
+            "series_id": "s1",
+            "doc_status": "published",
+            "classification": ["public", "internal"],
+        }
+        for mock in (vec, ft, cm):
+            assert mock.call_args.args[-1] == expected
 
 
 # ======================================================================

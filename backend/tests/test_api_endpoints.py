@@ -205,7 +205,7 @@ class TestChatStream:
 
                 return NS(conversation_id=uuid4())
 
-            async def stream_chat(self, prepared):
+            async def stream_chat(self, prepared, db=None):
                 yield "你好"
                 from app.utils.sse import SSEEvent, SSEEventType
                 yield SSEEvent(data={}, event=SSEEventType.DONE)

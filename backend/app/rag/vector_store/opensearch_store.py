@@ -271,6 +271,10 @@ class OpenSearchVectorStore(VectorStoreBase):
             doc_status = doc_meta.get("doc_status")
             if doc_status is not None:
                 hierarchy_fields["doc_status"] = str(doc_status)
+            # P0 密级下推：密级写入索引，供检索端按用户可见密级白名单过滤
+            classification = doc_meta.get("classification")
+            if classification is not None:
+                hierarchy_fields["classification"] = str(classification)
             # P2: 文档角色粗标（normal/constraint_source，运营标注）
             doc_role = doc_meta.get("doc_role")
             if doc_role is not None:
@@ -399,6 +403,8 @@ class OpenSearchVectorStore(VectorStoreBase):
                     "version_of": {"type": "keyword"},
                     # P0-1: 文档状态过滤 — 检索时按 doc_status=published 过滤
                     "doc_status": {"type": "keyword"},
+                    # P0 密级下推 — 检索时按用户可见密级白名单（terms）过滤
+                    "classification": {"type": "keyword"},
                     # P2: 文档角色粗标（normal/constraint_source，运营标注）
                     "doc_role": {"type": "keyword"},
                 }

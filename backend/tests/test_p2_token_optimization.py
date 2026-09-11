@@ -44,7 +44,7 @@ class FakeRetriever:
     def __init__(self, candidates: list[dict[str, Any]] | None = None) -> None:
         self.candidates = candidates or []
 
-    async def search(self, query, kb_ids=None, top_k=20):
+    async def search(self, query, kb_ids=None, top_k=20, classifications=None):
         return self.candidates
 
 

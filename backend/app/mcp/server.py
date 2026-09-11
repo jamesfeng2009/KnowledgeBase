@@ -49,6 +49,19 @@ _tenant_ctx: contextvars.ContextVar[uuid.UUID | None] = contextvars.ContextVar(
     "mcp_request_tenant_id", default=None
 )
 
+# P1: 请求级用户上下文 — 进程内 Agent Loop 调用工具时携带 user_id，
+# knowledge_search / document_get 等文档读取工具据此启用用户级 ABAC
+# 过滤（知识库可见性 + 密级），避免工具路径绕过检索链路的权限模型。
+# 外部 HTTP MCP 调用方（API Key，租户级服务身份）不设置 — 维持
+# 租户范围语义（既有契约，不回归）。
+_user_ctx: contextvars.ContextVar[uuid.UUID | None] = contextvars.ContextVar(
+    "mcp_request_user_id", default=None
+)
+
+#: 权限解析失败哨兵 — user_id 上下文存在但用户加载失败时 fail-closed，
+#: 文档读取工具拒绝返回内容（宁可拒绝不可越权）。
+_PERM_FAIL_CLOSED = "fail_closed"
+
 # 后台任务强引用集合 — 事件循环对 Task 仅持弱引用，不保存强引用任务可能
 # 被 GC 提前回收（CPython 官方文档明确警告）；加入本集合并通过
 # done_callback 自动移除，兼顾防 GC 与防泄漏。
@@ -58,6 +71,38 @@ _background_tasks: set[asyncio.Task] = set()
 def _current_tenant() -> uuid.UUID | None:
     """读取当前请求上下文的租户 ID（未设置返回 None）。"""
     return _tenant_ctx.get()
+
+
+def _current_user_id() -> uuid.UUID | None:
+    """读取当前请求上下文的用户 ID（未设置返回 None）。"""
+    return _user_ctx.get()
+
+
+async def _resolve_document_permission(session: Any) -> Any:
+    """P1: 按请求级用户上下文构建 PermissionService（文档读取工具用）。
+
+    Returns:
+        - PermissionService：用户上下文存在且用户加载成功，
+          工具据此执行 ABAC 过滤（知识库可见性 + 密级）；
+        - None：无用户上下文（外部 API Key 服务身份）— 维持租户范围
+          语义（既有契约，不回归）；
+        - _PERM_FAIL_CLOSED：user_id 已设置但用户加载失败 — fail-closed，
+          工具应拒绝返回文档内容（宁可拒绝不可越权）。
+    """
+    user_id = _current_user_id()
+    if user_id is None:
+        return None
+
+    from app.models.user import User as UserModel
+    from app.services.permission_service import PermissionService
+
+    stmt = select(UserModel).where(UserModel.id == user_id)
+    stmt = apply_tenant_filter(stmt, UserModel, _current_tenant())
+    user = (await session.execute(stmt)).scalars().first()
+    if user is None:
+        log.warning("mcp.permission_user_not_found", user_id=str(user_id))
+        return _PERM_FAIL_CLOSED
+    return PermissionService(session, user, _current_tenant())
 
 
 #: knowledge_search 单工具结果上限 — LLM 传入泛词（如"系统"）时
@@ -352,6 +397,7 @@ class KnowledgeBaseMCPServer:
         arguments: dict,
         *,
         tenant_id: str | uuid.UUID | None = None,
+        user_id: str | uuid.UUID | None = None,
     ) -> str:
         """调用指定工具并返回结果（JSON 字符串）。
 
@@ -365,6 +411,10 @@ class KnowledgeBaseMCPServer:
             tenant_id: 请求级租户 ID（由调用方从请求上下文传入，
                 **不信任** LLM 在 arguments 中自封的租户标识）。
                 设置期间工具内查询追加租户过滤，调用结束后自动复位。
+            user_id: 请求级用户 ID（P1，由 Agent Loop 从 state 传入）。
+                设置期间文档读取工具按用户 ABAC（知识库可见性 + 密级）
+                过滤，调用结束后自动复位。None = 外部服务身份，维持
+                租户范围语义。
 
         Returns:
             工具执行结果或错误信息（JSON 序列化字符串）。
@@ -396,7 +446,17 @@ class KnowledgeBaseMCPServer:
                 )
             except (ValueError, TypeError):
                 log.warning("mcp.invalid_tenant_id", tenant_id=str(tenant_id))
-        token = _tenant_ctx.set(tenant_uuid)
+        # P1: 解析并设置请求级用户上下文（非法 ID 视为未设置）
+        user_uuid: uuid.UUID | None = None
+        if user_id is not None:
+            try:
+                user_uuid = (
+                    user_id if isinstance(user_id, uuid.UUID) else uuid.UUID(str(user_id))
+                )
+            except (ValueError, TypeError):
+                log.warning("mcp.invalid_user_id", user_id=str(user_id))
+        tenant_token = _tenant_ctx.set(tenant_uuid)
+        user_token = _user_ctx.set(user_uuid)
         try:
             return await handler(**arguments)
         except Exception as exc:
@@ -406,7 +466,8 @@ class KnowledgeBaseMCPServer:
                 ensure_ascii=False,
             )
         finally:
-            _tenant_ctx.reset(token)
+            _tenant_ctx.reset(tenant_token)
+            _user_ctx.reset(user_token)
 
     def is_long_running(self, tool_name: str) -> bool:
         """查询工具是否标记为长耗时（需走异步任务模式）。
@@ -429,6 +490,7 @@ class KnowledgeBaseMCPServer:
         arguments: dict,
         *,
         tenant_id: str | uuid.UUID | None = None,
+        user_id: str | uuid.UUID | None = None,
     ) -> str:
         """异步调用长耗时工具 — 返回任务句柄而非阻塞等待结果。
 
@@ -480,7 +542,7 @@ class KnowledgeBaseMCPServer:
         async def _execute() -> None:
             try:
                 result_str = await self.call_tool(
-                    tool_name, arguments, tenant_id=tenant_id,
+                    tool_name, arguments, tenant_id=tenant_id, user_id=user_id,
                 )
                 # 尝试解析为 dict 便于客户端消费；解析失败保留原始字符串
                 try:
@@ -591,6 +653,18 @@ class KnowledgeBaseMCPServer:
             try:
                 result = await session.execute(stmt)
                 docs = list(result.scalars().all())
+                # P1: 用户级 ABAC 过滤 — 知识库可见性（owner/member/public/dept）
+                # + 密级。无用户上下文（外部服务身份）时维持租户范围；
+                # 用户解析失败 fail-closed 拒绝。
+                perm = await _resolve_document_permission(session)
+                if perm == _PERM_FAIL_CLOSED:
+                    await session.rollback()
+                    return json.dumps(
+                        {"error": "无权访问文档检索", "results": [], "count": 0},
+                        ensure_ascii=False,
+                    )
+                if perm is not None:
+                    docs = await perm.filter_documents(docs)
                 results = [
                     {
                         "id": str(doc.id),
@@ -655,6 +729,25 @@ class KnowledgeBaseMCPServer:
                         {"error": f"文档不存在: {doc_id}"},
                         ensure_ascii=False,
                     )
+                # P1: 用户级 ABAC 校验 — 无用户上下文（外部服务身份）维持
+                # 租户范围；用户解析失败 fail-closed 拒绝；加载成功但不在
+                # 可访问范围（知识库可见性/密级不符）按"不存在"返回，
+                # 避免泄漏文档存在性。
+                perm = await _resolve_document_permission(session)
+                if perm == _PERM_FAIL_CLOSED:
+                    await session.rollback()
+                    return json.dumps(
+                        {"error": f"文档不存在: {doc_id}"},
+                        ensure_ascii=False,
+                    )
+                if perm is not None:
+                    allowed = await perm.filter_documents([doc])
+                    if not allowed:
+                        await session.commit()
+                        return json.dumps(
+                            {"error": f"文档不存在: {doc_id}"},
+                            ensure_ascii=False,
+                        )
                 result = {
                     "id": str(doc.id),
                     "title": doc.title,
@@ -709,7 +802,11 @@ class KnowledgeBaseMCPServer:
         content: str,
         kb_id: str,
     ) -> str:
-        """创建文档 — 以知识库所有者作为文档所有者，状态默认为 draft。"""
+        """创建文档 — 以知识库所有者作为文档所有者，状态默认为 draft。
+
+        P1 写权限：携带用户上下文时经 ``check_write`` 校验（admin /
+        owner / 成员 admin|editor）；public/dept 可见性只授予读权限。
+        """
         async with self._db_factory() as session:
             try:
                 # 租户隔离 — KB 校验与文档创建均限定在当前租户内：
@@ -719,6 +816,24 @@ class KnowledgeBaseMCPServer:
                 kb = await kb_repo.get_by_id(uuid.UUID(kb_id))
                 if kb is None:
                     await session.commit()
+                    return json.dumps(
+                        {"error": f"知识库不存在: {kb_id}"},
+                        ensure_ascii=False,
+                    )
+
+                # P1: 写权限校验 — check_write（admin / owner / 成员 admin|editor）。
+                # visibility=public/dept 只授予读权限，不得经工具路径写入。
+                # 无用户上下文（外部服务身份）维持租户范围契约；用户解析
+                # 失败 fail-closed，拒绝与"不存在"同文案（不泄漏存在性）。
+                perm = await _resolve_document_permission(session)
+                if perm == _PERM_FAIL_CLOSED:
+                    await session.rollback()
+                    return json.dumps(
+                        {"error": f"知识库不存在: {kb_id}"},
+                        ensure_ascii=False,
+                    )
+                if perm is not None and not await perm.check_write(uuid.UUID(kb_id)):
+                    await session.rollback()
                     return json.dumps(
                         {"error": f"知识库不存在: {kb_id}"},
                         ensure_ascii=False,

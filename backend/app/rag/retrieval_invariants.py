@@ -89,13 +89,19 @@ class RetrievalInvariants:
         channel: str,
         kb_ids: list[str] | None,
         base: dict[str, Any] | None,
+        classifications: list[str] | None = None,
     ) -> dict[str, Any]:
-        """生成检索层下推过滤子句 — I1 在召回阶段的第一道防线。
+        """生成检索层下推过滤子句 — I1 / I3 在召回阶段的第一道防线。
 
         行为契约：
             - 返回新 dict，不修改调用方传入的 ``base``；
             - 强制注入 ``doc_status=published`` — 调用方传入的
               doc_status 会被覆盖（安全优先于灵活性）；
+            - P0 密级下推：``classifications`` 非 None 时注入
+              ``classification=<用户可见密级白名单>``（多值 list），
+              由 filter_builder 转为后端过滤子句（OpenSearch 容忍
+              模式放行字段缺失的存量旧文档到 Final Gate；Milvus 路
+              容忍模式下不下推，均由 Final Gate DB 复检兜底）；
             - ``kb_ids`` 参数当前仅为签名对齐（kb 范围过滤由
               retriever 单独下推），保留参数使未来新增 per-channel
               下推约束无需改动调用方签名。
@@ -104,10 +110,15 @@ class RetrievalInvariants:
             channel: 通道名（ALL_CHANNELS 之一，用于日志归因）。
             kb_ids: 检索限定的知识库 ID 列表（可为 None 表示不限定）。
             base: 调用方传入的原始过滤条件（如 wiki 层级过滤）。
+            classifications: 用户可见密级白名单（I3 召回层下推）。
+                None 表示不做密级下推（向后兼容旧调用 / 无权限上下文
+                的内部管线）；空列表同样注入（fail-closed — OpenSearch
+                terms 空数组匹配不到任何文档）。
 
         Returns:
-            含 doc_status=published 的过滤字典，透传给
-            VectorStoreBase.search / OpenSearch bool.filter。
+            含 doc_status=published（及可选 classification 白名单）的
+            过滤字典，透传给 VectorStoreBase.search / OpenSearch
+            bool.filter。
         """
         filters: dict[str, Any] = dict(base) if base else {}
         if filters.get("doc_status") != cls.PUBLISHED:
@@ -117,6 +128,8 @@ class RetrievalInvariants:
                 original_status=filters.get("doc_status"),
             )
         filters["doc_status"] = cls.PUBLISHED
+        if classifications is not None:
+            filters["classification"] = list(classifications)
         return filters
 
     # ------------------------------------------------------------------
