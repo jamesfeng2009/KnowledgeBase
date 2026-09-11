@@ -674,20 +674,39 @@ class ExternalSyncService:
     # ------------------------------------------------------------------
 
     async def _trigger_reindex_async(self, doc_id: str) -> None:
-        """异步触发文档重建索引 — 先删旧向量，再异步触发 process_document。
+        """异步触发文档重建索引 — 标记待解析 + 异步触发 process_document。
+
+        P1 修复：旧向量删除已移入 process_document 任务内执行
+        （_build_vector_index 写入前清理），派发失败时旧向量保留，
+        检索降级为旧内容而非消失。
+
+        "欠一次解析"标记（parse_status=pending）独立短事务先落库，
+        派发丢失（异常或进程崩溃）由 rescan_stuck_documents 每小时补偿。
 
         优雅降级：Celery/向量存储不可用时仅记录日志。
         与 knowledge_service._trigger_reindex 逻辑一致，但不依赖 service 实例。
         """
+        # ① 标记"欠一次解析"— 与 knowledge_service.update_document 同语义
         try:
-            # ① 先删除旧向量 — 防止旧 chunk 残留
-            from app.rag.vector_store import get_vector_store
+            from app.database import async_session_factory
 
-            store = get_vector_store()
-            await store.delete(doc_id)
-            log.info("external_sync.reindex_deleted", doc_id=doc_id)
+            async with async_session_factory() as session:
+                await session.execute(
+                    update(Document)
+                    .where(Document.id == uuid.UUID(doc_id))
+                    .values(parse_status="pending")
+                )
+                await session.commit()
+            log.info("external_sync.parse_pending_marked", doc_id=doc_id)
+        except Exception as exc:
+            log.warning(
+                "external_sync.parse_pending_mark_failed",
+                doc_id=doc_id,
+                error=str(exc)[:200],
+            )
 
-            # ② 异步触发重建（Celery 任务）
+        # ② 异步触发重建（Celery 任务，向量清理在任务内执行）
+        try:
             from tasks.document_tasks import process_document
 
             process_document.delay(doc_id)

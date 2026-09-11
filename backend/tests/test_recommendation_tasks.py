@@ -471,14 +471,17 @@ class TestRebuildEndpoint:
     async def test_rebuild_returns_real_task_id(
         self, admin_client: httpx.AsyncClient
     ) -> None:
-        """管理员调用：提交 Celery 任务并返回真实 task_id。"""
+        """管理员调用：锁未被占用 → 以显式 task_id 派发并返回。"""
         mock_task = MagicMock()
-        mock_task.delay = MagicMock(
-            return_value=SimpleNamespace(id="celery-task-abc123")
+        mock_task.apply_async = MagicMock(
+            return_value=SimpleNamespace(id="unused")
         )
 
         with patch(
             "tasks.recommendation_tasks.rebuild_recommendation_model", mock_task
+        ), patch(
+            "app.api.v1.recommendations.acquire_rebuild_lock",
+            AsyncMock(return_value=(True, None)),
         ):
             response = await admin_client.post("/api/v1/recommendations/rebuild")
 
@@ -486,19 +489,49 @@ class TestRebuildEndpoint:
         data = response.json()
         assert data["code"] == 0
         assert data["data"]["status"] == "queued"
-        assert data["data"]["task_id"] == "celery-task-abc123"
-        # 测试请求未携带租户上下文 → 全量重建
-        mock_task.delay.assert_called_once_with(tenant_id=None)
+        assert data["data"]["reused"] is False
+        # 测试请求未携带租户上下文 → 全量重建；task_id 与派发一致
+        call = mock_task.apply_async.call_args
+        assert call.kwargs["args"] == [None]
+        assert call.kwargs["task_id"] == data["data"]["task_id"]
+
+    async def test_rebuild_inflight_returns_existing_task_id(
+        self, admin_client: httpx.AsyncClient
+    ) -> None:
+        """锁已被占用（超时重试场景）→ 返回原 task_id，不重复派发。"""
+        mock_task = MagicMock()
+        mock_task.apply_async = MagicMock()
+
+        with patch(
+            "tasks.recommendation_tasks.rebuild_recommendation_model", mock_task
+        ), patch(
+            "app.api.v1.recommendations.acquire_rebuild_lock",
+            AsyncMock(return_value=(False, "celery-task-running")),
+        ):
+            response = await admin_client.post("/api/v1/recommendations/rebuild")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["code"] == 0
+        assert data["data"]["task_id"] == "celery-task-running"
+        assert data["data"]["reused"] is True
+        mock_task.apply_async.assert_not_called()
 
     async def test_rebuild_submit_failure_returns_500(
         self, admin_client: httpx.AsyncClient
     ) -> None:
-        """broker 不可用时返回明确错误而非未处理异常。"""
+        """broker 不可用时返回明确错误而非未处理异常，并释放重建锁。"""
         mock_task = MagicMock()
-        mock_task.delay = MagicMock(side_effect=ConnectionError("broker down"))
+        mock_task.apply_async = MagicMock(side_effect=ConnectionError("broker down"))
+        mock_release = AsyncMock()
 
         with patch(
             "tasks.recommendation_tasks.rebuild_recommendation_model", mock_task
+        ), patch(
+            "app.api.v1.recommendations.acquire_rebuild_lock",
+            AsyncMock(return_value=(True, None)),
+        ), patch(
+            "app.api.v1.recommendations.release_rebuild_lock", mock_release
         ):
             response = await admin_client.post("/api/v1/recommendations/rebuild")
 
@@ -506,3 +539,4 @@ class TestRebuildEndpoint:
         data = response.json()
         assert data["code"] == 500
         assert "重建任务提交失败" in data["message"]
+        mock_release.assert_awaited_once()

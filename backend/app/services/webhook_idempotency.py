@@ -65,3 +65,40 @@ async def is_duplicate_event(
             error=str(exc)[:200],
         )
         return False
+
+
+async def clear_event_mark(event_id: str) -> bool:
+    """清除事件幂等标记 — Celery 派发失败时调用。
+
+    标记先于派发写入（SETNX 在 is_duplicate_event 内完成）；若派发失败
+    却保留标记，外部平台重试会被 skipped 挡住，事件在 TTL 窗口内永久丢失。
+    本函数在派发失败路径上删除标记，让外部平台的重试重新进入处理。
+
+    Args:
+        event_id: 事件唯一标识（飞书 header.event_id / Confluence eventId）。
+
+    Returns:
+        True = 标记已清除（或本就不存在）；False = 清除失败（Redis 异常，
+        后续重试仍会被旧标记挡住，由 patrol_external_docs 每日巡检兜底）。
+    """
+    if not event_id:
+        return True
+
+    try:
+        import redis.asyncio as aioredis
+
+        settings = get_settings()
+        redis = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+        try:
+            await redis.delete(f"{_KEY_PREFIX}{event_id}")
+            log.info("webhook.event_mark_cleared", event_id=event_id)
+            return True
+        finally:
+            await redis.close()
+    except Exception as exc:
+        log.warning(
+            "webhook.idempotency_clear_failed",
+            event_id=event_id,
+            error=str(exc)[:200],
+        )
+        return False

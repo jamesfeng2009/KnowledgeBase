@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import httpx
@@ -327,7 +327,7 @@ class TestRebuild:
 
     @pytest.mark.asyncio
     async def test_rebuild_admin(self) -> None:
-        """管理员调用重建应返回 queued。"""
+        """管理员调用重建应返回 queued（锁未被占用 → 正常派发）。"""
         from app.database import get_db_session
         from app.deps import get_current_user
         from app.main import app
@@ -348,12 +348,19 @@ class TestRebuild:
         app.dependency_overrides[get_current_user] = override_user
         app.dependency_overrides[get_db_session] = override_db
 
-        # 端点现已提交真实 Celery 任务 — mock delay 避免依赖 broker
-        mock_task = AsyncMock()
-        mock_task.delay = lambda **kwargs: SimpleNamespace(id="celery-task-test")
+        # 端点以显式 task_id 提交真实 Celery 任务 — mock 避免依赖 broker；
+        # mock 重建互斥锁（SETNX）避免依赖真实 Redis
+        mock_task = MagicMock()
+        mock_task.apply_async = MagicMock(
+            return_value=SimpleNamespace(id="unused")
+        )
 
         with patch("app.api.v1.recommendations.RecommendationService"), \
-             patch("tasks.recommendation_tasks.rebuild_recommendation_model", mock_task):
+             patch("tasks.recommendation_tasks.rebuild_recommendation_model", mock_task), \
+             patch(
+                 "app.api.v1.recommendations.acquire_rebuild_lock",
+                 AsyncMock(return_value=(True, None)),
+             ):
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=app),
                 base_url="http://test",
@@ -365,4 +372,8 @@ class TestRebuild:
         data = response.json()
         assert data["code"] == 0
         assert data["data"]["status"] == "queued"
-        assert data["data"]["task_id"] == "celery-task-test"
+        assert data["data"]["reused"] is False
+        # apply_async 以预生成 task_id 派发，与响应一致
+        call = mock_task.apply_async.call_args
+        assert call.kwargs["args"] == [None]  # 无租户上下文 → 全量重建
+        assert call.kwargs["task_id"] == data["data"]["task_id"]

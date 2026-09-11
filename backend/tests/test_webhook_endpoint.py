@@ -358,6 +358,98 @@ class TestIrrelevantEvent:
 
 
 # ==================================================================
+# P1 修复：派发失败 → 清除幂等标记 + 500
+# ==================================================================
+
+class TestDispatchFailureClearsMark:
+    """P1 修复：Celery 派发失败时清除幂等标记。
+
+    旧行为：标记先于派发写入，派发失败返回 500 后，外部平台重试会被
+    skipped 挡住，事件在 TTL 窗口内永久丢失。
+    修复行为：派发失败 → 清除标记 → 返回 500 → 外部平台重试可重新处理。
+    """
+
+    def test_feishu_dispatch_failure_clears_mark_and_returns_500(
+        self,
+        client: TestClient,
+        feishu_credentials: dict,
+    ) -> None:
+        body = _feishu_event_body(event_id="evt-dispatch-fail-1")
+        timestamp = str(int(datetime.now(timezone.utc).timestamp()))
+        nonce = "n"
+        sig = _compute_feishu_signature(timestamp, nonce, feishu_credentials["encrypt_key"], body)
+
+        mock_clear = AsyncMock(return_value=True)
+
+        with (
+            patch(
+                "app.api.v1.external_webhooks._get_credentials",
+                new=AsyncMock(return_value=feishu_credentials),
+            ),
+            patch(
+                "app.api.v1.external_webhooks.is_duplicate_event",
+                new=AsyncMock(return_value=False),
+            ),
+            patch(
+                "app.api.v1.external_webhooks.clear_event_mark",
+                new=mock_clear,
+            ),
+            patch("tasks.webhook_tasks.sync_external_document") as mock_task,
+        ):
+            mock_task.delay.side_effect = Exception("broker unavailable")
+
+            resp = client.post(
+                "/webhooks/external/feishu",
+                content=body,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Lark-Request-Timestamp": timestamp,
+                    "X-Lark-Request-Nonce": nonce,
+                    "X-Lark-Signature": sig,
+                },
+            )
+
+        # 派发失败 → 500（外部平台将重试）
+        assert resp.status_code == 500
+        # 幂等标记被清除 — 重试不会被 skipped 挡住
+        mock_clear.assert_awaited_once_with("evt-dispatch-fail-1")
+
+    def test_confluence_dispatch_failure_clears_mark(
+        self,
+        client: TestClient,
+        confluence_credentials: dict,
+    ) -> None:
+        body = _confluence_event_body(event_id="conf-dispatch-fail-1")
+        mock_clear = AsyncMock(return_value=True)
+
+        with (
+            patch(
+                "app.api.v1.external_webhooks._get_credentials",
+                new=AsyncMock(return_value=confluence_credentials),
+            ),
+            patch(
+                "app.api.v1.external_webhooks.is_duplicate_event",
+                new=AsyncMock(return_value=False),
+            ),
+            patch(
+                "app.api.v1.external_webhooks.clear_event_mark",
+                new=mock_clear,
+            ),
+            patch("tasks.webhook_tasks.sync_external_document") as mock_task,
+        ):
+            mock_task.delay.side_effect = Exception("broker unavailable")
+
+            resp = client.post(
+                "/webhooks/external/confluence",
+                content=body,
+                headers={"Content-Type": "application/json"},
+            )
+
+        assert resp.status_code == 500
+        mock_clear.assert_awaited_once_with("conf-dispatch-fail-1")
+
+
+# ==================================================================
 # 无效 JSON
 # ==================================================================
 

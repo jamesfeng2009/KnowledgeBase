@@ -43,7 +43,12 @@ async def _deep_research_async(
     from app.rag.retriever import HybridRetriever
     from app.rag.web_search import build_provider
     from app.services.deep_research_service import DeepResearchService
-    from app.services.research_progress import EVENT_DONE, publish_progress
+    from app.services.research_progress import (
+        EVENT_DONE,
+        publish_progress,
+        save_failure,
+        save_result,
+    )
     from tasks.milestone_runner import milestone_checkpoint_manager
 
     llm = get_llm_provider()
@@ -59,17 +64,33 @@ async def _deep_research_async(
 
     service = DeepResearchService(llm, retriever, web_provider=web_provider)
 
-    async with milestone_checkpoint_manager() as mgr:
-        report = await service.research(
-            goal,
-            kb_ids=kb_ids,
-            checkpoint_manager=mgr,
-            task_id=task_id,
-            tenant_id=tenant_id,
-            progress=_progress,
-        )
+    # Celery 结果后端为 rpc://（task_ignore_result=True），最终报告不落 Celery；
+    # 成功/失败均持久化到 Redis，供 /research/{task_id}/result 查询。
+    try:
+        async with milestone_checkpoint_manager() as mgr:
+            report = await service.research(
+                goal,
+                kb_ids=kb_ids,
+                checkpoint_manager=mgr,
+                task_id=task_id,
+                tenant_id=tenant_id,
+                progress=_progress,
+            )
+    except Exception as exc:
+        await save_failure(task_id, str(exc))
+        # 幂等收尾：标记 research_jobs 为 failed，释放该幂等键供原键重试
+        from app.services.research_job_service import mark_research_job_status
+
+        await mark_research_job_status(task_id, "failed", str(exc)[:200])
+        raise
     await publish_progress(task_id, {"type": EVENT_DONE, "task_id": task_id})
-    return report.to_dict()
+    data = report.to_dict()
+    await save_result(task_id, data)
+    # 幂等收尾：标记成功（成功任务继续持有键，重试返回原任务）
+    from app.services.research_job_service import mark_research_job_status
+
+    await mark_research_job_status(task_id, "success")
+    return data
 
 
 try:
@@ -97,6 +118,25 @@ try:
                 task_id=self.request.id,
                 error=str(exc)[:200],
             )
+            # 重试额度耗尽才标记 failed 释放幂等键；仍有重试额度时
+            # 任务保持 queued（checkpoint 恢复后重跑，键继续占位）
+            if self.request.retries >= self.max_retries:
+                try:
+                    from app.services.research_job_service import (
+                        mark_research_job_status,
+                    )
+
+                    _run_async(
+                        mark_research_job_status(
+                            self.request.id, "failed", str(exc)[:200]
+                        )
+                    )
+                except Exception as mark_exc:
+                    logger.warning(
+                        "research_job.mark_failed_error",
+                        task_id=self.request.id,
+                        error=str(mark_exc)[:200],
+                    )
             raise self.retry(exc=exc)
 
 except ImportError:

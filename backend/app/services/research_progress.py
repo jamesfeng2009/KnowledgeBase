@@ -37,8 +37,16 @@ CHANNEL_PREFIX: str = "research_progress"
 SNAPSHOT_PREFIX: str = "research_events"
 #: 快照保留最大条数（LTRIM 裁剪）
 MAX_SNAPSHOT: int = 200
+#: 快照 key TTL（秒）— 每次发布时重设：任务期间保持存活，done 后保留固定
+#: 窗口再自动过期清理（配合每日清理任务双重保障）
+SNAPSHOT_TTL: int = 6 * 3600
 #: SSE 心跳间隔（秒）
 HEARTBEAT_INTERVAL: int = 30
+
+#: 最终结果 key 前缀（Celery 结果后端为 rpc:// 不持久化，最终报告改存此处）
+RESULT_PREFIX: str = "research_result"
+#: 最终结果保留时长（秒）— 超出后由 Redis 自动清理
+RESULT_TTL: int = 86400
 
 #: 进度事件类型（event 字段，前端据此分派渲染）
 EVENT_DECOMPOSED = "decomposed"      # data: {"type","topics":[...]}
@@ -78,6 +86,10 @@ def _snapshot_key(task_id: str) -> str:
     return f"{SNAPSHOT_PREFIX}:{task_id}"
 
 
+def _result_key(task_id: str) -> str:
+    return f"{RESULT_PREFIX}:{task_id}"
+
+
 # ----------------------------------------------------------------------
 # Worker 端发布
 # ----------------------------------------------------------------------
@@ -94,11 +106,63 @@ async def publish_progress(task_id: str, event: dict[str, Any]) -> bool:
         payload = json.dumps(event, ensure_ascii=False)
         await redis.rpush(_snapshot_key(task_id), payload)
         await redis.ltrim(_snapshot_key(task_id), -MAX_SNAPSHOT, -1)
+        # 重设快照 key TTL（每次发布刷新）— 任务期间不失效，done 后保留窗口自动清理
+        await redis.expire(_snapshot_key(task_id), SNAPSHOT_TTL)
         await redis.publish(_channel(task_id), payload)
         return True
     except Exception as exc:
         logger.warning("research_progress.publish_failed", error=str(exc)[:200])
         return False
+
+
+# ----------------------------------------------------------------------
+# 最终结果持久化（Celery 结果后端 rpc:// 不持久化，改存 Redis）
+# ----------------------------------------------------------------------
+
+async def _set_result(task_id: str, payload: dict[str, Any]) -> bool:
+    """将最终结果写入 Redis（带 TTL）；不可用时返回 False 不抛错。"""
+    redis = await _get_redis()
+    if redis is None:
+        return False
+    try:
+        raw = json.dumps(payload, ensure_ascii=False)
+        await redis.set(_result_key(task_id), raw, ex=RESULT_TTL)
+        return True
+    except Exception as exc:
+        logger.warning("research_progress.result_save_failed", error=str(exc)[:200])
+        return False
+
+
+async def save_result(task_id: str, report: dict[str, Any]) -> bool:
+    """保存调研最终成功报告。"""
+    return await _set_result(task_id, {"status": "success", "report": report})
+
+
+async def save_failure(task_id: str, error: str) -> bool:
+    """保存调研最终失败原因。"""
+    return await _set_result(task_id, {"status": "failed", "error": error[:200]})
+
+
+async def load_result(task_id: str) -> dict[str, Any] | None:
+    """读取调研最终结果；无记录返回 None（视为任务进行中）。
+
+    返回值为持久化结构 {"status": "success"|"failed", ...}。
+    """
+    redis = await _get_redis()
+    if redis is None:
+        return None
+    try:
+        raw = await redis.get(_result_key(task_id))
+    except Exception as exc:
+        logger.warning("research_progress.result_load_failed", error=str(exc)[:200])
+        return None
+    if not raw:
+        return None
+    try:
+        item = json.loads(raw)
+        return item if isinstance(item, dict) else None
+    except (ValueError, TypeError):
+        return None
 
 
 # ----------------------------------------------------------------------

@@ -24,6 +24,10 @@ from app.models.user import User
 from app.schemas.common import ApiResponse, BehaviorReport, RecommendationItem
 from app.services.permission_service import PermissionService
 from app.services.recommendation_service import RecommendationService
+from app.services.rebuild_idempotency import (
+    acquire_rebuild_lock,
+    release_rebuild_lock,
+)
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -110,28 +114,62 @@ async def trigger_rebuild(
 ) -> ApiResponse[dict]:
     """触发离线索引重建 — 提交 Celery 任务，需管理员权限。
 
-    返回真实 ``task_id``（Celery AsyncResult.id）。项目暂无 Celery 任务
-    状态查询端点（``/mcp/tasks/{task_id}`` 仅服务于 MCP 长耗时工具，
-    与 Celery 任务无关），调用方可凭 task_id 通过 Celery 结果后端
-    （Redis，result_expires=3600s）查询任务状态。
+    幂等提交：同一租户在锁 TTL 内只允许一个重建任务（Redis SETNX），
+    重复调用返回原 task_id（``reused=True``），不重复派发。
+
+    返回真实 ``task_id``。项目暂无 Celery 任务状态查询端点
+    （``/mcp/tasks/{task_id}`` 仅服务于 MCP 长耗时工具，与 Celery 任务无关），
+    调用方可凭 task_id 通过 Celery 结果后端（Redis，result_expires=3600s）
+    查询任务状态。
     """
     if user.role not in ("admin", "kb_admin"):
         return ApiResponse(code=403, data=None, message="需要管理员权限")
 
     try:
         from tasks.recommendation_tasks import rebuild_recommendation_model
+    except Exception as exc:
+        logger.error("recommend.rebuild.submit_failed", error=str(exc))
+        return ApiResponse(code=500, data=None, message=f"重建任务提交失败: {exc}")
 
-        tenant_id = getattr(request.state, "tenant_id", None)
-        async_result = rebuild_recommendation_model.delay(
-            tenant_id=str(tenant_id) if tenant_id else None
+    tenant_id = getattr(request.state, "tenant_id", None)
+    scope = str(tenant_id) if tenant_id else "default"
+    task_id = str(uuid.uuid4())
+
+    # 重建互斥：SETNX 占位（值为预生成 task_id），重复提交回读原 id
+    try:
+        acquired, existing = await acquire_rebuild_lock(scope, task_id)
+    except Exception as exc:
+        # Redis 不可用 — 优雅降级为无锁提交（与 webhook 幂等同口径）
+        logger.warning("recommend.rebuild.lock_unavailable", error=str(exc)[:200])
+        acquired, existing = True, None
+
+    if not acquired:
+        logger.info(
+            "recommend.rebuild.reused_existing", scope=scope, task_id=existing
+        )
+        return ApiResponse(
+            code=0,
+            data={
+                "status": "queued",
+                "task_id": existing or "",
+                "reused": True,
+            },
+            message="重建任务进行中：返回已提交的 task_id",
+        )
+
+    try:
+        rebuild_recommendation_model.apply_async(
+            args=[str(tenant_id) if tenant_id else None],
+            task_id=task_id,
         )
     except Exception as exc:
-        # Celery broker 不可用时不应 500，返回明确错误供管理员排查
+        # 派发失败释放锁 — 管理员可立即重试，不被占位标记堵住
+        await release_rebuild_lock(scope)
         logger.error("recommend.rebuild.submit_failed", error=str(exc))
         return ApiResponse(code=500, data=None, message=f"重建任务提交失败: {exc}")
 
     return ApiResponse(
         code=0,
-        data={"status": "queued", "task_id": async_result.id},
+        data={"status": "queued", "task_id": task_id, "reused": False},
         message="推荐模型重建任务已提交",
     )

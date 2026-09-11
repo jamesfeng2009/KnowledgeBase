@@ -32,6 +32,7 @@ from app.models.knowledge_approval import KnowledgeApproval
 from app.models.memory import EntityEvent, KnowledgeEntity, MemoryFact
 from app.models.notification import Notification
 from app.models.qa import QaAnswer, QaQuestion
+from app.models.research import ResearchJob
 from app.models.task_outbox import TaskOutbox
 from app.models.user import Department, KbMember, User
 from app.models.user_model_preference import UserModelPreference
@@ -133,6 +134,8 @@ __all__ = [
     "KnowledgeConflict",
     # P2: 知识回流审批
     "KnowledgeApproval",
+    # Deep Research 幂等提交
+    "ResearchJob",
     # P2 轻量 Outbox：任务欠投递发件箱
     "TaskOutbox",
 ]

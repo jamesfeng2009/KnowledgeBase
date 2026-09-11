@@ -37,7 +37,7 @@ from app.services.webhook_event_parser import (
     is_feishu_challenge,
     parse_webhook_event,
 )
-from app.services.webhook_idempotency import is_duplicate_event
+from app.services.webhook_idempotency import clear_event_mark, is_duplicate_event
 from app.services.webhook_signature import verify_webhook_signature
 from app.utils.crypto import decrypt_secret
 from app.utils.logger import get_logger
@@ -168,13 +168,30 @@ async def receive_external_webhook(
         )
 
     # 8. 异步派发 Celery 同步任务
+    # P1 修复：派发失败时清除步骤 7 写入的幂等标记。标记先于派发存在，
+    # 若保留标记直接返回 500，外部平台重试会被 skipped 挡住，
+    # 事件在 TTL 窗口内永久丢失（漏发通知且重试被跳过）。
     from tasks.webhook_tasks import sync_external_document
 
-    sync_external_document.delay(
-        adapter_id=parsed.adapter_id,
-        source_doc_id=parsed.source_doc_id,
-        tenant_id=tenant_id_str,
-    )
+    try:
+        sync_external_document.delay(
+            adapter_id=parsed.adapter_id,
+            source_doc_id=parsed.source_doc_id,
+            tenant_id=tenant_id_str,
+        )
+    except Exception as exc:
+        await clear_event_mark(parsed.event_id)
+        log.error(
+            "webhook.dispatch_failed_mark_cleared",
+            adapter_id=adapter_id,
+            source_doc_id=parsed.source_doc_id,
+            event_id=parsed.event_id,
+            error=str(exc)[:200],
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="同步任务派发失败，外部平台重试将重新处理该事件",
+        ) from exc
     log.info(
         "webhook.dispatched",
         adapter_id=adapter_id,
