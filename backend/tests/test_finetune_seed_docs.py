@@ -287,8 +287,9 @@ class TestRunSeed:
         assert first.tenant_id == tid
         assert first.status == "published"
         assert first.doc_type == "md"
-        # Document 无 source 列，来源标记写入 content_json
-        assert not hasattr(first, "source")
+        # Document 自外部来源同步起含 source 列（NULL=本地文档，非空=外部平台）；
+        # seed 文档为本地导入，source 保持 NULL，来源标记写入 content_json
+        assert first.source is None
         assert first.content_json["source"] == "seed"
         assert first.content_json["scenario"] == first.category
         assert first.char_count == len(first.content_text)

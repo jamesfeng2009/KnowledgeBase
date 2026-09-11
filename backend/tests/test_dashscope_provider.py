@@ -397,11 +397,12 @@ class TestBackwardCompatibility:
         assert "private_overseas" in _llm_provider_registry
         assert "private_domestic" in _llm_provider_registry
 
-    def test_all_four_modes_registered(self) -> None:
-        """四种部署模式全部已注册。"""
+    def test_all_modes_registered(self) -> None:
+        """全部部署模式已注册（含 P2 新增 private_finetuned）。"""
         from app.llm.factory import _llm_provider_registry
 
-        assert len(_llm_provider_registry) == 4
+        assert len(_llm_provider_registry) == 5
         assert set(_llm_provider_registry.keys()) == {
-            "saas", "saas_dashscope", "private_overseas", "private_domestic"
+            "saas", "saas_dashscope", "private_overseas", "private_domestic",
+            "private_finetuned",
         }

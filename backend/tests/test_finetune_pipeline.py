@@ -710,6 +710,17 @@ class TestExportEndpoint:
 
         db.refresh = AsyncMock(side_effect=_refresh)
 
+        # begin_nested mock：返回真正的异步上下文管理器
+        # （AsyncMock 默认返回 coroutine，不支持 async with 协议）
+        class _NestedCM:
+            async def __aenter__(self):
+                return None
+
+            async def __aexit__(self, *args):
+                return False
+
+        db.begin_nested = MagicMock(return_value=_NestedCM())
+
         mock_task = MagicMock()
         mock_task.delay = MagicMock(return_value=SimpleNamespace(id="celery-task-ft"))
         with patch("tasks.finetune_tasks.build_dataset_task", mock_task):

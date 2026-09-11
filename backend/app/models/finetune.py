@@ -9,7 +9,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, Integer, String
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, Integer, String, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -23,6 +23,15 @@ class DatasetExport(UUIDMixin, TimestampMixin, Base):
     __table_args__ = (
         Index("ix_finetune_dataset_exports_tenant", "tenant_id"),
         Index("ix_finetune_dataset_exports_type", "tenant_id", "dataset_type"),
+        Index(
+            "uq_finetune_exports_idem_active",
+            "created_by",
+            "idempotency_key",
+            unique=True,
+            postgresql_where=text(
+                "idempotency_key IS NOT NULL AND status <> 'failed'"
+            ),
+        ),
     )
 
     tenant_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -60,4 +69,14 @@ class DatasetExport(UUIDMixin, TimestampMixin, Base):
     )
     params: Mapped[dict] = mapped_column(
         JSONB, default=dict, comment="构建参数（max_classification/days/min_rating/limit）"
+    )
+    idempotency_key: Mapped[str | None] = mapped_column(
+        String(128),
+        nullable=True,
+        comment="幂等键（调用方生成，随重试保持不变；NULL=不参与去重）",
+    )
+    input_hash: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        comment="提交内容指纹（dataset_type + params 规范化 JSON 的 SHA-256）",
     )

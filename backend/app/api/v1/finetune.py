@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime
+import uuid
 from pathlib import Path
 from typing import Any, Literal
 from uuid import UUID
@@ -24,6 +24,7 @@ from fastapi import APIRouter, Body, Depends, Query, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db_session
@@ -32,12 +33,19 @@ from app.finetune.exporter import make_version, read_jsonl_head
 from app.models.finetune import DatasetExport
 from app.models.user import User
 from app.schemas.common import ApiResponse, PageResponse
+from app.services.submit_idempotency import (
+    canonical_input_hash,
+    is_unique_violation,
+)
 from app.utils.logger import get_logger
 from app.utils.tenant import apply_tenant_filter
 
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/finetune", tags=["微调数据集"])
+
+#: 导出记录幂等部分唯一索引名 — IntegrityError 只认这一条
+_IDEM_CONSTRAINT = "uq_finetune_exports_idem_active"
 
 #: 允许的数据集类型（与 dataset_builder.DATASET_BUILDERS 键一致）
 DatasetType = Literal["sft", "dpo", "embedding", "golden"]
@@ -56,6 +64,14 @@ class DatasetExportRequest(BaseModel):
     days: int = Field(default=90, ge=1, le=365, description="数据时间窗口（天）")
     min_rating: int = Field(default=4, ge=1, le=5, description="好评最低评分")
     limit: int = Field(default=10000, ge=1, le=100000, description="样本上限")
+    idempotency_key: str | None = Field(
+        default=None,
+        max_length=128,
+        description=(
+            "幂等键：调用方为本次构建生成，超时重试时必须携带原键；"
+            "省略则不参与去重。也可通过 Idempotency-Key 请求头传递（优先）。"
+        ),
+    )
 
 
 def _require_admin(user: User) -> ApiResponse[None] | None:
@@ -101,7 +117,12 @@ async def export_dataset(
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse[dict]:
-    """创建数据集导出任务 — 落库 pending 记录并提交 Celery 异步构建。"""
+    """创建数据集导出任务 — 落库 pending 记录并提交 Celery 异步构建。
+
+    幂等提交：同管理员同 idempotency_key 只建一条导出记录；
+    超时重试返回原 export_id/task_id（``reused=True``）；
+    同键不同参数返回 409 IDEMPOTENCY_CONFLICT。
+    """
     if (deny := _require_admin(user)) is not None:
         return deny
 
@@ -112,16 +133,83 @@ async def export_dataset(
         "min_rating": body.min_rating,
         "limit": body.limit,
     }
+    header_key = (request.headers.get("Idempotency-Key") or "").strip()
+    body_key = (body.idempotency_key or "").strip()
+    idempotency_key = header_key or body_key or None
+    input_hash = canonical_input_hash(
+        {"dataset_type": body.dataset_type, **params}
+    )
+
+    async def _reuse_existing(existing: DatasetExport) -> ApiResponse[dict]:
+        if existing.input_hash != input_hash:
+            return ApiResponse(
+                code=409,
+                data={"error": {"code": "IDEMPOTENCY_CONFLICT"}},
+                message="该幂等键已绑定不同的构建参数，重新构建请换新键",
+            )
+        return ApiResponse(
+            code=0,
+            data={
+                "export_id": str(existing.id),
+                "task_id": existing.celery_task_id or str(existing.id),
+                "status": existing.status,
+                "reused": True,
+            },
+            message="重复提交：返回已创建的导出任务",
+        )
+
+    if idempotency_key:
+        # 快捷路径：前置查询命中 → 复用（并发空档由唯一索引兜底）
+        stmt = (
+            select(DatasetExport)
+            .where(
+                DatasetExport.created_by == user.id,
+                DatasetExport.idempotency_key == idempotency_key,
+                DatasetExport.status != "failed",
+            )
+            .order_by(DatasetExport.created_at.desc())
+            .limit(1)
+        )
+        existing = (await db.execute(stmt)).scalar_one_or_none()
+        if existing is not None:
+            return await _reuse_existing(existing)
+
     record = DatasetExport(
+        id=uuid.uuid4(),
         tenant_id=tenant_id,
         dataset_type=body.dataset_type,
         version=make_version(),
         status="pending",
         params=params,
         created_by=user.id,
+        idempotency_key=idempotency_key,
+        input_hash=input_hash,
     )
     db.add(record)
-    await db.commit()
+    try:
+        async with db.begin_nested():
+            await db.flush()
+    except IntegrityError as exc:
+        # 只认幂等唯一约束；其余约束冲突原样上抛
+        if not is_unique_violation(exc, _IDEM_CONSTRAINT):
+            raise
+        await db.rollback()  # 回滚被污染的外层事务后重新查询
+        stmt = (
+            select(DatasetExport)
+            .where(
+                DatasetExport.created_by == user.id,
+                DatasetExport.idempotency_key == idempotency_key,
+                DatasetExport.status != "failed",
+            )
+            .order_by(DatasetExport.created_at.desc())
+            .limit(1)
+        )
+        existing = (await db.execute(stmt)).scalar_one_or_none()
+        if existing is None:
+            raise RuntimeError(
+                "唯一约束冲突但未找到已提交的导出记录，请携带原键重试"
+            ) from exc
+        return await _reuse_existing(existing)
     await db.refresh(record)
 
     try:
@@ -132,7 +220,9 @@ async def export_dataset(
         record.celery_task_id = async_result.id
         await db.commit()
     except Exception as exc:
-        # Celery broker 不可用时不应 500，记录保持 pending 供排查后重提
+        # Celery broker 不可用时回滚 — 记录不入库、幂等键不被占用，
+        # 调用方可携带原键重试（避免半成品记录堵住重试路径）
+        await db.rollback()
         logger.error(
             "finetune.export.submit_failed",
             export_id=str(record.id),
@@ -146,6 +236,7 @@ async def export_dataset(
             "export_id": str(record.id),
             "task_id": async_result.id,
             "status": "building",
+            "reused": False,
         },
         message="数据集构建任务已提交",
     )

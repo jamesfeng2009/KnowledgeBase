@@ -1,4 +1,4 @@
-"""add deleted_at to ai eval case tables (3 tables)
+"""add deleted_at to ai eval case tables (2 tables)
 
 Revision ID: f2a3b4c5d6e7
 Revises: e1f2a3b4c5d6
@@ -7,15 +7,15 @@ Create Date: 2026-07-27 10:00:00.000000
 P1 修复 — ai_eval 用例级物理删除改软删除：
 
 项目约束：不允许任何逻辑物理删除数据库数据。
-此前 DocParseCase / RagEvalQuery / JudgeCase 三个模型缺少 SoftDeleteMixin，
+此前 JudgeCase / DocParseCase 两个模型缺少 SoftDeleteMixin，
 对应 service 层 delete_case 直接 db.delete() 物理删除，违反约束。
 
-本迁移为三张用例表补充 deleted_at 软删除列：
+本迁移为两张用例表补充 deleted_at 软删除列：
 - ai_eval_doc_parse_cases
-- ai_eval_rag_queries
 - ai_eval_judge_cases
 
 说明：
+- ai_eval_rag_queries 在 2026_07_24 建表时即含 deleted_at，无需变更；
 - 结果表（results）随用例查询过滤自然隐藏，不加 deleted_at；
   结果通过 case_id 关联，用例被软删后其结果不再被查询到。
 - 数据集表（datasets）此前已有 deleted_at，无需变更。
@@ -34,7 +34,6 @@ depends_on: Union[str, Sequence[str], None] = None
 
 _TABLES = (
     "ai_eval_doc_parse_cases",
-    "ai_eval_rag_queries",
     "ai_eval_judge_cases",
 )
 
