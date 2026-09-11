@@ -92,8 +92,8 @@ def _make_mock_engine(
     engine._injection_guard = None
     # _constraint_channel 为 __init__ 设置的普通实例属性（约束通道，
     # None 表示禁用）；__new__ 绕过构造时需手动补齐，否则 _retrieve
-    # 触发 AttributeError。其余 _trace_ctx / _retrieval_retry_count 等
-    # 为 ContextVar 属性，有默认值无需设置。
+    # 触发 AttributeError。其余 _trace_ctx 等为 ContextVar 属性，有
+    # 默认值无需设置（检索重试计数已迁入 state，见 engine.py 注释）。
     engine._constraint_channel = None
     return engine
 

@@ -902,3 +902,148 @@ async def test_checkpoint_load_no_new_events(db_session) -> None:
     assert state is not None
     # 状态等于 Checkpoint 快照（无新事件可重放）
     assert "_base_seq" not in state
+
+
+# ======================================================================
+# Checkpoint 状态序列化防腐蚀 — _sanitize_state_for_json
+# ======================================================================
+
+
+class TestCheckpointStateSanitize:
+    """save_checkpoint 入口过滤 — callable 不得被静默序列化成垃圾字符串。"""
+
+    def _sanitize(self, state: dict) -> tuple[Any, list[str]]:
+        from app.memory.checkpoint import _sanitize_state_for_json
+
+        dropped: list[str] = []
+        return _sanitize_state_for_json(state, "agent_state", dropped), dropped
+
+    def test_drops_callables(self) -> None:
+        """permission_filter 等 callable 应被剔除（而非 str() 成垃圾字符串）。"""
+
+        def _fake_filter(docs: list) -> list:
+            return docs
+
+        state = {
+            "query": "q",
+            "permission_filter": _fake_filter,
+            "tenant_id": None,
+        }
+        cleaned, dropped = self._sanitize(state)
+        assert "permission_filter" not in cleaned
+        assert cleaned["query"] == "q"
+        assert cleaned["tenant_id"] is None  # 真 None 保留
+        assert any("permission_filter" in p for p in dropped)
+
+    def test_drops_nested_callables_and_modules(self) -> None:
+        """嵌套结构（dict/list）中的 callable / module 同样剔除。"""
+        import sys
+
+        state = {
+            "nested": {"fn": lambda x: x},
+            "items": [1, "a", str.join],
+            "mod": sys,
+        }
+        cleaned, dropped = self._sanitize(state)
+        assert "fn" not in cleaned["nested"]
+        assert cleaned["items"] == [1, "a"]  # 列表中的 callable 剔除后不留垃圾
+        assert "mod" not in cleaned
+        assert len(dropped) == 3
+
+    def test_stringifies_simple_types(self) -> None:
+        """datetime / UUID / Decimal 字符串化（兼容原 default=str 行为）。"""
+        import uuid as uuid_mod
+        from datetime import datetime, timezone
+        from decimal import Decimal
+
+        dt = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        uid = uuid_mod.UUID("12345678-1234-5678-1234-567812345678")
+        state = {"ts": dt, "uid": uid, "amount": Decimal("1.5")}
+        cleaned, dropped = self._sanitize(state)
+        assert dropped == []
+        assert cleaned["ts"] == "2026-01-01 00:00:00+00:00"
+        assert cleaned["uid"] == "12345678-1234-5678-1234-567812345678"
+        assert cleaned["amount"] == "1.5"
+
+    def test_preserves_scalars_and_containers(self) -> None:
+        """JSON 标量与容器结构原样保留。"""
+        state = {
+            "iteration": 2,
+            "score": 0.85,
+            "ok": True,
+            "docs": [{"id": "d1", "score": 0.9}, []],
+            "empty": None,
+        }
+        cleaned, dropped = self._sanitize(state)
+        assert cleaned == state
+        assert dropped == []
+
+    def test_unknown_object_stringified_with_warning(self) -> None:
+        """未知对象保底 str()（兼容 default=str），但记录 dropped 路径。"""
+
+        class Custom:
+            def __str__(self) -> str:
+                return "custom-obj"
+
+        state = {"payload": Custom()}
+        cleaned, dropped = self._sanitize(state)
+        assert cleaned["payload"] == "custom-obj"
+        assert any("~str(Custom)" in p for p in dropped)
+
+    def test_non_string_dict_keys_coerced(self) -> None:
+        """非字符串 dict 键统一转 str（json.dumps 同款语义，显式化）。"""
+        state = {1: "a"}
+        cleaned, _ = self._sanitize(state)
+        assert cleaned == {"1": "a"}
+
+    def test_output_is_json_dumps_safe(self) -> None:
+        """清洗结果必须能直接 json.dumps（不含 default 兜底）。"""
+        import json as json_mod
+
+        def _fn() -> None:
+            return None
+
+        state = {
+            "query": "q",
+            "permission_filter": _fn,
+            "messages": [{"role": "user", "content": "hi"}],
+            "ts": __import__("datetime").datetime(2026, 1, 1),
+        }
+        cleaned, _ = self._sanitize(state)
+        # 不传 default — 若清洗不彻底这里会抛 TypeError
+        assert json_mod.dumps(cleaned, ensure_ascii=False) is not None
+
+
+@db_required
+@pytest.mark.asyncio
+async def test_checkpoint_save_drops_callables(db_session) -> None:
+    """save_checkpoint 含 callable 时：不抛异常，落库结果无垃圾字符串。"""
+    from datetime import datetime, timezone
+
+    from app.memory.checkpoint import CheckpointManager
+
+    session_id = "test-cp-sanitize-1"
+    cp_manager = CheckpointManager(db_session)
+
+    def _permission_filter(docs: list) -> list:
+        return docs
+
+    state = {
+        "query": "q",
+        "iteration": 2,
+        "permission_filter": _permission_filter,
+        "kb_version_snapshot": datetime.now(timezone.utc).isoformat(),
+        "retrieved_docs": [{"doc_id": "d1", "score": 0.9}],
+    }
+    await cp_manager.save_checkpoint(session_id, state, iteration=2)
+
+    loaded = await cp_manager.load_checkpoint(session_id)
+    assert loaded is not None
+    assert loaded["query"] == "q"
+    assert loaded["iteration"] == 2
+    # callable 被剔除 — 落库后不存在，也不会以 "<function ...>" 字符串形态出现
+    assert "permission_filter" not in loaded
+    assert loaded["retrieved_docs"] == [{"doc_id": "d1", "score": 0.9}]
+
+    # 清理 — 不影响其他测试
+    await cp_manager.delete_checkpoint(session_id)

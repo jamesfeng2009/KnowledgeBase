@@ -51,6 +51,9 @@ class AgentState(TypedDict, total=False):
     answer: str
     iteration: int
     max_iterations: int
+    # 检索质量守卫重试计数 — 单次 run 的执行现场，随 state 生命周期存亡；
+    # 不入用户级存储（否则新任务会继承旧任务的失败次数）
+    retrieval_retry_count: int
     kb_ids: list[str] | None
     memory_context: str
     # 多租户预留 — 当前不实施隔离逻辑，仅预留字段供未来扩展。

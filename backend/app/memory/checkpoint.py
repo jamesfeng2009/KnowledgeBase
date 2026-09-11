@@ -10,8 +10,12 @@ JSONB 内），失败重试时从最近已完成里程碑恢复，跳过已做�
 遵循单一职责：只管状态存取，不管业务逻辑。
 """
 
+import json
 import uuid
 from datetime import datetime, timezone
+from decimal import Decimal
+from types import ModuleType
+from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +26,74 @@ logger = get_logger(__name__)
 
 #: P2-13: 里程碑列表在 agent_state 中的字段名
 MILESTONES_FIELD = "milestones"
+
+# ---------------------------------------------------------------------------
+# Checkpoint 状态序列化防腐蚀 — save_checkpoint 入口统一过滤
+#
+# 背景：agent_state 若含 callable（如请求级 permission_filter）或连接句柄，
+# json.dumps(default=str) 会将其静默序列化成 "<function ...>" 垃圾字符串，
+# 恢复时以字符串形态腐化状态。此处递归清洗：
+#   - JSON 标量（str/int/float/bool/None）原样保留；
+#   - datetime / UUID / Decimal 确定性地字符串化（与原 default=str 一致）；
+#   - dict / list / tuple / set 递归处理（dict 键统一转 str）；
+#   - callable / module 直接剔除（记录 dropped 路径并告警）；
+#   - 其余未知对象保底 str()（兼容 default=str 历史行为，记录告警）。
+# ---------------------------------------------------------------------------
+
+_JSON_SCALARS = (str, int, float, bool)
+_STR_TYPES = (datetime, uuid.UUID, Decimal)
+
+
+class _Drop:
+    """私有哨兵 — 标记被剔除的值（与合法的 None 值区分）。"""
+
+
+_DROP = _Drop()
+
+
+def _sanitize_state_for_json(
+    value: Any,
+    path: str = "state",
+    dropped: list[str] | None = None,
+) -> Any:
+    """递归清洗 agent_state，产出可安全 CAST 为 jsonb 的值。
+
+    Args:
+        value: 待清洗的值（任意嵌套结构）。
+        path: 当前值在 state 中的路径（用于告警定位）。
+        dropped: 收集被剔除/降级字段路径的列表（可为 None 表示不收集）。
+
+    Returns:
+        清洗后的值；被剔除时返回 ``_DROP`` 哨兵（由父层从容器中移除，
+        根层传入的 agent_state 恒为 dict，不会以哨兵形态外泄）。
+    """
+    if value is None or isinstance(value, _JSON_SCALARS):
+        return value
+    if isinstance(value, _STR_TYPES):
+        return str(value)
+    if isinstance(value, dict):
+        cleaned: dict[str, Any] = {}
+        for k, v in value.items():
+            sub = _sanitize_state_for_json(v, f"{path}.{k}", dropped)
+            if sub is not _DROP:
+                cleaned[k if isinstance(k, str) else str(k)] = sub
+        return cleaned
+    if isinstance(value, (list, tuple, set)):
+        cleaned_list: list[Any] = []
+        for i, item in enumerate(value):
+            sub = _sanitize_state_for_json(item, f"{path}[{i}]", dropped)
+            if sub is not _DROP:
+                cleaned_list.append(sub)
+        return cleaned_list
+    # callable / module — 剔除（反序列化后只是垃圾字符串，还会占通道）
+    if callable(value) or isinstance(value, ModuleType):
+        if dropped is not None:
+            dropped.append(f"{path}({type(value).__name__})")
+        return _DROP
+    # 其余未知对象 — 保底字符串化（兼容原 default=str 行为），记录告警
+    if dropped is not None:
+        dropped.append(f"{path}~str({type(value).__name__})")
+    return str(value)
 
 
 def append_milestone_to_state(
@@ -77,8 +149,20 @@ class CheckpointManager:
             agent_state: Agent 的完整状态（messages, retrieved_docs, tool_results 等）
             iteration: 当前迭代次数
         """
-        import json
-        state_json = json.dumps(agent_state, default=str, ensure_ascii=False)
+        # 防腐蚀：递归剔除 callable / module，字符串化简单类型，
+        # 防止 default=str 把 permission_filter 等 callable 静默序列化成
+        # 垃圾字符串腐化 checkpoint（详见 _sanitize_state_for_json 注释块）。
+        dropped: list[str] = []
+        safe_state = _sanitize_state_for_json(agent_state, "agent_state", dropped)
+        if dropped:
+            logger.warning(
+                "checkpoint_state_fields_dropped",
+                session_id=session_id,
+                dropped=dropped[:10],
+                dropped_total=len(dropped),
+            )
+
+        state_json = json.dumps(safe_state, ensure_ascii=False)
 
         # 使用 upsert：存在则更新，不存在则插入
         await self.db.execute(
@@ -122,7 +206,6 @@ class CheckpointManager:
         if row is None:
             return None
 
-        import json
         state = row[0] if isinstance(row[0], dict) else json.loads(row[0])
         logger.info(
             "checkpoint_loaded",

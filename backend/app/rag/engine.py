@@ -97,9 +97,10 @@ _background_tasks: set[asyncio.Task] = set()
 _usage_ctx: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
     "rag_usage", default=None
 )
-_retry_count_ctx: contextvars.ContextVar[int] = contextvars.ContextVar(
-    "rag_retry_count", default=0
-)
+# 注：检索重试计数曾是 ContextVar（rag_retry_count），现已迁入 AgentState
+# 的 retrieval_retry_count 字段 — 计数是单次 run 的执行现场，应随 state
+# 生命周期存亡，而非随消费方 task 的 context 存亡（跨 task 消费生成器时
+# ContextVar 写入会落错现场）。
 _trace_ctx_var: contextvars.ContextVar[Any] = contextvars.ContextVar(
     "rag_trace_ctx", default=None
 )
@@ -432,15 +433,6 @@ class AgenticRAGEngine:
         _usage_ctx.set(value)
 
     @property
-    def _retrieval_retry_count(self) -> int:
-        """检索重试计数（每次 answer 调用时重置）。"""
-        return _retry_count_ctx.get()
-
-    @_retrieval_retry_count.setter
-    def _retrieval_retry_count(self, value: int) -> None:
-        _retry_count_ctx.set(value)
-
-    @property
     def _trace_ctx(self) -> TraceContext | None:
         """LangFuse 追踪上下文（每次 answer 调用时重置）。"""
         return _trace_ctx_var.get()
@@ -722,6 +714,8 @@ class AgenticRAGEngine:
             "answer": "",
             "iteration": 0,
             "max_iterations": self.max_iterations,
+            # 检索质量守卫重试计数 — run 内执行现场，随 state 存亡
+            "retrieval_retry_count": 0,
             "kb_ids": kb_ids,
             "memory_context": memory_context,
             "tenant_id": tenant_id,
@@ -738,8 +732,6 @@ class AgenticRAGEngine:
             # 写入 _span_evidence 供 trace 回放追溯"哪一版资料造成了这个答案"。
             "kb_version_snapshot": datetime.now(timezone.utc).isoformat(),
         }
-        # 重置检索重试计数
-        self._retrieval_retry_count = 0
         # P0-Stage2: 重置用量累加器
         self._accumulated_usage = {"input_tokens": 0, "output_tokens": 0, "model": ""}
 
@@ -1077,7 +1069,7 @@ class AgenticRAGEngine:
                 "tool_results": len(state["tool_results"]),
                 "budget_compress_count": budget_stats["compress_count"],
                 "budget_tokens_saved": budget_stats["total_tokens_saved"],
-                "retrieval_retry_count": self._retrieval_retry_count,
+                "retrieval_retry_count": state.get("retrieval_retry_count", 0),
             }
             # 质量评分上报到 LangFuse
             if eval_result is not None:
@@ -1373,6 +1365,8 @@ class AgenticRAGEngine:
             "answer": "",
             "iteration": 0,
             "max_iterations": self.max_iterations,
+            # 检索质量守卫重试计数 — run 内执行现场，随 state 存亡
+            "retrieval_retry_count": 0,
             "kb_ids": kb_ids,
             "memory_context": memory_context,
             "_decision": "",
@@ -2559,15 +2553,17 @@ class AgenticRAGEngine:
                         threshold_override=_dyn_threshold,
                     )
                     if self._quality_guard.should_retry_retrieval(
-                        check_result, self._retrieval_retry_count
+                        check_result, state.get("retrieval_retry_count", 0)
                     ):
-                        self._retrieval_retry_count += 1
+                        state["retrieval_retry_count"] = (
+                            state.get("retrieval_retry_count", 0) + 1
+                        )
                         expanded_top_k = self._quality_guard.get_expanded_top_k()
                         log.info(
                             "engine.retrieve.quality_retry",
                             mean_score=check_result.mean_score,
                             expanded_top_k=expanded_top_k,
-                            retry_count=self._retrieval_retry_count,
+                            retry_count=state["retrieval_retry_count"],
                         )
                         reranked = await self.reranker.rerank(
                             query=original_query,
@@ -2583,7 +2579,7 @@ class AgenticRAGEngine:
                             threshold_override=_dyn_threshold,
                         )
                         if self._quality_guard.should_reject_after_retry(
-                            recheck, self._retrieval_retry_count
+                            recheck, state.get("retrieval_retry_count", 0)
                         ):
                             state["retrieval_insufficient"] = True
                             # P2: 结构化观察 — 检索质量不足（失败）
@@ -2591,7 +2587,7 @@ class AgenticRAGEngine:
                                 state, "failure", "检索质量不足，判定拒答"
                             )
                     elif self._quality_guard.should_reject_after_retry(
-                        check_result, self._retrieval_retry_count
+                        check_result, state.get("retrieval_retry_count", 0)
                     ):
                         # P1-2: 首次检查就低于阈值且已无重试次数 → 标记拒答
                         state["retrieval_insufficient"] = True

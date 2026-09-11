@@ -414,6 +414,52 @@ class TestEngineRetrievalGuardIntegration:
         assert second_call_kwargs["top_k"] > 5
 
     @pytest.mark.asyncio
+    async def test_retry_count_is_run_scoped(self) -> None:
+        """重试计数必须随 state 存亡 — 连续两次 _retrieve 不得继承上次计数。
+
+        锁定迁移契约：retrieval_retry_count 曾是 ContextVar（消费方 task 级），
+        引擎单例下第二次 _retrieve 会继承第一次的计数（=1，已达 max_retries）
+        而不再重试；现迁入 state 后每次 run 从 0 开始（对齐文章结论：
+        retry_count 属于 State 层，不得进入跨 run 的存储）。
+        """
+        from app.rag.engine import AgenticRAGEngine
+
+        mock_reranker = MagicMock()
+        mock_reranker.rerank = AsyncMock(
+            side_effect=[
+                # run 1：首排低分 → 扩展重排高分
+                [{"index": 0, "score": 0.1, "content": "doc1"}],
+                [{"index": 0, "score": 0.8, "content": "doc1"}],
+                # run 2：同样低分 → 必须同样触发重试（计数不继承）
+                [{"index": 0, "score": 0.1, "content": "doc1"}],
+                [{"index": 0, "score": 0.8, "content": "doc1"}],
+            ]
+        )
+        mock_retriever = MagicMock()
+        mock_retriever.search = AsyncMock(
+            return_value=[{"doc_id": "1", "chunk_id": "c1", "content": "doc1", "score": 0.5, "source": "vector"}]
+        )
+
+        engine = AgenticRAGEngine(
+            llm=MagicMock(),
+            mcp_client=MagicMock(),
+            retriever=mock_retriever,
+            reranker=mock_reranker,
+            generator=MagicMock(),
+        )
+
+        state_a = {"query": "test-a", "iteration": 1, "retrieved_docs": []}
+        await engine._retrieve(state_a, kb_ids=None)
+        state_b = {"query": "test-b", "iteration": 1, "retrieved_docs": []}
+        await engine._retrieve(state_b, kb_ids=None)
+
+        # 两次 run 的计数互不串扰：各自从 0 重试一次 → 1
+        assert state_a["retrieval_retry_count"] == 1
+        assert state_b["retrieval_retry_count"] == 1
+        # 每次 run 都发生了首排 + 扩展重排（若计数串扰，run 2 不再重试 → 3 次）
+        assert mock_reranker.rerank.call_count == 4
+
+    @pytest.mark.asyncio
     async def test_retrieve_no_retry_high_score(self) -> None:
         """高重排分数时不触发扩展重排。"""
         from app.rag.engine import AgenticRAGEngine
