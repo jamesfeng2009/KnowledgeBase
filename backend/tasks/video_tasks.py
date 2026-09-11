@@ -591,12 +591,11 @@ def finalize_video_task(
         )
 
         # 8. 链式触发文档智能处理（摘要/标签/分类）
-        try:
-            from tasks.intelligence_tasks import process_intelligence
+        # P2 轻量 Outbox：同步任务用 sync 版本，派发失败落 task_outbox 由定时任务补投
+        from app.services.task_outbox import dispatch_with_outbox_sync
+        from tasks.intelligence_tasks import process_intelligence
 
-            process_intelligence.delay(doc_id)
-        except Exception:
-            log.debug("video_multipart.intelligence_trigger_failed", doc_id=doc_id)
+        dispatch_with_outbox_sync(process_intelligence, doc_id=doc_id)
 
     except Exception as exc:
         log.exception("video_multipart.finalize_failed", doc_id=doc_id)

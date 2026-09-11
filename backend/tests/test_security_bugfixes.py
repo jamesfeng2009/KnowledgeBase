@@ -490,7 +490,10 @@ class TestBug4ClassificationGuard:
         result = await svc.update_document(doc.id, content_text="新内容")
 
         assert result is updated
-        svc.doc_repo.update.assert_awaited_once_with(doc.id, content_text="新内容")
+        # P1 修复：内容变更同事务置 parse_status=pending（补偿网接管的前提）
+        svc.doc_repo.update.assert_awaited_once_with(
+            doc.id, content_text="新内容", parse_status="pending"
+        )
 
 
 # ======================================================================

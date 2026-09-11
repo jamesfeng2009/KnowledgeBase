@@ -261,9 +261,17 @@ class TestIndexCleanupDispatch:
         with patch("asyncio.run") as mock_run:
             cleanup_document_indexes(_DOC_UUID)
 
-        # celery 已 mock，函数体为 MagicMock，仅验证可安全调用
-        # （真实 worker 中由 asyncio.run 驱动 _delete_document_from_indexes）
-        mock_run.assert_not_called()
+        # conftest 预导入真实 celery（项目硬依赖）— 函数体真实执行：
+        # 由 asyncio.run 驱动 _delete_document_from_indexes。
+        # 无 celery 的回退环境下任务体为 MagicMock，跳过断言。
+        from unittest.mock import MagicMock as _MagicMock
+
+        if isinstance(cleanup_document_indexes, _MagicMock):
+            mock_run.assert_not_called()
+        else:
+            mock_run.assert_called_once()
+            # 关闭未消费的协程，避免 RuntimeWarning
+            mock_run.call_args.args[0].close()
 
     @pytest.mark.asyncio
     async def test_dispatch_index_cleanup_uses_delay(self) -> None:

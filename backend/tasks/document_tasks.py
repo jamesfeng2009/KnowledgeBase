@@ -966,13 +966,15 @@ async def _finalize_document_async(
             doc.status = "published"
             await session.commit()
 
-        # 触发智能处理
-        try:
-            from tasks.intelligence_tasks import process_intelligence
-            process_intelligence.delay(doc_id)
+        # 触发智能处理（P2 轻量 Outbox：派发失败落 task_outbox 由定时任务补投）
+        from app.services.task_outbox import dispatch_with_outbox
+        from tasks.intelligence_tasks import process_intelligence
+
+        dispatched = await dispatch_with_outbox(
+            process_intelligence, doc_id=doc_id
+        )
+        if dispatched:
             logger.info("document.intelligence_triggered", doc_id=doc_id)
-        except Exception as exc:
-            logger.warning("document.intelligence_trigger_failed", doc_id=doc_id, error=str(exc))
 
         # 清理 Redis 中的临时 chunks
         _cleanup_chunks_redis(doc_id)
@@ -2675,6 +2677,10 @@ def _build_doc_meta(doc: Any) -> dict[str, Any] | None:
     meta["doc_status"] = (
         "pending_review" if classification in _REQUIRES_REVIEW else "published"
     )
+    # P0 密级下推：classification 写入索引，供检索端按用户可见密级白名单
+    # （terms）在召回层过滤，替代纯 Final Gate 后置剔除（减少 top-k 占坑浪费）。
+    # Final Gate 仍按 DB 权威复检，二者构成双重保障（下推是优化，复检是安全）。
+    meta["classification"] = classification
     # P2: 文档角色粗标（normal/constraint_source）— 运营检索与日志标注用，
     # 不用于必召回（必召回走 constraint_rules，确定域）
     doc_role = getattr(doc, "doc_role", None)
@@ -2728,6 +2734,20 @@ async def _build_vector_index(
         doc_meta = _build_doc_meta(doc)
 
         store = get_vector_store()
+
+        # P1 修复：写新向量前先清理该文档旧向量。文档更新重解析时
+        # 新 chunk_id 与旧 chunk_id 不一致，仅 upsert 会残留旧 chunk。
+        # 清理在任务内执行（而非 API 侧预删）：派发失败时旧向量保留，
+        # 检索降级为旧内容而非消失；删除失败仅告警，不阻塞 upsert。
+        try:
+            await store.delete(doc_id)
+        except Exception as del_exc:
+            logger.warning(
+                "vector.stale_delete_failed",
+                doc_id=doc_id,
+                error=str(del_exc)[:200],
+            )
+
         count = await store.upsert(
             doc_id,
             chunk_objects,

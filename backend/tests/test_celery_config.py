@@ -11,7 +11,7 @@ Celery 队列配置回归测试 — 防止任务静默堆积的配置回退。
 1. task_queues 显式声明全部业务队列（含默认兜底队列）
 2. include 中的每个任务模块都有匹配的 task_routes 规则
 3. task_routes 指向的队列必须存在于 task_queues 中
-4. 可靠性配置（acks_late / reject_on_worker_lost / visibility_timeout）
+4. 可靠性配置（acks_late / reject_on_worker_lost / RabbitMQ 持久化）
 5. beat_schedule 中的任务都能路由到已声明的队列
 6. docker-compose worker 命令通过 -Q 显式消费全部队列（双重保障）
 
@@ -173,19 +173,44 @@ class TestReliabilityConfig:
         """task_reject_on_worker_lost 必须开启（OOM 强杀时重投）。"""
         assert celery_app.conf.task_reject_on_worker_lost is True
 
-    def test_visibility_timeout_covers_long_tasks(self):
-        """broker 可见性超时必须 >= task_time_limit。
+    def test_rabbitmq_persistent_delivery(self):
+        """消息必须持久化（delivery_mode=2）。
 
-        若可见性超时短于任务硬超时，长任务执行中会被 broker
-        重新投递，导致同一任务被多个 worker 并发执行。
+        持久化消息配合 durable 队列与 RabbitMQ 持久化卷，
+        broker 重启后队列与消息不丢失。
         """
-        transport_opts = celery_app.conf.broker_transport_options or {}
-        visibility = transport_opts.get("visibility_timeout", 0)
-        time_limit = celery_app.conf.task_time_limit or 0
-        assert visibility >= time_limit, (
-            f"visibility_timeout({visibility}) < task_time_limit({time_limit})，"
-            "长任务会被 broker 重复投递"
+        assert celery_app.conf.task_default_delivery_mode == "persistent"
+
+    def test_rabbitmq_all_queues_durable(self):
+        """全部队列必须 durable。
+
+        persistent 消息只有写入 durable 队列才能在 broker 重启后存活，
+        二者缺一不可。
+        """
+        non_durable = [q.name for q in celery_app.conf.task_queues if not q.durable]
+        assert not non_durable, (
+            f"以下队列非 durable，broker 重启后消息丢失: {non_durable}"
         )
+
+    def test_publish_retry_enabled(self):
+        """发布确认必须开启（API 侧投递失败自动重试）。"""
+        assert celery_app.conf.task_publish_retry is True
+
+    def test_broker_connection_retry_on_startup(self):
+        """worker 启动时 broker 不可达必须持续重连。
+
+        若退出，docker depends_on 健康检查通过后 broker 短暂抖动
+        会导致 worker 直接退出。
+        """
+        assert celery_app.conf.broker_connection_retry_on_startup is True
+
+    def test_broker_is_rabbitmq(self):
+        """broker URL 必须是 amqp://（RabbitMQ）。
+
+        Redis broker 的 AOF everysec 存在 1 秒丢失窗口，
+        消息可靠性不达标准。
+        """
+        assert celery_app.conf.broker_url.startswith("amqp://")
 
     def test_prefetch_multiplier_is_one(self):
         """预取数为 1，避免长任务阻塞短任务。"""
@@ -194,6 +219,31 @@ class TestReliabilityConfig:
     def test_result_expires_set(self):
         """结果过期时间已配置（防 Redis 内存膨胀）。"""
         assert (celery_app.conf.result_expires or 0) > 0
+
+
+class TestResultHygiene:
+    """结果清理护栏 — 防止 rpc reply 队列在无人消费时堆积。
+
+    结果后端为 RabbitMQ rpc://，结果消息按任务仅一次可消费；若某任务开放的
+    结果无跨进程消费方，reply 队列将无限堆积。以下不变量确保默认不写结果：
+    1. task_ignore_result=True — 结果不写回 reply 队列；
+    2. task_store_errors_even_if_ignored=False — 异常（含 Retry）也不写回；
+    3. 结果后端实例确为 RPCBackend（RabbitMQ rpc://），而非 Redis。
+    """
+
+    def test_ignore_result_enabled(self):
+        """结果必须默认忽略（不写回 reply 队列）。"""
+        assert celery_app.conf.task_ignore_result is True
+
+    def test_errors_not_stored_even_if_ignored(self):
+        """异常也不能写回（含 Retry 异常，避免 reply 队列被错误消息塞满）。"""
+        assert celery_app.conf.task_store_errors_even_if_ignored is False
+
+    def test_result_backend_is_rpc_backend(self):
+        """结果后端必须是 RabbitMQ RPCBackend，而非 Redis。"""
+        from celery.backends.rpc import RPCBackend
+
+        assert isinstance(celery_app.backend, RPCBackend)
 
 
 class TestBeatSchedule:

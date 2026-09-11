@@ -47,8 +47,8 @@ _ALL_QUEUES: tuple[str, ...] = (
 
 celery_app = Celery(
     "ekb_worker",
-    broker=settings.REDIS_URL,
-    backend=settings.REDIS_URL,
+    broker=settings.BROKER_URL,
+    backend=settings.CELERY_RESULT_BACKEND,
     include=[
         "tasks.document_tasks",
         "tasks.index_tasks",
@@ -82,6 +82,19 @@ celery_app.conf.update(
     task_serializer="json",
     result_serializer="json",
     accept_content=["json"],
+
+    # 任务结果（RabbitMQ rpc://）— 结果清理策略。
+    # rpc 结果后端按任务仅一次可消费；reply 队列为每 worker 独占
+    # exclusive + auto-delete，连接关闭即删除。无人调用 AsyncResult.get() 时
+    # reply 队列不产生消息，配合以下保证其始终为空、杜绝堆积：
+    #   1) task_ignore_result=True        — 结果一律不写回 reply 队列；
+    #   2) task_store_errors_even_if_ignored=False — 异常（含 Retry）也不写回；
+    #   3) 全仓无跨进程轮询 Celery 结果（Deep Research 改查 Redis 快照；
+    #      document_tasks 的 .apply().get() 为进程内 eager，不走 broker）。
+    # 保留 result_expires=3600 兜底 — 若未来某任务确需结果并放开 ignore_result，
+    # 结果可被后端在超时后清理；确需结果的任务可单独覆盖 ignore_result=False。
+    task_ignore_result=True,
+    task_store_errors_even_if_ignored=False,
 
     # 时区
     timezone="Asia/Shanghai",
@@ -128,6 +141,17 @@ celery_app.conf.update(
     # 配合 task_acks_late=True，确保 worker 异常退出时任务不丢失
     task_reject_on_worker_lost=True,
 
+    # RabbitMQ 可靠性 — 消息磁盘级持久化 + 发布确认
+    # 持久化消息（delivery_mode=2），配合 Queue(durable=True) 与
+    # RabbitMQ 的持久化卷，broker 重启后队列与消息不丢失
+    task_default_delivery_mode="persistent",
+    # 发布确认 — 生产者投递失败自动重试，防止 API 侧丢消息
+    task_publish_retry=True,
+    task_publish_retry_max_retries=5,
+    # worker 启动时 broker 不可达则持续重连（而非退出），
+    # 配合 docker depends_on 健康检查消除断连竞态
+    broker_connection_retry_on_startup=True,
+
     # 重试配置
     task_default_retry_delay=60,  # 默认重试间隔 60 秒
     task_max_retries=3,           # 最多重试 3 次
@@ -148,14 +172,9 @@ celery_app.conf.update(
 # Celery 的 task_routes 按 task 名称路由，死信通过 task 配置 max_retries
 # 后 raise self.retry(exc=exc) 达到上限会抛 MaxRetriesExceededError。
 # 我们在 task 装饰器上配置 deadletter 行为（见各 task 文件）。
-# 此处配置 Redis broker 的可见性超时 — 确保任务不会因 broker 超时被重复消费
-
-celery_app.conf.update(
-    # 可见性超时 — worker 取出任务后，如果在此时长内未 ACK，任务会被重新投递
-    # 默认 3600s（1小时），设为 6 小时覆盖长任务（如视频处理）
-    broker_transport_options={"visibility_timeout": 21600},
-    result_backend_transport_options={"visibility_timeout": 21600},
-)
+# 说明：RabbitMQ broker 无 Redis 的 visibility_timeout 概念 —
+# 任务被 worker 取走后连接断开会自动 unacked → requeue，
+# 靠 acks_late + reject_on_worker_lost 保证不丢不重，无需额外配置。
 
 
 # ------------------------------------------------------------------
@@ -218,6 +237,12 @@ celery_app.conf.beat_schedule = {
         "task": "tasks.scheduled_tasks.cleanup_stale_checkpoints",
         "schedule": crontab(minute=30, hour=4),  # 每天凌晨 4:30
     },
+    # 每日清理无 TTL 的 Deep Research 快照/结果键（P3 兜底安全网；
+    # 常规路径已靠 TTL 自动过期，本任务清扫部署前遗留的 persistent 键）
+    "cleanup-stale-research-daily": {
+        "task": "tasks.scheduled_tasks.cleanup_stale_research",
+        "schedule": crontab(minute=45, hour=4),  # 每天凌晨 4:45
+    },
     # 每周一生成质量报告
     "generate-quality-report-weekly": {
         "task": "tasks.scheduled_tasks.generate_quality_report",
@@ -243,11 +268,24 @@ celery_app.conf.beat_schedule = {
         "task": "tasks.health_tasks.health_check_all_providers",
         "schedule": 30.0,  # 每 30 秒
     },
+    # 每小时 :15 — 补偿扫描卡死的文档解析任务（P1 兜底安全网）
+    # 覆盖 RabbitMQ 之外的丢消息路径：投递失败未确认、队列被误 purge、
+    # 任务被消费但 DB 写入失败等。错开整点，避免与其他整点任务抢 worker
+    "rescan-stuck-documents-hourly": {
+        "task": "tasks.scheduled_tasks.rescan_stuck_documents",
+        "schedule": crontab(minute=15),
+    },
+    # 每 5 分钟 — 补投 task_outbox 欠投递记录（P2 轻量 Outbox 兜底）
+    # 一次性触发链路（feedback/qa/智能处理链等）派发失败落箱后由本任务补投
+    "flush-task-outbox-5min": {
+        "task": "tasks.scheduled_tasks.flush_task_outbox",
+        "schedule": crontab(minute="*/5"),
+    },
 }
 
 logger.info(
     "celery.app_configured",
-    broker=settings.REDIS_URL,
+    broker=settings.BROKER_URL,
     queues=list(_ALL_QUEUES),
 )
 

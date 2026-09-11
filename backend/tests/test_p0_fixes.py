@@ -213,11 +213,16 @@ class TestP01FulltextSearchStatusFilter:
 
 
 class TestP02ReindexTrigger:
-    """P0-2: update_document 触发重建索引。"""
+    """P0-2: update_document 触发重建索引（P1 修复后语义）。
+
+    P1 修复：旧向量删除从 API 侧预删移入 process_document 任务内
+    （_build_vector_index 写入前清理），API 侧仅触发任务 + 依赖
+    parse_status=pending 标记 + rescan_stuck_documents 补偿。
+    """
 
     @pytest.mark.asyncio
-    async def test_trigger_reindex_deletes_old_vectors(self) -> None:
-        """_trigger_reindex 应先删除旧向量数据。"""
+    async def test_trigger_reindex_does_not_touch_vector_store(self) -> None:
+        """P1 修复：_trigger_reindex 不应触碰向量存储（不再预删旧向量）。"""
         from app.services.knowledge_service import KnowledgeService
 
         mock_db = AsyncMock()
@@ -229,18 +234,22 @@ class TestP02ReindexTrigger:
 
         mock_store = AsyncMock()
         mock_store.delete = AsyncMock()
+        mock_store.upsert = AsyncMock()
 
         mock_tasks_mod = _make_mock_tasks_module()
 
+        # get_vector_store 打上"不应被调用"哨兵 — 若代码触碰向量存储即失败
         with patch.dict(sys.modules, {
             "tasks": mock_tasks_mod,
             "tasks.document_tasks": mock_tasks_mod,
         }), patch(
-            "app.rag.vector_store.get_vector_store", return_value=mock_store
+            "app.rag.vector_store.get_vector_store",
+            side_effect=AssertionError("API 侧不应触碰向量存储（P1：删除移入任务内）"),
         ):
             await service._trigger_reindex("doc-123", "kb-456")
 
-        mock_store.delete.assert_called_once_with("doc-123")
+        mock_store.delete.assert_not_called()
+        mock_store.upsert.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_trigger_reindex_calls_process_document_delay(self) -> None:
@@ -254,17 +263,12 @@ class TestP02ReindexTrigger:
         mock_user.dept_id = None
         service = KnowledgeService(mock_db, mock_user)
 
-        mock_store = AsyncMock()
-        mock_store.delete = AsyncMock()
-
         mock_tasks_mod = _make_mock_tasks_module()
 
         with patch.dict(sys.modules, {
             "tasks": mock_tasks_mod,
             "tasks.document_tasks": mock_tasks_mod,
-        }), patch(
-            "app.rag.vector_store.get_vector_store", return_value=mock_store
-        ):
+        }):
             await service._trigger_reindex("doc-123", "kb-456")
 
         mock_tasks_mod.process_document.delay.assert_called_once_with("doc-123")
@@ -281,48 +285,15 @@ class TestP02ReindexTrigger:
         mock_user.dept_id = None
         service = KnowledgeService(mock_db, mock_user)
 
-        mock_store = AsyncMock()
-        mock_store.delete = AsyncMock()
-
         mock_tasks_mod = _make_mock_tasks_module()
         mock_tasks_mod.process_document.delay = MagicMock(side_effect=Exception("Celery down"))
 
         with patch.dict(sys.modules, {
             "tasks": mock_tasks_mod,
             "tasks.document_tasks": mock_tasks_mod,
-        }), patch(
-            "app.rag.vector_store.get_vector_store", return_value=mock_store
-        ):
+        }):
             # 不应抛异常
             await service._trigger_reindex("doc-123", "kb-456")
-
-    @pytest.mark.asyncio
-    async def test_trigger_reindex_graceful_degradation_on_store_failure(self) -> None:
-        """向量存储不可用时 _trigger_reindex 不应抛异常。"""
-        from app.services.knowledge_service import KnowledgeService
-
-        mock_db = AsyncMock()
-        mock_user = MagicMock()
-        mock_user.id = MagicMock()
-        mock_user.role = "admin"
-        mock_user.dept_id = None
-        service = KnowledgeService(mock_db, mock_user)
-
-        mock_store = AsyncMock()
-        mock_store.delete = AsyncMock(side_effect=Exception("OpenSearch down"))
-
-        mock_tasks_mod = _make_mock_tasks_module()
-
-        with patch.dict(sys.modules, {
-            "tasks": mock_tasks_mod,
-            "tasks.document_tasks": mock_tasks_mod,
-        }), patch(
-            "app.rag.vector_store.get_vector_store", return_value=mock_store
-        ):
-            # 不应抛异常
-            await service._trigger_reindex("doc-123", "kb-456")
-            # 即使删除失败，仍应尝试触发重建
-            mock_tasks_mod.process_document.delay.assert_called_once_with("doc-123")
 
 
 # ======================================================================

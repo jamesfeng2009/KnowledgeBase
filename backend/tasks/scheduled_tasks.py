@@ -13,6 +13,8 @@
 - cleanup_stale_checkpoints：每日清理过期 Checkpoint 会话
 - generate_quality_report：每周生成质量报告
 - cleanup_orphan_multipart_uploads：每日清理 24h 未 complete 的孤儿分片
+- rescan_stuck_documents：每小时补偿扫描卡死的文档解析任务并重投
+- flush_task_outbox：每 5 分钟补投 task_outbox 欠投递记录（P2 轻量 Outbox）
 """
 
 from __future__ import annotations
@@ -180,6 +182,31 @@ def cleanup_orphan_multipart_uploads() -> dict[str, Any]:
         raise
 
 
+@celery_app.task(name="tasks.scheduled_tasks.cleanup_stale_research")
+def cleanup_stale_research() -> dict[str, Any]:
+    """每日清理无 TTL 的 Deep Research 快照/结果 Redis 键（P3 兜底）。
+
+    常规路径：``research_progress`` 在每次发布时对快照键重设 TTL，完成后自动过期；
+    ``research_result`` 写时带 TTL。本任务作为安全网，清理部署前遗留或异常情况
+    下失去 TTL（persistent，ttl == -1）的快照/结果键，防止 Redis 内存累积。
+
+    Returns:
+        清理结果字典，含快照与结果的清理数量。
+    """
+    logger.info("scheduled.cleanup_stale_research_started")
+    try:
+        result = asyncio.run(_cleanup_stale_research_async())
+        logger.info(
+            "scheduled.cleanup_stale_research_completed",
+            snapshots_cleaned=result.get("snapshots_cleaned", 0),
+            results_cleaned=result.get("results_cleaned", 0),
+        )
+        return result
+    except Exception as exc:
+        logger.error("scheduled.cleanup_stale_research_failed", error=str(exc))
+        raise
+
+
 @celery_app.task(name="tasks.scheduled_tasks.patrol_external_docs")
 def patrol_external_docs() -> dict[str, Any]:
     """每日巡检过期外部文档 — P2 定时兜底安全网。
@@ -221,6 +248,198 @@ def patrol_external_docs() -> dict[str, Any]:
     except Exception as exc:
         logger.error("scheduled.patrol_failed", error=str(exc)[:200])
         raise
+
+
+@celery_app.task(name="tasks.scheduled_tasks.rescan_stuck_documents")
+def rescan_stuck_documents() -> dict[str, Any]:
+    """每小时补偿扫描卡死的文档解析任务 — P1 兜底安全网。
+
+    背景：即使 broker 走 RabbitMQ（磁盘级持久化），仍有丢消息路径：
+    API 侧投递失败未确认、队列被误 purge、任务消费后 DB 写入失败、
+    worker 异常退出后消息被 ack 等。此时文档将永远停留在"解析中"
+    状态（parse_status 为 NULL/pending，前端进度条无响应且无人重投）。
+
+    卡死判定（同时满足才重投）：
+        1. parse_status 为 NULL 或 'pending'（DB 只在 finalize 时写入
+           parsed/partial/failed 终态，NULL/pending = 处理从未完成）；
+        2. updated_at 超过卡死阈值（默认 2h）无任何 DB 写入；
+        3. Redis 解析进度 key 已过期（TTL 30min，key 存活说明 worker
+           仍在推进）且任务幂等锁不存在（锁存活说明 worker 仍持有任务）。
+
+    重投安全性：process_document 自带 Redis SETNX 幂等锁（P1-B），
+    即使与正在执行的任务竞争，后到者拿锁失败会直接跳过，不会重复处理。
+
+    Returns:
+        扫描摘要：candidates / skipped_alive / dispatched / dispatch_failed。
+    """
+    from app.config import get_settings
+
+    settings = get_settings()
+    if not settings.DOCUMENT_RESCAN_ENABLED:
+        logger.info("scheduled.rescan_stuck_disabled_by_config")
+        return {"candidates": 0, "dispatched": 0, "message": "补偿扫描已禁用"}
+
+    logger.info(
+        "scheduled.rescan_stuck_started",
+        stuck_hours=settings.DOCUMENT_RESCAN_STUCK_HOURS,
+        batch_size=settings.DOCUMENT_RESCAN_BATCH_SIZE,
+    )
+    try:
+        result = asyncio.run(_rescan_stuck_documents_async(settings))
+        logger.info(
+            "scheduled.rescan_stuck_completed",
+            candidates=result.get("candidates", 0),
+            skipped_alive=result.get("skipped_alive", 0),
+            dispatched=result.get("dispatched", 0),
+            dispatch_failed=result.get("dispatch_failed", 0),
+        )
+        return result
+    except Exception as exc:
+        logger.error("scheduled.rescan_stuck_failed", error=str(exc)[:200])
+        raise
+
+
+# 轻量 Outbox 补投上限 — 超过视为毒丸（如任务名已废弃/参数非法），标记 dead
+# 防止无限重试；dead 记录保留在表中供人工排查。
+_OUTBOX_MAX_ATTEMPTS: int = 5
+# 单轮补投批量上限 — 派发失败才有记录，正常存量极小
+_OUTBOX_BATCH_SIZE: int = 50
+
+
+@celery_app.task(name="tasks.scheduled_tasks.flush_task_outbox")
+def flush_task_outbox() -> dict[str, Any]:
+    """每 5 分钟补投 task_outbox 欠投递记录 — P2 轻量 Outbox 兜底。
+
+    背景：一次性触发链路（好评→FAQ 回流、采纳→FAQ 回流、解析→智能处理链、
+    FAQ 文档索引、视频→智能处理链）原先"派发失败仅日志"，恢复只能靠
+    再次触发。dispatch_with_outbox 在派发失败时以独立短事务写入
+    task_outbox 表，本任务定时补投，把恢复的开关从"下一次点击"
+    收回到系统内。
+
+    派发语义：按任务名 celery_app.send_task 派发（消息进入 broker 即算
+    成功，与任务执行成功解耦 — 与 Outbox 派发语义一致）。
+
+    Returns:
+        补投摘要：candidates / dispatched / failed / dead。
+    """
+    logger.info("scheduled.flush_outbox_started")
+    try:
+        result = asyncio.run(_flush_task_outbox_async())
+        logger.info(
+            "scheduled.flush_outbox_completed",
+            candidates=result.get("candidates", 0),
+            dispatched=result.get("dispatched", 0),
+            failed=result.get("failed", 0),
+            dead=result.get("dead", 0),
+        )
+        return result
+    except Exception as exc:
+        logger.error("scheduled.flush_outbox_failed", error=str(exc)[:200])
+        raise
+
+
+async def _flush_task_outbox_async() -> dict[str, Any]:
+    """异步补投 task_outbox pending 记录。
+
+    流程：
+    1. 查询 status=pending 且 attempts < 上限的记录（最老的优先）；
+    2. 逐条按名字 send_task 派发；
+    3. 成功 → status=sent + sent_at；失败 → attempts+1 + last_error，
+       达上限 → status=dead。
+
+    每条记录独立短事务更新 — 单条失败不影响其余补投。
+    """
+    from sqlalchemy import select, update
+
+    from app.database import task_db_session
+    from app.models.task_outbox import TaskOutbox
+
+    now = datetime.now(timezone.utc)
+    candidates = 0
+    dispatched = 0
+    failed = 0
+    dead = 0
+
+    async with task_db_session() as session:
+        stmt = (
+            select(TaskOutbox)
+            .where(
+                TaskOutbox.status == "pending",
+                TaskOutbox.attempts < _OUTBOX_MAX_ATTEMPTS,
+            )
+            .order_by(TaskOutbox.created_at.asc())
+            .limit(_OUTBOX_BATCH_SIZE)
+        )
+        result = await session.execute(stmt)
+        entries = list(result.scalars().all())
+        candidates = len(entries)
+
+    for entry in entries:
+        sent = False
+        send_error = ""
+        try:
+            celery_app.send_task(entry.task_name, kwargs=entry.task_kwargs or {})
+            sent = True
+        except Exception as exc:
+            send_error = str(exc)[:2000]
+            logger.warning(
+                "scheduled.flush_outbox_redispatch_failed",
+                outbox_id=str(entry.id),
+                task_name=entry.task_name,
+                error=send_error[:200],
+            )
+
+        # 独立短事务更新状态 — 单条失败不影响其余
+        try:
+            async with task_db_session() as session:
+                if sent:
+                    await session.execute(
+                        update(TaskOutbox)
+                        .where(TaskOutbox.id == entry.id)
+                        .values(
+                            status="sent", sent_at=now, last_error=None
+                        )
+                    )
+                else:
+                    new_attempts = (entry.attempts or 0) + 1
+                    values: dict[str, Any] = {
+                        "attempts": new_attempts,
+                        "last_error": send_error,
+                    }
+                    if new_attempts >= _OUTBOX_MAX_ATTEMPTS:
+                        values["status"] = "dead"
+                        dead += 1
+                    await session.execute(
+                        update(TaskOutbox).where(TaskOutbox.id == entry.id).values(**values)
+                    )
+                await session.commit()
+        except Exception as upd_exc:
+            logger.warning(
+                "scheduled.flush_outbox_status_update_failed",
+                outbox_id=str(entry.id),
+                error=str(upd_exc)[:200],
+            )
+            # 状态未更新 — attempts 不变，下轮重试；若本已派发成功，
+            # 下一轮重复派发由任务自身幂等性兜底
+            if sent:
+                dispatched += 1
+            else:
+                failed += 1
+            continue
+
+        if sent:
+            dispatched += 1
+        else:
+            failed += 1
+
+    return {
+        "status": "success",
+        "candidates": candidates,
+        "dispatched": dispatched,
+        "failed": failed,
+        "dead": dead,
+        "flushed_at": now.isoformat(),
+    }
 
 
 # ------------------------------------------------------------------
@@ -553,6 +772,63 @@ async def _cleanup_orphan_multipart_uploads_async() -> dict[str, Any]:
     }
 
 
+async def _cleanup_stale_research_async() -> dict[str, Any]:
+    """删除无 TTL（persistent）的 Deep Research 快照/结果键（P3 兜底）。
+
+    仅处理 ```ttl == -1`` 的键——正常键要么带 TTL（发布时重设 / 写时带 ex），
+    要么正被任务持续写入并刷新 TTL，因此不会误删进行中的任务。当前具有 TTL
+    的键交由 Redis 自动过期，本任务只清扫部署前遗留或异常失去 TTL 的键。
+    """
+    from app.config import get_settings
+
+    settings = get_settings()
+    snapshots_cleaned = 0
+    results_cleaned = 0
+
+    try:
+        import redis
+        from app.services.research_progress import RESULT_PREFIX, SNAPSHOT_PREFIX
+
+        client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+        for pattern, counter in (
+            (f"{SNAPSHOT_PREFIX}:*", "snapshots"),
+            (f"{RESULT_PREFIX}:*", "results"),
+        ):
+            try:
+                for key in client.scan_iter(match=pattern, count=100):
+                    try:
+                        if client.ttl(key) == -1:
+                            client.delete(key)
+                            if counter == "snapshots":
+                                snapshots_cleaned += 1
+                            else:
+                                results_cleaned += 1
+                    except Exception as exc:
+                        logger.warning(
+                            "scheduled.cleanup_stale_research_key_failed",
+                            key=key,
+                            error=str(exc),
+                        )
+            except Exception as exc:
+                logger.warning(
+                    "scheduled.cleanup_stale_research_scan_failed",
+                    pattern=pattern,
+                    error=str(exc),
+                )
+        client.close()
+    except ImportError:
+        logger.debug("scheduled.cleanup_stale_research_skipped", reason="redis_not_installed")
+    except Exception as exc:
+        logger.warning("scheduled.cleanup_stale_research_failed", error=str(exc))
+
+    return {
+        "status": "success",
+        "snapshots_cleaned": snapshots_cleaned,
+        "results_cleaned": results_cleaned,
+        "cleaned_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 async def _patrol_external_docs_async(settings: Any) -> dict[str, Any]:
     """异步巡检过期外部文档 — 委托 ExternalSyncService.patrol。
 
@@ -567,3 +843,120 @@ async def _patrol_external_docs_async(settings: Any) -> dict[str, Any]:
         batch_size=settings.EXTERNAL_SYNC_PATROL_BATCH_SIZE,
         concurrency=settings.EXTERNAL_SYNC_PATROL_CONCURRENCY,
     )
+
+
+async def _rescan_stuck_documents_async(settings: Any) -> dict[str, Any]:
+    """异步补偿扫描卡死的文档解析任务 — 查库 + Redis 存活检查 + 重投。
+
+    Args:
+        settings: 已加载的 Settings 实例（避免重复 IO 读取配置）。
+    """
+    from datetime import timedelta
+
+    import redis as redis_sync
+    from sqlalchemy import or_, select
+
+    from app.database import task_db_session
+    from app.models.knowledge import Document
+    from tasks.document_tasks import _PROGRESS_KEY_PREFIX, process_document
+
+    now = datetime.now(timezone.utc)
+    stuck_before = now - timedelta(hours=settings.DOCUMENT_RESCAN_STUCK_HOURS)
+
+    dispatched = 0
+    skipped_alive = 0
+    dispatch_failed = 0
+
+    # Redis 短连接 — 检查解析进度 key 与任务幂等锁是否存活。
+    # Redis 不可用时本轮放弃重投：进度/锁状态未知，无法判定是否卡死
+    # （宁漏勿重，下一轮扫描会接力）。
+    client = None
+    try:
+        client = redis_sync.from_url(settings.REDIS_URL, decode_responses=True)
+    except Exception as exc:
+        logger.warning("scheduled.rescan_redis_connect_failed", error=str(exc)[:200])
+
+    candidates = 0
+    async with task_db_session() as session:
+        stmt = (
+            select(Document)
+            .where(
+                Document.deleted_at.is_(None),
+                # 处理从未完成：NULL（从未写入终态）或 pending
+                or_(
+                    Document.parse_status.is_(None),
+                    Document.parse_status == "pending",
+                ),
+                # 超过卡死阈值无任何 DB 写入
+                Document.updated_at < stuck_before,
+            )
+            # 最老的优先 — 积压最久的文档最先被补偿
+            .order_by(Document.updated_at.asc())
+            .limit(settings.DOCUMENT_RESCAN_BATCH_SIZE)
+        )
+        result = await session.execute(stmt)
+        docs = list(result.scalars().all())
+        candidates = len(docs)
+
+        for doc in docs:
+            doc_id = str(doc.id)
+
+            if client is None:
+                break
+
+            try:
+                progress_alive = bool(client.exists(f"{_PROGRESS_KEY_PREFIX}{doc_id}"))
+                lock_alive = bool(
+                    client.exists(
+                        f"{settings.TASK_LOCK_REDIS_PREFIX}process_document:{doc_id}"
+                    )
+                )
+            except Exception as exc:
+                # Redis 抖动 — 跳过该文档下轮再查（宁漏勿重）
+                logger.warning(
+                    "scheduled.rescan_check_failed",
+                    doc_id=doc_id,
+                    error=str(exc)[:200],
+                )
+                continue
+
+            # 进度或锁仍存活 = worker 还在处理，不是卡死
+            if progress_alive or lock_alive:
+                skipped_alive += 1
+                continue
+
+            try:
+                process_document.delay(
+                    doc_id,
+                    tenant_id=str(doc.tenant_id) if doc.tenant_id else None,
+                )
+                dispatched += 1
+                logger.info(
+                    "scheduled.rescan_redispatched",
+                    doc_id=doc_id,
+                    updated_at=(
+                        doc.updated_at.isoformat() if doc.updated_at else None
+                    ),
+                )
+            except Exception as exc:
+                dispatch_failed += 1
+                logger.warning(
+                    "scheduled.rescan_redispatch_failed",
+                    doc_id=doc_id,
+                    error=str(exc)[:200],
+                )
+
+    if client is not None:
+        try:
+            client.close()
+        except Exception:
+            pass
+
+    return {
+        "status": "success",
+        "candidates": candidates,
+        "skipped_alive": skipped_alive,
+        "dispatched": dispatched,
+        "dispatch_failed": dispatch_failed,
+        "scanned_at": now.isoformat(),
+    }

@@ -2058,21 +2058,17 @@ class KnowledgeCompoundingService:
 
         doc_id_str = str(doc.id)
 
-        # 触发索引重建（优雅降级 — Celery 不可用时仅日志，不影响沉淀）
-        try:
-            from tasks.document_tasks import process_document
+        # 触发索引重建（P2 轻量 Outbox：派发失败落 task_outbox 由定时任务补投，
+        # 不影响沉淀主流程）
+        from app.services.task_outbox import dispatch_with_outbox
+        from tasks.document_tasks import process_document
 
-            process_document.delay(doc_id_str)
+        dispatched = await dispatch_with_outbox(process_document, doc_id=doc_id_str)
+        if dispatched:
             log.info(
                 "compounding.faq_doc_index_triggered",
                 doc_id=doc_id_str,
                 kb_id=str(kb_id),
-            )
-        except Exception as exc:
-            log.warning(
-                "compounding.faq_doc_index_trigger_failed",
-                doc_id=doc_id_str,
-                error=str(exc)[:200],
             )
 
         return doc.id

@@ -210,23 +210,19 @@ class QaService:
         await self.question_repo.update(answer.question_id, status="answered")
 
         # P0: 采纳答案 → 知识库 FAQ 回流触发（无 LLM 快路径）
-        # Celery 不可用时优雅降级（仅日志，不阻断采纳操作）。
-        try:
-            from tasks.compounding_tasks import (
-                trigger_accepted_answer_compounding,
-            )
+        # 派发失败落 task_outbox 由定时任务补投，不阻断采纳操作。
+        from app.services.task_outbox import dispatch_with_outbox
+        from tasks.compounding_tasks import (
+            trigger_accepted_answer_compounding,
+        )
 
-            trigger_accepted_answer_compounding.delay(
-                str(answer_id),
-                str(self._tenant_id) if self._tenant_id else None,
-            )
+        dispatched = await dispatch_with_outbox(
+            trigger_accepted_answer_compounding,
+            answer_id=str(answer_id),
+            tenant_id=str(self._tenant_id) if self._tenant_id else None,
+        )
+        if dispatched:
             log.info("qa.compounding_triggered", answer_id=str(answer_id))
-        except Exception as exc:
-            log.warning(
-                "qa.compounding_trigger_failed",
-                answer_id=str(answer_id),
-                error=str(exc)[:200],
-            )
 
         return accepted
 

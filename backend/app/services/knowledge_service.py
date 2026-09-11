@@ -279,6 +279,10 @@ class KnowledgeService:
             update_fields["content_text"] = content_text
 
         if update_fields:
+            # P1 修复：内容变更即置 parse_status=pending（与内容更新同事务提交）。
+            # 无论后续 Celery 派发成功与否（含派发前进程崩溃），库里始终留有
+            # "欠一次解析"的持久标记，rescan_stuck_documents 每小时补偿重投。
+            update_fields["parse_status"] = "pending"
             updated = await self.doc_repo.update(doc_id, **update_fields)
             if updated is None:
                 raise ValueError(f"文档 {doc_id} 不存在")
@@ -381,28 +385,28 @@ class KnowledgeService:
     async def _trigger_reindex(self, doc_id: str, kb_id: str | None) -> None:
         """P0-2: 文档更新后触发重建索引 — 消除混合状态。
 
-        先删除旧向量数据（防止旧 chunk 残留），再异步触发 process_document
-        重新解析+分块+向量化+索引。process_document 内部有幂等锁（Redis SETNX），
+        P1 修复：旧向量删除已移入 process_document 任务内执行
+        （_build_vector_index 写入前清理旧向量）。这样派发失败时旧向量
+        保留，检索降级为旧内容而非消失；"欠一次解析"由调用方在内容更新
+        事务中写入的 parse_status=pending 标记 + rescan_stuck_documents
+        每小时补偿扫描兜底。
+
+        process_document 内部有幂等锁（Redis SETNX），
         同一文档同时只被一个 worker 处理，无需调用方去重。
 
-        优雅降级：Celery / 向量存储不可用时仅记录日志，不影响文档更新操作。
+        优雅降级：Celery 不可用时仅记录日志，不影响文档更新操作。
         """
         from app.utils.logger import get_logger
         logger = get_logger(__name__)
 
-        # ① 先删除旧向量 — 防止旧 chunk 残留导致混合状态
-        try:
-            from app.rag.vector_store import get_vector_store
-            store = get_vector_store()
-            await store.delete(doc_id)
-            logger.info("knowledge.reindex_old_vectors_deleted", doc_id=doc_id)
-        except Exception as exc:
-            logger.warning("knowledge.reindex_delete_failed", doc_id=doc_id, error=str(exc)[:200])
-
-        # ② 异步触发重建索引
+        # 异步触发重建索引（向量清理在任务内执行，此处不再预删）
         try:
             from tasks.document_tasks import process_document
             process_document.delay(doc_id)
             logger.info("knowledge.reindex_triggered", doc_id=doc_id, kb_id=kb_id)
         except Exception as exc:
-            logger.warning("knowledge.reindex_trigger_failed", doc_id=doc_id, error=str(exc)[:200])
+            logger.warning(
+                "knowledge.reindex_trigger_failed",
+                doc_id=doc_id,
+                error=str(exc)[:200],
+            )

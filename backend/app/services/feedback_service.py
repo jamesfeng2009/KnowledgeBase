@@ -100,26 +100,22 @@ class FeedbackService:
         )
 
         # P0: 好评反馈 → 知识库 FAQ 回流触发
-        # 仅 praise 且关联了 message 时触发；Celery 不可用时优雅降级（仅日志，不阻断反馈创建）。
+        # 仅 praise 且关联了 message 时触发；派发失败落 task_outbox 由定时任务补投。
         if feedback.type == "praise" and feedback.related_message_id is not None:
-            try:
-                from tasks.compounding_tasks import (
-                    trigger_chat_feedback_compounding,
-                )
+            from app.services.task_outbox import dispatch_with_outbox
+            from tasks.compounding_tasks import (
+                trigger_chat_feedback_compounding,
+            )
 
-                trigger_chat_feedback_compounding.delay(
-                    str(feedback.id),
-                    str(self._tenant_id) if self._tenant_id else None,
-                )
+            dispatched = await dispatch_with_outbox(
+                trigger_chat_feedback_compounding,
+                feedback_id=str(feedback.id),
+                tenant_id=str(self._tenant_id) if self._tenant_id else None,
+            )
+            if dispatched:
                 log.info(
                     "feedback.compounding_triggered",
                     feedback_id=str(feedback.id),
-                )
-            except Exception as exc:
-                log.warning(
-                    "feedback.compounding_trigger_failed",
-                    feedback_id=str(feedback.id),
-                    error=str(exc)[:200],
                 )
 
         return feedback
