@@ -51,6 +51,7 @@ opensearch-py>=2.8.0
 
 # === 消息队列 ===
 celery>=5.4.0
+amqp>=5.2.0          # RabbitMQ 传输（celery 默认依赖，显式声明保证安装）
 
 # === 工具 ===
 httpx>=0.28.0

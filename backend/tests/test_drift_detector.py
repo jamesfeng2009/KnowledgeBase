@@ -11,6 +11,7 @@ P4-A 漂移检测器单元测试。
 """
 
 import pytest
+from unittest.mock import patch
 
 from app.context.drift_detector import DriftDetector, DriftResult
 from app.context.focus_tracker import ConversationFocus
@@ -182,18 +183,27 @@ class TestDriftDetectorConfidence:
 
     @pytest.mark.asyncio
     async def test_confidence_decay_drift(self):
-        """连续 3 轮低置信度 → 漂移。"""
+        """连续 3 轮低置信度 → 漂移。
+
+        显式 patch get_embedder 使其不可用：环境存在真实 DASHSCOPE_API_KEY
+        时 get_embedder() 会构造真实 Embedder 并发起外部 API 调用（烧配额
+        且结果不确定），破坏"无 embedder → 置信度衰减"的测试前提。
+        """
         detector = DriftDetector(embedder=None)
         focus_low = ConversationFocus(
             topic="某话题", entity="某实体", confidence=0.2,
         )
         # 模拟 3 轮低置信度
         # 规则无法判断 + 无 embedder → 更新 confidence streak
-        for _ in range(3):
-            await detector.check("模糊问题", focus_low)
+        with patch(
+            "app.llm.embedder.get_embedder",
+            side_effect=RuntimeError("embedder unavailable"),
+        ):
+            for _ in range(3):
+                await detector.check("模糊问题", focus_low)
 
-        # 第 4 轮 → 置信度衰减触发
-        result = await detector.check("又一个模糊问题", focus_low)
+            # 第 4 轮 → 置信度衰减触发
+            result = await detector.check("又一个模糊问题", focus_low)
         assert result.is_drift is True
         assert result.detection_method == "confidence"
         assert result.action == "reset_focus"

@@ -11,6 +11,7 @@ P3-B 语义上下文选择器单元测试。
 """
 
 import pytest
+from unittest.mock import patch
 
 from app.context.context_selector import ContextSelector
 
@@ -84,12 +85,21 @@ class TestContextSelectorFallback:
 
     @pytest.mark.asyncio
     async def test_fallback_no_embedder(self):
-        """无 Embedder → 降级为固定窗口。"""
+        """无 Embedder → 降级为固定窗口。
+
+        显式 patch get_embedder 使其不可用 — 否则测试结果依赖环境是否
+        配置了 OPENAI_API_KEY（conftest 会注入 dummy key，真实 Embedder
+        可被构造，走向量路径而非降级路径）。
+        """
         selector = ContextSelector(embedder=None, always_keep_recent=2)
         history = [
             {"role": "user", "content": f"msg {i}"} for i in range(10)
         ]
-        result = await selector.select("query", history)
+        with patch(
+            "app.llm.embedder.get_embedder",
+            side_effect=RuntimeError("embedder unavailable"),
+        ):
+            result = await selector.select("query", history)
         # 降级：取最近 always_keep_recent * 2 = 4 条
         assert len(result) == 4
         assert result[-1]["content"] == "msg 9"

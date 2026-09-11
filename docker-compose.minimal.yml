@@ -1,0 +1,211 @@
+# === 企业知识库 · 最小化部署拓扑（P2）===
+# 适用场景：小规模私有部署（≤50 用户 / 单机 8GB+ 内存 / 无 GPU）
+# 使用方式：
+#   cp backend/.env.example backend/.env  # 按需修改后
+#   docker compose -f docker-compose.minimal.yml up -d
+#
+# 相对完整版（docker-compose.yml）的降级清单：
+#   | 组件                 | 降级方式                              | 影响                                |
+#   |----------------------|---------------------------------------|-------------------------------------|
+#   | Milvus (+etcd+minio) | 移除；向量检索走 OpenSearch k-NN      | 向量召回规模上限约百万级（够小规模用）|
+#   | Neo4j                | 移除；GRAPH_SEARCH_ENABLED=false      | 图谱召回第四路关闭                  |
+#   | EntityRegistry       | ENTITY_REGISTRY_ENABLED=false         | 同义词/实体扩展关闭（BM25 召回略降）|
+#   | 跨模态检索            | CROSS_MODAL_ENABLED=false（默认关）   | 文本→图片检索不可用                 |
+#   | 记忆 sidecar         | MEMORY_SIDECAR_ENABLED=false（默认关）| 轻量记忆抽取关闭（主记忆链路不受影响）|
+#
+# 安全不降级：租户隔离 / ABAC 密级下推 + Final Gate / 答案缓存权限视图 /
+# 数据库定时备份（pg-backup）全部保留。
+# 扩容路径：资源允许后可直接切回 docker-compose.yml（数据卷同名兼容，
+# 开启 Neo4j/Milvus 后重建对应索引即可恢复全部检索路）。
+
+services:
+  # === 基础设施层 ===
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ekb}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ekb}
+      POSTGRES_DB: ${POSTGRES_DB:-ekb}
+    ports: ["5432:5432"]
+    volumes: ["pg_data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ekb}"]
+      interval: 10s
+      retries: 5
+    mem_limit: 1g
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --appendfsync everysec
+    ports: ["6379:6379"]
+    volumes: ["redis_data:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      retries: 5
+    mem_limit: 256m
+
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-ekb}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-ekb123456}
+    ports: ["5672:5672"]
+    volumes: ["rabbitmq_data:/var/lib/rabbitmq"]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      retries: 5
+      start_period: 20s
+    mem_limit: 512m
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    ports: ["9000:9000", "9001:9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes: ["minio_data:/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "mc ready local"]
+      interval: 10s
+      retries: 5
+    mem_limit: 512m
+
+  # 全文 + 向量检索一体（BM25 + k-NN，替代 OpenSearch + Milvus 双栈）
+  opensearch:
+    image: opensearchproject/opensearch:2.18.0
+    environment:
+      - discovery.type=single-node
+      - DISABLE_SECURITY_PLUGIN=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports: ["9200:9200"]
+    volumes: ["os_data:/usr/share/opensearch/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 15s
+      retries: 5
+    mem_limit: 1g
+
+  # === 后端 API ===
+  core-engine:
+    build: ./backend
+    ports: ["8000:8000"]
+    env_file: ./backend/.env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-ekb}:${POSTGRES_PASSWORD:-ekb}@postgres:5432/${POSTGRES_DB:-ekb}
+      - REDIS_URL=redis://redis:6379/0
+      - BROKER_URL=amqp://${RABBITMQ_USER:-ekb}:${RABBITMQ_PASSWORD:-ekb123456}@rabbitmq:5672//
+      - MINIO_ENDPOINT=minio:9000
+      - OPENSEARCH_URL=http://opensearch:9200
+      # --- P2 最小部署降级开关 ---
+      - VECTOR_STORE=os_knn                # 向量检索走 OpenSearch k-NN（不部署 Milvus）
+      - GRAPH_SEARCH_ENABLED=false         # 不部署 Neo4j，图谱召回关闭
+      - ENTITY_REGISTRY_ENABLED=false      # 实体/同义词扩展关闭
+      - CROSS_MODAL_ENABLED=false          # 跨模态检索关闭
+      - MEMORY_SIDECAR_ENABLED=false       # 记忆 sidecar 关闭
+      - AUTO_MIGRATE=true
+      - AUTO_CREATE_TABLES=false
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+      minio: { condition: service_healthy }
+      opensearch: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health/db || exit 1"]
+      interval: 10s
+      retries: 10
+      start_period: 30s
+    stop_grace_period: 30s
+
+  # === 前端 ===
+  frontend:
+    build: ./frontend
+    ports: ["3000:80"]
+    depends_on:
+      core-engine: { condition: service_healthy }
+
+  # === Yjs 协作服务（轻量 Node 进程，保留协同编辑能力）===
+  yjs-server:
+    build: ./collab-service
+    ports: ["8001:8001"]
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-ekb}:${POSTGRES_PASSWORD:-ekb}@postgres:5432/${POSTGRES_DB:-ekb}
+      - PORT=8001
+    depends_on:
+      postgres: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8001/health || exit 1"]
+      interval: 10s
+      retries: 5
+    mem_limit: 256m
+
+  # === Celery 异步任务（小规模降并发：4 → 2）===
+  celery-worker:
+    build: ./backend
+    command: celery -A celery_app worker --loglevel=info --concurrency=2 -Q celery,documents,indexing,scheduled,notifications,multimodal,dead_letter
+    env_file: ./backend/.env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-ekb}:${POSTGRES_PASSWORD:-ekb}@postgres:5432/${POSTGRES_DB:-ekb}
+      - REDIS_URL=redis://redis:6379/0
+      - BROKER_URL=amqp://${RABBITMQ_USER:-ekb}:${RABBITMQ_PASSWORD:-ekb123456}@rabbitmq:5672//
+      - MINIO_ENDPOINT=minio:9000
+      - OPENSEARCH_URL=http://opensearch:9200
+      # 与 core-engine 同一套降级开关（任务侧索引/建图行为保持一致）
+      - VECTOR_STORE=os_knn
+      - GRAPH_SEARCH_ENABLED=false
+      - ENTITY_REGISTRY_ENABLED=false
+      - CROSS_MODAL_ENABLED=false
+      - MEMORY_SIDECAR_ENABLED=false
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+      core-engine: { condition: service_healthy }
+    stop_grace_period: 60s
+
+  # === Celery Beat 定时任务（单实例）===
+  celery-beat:
+    build: ./backend
+    command: celery -A celery_app beat --loglevel=info
+    environment:
+      - CELERY_BEAT_SINGLE_INSTANCE=1
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-ekb}:${POSTGRES_PASSWORD:-ekb}@postgres:5432/${POSTGRES_DB:-ekb}
+      - REDIS_URL=redis://redis:6379/0
+      - BROKER_URL=amqp://${RABBITMQ_USER:-ekb}:${RABBITMQ_PASSWORD:-ekb123456}@rabbitmq:5672//
+    depends_on:
+      redis: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+
+  # === 定时 PostgreSQL 备份（硬约束：不允许无备份的部署）===
+  pg-backup:
+    image: postgres:16-alpine
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGUSER: ${POSTGRES_USER:-ekb}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-ekb}
+      PGDATABASE: ${POSTGRES_DB:-ekb}
+      BACKUP_DIR: /backups
+      RETENTION_DAYS: 14
+      BACKUP_CRON: "0 3 * * *"
+      RESTORE_CRON: "0 5 * * 0"
+    volumes:
+      - ./infra/backup/backup.sh:/scripts/backup.sh:ro
+      - ./infra/backup/restore_drill.sh:/scripts/restore_drill.sh:ro
+      - ./infra/backup/entrypoint.sh:/scripts/entrypoint.sh:ro
+      - pg_backup:/backups
+    entrypoint: ["/bin/sh", "/scripts/entrypoint.sh"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    mem_limit: 256m
+
+volumes:
+  pg_data:
+  pg_backup:
+  redis_data:
+  rabbitmq_data:
+  minio_data:
+  os_data:

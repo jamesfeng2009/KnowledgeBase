@@ -15,6 +15,23 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from app.services.cross_modal_service import CrossModalService
 
 
+@pytest.fixture(autouse=True)
+def _isolate_multimodal_embedder_cache():
+    """隔离全局 get_multimodal_embedder lru_cache — 防止单例跨测试泄漏。
+
+    TestGetMultimodalEmbedder 会在 patched settings 下构造真实
+    JinaCLIPEmbedder 并被 lru_cache 缓存；若不清缓存，后续测试文件中的
+    HybridRetriever._cross_modal_search 会拿到该实例（其 httpx 客户端
+    绑定已关闭的事件循环），导致真实外呼 / 永久阻塞。
+    每个测试前后各清一次，保证缓存不跨测试存活。
+    """
+    from app.llm.multimodal_embedder import get_multimodal_embedder
+
+    get_multimodal_embedder.cache_clear()
+    yield
+    get_multimodal_embedder.cache_clear()
+
+
 # ------------------------------------------------------------------
 # JinaCLIPEmbedder 测试
 # ------------------------------------------------------------------

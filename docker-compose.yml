@@ -29,6 +29,22 @@ services:
       interval: 10s
       retries: 5
 
+  # === RabbitMQ — Celery broker（消息可靠性标配）===
+  # 队列/消息磁盘级持久化 + publisher confirm，可靠性高于 Redis AOF
+  # （everysec 有 1s 丢失窗口）。管理界面：http://localhost:15672
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-ekb}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-ekb123456}
+    ports: ["5672:5672", "15672:15672"]
+    volumes: ["rabbitmq_data:/var/lib/rabbitmq"]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      retries: 5
+      start_period: 20s
+
   minio:
     image: minio/minio:latest
     command: server /data --console-address ":9001"
@@ -50,6 +66,7 @@ services:
     environment:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-ekb}:${POSTGRES_PASSWORD:-ekb}@postgres:5432/${POSTGRES_DB:-ekb}
       - REDIS_URL=redis://redis:6379/0
+      - BROKER_URL=amqp://${RABBITMQ_USER:-ekb}:${RABBITMQ_PASSWORD:-ekb123456}@rabbitmq:5672//
       - MINIO_ENDPOINT=minio:9000
       - MILVUS_HOST=milvus
       - MILVUS_PORT=19530
@@ -62,6 +79,7 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
       minio: { condition: service_healthy }
     healthcheck:
       # 触 DB 的健康检查 — 确保表已创建且连接正常
@@ -103,6 +121,7 @@ services:
     environment:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-ekb}:${POSTGRES_PASSWORD:-ekb}@postgres:5432/${POSTGRES_DB:-ekb}
       - REDIS_URL=redis://redis:6379/0
+      - BROKER_URL=amqp://${RABBITMQ_USER:-ekb}:${RABBITMQ_PASSWORD:-ekb123456}@rabbitmq:5672//
       - MINIO_ENDPOINT=minio:9000
       - MILVUS_HOST=milvus
       - MILVUS_PORT=19530
@@ -113,6 +132,7 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
       core-engine: { condition: service_healthy }
     # 优雅关闭 — 给 Celery worker_shutdown 信号 60 秒清理资源
     stop_grace_period: 60s
@@ -128,8 +148,10 @@ services:
       - CELERY_BEAT_SINGLE_INSTANCE=1
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-ekb}:${POSTGRES_PASSWORD:-ekb}@postgres:5432/${POSTGRES_DB:-ekb}
       - REDIS_URL=redis://redis:6379/0
+      - BROKER_URL=amqp://${RABBITMQ_USER:-ekb}:${RABBITMQ_PASSWORD:-ekb123456}@rabbitmq:5672//
     depends_on:
       redis: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
 
   # === 定时 PostgreSQL 备份（数据库备份 — 硬约束）===
   # 使用 postgres 官方镜像（自带 pg_dump/pg_restore），cron 每日备份 +
@@ -303,6 +325,7 @@ volumes:
   pg_data:
   pg_backup:
   redis_data:
+  rabbitmq_data:
   minio_data:
   os_data:
   etcd_data:

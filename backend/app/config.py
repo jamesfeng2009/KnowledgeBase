@@ -48,6 +48,17 @@ class Settings(BaseSettings):
     # === Redis ===
     REDIS_URL: str = "redis://localhost:6379/0"
 
+    # === 消息队列（RabbitMQ broker）===
+    # Celery broker 走 RabbitMQ — 队列/消息磁盘级持久化 + publisher confirm，
+    # 可靠性高于 Redis AOF（everysec 有 1s 丢失窗口）。
+    # 消息链路（broker + result backend）全部走 RabbitMQ，Redis 仅作缓存/锁/状态：
+    #   限流令牌桶、Beat 单实例锁、任务幂等锁、SSE 快照、Webhook 去重、L2 语义缓存等。
+    BROKER_URL: str = "amqp://guest:guest@localhost:5672//"
+    # Celery result backend — RabbitMQ rpc://（消息链路彻底去 Redis）。
+    # rpc 结果为按任务一次性消费、不持久化；当前无跨请求轮询结果后端的依赖
+    # （Deep Research 已改查 Redis 快照），配合 task_ignore_result 避免结果堆积。
+    CELERY_RESULT_BACKEND: str = "rpc://"
+
     # === Milvus ===
     MILVUS_HOST: str = "localhost"
     MILVUS_PORT: int = 19530
@@ -73,6 +84,15 @@ class Settings(BaseSettings):
     # os_knn: OpenSearch k-NN（默认，< 500 万向量场景）
     # milvus: Milvus 向量引擎（可选，> 500 万向量场景）
     VECTOR_STORE: Literal["os_knn", "milvus"] = "os_knn"
+
+    # P0 密级下推 strict 开关 — 回填完成前保持 False（容忍模式）：
+    #   False: OpenSearch 用 should[terms, must_not exists] 子句，存量索引
+    #          中无 classification 字段的旧文档放行到 Final Gate（DB 权威
+    #          复检兜底，安全性不变）；Milvus 路不下推密级（Final Gate 兜底）。
+    #   True:  纯 terms / in [...] 过滤 — 必须在 scripts/
+    #          backfill_index_classification.py 回填完成后开启，否则旧文档
+    #          会因字段缺失被召回层静默排除。
+    CLASSIFICATION_PUSHDOWN_STRICT: bool = False
 
     # === MinIO ===
     MINIO_ENDPOINT: str = "localhost:9000"
@@ -220,6 +240,20 @@ class Settings(BaseSettings):
     MINERU_LANG: str = "ch"
     # 单文件解析超时（秒）
     MINERU_TIMEOUT: int = 600
+    # === DOC_PARSER_ROUTE 解析路由决策门控（P1.5）===
+    # 由解析消融（evals/parse_ablation.py）的真实指标决定，把"Docling 够不够"落到配置。
+    #   - "docling_default_conditional_mineru"（默认）：Docling 主引擎；仅图片与纯扫描
+    #     PDF（无文本层）在命中 MinerU 时升级，Office/数字 PDF 走 Docling。
+    #   - "mineru_by_doc_complexity"：按复杂度评分升级——compute_complexity() 得分达到
+    #     DOC_PARSER_COMPLEXITY_THRESHOLD 的文档（扫描/图片密集/公式表格重）也路由到
+    #     MinerU，供客户语料中扫描件占比高时切换。
+    DOC_PARSER_ROUTE: Literal[
+        "docling_default_conditional_mineru", "mineru_by_doc_complexity"
+    ] = "docling_default_conditional_mineru"
+    # 复杂度升级阈值（0~1）：仅 mineru_by_doc_complexity 模式生效。
+    # 用评测集 + 真实消融数字标定：足量客户文档下 MinerU 相对 Docling 指标增益
+    # 转正（表格/公式/OCR）所对应的复杂度分位数，即此阈值。
+    DOC_PARSER_COMPLEXITY_THRESHOLD: float = 0.6
 
     # === Find Skills 渐进式技能加载 ===
     # 启用后 Agent Loop 先匹配相关技能再按需加载完整 schema，
@@ -675,6 +709,13 @@ class Settings(BaseSettings):
     EXTERNAL_SYNC_PATROL_BATCH_SIZE: int = 50           # 单批巡检文档数上限
     EXTERNAL_SYNC_PATROL_CONCURRENCY: int = 2            # 并发上限（防 IP 封禁）
 
+    # === 文档解析补偿扫描（P1 兜底 — 堵 Redis AOF 1s 丢失窗口 / worker 异常退出）===
+    # 扫描卡死在"解析中"的文档并重投 process_document。
+    # 重投安全：process_document 自带 Redis SETNX 幂等锁（P1-B），重复投递会被锁挡下。
+    DOCUMENT_RESCAN_ENABLED: bool = True            # 补偿扫描总开关
+    DOCUMENT_RESCAN_STUCK_HOURS: int = 2            # 卡死判定阈值（h）
+    DOCUMENT_RESCAN_BATCH_SIZE: int = 50            # 单轮最大重投文档数（防刷爆解析队列）
+
     # ================================================================
     # Pydantic V2 校验器 — 结构性校验硬失败，运营性校验发 warning
     # ================================================================
@@ -715,6 +756,8 @@ class Settings(BaseSettings):
         "CIRCUIT_BREAKER_HALF_OPEN_MAX_CALLS",
         "CIRCUIT_BREAKER_FAILURE_WINDOW",
         "TASK_LOCK_TTL",
+        "DOCUMENT_RESCAN_STUCK_HOURS",
+        "DOCUMENT_RESCAN_BATCH_SIZE",
         "GRAPH_SEARCH_MAX_DEPTH",
         "GRAPH_SEARCH_MAX_RESULTS",
         "CONTEXT_FOCUS_HISTORY_WINDOW",
