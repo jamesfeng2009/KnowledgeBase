@@ -76,6 +76,10 @@ function isRetryableError(error: unknown): boolean {
     return true;
   }
   if (error instanceof Error) {
+    // ApiError 包装的网络层失败（api.ts 约定 status=0 = 网络异常/超时）
+    if ((error as { status?: unknown }).status === 0) {
+      return true;
+    }
     const msg = error.message.toLowerCase();
     // 超时、连接重置等
     if (msg.includes('timeout') || msg.includes('network') || msg.includes('fetch')) {

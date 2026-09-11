@@ -158,6 +158,7 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '知识缺
 
 <script>
   import { getData, putData, postData } from '@/lib/api';
+  import { submitResearch } from '@/lib/apis/research';
 
   const BASE = '/api/v1';
 
@@ -294,6 +295,7 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '知识缺
           <div class="gap-item-suggestion">${escapeHtml(g.suggestion || '暂无建议')}</div>
         </div>
         <div class="gap-item-actions">
+          ${g.status === 'open' ? `<button class="btn btn-primary btn-sm" data-action="research" data-id="${escapeHtml(g.id)}">发起 AI 调研</button>` : ''}
           ${g.status !== 'ignored' ? `<button class="btn btn-ghost btn-sm" data-action="ignore" data-id="${escapeHtml(g.id)}">忽略</button>` : ''}
           ${g.status !== 'filled' ? `<button class="btn btn-outline btn-sm" data-action="fill" data-id="${escapeHtml(g.id)}">标记已填补</button>` : ''}
         </div>
@@ -307,6 +309,10 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '知识缺
         const id = (btn as HTMLElement).dataset.id!;
         if (action === 'ignore') await updateGapStatus(id, 'ignored');
         else if (action === 'fill') await updateGapStatus(id, 'filled');
+        else if (action === 'research') {
+          const gap = allGaps.find((g) => g.id === id);
+          if (gap) await startGapResearch(gap, btn as HTMLButtonElement);
+        }
       });
     });
   }
@@ -321,6 +327,37 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '知识缺
       const msg = err instanceof Error ? err.message : '未知错误';
       alert('更新失败：' + msg);
     }
+  }
+
+  // ===== 发起 AI 深度调研（幂等提交） =====
+  // 幂等键由 submitResearch 在本次提交发起时生成一次；
+  // 网络超时自动重试与用户手动重试都沿用同一键 — 服务端保证
+  // 同键同输入只建一条任务，重试返回原 task_id，不会重复排两次处理。
+  async function startGapResearch(gap: Gap, btn: HTMLButtonElement) {
+    const goal = `调研知识缺口「${gap.title}」：${gap.description || gap.suggestion || '请调研该主题并产出填补方案'}`;
+    btn.disabled = true;
+    btn.textContent = '提交中...';
+
+    submitResearch(
+      goal,
+      null,
+      (result) => {
+        btn.textContent = '调研中';
+        alert(
+          result.reused
+            ? `该调研已在进行中（重复提交已合并，未重复创建任务）\ntask_id: ${result.task_id}`
+            : `调研任务已提交，完成后可在通知中查看报告\ntask_id: ${result.task_id}`,
+        );
+      },
+      (message, retry) => {
+        // 恢复按钮；重试沿用同一幂等键（attempt 闭包固化），不会换键
+        btn.disabled = false;
+        btn.textContent = '发起 AI 调研';
+        if (confirm(`调研提交失败：${message}\n\n是否用同一幂等键重试？（不会重复创建任务）`)) {
+          retry();
+        }
+      },
+    );
   }
 
   // ===== 刷新分析：调用 POST /api/v1/manage/knowledge-gaps/refresh 触发重新分析 =====
