@@ -14,7 +14,10 @@
 - generate_quality_report：每周生成质量报告
 - cleanup_orphan_multipart_uploads：每日清理 24h 未 complete 的孤儿分片
 - rescan_stuck_documents：每小时补偿扫描卡死的文档解析任务并重投
+- rescan_stuck_research_jobs：每小时补偿扫描卡死的 Deep Research 任务
+  （Redis 终态回填或标 failed 释放幂等键，P0-2）
 - flush_task_outbox：每 5 分钟补投 task_outbox 欠投递记录（P2 轻量 Outbox）
+- promote_knowledge_candidates：每 30 分钟晋升/过期沉淀候选池（P3）
 """
 
 from __future__ import annotations
@@ -959,4 +962,237 @@ async def _rescan_stuck_documents_async(settings: Any) -> dict[str, Any]:
         "dispatched": dispatched,
         "dispatch_failed": dispatch_failed,
         "scanned_at": now.isoformat(),
+    }
+
+
+# ======================================================================
+# Deep Research 卡死任务补偿扫描（P0-2 兜底安全网）
+# ======================================================================
+
+# 卡死阈值（小时）— task_time_limit=1800s（30min 硬超时）× 最多 3 次尝试
+# （首次 + 2 retry）+ retry 间隔 60s×2 ≈ 92min；2h 留足余量，零误杀。
+_RESEARCH_STUCK_HOURS: int = 2
+# 单轮扫描批量上限 — 正常存量应为零，防极端积压拖垮扫描
+_RESEARCH_STUCK_BATCH: int = 50
+
+
+@celery_app.task(name="tasks.scheduled_tasks.rescan_stuck_research_jobs")
+def rescan_stuck_research_jobs() -> dict[str, Any]:
+    """每小时补偿扫描卡死的 Deep Research 任务 — P0-2 兜底安全网。
+
+    背景：RabbitMQ acks_late + reject_on_worker_lost 已兜住"worker 被杀
+    消息重投"；本任务只兜真正的残余路径：队列被误 purge、运维丢消息、
+    worker 收尾 mark_research_job_status 静默失败（它失败仅告警不重试）。
+    此时 research_jobs 永远停留 queued（执行中也仍为 queued），而部分唯一
+    索引不排除 queued — 幂等键被占死，用户原键重试只会拿回永远不会跑的
+    任务（reused=True），无超时、无接管。
+
+    卡死判定：status='queued' 且 updated_at 超过阈值无任何 DB 写。
+    任何收尾写（mark_research_job_status）都显式刷新 updated_at，
+    正在执行/重试的任务不可能被扫中。
+
+    处理顺序（Redis 终态优先回填，能救回真实结果就不标失败）：
+        Redis 有终态 → 回填 DB（救 mark 静默失败 / output_json 前存量行）；
+        Redis 无终态 → 标 failed 释放幂等键（用户可原键重试）。
+    不做自动重派发 — 同一 job.id 双消息并发会重复执行（双份 LLM 成本 +
+    双份事件流污染），原键重试新建任务是更安全的恢复路径。
+
+    Returns:
+        扫描摘要：candidates / backfilled / marked_failed。
+    """
+    logger.info("scheduled.rescan_research_started")
+    try:
+        result = asyncio.run(_rescan_stuck_research_async())
+        logger.info(
+            "scheduled.rescan_research_completed",
+            candidates=result.get("candidates", 0),
+            backfilled=result.get("backfilled", 0),
+            marked_failed=result.get("marked_failed", 0),
+        )
+        return result
+    except Exception as exc:
+        # 必须重抛：返回 failed dict 会让 Celery 判定任务成功，告警失效
+        logger.error("scheduled.rescan_research_failed", error=str(exc)[:200])
+        raise
+
+
+async def _rescan_stuck_research_async() -> dict[str, Any]:
+    from datetime import timedelta
+
+    from sqlalchemy import select
+
+    from app.database import task_db_session
+    from app.models.research import ResearchJob
+    from app.services.research_job_service import (
+        backfill_result_from_redis,
+        mark_research_job_status,
+    )
+    from app.services.research_progress import load_result
+
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=_RESEARCH_STUCK_HOURS)
+    candidates = backfilled = marked_failed = 0
+
+    async with task_db_session() as session:
+        stmt = (
+            select(ResearchJob)
+            .where(
+                ResearchJob.status == "queued",
+                ResearchJob.updated_at < cutoff,
+            )
+            .order_by(ResearchJob.updated_at.asc())
+            .limit(_RESEARCH_STUCK_BATCH)
+        )
+        jobs = list((await session.execute(stmt)).scalars().all())
+    candidates = len(jobs)
+
+    for job in jobs:
+        try:
+            data = await load_result(str(job.id))
+        except Exception as exc:
+            logger.warning(
+                "scheduled.rescan_research_redis_read_failed",
+                job_id=str(job.id),
+                error=str(exc)[:200],
+            )
+            data = None
+        if data and data.get("status") in ("success", "failed"):
+            # only_when_queued 守卫：SELECT 与回填之间 worker 若并发收尾，
+            # 守卫使回填落空，不覆盖真实终态
+            if await backfill_result_from_redis(str(job.id), data):
+                backfilled += 1
+                logger.info(
+                    "scheduled.rescan_research_backfilled", job_id=str(job.id)
+                )
+        else:
+            await mark_research_job_status(
+                str(job.id),
+                "failed",
+                last_error="任务长时间无进展已自动终止，请重新提交",
+                only_when_queued=True,
+            )
+            marked_failed += 1
+            logger.info(
+                "scheduled.rescan_research_marked_failed", job_id=str(job.id)
+            )
+
+    return {
+        "status": "success",
+        "candidates": candidates,
+        "backfilled": backfilled,
+        "marked_failed": marked_failed,
+    }
+
+
+# ======================================================================
+# P3: 沉淀候选池晋升/过期（beat 每 30 分钟）
+# ======================================================================
+
+
+@celery_app.task(name="tasks.scheduled_tasks.promote_knowledge_candidates")
+def promote_knowledge_candidates() -> dict[str, Any]:
+    """每 30 分钟扫描沉淀候选池 — TTL 过期 + 达标簇晋升。
+
+    晋升条件（P3 判据）：support_count ≥ CHAT_FAQ_PROMOTE_MIN_SUPPORT
+    且 distinct_users ≥ CHAT_FAQ_PROMOTE_MIN_USERS，晋升时对每簇做一次
+    权威查重（嵌入 vs FAQ KB 已发布文档标题），通过后才提取/沉淀/审批。
+    池开关关闭或 FAQ_KB_ID 未配置时直接跳过（回退 P2a 闸门直沉行为）。
+
+    Returns:
+        摘要：expired / candidates / promoted / dedup_blocked / skipped / failed。
+    """
+    from app.config import get_settings
+
+    settings = get_settings()
+    if (
+        not settings.CHAT_FAQ_COMPOUNDING_ENABLED
+        or not settings.CHAT_FAQ_CANDIDATE_POOL_ENABLED
+    ):
+        logger.info("scheduled.candidates_promote_disabled_by_config")
+        return {"status": "skipped", "reason": "candidate_pool_disabled"}
+    if not settings.FAQ_KB_ID:
+        logger.warning("scheduled.candidates_promote_no_faq_kb_id")
+        return {"status": "skipped", "reason": "faq_kb_id_not_configured"}
+
+    logger.info(
+        "scheduled.candidates_promote_started",
+        batch_size=settings.CHAT_FAQ_PROMOTE_BATCH_SIZE,
+        ttl_days=settings.CHAT_FAQ_CANDIDATE_TTL_DAYS,
+    )
+    try:
+        result = asyncio.run(_promote_knowledge_candidates_async(settings))
+        logger.info("scheduled.candidates_promote_completed", **result)
+        return result
+    except Exception as exc:
+        logger.error("scheduled.candidates_promote_failed", error=str(exc)[:200])
+        raise
+
+
+async def _promote_knowledge_candidates_async(settings: Any) -> dict[str, Any]:
+    """异步晋升/过期候选 — 每簇独立事务，单簇失败不影响其余。"""
+    import uuid as _uuid
+
+    from app.database import task_db_session
+    from app.llm.factory import get_llm_provider
+    from app.services.knowledge_compounding import KnowledgeCompoundingService
+    from app.services.knowledge_compounding.knowledge_candidates import (
+        KnowledgeCandidatePool,
+    )
+
+    kb_uuid = _uuid.UUID(settings.FAQ_KB_ID)
+    expired = promoted = dedup_blocked = skipped = failed = 0
+
+    async with task_db_session() as db:
+        # LLM 不可用降级（_llm_extract_faq 有 None 降级路径）
+        try:
+            llm = get_llm_provider()
+        except Exception as exc:
+            logger.warning("scheduled.candidates_llm_unavailable", error=str(exc)[:200])
+            llm = None
+
+        # 1. TTL 过期（独立事务，先于晋升，防止过期簇被晋升）
+        pool = KnowledgeCandidatePool(db)
+        try:
+            expired = await pool.expire_stale()
+            await db.commit()
+        except Exception as exc:
+            await db.rollback()
+            logger.warning(
+                "scheduled.candidates_expire_failed", error=str(exc)[:200]
+            )
+
+        # 2. 达标簇逐个晋升（每簇独立事务）
+        eligible = await pool.list_eligible(limit=settings.CHAT_FAQ_PROMOTE_BATCH_SIZE)
+        for row in eligible:
+            svc = KnowledgeCompoundingService(
+                llm, db, tenant_id=row.tenant_id
+            )
+            cand_pool = KnowledgeCandidatePool(
+                db, tenant_id=row.tenant_id, compounding=svc
+            )
+            try:
+                out = await cand_pool.promote_candidate(row, target_kb_id=kb_uuid)
+                await db.commit()
+                if out.get("status") == "promoted":
+                    promoted += 1
+                elif out.get("status") == "dismissed":
+                    dedup_blocked += 1
+                else:
+                    skipped += 1
+            except Exception as exc:
+                await db.rollback()
+                failed += 1
+                logger.warning(
+                    "scheduled.candidates_promote_one_failed",
+                    candidate_id=str(row.id),
+                    error=str(exc)[:200],
+                )
+
+    return {
+        "status": "success",
+        "expired": expired,
+        "candidates": len(eligible),
+        "promoted": promoted,
+        "dedup_blocked": dedup_blocked,
+        "skipped": skipped,
+        "failed": failed,
     }

@@ -95,6 +95,11 @@ class KnowledgeApproval(UUIDMixin, TimestampMixin, Base):
     auto_detected_risks: Mapped[list | None] = mapped_column(
         JSONB, nullable=True, comment="自动检测风险详情列表"
     )
+    # P2a 支持度证据（distillation_gate 统计：support_count/praise_count/
+    # accept_count/distinct_users/window_days）。闸门关闭时为 NULL（旧行为）。
+    support_evidence: Mapped[dict | None] = mapped_column(
+        JSONB, nullable=True, comment="支持度证据摘要（多源好评/采纳信号统计）"
+    )
     # === 审批元数据 ===
     # 过期时间（pending 状态超时自动 expired）
     expire_at: Mapped[datetime | None] = mapped_column(

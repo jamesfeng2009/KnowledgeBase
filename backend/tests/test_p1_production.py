@@ -28,6 +28,7 @@ from app.core.tenant_resolver import (
 from app.core import secrets as secrets_module
 from app.middleware import (
     RateLimiter,
+    RedisRateLimiter,
     _build_limiter,
     get_tenant_rate_limiter,
 )
@@ -57,12 +58,15 @@ class TestTenantRateLimit:
         assert limiter.allow(f"tenant:{tid_b}") is True
 
     def test_tenant_limiter_configured_in_middleware(self):
-        """setup_middleware 会初始化租户限流器。"""
+        """setup_middleware 会初始化租户限流器。
+
+        实现按 REDIS_URL 选择：有 Redis → RedisRateLimiter（分布式
+        令牌桶，P0 安全要求），否则回退内存 RateLimiter。
+        """
         from app.middleware import _tenant_rate_limiter
 
-        # 默认 RATE_LIMIT_TENANT_ENABLED=True，配置后实例应为 RateLimiter（无 Redis）
         assert _tenant_rate_limiter is None or isinstance(
-            _tenant_rate_limiter, RateLimiter
+            _tenant_rate_limiter, (RateLimiter, RedisRateLimiter)
         )
 
 
@@ -209,15 +213,20 @@ class TestMetrics:
 
 class TestSecretsManager:
     def test_apply_secrets_idempotent(self, monkeypatch, tmp_path):
-        """apply_secrets 幂等 — 多次调用只注入一次。"""
+        """apply_secrets 幂等 — 多次调用只注入一次。
+
+        环境变量一律经 monkeypatch 读写（teardown 自动还原）——直接改写
+        os.environ 会把 ``DATABASE_URL=postgresql+asyncpg://secret`` 泄漏到
+        后续测试，导致其余 DB 夹具全部 DNS 解析失败（socket.gaierror）。
+        """
         monkeypatch.setattr(secrets_module, "_secrets_applied", False)
-        os.environ["SECRETS_PROVIDER"] = "file"
-        os.environ["SECRETS_FILE_DIR"] = str(tmp_path)
+        monkeypatch.setenv("SECRETS_PROVIDER", "file")
+        monkeypatch.setenv("SECRETS_FILE_DIR", str(tmp_path))
         secret_file = tmp_path / "DATABASE_URL"
         secret_file.write_text("postgresql+asyncpg://secret")
 
-        # 清理可能存在的同名环境变量
-        os.environ.pop("DATABASE_URL", None)
+        # 清理可能存在的同名环境变量（teardown 时还原为原值）
+        monkeypatch.delenv("DATABASE_URL", raising=False)
 
         secrets_module.apply_secrets()
         assert os.environ["DATABASE_URL"] == "postgresql+asyncpg://secret"
@@ -231,9 +240,9 @@ class TestSecretsManager:
     def test_env_var_overrides_secret_file(self, monkeypatch, tmp_path):
         """显式环境变量优先于机密文件。"""
         monkeypatch.setattr(secrets_module, "_secrets_applied", False)
-        os.environ["SECRETS_PROVIDER"] = "file"
-        os.environ["SECRETS_FILE_DIR"] = str(tmp_path)
-        os.environ["DATABASE_URL"] = "postgresql+asyncpg://from_env"
+        monkeypatch.setenv("SECRETS_PROVIDER", "file")
+        monkeypatch.setenv("SECRETS_FILE_DIR", str(tmp_path))
+        monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://from_env")
         (tmp_path / "DATABASE_URL").write_text("postgresql+asyncpg://from_file")
 
         secrets_module.apply_secrets()
@@ -244,8 +253,8 @@ class TestSecretsManager:
     def test_file_secrets_missing_dir_is_noop(self, monkeypatch):
         """机密目录不存在时静默跳过。"""
         monkeypatch.setattr(secrets_module, "_secrets_applied", False)
-        os.environ["SECRETS_PROVIDER"] = "file"
-        os.environ["SECRETS_FILE_DIR"] = "/nonexistent/secret/dir"
+        monkeypatch.setenv("SECRETS_PROVIDER", "file")
+        monkeypatch.setenv("SECRETS_FILE_DIR", "/nonexistent/secret/dir")
         secrets_module.apply_secrets()  # 不应抛异常
 
         monkeypatch.setattr(secrets_module, "_secrets_applied", False)

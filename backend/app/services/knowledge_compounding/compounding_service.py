@@ -33,6 +33,7 @@ from uuid import UUID
 from sqlalchemy import select, update, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.llm.base import LLMProvider, Message
 from app.models.knowledge_compounding import (
     CompoundingTask,
@@ -40,6 +41,7 @@ from app.models.knowledge_compounding import (
     KnowledgeConflict,
 )
 from app.models.testing import TestCase, TestExecution, TestRequirement
+from app.services.knowledge_compounding.distillation_gate import DistillationGate
 from app.utils.logger import get_logger
 from app.utils.tenant import apply_tenant_filter
 
@@ -1476,6 +1478,20 @@ class KnowledgeCompoundingService:
                 "reason": "feedback_not_praise_or_no_message",
             }
 
+        # P3: 候选池模式 — 信号入池归簇，晋升时统一提取（不即时消耗 LLM）；
+        # 关闭时回退 P2a 闸门直沉行为（下方原路径）。
+        if get_settings().CHAT_FAQ_CANDIDATE_POOL_ENABLED:
+            return await self._enqueue_signal_to_pool(
+                source_type="chat_feedback",
+                source_id=feedback_id,
+                user_id=context["user_id"],
+                question_hint=context["user_query"],
+                message_id=context.get("related_message_id"),
+                answer_draft=None,
+                id_key="feedback_id",
+                id_value=feedback_id,
+            )
+
         # 创建回流任务
         task = CompoundingTask(
             task_type="extraction",
@@ -1487,6 +1503,34 @@ class KnowledgeCompoundingService:
         await self.db.flush()
 
         try:
+            # P2a: 沉淀前置闸门（提取前廉价查重 + 支持度统计）
+            gate_support: dict[str, Any] | None = None
+            if get_settings().CHAT_FAQ_GATE_ENABLED:
+                gate = DistillationGate(self.db, tenant_id=self._tenant_id)
+                verdict = await gate.check_before_extract(
+                    question_hint=context["user_query"],
+                    source_type="chat_feedback",
+                    source_id=feedback_id,
+                    user_id=context["user_id"],
+                )
+                gate_support = verdict["support"]
+                if verdict["action"] == "skip":
+                    task.status = "skipped"
+                    task.completed_at = datetime.utcnow()
+                    task.error_message = f"gate:{verdict['reason']}"
+                    await self.db.flush()
+                    log.info(
+                        "compounding.chat_feedback_gate_skipped",
+                        feedback_id=str(feedback_id),
+                        reason=verdict["reason"],
+                    )
+                    return {
+                        "feedback_id": str(feedback_id),
+                        "task_id": str(task.id),
+                        "status": "skipped",
+                        "reason": "gate_duplicate",
+                    }
+
             # LLM 提取 Q-A
             extracted = await self._llm_extract_faq(context)
             question = (extracted.get("question") or "").strip()
@@ -1508,6 +1552,26 @@ class KnowledgeCompoundingService:
                     "reason": "empty_qa",
                 }
 
+            # P2a: 提取后权威查重（vs FAQ KB 已发布文档标题，嵌入余弦）
+            if get_settings().CHAT_FAQ_GATE_ENABLED:
+                verdict = await gate.check_after_extract(question, target_kb_id)
+                if verdict["action"] == "skip":
+                    task.status = "skipped"
+                    task.completed_at = datetime.utcnow()
+                    task.error_message = f"gate:{verdict['reason']}"
+                    await self.db.flush()
+                    log.info(
+                        "compounding.chat_feedback_gate_dedup",
+                        feedback_id=str(feedback_id),
+                        reason=verdict["reason"],
+                    )
+                    return {
+                        "feedback_id": str(feedback_id),
+                        "task_id": str(task.id),
+                        "status": "skipped",
+                        "reason": "gate_duplicate_existing",
+                    }
+
             # 沉淀为 KnowledgeAsset + Document
             asset = await self._precipitate_faq_asset(
                 question=question,
@@ -1525,10 +1589,12 @@ class KnowledgeCompoundingService:
             conflicts = await self._detect_conflicts_for_assets([asset])
 
             # P2: 提交审批（自动检测分流 — 高质量自动通过，否则人工审批）
+            # P2a: 传入支持度证据（D3：distinct_users 不足时不自动发布）
             await self._submit_faq_for_review(
                 asset=asset,
                 target_kb_id=target_kb_id,
                 conflict_count=len(conflicts),
+                support=gate_support,
             )
 
             task.extracted_asset_ids = [str(asset.id)]
@@ -1615,6 +1681,24 @@ class KnowledgeCompoundingService:
                 "reason": "answer_not_accepted_or_not_found",
             }
 
+        # P3: 候选池模式（D1：采纳信号统一入池，accepted 计双倍支持度；
+        # CHAT_FAQ_ACCEPT_INSTANT_PROMOTE=true 时跳过池直沉，回退旧行为）
+        _settings = get_settings()
+        if (
+            _settings.CHAT_FAQ_CANDIDATE_POOL_ENABLED
+            and not _settings.CHAT_FAQ_ACCEPT_INSTANT_PROMOTE
+        ):
+            return await self._enqueue_signal_to_pool(
+                source_type="qa_accepted",
+                source_id=answer_id,
+                user_id=context["user_id"],
+                question_hint=context["question_title"],
+                message_id=None,
+                answer_draft=context["answer_content"],
+                id_key="answer_id",
+                id_value=answer_id,
+            )
+
         # 创建回流任务
         task = CompoundingTask(
             task_type="extraction",
@@ -1629,6 +1713,54 @@ class KnowledgeCompoundingService:
             # 直接使用 title + content，无 LLM
             question = context["question_title"]
             answer = context["answer_content"]
+
+            # P2a: 沉淀前置闸门（提取前廉价查重 + 支持度统计；采纳信号 D1 入池前置阶段同样过闸）
+            gate_support: dict[str, Any] | None = None
+            if get_settings().CHAT_FAQ_GATE_ENABLED:
+                gate = DistillationGate(self.db, tenant_id=self._tenant_id)
+                verdict = await gate.check_before_extract(
+                    question_hint=question,
+                    source_type="qa_accepted",
+                    source_id=answer_id,
+                    user_id=context["user_id"],
+                )
+                gate_support = verdict["support"]
+                if verdict["action"] == "skip":
+                    task.status = "skipped"
+                    task.completed_at = datetime.utcnow()
+                    task.error_message = f"gate:{verdict['reason']}"
+                    await self.db.flush()
+                    log.info(
+                        "compounding.qa_accepted_gate_skipped",
+                        answer_id=str(answer_id),
+                        reason=verdict["reason"],
+                    )
+                    return {
+                        "answer_id": str(answer_id),
+                        "task_id": str(task.id),
+                        "status": "skipped",
+                        "reason": "gate_duplicate",
+                    }
+
+            # P2a: 提取后权威查重（vs FAQ KB 已发布文档标题，嵌入余弦）
+            if get_settings().CHAT_FAQ_GATE_ENABLED:
+                verdict = await gate.check_after_extract(question, target_kb_id)
+                if verdict["action"] == "skip":
+                    task.status = "skipped"
+                    task.completed_at = datetime.utcnow()
+                    task.error_message = f"gate:{verdict['reason']}"
+                    await self.db.flush()
+                    log.info(
+                        "compounding.qa_accepted_gate_dedup",
+                        answer_id=str(answer_id),
+                        reason=verdict["reason"],
+                    )
+                    return {
+                        "answer_id": str(answer_id),
+                        "task_id": str(task.id),
+                        "status": "skipped",
+                        "reason": "gate_duplicate_existing",
+                    }
 
             # 沉淀为 KnowledgeAsset + Document
             asset = await self._precipitate_faq_asset(
@@ -1647,10 +1779,12 @@ class KnowledgeCompoundingService:
             conflicts = await self._detect_conflicts_for_assets([asset])
 
             # P2: 提交审批（自动检测分流 — 高质量自动通过，否则人工审批）
+            # P2a: 传入支持度证据（D3：distinct_users 不足时不自动发布）
             await self._submit_faq_for_review(
                 asset=asset,
                 target_kb_id=target_kb_id,
                 conflict_count=len(conflicts),
+                support=gate_support,
             )
 
             task.extracted_asset_ids = [str(asset.id)]
@@ -1694,6 +1828,56 @@ class KnowledgeCompoundingService:
     # ------------------------------------------------------------------
     # P0 内部：上下文加载
     # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # P3 内部：候选池入队（开关切换见 CHAT_FAQ_CANDIDATE_POOL_ENABLED）
+    # ------------------------------------------------------------------
+
+    async def _enqueue_signal_to_pool(
+        self,
+        *,
+        source_type: str,
+        source_id: uuid.UUID,
+        user_id: uuid.UUID | None,
+        question_hint: str,
+        message_id: str | None,
+        answer_draft: str | None,
+        id_key: str,
+        id_value: uuid.UUID,
+    ) -> dict[str, Any]:
+        """信号入池 — 候选池模式的统一入口（替代闸门直沉）。
+
+        入池不做 LLM 提取；晋升由 beat 任务 scan_and_promote 统一处理
+        （见 knowledge_candidates.KnowledgeCandidatePool.promote_candidate）。
+        """
+        from app.services.knowledge_compounding.knowledge_candidates import (
+            KnowledgeCandidatePool,
+        )
+
+        pool = KnowledgeCandidatePool(self.db, tenant_id=self._tenant_id)
+        pool_result = await pool.upsert_from_signal(
+            source_type=source_type,
+            source_id=source_id,
+            user_id=user_id,
+            question_hint=question_hint,
+            message_id=message_id,
+            answer_draft=answer_draft,
+        )
+        result: dict[str, Any] = {
+            id_key: str(id_value),
+            "status": "queued" if pool_result["status"] == "queued" else "skipped",
+            "candidate_id": pool_result.get("candidate_id"),
+        }
+        if pool_result.get("reason"):
+            result["reason"] = pool_result["reason"]
+        log.info(
+            "compounding.signal_enqueued_to_pool",
+            source_type=source_type,
+            source_id=str(source_id),
+            candidate_id=result["candidate_id"],
+            pool_status=pool_result["status"],
+        )
+        return result
 
     async def _load_chat_feedback_context(
         self,
@@ -1771,6 +1955,7 @@ class KnowledgeCompoundingService:
         return {
             "feedback_id": str(feedback.id),
             "user_id": feedback.user_id,
+            "related_message_id": str(feedback.related_message_id),
             "conversation_id": str(assistant_msg.conversation_id),
             "user_query": user_msg.content,
             "assistant_answer": assistant_msg.content,
@@ -2100,15 +2285,22 @@ class KnowledgeCompoundingService:
         asset: KnowledgeAsset,
         target_kb_id: uuid.UUID,
         conflict_count: int,
+        support: dict[str, Any] | None = None,
     ) -> None:
         """P2: 提交 FAQ 资产到审批工作流（自动检测分流）。
 
         复用 KnowledgeApprovalService.submit_for_review：
-        - 高质量(quality_score >= 阈值 且 无冲突 且 无 PII) → 自动 approve
-          （asset.status=active, doc.status=published）
+        - 高质量(quality_score >= 阈值 且 无冲突 且 无 PII 且 D3 支持度达标)
+          → 自动 approve（asset.status=active, doc.status=published）
         - 否则 → pending（人工审批，asset.status=pending_review）
 
         审批服务不可用时优雅降级（资产保持 pending_review，不阻断沉淀）。
+
+        Args:
+            asset: 已沉淀的知识资产。
+            target_kb_id: 目标 FAQ 知识库 ID。
+            conflict_count: 冲突检测发现的冲突数量。
+            support: P2a 支持度证据摘要（闸门关闭时为 None，保持旧行为）。
         """
         try:
             from app.services.knowledge_approval_service import (
@@ -2123,6 +2315,7 @@ class KnowledgeCompoundingService:
                 doc_id=asset.doc_id,
                 kb_id=target_kb_id,
                 conflict_count=conflict_count,
+                support=support,
             )
         except Exception as exc:
             log.warning(

@@ -647,6 +647,37 @@ class Settings(BaseSettings):
     # P2 审批过期时间（秒）— pending 状态超时后标记 expired。默认 7 天。
     CHAT_FAQ_APPROVAL_TTL_SECONDS: int = 7 * 24 * 3600
 
+    # === P2a 沉淀前置闸门（借鉴交付链判据：产出查重 + 多用户支持）===
+    # 闸门总开关（False=完全回退旧行为：单次信号直沉，无查重无支持度）
+    CHAT_FAQ_GATE_ENABLED: bool = True
+    # 提取后权威查重阈值 — 提取问题 vs FAQ KB 已发布文档标题的嵌入余弦相似度，
+    # >= 此值判重复跳过。嵌入不可用时 fail-open（放行），不阻塞沉淀。
+    CHAT_FAQ_DEDUP_SIM_THRESHOLD: float = 0.88
+    # 提取前廉价查重阈值 — 用户问题 hint vs 既有 chat_faq 资产标题的词汇相似度。
+    # 设高（0.92）只拦截明显重复；漏网由提取后权威查重兜底。
+    CHAT_FAQ_PRECHECK_SIM_THRESHOLD: float = 0.92
+    # 支持度统计回溯窗口（天）— 统计近 N 天内相似问题的好评/采纳信号
+    CHAT_FAQ_SUPPORT_WINDOW_DAYS: int = 30
+    # D3: 自动审批所需最少独立用户数 — distinct_users < 此值一律人工审批。
+    # support 缺失（闸门关闭）时不生效，保持旧行为。
+    CHAT_FAQ_PROMOTE_MIN_USERS: int = 2
+
+    # === P3 沉淀候选池（信号先进池归簇，支持度达标才晋升）===
+    # D2: 候选池开关 — True 时好评/采纳信号入池等待晋升（不即时 LLM 提取）；
+    # False 回退 P2a 行为（闸门直沉）。晋升走既有沉淀+审批流程，保证可回滚。
+    CHAT_FAQ_CANDIDATE_POOL_ENABLED: bool = True
+    # 归簇阈值 — 新信号问题与簇代表问题的相似度 >= 此值即归入同簇
+    # （有嵌入用余弦，嵌入不可用回退词汇相似度）
+    CHAT_FAQ_CANDIDATE_SIM_THRESHOLD: float = 0.88
+    # 晋升门槛 — 簇内加权支持度（praise=1, accepted=2）>= 此值才可晋升
+    CHAT_FAQ_PROMOTE_MIN_SUPPORT: int = 3
+    # 候选 TTL（天）— 自 first_seen 起此天数内未达标则置 expired（不删除）
+    CHAT_FAQ_CANDIDATE_TTL_DAYS: int = 30
+    # D1 附属开关 — True 时采纳信号跳过候选池直沉（旧行为）。默认 False 统一入池。
+    CHAT_FAQ_ACCEPT_INSTANT_PROMOTE: bool = False
+    # 单轮晋升任务最大处理簇数（控制 LLM 调用上限）
+    CHAT_FAQ_PROMOTE_BATCH_SIZE: int = 10
+
     # === P2 EntityRegistry 企业本体 ===
     ENTITY_REGISTRY_ENABLED: bool = True        # EntityRegistry 总开关
     GRAPH_SEARCH_ENABLED: bool = True           # 图谱召回开关（HybridRetriever 第四路）
@@ -700,6 +731,12 @@ class Settings(BaseSettings):
     # P2 软删除窗口：被 superseded 的记忆保留 N 天，窗口期内强命中自动复活（防 LLM 误判）
     MEMORY_REVIVAL_WINDOW_DAYS: int = 7                 # 复活窗口（天）
     MEMORY_REVIVAL_THRESHOLD: float = 0.90              # 复活所需相似度（强命中才复活，防误复活）
+    # P0 记忆写入异步化：答完后 Celery 异步写记忆（回答先返回），broker 不可用降级同步
+    MEMORY_ASYNC_WRITE_ENABLED: bool = True
+    # P2 L1 短期窗口 Redis 热层：Redis List 保留最近 20 条（TTL 24h），miss 回填 PG
+    MEMORY_SHORT_TERM_CACHE_ENABLED: bool = True
+    MEMORY_SHORT_TERM_CACHE_TTL_HOURS: int = 24         # 热层过期时间（h）
+    MEMORY_SHORT_TERM_CACHE_WINDOW: int = 20            # 热层保留消息条数
 
     # === 外部文档同步巡检（P2 定时兜底）===
     # 方案 A：单一阈值，所有外部文档无类别区分，无盲区

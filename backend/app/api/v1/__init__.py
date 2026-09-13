@@ -20,6 +20,7 @@ from app.api.v1.chat import router as chat_router
 from app.api.v1.comments import router as comments_router
 from app.api.v1.connectors import router as connectors_router
 from app.api.v1.constraints import router as constraints_router
+from app.api.v1.delivery_chain import router as delivery_chain_router
 from app.api.v1.documents import router as documents_router
 from app.api.v1.experts import router as experts_router
 from app.api.v1.external_credentials import router as external_credentials_router
@@ -30,6 +31,7 @@ from app.api.v1.graph import router as graph_router
 from app.api.v1.intelligence import router as intelligence_router
 from app.api.v1.knowledge import router as knowledge_router
 from app.api.v1.knowledge_approvals import router as knowledge_approvals_router
+from app.api.v1.knowledge_candidates import router as knowledge_candidates_router
 from app.api.v1.knowledge_compounding import router as compounding_router
 from app.api.v1.manage import router as manage_router
 from app.api.v1.models import router as models_router
@@ -84,8 +86,10 @@ api_router.include_router(testing_router)
 api_router.include_router(ai_eval_router)
 api_router.include_router(compounding_router)
 api_router.include_router(knowledge_approvals_router)
+api_router.include_router(knowledge_candidates_router)
 api_router.include_router(manage_router)
 api_router.include_router(admin_router)
+api_router.include_router(delivery_chain_router)
 api_router.include_router(observability_router)
 api_router.include_router(constraints_router)
 api_router.include_router(tts_router)

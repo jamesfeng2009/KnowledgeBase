@@ -27,6 +27,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.config import get_settings
+
 # ------------------------------------------------------------------
 # Mock celery before importing app modules
 # ------------------------------------------------------------------
@@ -1116,6 +1118,11 @@ class TestChatFaqCompounding:
         asset_mock = MagicMock(id=uuid.uuid4(), doc_id=uuid.uuid4())
 
         with patch.object(
+            # P3: 闸门直沉路径测试 — 显式关闭候选池（默认开启会先行入池返回 queued）
+            get_settings(),
+            "CHAT_FAQ_CANDIDATE_POOL_ENABLED",
+            False,
+        ), patch.object(
             service, "_get_asset_by_source", new=AsyncMock(return_value=None)
         ), patch.object(
             service, "_load_chat_feedback_context",
@@ -1201,6 +1208,11 @@ class TestChatFaqCompounding:
         kb_id = uuid.uuid4()
 
         with patch.object(
+            # P3: 闸门直沉路径测试 — 显式关闭候选池
+            get_settings(),
+            "CHAT_FAQ_CANDIDATE_POOL_ENABLED",
+            False,
+        ), patch.object(
             service, "_get_asset_by_source", new=AsyncMock(return_value=None),
         ), patch.object(
             service, "_load_chat_feedback_context",
@@ -1239,6 +1251,11 @@ class TestChatFaqCompounding:
         asset_mock = MagicMock(id=uuid.uuid4(), doc_id=uuid.uuid4())
 
         with patch.object(
+            # P3: 闸门直沉路径测试 — 显式关闭候选池
+            get_settings(),
+            "CHAT_FAQ_CANDIDATE_POOL_ENABLED",
+            False,
+        ), patch.object(
             service, "_get_asset_by_source", new=AsyncMock(return_value=None),
         ), patch.object(
             service, "_load_accepted_answer_context",

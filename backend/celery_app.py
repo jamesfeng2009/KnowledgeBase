@@ -63,6 +63,7 @@ celery_app = Celery(
         "tasks.recommendation_tasks",
         "tasks.finetune_tasks",
         "tasks.webhook_tasks",
+        "tasks.memory_tasks",
     ],
 )
 
@@ -126,6 +127,8 @@ celery_app.conf.update(
         "tasks.finetune_tasks.*": {"queue": "scheduled"},
         # 外部平台 Webhook 同步（飞书/Confluence 文档更新）— 复用文档解析队列
         "tasks.webhook_tasks.*": {"queue": "documents"},
+        # 记忆异步写入（对话后 Checkpoint/事实提取）— LLM 任务归文档队列
+        "tasks.memory_tasks.*": {"queue": "documents"},
     },
 
     # 任务超时（秒）— 防止任务卡死
@@ -275,11 +278,25 @@ celery_app.conf.beat_schedule = {
         "task": "tasks.scheduled_tasks.rescan_stuck_documents",
         "schedule": crontab(minute=15),
     },
+    # 每小时 :20 — 补偿扫描卡死的 Deep Research 任务（P0-2 兜底安全网）
+    # 兜 RabbitMQ 之外的残余丢消息路径 + worker 收尾 mark 静默失败：
+    # Redis 有终态则回填 DB，无终态则标 failed 释放幂等键（可原键重试）。
+    # 错开 :15（文档补偿扫描）与 :45，避免同刻任务抢 worker
+    "rescan-stuck-research-hourly": {
+        "task": "tasks.scheduled_tasks.rescan_stuck_research_jobs",
+        "schedule": crontab(minute=20),
+    },
     # 每 5 分钟 — 补投 task_outbox 欠投递记录（P2 轻量 Outbox 兜底）
     # 一次性触发链路（feedback/qa/智能处理链等）派发失败落箱后由本任务补投
     "flush-task-outbox-5min": {
         "task": "tasks.scheduled_tasks.flush_task_outbox",
         "schedule": crontab(minute="*/5"),
+    },
+    # 每 30 分钟 — 沉淀候选池 TTL 过期 + 达标簇晋升（P3）
+    # 晋升走既有沉淀+审批流程（每簇一次 LLM 提取），池关闭时任务自行跳过
+    "promote-knowledge-candidates-30min": {
+        "task": "tasks.scheduled_tasks.promote_knowledge_candidates",
+        "schedule": crontab(minute="*/30"),
     },
 }
 

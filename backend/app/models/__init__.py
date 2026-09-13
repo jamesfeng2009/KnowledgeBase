@@ -29,6 +29,7 @@ from app.models.knowledge_compounding import (
     KnowledgeConflict,
 )
 from app.models.knowledge_approval import KnowledgeApproval
+from app.models.knowledge_candidate import KnowledgeCandidate
 from app.models.memory import EntityEvent, KnowledgeEntity, MemoryFact
 from app.models.notification import Notification
 from app.models.qa import QaAnswer, QaQuestion
@@ -134,6 +135,8 @@ __all__ = [
     "KnowledgeConflict",
     # P2: 知识回流审批
     "KnowledgeApproval",
+    # P3: 沉淀候选池
+    "KnowledgeCandidate",
     # Deep Research 幂等提交
     "ResearchJob",
     # P2 轻量 Outbox：任务欠投递发件箱

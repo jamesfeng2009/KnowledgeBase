@@ -63,12 +63,18 @@ class KnowledgeApprovalService:
         doc_id: uuid.UUID | None,
         kb_id: uuid.UUID,
         conflict_count: int = 0,
+        support: dict[str, Any] | None = None,
     ) -> KnowledgeApproval:
         """P0 沉淀后自动提交审批 — 自动检测 + 分流。
 
         前置检测：
             1. PII 检测（PIIScrubber 检查 title + content）
-            2. 自动通过判断（quality_score >= 阈值 且 conflict_count=0 且 !pii_detected）
+            2. 自动通过判断（quality_score >= 阈值 且 conflict_count=0
+               且 !pii_detected 且 D3 支持度门槛通过）
+
+        D3 支持度门槛：support 提供且 distinct_users < CHAT_FAQ_PROMOTE_MIN_USERS
+        时一律人工审批 — 单用户好评即使 quality 0.99 也不自动发布。
+        support 为 None（闸门关闭）时不生效，保持旧行为。
 
         分流：
             - 自动通过 → asset.status=active, doc.status=published,
@@ -81,6 +87,7 @@ class KnowledgeApprovalService:
             doc_id: 关联的文档 ID（可为 None）。
             kb_id: 目标知识库 ID。
             conflict_count: 冲突检测发现的冲突数量。
+            support: 支持度证据摘要（distillation_gate 统计，可为 None）。
 
         Returns:
             创建的 KnowledgeApproval 实例。
@@ -94,15 +101,24 @@ class KnowledgeApprovalService:
             asset.title or "", asset.content or ""
         )
 
-        # ② 自动通过判断
+        # ② D3 支持度门槛（闸门关闭 support=None 时不生效）
+        distinct_users = (support or {}).get("distinct_users")
+        support_below_threshold = (
+            support is not None
+            and distinct_users is not None
+            and distinct_users < settings.CHAT_FAQ_PROMOTE_MIN_USERS
+        )
+
+        # ③ 自动通过判断
         quality_score = asset.confidence_score or 0.0
         auto_approve = (
             quality_score >= settings.CHAT_FAQ_AUTO_APPROVE_THRESHOLD
             and conflict_count == 0
             and not pii_detected
+            and not support_below_threshold
         )
 
-        # ③ 构建 approval 记录
+        # ④ 构建 approval 记录
         risks: list[dict[str, Any]] = []
         if pii_detected:
             risks.append({"type": "pii", "details": pii_risks})
@@ -110,6 +126,14 @@ class KnowledgeApprovalService:
             risks.append({"type": "conflict", "count": conflict_count})
         if quality_score < settings.CHAT_FAQ_AUTO_APPROVE_THRESHOLD:
             risks.append({"type": "low_quality", "score": quality_score})
+        if support_below_threshold:
+            risks.append(
+                {
+                    "type": "low_support",
+                    "distinct_users": distinct_users,
+                    "required": settings.CHAT_FAQ_PROMOTE_MIN_USERS,
+                }
+            )
 
         now = datetime.now(timezone.utc)
         approval = KnowledgeApproval(
@@ -121,6 +145,7 @@ class KnowledgeApprovalService:
             pii_detected=pii_detected,
             conflict_count=conflict_count,
             auto_detected_risks=risks if risks else None,
+            support_evidence=support,
             expire_at=None if auto_approve else (
                 now + timedelta(seconds=settings.CHAT_FAQ_APPROVAL_TTL_SECONDS)
             ),
@@ -130,7 +155,7 @@ class KnowledgeApprovalService:
         )
         self.db.add(approval)
 
-        # ④ 状态流转：资产 + 文档
+        # ⑤ 状态流转：资产 + 文档
         if auto_approve:
             asset.status = "active"
             await self._update_doc_status(doc_id, "published")
@@ -138,6 +163,7 @@ class KnowledgeApprovalService:
                 "knowledge_approval.auto_approved",
                 asset_id=str(asset.id),
                 quality_score=quality_score,
+                distinct_users=distinct_users,
             )
         else:
             asset.status = "pending_review"
@@ -148,6 +174,7 @@ class KnowledgeApprovalService:
                 pii_detected=pii_detected,
                 conflict_count=conflict_count,
                 quality_score=quality_score,
+                distinct_users=distinct_users,
             )
 
         await self.db.flush()
