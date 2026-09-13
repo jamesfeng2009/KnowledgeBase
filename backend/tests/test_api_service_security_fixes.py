@@ -635,7 +635,9 @@ class TestChatServiceStream:
 
         with patch(
             "app.services.chat_service.get_rag_engine", return_value=engine
-        ):
+        ), patch(
+            "tasks.memory_tasks.dispatch_memory_write", return_value=True
+        ) as mock_dispatch:
             events = [e async for e in service.stream_chat(prepared)]
 
         # meta 事件先行
@@ -653,10 +655,45 @@ class TestChatServiceStream:
         assert call.args[1] == "assistant"
         assert call.args[2] == "你好"
 
-        # 记忆保存（best-effort）
-        service.memory.save_session.assert_awaited_once()
+        # P0 记忆写入异步化：Celery 派发成功 → 不再同步 await save_session
+        mock_dispatch.assert_called_once()
+        assert mock_dispatch.call_args.kwargs["session_id"] == str(
+            prepared.conversation_id
+        )
+        assert mock_dispatch.call_args.kwargs["assistant_content"] == "你好"
+        service.memory.save_session.assert_not_awaited()
 
         # 短事务结束即提交并释放连接
+        service.db.commit.assert_awaited_once()
+        service.db.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_stream_chat_memory_falls_back_to_sync_when_dispatch_fails(
+        self,
+    ) -> None:
+        """P0 降级路径：Celery 派发失败（broker 不可用）→ 同步写记忆（fail-open）。"""
+        user = _make_user()
+        service = _make_chat_service(user=user)
+        prepared = _make_prepared(user.id)
+        engine = _FakeEngine(
+            chunks=["你", "好", SSEEvent(data={}, event=SSEEventType.DONE)]
+        )
+
+        with patch(
+            "app.services.chat_service.get_rag_engine", return_value=engine
+        ), patch(
+            "tasks.memory_tasks.dispatch_memory_write", return_value=False
+        ):
+            events = [e async for e in service.stream_chat(prepared)]
+
+        # 流正常走完
+        assert any(
+            isinstance(e, SSEEvent) and e.event == SSEEventType.DONE for e in events
+        )
+        service.msg_repo.create_message.assert_awaited_once()
+        # 派发失败 → 降级为原同步记忆写入
+        service.memory.save_session.assert_awaited_once()
+        service.memory.extract_and_save_facts.assert_awaited_once()
         service.db.commit.assert_awaited_once()
         service.db.close.assert_awaited_once()
 
