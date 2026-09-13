@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Research Agent 文章 · 只取理念落地清单 + 公网混合检索评估</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --panel2:#1d2130;
+    --line:#2a2f3d; --text:#e6e9ef; --muted:#9aa3b2;
+    --accent:#f59e0b; --accent2:#38bdf8; --good:#34d399; --warn:#fbbf24; --bad:#f87171;
+    --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font:14px/1.6 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+    max-width:1120px;margin:0 auto;padding:32px 28px 80px}
+  h1{font-size:26px;margin-bottom:6px}
+  .sub{color:var(--muted);margin-bottom:28px}
+  h2{font-size:19px;margin:38px 0 6px;padding-left:10px;border-left:4px solid var(--accent);color:#fff}
+  .lead{color:var(--muted);margin:0 0 18px 10px}
+  .tag{display:inline-block;font-size:11px;padding:1px 8px;border-radius:10px;margin-left:8px;vertical-align:2px}
+  .t-verdict{background:#20332f;color:var(--good);border:1px solid #2f5a49}
+  .t-part{background:#202c3a;color:var(--accent2);border:1px solid #2f4a63}
+  .t-gap{background:#35301f;color:var(--warn);border:1px solid #595024}
+  .t-avoid{background:#381f25;color:var(--bad);border:1px solid #5c2d39}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin:14px 0}
+  .card h3{font-size:15px;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+  .card .n{display:inline-flex;width:22px;height:22px;border-radius:50%;background:var(--accent);color:#1a1304;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex:none}
+
+  table{width:100%;border-collapse:collapse;margin:12px 0;background:var(--panel)}
+  th,td{border:1px solid var(--line);padding:9px 12px;text-align:left;vertical-align:top;font-size:13px}
+  th{background:var(--panel2);color:#fff;font-weight:600}
+  td code{background:#0d1016;border:1px solid var(--line);padding:1px 6px;border-radius:5px;color:var(--accent2);
+    font-family:var(--mono);font-size:12px}
+  .num{color:var(--accent2);font-family:var(--mono)}
+
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0}
+  @media(max-width:820px){.grid{grid-template-columns:1fr}}
+  .metric{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
+  .metric .k{color:var(--muted);font-size:12px}
+  .metric .v{font-size:20px;font-weight:700;margin-top:4px}
+  .metric .d{font-size:12px;color:var(--muted);margin-top:4px}
+
+  .flow{background:#0d1016;border:1px solid var(--line);border-radius:10px;padding:16px;font-family:var(--mono);font-size:12.5px;color:var(--muted);overflow-x:auto;white-space:nowrap;margin:10px 0}
+  .flow b{color:var(--accent)}
+  .flow .g{color:var(--good)}
+  .flow .bl{color:var(--accent2)}
+
+  ul{margin:8px 0 8px 22px}
+  li{margin:4px 0}
+  .warnbox{border:1px solid #595024;background:#2a2415;border-radius:10px;padding:14px 16px;margin:14px 0}
+  .okbox{border:1px solid #2f5a49;background:#13251f;border-radius:10px;padding:14px 16px;margin:14px 0}
+  .badbox{border:1px solid #5c2d39;background:#2a151c;border-radius:10px;padding:14px 16px;margin:14px 0}
+  .verdict{font-size:15px;font-weight:600}
+  .av-avoid{color:var(--bad)} .av-warn{color:var(--warn)} .av-good{color:var(--good)}
+
+  .pill{display:inline-block;font-size:11px;padding:2px 9px;border-radius:6px;font-weight:600}
+  .p-1{background:#202c3a;color:var(--accent2)} .p-2{background:#2a2415;color:var(--warn)} .p-3{background:#1e352c;color:var(--good)} .p-x{background:#381f25;color:var(--bad)}
+</style>
+</head>
+<body>
+
+<h1>借鉴评估：Research Agent 文章 → 本项目落地</h1>
+<div class="sub">目标：<b>只取理念、不动技术栈</b>（不引入 LangGraph / Chroma / FastMCP 标准协议），并评估<b>公网混合检索</b>纳入 P 规划的合理性。 · 2026-08-20</div>
+
+<div class="okbox">
+  <div class="verdict av-good">总体结论</div>
+  <p style="margin-top:6px">文章的技术栈（LangGraph StateGraph、Chroma、FastMCP）与本项目<strong>刻意移除 LangGraph / 禁止 SQLite / MCP 仅内部工具注册表 / RAG 核心手写</strong>四条约束直接冲突，<strong>全部不采纳</strong>。但其 <strong>5 条框架无关的设计理念</strong>中：2 条本项目<b>已实现且更彻底</b>（引用溯源）、2 条<b>值得低成本照搬理念</b>（生成阶段内部优先、归一化合并）、1 条<b>正是真实空白</b>（公网混合检索，且与已存在的 DeepResearch 场景高度契合）。</p>
+</div>
+
+<h2>Part A · 只取理念，落地对照清单</h2>
+<p class="lead">对照"文章做法 → 本项目现状 → 框架无关的落地动作 → 归属"。总原则：<b>任何落地都不得重新引入 LangGraph / Chroma / 快照式 interrupt</b>，恢复/暂停一律用现有 Celery 里程碑 Checkpoint 或 UI 两段式完成。</p>
+
+<div class="card">
+  <h3><span class="n">1</span>「先对齐需求再动手」的 HITL 澄清 + 大纲审核 <span class="tag t-part">理念可借鉴</span></h3>
+  <p><b>文章</b>：用 <code>interrupt()</code> 把图在「需求澄清 / 大纲审核」两处停住，等人类通过 <code>Command(resume)</code> 回填后继续；LLM 副作用与 interrupt 拆成两个节点，避免 resume 重跑产生对不上的问题。</p>
+  <p style="margin:8px 0"><b>本项目现状</b>：已有 <code>planner</code> + engine 的规则级 Clarify / Interrupt 出口（零 LLM 成本）；<code>DeepResearchService</code> 已有 <code>_decompose_goal</code>（LLM 拆子课题）+ Celery <code>milestone_checkpoint</code> 断点恢复（P2-11 / P2-13）。<b>缺的是"用户主动确认报告骨架"这一步。</b></p>
+  <p><b>落地（不动栈）</b>：不引入快照式 interrupt。改由业务层实现<b>两段式</b>——① <code>_decompose_goal</code> 产出子课题骨架后先<strong>落成"待确认"中间态</strong>并返回给前端；② 用户在前端增删改章节后再次提交，才用确认后的骨架进入检索阶段。暂停/恢复完全依赖现成的 Celery + 里程碑 Checkpoint，"等人类"只是任务处于 <code>awaiting_review</code> 状态、无需占用 LLM。LLM 副作用放 <code>_decompose_goal</code>、确认态只做回填，天然规避"重跑对不上"。</p>
+</div>
+
+<div class="card">
+  <h3><span class="n">2</span>双源归一化合并（内部向量分数 vs 网络分数量纲不同）<span class="tag t-gap">真实空白</span></h3>
+  <p><b>文章最实的一条</b>：余弦相似度（0~1）与 Tavily 搜索相关性分（另一套量纲）不能直接比大小，必须「先各自 min-max 归一化 → 内部 × BOOST → 再合并排序」；且<b>不能用手写"固定配额拼接"</b>，否则 boost 参数形同虚设。改为<b>保底配额 + 剩余预算全局竞争</b>。</p>
+  <p style="margin:8px 0"><b>本项目现状</b>：<code>HybridRetriever.gather_paths</code> 四路（vector / fulltext / cross_modal / graph）<b>均为内部源、量纲接近</b>，因此目前<b>不存在跨源合并问题</b>——这是"当下无需处理、一旦接公网必须先做"的关键点。</p>
+  <div class="flow">merge_rank(internal, web)：<span class="bl">归一化 internal</span> &amp; <span class="bl">归一化 web</span> → 内部 × boost → 合并排序 →
+  保底 internal[:min] + web[:min] → 剩余预算两源候选池 <b>加权全局竞争</b> → 按分收尾</div>
+  <p><b>落地</b>：仅在启动公网检索 <b>Part B</b> 时实现 <code>merge_rank.py</code>（纯函数，无框架依赖，可独立单测）。现阶段的"保底+竞争"算法验收项：改 <code>boost</code> 需能在报告引用占比上观察到变化（否则该参数是死的）。</p>
+</div>
+
+<div class="card">
+  <h3><span class="n">3</span>「内部优先」放在生成阶段，而非检索阶段 <span class="tag t-part">理念可借鉴 · 低风险即收益</span></h3>
+  <p><b>文章</b>：不在检索排序里强行给内部加权（会破坏双源公平合并），而是在 Summarize 的 Prompt 里约束「内部已清晰回答就优先引用，网络仅作补充」，调参直观、效果可观察。</p>
+  <p style="margin:8px 0"><b>本项目现状</b>：<code>DeepResearchService._summarize</code> 已接收带来源标注的 <code>EvidenceCard</code>，但未显式施加"内部优先"的 Prompt 约束。</p>
+  <p><b>落地</b>：在 <code>_summarize</code> 的系统提示里加一段"内部证据优先 / 网络仅补充最新信息 / 每个论点后标 <code>[n]</code>"。<b>独立可交付、半天工作量、不动任何架构</b>，可先行在 DeepResearch 体验上验证。</p>
+</div>
+
+<div class="card">
+  <h3><span class="n">4</span>引用可溯源 + 悬空编号清理 <span class="tag t-verdict">项目已领先 · 无需借鉴</span></h3>
+  <p><b>文章</b>：报告每条引用标 <code>[内部文档]/[网络]</code>，编号经代码层校验，LLM 幻觉出的编号被自动清理（<code>strip_dangling_citations</code>）。</p>
+  <p style="margin:8px 0"><b>本项目现状</b>：项目记忆与代码均显示——引擎强制调用 <code>extract_citations()</code> 生成结构化引用卡片；<code>EvidenceCard</code>；<code>evidence_ref</code> 四层贯穿（engine → TraceContext → SpanRecord → ToolAuditLog）；P1/P2/P3 正是为此把"依据 / 证据"落库做深。这些<b>远超文章</b>。</p>
+  <div class="okbox" style="margin-top:10px"><b>结论</b>：此条<b>不落地</b>，仅需在引用展示时给来源打上「内部/网络」标签（属前端展示件）。</div>
+</div>
+
+<div class="card">
+  <h3><span class="n">5</span>双生命周期集合：持久知识库 vs 任务临时记忆 <span class="tag t-part">理念可借鉴 · 间接</span></h3>
+  <p><b>文章</b>：<code>enterprise_kb</code> 跨任务永久共享 vs <code>research_{job_id}</code> 单任务临时分片（用完即弃 / TTL），避免污染全局知识库、保证任务隔离。</p>
+  <p style="margin:8px 0"><b>本项目现状</b>：多租户隔离（RLS / 密级 / 租户级过滤）已覆盖全局知识库；但 DeepResearch 若需"抓取公网页面的临时正文分片"，目前无任务级临时工作记忆。</p>
+  <p><b>落地</b>：仅当启用公网检索（Part B）时，为"抓取到的外网页正文"建立<b>任务隔离的临时索引 + TTL 清理</b>，或在内存中对每个子课题暂存抓取结果。不必照搬 Chroma 的 collection 语义——用 Milvus 的任务级 collection 或直接在流程内存里暂存即可。</p>
+</div>
+
+<div class="warnbox">
+  <b>明确不落地的技术栈（全部否决）</b><br>
+  <span class="pill p-x">LangGraph StateGraph</span>
+  <span class="pill p-x">Chroma（SQLite）</span>
+  <span class="pill p-x">FastMCP 标准协议落地</span>
+  <span class="pill p-x">interrupt() 快照式暂停</span>
+  <p style="margin-top:8px">理由：分别违背"LangGraph StateGraph 保持移除 / 禁用 SQLite / MCP 内部工具注册表不实现标准协议 / RAG 核心手写"四条既定约束；这些能力本项目已用「单路径 while 循环 + 多记忆层 + Milvus/OpenSearch」等价或更完整地实现。理念可取，工具不取。</p>
+</div>
+
+<h2>Part B · 公网混合检索 纳入 P 规划的评估</h2>
+<p class="lead">判断它该不该做、放哪个阶段、工作量与风险。结论先行：<b>建议作为独立新增工作流（暂定 P4-前沿）立项，不并入现 P1/P2/P3；先 POC 验证双源合并算法，再做正式集成。</b></p>
+
+<h3 style="margin:22px 0 8px">① 与 P1/P2/P3 的关系：正交，不冲突</h3>
+<table>
+  <thead><tr><th>现有阶段</th><th>实质内容</th><th>与公网检索关系</th></tr></thead>
+  <tbody>
+    <tr><td><span class="pill p-1">P1</span></td><td>仲裁理由 <code>verdict_reason</code> + 遗忘原因/激活值落库</td><td>记忆层"为什么"可审计，<b>无关</b></td></tr>
+    <tr><td><span class="pill p-2">P2</span></td><td><code>state.update</code> 摘要 + 工具审计补全（<code>result_ref/evidence_ref</code>）</td><td>轨迹差分与审计，<b>无关</b></td></tr>
+    <tr><td><span class="pill p-3">P3</span></td><td><code>evidence_ref</code> 贯穿四层（纯 plumbing）</td><td>证据通道，<b>不冲突</b>，公网证据未来可复用此通道外引</td></tr>
+  </tbody>
+</table>
+<div class="okbox"><b>建议</b>：公网混合检索属<b>检索层 + DeepResearch 能力</b>，与 P1/P2/P3 的"记忆审计链路"正交。塞进既有 P1/P2/P3 会挤占既定交付节奏、破坏"一次一个关注点"；应<b>独立成新工作流</b>，依赖 P3 的证据通道（可后置联调）。</div>
+
+<h3 style="margin:22px 0 8px">② 场景契合度：高，且恰有载体</h3>
+<table>
+  <thead><tr><th>判据</th><th>本项目情况</th><th>契合度</th></tr></thead>
+  <tbody>
+    <tr><td>是否有"课题/研究报告"类产品能力</td><td><code>DeepResearchService</code>（P2-11 调研 + P2-13 里程碑断点）已存在</td><td class="av-good">★ 有现成载体</td></tr>
+    <tr><td>外部信息是否是刚需</td><td>竞品动态、行业最新数据等"新的东西"内部库天然缺失</td><td class="av-good">★ 显著补强</td></tr>
+    <tr><td>是否已有内部×外部异构合并缺失</td><td>四路 <code>gather_paths</code> 全为内部源，<b>无 web path、无归一化合并</b></td><td class="av-good">★ 真实空白</td></tr>
+  </tbody>
+</table>
+<p style="margin-top:8px">判据本质：<b>产品是否要求"研究报告 / 竞品分析"类能力？若收敛为"是"，公网检索就是对 DeepResearch 最高性价比的补强。</b></p>
+
+<h3 style="margin:22px 0 8px">③ 现状缺口清单（落地则需补齐）</h3>
+<ol style="margin-left:22px">
+  <li><b>新增一条检索 gather 路径</b>：<code>HybridRetriever.gather_paths</code> 增加 <code>source="web"</code> 分支（纯新增，不动既有四路）。</li>
+  <li><b>扩展 <code>_gather_evidence</code></b>：从"只查内部 <code>retriever.search</code>"改为"内部 + 公网并发（<code>asyncio.gather</code>，单路失败降级不阻塞）"。<b>并发 ≤ 2 的约束需注意</b>（对齐爬虫/外部调用防 IP 屏蔽的既有偏好）。</li>
+  <li><b>接入一个公网搜索提供商</b>：Tavily / Bing / 通义等搜索 API，需<b>选型 + 成本控制</b>（对齐你"追踪并限制外部服务用量、避免意外成本"的强偏好，按租户配额）。</li>
+  <li><b>实现 <code>merge_rank.py</code></b>：归一化 + 内部 boost + 保底/竞争（见 Part A #2），另需**来源编号去重 + 引用标签**。</li>
+  <li><b>任务级临时工作记忆 + 内容安全</b>：抓取正文分片做任务隔离 + TTL；公网内容 <b>sanitize 防注入 / 防污染</b>，来源白名单 + 质量门槛（对齐注入防护安全约束）。</li>
+</ol>
+
+<h3 style="margin:22px 0 8px">④ 工作量与风险</h3>
+<div class="grid">
+  <div class="metric"><div class="k">POC 阶段（双源合并算法验证）</div><div class="v">0.5 周</div><div class="d">纯函数 merge_rank + 单测，无外部依赖，验证 boost 可观察性</div></div>
+  <div class="metric"><div class="k">正式集成（web path + 提供商 + DeepResearch 打通）</div><div class="v">1–1.5 周</div><div class="d">新增 gather 分支 + 并发 + 临时索引 + 前端引用标签</div></div>
+  <div class="metric"><div class="k">外部 API 成本 / 限流</div><div class="v">风险</div><div class="d">按租户配额 + 缓存 + 并发压到 2，避免意外账单</div></div>
+  <div class="metric"><div class="k">内容注入 / 版权 / 质量</div><div class="v">风险</div><div class="d">sanitize + 白名单 + 质量门槛 + 来源标注「内部/网络」</div></div>
+</div>
+
+<ul>
+  <li><span class="av-warn">风险·跨源量纲</span>：不归一化就合并 → 合并排序失真。前置条件是"先各自归一化"。</li>
+  <li><span class="av-warn">风险·boost 失效</span>：用固定配额拼接则 boost 形同虚设；验收标必须为"改 boost 能观察到引用占比变化"。</li>
+  <li><span class="av-warn">风险·任务污染</span>：抓取的公网分片必须任务隔离 + TTL，混入全局知识库会污染检索。</li>
+  <li><span class="av-good">风险缓解</span>：POC 先行验证最小成本；依赖 P3 证据通道后置，不阻塞 P1/P2/P3 交付。</li>
+</ul>
+
+<div class="warnbox">
+  <b>决策要点（给评审的一句话）</b><br>
+  公网混合检索是<b>对已存在的 DeepResearch 最直接的补强</b>，属独立检索能力而非记忆审计，应与 P1/P2/P3 并列推进、互不阻塞；建议<b>先立 POC（半周）验证 merge_rank 的归一化+保底+竞争算法可观察</b>，通过后再作为<P4-前沿>正式立项，再接提供商与前端引用标签。全程不引入 LangGraph / Chroma。
+</div>
+
+</body>
+</html>
