@@ -19,6 +19,8 @@ Deep Research API — 触发课题调研长任务（Celery 异步）+ 实时进�
 
 from __future__ import annotations
 
+import uuid
+
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -219,32 +221,77 @@ async def research_stream(
 async def get_research_result(
     task_id: str,
     user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse[dict]:
-    """查询调研任务最终结果（Redis 持久化）。
+    """查询调研任务最终结果 — DB 为权威存储，Redis 降级为缓存与自愈来源（P0-1）。
 
-    Celery 结果后端为 rpc:// 且全局 task_ignore_result=True，不保存结果；
-    worker 在完成/失败时将最终结果写入 Redis，本端点读取之。
+    读取顺序：
+        DB status=success → 返回 output_json（Redis 过期/驱逐不影响）；
+        DB status=failed  → 返回 last_error；
+        DB queued（含执行中）→ 查 Redis 终态结果键自愈回填 DB 后按其返回
+            （救 mark 静默失败 / output_json 上线前存量行）；无则 running。
+
+    归属校验：仅任务归属者（或 admin）可查 — 防止枚举 task_id 越权读报告。
     """
+    from sqlalchemy import select
+
+    from app.models.research import ResearchJob
+    from app.services.research_job_service import backfill_result_from_redis
     from app.services.research_progress import load_result
 
     try:
-        data = await load_result(task_id)
+        jid = uuid.UUID(task_id)
+    except (ValueError, AttributeError):
+        return ApiResponse(code=404, data=None, message="调研任务不存在")
+
+    try:
+        job = (
+            (await db.execute(select(ResearchJob).where(ResearchJob.id == jid)))
+            .scalar_one_or_none()
+        )
     except Exception as exc:
         logger.error("research.result_query_unavailable", error=str(exc)[:200])
         return ApiResponse(code=503, data=None, message=f"任务结果查询不可用: {exc}")
 
-    if not data:
-        # 尚无持久化结果 — 任务排队中或仍在执行
-        return ApiResponse(code=0, data={"status": "running"}, message="调研任务进行中")
+    if job is None:
+        return ApiResponse(code=404, data=None, message="调研任务不存在")
+    if job.user_id != user.id and getattr(user, "role", "") != "admin":
+        logger.info(
+            "research.result_denied", task_id=task_id, user_id=str(user.id)
+        )
+        return ApiResponse(code=403, data=None, message="无权查看该调研任务")
 
-    status = data.get("status")
-    if status == "success":
+    if job.status == "success":
+        return ApiResponse(
+            code=0,
+            data={"status": "success", "report": job.output_json or {}},
+            message="调研完成",
+        )
+    if job.status == "failed":
+        return ApiResponse(
+            code=0,
+            data={
+                "status": "failed",
+                "error": job.last_error or "unknown error",
+            },
+            message="调研任务失败",
+        )
+
+    # queued（含执行中）— Redis 终态自愈回填（仅回填，不改变进行中语义）
+    try:
+        data = await load_result(task_id)
+    except Exception as exc:
+        logger.warning("research.result_backfill_read_failed", error=str(exc)[:200])
+        data = None
+    if data and data.get("status") == "success":
+        await backfill_result_from_redis(task_id, data)
         return ApiResponse(
             code=0,
             data={"status": "success", "report": data.get("report", {})},
             message="调研完成",
         )
-    if status == "failed":
+    if data and data.get("status") == "failed":
+        await backfill_result_from_redis(task_id, data)
         return ApiResponse(
             code=0,
             data={"status": "failed", "error": data.get("error", "unknown error")},

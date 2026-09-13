@@ -12,8 +12,9 @@ job.id 同时作为 Celery task_id 派发，`/research/{task_id}/stream|result`
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
-from sqlalchemy import ForeignKey, Index, String, Text, text
+from sqlalchemy import DateTime, ForeignKey, Index, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -68,6 +69,16 @@ class ResearchJob(UUIDMixin, TimestampMixin, Base):
         default="queued",
         nullable=False,
         comment="状态: queued/success/failed（执行中仍为 queued，进度看 Redis 流）",
+    )
+    output_json: Mapped[dict | None] = mapped_column(
+        JSONB,
+        nullable=True,
+        comment="最终报告（status=success 时与状态同一条 UPDATE 写入，DB 为权威存储）",
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="终态写入时间（success/failed 时记录）",
     )
     last_error: Mapped[str | None] = mapped_column(
         Text, nullable=True, comment="失败原因（status=failed 时记录）"

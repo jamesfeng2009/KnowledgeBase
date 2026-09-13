@@ -37,6 +37,7 @@ IDEM_CONSTRAINT: str = "uq_research_jobs_idem_active"
 __all__ = [
     "IDEM_CONSTRAINT",
     "IdempotencyConflictError",
+    "backfill_result_from_redis",
     "compute_input_hash",
     "create_research_job",
     "find_active_job",
@@ -143,26 +144,52 @@ async def mark_research_job_status(
     job_id: str,
     status: str,
     last_error: str | None = None,
-) -> None:
-    """回写任务终态（Celery worker 调用）— 失败仅告警，不影响任务本身。
+    output: dict | None = None,
+    only_when_queued: bool = False,
+) -> bool:
+    """回写任务终态（Celery worker / 补偿扫描调用）— 失败仅告警不抛错。
 
-    status=failed 使部分唯一索引放行该键，调用方可原键重试。
+    status / output_json / finished_at 在同一条 UPDATE 写入 — 单条 UPDATE
+    即原子，查询侧不会读到 "success 配空 output" 的中间态（P0-1 结果权威落库）。
+
+    Args:
+        output: status=success 时的最终报告（存 output_json，DB 为权威存储）。
+        only_when_queued: True 时仅当记录仍为 queued 才写入（回填/补偿扫描
+            用，防止覆盖并发收尾已写入的更新终态）；worker 收尾保持 False。
+        status=failed 使部分唯一索引放行该键，调用方可原键重试。
+
+    Returns:
+        UPDATE 是否实际命中（rowcount==1）— only_when_queued 守卫落空、
+        记录不存在或 DB 写失败时为 False，供回填方判定是否真实写入。
     """
     try:
         jid = uuid.UUID(str(job_id))
     except (ValueError, TypeError, AttributeError):
-        return  # 非 job.id 形态的 task_id（旧路径/手动派发），忽略
+        return False  # 非 job.id 形态的 task_id（旧路径/手动派发），忽略
+
+    from sqlalchemy import func
+
+    values: dict = {
+        "status": status,
+        "last_error": last_error,
+        # 显式刷新（补偿扫描依赖 updated_at 做"无进展"判定，不依赖 onupdate 生效）
+        "updated_at": func.now(),
+    }
+    if status in ("success", "failed"):
+        values["finished_at"] = func.now()
+    if output is not None:
+        values["output_json"] = output
 
     from app.database import task_db_session
 
     try:
         async with task_db_session() as session:
-            await session.execute(
-                update(ResearchJob)
-                .where(ResearchJob.id == jid)
-                .values(status=status, last_error=last_error)
-            )
+            stmt = update(ResearchJob).where(ResearchJob.id == jid)
+            if only_when_queued:
+                stmt = stmt.where(ResearchJob.status == "queued")
+            result = await session.execute(stmt.values(**values))
             await session.commit()
+            return bool(result.rowcount)
     except Exception as exc:
         log.warning(
             "research_job.status_update_failed",
@@ -170,3 +197,37 @@ async def mark_research_job_status(
             status=status,
             error=str(exc)[:200],
         )
+        return False
+
+
+async def backfill_result_from_redis(task_id: str, data: dict) -> bool:
+    """把 Redis 持久化的终态结果回填 DB — 查询自愈与补偿扫描共用。
+
+    场景：worker 收尾 mark_research_job_status 静默失败（DB 抖动）、或
+    output_json 列上线前的存量任务 — Redis 有终态而 DB 仍 queued。
+    仅当记录仍为 queued（only_when_queued 守卫）才写入，绝不覆盖终态。
+
+    Args:
+        data: research_progress.save_result/save_failure 的持久化结构：
+              {"status": "success", "report": {...}} 或
+              {"status": "failed", "error": "..."}。
+
+    Returns:
+        True 表示确实发生了回填（守卫落空 / 非终态数据为 False）。
+    """
+    status = data.get("status")
+    if status == "success":
+        report = data.get("report")
+        if not isinstance(report, dict):
+            return False
+        return await mark_research_job_status(
+            task_id, "success", last_error=None, output=report, only_when_queued=True
+        )
+    if status == "failed":
+        return await mark_research_job_status(
+            task_id,
+            "failed",
+            last_error=str(data.get("error", "unknown error"))[:200],
+            only_when_queued=True,
+        )
+    return False

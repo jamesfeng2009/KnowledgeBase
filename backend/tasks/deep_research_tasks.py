@@ -86,10 +86,11 @@ async def _deep_research_async(
     await publish_progress(task_id, {"type": EVENT_DONE, "task_id": task_id})
     data = report.to_dict()
     await save_result(task_id, data)
-    # 幂等收尾：标记成功（成功任务继续持有键，重试返回原任务）
+    # 幂等收尾：标记成功并把报告同条 UPDATE 落库（DB 为权威存储，P0-1；
+    # Redis 结果降级为查询缓存与自愈来源）。成功任务继续持有键，重试返回原任务。
     from app.services.research_job_service import mark_research_job_status
 
-    await mark_research_job_status(task_id, "success")
+    await mark_research_job_status(task_id, "success", output=data)
     return data
 
 

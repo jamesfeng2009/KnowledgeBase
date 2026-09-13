@@ -305,23 +305,76 @@ async def test_subscribe_stream_replays_snapshot_done() -> None:
 # ======================================================================
 
 
+def _make_user(uid=None):
+    return SimpleNamespace(id=uid or uuid4(), role="editor", is_active=True)
+
+
+def _db_returning(job):
+    """构造返回指定 job 行的 mock db 会话（endpoint 直调用）。"""
+    db = MagicMock()
+    db.execute = AsyncMock(
+        return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=job))
+    )
+    return db
+
+
 def test_result_running_success_failed() -> None:
-    """/result 三态：无记录 → running；success → 报告；failed → 错误信息。"""
+    """/result 三态（P0-1 DB 权威）：queued→running/自愈；
+    success→读 output_json（不查 Redis）；failed→last_error。"""
     from app.api.v1.research import get_research_result
 
-    with patch("app.services.research_progress.load_result") as lr:
-        lr.return_value = None
-        assert _run(get_research_result("tid", _make_user())).data["status"] == "running"
+    jid, uid = uuid4(), uuid4()
+    queued = SimpleNamespace(
+        id=jid, user_id=uid, status="queued", output_json=None, last_error=None
+    )
 
+    with patch("app.services.research_progress.load_result") as lr:
+        # queued 且 Redis 无终态 → running
+        lr.return_value = None
+        r = _run(get_research_result(str(jid), _make_user(uid), _db_returning(queued)))
+        assert r.data["status"] == "running"
+
+        # queued 且 Redis 有终态 → 自愈回填后返回成功
         lr.return_value = {"status": "success", "report": {"goal": "g", "summary": "s"}}
-        r = _run(get_research_result("tid", _make_user()))
+        with patch(
+            "app.services.research_job_service.backfill_result_from_redis",
+            new=AsyncMock(return_value=True),
+        ) as bf:
+            r = _run(get_research_result(str(jid), _make_user(uid), _db_returning(queued)))
+            assert r.data["status"] == "success"
+            assert r.data["report"]["summary"] == "s"
+            bf.assert_awaited_once()
+
+        # queued 且 Redis 记录失败 → failed
+        lr.return_value = {"status": "failed", "error": "boom"}
+        with patch(
+            "app.services.research_job_service.backfill_result_from_redis",
+            new=AsyncMock(return_value=True),
+        ):
+            r = _run(get_research_result(str(jid), _make_user(uid), _db_returning(queued)))
+            assert r.data["status"] == "failed"
+            assert r.data["error"] == "boom"
+
+    # DB 已 success → 直读 output_json，Redis 不被查询（DB 权威）
+    success_job = SimpleNamespace(
+        id=jid, user_id=uid, status="success",
+        output_json={"summary": "s"}, last_error=None,
+    )
+    with patch(
+        "app.services.research_progress.load_result", new=AsyncMock(return_value=None)
+    ) as lr:
+        r = _run(get_research_result(str(jid), _make_user(uid), _db_returning(success_job)))
         assert r.data["status"] == "success"
         assert r.data["report"]["summary"] == "s"
+        lr.assert_not_awaited()
 
-        lr.return_value = {"status": "failed", "error": "boom"}
-        r = _run(get_research_result("tid", _make_user()))
-        assert r.data["status"] == "failed"
-        assert r.data["error"] == "boom"
+    # DB 已 failed → last_error
+    failed_job = SimpleNamespace(
+        id=jid, user_id=uid, status="failed", output_json=None, last_error="boom"
+    )
+    r = _run(get_research_result(str(jid), _make_user(uid), _db_returning(failed_job)))
+    assert r.data["status"] == "failed"
+    assert r.data["error"] == "boom"
 
 
 def test_stream_requires_auth(raw_client) -> None:
