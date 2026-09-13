@@ -68,8 +68,21 @@ def _make_manager(fail_category: str | None = None) -> tuple[MemoryManager, _Sel
 # ----------------------------------------------------------------------
 
 
+class _FakeAsyncSessionCtx:
+    """async_session_factory() 的异步上下文替身。"""
+
+    def __init__(self, session):
+        self.session = session
+
+    async def __aenter__(self):
+        return self.session
+
+    async def __aexit__(self, *exc):
+        return False
+
+
 class TestP1aParallelBuildContext:
-    """L2/L3/L4 并行加载：无 session_id 不报错 + 单路失败隔离。"""
+    """L2/L3/L4 并行加载：无 session_id 不报错 + 单路失败隔离 + 会话隔离。"""
 
     @pytest.mark.asyncio
     async def test_no_session_id_ok(self):
@@ -103,20 +116,92 @@ class TestP1aParallelBuildContext:
         assert len(ctx.working_memory) == 1  # L4 不受影响
 
     @pytest.mark.asyncio
-    async def test_checkpoint_parallel_load(self):
-        """session_id 存在时 Checkpoint 与 L3/L4 并行加载，结果正常聚合。"""
+    async def test_checkpoint_uses_isolated_session(self, monkeypatch):
+        """checkpoint 分支必须走独立短会话（AsyncSession 不可并发共享）。"""
         mgr, _mem0 = _make_manager()
-        mgr.checkpoint = MagicMock(
+        fresh_session = MagicMock()
+        factory_calls: list[int] = []
+
+        def fake_factory():
+            factory_calls.append(1)
+            return _FakeAsyncSessionCtx(fresh_session)
+
+        monkeypatch.setattr(
+            "app.database.async_session_factory", fake_factory
+        )
+        fake_cm = MagicMock(
             load_checkpoint=AsyncMock(
                 return_value={"iteration": 2, "retrieved_docs": ["d1"]}
             )
         )
+        monkeypatch.setattr(
+            "app.memory.memory_manager.CheckpointManager",
+            MagicMock(return_value=fake_cm),
+        )
+
         ctx = await mgr.build_context(
             user_id=uuid.uuid4(), session_id="sess-1", query="问题"
         )
+
         assert ctx.checkpoint is not None
         assert ctx.checkpoint["iteration"] == 2
-        assert len(ctx.user_facts) == 1
+        assert len(factory_calls) == 1          # 用了独立会话工厂
+        fake_cm.load_checkpoint.assert_awaited_once_with("sess-1")
+
+    @pytest.mark.asyncio
+    async def test_checkpoint_propagates_tenant_guc(self, monkeypatch):
+        """带 tenant_id 时，独立会话需 SET LOCAL app.tenant_id（RLS 边界）。"""
+        tenant_id = uuid.uuid4()
+        mgr = MemoryManager(db=MagicMock(), sidecar=None, tenant_id=tenant_id)
+        mgr.mem0 = _SelectiveMem0()
+        fresh_session = MagicMock()
+        fresh_session.execute = AsyncMock()
+
+        monkeypatch.setattr(
+            "app.database.async_session_factory",
+            lambda: _FakeAsyncSessionCtx(fresh_session),
+        )
+        monkeypatch.setattr(
+            "app.memory.memory_manager.CheckpointManager",
+            MagicMock(
+                return_value=MagicMock(load_checkpoint=AsyncMock(return_value=None))
+            ),
+        )
+
+        await mgr.build_context(
+            user_id=uuid.uuid4(), session_id="sess-1", query="问题"
+        )
+
+        fresh_session.execute.assert_awaited_once()
+        stmt = fresh_session.execute.await_args.args[0]
+        assert "app.tenant_id" in stmt.text
+        assert str(tenant_id) in stmt.text
+
+    @pytest.mark.asyncio
+    async def test_checkpoint_failure_isolated(self, monkeypatch):
+        """checkpoint 分支失败不影响 L3/L4。"""
+        mgr, mem0 = _make_manager()
+        monkeypatch.setattr(
+            "app.database.async_session_factory",
+            lambda: _FakeAsyncSessionCtx(MagicMock()),
+        )
+        monkeypatch.setattr(
+            "app.memory.memory_manager.CheckpointManager",
+            MagicMock(
+                return_value=MagicMock(
+                    load_checkpoint=AsyncMock(
+                        side_effect=RuntimeError("db down")
+                    )
+                )
+            ),
+        )
+
+        ctx = await mgr.build_context(
+            user_id=uuid.uuid4(), session_id="sess-1", query="问题"
+        )
+        assert ctx.checkpoint is None          # checkpoint 降级为 None
+        assert len(ctx.user_facts) == 1        # L3 不受影响
+        assert len(ctx.working_memory) == 1    # L4 不受影响
 
 
 # ----------------------------------------------------------------------
@@ -269,6 +354,8 @@ class TestP1bDeleteConversationAPI:
 
     @pytest.mark.asyncio
     async def test_delete_missing_returns_404(self, monkeypatch):
+        from fastapi import HTTPException
+
         from app.api.v1.chat import delete_conversation as route
 
         fake_service = MagicMock(delete_conversation=AsyncMock(return_value=False))
@@ -276,18 +363,104 @@ class TestP1bDeleteConversationAPI:
             "app.api.v1.chat.ChatService", MagicMock(return_value=fake_service)
         )
         request = SimpleNamespace(state=SimpleNamespace(tenant_id=None))
-        resp = await route(
-            request,
-            uuid.uuid4(),
-            db=MagicMock(),
-            user=SimpleNamespace(id=uuid.uuid4()),
-        )
-        assert resp.code == 404
+        with pytest.raises(HTTPException) as exc_info:
+            await route(
+                request,
+                uuid.uuid4(),
+                db=MagicMock(),
+                user=SimpleNamespace(id=uuid.uuid4()),
+            )
+        assert exc_info.value.status_code == 404
 
 
 # ----------------------------------------------------------------------
 # P0 记忆写入异步化
 # ----------------------------------------------------------------------
+
+
+class _FakeTaskSessionCtx:
+    """task_db_session() 的异步上下文替身。"""
+
+    def __init__(self, session):
+        self.session = session
+
+    async def __aenter__(self):
+        return self.session
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class TestP0ConversationDeletedGuard:
+    """P1b×P0 竞态守卫：会话已删除/不存在时，异步记忆任务直接跳过。"""
+
+    def _patch_env(self, monkeypatch, row):
+        fake_session = MagicMock()
+        fake_session.execute = AsyncMock(
+            return_value=SimpleNamespace(first=lambda: row)
+        )
+        fake_session.commit = AsyncMock()
+        monkeypatch.setattr(
+            "app.database.task_db_session",
+            lambda: _FakeTaskSessionCtx(fake_session),
+        )
+        memory_mock = MagicMock()
+        memory_mock.save_session = AsyncMock()
+        memory_mock.extract_and_save_facts = AsyncMock()
+        monkeypatch.setattr(
+            "app.memory.memory_manager.MemoryManager",
+            MagicMock(return_value=memory_mock),
+        )
+        return memory_mock
+
+    @pytest.mark.asyncio
+    async def test_skips_when_conversation_deleted(self, monkeypatch):
+        from tasks.memory_tasks import _persist_memory_async
+
+        deleted_row = SimpleNamespace(id="i", deleted_at="2026-09-13 00:00:00")
+        memory_mock = self._patch_env(monkeypatch, deleted_row)
+
+        result = await _persist_memory_async(
+            user_id=str(uuid.uuid4()),
+            session_id=str(uuid.uuid4()),
+            query="q",
+        )
+
+        assert result["session_saved"] is False
+        memory_mock.save_session.assert_not_awaited()
+        memory_mock.extract_and_save_facts.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_skips_when_conversation_missing(self, monkeypatch):
+        from tasks.memory_tasks import _persist_memory_async
+
+        memory_mock = self._patch_env(monkeypatch, None)  # 会话不存在
+
+        result = await _persist_memory_async(
+            user_id=str(uuid.uuid4()),
+            session_id=str(uuid.uuid4()),
+            query="q",
+        )
+
+        assert result["session_saved"] is False
+        memory_mock.save_session.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_writes_when_conversation_alive(self, monkeypatch):
+        from tasks.memory_tasks import _persist_memory_async
+
+        alive_row = SimpleNamespace(id="i", deleted_at=None)
+        memory_mock = self._patch_env(monkeypatch, alive_row)
+
+        result = await _persist_memory_async(
+            user_id=str(uuid.uuid4()),
+            session_id=str(uuid.uuid4()),
+            query="q",
+        )
+
+        assert result["session_saved"] is True
+        memory_mock.save_session.assert_awaited_once()
+        memory_mock.extract_and_save_facts.assert_awaited_once()
 
 
 class TestP0DispatchMemoryWrite:

@@ -50,6 +50,34 @@ async def _persist_memory_async(
     }
 
     async with task_db_session() as session:
+        # P1b 竞态守卫：派发后用户可能已删除会话（软删除）——
+        # 此时写回记忆会产生指向已删除会话的"僵尸记忆"，直接跳过。
+        try:
+            from sqlalchemy import select
+
+            from app.models.conversation import Conversation
+
+            conv_uuid = _uuid.UUID(session_id)
+            row = (
+                await session.execute(
+                    select(Conversation.id, Conversation.deleted_at).where(
+                        Conversation.id == conv_uuid
+                    )
+                )
+            ).first()
+            if row is None or row.deleted_at is not None:
+                logger.info(
+                    "memory_task.skipped_conversation_gone",
+                    session_id=session_id,
+                    deleted=row is not None,
+                )
+                return result
+        except ValueError:
+            logger.warning(
+                "memory_task.invalid_session_id", session_id=session_id
+            )
+            return result
+
         memory = MemoryManager(session)
 
         # 1. Checkpoint + summary（与 save_session 行为一致）

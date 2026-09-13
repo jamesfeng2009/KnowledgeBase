@@ -141,7 +141,12 @@ class MemoryManager:
         await memory.save_session(user_id, session_id, agent_state, summary)
     """
 
-    def __init__(self, db: AsyncSession, sidecar: Any | None = None):
+    def __init__(
+        self,
+        db: AsyncSession,
+        sidecar: Any | None = None,
+        tenant_id: uuid.UUID | None = None,
+    ):
         self.db = db
         self.mem0 = Mem0Manager(db)
         self.graphiti = GraphitiManager(db)
@@ -150,6 +155,30 @@ class MemoryManager:
         self.arbiter = MemoryConflictArbiter(self.mem0)
         # P2-1: 副车道检索器（可注入以便测试；为 None 时按需惰性创建）
         self._sidecar = sidecar
+        # P1a: 租户上下文 — checkpoint 独立会话需要传播 app.tenant_id（RLS）
+        self._tenant_id = tenant_id
+
+    async def _load_checkpoint_isolated(
+        self, session_id: str
+    ) -> dict[str, Any] | None:
+        """L2 Checkpoint 加载 — 独立短会话执行（P1a 并发安全修复）。
+
+        SQLAlchemy AsyncSession 不允许并发使用：gather 各分支若共享请求
+        会话，asyncpg 会在同一连接上并发派发查询并抛
+        "another operation is in progress"。因此 checkpoint 分支改用
+        独立短会话，与 mem0 分支（请求会话内串行 L3→L4）真正并行。
+        新会话内传播租户 GUC，保持与请求会话一致的 RLS 边界。
+        """
+        from app.database import async_session_factory
+        from sqlalchemy import text
+
+        async with async_session_factory() as session:
+            if self._tenant_id is not None:
+                tenant_uuid = uuid.UUID(str(self._tenant_id))
+                await session.execute(
+                    text(f"SET LOCAL app.tenant_id = '{tenant_uuid}'")
+                )
+            return await CheckpointManager(session).load_checkpoint(session_id)
 
     def _get_sidecar(self) -> Any | None:
         """返回副车道检索器；未注入且开关关闭时返回 None（走原逻辑）。
@@ -196,12 +225,37 @@ class MemoryManager:
 
         # L2/L3/L4 并行加载（P1a：对标竞品并行检索，延迟从串行叠加变最慢一路）
         # 各路独立降级：单路失败只记日志，不影响其余记忆源。
+        # 并发安全：gather 各分支禁止共享请求 AsyncSession（asyncpg 会在同一
+        # 连接上并发派发查询而报错）—— checkpoint 走独立短会话（见
+        # _load_checkpoint_isolated），L3/L4 在请求会话内串行为一个分支。
         # 注意：gather 不接受 None，无 session_id 时用空协程占位保持下标稳定。
         async def _no_checkpoint() -> None:
             return None
 
+        async def _search_l3_l4() -> tuple[Any, Any]:
+            """L3 长期偏好 + L4 工作记忆。
+
+            请求会话内串行（同一会话不可并发）；两路各自 try/except，
+            保持"单路失败独立降级"语义。
+            """
+            try:
+                user_facts: Any = await self.mem0.search_facts(
+                    user_id=user_id, query=query, limit=10
+                )
+            except Exception as exc:
+                logger.warning("mem0_search_failed", error=str(exc))
+                user_facts = exc
+            try:
+                working: Any = await self.mem0.search_facts(
+                    user_id=user_id, query=query, category="working", limit=5
+                )
+            except Exception as exc:
+                logger.warning("working_memory_load_failed", error=str(exc))
+                working = exc
+            return user_facts, working
+
         if session_id:
-            checkpoint_task: Any = self.checkpoint.load_checkpoint(session_id)
+            checkpoint_task: Any = self._load_checkpoint_isolated(session_id)
         else:
             checkpoint_task = _no_checkpoint()
 
@@ -212,13 +266,7 @@ class MemoryManager:
             sidecar_task = sidecar.retrieve(user_id=user_id, query=query, mem0=self.mem0)
             tasks = [checkpoint_task, sidecar_task]
         else:
-            tasks = [
-                checkpoint_task,
-                self.mem0.search_facts(user_id=user_id, query=query, limit=10),
-                self.mem0.search_facts(
-                    user_id=user_id, query=query, category="working", limit=5
-                ),
-            ]
+            tasks = [checkpoint_task, _search_l3_l4()]
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -244,16 +292,19 @@ class MemoryManager:
                 ctx.user_facts = recall.get("user_facts", [])
                 ctx.working_memory = recall.get("working_memory", [])
         else:
+            # L3/L4 分支结果为 (user_facts|exc, working|exc) 元组（分支内
+            # 串行查询，两路各自降级为异常占位）
+            l3_l4 = results[1]
+            user_facts, working = (
+                l3_l4 if not isinstance(l3_l4, BaseException) else (l3_l4, l3_l4)
+            )
             # L3: Mem0 长期偏好 — 有 query 时语义检索，无 query 时按时间排序
             # ORM 对象统一转为 dict（消费端均为 dict 式访问，见 _fact_to_dict）
-            user_facts = results[1]
             if isinstance(user_facts, BaseException):
                 logger.warning("mem0_search_failed", error=str(user_facts))
             else:
                 ctx.user_facts = [_fact_to_dict(f) for f in user_facts]
-
             # L4: 工作记忆 — 当前任务相关事实
-            working = results[2]
             if isinstance(working, BaseException):
                 logger.warning("working_memory_load_failed", error=str(working))
             else:

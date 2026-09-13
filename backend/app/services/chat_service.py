@@ -131,7 +131,7 @@ class ChatService:
             db, tenant_id=tenant_id
         )
         self.llm: LLMProvider = get_llm_provider()
-        self.memory: MemoryManager = MemoryManager(db)
+        self.memory: MemoryManager = MemoryManager(db, tenant_id=self._tenant_id)
 
         # P1 IntentRouter — 懒初始化，失败不阻断现有功能
         self._intent_router = None
@@ -365,7 +365,7 @@ class ChatService:
             self.db = db
             self.conv_repo = ConversationRepository(db, tenant_id=self._tenant_id)
             self.msg_repo = MessageRepository(db, tenant_id=self._tenant_id)
-            self.memory = MemoryManager(db)
+            self.memory = MemoryManager(db, tenant_id=self._tenant_id)
 
         query = prepared.query
         conversation_id = prepared.conversation_id

@@ -14,7 +14,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -175,5 +175,8 @@ async def delete_conversation(
     service = ChatService(db, user, tenant_id=tenant_id)
     deleted = await service.delete_conversation(conv_id)
     if not deleted:
-        return ApiResponse(code=404, data=None, message="对话不存在或无权删除")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="对话不存在或无权删除",
+        )
     return ApiResponse(code=0, data=None, message="success")
