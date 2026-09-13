@@ -194,6 +194,11 @@ class ChatService:
         # P0-1 记忆溯源：保存用户消息 ID，供记忆提取时绑定来源
         self._last_user_message_id = user_msg.id
 
+        # P2a L1 热层：用户消息写穿透 Redis（失败降级，不阻断）
+        from app.memory.short_term_cache import short_term_cache
+
+        await short_term_cache.append(conversation_id, "user", query)
+
         # 3. 加载记忆上下文（四级记忆：短期窗口 + Checkpoint + Mem0 偏好 + 工作记忆）
         memory_ctx = await self.memory.build_context(
             user_id=self.user.id,
@@ -711,32 +716,51 @@ class ChatService:
             model_used=resolved_model_id or None,
         )
 
-        # 8. 保存记忆（Checkpoint 快照 + 提取用户偏好 + 关键决策持久化）
-        try:
-            await self.memory.save_session(
-                user_id=self.user.id,
-                session_id=str(conversation_id),
-                agent_state={"iteration": 0, "retrieved_docs": []},
-                summary=f"用户提问：{query[:60]}；AI回复：{assistant_content[:60]}",
-            )
-            await self.memory.extract_and_save_facts(
-                self.user.id,
-                [{"role": "user", "content": query}],
-                message_ids=(
-                    [self._last_user_message_id]
-                    if getattr(self, "_last_user_message_id", None) is not None
-                    else None
-                ),
-            )
-            # P1-2: 跨轮关键决策显式持久化到 working memory
-            # 防中间遗忘：关键决策不依赖模型从历史中"找回"
-            await self.memory.extract_and_save_key_decisions(
-                user_id=self.user.id,
-                query=query,
-                answer=assistant_content,
-            )
-        except Exception as e:
-            logger.warning("memory_save_failed", error=str(e))
+        # P2a L1 热层：助手消息写穿透 Redis（失败降级，不阻断）
+        from app.memory.short_term_cache import short_term_cache
+
+        await short_term_cache.append(conversation_id, "assistant", assistant_content)
+
+        # 8. 保存记忆 — P0 异步化：Celery 派发，回答先返回；
+        #    开关关闭或 broker 不可用时降级为原同步写入（fail-open 不丢记忆）
+        from tasks.memory_tasks import dispatch_memory_write
+
+        user_message_id = getattr(self, "_last_user_message_id", None)
+        dispatched = dispatch_memory_write(
+            user_id=str(self.user.id),
+            session_id=str(conversation_id),
+            query=query,
+            assistant_content=assistant_content,
+            summary=f"用户提问：{query[:60]}；AI回复：{assistant_content[:60]}",
+            user_message_id=str(user_message_id) if user_message_id else None,
+            extract_decisions=True,
+        )
+        if not dispatched:
+            try:
+                await self.memory.save_session(
+                    user_id=self.user.id,
+                    session_id=str(conversation_id),
+                    agent_state={"iteration": 0, "retrieved_docs": []},
+                    summary=f"用户提问：{query[:60]}；AI回复：{assistant_content[:60]}",
+                )
+                await self.memory.extract_and_save_facts(
+                    self.user.id,
+                    [{"role": "user", "content": query}],
+                    message_ids=(
+                        [self._last_user_message_id]
+                        if getattr(self, "_last_user_message_id", None) is not None
+                        else None
+                    ),
+                )
+                # P1-2: 跨轮关键决策显式持久化到 working memory
+                # 防中间遗忘：关键决策不依赖模型从历史中"找回"
+                await self.memory.extract_and_save_key_decisions(
+                    user_id=self.user.id,
+                    query=query,
+                    answer=assistant_content,
+                )
+            except Exception as e:
+                logger.warning("memory_save_failed", error=str(e))
 
         await self.db.commit()
         await self.db.close()
@@ -819,6 +843,35 @@ class ChatService:
         if conversation is None or conversation.user_id != self.user.id:
             raise PermissionError("无权访问该对话")
         return await self.msg_repo.get_by_conversation(conversation_id)
+
+    async def delete_conversation(self, conversation_id: UUID) -> bool:
+        """P1b: 软删除对话并清理该会话产生的记忆（对标竞品「删除会话」）。
+
+        清理链：对话软删除 → working/summary 事实停用（source_ref_id 反查）
+        → L2 Checkpoint + EventLog 删除 → L1 Redis 热层失效。
+        preference 长期偏好保留，不随会话删除。
+
+        Returns:
+            True 删除成功；False 对话不存在或不属于当前用户。
+        """
+        conversation = await self.conv_repo.get_by_id(conversation_id)
+        if conversation is None or conversation.user_id != self.user.id:
+            return False
+        deleted = await self.conv_repo.soft_delete(conversation_id)
+        if not deleted:
+            return False
+        await self.memory.cleanup_conversation_memory(
+            user_id=self.user.id,
+            session_id=str(conversation_id),
+            conversation_id=conversation_id,
+        )
+        await self.db.commit()
+        logger.info(
+            "conversation_deleted",
+            conversation_id=str(conversation_id),
+            user_id=str(self.user.id),
+        )
+        return True
 
     # ------------------------------------------------------------------
     # Agent 调用
@@ -1001,17 +1054,37 @@ class ChatService:
             if fragment:
                 parts.append(fragment)
 
-        # 3. 对话历史 — 若记忆上下文无 short_term，从 DB 加载
+        # 3. 对话历史 — 若记忆上下文无 short_term，优先 L1 热层（Redis），miss 回填 PG
         if not (memory_ctx and memory_ctx.short_term):
             _HISTORY_WINDOW = 16  # 最近 8 轮对话（16 条消息）
-            history = await self.msg_repo.get_by_conversation(
-                conversation_id, limit=_HISTORY_WINDOW
+            history_dicts = None
+            from app.memory.short_term_cache import short_term_cache
+
+            cached = await short_term_cache.get_window(
+                conversation_id, limit=_HISTORY_WINDOW + 1
             )
-            if history:
-                history_dicts = [
-                    {"role": msg.role, "content": msg.content}
-                    for msg in history[:-1]  # 排除最后一条（刚保存的当前用户消息）
-                ]
+            if cached is not None:
+                # 与 PG 路径一致：排除最后一条（刚保存的当前用户消息）
+                history_dicts = cached[:-1]
+                logger.debug("chat.history_from_cache", count=len(history_dicts))
+            if history_dicts is None:
+                history = await self.msg_repo.get_by_conversation(
+                    conversation_id, limit=_HISTORY_WINDOW
+                )
+                if history:
+                    history_dicts = [
+                        {"role": msg.role, "content": msg.content}
+                        for msg in history[:-1]  # 排除最后一条（刚保存的当前用户消息）
+                    ]
+                    # 回填热层（含当前用户消息，TTL 内后续轮次直读 Redis）
+                    await short_term_cache.replace(
+                        conversation_id,
+                        [
+                            {"role": msg.role, "content": msg.content}
+                            for msg in history
+                        ],
+                    )
+            if history_dicts:
 
                 # P3-C: 滚动摘要压缩 — 旧历史超阈值时压缩为摘要 + 保留近期原文
                 try:

@@ -328,20 +328,32 @@ class BaseAgent(ABC):
         try:
             from uuid import UUID
 
+            # P0 异步化：Celery 派发（回答先返回）；派发失败降级同步写入
+            from tasks.memory_tasks import dispatch_memory_write
+
             summary = f"用户提问：{state.get('query', '')[:60]}；AI回复：{state.get('answer', '')[:60]}"
-            await self.memory.save_session(
-                user_id=UUID(user_id),
+            agent_state = {
+                "iteration": state.get("iteration", 0),
+                "retrieved_docs": state.get("retrieved_docs", []),
+                "tool_results": state.get("tool_results", []),
+            }
+            dispatched = dispatch_memory_write(
+                user_id=user_id,
                 session_id=session_id,
-                agent_state={
-                    "iteration": state.get("iteration", 0),
-                    "retrieved_docs": state.get("retrieved_docs", []),
-                    "tool_results": state.get("tool_results", []),
-                },
+                query=state.get("query", ""),
                 summary=summary,
+                agent_state=agent_state,
             )
-            await self.memory.extract_and_save_facts(
-                UUID(user_id),
-                [{"role": "user", "content": state.get("query", "")}],
-            )
+            if not dispatched:
+                await self.memory.save_session(
+                    user_id=UUID(user_id),
+                    session_id=session_id,
+                    agent_state=agent_state,
+                    summary=summary,
+                )
+                await self.memory.extract_and_save_facts(
+                    UUID(user_id),
+                    [{"role": "user", "content": state.get("query", "")}],
+                )
         except Exception as exc:
             logger.warning("agent.memory_save_failed", error=str(exc))

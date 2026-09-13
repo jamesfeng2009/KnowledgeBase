@@ -11,6 +11,7 @@
 遵循单一职责：编排器只做协调，具体存储委托给各管理器。
 """
 
+import asyncio
 import uuid
 from typing import Any
 
@@ -193,52 +194,70 @@ class MemoryManager:
         """
         ctx = MemoryContext()
 
-        # L1: 短期窗口 — 取最近 N 条消息
-        if recent_messages:
-            ctx.short_term = recent_messages[-SHORT_TERM_WINDOW_SIZE:]
+        # L2/L3/L4 并行加载（P1a：对标竞品并行检索，延迟从串行叠加变最慢一路）
+        # 各路独立降级：单路失败只记日志，不影响其余记忆源。
+        # 注意：gather 不接受 None，无 session_id 时用空协程占位保持下标稳定。
+        async def _no_checkpoint() -> None:
+            return None
 
-        # L2: Checkpoint — 恢复会话状态
         if session_id:
-            try:
-                ctx.checkpoint = await self.checkpoint.load_checkpoint(session_id)
-            except Exception as e:
-                logger.warning("checkpoint_load_failed", session_id=session_id, error=str(e))
+            checkpoint_task: Any = self.checkpoint.load_checkpoint(session_id)
+        else:
+            checkpoint_task = _no_checkpoint()
 
-        # L3: Mem0 长期偏好 — 有 query 时做语义检索，无 query 时按时间排序
-        # ORM 对象统一转为 dict（消费端均为 dict 式访问，见 _fact_to_dict）
-        # P2-1: 副车道检索开启时，L3/L4 走独立通道（轻量模型改写 + 召回），
-        # 不污染主对话 Prompt Cache 前缀；关闭时保持原逻辑（零回归）。
         sidecar = self._get_sidecar()
         if sidecar is not None:
-            recall = await sidecar.retrieve(user_id=user_id, query=query, mem0=self.mem0)
-            ctx.user_facts = recall.get("user_facts", [])
-            ctx.working_memory = recall.get("working_memory", [])
+            # P2-1: 副车道检索 — L3/L4 走独立通道（轻量模型改写 + 召回），
+            # 不污染主对话 Prompt Cache 前缀
+            sidecar_task = sidecar.retrieve(user_id=user_id, query=query, mem0=self.mem0)
+            tasks = [checkpoint_task, sidecar_task]
         else:
-            try:
-                ctx.user_facts = [
-                    _fact_to_dict(f)
-                    for f in await self.mem0.search_facts(
-                        user_id=user_id,
-                        query=query,
-                        limit=10,
-                    )
-                ]
-            except Exception as e:
-                logger.warning("mem0_search_failed", user_id=str(user_id), error=str(e))
+            tasks = [
+                checkpoint_task,
+                self.mem0.search_facts(user_id=user_id, query=query, limit=10),
+                self.mem0.search_facts(
+                    user_id=user_id, query=query, category="working", limit=5
+                ),
+            ]
 
-            # L4: 工作记忆 — 获取当前任务相关事实（有 query 时也做语义检索）
-            try:
-                ctx.working_memory = [
-                    _fact_to_dict(f)
-                    for f in await self.mem0.search_facts(
-                        user_id=user_id,
-                        query=query,
-                        category="working",
-                        limit=5,
-                    )
-                ]
-            except Exception as e:
-                logger.warning("working_memory_load_failed", error=str(e))
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # L2: Checkpoint — 恢复会话状态
+        checkpoint_result = results[0]
+        if isinstance(checkpoint_result, BaseException):
+            if session_id:
+                logger.warning(
+                    "checkpoint_load_failed",
+                    session_id=session_id,
+                    error=str(checkpoint_result),
+                )
+        else:
+            ctx.checkpoint = checkpoint_result
+
+        if sidecar is not None:
+            recall = results[1]
+            if isinstance(recall, BaseException):
+                logger.warning(
+                    "sidecar_recall_failed", user_id=str(user_id), error=str(recall)
+                )
+            else:
+                ctx.user_facts = recall.get("user_facts", [])
+                ctx.working_memory = recall.get("working_memory", [])
+        else:
+            # L3: Mem0 长期偏好 — 有 query 时语义检索，无 query 时按时间排序
+            # ORM 对象统一转为 dict（消费端均为 dict 式访问，见 _fact_to_dict）
+            user_facts = results[1]
+            if isinstance(user_facts, BaseException):
+                logger.warning("mem0_search_failed", error=str(user_facts))
+            else:
+                ctx.user_facts = [_fact_to_dict(f) for f in user_facts]
+
+            # L4: 工作记忆 — 当前任务相关事实
+            working = results[2]
+            if isinstance(working, BaseException):
+                logger.warning("working_memory_load_failed", error=str(working))
+            else:
+                ctx.working_memory = [_fact_to_dict(f) for f in working]
 
         logger.info(
             "memory_context_built",
@@ -286,6 +305,62 @@ class MemoryManager:
                 logger.error("summary_save_failed", error=str(e))
 
         logger.info("session_memory_saved", session_id=session_id, user_id=str(user_id))
+
+    async def cleanup_conversation_memory(
+        self,
+        user_id: uuid.UUID,
+        session_id: str,
+        conversation_id: uuid.UUID,
+    ) -> dict[str, int]:
+        """P1b: 删除会话时清理该会话产生的记忆（对标竞品「删除会话」）。
+
+        清理范围（利用 P0-1 溯源 source_ref_id 反查）：
+          - working/summary 类事实：source_ref_id ∈ 会话消息 ID → 停用
+            （preference 是用户长期偏好，不随会话删除）；
+          - L2 Checkpoint + EventLog：按 session_id 物理删除；
+          - L1 Redis 热层：invalidate。
+        各路独立降级：单路失败只记日志，不阻断其余清理。
+        """
+        stats = {"facts": 0, "checkpoints": 0, "events": 0}
+
+        # working/summary 事实 — 按来源消息反查停用
+        try:
+            from app.repositories.conversation_repository import MessageRepository
+
+            msgs = await MessageRepository(self.db).get_by_conversation(
+                conversation_id
+            )
+            stats["facts"] = await self.mem0.deactivate_facts_by_source_refs(
+                user_id, [m.id for m in msgs], categories=["working", "summary"]
+            )
+        except Exception as exc:
+            logger.warning("conversation_facts_cleanup_failed", error=str(exc))
+
+        # L2 Checkpoint
+        try:
+            await self.checkpoint.delete_checkpoint(session_id)
+            stats["checkpoints"] = 1
+        except Exception as exc:
+            logger.warning("conversation_checkpoint_cleanup_failed", error=str(exc))
+
+        # EventLog（混合恢复的事件重放源，一并清理）
+        try:
+            from app.memory.event_log import EventLogManager
+
+            stats["events"] = await EventLogManager(self.db).delete_all(session_id)
+        except Exception as exc:
+            logger.warning("conversation_eventlog_cleanup_failed", error=str(exc))
+
+        # L1 Redis 热层
+        try:
+            from app.memory.short_term_cache import short_term_cache
+
+            await short_term_cache.invalidate(str(conversation_id))
+        except Exception as exc:
+            logger.warning("conversation_cache_cleanup_failed", error=str(exc))
+
+        logger.info("conversation_memory_cleaned", session_id=session_id, **stats)
+        return stats
 
     async def set_preference(
         self,
@@ -466,7 +541,12 @@ class MemoryManager:
 
         prompt = (
             "分析以下对话，提取值得长期记住的用户偏好和事实。\n"
-            "只提取明确的偏好和事实，不要推测。\n"
+            "只提取用户本人明确表达的偏好和事实，不要推测。\n"
+            "负规则（以下一律不提取）：\n"
+            "1. 寒暄/问候/礼貌用语（如\"你好\"\"谢谢\"\"辛苦了\"）— 不是记忆；\n"
+            "2. 知识库检索结果、文档内容、工具返回结果 — 那是系统知识，不是用户信息；\n"
+            "3. AI 回复中陈述的内容 — 只认用户消息里的话；\n"
+            "4. 一次性的临时任务指令（如\"帮我查X\"\"帮我总结Y\"）— 不是持久偏好。\n"
             "输出格式：每行一个事实，格式为 category|importance|content\n"
             "category 可选：preference（用户偏好）/ fact（事实信息）\n"
             "importance 为 1-5 的整数（5=非常重要，1=可有可无）\n"

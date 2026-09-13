@@ -157,3 +157,23 @@ async def get_conversation_messages(
         data=[MessageResponse.model_validate(msg) for msg in messages],
         message="success",
     )
+
+
+@router.delete("/conversations/{conv_id}")
+async def delete_conversation(
+    request: Request,
+    conv_id: UUID,
+    db: AsyncSession = Depends(get_db_session),
+    user: User = Depends(get_current_active_user),
+) -> ApiResponse[None]:
+    """删除对话（P1b）— 软删除对话并清理该会话产生的记忆。
+
+    清理范围：working/summary 记忆、Checkpoint、EventLog、L1 Redis 热层；
+    用户长期偏好（preference）保留。
+    """
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = ChatService(db, user, tenant_id=tenant_id)
+    deleted = await service.delete_conversation(conv_id)
+    if not deleted:
+        return ApiResponse(code=404, data=None, message="对话不存在或无权删除")
+    return ApiResponse(code=0, data=None, message="success")

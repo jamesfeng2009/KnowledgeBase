@@ -658,6 +658,42 @@ class Mem0Manager:
             return True
         return False
 
+    async def deactivate_facts_by_source_refs(
+        self,
+        user_id: uuid.UUID,
+        source_ref_ids: list[uuid.UUID],
+        categories: list[str] | None = None,
+    ) -> int:
+        """按来源消息 ID 批量停用事实（P1b 删除会话时清理会话级记忆）。
+
+        P0-1 溯源将 source_ref_id 绑定为消息 ID — 反查即可定位某会话
+        产生的全部记忆。只清理指定类别（working/summary）；
+        preference 是用户长期偏好，不随会话删除。
+        """
+        if not source_ref_ids:
+            return 0
+        stmt = select(MemoryFact).where(
+            MemoryFact.user_id == user_id,
+            MemoryFact.source_ref_id.in_(source_ref_ids),
+            MemoryFact.is_active == True,
+        )
+        if categories:
+            stmt = stmt.where(MemoryFact.category.in_(categories))
+        result = await self.db.execute(stmt)
+        count = 0
+        for fact in result.scalars():
+            fact.is_active = False
+            count += 1
+        if count:
+            await self.db.flush()
+            logger.info(
+                "facts_deactivated_by_source",
+                user_id=str(user_id),
+                count=count,
+                categories=categories,
+            )
+        return count
+
     async def touch_fact(
         self,
         fact_id: uuid.UUID,
