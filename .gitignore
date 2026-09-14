@@ -78,3 +78,6 @@ ai-coding-testing-quality.md
 评审-*.md
 评测.md
 面试串联演练-*.md
+
+# 技能进化 run 运行产物（审计链），不入仓库
+backend/evolution_runs/

@@ -16,9 +16,15 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextvars import ContextVar
+from pathlib import Path
 from typing import Any
 
 from app.config import get_settings
+from app.core.prompt_files import (
+    compose_guidance_prompt,
+    load_prompt_file,
+    split_guidance_sections,
+)
 from app.llm.base import LLMProvider, Message
 from app.rag.citation import CitationExtractor
 from app.rag.chunker import estimate_tokens
@@ -42,6 +48,20 @@ _CONSTRAINT_LABELS: dict[str, str] = {
     "warn": "【提醒】",
 }
 
+# === P1 技能进化：生成层基础指引外置（app/rag/prompts/generate_base.md）===
+# 文件分「## 指引」（可进化区，由 app/evolution 循环维护）与
+# 「## 红线」（冻结区，代码侧守卫，编辑器永远拿不到）。
+# 文件缺失/为空/指引区为空时回退内置默认（与历史硬编码逐字一致）。
+_GENERATE_PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
+_GENERATE_BASE_FILE = "generate_base.md"
+_GENERATE_BASE_GUIDANCE_DEFAULT: list[str] = [
+    "你是企业知识库助手。请基于以下检索到的上下文和企业工具结果回答用户问题。",
+    "如果上下文不足以回答，请明确说明并建议补充信息。",
+]
+_GENERATE_BASE_REDLINE_DEFAULT: list[str] = [
+    "禁止编造未在上下文中出现的事实。",
+]
+
 
 class Generator:
     """答案生成器 — 组装上下文并流式生成。
@@ -58,6 +78,7 @@ class Generator:
         llm: LLMProvider,
         citation_extractor: CitationExtractor | None = None,
         context_budget: int | None = None,
+        base_guidance: str | None = None,
     ) -> None:
         self.llm = llm
         self.citation_extractor = citation_extractor or CitationExtractor()
@@ -65,6 +86,9 @@ class Generator:
         self._allocator = BudgetAllocator(
             budget=context_budget or _CONTEXT_CLIFF_THRESHOLD
         )
+        # P1 技能进化：基础指引覆盖通道 — 进化循环用候选指引做 rollout 时
+        # 注入候选全文（指引+红线），不触碰线上文件；None 时从文件/默认加载
+        self._base_guidance_override = base_guidance
         # P0-Stage2: 最近一次 generate 的真实 token 用量（由 LLM Provider yield）
         # 并发隔离修复：Generator 为引擎级共享实例，若用普通实例属性，
         # 并发请求会互相覆写/读取对方的 usage（A 请求重置 None 时 B 正在累加，
@@ -91,6 +115,7 @@ class Generator:
         tool_results: list[dict[str, Any]],
         memory_context: str = "",
         constraint_context: list[dict[str, Any]] | None = None,
+        temperature: float | None = None,
     ) -> AsyncIterator[str]:
         """流式生成答案，逐 token yield 供 SSE 消费。
 
@@ -101,6 +126,8 @@ class Generator:
             memory_context: 记忆引擎提供的上下文（用户偏好、历史事实等）。
             constraint_context: 约束注入通道输出（ConstraintChannel.fetch，
                 source=constraint）— 确定性红线条款，block 级全量注入。
+            temperature: 采样温度；None 用 Provider 默认（线上随机性），
+                评测场景传 0.0 保证 A/B 指标可比（进化循环门控依赖）。
 
         Yields:
             str: 答案文本片段。
@@ -132,7 +159,10 @@ class Generator:
         self.last_usage = None
 
         try:
-            async for chunk in self.llm.chat(messages, stream=True, max_tokens=_MAX_TOKENS):
+            chat_kwargs: dict[str, Any] = {"stream": True, "max_tokens": _MAX_TOKENS}
+            if temperature is not None:
+                chat_kwargs["temperature"] = temperature
+            async for chunk in self.llm.chat(messages, **chat_kwargs):
                 # P0-Stage2: 捕获 usage dict（由 Provider 在流末尾 yield）
                 if isinstance(chunk, dict) and chunk.get("type") == "usage":
                     self.last_usage = chunk
@@ -196,11 +226,7 @@ class Generator:
         doc_items = [it for it in selected if it.kind == "document"]
         tool_items = [it for it in selected if it.kind == "tool"]
 
-        parts: list[str] = [
-            "你是企业知识库助手。请基于以下检索到的上下文和企业工具结果回答用户问题。",
-            "如果上下文不足以回答，请明确说明并建议补充信息。",
-            "禁止编造未在上下文中出现的事实。",
-        ]
+        parts: list[str] = [self._build_base_instruction()]
 
         # 引用指引
         if doc_items:
@@ -271,6 +297,31 @@ class Generator:
                 parts.append(f"工具 {idx}：{item.content}")
 
         return "\n".join(parts)
+
+    def _build_base_instruction(self) -> str:
+        """解析生成层基础指引 — 候选覆盖 > 外置文件 > 内置默认。
+
+        P1 技能进化的进化对象：指引区由 app/evolution 循环维护；
+        红线区（冻结区）随文件解析带出，但进化编辑器永远拿不到红线区
+        （见 app/evolution/editor），结构上不可被修改。
+        """
+        if self._base_guidance_override is not None:
+            return self._base_guidance_override
+
+        text = load_prompt_file(_GENERATE_PROMPTS_DIR, _GENERATE_BASE_FILE, "")
+        if not text:
+            return compose_guidance_prompt(
+                _GENERATE_BASE_GUIDANCE_DEFAULT, _GENERATE_BASE_REDLINE_DEFAULT
+            )
+        guidance, redline = split_guidance_sections(text)
+        if not guidance:
+            # 文件被清空/只剩红线标题 — 回退默认，避免 prompt 变空串
+            return compose_guidance_prompt(
+                _GENERATE_BASE_GUIDANCE_DEFAULT, _GENERATE_BASE_REDLINE_DEFAULT
+            )
+        return compose_guidance_prompt(
+            guidance, redline or _GENERATE_BASE_REDLINE_DEFAULT
+        )
 
     def _check_context_cliff(
         self,

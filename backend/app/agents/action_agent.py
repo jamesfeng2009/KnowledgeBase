@@ -22,6 +22,7 @@ import json
 from collections.abc import AsyncIterator
 
 from app.agents.base import AgentState, BaseAgent
+from app.agents.prompt_loader import load_agent_prompt
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -55,16 +56,8 @@ class ActionAgent(BaseAgent):
         "账号锁定", "权限不足",
     )
 
-    system_prompt: str = (
-        "你是一个行动执行助手。请将用户的指令转化为具体可执行的步骤，"
-        "并协助用户完成操作。\n"
-        "要求：\n"
-        "1. 分析用户指令，识别需要执行的操作类型；\n"
-        "2. 将复杂指令拆解为清晰的步骤列表；\n"
-        "3. 能通过工具自动完成的操作，直接执行并返回结果；\n"
-        "4. 需要用户手动操作的，给出明确的操作指引；\n"
-        "5. 回答使用中文，步骤明确，格式规范。"
-    )
+    # P0 prompt 外置：从 prompts/action.md 加载，缺失时回退内置默认（与历史硬编码一致）
+    system_prompt: str = load_agent_prompt("action")
 
     async def execute(self, state: AgentState) -> AsyncIterator[str]:
         """执行操作流程 — 分析意图 → 调用工具 → 生成结果。

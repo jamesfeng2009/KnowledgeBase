@@ -1,0 +1,201 @@
+{
+  "target": "app/rag/prompts/generate_base.md",
+  "threshold": 4.5,
+  "n_cases": 19,
+  "avg_score": 4.6484,
+  "min_score": 2.67,
+  "max_score": 5.0,
+  "n_hard": 6,
+  "results": [
+    {
+      "case_id": "fb_001",
+      "query": "在吗在吗，帮个忙呗，我想把知识库的数据导出来做个备份，在哪里操作啊，找了半天没找到入口",
+      "total_score": 5.0,
+      "citation_accuracy": 5,
+      "completeness": 5,
+      "hallucination_inverse": 5,
+      "reasoning": "答案准确引用了文档信息，完整回答了用户问题，且无任何编造内容。",
+      "error": null
+    },
+    {
+      "case_id": "fb_002",
+      "query": "审计日志保留多久？能查到哪些操作？",
+      "total_score": 5.0,
+      "citation_accuracy": 5,
+      "completeness": 5,
+      "hallucination_inverse": 5,
+      "reasoning": "答案事实均能溯源，完整回答问题，无编造信息。",
+      "error": null
+    },
+    {
+      "case_id": "fb_003",
+      "query": "多租户之间数据是怎么隔离的？",
+      "total_score": 5.0,
+      "citation_accuracy": 5,
+      "completeness": 5,
+      "hallucination_inverse": 5,
+      "reasoning": "答案事实均能从引用文档中找到，完整回答了数据隔离方式，无编造信息。",
+      "error": null
+    },
+    {
+      "case_id": "fb_004",
+      "query": "那质量分达到多少可以不走人工直接过？",
+      "total_score": 5.0,
+      "citation_accuracy": 5,
+      "completeness": 5,
+      "hallucination_inverse": 5,
+      "reasoning": "答案准确引用了文档信息，完整回答了问题，且无任何幻觉内容。",
+      "error": null
+    },
+    {
+      "case_id": "fb_005",
+      "query": "审批工作流有哪几种状态？",
+      "total_score": 2.67,
+      "citation_accuracy": 0,
+      "completeness": 5,
+      "hallucination_inverse": 3,
+      "reasoning": "答案未引用任何文档内容，且未直接回答问题。",
+      "error": null
+    },
+    {
+      "case_id": "fb_006",
+      "query": "谢谢啦，那我知道了，辛苦辛苦~",
+      "total_score": 3.33,
+      "citation_accuracy": 0,
+      "completeness": 5,
+      "hallucination_inverse": 5,
+      "reasoning": "答案无引用文档支持，但完整回答了用户问题，且无编造信息。",
+      "error": null
+    },
+    {
+      "case_id": "fb_007",
+      "query": "备份要多久做一次比较好啊？",
+      "total_score": 5.0,
+      "citation_accuracy": 5,
+      "completeness": 5,
+      "hallucination_inverse": 5,
+      "reasoning": "答案准确引用了文档2的内容，完整回答了问题，且无任何编造信息。",
+      "error": null
+    },
+    {
+      "case_id": "fb_008",
+      "query": "知识库的数据备份策略是怎样的？",
+      "total_score": 5.0,
+      "citation_accuracy": 5,
+      "completeness": 5,
+      "hallucination_inverse": 5,
+      "reasoning": "答案中的事实均可溯源，完整回答了用户问题，且无编造信息。",
+      "error": null
+    },
+    {
+      "case_id": "fb_009",
+      "query": "请问知识库支持上传什么格式的文件？",
+      "total_score": 5.0,
+      "citation_accuracy": 5,
+      "completeness": 5,
+      "hallucination_inverse": 5,
+      "reasoning": "答案准确引用了文档3，完整回答了用户问题，且无编造信息。",
+      "error": null
+    },
+    {
+      "case_id": "fb_010",
+      "query": "如何配置 SSO 单点登录？",
+      "total_score": 4.33,
+      "citation_accuracy": 5,
+      "completeness": 3,
+      "hallucination_inverse": 5,
+      "reasoning": "引用准确，但未提供具体配置步骤，仅建议联系管理员或查阅文档。",
+      "error": null
+    },
+    {
+      "case_id": "fb_011",
+      "query": "哇这个系统真好用，对了想问下，就是我上传的那个扫描件PDF它识别不出来文字是为什么呀，急急急",
+      "total_score": 4.33,
+      "citation_accuracy": 4,
+      "completeness": 5,
+      "hallucination_inverse": 4,
+      "reasoning": "答案引用了文档1中的OCR相关建议，基本准确。问题完全解答，方法具体。少量信息未直接引用，但无编造内容。",
+      "error": null
+    },
+    {
+      "case_id": "fb_012",
+      "query": "API 的速率限制是多少？超限后会怎样？",
+      "total_score": 5.0,
+      "citation_accuracy": 5,
+      "completeness": 5,
+      "hallucination_inverse": 5,
+      "reasoning": "答案中的事实均能从引用文档中找到，完整回答了用户问题，且无编造信息。",
+      "error": null
+    },
+    {
+      "case_id": "fb_013",
+      "query": "那它跟向量库是什么关系，检索时会一起用吗？",
+      "total_score": 5.0,
+      "citation_accuracy": 5,
+      "completeness": 5,
+      "hallucination_inverse": 5,
+      "reasoning": "答案事实均能从引用文档中找到依据，完整回答问题且无编造信息。",
+      "error": null
+    },
+    {
+      "case_id": "fb_014",
+      "query": "图谱抽取的三元组存在哪里？",
+      "total_score": 5.0,
+      "citation_accuracy": 5,
+      "completeness": 5,
+      "hallucination_inverse": 5,
+      "reasoning": "答案未包含文档外的信息，且完整回答了用户问题。",
+      "error": null
+    },
+    {
+      "case_id": "fb_015",
+      "query": "嘿嘿在吗，顺便问一下哈，就是那个文档权限是怎么申请的来着，我上次没记住",
+      "total_score": 5.0,
+      "citation_accuracy": 5,
+      "completeness": 5,
+      "hallucination_inverse": 5,
+      "reasoning": "答案中的事实均能从文档3准确溯源，完整回答了用户问题，且无任何编造信息。",
+      "error": null
+    },
+    {
+      "case_id": "fb_016",
+      "query": "知识库的全文检索支持哪些查询语法？",
+      "total_score": 4.33,
+      "citation_accuracy": 4,
+      "completeness": 5,
+      "hallucination_inverse": 4,
+      "reasoning": "答案提及了 PostgreSQL 的全文检索功能，引用文档支持该信息。但未明确列出具体查询语法，完整性稍有不足。无编造信息。",
+      "error": null
+    },
+    {
+      "case_id": "fb_017",
+      "query": "企业知识库支持上传哪些文档格式？",
+      "total_score": 4.33,
+      "citation_accuracy": 4,
+      "completeness": 5,
+      "hallucination_inverse": 4,
+      "reasoning": "答案引用了文档3中的多模态文档支持信息，但未明确提及具体格式。",
+      "error": null
+    },
+    {
+      "case_id": "fb_018",
+      "query": "它的相似度检索用的是哪种度量方式？",
+      "total_score": 5.0,
+      "citation_accuracy": 5,
+      "completeness": 5,
+      "hallucination_inverse": 5,
+      "reasoning": "答案准确引用了文档2中的余弦相似度信息，完整回答了问题，且无编造内容。",
+      "error": null
+    },
+    {
+      "case_id": "fb_019",
+      "query": "我们公司的知识库用的是哪个向量数据库？",
+      "total_score": 5.0,
+      "citation_accuracy": 5,
+      "completeness": 5,
+      "hallucination_inverse": 5,
+      "reasoning": "答案引用准确，完整回答问题，无编造信息。",
+      "error": null
+    }
+  ]
+}

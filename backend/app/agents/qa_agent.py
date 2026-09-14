@@ -19,6 +19,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from app.agents.base import AgentState, BaseAgent
+from app.agents.prompt_loader import load_agent_prompt
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -43,14 +44,8 @@ class QAAgent(BaseAgent):
 
     agent_type: str = "qa"
 
-    system_prompt: str = (
-        "你是一个企业知识库问答助手。请基于提供的知识库检索结果，"
-        "准确、简洁地回答用户问题。\n"
-        "要求：\n"
-        "1. 优先引用知识库中的文档内容；\n"
-        "2. 若检索结果不足以回答，请如实说明信息不足；\n"
-        "3. 回答使用中文，格式清晰。"
-    )
+    # P0 prompt 外置：从 prompts/qa.md 加载，缺失时回退内置默认（与历史硬编码一致）
+    system_prompt: str = load_agent_prompt("qa")
 
     async def execute(self, state: AgentState) -> AsyncIterator[str]:
         """执行 Agentic RAG 流程 — 检索 → 过滤 → 生成。

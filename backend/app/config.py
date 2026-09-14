@@ -442,6 +442,29 @@ class Settings(BaseSettings):
     # 回归阈值 — 指标下降超过此比例视为回归（如 0.05 = 下降 5%）
     EVAL_REGRESSION_THRESHOLD: float = 0.05
 
+    # === P1 技能自进化（SkillOptLite · 生成层基础指引）===
+    # 设计：SkillOpt 纪律的工程化适配 — rollout → 反思 → 有界编辑 →
+    # 严格门控 → 审计链；判官不可信时以红线否决 + 死区压制噪声误接受。
+    # 每轮允许的最大编辑条数（有界编辑）
+    EVOLUTION_EDIT_BUDGET: int = 2
+    # 门控死区 — 候选均分须超出当前基线至少该值才接受（平手/微弱领先均拒）
+    EVOLUTION_DEADBAND: float = 0.1
+    # 最大进化轮数
+    EVOLUTION_MAX_ROUNDS: int = 5
+    # 连续无改进轮数达此值即早停
+    EVOLUTION_PATIENCE: int = 3
+    # 单次 run 的 LLM 调用总预算（rollout + judge + optimizer），超限中止
+    # （成本护栏；完整 5 轮约需 250-350 次，可按需调高）
+    EVOLUTION_MAX_LLM_CALLS: int = 200
+    # 指引区最大行数（保持技能文档精简，防膨胀）
+    EVOLUTION_MAX_GUIDANCE_LINES: int = 12
+    # 诊断阶段取最低分弱样本数（喂给 optimizer 的失败模式样本量）
+    EVOLUTION_DIAGNOSE_TOP_K: int = 5
+    # optimizer LLM 模型 ID（models.json 中的 id；空=与 rollout 同模型）。
+    # P2：optimizer 每轮仅 1 次调用，换更强模型提升禁则遵循度，成本可控。
+    # 推荐 qwen-plus / qwen-max（saas_dashscope）或 claude-sonnet-4.6（saas）。
+    EVOLUTION_OPTIMIZER_MODEL: str = ""
+
     # === LDAP ===
     LDAP_URL: str = ""
     LDAP_BIND_DN: str = ""

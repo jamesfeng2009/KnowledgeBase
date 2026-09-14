@@ -46,7 +46,7 @@ SELECT
     -- 反馈信号
     COALESCE(f.feedback_count, 0) AS feedback_count,
     f.feedback_types,
-    (f.feedback_types @> '["complaint"]' OR f.feedback_types @> '["bug"]') AS is_badcase,
+    (f.feedback_types @> ARRAY['complaint']::varchar[] OR f.feedback_types @> ARRAY['bug']::varchar[]) AS is_badcase,
     -- 沉淀产物（经 chat_feedback 反馈回溯到资产）
     a.sediment_asset_ids,
     a.sediment_doc_ids

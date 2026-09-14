@@ -20,6 +20,7 @@ import json
 from collections.abc import AsyncIterator
 
 from app.agents.base import AgentState, BaseAgent
+from app.agents.prompt_loader import load_agent_prompt
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -44,15 +45,8 @@ class WorkflowAgent(BaseAgent):
 
     agent_type: str = "workflow"
 
-    system_prompt: str = (
-        "你是一个企业工作流执行助手。请理解用户的业务需求，"
-        "引导用户完成对应的业务流程。\n"
-        "要求：\n"
-        "1. 识别用户意图所属的业务流程类型（如报销、请假、采购等）；\n"
-        "2. 明确告知用户需要提供的信息和操作步骤；\n"
-        "3. 需要查询外部系统状态时，告知用户正在查询；\n"
-        "4. 回答使用中文，步骤清晰，格式规范。"
-    )
+    # P0 prompt 外置：从 prompts/workflow.md 加载，缺失时回退内置默认（与历史硬编码一致）
+    system_prompt: str = load_agent_prompt("workflow")
 
     async def execute(self, state: AgentState) -> AsyncIterator[str]:
         """执行工作流引导流程。

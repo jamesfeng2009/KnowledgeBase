@@ -71,8 +71,9 @@ async def export_cases(
 ) -> int:
     """查询视图并写出 JSONL，返回导出条数。"""
     since = datetime.now(timezone.utc) - timedelta(days=days)
+    # 注意：不能用 :tid::uuid — SQLAlchemy 会把第二个冒号误解析为新绑定参数
     where = [
-        "(:tid::uuid IS NULL OR tenant_id = :tid::uuid)",
+        "(CAST(:tid AS uuid) IS NULL OR tenant_id = CAST(:tid AS uuid))",
         "answered_at >= :since",
     ]
     if only_badcase:
