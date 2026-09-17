@@ -65,22 +65,27 @@ class KnowledgeApprovalService:
         conflict_count: int = 0,
         support: dict[str, Any] | None = None,
     ) -> KnowledgeApproval:
-        """P0 沉淀后自动提交审批 — 自动检测 + 分流。
+        """P0 沉淀后自动提交审批 — 双阈值自动检测 + 三分流。
 
         前置检测：
             1. PII 检测（PIIScrubber 检查 title + content）
-            2. 自动通过判断（quality_score >= 阈值 且 conflict_count=0
-               且 !pii_detected 且 D3 支持度门槛通过）
+            2. D3 支持度门槛（distinct_users 不足时不自动发布）
 
-        D3 支持度门槛：support 提供且 distinct_users < CHAT_FAQ_PROMOTE_MIN_USERS
-        时一律人工审批 — 单用户好评即使 quality 0.99 也不自动发布。
-        support 为 None（闸门关闭）时不生效，保持旧行为。
+        双阈值三分流（quality_score = asset.confidence_score）：
+            - >= CHAT_FAQ_AUTO_APPROVE_THRESHOLD 且 无冲突 且 无 PII
+              且 D3 支持度达标 → 自动 approve
+              （asset.status=active, doc.status=published, auto_approved=True）
+            - < CHAT_FAQ_AUTO_REJECT_THRESHOLD 且 无 D3 支持度争议
+              → 自动 reject（低置信度不再占用人审队列）
+              （asset.status=deprecated, doc 软删除, review_note 标记 auto_rejected）
+            - 其余（两阈值之间 / 有冲突 / 有 PII / 支持度不足）
+              → pending（人工审批，expire_at=now+TTL）
 
-        分流：
-            - 自动通过 → asset.status=active, doc.status=published,
-              approval.status=approved, auto_approved=True
-            - 人工审批 → asset.status=pending_review, doc.status=pending_review,
-              approval.status=pending, expire_at=now+TTL
+        自动拒绝安全边界：
+            - PII 命中一律不自动拒绝（人审裁决，安全优先）
+            - 支持度不足（low_support）不自动拒绝 — 低分但多人好评的
+              资产仍值得人工看一眼
+            - CHAT_FAQ_AUTO_REJECT_THRESHOLD=0 时关闭自动拒绝（全量人审）
 
         Args:
             asset: 已沉淀的知识资产（含 title/content/quality_score）。
@@ -109,11 +114,19 @@ class KnowledgeApprovalService:
             and distinct_users < settings.CHAT_FAQ_PROMOTE_MIN_USERS
         )
 
-        # ③ 自动通过判断
+        # ③ 双阈值三分流判断
         quality_score = asset.confidence_score or 0.0
         auto_approve = (
             quality_score >= settings.CHAT_FAQ_AUTO_APPROVE_THRESHOLD
             and conflict_count == 0
+            and not pii_detected
+            and not support_below_threshold
+        )
+        # 自动拒绝：低置信度 + 无 PII + 无支持度争议（低分但多人好评 → 人审）
+        reject_threshold = settings.CHAT_FAQ_AUTO_REJECT_THRESHOLD
+        auto_reject = (
+            reject_threshold > 0
+            and quality_score < reject_threshold
             and not pii_detected
             and not support_below_threshold
         )
@@ -140,17 +153,27 @@ class KnowledgeApprovalService:
             asset_id=asset.id,
             doc_id=doc_id,
             kb_id=kb_id,
-            status="approved" if auto_approve else "pending",
+            status=(
+                "approved" if auto_approve
+                else "rejected" if auto_reject
+                else "pending"
+            ),
             quality_score=quality_score,
             pii_detected=pii_detected,
             conflict_count=conflict_count,
             auto_detected_risks=risks if risks else None,
             support_evidence=support,
-            expire_at=None if auto_approve else (
-                now + timedelta(seconds=settings.CHAT_FAQ_APPROVAL_TTL_SECONDS)
+            expire_at=(
+                None if auto_approve or auto_reject
+                else now + timedelta(seconds=settings.CHAT_FAQ_APPROVAL_TTL_SECONDS)
             ),
-            reviewed_at=now if auto_approve else None,
+            reviewed_at=now if (auto_approve or auto_reject) else None,
             auto_approved=auto_approve,
+            # 自动拒绝以 review_note 标记（reviewer_id 保持 NULL = 无人介入）
+            review_note=(
+                f"auto_rejected: quality {quality_score:.2f} < "
+                f"{reject_threshold}" if auto_reject else None
+            ),
             tenant_id=self._tenant_id,
         )
         self.db.add(approval)
@@ -164,6 +187,16 @@ class KnowledgeApprovalService:
                 asset_id=str(asset.id),
                 quality_score=quality_score,
                 distinct_users=distinct_users,
+            )
+        elif auto_reject:
+            # 与人工 reject 同款流转：资产 deprecated + 文档软删除（留审计痕迹）
+            asset.status = "deprecated"
+            await self._soft_delete_doc(doc_id)
+            log.info(
+                "knowledge_approval.auto_rejected",
+                asset_id=str(asset.id),
+                quality_score=quality_score,
+                reject_threshold=reject_threshold,
             )
         else:
             asset.status = "pending_review"
@@ -339,11 +372,26 @@ class KnowledgeApprovalService:
         )
         auto_count = (await self.db.execute(auto_stmt)).scalar() or 0
 
+        # 自动拒绝：status=rejected 且无人工 reviewer（review_note 以
+        # auto_rejected: 前缀标记，与人工拒绝区分）
+        auto_rej_stmt = select(func.count(KnowledgeApproval.id)).where(
+            KnowledgeApproval.status == "rejected",
+            KnowledgeApproval.reviewer_id.is_(None),
+        )
+        auto_rej_stmt = apply_tenant_filter(
+            auto_rej_stmt, KnowledgeApproval, self._tenant_id
+        )
+        auto_rejected = (
+            (await self.db.execute(auto_rej_stmt)).scalar() or 0
+        )
+
         return {
             "total": total,
             "by_status": status_counts,
             "auto_approved": auto_count,
             "auto_approve_rate": (auto_count / total) if total > 0 else 0.0,
+            "auto_rejected": auto_rejected,
+            "auto_reject_rate": (auto_rejected / total) if total > 0 else 0.0,
         }
 
     # ------------------------------------------------------------------

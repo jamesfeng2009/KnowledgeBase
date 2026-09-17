@@ -17,6 +17,7 @@ from app.api.v1.audit import router as audit_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.billing import router as billing_router
 from app.api.v1.chat import router as chat_router
+from app.api.v1.chunks import router as chunks_router
 from app.api.v1.comments import router as comments_router
 from app.api.v1.connectors import router as connectors_router
 from app.api.v1.constraints import router as constraints_router
@@ -27,6 +28,7 @@ from app.api.v1.external_credentials import router as external_credentials_route
 from app.api.v1.external_webhooks import router as external_webhooks_router
 from app.api.v1.feedback import router as feedback_router
 from app.api.v1.finetune import router as finetune_router
+from app.api.v1.folders import router as folders_router
 from app.api.v1.graph import router as graph_router
 from app.api.v1.intelligence import router as intelligence_router
 from app.api.v1.knowledge import router as knowledge_router
@@ -49,6 +51,7 @@ from app.api.v1.tenants import router as tenants_router
 from app.api.v1.testing import router as testing_router
 from app.api.v1.tts import router as tts_router
 from app.api.v1.users import router as users_router
+from app.api.v1.wiki import router as wiki_router
 
 api_router = APIRouter(prefix="/api/v1")
 
@@ -57,9 +60,11 @@ api_router.include_router(billing_router)
 api_router.include_router(knowledge_router)
 api_router.include_router(documents_router)
 api_router.include_router(chat_router)
+api_router.include_router(chunks_router)
 api_router.include_router(qa_router)
 api_router.include_router(comments_router)
 api_router.include_router(feedback_router)
+api_router.include_router(folders_router)
 api_router.include_router(graph_router)
 api_router.include_router(intelligence_router)
 api_router.include_router(analytics_router)
@@ -73,6 +78,7 @@ api_router.include_router(external_webhooks_router)
 api_router.include_router(multimodal_router)
 api_router.include_router(agents_router)
 api_router.include_router(users_router)
+api_router.include_router(wiki_router)
 api_router.include_router(tenants_router)
 api_router.include_router(apikeys_router)
 api_router.include_router(settings_router)

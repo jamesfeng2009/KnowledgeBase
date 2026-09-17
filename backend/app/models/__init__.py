@@ -14,12 +14,14 @@ from app.models.base import Base
 from app.models.behavior import UserBehavior
 from app.models.billing import Subscription, Tenant, UsageRecord
 from app.models.checkpoint import AgentCheckpoint
+from app.models.chunk import ChunkVersion, DocumentChunk
 from app.models.comment import DocumentComment
 from app.models.constraint import ConstraintAuditRecord, ConstraintRule
 from app.models.conversation import Conversation, Message
 from app.models.event_log import AgentEventLog
 from app.models.feedback import Feedback
 from app.models.finetune import DatasetExport
+from app.models.folder import KbFolder
 from app.models.gap import KnowledgeGap
 from app.models.high_risk import HighRiskAuditRecord
 from app.models.knowledge import Document, DocumentVersion, KnowledgeBase
@@ -37,6 +39,7 @@ from app.models.research import ResearchJob
 from app.models.task_outbox import TaskOutbox
 from app.models.user import Department, KbMember, User
 from app.models.user_model_preference import UserModelPreference
+from app.models.wiki import WikiPage, WikiPageLink, WikiPageVersion
 from app.models.testing import (
     TestExecution,
     TestPlan,
@@ -68,6 +71,7 @@ __all__ = [
     "KnowledgeBase",
     "Document",
     "DocumentVersion",
+    "KbFolder",
     "Conversation",
     "ConstraintAuditRecord",
     "ConstraintRule",
@@ -97,6 +101,9 @@ __all__ = [
     "ApiKey",
     # 文档智能处理（3.16）
     "DocumentAction",
+    # P0-2 分块编辑 + 版本历史
+    "DocumentChunk",
+    "ChunkVersion",
     # 知识健康度仪表盘（3.17）
     "SearchLog",
     # 知识主动推送（3.15）
@@ -141,4 +148,8 @@ __all__ = [
     "ResearchJob",
     # P2 轻量 Outbox：任务欠投递发件箱
     "TaskOutbox",
+    # P0-1 Wiki 模式：自动生成互链知识库
+    "WikiPage",
+    "WikiPageVersion",
+    "WikiPageLink",
 ]

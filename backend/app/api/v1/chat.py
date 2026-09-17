@@ -118,7 +118,17 @@ async def chat(
         )
 
     generator = service.stream_chat(prepared, db=stream_db)
-    return sse_response(generator)
+    # TTFT 埋点维度 — 首 token 延迟（sse.ttft）与流汇总（sse.stream_done）
+    # 供 P95 压测（scripts/bench_ttft.py）与线上观测聚合。
+    return sse_response(
+        generator,
+        ttft_context={
+            "tenant_id": str(tenant_id) if tenant_id else None,
+            "user_id": str(user.id),
+            "conversation_id": str(prepared.conversation_id),
+            "model": prepared.resolved_model_id or "default",
+        },
+    )
 
 
 @router.get("/conversations", response_model=ApiResponse[list[ConversationResponse]])

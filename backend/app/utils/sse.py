@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from dataclasses import dataclass
 from typing import Any, AsyncGenerator, Optional
 
@@ -134,7 +135,10 @@ def format_sse_event(
 _HEARTBEAT_INTERVAL: float = 30.0
 
 
-async def _to_sse_stream(generator: AsyncGenerator) -> AsyncGenerator[str, None]:
+async def _to_sse_stream(
+    generator: AsyncGenerator,
+    ttft_context: Optional[dict] = None,
+) -> AsyncGenerator[str, None]:
     """将异步生成器转为 SSE 文本流。
 
     生成器可产出以下类型，均会被正确序列化（dict / list 用 json.dumps）：
@@ -147,6 +151,12 @@ async def _to_sse_stream(generator: AsyncGenerator) -> AsyncGenerator[str, None]
     若生成器已 yield ``event=done`` 的 SSEEvent，则流末尾不再自动追加
     重复的 done 事件；否则自动发送一个 ``event=done`` 终止事件作为安全兜底。
 
+    TTFT 埋点（可选）：``ttft_context`` 非 None 时，首个内容 chunk
+    （str token 或 event=TOKEN）产出时刻与流开始时刻之差记为
+    Time-To-First-Token，log.info 输出 ``sse.ttft``；流结束时输出
+    ``sse.stream_done``（总时长 + token 计数）。调用方通过 context
+    附带 tenant_id / conversation_id / model 等维度，供压测与观测聚合。
+
     优雅关闭支持：
     - 30 秒心跳保活（SSE 注释 ``: heartbeat\\n\\n``），防止代理超时断连；
       心跳通过 ``asyncio.wait`` 实现 — 超时不取消 pending 的 ``__anext__``
@@ -155,6 +165,11 @@ async def _to_sse_stream(generator: AsyncGenerator) -> AsyncGenerator[str, None]
     """
     done_yielded = False
     heartbeat_interval = _HEARTBEAT_INTERVAL
+
+    # TTFT 埋点状态（ttft_context=None 时零开销，不计时）
+    t_start = time.monotonic() if ttft_context is not None else None
+    ttft_ms: float | None = None
+    token_count = 0
 
     # 挂起的 __anext__ 任务 — 跨心跳复用，超时绝不取消。
     anext_task: asyncio.Task | None = None
@@ -193,8 +208,22 @@ async def _to_sse_stream(generator: AsyncGenerator) -> AsyncGenerator[str, None]
                 yield chunk.to_text()
                 if chunk.event == SSEEventType.DONE:
                     done_yielded = True
+                # TTFT: 首个 TOKEN 事件视为首 token
+                if (
+                    ttft_context is not None
+                    and ttft_ms is None
+                    and chunk.event == SSEEventType.TOKEN
+                ):
+                    ttft_ms = (time.monotonic() - t_start) * 1000  # type: ignore[operator]
+                    log.info("sse.ttft", ttft_ms=round(ttft_ms, 1), **ttft_context)
             elif isinstance(chunk, str):
                 yield format_sse_event(chunk)
+                # TTFT: 首个 str 视为首 token（chat 默认事件逐 token 文本）
+                if ttft_context is not None:
+                    token_count += 1
+                    if ttft_ms is None:
+                        ttft_ms = (time.monotonic() - t_start) * 1000  # type: ignore[operator]
+                        log.info("sse.ttft", ttft_ms=round(ttft_ms, 1), **ttft_context)
             elif isinstance(chunk, (dict, list)):
                 yield format_sse_event(json.dumps(chunk, ensure_ascii=False))
             else:
@@ -209,19 +238,38 @@ async def _to_sse_stream(generator: AsyncGenerator) -> AsyncGenerator[str, None]
         # 清理仍挂起的 anext 任务，避免泄漏（客户端断连 / 流被提前关闭）
         if anext_task is not None:
             anext_task.cancel()
+        # TTFT 汇总 — 无论正常结束还是断连均输出（断连也关心 TTFT 表现）
+        if ttft_context is not None:
+            total_ms = (time.monotonic() - t_start) * 1000  # type: ignore[operator]
+            log.info(
+                "sse.stream_done",
+                ttft_ms=round(ttft_ms, 1) if ttft_ms is not None else None,
+                total_ms=round(total_ms, 1),
+                token_count=token_count,
+                **ttft_context,
+            )
 
     if not done_yielded:
         yield format_sse_event(json.dumps({"type": "done"}), event="done")
 
 
-def sse_response(generator: AsyncGenerator) -> StreamingResponse:
+def sse_response(
+    generator: AsyncGenerator,
+    ttft_context: Optional[dict] = None,
+) -> StreamingResponse:
     """将异步生成器包装为 SSE StreamingResponse。
 
     content_type 为 ``text/event-stream``，并设置禁用缓冲的响应头，
     以兼容 APISIX / Nginx 透传场景。
+
+    Args:
+        generator: 业务事件流。
+        ttft_context: 可选 TTFT 埋点维度（如 tenant_id / conversation_id /
+            model）。传入后流式输出阶段自动记录首 token 延迟
+            （``sse.ttft``）与流结束汇总（``sse.stream_done``）。
     """
     return StreamingResponse(
-        _to_sse_stream(generator),
+        _to_sse_stream(generator, ttft_context=ttft_context),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

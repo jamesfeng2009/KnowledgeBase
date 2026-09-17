@@ -317,6 +317,16 @@ class ChatService:
         resolved_model_id = await model_service.resolve_model(
             self.user.id, str(conversation_id)
         )
+        # P1 在线灰度/AB 分流 — 离线 evolution gate 通过的候选模型在此放量：
+        # 按租户白名单 / 流量百分比对默认模型确定性分流（sticky 分桶，
+        # 用户显式选择的模型不劫持），曝光埋点 ab.exposure 供线上指标归因。
+        from app.core.ab_split import apply_ab_split
+
+        resolved_model_id = apply_ab_split(
+            resolved_model_id,
+            tenant_id=tenant_id,
+            user_id=str(self.user.id),
+        )
         default_model = get_default_model()
         default_model_id = default_model["id"] if default_model else ""
 

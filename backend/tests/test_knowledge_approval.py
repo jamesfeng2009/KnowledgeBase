@@ -112,8 +112,8 @@ class TestKnowledgeApprovalService:
         assert asset.status == "active"
 
     @pytest.mark.asyncio
-    async def test_submit_for_review_pending_low_quality(self):
-        """低质量资产进入人工审批（quality_score < 0.9）。"""
+    async def test_submit_for_review_auto_reject_low_quality(self):
+        """低置信度资产自动拒绝（quality_score < 0.6，不占用人审队列）。"""
         from app.services.knowledge_approval_service import (
             KnowledgeApprovalService,
         )
@@ -121,6 +121,37 @@ class TestKnowledgeApprovalService:
         db = _make_mock_db()
         service = KnowledgeApprovalService(db)
         asset = _make_mock_asset(confidence=0.5)
+
+        with patch.object(
+            service, "_detect_pii", return_value=(False, [])
+        ), patch.object(
+            service, "_update_doc_status", new=AsyncMock()
+        ), patch.object(
+            service, "_soft_delete_doc", new=AsyncMock()
+        ) as mock_soft_delete:
+            approval = await service.submit_for_review(
+                asset=asset,
+                doc_id=asset.doc_id,
+                kb_id=uuid.uuid4(),
+                conflict_count=0,
+            )
+
+        assert approval.status == "rejected"
+        assert approval.auto_approved is False
+        assert "auto_rejected" in (approval.review_note or "")
+        assert asset.status == "deprecated"
+        mock_soft_delete.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_submit_for_review_pending_mid_band(self):
+        """中间区间资产进入人工审批（0.6 <= quality_score < 0.9）。"""
+        from app.services.knowledge_approval_service import (
+            KnowledgeApprovalService,
+        )
+
+        db = _make_mock_db()
+        service = KnowledgeApprovalService(db)
+        asset = _make_mock_asset(confidence=0.7)
 
         with patch.object(
             service, "_detect_pii", return_value=(False, [])

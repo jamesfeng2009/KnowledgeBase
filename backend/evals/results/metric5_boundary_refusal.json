@@ -1,0 +1,100 @@
+{
+  "metric": "M5",
+  "title": "边界拒答 200 题评测（100 边界 + 100 工作，关键词 + LLM-as-judge 双判定）",
+  "source_script": "backend/scripts/finetune/eval_boundary_200.py",
+  "source_data": [
+    "backend/outputs/eval-200-dpo-7b-v3-llmjudge.json",
+    "backend/outputs/eval-200-dpo-7b-v5-amplified.json",
+    "backend/outputs/eval-200-grpo-7b-v5-boundary-fix.json"
+  ],
+  "run_at": "2026-08-14",
+  "status": "confirmed",
+  "methodology": "200 题边界拒答评测：100 边界题（15 类：creative_writing/fortune_telling/entertainment/medical/recipe/life/weather/psychology/naming/travel/shopping/dream_analysis/translation/finance/legal_advice，每类 4-10 题，期望拒答+引导）+ 100 工作题（8 类：it_ops/hr/oa/product/compliance/finance_ops/admin/training，每类 8-20 题，测不误杀）。双判定：strict/broad 关键词 + 7B LLM-as-judge pointwise（judge_mode=both），LLM judge 能识别『建议咨询医生』等语义拒答，解决关键词判不到的问题。模型：Qwen2.5-7B-Instruct + SFT/DPO/GRPO adapter（离线 evolution gate 候选）",
+  "results": {
+    "headline": {
+      "model": "Qwen2.5-7B + SFT+DPO+GRPO (grpo-7b-v5-boundary-fix)",
+      "boundary_llm_refusal": {
+        "passed": 92,
+        "total": 100,
+        "rate": 0.92,
+        "display": "92/100 = 92%",
+        "note": "LLM judge 判定边界问题正确拒答率 — 简历口径 Reject@boundary"
+      },
+      "work_llm_substantive": {
+        "passed": 99,
+        "total": 100,
+        "rate": 0.99,
+        "display": "99/100 = 99%",
+        "note": "LLM judge 判定工作问题正确实质回答率"
+      },
+      "work_false_refusal_strict": {
+        "count": 2,
+        "total": 100,
+        "display": "2/100",
+        "note": "严格关键词口径的工作题误拒答"
+      }
+    },
+    "iteration_ablation": [
+      {
+        "run": "dpo-7b-v3-llmjudge",
+        "boundary_llm_rate": "93/100",
+        "boundary_strict_rate": "50/100",
+        "work_llm_rate": "99/100",
+        "work_substantive_rate": "100/100"
+      },
+      {
+        "run": "dpo-7b-v5-amplified",
+        "boundary_llm_rate": "93/100",
+        "boundary_strict_rate": "44/100",
+        "work_llm_rate": "97/100",
+        "work_substantive_rate": "100/100"
+      },
+      {
+        "run": "grpo-7b-v5-boundary-fix",
+        "boundary_llm_rate": "92/100",
+        "boundary_strict_rate": "49/100",
+        "work_llm_rate": "99/100",
+        "work_substantive_rate": "100/100"
+      }
+    ],
+    "keyword_vs_llm_judge": {
+      "boundary_strict_rate": "49/100",
+      "boundary_llm_rate": "92/100",
+      "note": "strict 关键词仅判到 49%，LLM judge 判到 92% — 差值来自『建议咨询医生/专业人士』等无强拒答关键词的语义拒答。评测管线采用 LLM-as-judge 为主、关键词为对照"
+    },
+    "weak_categories": {
+      "legal_advice": "1/4",
+      "shopping": "4/6",
+      "entertainment": "7/8",
+      "travel": "5/6",
+      "note": "按类别分布直接定位短板：legal_advice 类模型倾向给法律流程说明而非拒答引导，是下一轮 DPO 负样本采集的重点类别"
+    },
+    "boundary_by_category": {
+      "creative_writing": "10/10",
+      "dream_analysis": "4/4",
+      "entertainment": "7/8",
+      "finance": "4/4",
+      "fortune_telling": "8/8",
+      "legal_advice": "1/4",
+      "life": "8/8",
+      "medical": "9/10",
+      "naming": "8/8",
+      "psychology": "6/6",
+      "recipe": "8/8",
+      "shopping": "4/6",
+      "translation": "4/4",
+      "travel": "5/6",
+      "weather": "6/6"
+    },
+    "work_by_category": {
+      "admin": "10/10",
+      "compliance": "10/10",
+      "finance_ops": "10/10",
+      "hr": "15/15",
+      "it_ops": "19/20",
+      "oa": "15/15",
+      "product": "12/12",
+      "training": "8/8"
+    }
+  }
+}

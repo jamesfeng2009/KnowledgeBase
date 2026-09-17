@@ -143,6 +143,13 @@ class Settings(BaseSettings):
     VLLM_FINETUNED_MODEL: str = "Qwen2.5-7B-Instruct"
     VLLM_LORA_ADAPTER: str = "dpo-v3-7b"  # vLLM --lora-modules 注册的 adapter name
     VLLM_LORA_PATH: str = "/data/adapters/dpo-7b-v3"  # adapter 权重路径
+    # P1 在线灰度/AB 分流 — JSON 数组，离线 evolution gate 通过后的候选模型
+    # 在此按租户白名单 / 流量百分比放量（确定性 sticky 分桶，见 app/core/ab_split.py）。
+    # 只分流「默认模型」流量，用户显式选择的模型不劫持。示例：
+    # AB_EXPERIMENTS='[{"name":"dpo-v4-gray","control_model":"qwen-dpo-v3-7b",
+    #   "treatment_model":"qwen-dpo-v4-7b","traffic_pct":10,
+    #   "tenant_allowlist":["<tenant-uuid>"],"enabled":true}]'
+    AB_EXPERIMENTS: str = "[]"
     TEI_HOST: str = "embedding-server"
     TEI_PORT: str = "80"
     TEI_RERANKER_HOST: str = "reranker-server"
@@ -667,6 +674,11 @@ class Settings(BaseSettings):
     # P2 审批自动通过阈值 — quality_score >= 此值 且 无冲突 且 无 PII 时自动 approve。
     # 默认 0.9（保守，优先人工审批）；设为 1.0 则全部人工审批。
     CHAT_FAQ_AUTO_APPROVE_THRESHOLD: float = 0.9
+    # P2 双阈值审批 — 低置信度自动拒绝阈值。quality_score < 此值（且无 D3 支持
+    # 度争议）时自动 reject（asset=deprecated, doc 软删除），不再占用人审队列。
+    # [REJECT, APPROVE) 区间进 pending 人工审批。对齐 CONSTRAINT_REVIEW_CONFIDENCE
+    # 的三分流口径（≥AUTO 生效 / 两阈值间人审 / <REVIEW 丢弃）。设为 0 关闭自动拒绝。
+    CHAT_FAQ_AUTO_REJECT_THRESHOLD: float = 0.6
     # P2 审批过期时间（秒）— pending 状态超时后标记 expired。默认 7 天。
     CHAT_FAQ_APPROVAL_TTL_SECONDS: int = 7 * 24 * 3600
 
