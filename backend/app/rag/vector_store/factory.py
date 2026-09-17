@@ -9,6 +9,7 @@
 
     VECTOR_STORE=os_knn   # 默认 — OpenSearch k-NN
     VECTOR_STORE=milvus   # 可选 — Milvus 向量引擎
+    VECTOR_STORE=qdrant   # P1 可选 — Qdrant（超大规模 + Payload 过滤）
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from app.config import get_settings
 from app.rag.vector_store.base import VectorStoreBase
 from app.rag.vector_store.milvus_store import MilvusVectorStore
 from app.rag.vector_store.opensearch_store import OpenSearchVectorStore
+from app.rag.vector_store.qdrant_store import QdrantVectorStore
 from app.utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -27,6 +29,7 @@ log = get_logger(__name__)
 _BACKENDS: dict[str, type[VectorStoreBase]] = {
     "os_knn": OpenSearchVectorStore,
     "milvus": MilvusVectorStore,
+    "qdrant": QdrantVectorStore,  # P1 存储抽象扩展
 }
 
 # 默认后端

@@ -1,0 +1,50 @@
+name: Post-Merge Regression
+
+on:
+  push:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    name: Full backend regression on merge
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: ekb
+          POSTGRES_PASSWORD: ekb
+          POSTGRES_DB: ekb_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ekb" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      DATABASE_URL: postgresql+asyncpg://ekb:ekb@localhost:5432/ekb_test
+      SECRET_KEY: ci-secret-key
+      AUTO_MIGRATE: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install deps
+        run: pip install -r requirements.txt pytest pytest-asyncio
+      - name: Migrate
+        run: alembic upgrade head
+      - name: Full test suite
+        run: python -m pytest tests/ -q -p no:cacheprovider
+      - name: Upload JUnit report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-report
+          path: backend/.pytest_cache

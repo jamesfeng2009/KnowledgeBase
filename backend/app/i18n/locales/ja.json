@@ -1,0 +1,62 @@
+{
+  "common": {
+    "app_name": "エンタープライズ知識ベース",
+    "loading": "読み込み中…",
+    "search": "検索",
+    "submit": "送信",
+    "cancel": "キャンセル",
+    "confirm": "確認",
+    "delete": "削除",
+    "edit": "編集",
+    "save": "保存",
+    "back": "戻る",
+    "retry": "再試行",
+    "success": "成功",
+    "failed": "失敗",
+    "unauthorized": "未認証です。ログインしてください",
+    "forbidden": "この操作を実行する権限がありません",
+    "not_found": "リソースが見つかりません",
+    "internal_error": "サーバー内部エラーです。後でもう一度お試しください",
+    "required": "このフィールドは必須です",
+    "page_not_found": "ページが見つかりません"
+  },
+  "nav": {
+    "knowledge_bases": "知識ベース",
+    "documents": "ドキュメント",
+    "search": "グローバル検索",
+    "wiki": "Wiki",
+    "folders": "フォルダ",
+    "settings": "設定",
+    "admin": "管理",
+    "analytics": "分析"
+  },
+  "kb": {
+    "create": "知識ベースを作成",
+    "name": "知識ベース名",
+    "description": "説明",
+    "created": "知識ベースを作成しました",
+    "no_permission": "この知識ベースにアクセスする権限がありません"
+  },
+  "doc": {
+    "upload": "ドキュメントをアップロード",
+    "chunks": "チャンク",
+    "versions": "バージョン履歴",
+    "rollback": "ロールバック",
+    "rollback_confirm": "このバージョンにロールバックしますか？現在の内容は上書きされスナップショットが保存されます",
+    "folder_move": "フォルダに移動",
+    "status_published": "公開済み",
+    "status_draft": "下書き"
+  },
+  "wiki": {
+    "generate": "Wiki を生成",
+    "generating": "Wiki を生成中…",
+    "graph": "ナレッジグラフ",
+    "edit": "ページを編集",
+    "version_history": "バージョン履歴"
+  },
+  "chat": {
+    "placeholder": "質問を入力…",
+    "sending": "考え中…",
+    "new_conversation": "新しいチャット"
+  }
+}

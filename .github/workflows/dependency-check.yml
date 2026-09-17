@@ -1,0 +1,43 @@
+name: Dependency Check
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 6 * * 1"  # 每周一 UTC 06:00
+
+permissions:
+  contents: read
+
+jobs:
+  pip-check:
+    name: Python dependency health
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install deps
+        working-directory: backend
+        run: |
+          pip install pipdeptree
+          pip install -r requirements.txt
+          pip check
+          pipdeptree --warn fail --confirm >/dev/null || true
+
+  npm-check:
+    name: Node dependency health
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: npm install + doctor
+        working-directory: frontend
+        run: |
+          npm install
+          npm ls --depth=0 || true

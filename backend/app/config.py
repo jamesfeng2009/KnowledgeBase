@@ -59,6 +59,11 @@ class Settings(BaseSettings):
     # （Deep Research 已改查 Redis 快照），配合 task_ignore_result 避免结果堆积。
     CELERY_RESULT_BACKEND: str = "rpc://"
 
+    # === 任务队列监控（P1，RabbitMQ Management API）===
+    RABBITMQ_MGMT_URL: str = "http://localhost:15672"
+    RABBITMQ_MGMT_USER: str = "guest"
+    RABBITMQ_MGMT_PASSWORD: str = "guest"
+
     # === Milvus ===
     MILVUS_HOST: str = "localhost"
     MILVUS_PORT: int = 19530
@@ -121,6 +126,35 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     COHERE_API_KEY: str = ""
 
+    # === OpenAI 兼容厂商（P1 模型厂商扩展）===
+    # 一接入 20+ 厂商：仅需修改 base_url / api_key / model，
+    # OpenAI / DeepSeek / Moonshot / 智谱 / Groq / Together / Ollama 等
+    # 凡提供 OpenAI 兼容 /v1/chat/completions 的服务均可接入。
+    OPENAI_BASE_URL: str = "https://api.openai.com/v1"
+    OPENAI_LLM_MODEL: str = "gpt-4o-mini"
+
+    # === IM 集成（P1，企业微信优先）===
+    WECOM_CORP_ID: str = ""
+    WECOM_AGENT_ID: str = ""
+    WECOM_SECRET: str = ""
+    WECOM_BOT_WEBHOOK: str = ""   # 群机器人 webhook（推送用）
+    WECOM_BOT_TOKEN: str = ""     # 回调验签 token（接收用）
+    WECOM_BOT_AES_KEY: str = ""   # 回调解密 AES Key（EncodingAESKey）
+    CONNECTOR_WECOM_ENABLED: bool = False
+
+    # === OIDC 单点登录（P1）===
+    OIDC_ENABLED: bool = False
+    OIDC_ISSUER: str = ""            # 如 https://login.microsoftonline.com/{tenant}/v2.0
+    OIDC_CLIENT_ID: str = ""
+    OIDC_CLIENT_SECRET: str = ""
+    OIDC_REDIRECT_URI: str = "http://localhost:8000/api/v1/auth/oidc/callback"
+    OIDC_SCOPES: str = "openid profile email"
+
+    # === 网站嵌入 Widget（P2）===
+    WIDGET_HMAC_SECRET: str = ""     # 留空则从 SECRET_KEY 派生
+    WIDGET_TOKEN_TTL: int = 3600     # widget token 有效期（秒）
+    WIDGET_RATE_LIMIT: int = 10      # 每 token/IP 每分钟最大提问数
+
     # === SaaS 模式·国内（通义千问 DashScope）===
     # 阿里云通义千问，OpenAI 兼容接口，国内直连无需代理
     # Qwen-7B 无限制免费，qwen-turbo/qwen-plus 有新用户免费额度
@@ -133,6 +167,21 @@ class Settings(BaseSettings):
     DASHSCOPE_RERANK_MODEL: str = "gte-rerank-v2"
     # DashScope 视觉理解（qwen-vl 系列，走 OpenAI 兼容端点）
     DASHSCOPE_VLM_MODEL: str = "qwen-vl-max"
+
+    # === 向量存储·Qdrant（P1 存储抽象扩展）===
+    QDRANT_URL: str = "http://localhost:6333"
+    QDRANT_API_KEY: str = ""
+    QDRANT_COLLECTION: str = "ekb_documents"
+
+    # === 对象存储抽象（P1 存储抽象扩展）===
+    # OBJECT_STORE=local（默认，本地文件系统）| s3（S3/MinIO 兼容对象存储）
+    OBJECT_STORE: str = "local"
+    OBJECT_STORE_LOCAL_DIR: str = "data/objects"
+    S3_ENDPOINT: str = ""          # 留空则走 AWS 默认 endpoint；MinIO 填 http://minio:9000
+    S3_BUCKET: str = "ekb-objects"
+    S3_ACCESS_KEY: str = ""
+    S3_SECRET_KEY: str = ""
+    S3_REGION: str = "us-east-1"
 
     # === 私有部署模型服务地址 ===
     VLLM_HOST: str = "llm-server"

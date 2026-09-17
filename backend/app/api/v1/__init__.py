@@ -28,8 +28,10 @@ from app.api.v1.external_credentials import router as external_credentials_route
 from app.api.v1.external_webhooks import router as external_webhooks_router
 from app.api.v1.feedback import router as feedback_router
 from app.api.v1.finetune import router as finetune_router
+from app.api.v1.i18n import router as i18n_router
 from app.api.v1.folders import router as folders_router
 from app.api.v1.graph import router as graph_router
+from app.api.v1.im import router as im_router
 from app.api.v1.intelligence import router as intelligence_router
 from app.api.v1.knowledge import router as knowledge_router
 from app.api.v1.knowledge_approvals import router as knowledge_approvals_router
@@ -39,8 +41,10 @@ from app.api.v1.manage import router as manage_router
 from app.api.v1.models import router as models_router
 from app.api.v1.multimodal import router as multimodal_router
 from app.api.v1.notifications import router as notifications_router
+from app.api.v1.oidc import router as oidc_router
 from app.api.v1.observability import router as observability_router
 from app.api.v1.qa import router as qa_router
+from app.api.v1.queue_monitor import router as queue_monitor_router
 from app.api.v1.recommendations import router as recommendations_router
 from app.api.v1.reports import router as reports_router
 from app.api.v1.research import router as research_router
@@ -51,6 +55,7 @@ from app.api.v1.tenants import router as tenants_router
 from app.api.v1.testing import router as testing_router
 from app.api.v1.tts import router as tts_router
 from app.api.v1.users import router as users_router
+from app.api.v1.widget import router as widget_router
 from app.api.v1.wiki import router as wiki_router
 
 api_router = APIRouter(prefix="/api/v1")
@@ -62,14 +67,17 @@ api_router.include_router(documents_router)
 api_router.include_router(chat_router)
 api_router.include_router(chunks_router)
 api_router.include_router(qa_router)
+api_router.include_router(queue_monitor_router)
 api_router.include_router(comments_router)
 api_router.include_router(feedback_router)
 api_router.include_router(folders_router)
 api_router.include_router(graph_router)
+api_router.include_router(im_router)
 api_router.include_router(intelligence_router)
 api_router.include_router(analytics_router)
 api_router.include_router(experts_router)
 api_router.include_router(notifications_router)
+api_router.include_router(oidc_router)
 api_router.include_router(audit_router)
 api_router.include_router(search_router)
 api_router.include_router(connectors_router)
@@ -78,6 +86,7 @@ api_router.include_router(external_webhooks_router)
 api_router.include_router(multimodal_router)
 api_router.include_router(agents_router)
 api_router.include_router(users_router)
+api_router.include_router(widget_router)
 api_router.include_router(wiki_router)
 api_router.include_router(tenants_router)
 api_router.include_router(apikeys_router)
@@ -100,3 +109,4 @@ api_router.include_router(observability_router)
 api_router.include_router(constraints_router)
 api_router.include_router(tts_router)
 api_router.include_router(finetune_router)
+api_router.include_router(i18n_router)

@@ -193,6 +193,18 @@ services:
       interval: 15s
       retries: 5
 
+  # === 向量数据库·Qdrant（P1 可选，--profile qdrant 启用）===
+  # 切换后端：VECTOR_STORE=qdrant 即可走 Qdrant（Payload 过滤 + HNSW）
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    profiles: ["qdrant"]
+    ports: ["6333:6333", "6334:6334"]
+    volumes: ["qdrant_data:/qdrant/storage"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:6333/healthz || exit 1"]
+      interval: 10s
+      retries: 5
+
   # === 向量数据库（Milvus）===
   milvus-etcd:
     image: quay.io/coreos/etcd:v3.5.16
@@ -328,6 +340,7 @@ volumes:
   rabbitmq_data:
   minio_data:
   os_data:
+  qdrant_data:
   etcd_data:
   milvus_minio_data:
   neo4j_data:

@@ -1,0 +1,12 @@
+apiVersion: v2
+name: enterprise-knowledge
+description: 企业知识库 Agent 平台 — Kubernetes/Helm 部署（P1 平台工程补强）
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - rag
+  - knowledge-base
+  - agent
+maintainers:
+  - name: EnterpriseKnowledge Team

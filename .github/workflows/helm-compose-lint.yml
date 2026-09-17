@@ -1,0 +1,28 @@
+name: Helm & Compose Lint
+
+on:
+  pull_request:
+    branches: [main]
+    paths: ["infra/**", "docker-compose*.yml", ".github/workflows/helm-compose-lint.yml"]
+  push:
+    branches: [main]
+    paths: ["infra/**", "docker-compose*.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: helm lint + compose config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.14.4
+      - name: Helm lint
+        run: helm lint infra/helm/enterprise-knowledge
+      - name: Helm template
+        run: helm template ekb infra/helm/enterprise-knowledge > /tmp/rendered.yaml
+      - name: Docker compose config
+        run: docker compose --profile qdrant --profile private config --quiet

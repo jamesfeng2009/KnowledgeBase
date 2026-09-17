@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>EKB 剪藏助手</title>
+  <style>
+    body { width: 260px; font-family: -apple-system, "PingFang SC", sans-serif; padding: 12px; }
+    label { display: block; font-size: 12px; color: #333; margin: 8px 0 4px; }
+    input { width: 100%; box-sizing: border-box; padding: 6px 8px; border: 1px solid #ccc; border-radius: 4px; }
+    button { width: 100%; margin-top: 12px; padding: 8px; background: #2563eb; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
+    button:hover { background: #1d4ed8; }
+    #status { margin-top: 8px; font-size: 12px; color: #16a34a; }
+    #status.error { color: #dc2626; }
+  </style>
+</head>
+<body>
+  <h3 style="margin:0 0 4px;font-size:14px">EKB 剪藏助手</h3>
+  <label>API 地址</label>
+  <input id="baseUrl" placeholder="http://localhost:8000" />
+  <label>API Key</label>
+  <input id="apiKey" type="password" placeholder="sk-xxx" />
+  <label>知识库 ID</label>
+  <input id="kbId" placeholder="粘贴知识库 ID" />
+  <button id="save">保存配置</button>
+  <div id="status"></div>
+  <p style="font-size:11px;color:#888;margin-top:10px">在网页中选中文字后右键 →「剪藏到企业知识库」</p>
+  <script src="popup.js"></script>
+</body>
+</html>

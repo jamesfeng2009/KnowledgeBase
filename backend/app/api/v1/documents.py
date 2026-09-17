@@ -18,6 +18,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status, Request
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1586,5 +1587,82 @@ async def import_document_from_source(
             status="draft",
             message="导入成功，正在异步解析",
         ),
+        message="success",
+    )
+
+
+# ======================================================================
+# P2 网页剪藏 — 供 Chrome 扩展 / 浏览器插件调用
+# ======================================================================
+
+
+class ClipBody(BaseModel):
+    """网页剪藏请求体。"""
+
+    kb_id: UUID = Field(..., description="目标知识库 ID")
+    title: str = Field(..., min_length=1, max_length=500, description="剪藏标题")
+    content: str = Field(..., min_length=1, max_length=100_000, description="剪藏文本")
+    source_url: str = Field(default="", max_length=2048, description="来源 URL")
+
+
+@router.post("/documents/clip", response_model=ApiResponse[DocResponse], status_code=201)
+async def clip_document(
+    body: ClipBody,
+    request: Request,
+    db: AsyncSession = Depends(get_db_session),
+    user: User = Depends(get_current_active_user),
+) -> ApiResponse[DocResponse]:
+    """网页剪藏：文本直达 Document（doc_type=md），触发异步解析。
+
+    供 Chrome 剪藏扩展调用；与文件上传共用 KnowledgeService 的
+    知识库写权限校验与配额检查。
+    """
+    tenant_id = getattr(request.state, "tenant_id", None)
+    await _check_kb_write_access(db, user, body.kb_id, tenant_id)
+
+    if tenant_id is not None:
+        from app.services.billing_service import BillingService, QuotaExceededError
+
+        billing = BillingService(db)
+        try:
+            await billing.check_storage_quota(
+                tenant_id, additional_bytes=len(body.content.encode("utf-8"))
+            )
+        except QuotaExceededError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"存储配额不足：{exc}",
+            ) from exc
+
+    service = KnowledgeService(db, user, tenant_id=tenant_id)
+    try:
+        doc = await service.upload_document(
+            kb_id=body.kb_id,
+            title=body.title,
+            content=body.content,
+            doc_type="md",
+        )
+    except Exception as exc:
+        if isinstance(exc, PermissionError):
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        raise
+
+    if body.source_url:
+        from app.repositories.knowledge_repository import DocumentRepository
+
+        doc_repo = DocumentRepository(db, tenant_id=tenant_id)
+        await doc_repo.update(doc.id, source="clip", source_url=body.source_url)
+
+    # 触发异步解析（Celery 不可用时仅告警，不阻断剪藏响应）
+    try:
+        from tasks.document_tasks import process_document
+
+        process_document.delay(str(doc.id), tenant_id=str(tenant_id) if tenant_id else None)
+    except Exception:
+        log.warning("剪藏文档 %s 触发 Celery 解析失败", doc.id)
+
+    return ApiResponse(
+        code=0,
+        data=DocResponse.model_validate(doc),
         message="success",
     )

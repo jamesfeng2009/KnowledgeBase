@@ -1,0 +1,97 @@
+{{- if gt (int .Values.worker.replicas) 0 }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ekb.fullname" . }}-worker
+  labels:
+    {{- include "ekb.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.worker.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "ekb.name" . }}-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "ekb.name" . }}-worker
+        {{- include "ekb.labels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: celery-worker
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - celery
+            - -A
+            - celery_app
+            - worker
+            - --loglevel=info
+            - --concurrency={{ .Values.worker.concurrency }}
+            - -Q
+            - celery,documents,indexing,scheduled,notifications,multimodal,dead_letter
+          env:
+            - name: DEPLOY_MODE
+              value: {{ .Values.deployMode | quote }}
+            - name: DATABASE_URL
+              value: {{ include "ekb.postgresUrl" . | quote }}
+            - name: REDIS_URL
+              value: redis://{{ include "ekb.fullname" . }}-redis:6379/0
+            - name: BROKER_URL
+              value: {{ include "ekb.brokerUrl" . | quote }}
+            - name: MINIO_ENDPOINT
+              value: {{ include "ekb.fullname" . }}-minio:9000
+            - name: OPENSEARCH_URL
+              value: http://{{ include "ekb.fullname" . }}-opensearch:9200
+            {{- range $k, $v := .Values.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          envFrom:
+            - secretRef:
+                name: {{ include "ekb.fullname" . }}-secrets
+          volumeMounts:
+            - name: secrets
+              mountPath: /run/secrets
+              readOnly: true
+      volumes:
+        - name: secrets
+          secret:
+            secretName: {{ include "ekb.fullname" . }}-secrets
+{{- end }}
+{{- if .Values.celeryBeat.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ekb.fullname" . }}-beat
+  labels:
+    {{- include "ekb.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "ekb.name" . }}-beat
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "ekb.name" . }}-beat
+        {{- include "ekb.labels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: celery-beat
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["celery", "-A", "celery_app", "beat", "--loglevel=info"]
+          env:
+            - name: CELERY_BEAT_SINGLE_INSTANCE
+              value: "1"
+            - name: DATABASE_URL
+              value: {{ include "ekb.postgresUrl" . | quote }}
+            - name: REDIS_URL
+              value: redis://{{ include "ekb.fullname" . }}-redis:6379/0
+            - name: BROKER_URL
+              value: {{ include "ekb.brokerUrl" . | quote }}
+          envFrom:
+            - secretRef:
+                name: {{ include "ekb.fullname" . }}-secrets
+{{- end }}

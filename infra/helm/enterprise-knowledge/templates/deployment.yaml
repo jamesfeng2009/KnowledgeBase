@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ekb.fullname" . }}-core
+  labels:
+    {{- include "ekb.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "ekb.name" . }}-core
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "ekb.name" . }}-core
+        {{- include "ekb.labels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: core-engine
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            - name: DEPLOY_MODE
+              value: {{ .Values.deployMode | quote }}
+            - name: DATABASE_URL
+              value: {{ include "ekb.postgresUrl" . | quote }}
+            - name: REDIS_URL
+              value: redis://{{ include "ekb.fullname" . }}-redis:6379/0
+            - name: BROKER_URL
+              value: {{ include "ekb.brokerUrl" . | quote }}
+            - name: MINIO_ENDPOINT
+              value: {{ include "ekb.fullname" . }}-minio:9000
+            - name: OPENSEARCH_URL
+              value: http://{{ include "ekb.fullname" . }}-opensearch:9200
+            - name: QDRANT_URL
+              value: http://{{ include "ekb.fullname" . }}-qdrant:6333
+            {{- range $k, $v := .Values.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          envFrom:
+            - secretRef:
+                name: {{ include "ekb.fullname" . }}-secrets
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.livenessProbe.path }}
+              port: {{ .Values.livenessProbe.port }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.readinessProbe.path }}
+              port: {{ .Values.readinessProbe.port }}
+          volumeMounts:
+            - name: secrets
+              mountPath: /run/secrets
+              readOnly: true
+      volumes:
+        - name: secrets
+          secret:
+            secretName: {{ include "ekb.fullname" . }}-secrets

@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "EKB 剪藏助手",
+  "version": "1.0.0",
+  "description": "把网页选中内容一键剪藏到企业知识库（Enterprise Knowledge Base）",
+  "default_locale": "zh_CN",
+  "permissions": ["contextMenus", "storage", "activeTab", "scripting"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "EKB 剪藏助手"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

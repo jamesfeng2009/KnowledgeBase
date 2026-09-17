@@ -1,0 +1,62 @@
+{
+  "common": {
+    "app_name": "企业知识库",
+    "loading": "加载中…",
+    "search": "搜索",
+    "submit": "提交",
+    "cancel": "取消",
+    "confirm": "确认",
+    "delete": "删除",
+    "edit": "编辑",
+    "save": "保存",
+    "back": "返回",
+    "retry": "重试",
+    "success": "成功",
+    "failed": "失败",
+    "unauthorized": "未授权，请先登录",
+    "forbidden": "无权限执行该操作",
+    "not_found": "资源不存在",
+    "internal_error": "服务器内部错误，请稍后重试",
+    "required": "该字段为必填项",
+    "page_not_found": "页面不存在"
+  },
+  "nav": {
+    "knowledge_bases": "知识库",
+    "documents": "文档",
+    "search": "全局搜索",
+    "wiki": "Wiki",
+    "folders": "文件夹",
+    "settings": "设置",
+    "admin": "管理后台",
+    "analytics": "数据分析"
+  },
+  "kb": {
+    "create": "创建知识库",
+    "name": "知识库名称",
+    "description": "描述",
+    "created": "知识库创建成功",
+    "no_permission": "无权访问该知识库"
+  },
+  "doc": {
+    "upload": "上传文档",
+    "chunks": "分块",
+    "versions": "版本历史",
+    "rollback": "回滚",
+    "rollback_confirm": "确认回滚到该版本？当前内容将被覆盖并保留快照",
+    "folder_move": "移动到文件夹",
+    "status_published": "已发布",
+    "status_draft": "草稿"
+  },
+  "wiki": {
+    "generate": "生成 Wiki",
+    "generating": "正在生成 Wiki…",
+    "graph": "知识图谱",
+    "edit": "编辑页面",
+    "version_history": "版本历史"
+  },
+  "chat": {
+    "placeholder": "输入问题，开始提问…",
+    "sending": "正在思考…",
+    "new_conversation": "新对话"
+  }
+}

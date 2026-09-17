@@ -11,6 +11,7 @@ from app.connectors.crm import CRMConnector
 from app.connectors.erp import ERPConnector
 from app.connectors.mail import MailConnector
 from app.connectors.oa import OAConnector
+from app.connectors.wecom import WeComConnector
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -127,3 +128,4 @@ connector_registry.register(OAConnector())
 connector_registry.register(ERPConnector())
 connector_registry.register(CRMConnector())
 connector_registry.register(MailConnector())
+connector_registry.register(WeComConnector())  # P1 IM 集成

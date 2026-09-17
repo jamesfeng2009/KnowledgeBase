@@ -30,6 +30,7 @@ from app.llm.base import LLMProvider
 from app.llm.dashscope_provider import DashScopeProvider
 from app.llm.embedder import EmbeddingProvider, get_embedder
 from app.llm.model_config import get_model_by_id
+from app.llm.openai_provider import OpenAIProvider
 from app.llm.vllm_provider import VLLMProvider
 from app.utils.logger import get_logger
 
@@ -137,6 +138,8 @@ _PROVIDER_CONSTRUCTORS: dict[str, Callable[..., LLMProvider]] = {
     "anthropic": AnthropicProvider,
     "dashscope": DashScopeProvider,
     "vllm": VLLMProvider,
+    # P1 模型厂商扩展：OpenAI 兼容协议（OpenAI/DeepSeek/Moonshot/智谱/Groq/Ollama…）
+    "openai": OpenAIProvider,
 }
 
 

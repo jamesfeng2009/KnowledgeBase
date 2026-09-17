@@ -111,6 +111,18 @@ def get_vector_store_entries() -> list[ProviderMeta]:
     except Exception as exc:
         log.debug("registry.vectorstore.skip", name="milvus", error=str(exc))
 
+    # P1 存储抽象扩展：Qdrant
+    try:
+        from app.rag.vector_store.qdrant_store import QdrantVectorStore
+
+        entries.append(
+            ProviderMeta(
+                "qdrant", "vectorstore", "vectorstore_qdrant", QdrantVectorStore
+            )
+        )
+    except Exception as exc:
+        log.debug("registry.vectorstore.skip", name="qdrant", error=str(exc))
+
     return entries
 
 
@@ -143,6 +155,16 @@ def get_llm_provider_entries() -> list[ProviderMeta]:
         )
     except Exception as exc:
         log.debug("registry.llm.skip", name="dashscope", error=str(exc))
+
+    # P1 模型厂商扩展：OpenAI 兼容协议覆盖 20+ 厂商
+    try:
+        from app.llm.openai_provider import OpenAIProvider
+
+        entries.append(
+            ProviderMeta("openai", "llm", "openai", OpenAIProvider)
+        )
+    except Exception as exc:
+        log.debug("registry.llm.skip", name="openai", error=str(exc))
 
     return entries
 

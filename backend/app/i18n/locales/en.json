@@ -1,0 +1,62 @@
+{
+  "common": {
+    "app_name": "Enterprise Knowledge Base",
+    "loading": "Loading…",
+    "search": "Search",
+    "submit": "Submit",
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "delete": "Delete",
+    "edit": "Edit",
+    "save": "Save",
+    "back": "Back",
+    "retry": "Retry",
+    "success": "Success",
+    "failed": "Failed",
+    "unauthorized": "Unauthorized. Please sign in.",
+    "forbidden": "You do not have permission to perform this action.",
+    "not_found": "Resource not found",
+    "internal_error": "Internal server error. Please try again later.",
+    "required": "This field is required",
+    "page_not_found": "Page not found"
+  },
+  "nav": {
+    "knowledge_bases": "Knowledge Bases",
+    "documents": "Documents",
+    "search": "Global Search",
+    "wiki": "Wiki",
+    "folders": "Folders",
+    "settings": "Settings",
+    "admin": "Admin",
+    "analytics": "Analytics"
+  },
+  "kb": {
+    "create": "Create Knowledge Base",
+    "name": "Knowledge Base Name",
+    "description": "Description",
+    "created": "Knowledge base created",
+    "no_permission": "You do not have access to this knowledge base"
+  },
+  "doc": {
+    "upload": "Upload Document",
+    "chunks": "Chunks",
+    "versions": "Version History",
+    "rollback": "Rollback",
+    "rollback_confirm": "Roll back to this version? The current content will be overwritten and snapshotted.",
+    "folder_move": "Move to Folder",
+    "status_published": "Published",
+    "status_draft": "Draft"
+  },
+  "wiki": {
+    "generate": "Generate Wiki",
+    "generating": "Generating Wiki…",
+    "graph": "Knowledge Graph",
+    "edit": "Edit Page",
+    "version_history": "Version History"
+  },
+  "chat": {
+    "placeholder": "Ask a question…",
+    "sending": "Thinking…",
+    "new_conversation": "New Chat"
+  }
+}

@@ -1,0 +1,101 @@
+# =====================================================================
+# 企业知识库 Helm 默认值（P1 平台工程）
+# 安装示例：
+#   helm install ekb infra/helm/enterprise-knowledge \
+#     --namespace ekb --create-namespace \
+#     --set image.tag=v1.0.0 \
+#     --set postgres.enabled=true
+# =====================================================================
+
+# 镜像
+image:
+  repository: ghcr.io/enterprise-knowledge/core-engine
+  tag: latest
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+# 资源请求/限制
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi
+  limits:
+    cpu: "2"
+    memory: 4Gi
+
+# 数据库（内置 postgres 或外部已有实例）
+postgres:
+  enabled: true
+  image: pgvector/pgvector:pg16
+  storage: 20Gi
+  # 外部实例时填写：postgres://user:pass@host:5432/db
+  externalUrl: ""
+
+redis:
+  enabled: true
+  storage: 5Gi
+
+rabbitmq:
+  enabled: true
+  storage: 5Gi
+
+opensearch:
+  enabled: true
+  storage: 20Gi
+
+qdrant:
+  enabled: false
+  storage: 20Gi
+
+minio:
+  enabled: true
+  storage: 20Gi
+
+# 部署模式（saas | saas_dashscope | private_overseas | private_domestic | private_finetuned）
+deployMode: private_domestic
+
+# 环境变量（透传给 core-engine / celery-worker）
+env:
+  AUTO_MIGRATE: "true"
+  VECTOR_STORE: "os_knn"
+  GRAPH_SEARCH_ENABLED: "false"
+  SECRETS_PROVIDER: "file"
+  SECRETS_FILE_DIR: "/run/secrets"
+
+# 敏感配置（建议用 --set-file 或外部 secret 覆盖）
+secrets:
+  POSTGRES_PASSWORD: "ekb"
+  RABBITMQ_PASSWORD: "ekb123456"
+  SECRET_KEY: "change-me-in-production"
+  DASHSCOPE_API_KEY: ""
+  OPENAI_API_KEY: ""
+
+# 域名（配置后生成 Ingress）
+ingress:
+  enabled: false
+  host: kb.example.com
+  tlsSecret: ""
+
+# 自动扩缩容
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPU: 70
+
+# Celery Worker 副本数（0 = 不部署 worker）
+worker:
+  replicas: 1
+  concurrency: 4
+
+celeryBeat:
+  enabled: true
+
+# 探针
+livenessProbe:
+  path: /health/db
+  port: 8000
+readinessProbe:
+  path: /health/db
+  port: 8000

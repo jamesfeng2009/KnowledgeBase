@@ -1,0 +1,33 @@
+name: CLI & Widget Tests
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths: ["backend/app/cli/**", "backend/app/api/v1/widget.py", "backend/app/services/widget_token_service.py", "backend/scripts/ekb_cli.py", "backend/tests/test_cli.py", "backend/tests/test_widget.py"]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  cli-widget:
+    name: CLI + Widget unit tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      SECRET_KEY: ci-secret-key
+      AUTO_MIGRATE: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install deps
+        run: pip install -r requirements.txt pytest pytest-asyncio
+      - name: Run CLI + Widget tests
+        run: python -m pytest tests/test_cli.py tests/test_widget.py -q -p no:cacheprovider
