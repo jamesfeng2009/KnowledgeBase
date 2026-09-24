@@ -733,7 +733,17 @@ class TestChatStreamEndpoint:
 
         class _TrackingService:
             async def prepare_chat(self, **kwargs):
-                return SimpleNamespace(conversation_id=uuid4())
+                from app.services.chat_service import PreparedChat
+
+                return PreparedChat(
+                    query="问题",
+                    conversation_id=uuid4(),
+                    agent_type="qa",
+                    tenant_id=None,
+                    memory_context="",
+                    resolved_model_id="",
+                    default_model_id="",
+                )
 
             async def stream_chat(self, prepared, db=None):
                 # 流式开始时连接必须已释放

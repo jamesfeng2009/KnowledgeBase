@@ -22,7 +22,9 @@ class Settings(BaseSettings):
     """应用配置 — 从环境变量加载，提供类型安全访问。"""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        # .env.local 在后 → 优先级高于 .env：本机真实凭证写在 .env.local
+        # （已 gitignore），.env 只保留占位符，避免密钥被顺手提交或备份带走。
+        env_file=(".env", ".env.local"),
         env_file_encoding="utf-8",
         extra="ignore",
     )

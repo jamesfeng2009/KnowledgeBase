@@ -492,12 +492,15 @@ class TestTimeDecaySearch:
     @pytest.mark.asyncio
     async def test_decay_disabled_when_zero(self, monkeypatch) -> None:
         """激活值闸门关闭时纯按相似度排序（退回旧行为的逃生门）。"""
-        from app.config import get_settings
+        from app.memory import mem0_manager as mem0_module
         from app.memory.mem0_manager import Mem0Manager
 
-        settings = get_settings()
+        # 补在被测模块实际持有的那份 settings 上：mem0_manager 在 import 时
+        # 就把 get_settings() 的结果绑成了模块变量，而 test_crypto 之流会调
+        # get_settings.cache_clear()，之后再取的 Settings 已是另一个对象 ——
+        # 补丁打到那份上等于没打，用例结果会随执行顺序漂移。
         monkeypatch.setattr(
-            settings, "MEMORY_ACTIVATION_ENABLED", False, raising=False
+            mem0_module.settings, "MEMORY_ACTIVATION_ENABLED", False
         )
 
         mock_db = MagicMock()

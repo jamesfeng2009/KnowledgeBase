@@ -28,6 +28,26 @@ if "celery_app" not in sys.modules:
     sys.modules["celery_app"] = mock_celery_app
 
 
+def _patch_recall_settings(monkeypatch, **values) -> None:
+    """把召回闸门配置打到「读它的模块实际持有的那份 Settings」上。
+
+    不能只补 get_settings() 的返回值：mem0_manager 在 import 时就把
+    get_settings() 的结果绑成了模块变量，而 test_crypto 这类用例会调
+    get_settings.cache_clear()（换 SECRET_KEY），之后再取到的 Settings 已是
+    另一个对象 —— 补丁落在无人阅读的那份上等于没打，闸门配置看似改了却
+    没生效，用例结果随执行顺序漂移。两份都补上，与缓存状态解耦。
+    """
+    from app.config import get_settings
+    from app.memory import mem0_manager as mem0_module
+
+    targets = {id(mem0_module.settings): mem0_module.settings}
+    fresh = get_settings()
+    targets[id(fresh)] = fresh
+    for target in targets.values():
+        for key, value in values.items():
+            monkeypatch.setattr(target, key, value)
+
+
 def _make_fact(
     text: str = "测试事实",
     category: str = "working",
@@ -204,16 +224,11 @@ class TestRankCandidatesGate:
 
     def test_low_activation_filtered(self, monkeypatch) -> None:
         """激活值低于地板值的记忆当场跳过。"""
-        from app.config import get_settings
-
-        monkeypatch.setattr(
-            get_settings(), "MEMORY_ACTIVATION_ENABLED", True, raising=False
-        )
-        monkeypatch.setattr(
-            get_settings(), "MEMORY_ACTIVATION_FLOOR", 0.5, raising=False
-        )
-        monkeypatch.setattr(
-            get_settings(), "MEMORY_REVIVAL_THRESHOLD", 0.9, raising=False
+        _patch_recall_settings(
+            monkeypatch,
+            MEMORY_ACTIVATION_ENABLED=True,
+            MEMORY_ACTIVATION_FLOOR=0.5,
+            MEMORY_REVIVAL_THRESHOLD=0.9,
         )
         manager = self._manager()
         now = datetime.utcnow()
@@ -232,16 +247,11 @@ class TestRankCandidatesGate:
 
     def test_score_is_sim_times_activation(self, monkeypatch) -> None:
         """排序分 = 相似度 × 激活值：低相似新记忆可胜高相似老记忆。"""
-        from app.config import get_settings
-
-        monkeypatch.setattr(
-            get_settings(), "MEMORY_ACTIVATION_ENABLED", True, raising=False
-        )
-        monkeypatch.setattr(
-            get_settings(), "MEMORY_ACTIVATION_FLOOR", 0.0, raising=False
-        )
-        monkeypatch.setattr(
-            get_settings(), "MEMORY_REVIVAL_THRESHOLD", 0.9, raising=False
+        _patch_recall_settings(
+            monkeypatch,
+            MEMORY_ACTIVATION_ENABLED=True,
+            MEMORY_ACTIVATION_FLOOR=0.0,
+            MEMORY_REVIVAL_THRESHOLD=0.9,
         )
         manager = self._manager()
         now = datetime.utcnow()
@@ -260,16 +270,11 @@ class TestRankCandidatesGate:
 
     def test_superseded_revived_on_strong_hit(self, monkeypatch) -> None:
         """复活窗口：被 superseded 的记忆被强命中（>= 复活阈值）自动复活。"""
-        from app.config import get_settings
-
-        monkeypatch.setattr(
-            get_settings(), "MEMORY_ACTIVATION_ENABLED", True, raising=False
-        )
-        monkeypatch.setattr(
-            get_settings(), "MEMORY_ACTIVATION_FLOOR", 0.05, raising=False
-        )
-        monkeypatch.setattr(
-            get_settings(), "MEMORY_REVIVAL_THRESHOLD", 0.9, raising=False
+        _patch_recall_settings(
+            monkeypatch,
+            MEMORY_ACTIVATION_ENABLED=True,
+            MEMORY_ACTIVATION_FLOOR=0.05,
+            MEMORY_REVIVAL_THRESHOLD=0.9,
         )
         manager = self._manager()
         superseded = _make_fact(
@@ -287,16 +292,11 @@ class TestRankCandidatesGate:
 
     def test_superseded_weak_hit_stays_out(self, monkeypatch) -> None:
         """复活窗口：弱命中（< 复活阈值）继续挡在门外（防误复活）。"""
-        from app.config import get_settings
-
-        monkeypatch.setattr(
-            get_settings(), "MEMORY_ACTIVATION_ENABLED", True, raising=False
-        )
-        monkeypatch.setattr(
-            get_settings(), "MEMORY_ACTIVATION_FLOOR", 0.05, raising=False
-        )
-        monkeypatch.setattr(
-            get_settings(), "MEMORY_REVIVAL_THRESHOLD", 0.9, raising=False
+        _patch_recall_settings(
+            monkeypatch,
+            MEMORY_ACTIVATION_ENABLED=True,
+            MEMORY_ACTIVATION_FLOOR=0.05,
+            MEMORY_REVIVAL_THRESHOLD=0.9,
         )
         manager = self._manager()
         superseded = _make_fact(
@@ -312,11 +312,7 @@ class TestRankCandidatesGate:
 
     def test_gate_disabled_falls_back_to_similarity(self, monkeypatch) -> None:
         """闸门总开关关闭：退回纯相似度排序（零行为回归开关）。"""
-        from app.config import get_settings
-
-        monkeypatch.setattr(
-            get_settings(), "MEMORY_ACTIVATION_ENABLED", False, raising=False
-        )
+        _patch_recall_settings(monkeypatch, MEMORY_ACTIVATION_ENABLED=False)
         manager = self._manager()
         a = _make_fact(category="working")
         b = _make_fact(category="preference")
@@ -657,18 +653,15 @@ class TestPlanDowngradeScenario:
     @pytest.mark.asyncio
     async def test_full_loop(self, monkeypatch) -> None:
         """降级情节写入 → VIP 偏好退场 → 召回闸门跳过退场记忆。"""
-        from app.config import get_settings
         from app.memory.conflict_arbiter import ACTION_WRITE, ConsolidateVerdict
         from app.memory.mem0_manager import Mem0Manager
 
-        settings = get_settings()
-        monkeypatch.setattr(settings, "MEMORY_ACTIVATION_ENABLED", True, raising=False)
-        monkeypatch.setattr(settings, "MEMORY_ACTIVATION_FLOOR", 0.05, raising=False)
-        monkeypatch.setattr(
-            settings, "MEMORY_REVIVAL_THRESHOLD", 0.9, raising=False
-        )
-        monkeypatch.setattr(
-            settings, "MEMORY_REVIVAL_WINDOW_DAYS", 7, raising=False
+        _patch_recall_settings(
+            monkeypatch,
+            MEMORY_ACTIVATION_ENABLED=True,
+            MEMORY_ACTIVATION_FLOOR=0.05,
+            MEMORY_REVIVAL_THRESHOLD=0.9,
+            MEMORY_REVIVAL_WINDOW_DAYS=7,
         )
 
         # 1. 写入路径：裁决冲突，新情节落盘，旧偏好退场

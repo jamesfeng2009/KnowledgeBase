@@ -239,7 +239,8 @@ class ExternalCredential(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "external_credentials"
 
     tenant_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), nullable=True, comment="租户 ID（NULL=私有部署）"
+        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True,
+        comment="租户 ID（NULL=私有部署）"
     )
     adapter_id: Mapped[str] = mapped_column(
         String(30), nullable=False,

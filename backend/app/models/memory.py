@@ -24,7 +24,10 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.config import get_settings
 from app.models.base import Base, TimestampMixin, UUIDMixin
+
+settings = get_settings()
 
 
 class MemoryFact(UUIDMixin, TimestampMixin, Base):
@@ -55,7 +58,10 @@ class MemoryFact(UUIDMixin, TimestampMixin, Base):
         JSONB, nullable=True, comment="向量嵌入 JSONB（语义检索降级用）"
     )
     embedding_vec: Mapped[list | None] = mapped_column(
-        Vector(1536), nullable=True, comment="向量嵌入 pgvector（语义检索主索引）"
+        # 维度必须与写入侧 embedder 一致，否则 INSERT 报 dimension mismatch
+        Vector(settings.DASHSCOPE_EMBED_DIM),
+        nullable=True,
+        comment="向量嵌入 pgvector（语义检索主索引）",
     )
     is_active: Mapped[bool] = mapped_column(
         Boolean, default=True, comment="是否有效（软删除标记）"

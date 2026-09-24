@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,26 @@ import pytest
 
 class TestAiEvalRagMigration:
     """验证 RAG 评测表在 2026_07_24 迁移中被正确创建。"""
+
+    @staticmethod
+    def _code_only(source: str) -> str:
+        """去掉注释与文档字符串后的纯代码文本。
+
+        迁移文件开头的说明注释本来就要写「ai_eval_rag_queries 建表时已含
+        deleted_at，无需变更」，按整份文件的文本匹配会把这种说明误判为违规。
+        """
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            body = getattr(node, "body", None)
+            if isinstance(body, list) and body:
+                first = body[0]
+                if (
+                    isinstance(first, ast.Expr)
+                    and isinstance(first.value, ast.Constant)
+                    and isinstance(first.value.value, str)
+                ):
+                    body.pop(0)
+        return ast.unparse(tree)
 
     @pytest.fixture
     def migration_2026_07_24(self) -> str:
@@ -63,7 +84,10 @@ class TestAiEvalRagMigration:
         self, migration_2026_07_27: str
     ) -> None:
         """2026_07_27 不应再给 ai_eval_rag_queries 添加 deleted_at。"""
-        assert "ai_eval_rag_queries" not in migration_2026_07_27
+        code = self._code_only(migration_2026_07_27)
+        # 先自检断言不是空的：被循环遍历的表名必须以字符串形式出现在代码里
+        assert "ai_eval_doc_parse_cases" in code
+        assert "ai_eval_rag_queries" not in code
 
     def test_2026_07_27_adds_deleted_at_to_other_case_tables(
         self, migration_2026_07_27: str

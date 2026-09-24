@@ -201,9 +201,19 @@ class TestChatStream:
 
         class _FakeChatService:
             async def prepare_chat(self, **kwargs):
-                from types import SimpleNamespace as NS
+                # 用真实的 PreparedChat 而非 SimpleNamespace：端点按契约读字段，
+                # 手搓 NS 会在契约演进时静默变成 AttributeError。
+                from app.services.chat_service import PreparedChat
 
-                return NS(conversation_id=uuid4())
+                return PreparedChat(
+                    query="测试问题",
+                    conversation_id=uuid4(),
+                    agent_type="qa",
+                    tenant_id=None,
+                    memory_context="",
+                    resolved_model_id="",
+                    default_model_id="",
+                )
 
             async def stream_chat(self, prepared, db=None):
                 yield "你好"

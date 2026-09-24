@@ -18,8 +18,6 @@ P1-2 怎么召回 — embedding 迁移到 pgvector：
 """
 from typing import Sequence, Union
 
-import sqlalchemy as sa
-
 from alembic import op
 
 # revision identifiers, used by Alembic.
@@ -28,10 +26,15 @@ down_revision: Union[str, None] = "f2a3b4c5d6e7"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-# pgvector 向量维度（与当前使用的 embedding 模型维度一致）
-# text-embedding-3-small: 1536 维
-# text-embedding-ada-002: 1536 维
-VECTOR_DIM = 1536
+# pgvector 向量维度 —— 必须与写入侧 Embedder 的输出维度一致，否则
+# INSERT ... embedding_vec 会因 dimension mismatch 直接失败。
+# 维度由应用配置统一决定（DASHSCOPE_EMBED_DIM，默认 1024）；这里走
+# get_settings() 而不是 os.environ，是因为 pydantic-settings 把 .env
+# 解析进 Settings 对象而不会回写 os.environ —— 读环境变量会拿到与
+# 应用运行时不同的值，建出来的列宽度和 embedder 输出再度错位。
+from app.config import get_settings  # noqa: E402
+
+VECTOR_DIM = int(get_settings().DASHSCOPE_EMBED_DIM)
 
 
 def upgrade() -> None:
@@ -45,11 +48,16 @@ def upgrade() -> None:
     )
 
     # 3. 将已有 JSONB embedding 迁移到 vector 列
-    #    JSONB 存储的格式是浮点数数组，直接转换
+    #    pgvector 的文本字面量要求保留方括号（'[0.1,0.2]'::vector），
+    #    JSONB 数组转 text 正好就是这个格式，所以直接 cast，不去括号。
+    #    仅回填「确实是数组 且 维度和目标列一致」的行：换过 embedding
+    #    模型的历史数据维度不同，cast 会让整条 UPDATE 报错、迁移直接中断。
     op.execute(
-        "UPDATE memory_facts "
-        "SET embedding_vec = embedding::text::vector "
-        "WHERE embedding IS NOT NULL AND embedding_vec IS NULL"
+        f"UPDATE memory_facts "
+        f"SET embedding_vec = embedding::text::vector "
+        f"WHERE jsonb_typeof(embedding) = 'array' "
+        f"AND jsonb_array_length(embedding) = {VECTOR_DIM} "
+        f"AND embedding_vec IS NULL"
     )
 
     # 4. 创建 IVFFlat 向量索引（数据量大时加速检索）

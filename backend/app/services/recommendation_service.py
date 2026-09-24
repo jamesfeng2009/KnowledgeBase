@@ -190,11 +190,21 @@ class RecommendationService:
             paths.append(await self._graph_recall(user_id, behaviors, top_k))
         # 所有召回路都为空时兜底热门，保证首页不为空
         non_empty = [p for p in paths if p]
+        fell_back_to_hot = False
         if not non_empty:
             non_empty = [await self._hot_fallback(user_id=user_id, exclude=set(), top_k=top_k)]
+            fell_back_to_hot = True
 
         fused = self._rrf_fuse(non_empty, k=settings.RECOMMEND_RRF_K)
         result = await self._finalize(fused, user_doc_ids, permission_filter, top_k)
+        # 「首页不为空」的兜底判断必须放在收尾剔除之后：向量召回可能返回陈旧 /
+        # 已删 / 越权的 doc_id（向量库与 documents 表本就异步），这些候选会在
+        # _finalize 里被整批丢掉，若只看召回是否有产出就会返回空首页。
+        if not result and not fell_back_to_hot:
+            hot = await self._hot_fallback(
+                user_id=user_id, exclude=set(), top_k=top_k
+            )
+            result = await self._finalize(hot, user_doc_ids, permission_filter, top_k)
         await self._cache_set(cache_key, result)
         return result
 
