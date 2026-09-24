@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config import get_settings
+from app.core.ab_context import active_prompt_variant
 from app.core.prompt_files import (
     compose_guidance_prompt,
     load_prompt_file,
@@ -29,6 +30,7 @@ from app.llm.base import LLMProvider, Message
 from app.rag.citation import CitationExtractor
 from app.rag.chunker import estimate_tokens
 from app.rag.context_item import BudgetAllocator, ContextItemBuilder
+from app.rag.prompt_variants import variant_guidance
 from app.utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -299,29 +301,41 @@ class Generator:
         return "\n".join(parts)
 
     def _build_base_instruction(self) -> str:
-        """解析生成层基础指引 — 候选覆盖 > 外置文件 > 内置默认。
+        """解析生成层基础指引 — 候选覆盖 > 实验变体 > 外置文件 > 内置默认。
 
         P1 技能进化的进化对象：指引区由 app/evolution 循环维护；
         红线区（冻结区）随文件解析带出，但进化编辑器永远拿不到红线区
         （见 app/evolution/editor），结构上不可被修改。
+
+        P2 在线实验：命中 prompt 变体实验时只替换指引区，红线区始终
+        来自线上基线文件 —— 保证实验的唯一变量是指引，不让变体偷偷放宽
+        安全约束。变体文件缺失/为空时回落基线，不会把 prompt 变空。
         """
         if self._base_guidance_override is not None:
             return self._base_guidance_override
 
+        guidance, redline = self._load_base_sections()
+        variant = active_prompt_variant()
+        if variant:
+            variant_lines = variant_guidance(variant)
+            if variant_lines:
+                guidance = variant_lines
+        return compose_guidance_prompt(guidance, redline)
+
+    def _load_base_sections(self) -> tuple[list[str], list[str]]:
+        """读取基线指引文件的（指引区, 红线区），缺失时回退内置默认。"""
         text = load_prompt_file(_GENERATE_PROMPTS_DIR, _GENERATE_BASE_FILE, "")
         if not text:
-            return compose_guidance_prompt(
-                _GENERATE_BASE_GUIDANCE_DEFAULT, _GENERATE_BASE_REDLINE_DEFAULT
+            return list(_GENERATE_BASE_GUIDANCE_DEFAULT), list(
+                _GENERATE_BASE_REDLINE_DEFAULT
             )
         guidance, redline = split_guidance_sections(text)
         if not guidance:
             # 文件被清空/只剩红线标题 — 回退默认，避免 prompt 变空串
-            return compose_guidance_prompt(
-                _GENERATE_BASE_GUIDANCE_DEFAULT, _GENERATE_BASE_REDLINE_DEFAULT
+            return list(_GENERATE_BASE_GUIDANCE_DEFAULT), list(
+                _GENERATE_BASE_REDLINE_DEFAULT
             )
-        return compose_guidance_prompt(
-            guidance, redline or _GENERATE_BASE_REDLINE_DEFAULT
-        )
+        return guidance, redline or list(_GENERATE_BASE_REDLINE_DEFAULT)
 
     def _check_context_cliff(
         self,

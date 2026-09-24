@@ -49,6 +49,7 @@ from app.observability.langfuse_tracer import (
     trace_node,
 )
 from app.rag.cache import TokenCache
+from app.core.ab_context import effective_max_iterations, peek_ab_metadata
 from app.rag.constitution import get_constraint_reminder, get_system_prompt
 from app.rag.constraint_verifier import (
     ConstraintViolation,
@@ -509,6 +510,14 @@ class AgenticRAGEngine:
     # 对外入口
     # ------------------------------------------------------------------
 
+    def _effective_max_iterations(self) -> int:
+        """本次请求实际生效的迭代上限 — 在线实验可覆写（未命中即引擎默认）。
+
+        迭代上限是编排层最贵的一个旋钮（直接放大 LLM 调用次数与 token 成本），
+        因此覆写值由 app.core.ab_context 统一夹紧，引擎不重复判断合法性。
+        """
+        return effective_max_iterations(self.max_iterations)
+
     async def answer(
         self,
         query: str,
@@ -719,7 +728,7 @@ class AgenticRAGEngine:
             "tool_results": [],
             "answer": "",
             "iteration": 0,
-            "max_iterations": self.max_iterations,
+            "max_iterations": self._effective_max_iterations(),
             # 检索质量守卫重试计数 — run 内执行现场，随 state 存亡
             "retrieval_retry_count": 0,
             "kb_ids": kb_ids,
@@ -773,6 +782,9 @@ class AgenticRAGEngine:
             metadata={
                 "query": query[:200],
                 "http_request_id": _http_request_id,
+                # 在线实验分组随根 span 落档 —— 事后按臂聚合指标 / 回放归因的
+                # 唯一 join key（未命中实验时 peek_ab_metadata 返回空 dict）
+                **peek_ab_metadata(),
             },
             recorder=_audit_recorder,
         )
@@ -1373,7 +1385,7 @@ class AgenticRAGEngine:
             "tool_results": [],
             "answer": "",
             "iteration": 0,
-            "max_iterations": self.max_iterations,
+            "max_iterations": self._effective_max_iterations(),
             # 检索质量守卫重试计数 — run 内执行现场，随 state 存亡
             "retrieval_retry_count": 0,
             "kb_ids": kb_ids,
