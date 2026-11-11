@@ -87,10 +87,11 @@ class InjectionTestSuite(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
         Integer, default=0, comment="执行耗时（秒）"
     )
     created_by: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, comment="创建者 ID"
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True,
+        comment="创建者 ID"
     )
     tenant_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), nullable=True, comment="租户 ID（多租户隔离）"
+        UUID(as_uuid=True), nullable=True, index=True, comment="租户 ID（多租户隔离）"
     )
 
     # 关系
@@ -114,7 +115,7 @@ class InjectionTestCase(UUIDMixin, TimestampMixin, Base):
 
     suite_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("ai_eval_injection_suites.id"),
-        nullable=False, comment="所属套件 ID"
+        nullable=False, index=True, comment="所属套件 ID"
     )
     # 攻击类型：basic_jailbreak / role_playing / system_override /
     # context_poisoning / multi_turn / encoding_obfuscation /
@@ -173,11 +174,11 @@ class InjectionTestResult(UUIDMixin, TimestampMixin, Base):
 
     case_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("ai_eval_injection_cases.id"),
-        nullable=False, comment="关联用例 ID"
+        nullable=False, index=True, comment="关联用例 ID"
     )
     suite_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("ai_eval_injection_suites.id"),
-        nullable=False, comment="所属套件 ID"
+        nullable=False, index=True, comment="所属套件 ID"
     )
     # 模型响应文本
     response_text: Mapped[str | None] = mapped_column(

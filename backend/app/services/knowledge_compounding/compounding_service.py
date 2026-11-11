@@ -2234,6 +2234,8 @@ class KnowledgeCompoundingService:
             category="FAQ",
             char_count=len(content),
             page_count=1,
+            # 存储配额按 file_size 求和统计，FAQ 独立成文同样要落字节数
+            file_size=len(content.encode("utf-8")),
         )
         # 多租户隔离
         if self._tenant_id is not None:

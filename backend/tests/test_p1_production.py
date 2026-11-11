@@ -117,12 +117,17 @@ class TestTenantResolver:
         tenant_id, domain = resolve_tenant_id(req, None)
         assert tenant_id == tid
 
-    def test_resolve_tenant_header_fallback(self):
-        """无 JWT 时回退到网关 X-Tenant-Id 头。"""
+    def test_resolve_tenant_header_fallback_is_disabled(self):
+        """无 JWT 时不得回退到 X-Tenant-Id — 该头客户端可伪造。
+
+        旧断言期望 header 生效，等于把「伪造租户 ID 读全库」当功能锁死。
+        现在默认只认 JWT；网关通道需显式开关，见
+        tests/test_tenant_resolver_fail_closed.py 的 TestGatewayOptIn。
+        """
         tid = uuid.uuid4()
         req = self._make_request({TENANT_ID_HEADER: str(tid)})
         tenant_id, domain = resolve_tenant_id(req, None)
-        assert tenant_id == tid
+        assert tenant_id is None
 
     def test_resolve_tenant_no_token_no_header(self):
         """无 JWT 且无头时返回 None。"""

@@ -792,6 +792,127 @@ class TestEvalRepositoryDegradation:
 
 
 # ======================================================================
+# 结构型错误不得降级（曾把 UndefinedTable 吞成 warning）
+# ======================================================================
+#
+# 背景：eval_results 表曾经长期缺失（迁移漏了），但 _session_ctx / save
+# 双层 `except Exception` 把它降级成 warning，调用方拿到一个「看起来成功」
+# 的 run_id —— 评测历史一条没落库，回归基线永远是空的，没人发现。
+# 下面锁定：连通性问题降级，结构问题必须抛。
+
+
+class TestEvalRepositorySchemaErrors:
+    """结构型数据库错误必须抛 EvalSchemaError，不能伪装成降级成功。"""
+
+    @staticmethod
+    def _undefined_table_error() -> Exception:
+        """构造一个 asyncpg UndefinedTable 被 SQLAlchemy 包装后的异常。"""
+        from sqlalchemy.exc import ProgrammingError
+
+        return ProgrammingError(
+            "SELECT * FROM eval_results",
+            {},
+            Exception(
+                'relation "eval_results" does not exist '
+                "[SQL: SELECT * FROM eval_results]"
+            ),
+        )
+
+    def test_classifier_flags_missing_table(self) -> None:
+        from app.eval.repository import _is_schema_error
+
+        assert _is_schema_error(self._undefined_table_error()) is True
+
+    def test_classifier_flags_missing_column(self) -> None:
+        from sqlalchemy.exc import ProgrammingError
+
+        from app.eval.repository import _is_schema_error
+
+        exc = ProgrammingError(
+            "SELECT avg_recall_at_5", {}, Exception('column "avg_recall_at_5" does not exist')
+        )
+        assert _is_schema_error(exc) is True
+
+    def test_classifier_does_not_flag_availability_errors(self) -> None:
+        """连不上库是环境问题，仍应降级而不是抛。"""
+        from sqlalchemy.exc import OperationalError
+
+        from app.eval.repository import _is_schema_error
+
+        exc = OperationalError(
+            "connect", {}, Exception("connection refused")
+        )
+        assert _is_schema_error(exc) is False
+
+    async def test_save_raises_on_missing_table(self) -> None:
+        """表不存在时 save 必须抛出，而不是返回一个假的 run_id。"""
+        from app.eval.repository import EvalRepository, EvalSchemaError
+        from app.eval.runner import EvalRunResult
+
+        broken = MagicMock()
+        broken.add = MagicMock(side_effect=self._undefined_table_error())
+        broken.execute = AsyncMock(side_effect=self._undefined_table_error())
+        repo = EvalRepository(session=broken)
+        result = EvalRunResult(avg_recall_at_5=0.5, total=1, passed=1, evaluated_at="t")
+
+        with pytest.raises(EvalSchemaError):
+            await repo.save(result, "ds")
+
+    async def test_get_baseline_raises_on_missing_table(self) -> None:
+        from app.eval.repository import EvalRepository, EvalSchemaError
+
+        broken = MagicMock()
+        broken.execute = AsyncMock(side_effect=self._undefined_table_error())
+        repo = EvalRepository(session=broken)
+
+        with pytest.raises(EvalSchemaError):
+            await repo.get_baseline("ds")
+
+    async def test_list_results_raises_on_missing_table(self) -> None:
+        from app.eval.repository import EvalRepository, EvalSchemaError
+
+        broken = MagicMock()
+        broken.execute = AsyncMock(side_effect=self._undefined_table_error())
+        repo = EvalRepository(session=broken)
+
+        with pytest.raises(EvalSchemaError):
+            await repo.list_results("ds")
+
+    async def test_availability_error_still_degrades_and_is_observable(self) -> None:
+        """连接类错误继续降级，但原因必须能通过 last_error 查到。"""
+        from sqlalchemy.exc import OperationalError
+
+        from app.eval.repository import EvalRepository
+        from app.eval.runner import EvalRunResult
+
+        broken = MagicMock()
+        broken.add = MagicMock(side_effect=OperationalError("insert", {}, Exception("connection refused")))
+        broken.execute = AsyncMock(
+            side_effect=OperationalError("select", {}, Exception("connection refused"))
+        )
+        repo = EvalRepository(session=broken)
+        result = EvalRunResult(avg_recall_at_5=0.5, total=1, passed=1, evaluated_at="t")
+
+        run_id = await repo.save(result, "ds")
+        assert run_id, "环境类故障仍应返回 run_id 以降级"
+        assert repo.last_error and "connection refused" in repo.last_error
+        assert await repo.get_baseline("ds") is None
+
+    async def test_no_degradation_leaves_last_error_none(self) -> None:
+        """正常落库后 last_error 必须保持 None，避免误报。"""
+        from app.eval import repository as repo_mod
+        from app.eval.repository import EvalRepository
+        from app.eval.runner import EvalRunResult
+
+        with patch.object(repo_mod, "_session_factory", None):
+            repo = EvalRepository(session=None)
+            result = EvalRunResult(avg_recall_at_5=0.5, total=1, passed=1, evaluated_at="t")
+            await repo.save(result, "ds")
+            # 工厂不可用属于「已声明降级」而非错误，last_error 保持 None
+            assert repo.last_error is None
+
+
+# ======================================================================
 # CLI 测试（scripts/run_eval.py）
 # ======================================================================
 
@@ -852,6 +973,33 @@ class TestRunEvalCLI:
         assert rc == 2
         err = capsys.readouterr().err
         assert "引擎不可用" in err
+
+    def test_main_schema_error_exit_three(self, tmp_path, capsys) -> None:  # type: ignore[no-untyped-def]
+        """eval_results 表缺失时退出码 3，不输出「基线已设置」的假绿。"""
+        from app.eval.repository import EvalRepository, EvalSchemaError
+
+        from scripts import run_eval
+
+        ds_path = tmp_path / "sample.jsonl"
+        ds_path.write_text(
+            json.dumps({"query": "q1", "expected_doc_ids": ["d1"]}, ensure_ascii=False)
+            + "\n",
+            encoding="utf-8",
+        )
+
+        boom = AsyncMock(
+            side_effect=EvalSchemaError('relation "eval_results" does not exist')
+        )
+        with patch.object(run_eval, "_build_engine", return_value=self._StubEngine()), \
+             patch.object(run_eval, "_build_judge_with_model", return_value=None), \
+             patch("app.eval.repository._session_factory", None), \
+             patch.object(EvalRepository, "save", new=boom):
+            rc = run_eval.main(["--dataset", str(ds_path), "--no-generation"])
+
+        assert rc == 3
+        err = capsys.readouterr().err
+        assert "无法落库" in err
+        assert "alembic upgrade head" in err
 
     def test_main_regression_exit_one(self, tmp_path, capsys) -> None:  # type: ignore[no-untyped-def]
         from scripts import run_eval

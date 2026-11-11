@@ -10,6 +10,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -452,3 +454,100 @@ def test_dedup_keeps_unrelated_edit_when_buffer_empty() -> None:
     kept, skipped = filter_duplicate_edits(edits, [])
     assert kept == edits
     assert skipped == []
+
+
+# ======================================================================
+# 标点归一化正则（_PUNCT_RE）— 弯引号曾被 ASCII 引号截断
+# ======================================================================
+#
+# 原来这一行是三个相邻字面量的隐式拼接：
+#   r"[\s。，；、！？：""''（）…*,.;:!?'\"()\[\]{}]+"
+# raw 段 + 空串 + 非 raw 段。后果：
+#   1. 非 raw 段里的 \[ \] \" 触发 SyntaxWarning: invalid escape sequence；
+#   2. 本想写的弯引号 “ ” ‘ ’ 被误敲成 ASCII 引号，字符串提前终止，
+#      字符类里只剩两个 ASCII 单引号 —— 弯引号从未被剥离。
+# 于是「只差引号风格」的两条编辑归一化后并不相等，同类编辑去重漏判。
+
+
+def test_loop_module_imports_without_syntax_warning() -> None:
+    """回归：import app.evolution.loop 不得产生 SyntaxWarning。
+
+    用子进程 + ``-W error::SyntaxWarning`` 复核，因为当前进程早已 import
+    过该模块，警告不会重放。
+    """
+    result = subprocess.run(
+        [sys.executable, "-W", "error::SyntaxWarning", "-c", "import app.evolution.loop"],
+        cwd=str(Path(__file__).resolve().parents[1]),
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, (
+        "import app.evolution.loop 触发了 SyntaxWarning：\n" + result.stderr[-2000:]
+    )
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "\u201c\u5f15\u7528\u201d",  # “引用”
+        "\u2018\u5355\u5f15\u2019",  # ‘单引’
+        "\u300c\u4e66\u540d\u300d",  # 「书名」
+        '"ascii double"',
+        "'ascii single'",
+        "a b\tc\n",
+        "a.b,c;d:e!f?g",
+        "a（）b《》c【】d",
+    ],
+)
+def test_normalize_strips_quotes_and_punct(raw: str) -> None:
+    """_normalize_edit_text 要剥离弯引号、ASCII 引号与中英文标点。"""
+    from app.evolution.loop import _normalize_edit_text
+
+    stripped = _normalize_edit_text(raw)
+    assert not any(ch in stripped for ch in "\u201c\u201d\u2018\u2019\u300c\u300d\"'")
+
+
+def test_quote_style_only_difference_is_duplicate() -> None:
+    """仅引号风格不同的两条编辑应判为同类（去重守卫的真实语义）。"""
+    from app.evolution.loop import _normalize_edit_text
+
+    plain = "重试策略要带上指数退避"
+    variants = [
+        f"\u201c{plain}\u201d",  # “ ”
+        f"\u2018{plain}\u2019",  # ‘ ’
+        f"\u300c{plain}\u300d",  # 「 」
+        f'"{plain}"',
+        f"'{plain}'",
+    ]
+    normalized = {_normalize_edit_text(v) for v in variants} | {_normalize_edit_text(plain)}
+    assert len(normalized) == 1, f"引号风格导致归一化结果不一致：{normalized}"
+
+
+def test_dedup_filters_edit_differing_only_in_quote_style() -> None:
+    """已拒编辑用弯引号、新提案用 ASCII 引号 → 必须被过滤掉。"""
+    rejected = _rejected(
+        [
+            {
+                "round": 1,
+                "edit": {
+                    "op": "append",
+                    "line": None,
+                    "text": "\u201c回答需严格基于上下文，避免推测。\u201d",
+                    "reason": "增强约束",
+                },
+                "reason": "redline_citation_regression",
+            }
+        ]
+    )
+    edits = [
+        EditOp(
+            op="append",
+            line=None,
+            text='"回答需严格基于上下文，避免推测。"',
+            reason="换个引号再说一遍",
+        )
+    ]
+    kept, skipped = filter_duplicate_edits(edits, rejected)
+    assert kept == [], "只差引号风格的重复编辑未被过滤"
+    assert len(skipped) == 1
+    assert skipped[0]["reason"].startswith("duplicate_of_rejected")

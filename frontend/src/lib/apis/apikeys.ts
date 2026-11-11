@@ -1,6 +1,6 @@
 /**
  * API 密钥管理封装
- * 对接后端 apikeys 路由（密钥列表 / 创建 / 删除 / 使用记录）
+ * 对接后端 apikeys 路由（密钥列表 / 创建 / 删除）
  */
 import { getData, postData, delData } from '../api';
 
@@ -44,7 +44,6 @@ export function deleteApiKey(keyId: string): Promise<void> {
   return delData<void>(`${BASE}/${keyId}`);
 }
 
-/** 获取指定密钥的使用记录（后端可选支持） */
-export function getApiKeyUsage(keyId: string): Promise<unknown[]> {
-  return getData<unknown[]>(`${BASE}/${keyId}/usage`);
-}
+// 注意：曾有一个 `getApiKeyUsage(keyId)` 打 `/api/v1/apikeys/{id}/usage`，
+// 但后端从未实现该端点，也没有请求级使用记录表（api_keys 只有 last_used_at），
+// 导致 settings/api.astro 每次加载都 404。已删除，改为用列表里的真实字段。

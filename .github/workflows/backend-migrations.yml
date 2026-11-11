@@ -44,3 +44,9 @@ jobs:
         run: alembic heads | tee /tmp/heads && test "$(wc -l < /tmp/heads)" -eq 1
       - name: Upgrade head on fresh PG
         run: alembic upgrade head
+      # 门禁：对"只跑过迁移"的库做一次 autogenerate 对比。
+      # 破坏性漂移（remove_index / remove_fk / remove_table / remove_column）与
+      # 结构性漂移（add_* / modify_type）一律失败；注释、默认值差异只告警。
+      # 背景见 backend/alembic_drift.py 顶部说明。
+      - name: Autogenerate drift gate
+        run: python scripts/check_migration_drift.py

@@ -6,7 +6,11 @@ CRM 连接器 — 对接 Salesforce/纷享销客 API。
 
 from __future__ import annotations
 
-from app.connectors.base import BaseConnector, ExternalSearchResult
+from app.connectors.base import (
+    BaseConnector,
+    ConnectorNotImplementedError,
+    ExternalSearchResult,
+)
 from app.config import get_settings
 from app.utils.logger import get_logger
 
@@ -31,6 +35,12 @@ class CRMConnector(BaseConnector):
             return []
         try:
             return await self._call_crm_api(keyword, top_k)
+        except ConnectorNotImplementedError as exc:
+            # 已启用但适配器还没对接真实 API —— 配置错误，不是「没搜到」
+            logger.error(
+                "connector.crm.api_not_implemented", keyword=keyword, error=str(exc)
+            )
+            return []
         except Exception as exc:
             logger.warning("connector.crm.search_failed", keyword=keyword, error=str(exc))
             return []
@@ -46,4 +56,7 @@ class CRMConnector(BaseConnector):
     async def _call_crm_api(self, keyword: str, top_k: int) -> list[ExternalSearchResult]:
         """调用 CRM API — 子类可覆盖。"""
         # TODO: 对接真实 CRM API（Salesforce/纷享销客）
-        return []
+        raise ConnectorNotImplementedError(
+            "CRM 连接器已启用（CONNECTOR_CRM_API_URL 已配置），"
+            "但适配器尚未对接真实 API"
+        )

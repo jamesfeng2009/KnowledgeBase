@@ -1,9 +1,14 @@
 # APISIX 边缘网关 — 多租户子域路由
 # 用法：
-#   TENANT_ROOT_DOMAIN=example.com docker compose -f infra/apisix/docker-compose.apisix.yml up -d
+#   docker compose -f infra/apisix/docker-compose.apisix.yml up -d
 #
-# 网关监听 9080，把 {workspace}.example.com 路由到 core-engine:8000，
-# 并注入 X-Tenant-Domain 供后端解析租户。客户端自带的 X-Tenant-Id 会被剥离。
+# 网关监听 9080，把所有 Host 路由到 core-engine:8000，
+# 剥离客户端自带的 X-Tenant-Id / X-Tenant-Domain / X-Gateway-Trust，
+# 再按网关实际看到的 Host 重新注入 X-Tenant-Domain（语义标识，不是授权依据；
+# 后端默认只认 JWT，详见 apisix.yml 顶部「租户头可信边界」）。
+#
+# 不需要注入 TENANT_ROOT_DOMAIN：nginx worker 默认清除继承的环境变量，
+# apisix.yml 已改为直接使用 ngx.var.host，不依赖任何自定义环境变量。
 
 services:
   apisix:

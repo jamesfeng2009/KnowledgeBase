@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.tenant_context import TenantContextError, apply_tenant
 from app.database import get_db_session
 from app.deps import get_current_active_user
 from app.models.knowledge import Document
@@ -49,10 +50,15 @@ class AskBody(BaseModel):
 @router.post("/token", response_model=ApiResponse[dict])
 async def create_widget_token(
     body: TokenBody,
+    request: Request,
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse[dict]:
-    """登录用户 / API Key 换取短期 widget 令牌。"""
+    """登录用户 / API Key 换取短期 widget 令牌。
+
+    租户取自已认证请求的 JWT（中间件写入 ``request.state.tenant_id``），
+    签进 HMAC 令牌后供匿名 ``/widget/ask`` 使用。绝不从客户端请求头取租户。
+    """
     # 校验用户对该知识库有读权限（至少能访问）
     from app.services.permission_service import PermissionService
 
@@ -60,7 +66,17 @@ async def create_widget_token(
     accessible = await perm.get_accessible_kb_ids()
     if accessible is not None and body.kb_id not in accessible:
         raise HTTPException(status_code=403, detail="无权将该知识库暴露到 Widget")
-    data = _token_service.create_token(str(body.kb_id))
+
+    tenant_id = getattr(request.state, "tenant_id", None) or getattr(
+        user, "tenant_id", None
+    )
+    if tenant_id is None:
+        # 没有租户归属的账号签不出可用于 fail-closed 查询的令牌，
+        # 与其发一张必然查不到数据的废牌，不如在签发处明确报错。
+        raise HTTPException(
+            status_code=403, detail="当前账号未绑定租户，无法签发 Widget 令牌"
+        )
+    data = _token_service.create_token(str(body.kb_id), tenant_id=str(tenant_id))
     return ApiResponse(code=0, data=data, message="success")
 
 
@@ -75,6 +91,14 @@ async def widget_ask(
         claims = _token_service.verify_token(body.token)
     except WidgetTokenError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+    if not claims.tenant_id:
+        # 改造前签发的旧令牌没有租户字段；不兜底到任何默认租户。
+        raise HTTPException(status_code=401, detail="Widget 令牌缺少租户上下文，请重新签发")
+    try:
+        await apply_tenant(db, claims.tenant_id)
+    except TenantContextError as exc:
+        raise HTTPException(status_code=401, detail="Widget 令牌租户标识无效") from exc
 
     # 限流：按令牌哈希 + IP 双维度
     client_ip = request.client.host if request.client else "unknown"

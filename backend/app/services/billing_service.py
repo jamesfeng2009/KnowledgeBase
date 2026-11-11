@@ -22,7 +22,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.billing import Subscription, Tenant, UsageRecord
@@ -193,9 +193,20 @@ class BillingService:
     async def get_storage_usage(self, tenant_id: uuid.UUID) -> int:
         """统计租户已用存储（字节）。
 
-        基于 Document.file_size 求和（上传时写入真实文件大小），
-        file_size 为空时回退到 content_text 长度近似估算。
+        口径分两段：
+            1. ``file_size`` 有真实值的文档 → 直接求和（上传链路写入的字节数）；
+            2. ``file_size`` 未知的文档 → 回退估算（content_text 长度 + 每篇 500KB）。
+
+        "未知"必须包含 **0**：迁移 8c93453eea3d 曾把历史 NULL 回填成 0，
+        若只判 ``IS NULL``，这批历史文档会被算成"占用 0 字节"，租户可以
+        无限超配额而系统毫无察觉。空文件被算成 500KB 是可接受的误差
+        （配额只需要量级正确），漏算整批历史文档则不是。
         """
+        unknown_size = or_(
+            Document.file_size.is_(None),
+            Document.file_size == 0,
+        )
+
         sum_file = select(
             func.coalesce(func.sum(Document.file_size), 0)
         ).where(
@@ -204,13 +215,13 @@ class BillingService:
         )
         used = int(await self._db.scalar(sum_file) or 0)
 
-        # 回退估算：无 file_size 的文档按 content_text 长度 + 每条 500KB 兜底
+        # 回退估算：体积未知的文档按 content_text 长度 + 每条 500KB 兜底
         sum_text = select(
             func.coalesce(func.sum(func.length(Document.content_text)), 0)
         ).where(
             Document.tenant_id == tenant_id,
             Document.deleted_at.is_(None),
-            Document.file_size.is_(None),
+            unknown_size,
         )
         text_len = int(await self._db.scalar(sum_text) or 0)
         used += text_len
@@ -218,7 +229,7 @@ class BillingService:
         count_no_size = select(func.count(Document.id)).where(
             Document.tenant_id == tenant_id,
             Document.deleted_at.is_(None),
-            Document.file_size.is_(None),
+            unknown_size,
         )
         no_size_count = int(await self._db.scalar(count_no_size) or 0)
         used += no_size_count * 500 * 1024

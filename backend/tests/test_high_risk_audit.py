@@ -16,12 +16,14 @@ import asyncio
 import uuid
 from collections.abc import AsyncIterator
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from app.models.high_risk import HighRiskAuditRecord
 from app.services.high_risk_audit_service import HighRiskAuditService
+
+TENANT_ID = "11111111-1111-1111-1111-111111111111"
 
 
 # ======================================================================
@@ -411,3 +413,63 @@ class TestEngineWiring:
         assert kwargs["session_id"] == "sess-test"
         assert kwargs["max_risk_level"] == "high"
         assert kwargs["total_count"] >= 1
+
+
+# ======================================================================
+# 6. RLS fail-closed：自建会话必须显式绑定租户
+# ======================================================================
+
+
+class TestTenantBinding:
+    """服务自己开 session_factory，没人替它写 GUC，必须自己 apply_tenant。"""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "method, kwargs",
+        [
+            (
+                "record_block_audit",
+                {
+                    "query": "q", "answer": "a", "session_id": "s",
+                    "total_count": 1, "unverified_count": 1,
+                    "max_risk_level": "high", "items": [],
+                },
+            ),
+            ("list_audits", {}),
+            (
+                "review_audit",
+                {"record_id": uuid.uuid4(), "review_status": "confirmed",
+                 "reviewer_id": uuid.uuid4()},
+            ),
+            ("get_misjudgment_stats", {}),
+        ],
+    )
+    async def test_every_method_binds_tenant(
+        self, method: str, kwargs: dict
+    ) -> None:
+        session = FakeSession()
+        session.execute_results = [
+            FakeResult(scalar=0),
+            FakeResult(rows=[]),
+        ]
+        service = _make_service(session)
+        with patch(
+            "app.services.high_risk_audit_service.apply_tenant",
+            new_callable=AsyncMock,
+        ) as apply:
+            await getattr(service, method)(tenant_id=TENANT_ID, **kwargs)
+
+        apply.assert_awaited_once()
+        assert apply.await_args.args[1] == TENANT_ID
+
+    @pytest.mark.asyncio
+    async def test_missing_tenant_stays_fail_closed(self) -> None:
+        """不传 tenant_id 时绝不兜底到跨租户，只是保持无 GUC。"""
+        session = FakeSession()
+        service = _make_service(session)
+        with patch(
+            "app.services.high_risk_audit_service.apply_tenant",
+            new_callable=AsyncMock,
+        ) as apply:
+            await service.get_misjudgment_stats()
+        apply.assert_not_awaited()

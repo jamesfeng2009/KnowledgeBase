@@ -4,15 +4,38 @@
 #   docker compose -f infra/apisix/docker-compose.apisix.yml up -d
 #
 # 职责：
-#   1. 子域路由：{workspace}.<TENANT_ROOT_DOMAIN> → 同一 core-engine 后端，
-#      但注入 X-Tenant-Domain 供后端解析租户；
-#   2. 安全清洗：剥离客户端自带的 X-Tenant-Id 头（防止租户伪造），
-#      仅由网关注入可信租户标识；
+#   1. 子域路由：所有 Host → 同一 core-engine 后端，剥离客户端租户头后
+#      按网关实际看到的 Host 重新注入 X-Tenant-Domain（语义标识，非授权依据）；
+#   2. 安全清洗：剥离客户端自带的三个租户头，见下方「租户头可信边界」；
 #   3. 租户级限流：按 X-Tenant-Domain 维度限流（配合后端 P1 租户限流）。
 #
-# 说明：APISIX 作为边缘网关，将子域中的 workspace 提取出来注入
-# X-Tenant-Domain 头；后端依据该头 + Tenant 表 domain 映射解析租户 ID。
-# 需要部署时把下方 {TENANT_ROOT_DOMAIN} 替换为真实根域名。
+# 为什么不读 TENANT_ROOT_DOMAIN / 不从 Host 剥子域：
+#   nginx 默认清除 worker 继承的全部环境变量（只保留 TZ）。Lua 里的
+#   os.getenv("TENANT_ROOT_DOMAIN") 只有在 config.yaml 配置
+#   nginx_config.envs 之后才拿得到值，否则恒为 nil —— 于是 X-Tenant-Domain
+#   永远不注入，limit-req 的 key 退化成空串，全站共用同一个限流桶。
+#   注入完整 Host 不需要任何环境变量，key 永远有值，且后端
+#   extract_domain_from_request 在没有该头时本来就返回完整 hostname，
+#   语义完全一致。子域 → 租户的权威映射由后端查 tenants 表完成。
+
+# === 租户头可信边界 ===
+# X-Tenant-Id / X-Tenant-Domain / X-Gateway-Trust 都是普通 HTTP 头，客户端可任意构造。
+# 后端 app/core/tenant_resolver.py 默认**只认 JWT**：X-Tenant-Id 完全不采信，
+# X-Tenant-Domain 只作为语义标识，必须经 tenants 表权威映射才能变成 tenant_id。
+# 因此网关的职责是「全部剥离，只按 Host 子域重新注入 X-Tenant-Domain」，
+# 而不是像旧注释所说「由网关注入可信租户标识」——网关没有 tenant_id 查询能力，
+# 旧实现也确实只 clear 不 set，注释与代码长期不一致。
+#
+# 若将来确实要启用网关注入租户 ID，必须同时满足：
+#   - 网关能权威解析 domain → tenant_id（当前不具备）；
+#   - 后端显式设置 TRUST_TENANT_ID_HEADER=true 且配置 TENANT_GATEWAY_TOKEN；
+#   - 网关在 clear 之后注入 X-Gateway-Trust（共享密钥）与 X-Tenant-Id；
+#   - 后端不对外暴露，否则等于把「伪造租户 ID 读全库」的洞放回来。
+# 在此之前，任何注入 X-Tenant-Id / X-Gateway-Trust 的代码都不应加回来。
+#
+# 下面四条路由的清洗片段必须保持同步；新增路由时同样要复制这段。
+# 本文件不再含 {TENANT_ROOT_DOMAIN} 占位符，也不再需要任何
+# sed/envsubst 渲染（唯一保留的 ${APISIX_ADMIN_KEY:-...} 由部署侧渲染）。
 
 apisix:
   node_listen: 9080
@@ -44,6 +67,14 @@ upstreams:
     nodes:
       "core-engine:8000": 1
     type: roundrobin
+  # Yjs 协作服务 — 协同编辑 / 评论通知的 WebSocket 上游。
+  # 此前网关只配了 /api/*，协作服务**不在网关后面**，这与
+  # collab-service 里"签名由 APISIX 验证"的注释自相矛盾。
+  # 现在补齐：协作连接必须经网关（其自身也已本地验签 + 校验文档归属）。
+  - id: yjs-server
+    nodes:
+      "yjs-server:8001": 1
+    type: roundrobin
 
 # 路由
 routes:
@@ -54,21 +85,19 @@ routes:
     priority: 100
     upstream_id: core-engine
     plugins:
-      # 子域 → X-Tenant-Domain 注入，并剥离客户端伪造的租户头
+      # 清洗三个租户头，再按网关实际看到的 Host 重新注入语义域标识。
+      # 不用 os.getenv：nginx worker 默认不继承环境变量（见文件顶部说明）。
       serverless-pre-function:
         functions:
           - |
-            ngx.req.clear_header("X-Tenant-Id")
-            local host = ngx.var.host or ""
-            local root = "{TENANT_ROOT_DOMAIN}"
-            local dot = "." .. root
-            if host ~= "" and root ~= "" and host:find(dot, 1, true) then
-              local sub = host:sub(1, #host - #dot)
-              if sub ~= "" and not sub:find(".", 1, true) then
-                ngx.req.set_header("X-Tenant-Domain", sub)
-              end
+            for _, h in ipairs({"X-Tenant-Id", "X-Tenant-Domain", "X-Gateway-Trust"}) do
+              ngx.req.clear_header(h)
             end
-      # 租户级限流（按 X-Tenant-Domain）
+            local host = ngx.var.host or ""
+            if host ~= "" then
+              ngx.req.set_header("X-Tenant-Domain", host:lower())
+            end
+      # 租户级限流（按网关注入的 X-Tenant-Domain；Host 恒有值，不会退化成共享桶）
       limit-req:
         key: "$http_x_tenant_domain"
         rate: 10            # 每秒速率（rps）
@@ -85,13 +114,41 @@ routes:
       serverless-pre-function:
         functions:
           - |
-            ngx.req.clear_header("X-Tenant-Id")
+            for _, h in ipairs({"X-Tenant-Id", "X-Tenant-Domain", "X-Gateway-Trust"}) do
+              ngx.req.clear_header(h)
+            end
 
   # --- 健康检查（不经子域限流）---
+  # 即便健康检查不查租户数据，也要清洗租户头：任何新增的 /health* 子路径
+  # 都可能被加上诊断逻辑，届时未清洗的头会变成一条隐蔽的身份注入口。
   - id: health
     uri: /health*
     priority: 300
     upstream_id: core-engine
+    plugins:
+      serverless-pre-function:
+        functions:
+          - |
+            for _, h in ipairs({"X-Tenant-Id", "X-Tenant-Domain", "X-Gateway-Trust"}) do
+              ngx.req.clear_header(h)
+            end
+
+  # --- 协同编辑 / 评论通知 WebSocket ---
+  # 路径形如 /ws/collab/<docId>（y-websocket 把 room 名拼在路径里）。
+  # enable_websocket: true 让网关完成 Upgrade 透传；Cookie（access_token）
+  # 原样透传，由协作服务本地验签并校验文档归属。
+  - id: collab-ws
+    uri: /ws/*
+    priority: 300
+    upstream_id: yjs-server
+    enable_websocket: true
+    plugins:
+      serverless-pre-function:
+        functions:
+          - |
+            for _, h in ipairs({"X-Tenant-Id", "X-Tenant-Domain", "X-Gateway-Trust"}) do
+              ngx.req.clear_header(h)
+            end
 
 # 全局默认 — 未匹配路由返回 404
 # (APISIX standalone 未命中路由默认返回 404)

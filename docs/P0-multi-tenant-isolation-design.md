@@ -638,3 +638,436 @@ P1（基础设施层）→ P2（数据层基础）→ P3（查询过滤全覆盖
 **P3 必须在 P2 完成后**：Repository 构造函数改造依赖 BaseRepository 封装。
 
 **P4 必须在 P3 完成后**：RLS 是兜底，应用层过滤必须先到位。
+
+---
+
+## 八、RLS 的真实边界（实测结论）
+
+> 本节是事后核验结论，回答一个关键问题：**数据库层 RLS 到底在不在生效？**
+> 结论可能和直觉相反，部署前请务必读完。
+
+### 8.1 组件是齐的
+
+| 环节 | 现状 |
+|------|------|
+| 表级开关 | 36 张含 `tenant_id` 的表均为 `RELROWSECURITY = true` |
+| 表级强化 | 上述表同时为 `RELFORCEROWSECURITY = true`（表 owner 也不能绕过） |
+| 策略定义 | `current_setting('app.tenant_id', true) IS NULL OR tenant_id::text = current_setting('app.tenant_id', true)` |
+| 运行时注入 | `app/database.py::get_db_session` 在 `request.state.tenant_id` 存在时执行 `SET LOCAL app.tenant_id = '<uuid>'`（先做 UUID 强校验再拼接） |
+| 旁路会话 | `chat_service.py`、`memory_manager.py` 在独立会话中补设同一 GUC |
+
+看起来是完整的。**但缺了最关键的一环。**
+
+### 8.2 缺的一环：应用连的是超级用户
+
+`DATABASE_URL` 里的连接角色（默认 `ekb`）在 PostgreSQL 中是 **superuser**：
+
+```
+select current_user, rolsuper from pg_roles where rolname = current_user;
+-- ekb | t
+```
+
+而 PostgreSQL 对 superuser **无条件绕过 RLS** —— `FORCE ROW LEVEL SECURITY` 只覆盖表 owner，
+**不覆盖 superuser**。实测对比（同一张开了 FORCE RLS 的表、同一个 `app.tenant_id`）：
+
+| 查询角色 | 设置 tenant_id = 租户 A 后可见行数 | 说明 |
+|---------|-------------------------------|------|
+| `ekb`（superuser） | **2 行**（A + B 全可见） | RLS **未生效** |
+| 普通角色（仅 GRANT SELECT） | **1 行**（只有 A） | RLS 生效 |
+
+复现脚本（在任意库执行，末尾 ROLLBACK 不落盘）：
+
+```sql
+BEGIN;
+CREATE TABLE public._rls_probe (id int primary key, tenant_id uuid);
+ALTER TABLE public._rls_probe ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public._rls_probe FORCE ROW LEVEL SECURITY;
+CREATE POLICY tenant_isolation ON public._rls_probe
+  USING (current_setting('app.tenant_id', true) IS NULL
+         OR tenant_id::text = current_setting('app.tenant_id', true));
+INSERT INTO public._rls_probe VALUES
+  (1, '11111111-1111-1111-1111-111111111111'),
+  (2, '22222222-2222-2222-2222-222222222222');
+CREATE ROLE _rls_probe_role NOLOGIN;
+GRANT SELECT ON public._rls_probe TO _rls_probe_role;
+SET LOCAL app.tenant_id = '11111111-1111-1111-1111-111111111111';
+SELECT count(*) FROM public._rls_probe;              -- superuser：2（绕过）
+SET LOCAL ROLE _rls_probe_role;
+SELECT count(*) FROM public._rls_probe;              -- 普通角色：1（生效）
+ROLLBACK;
+```
+
+### 8.3 所以，隔离的真实边界是
+
+1. **实际生效的只有应用层 `WHERE tenant_id = ...`**（`BaseRepository._apply_tenant_filter` +
+   各 Repository 显式过滤）。172 个租户隔离测试验证的也是这一层。
+2. **RLS 目前是零防护**，不是「最后一道防线」—— 因为连接角色是 superuser。
+3. 另一处设计上的 fail-open：策略第一个分支 `current_setting(...) IS NULL` 意味着
+   **GUC 未设置时全表可见**。任何绕过 `TenantContextMiddleware` 的入口
+   （单租户兜底模式、脚本、Celery 任务漏传 tenant_id）都能读全租户数据。
+
+### 8.4 要真正让 RLS 生效，需要三件事
+
+1. **拆角色**：迁移/DDL 用 superuser（`ekb`），运行时装机用非 superuser 角色
+   （如 `ekb_app`），只给 `SELECT/INSERT/UPDATE/DELETE` + 序列权限：
+   ```sql
+   CREATE ROLE ekb_app LOGIN PASSWORD '...' NOSUPERUSER NOBYPASSRLS;
+   GRANT USAGE ON SCHEMA public TO ekb_app;
+   GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ekb_app;
+   GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ekb_app;
+   ```
+   然后运行时 `DATABASE_URL` 指向 `ekb_app`，迁移用独立 `MIGRATION_DATABASE_URL`（`ekb`）。
+2. **关掉 fail-open**：把策略改成 GUC 缺失时**拒绝**（`tenant_id::text = current_setting('app.tenant_id', true)`），
+   仅对确需跨租户的系统任务显式 `SET LOCAL app.tenant_id = ''` 之类的白名单通道开口子。
+   这一步会打破「单租户兜底」现状，必须与业务确认后再做。
+3. **防 GUC 泄漏**：`SET LOCAL` 随事务结束失效，前提是**一个请求一个事务**。
+   若将来把 `NullPool` 换成连接池复用，必须确保每个事务开头都重设 GUC，
+   否则残留值会串租户。
+
+> 在完成第 1 步之前，**不要把 RLS 计入安全评估**。多租户隔离的正确性只能按
+> 「应用层过滤是否完备」来验收。
+
+---
+
+## 九、第 1 步已落地：角色拆分与策略补全（2026-11-10）
+
+上一节的三步整改里，**第 1 步（拆角色）已经实现并带测试**；第 2 步（关 fail-open）
+刻意没动，需要业务确认；第 3 步（防 GUC 泄漏）是将来换连接池时的事前约束。
+
+### 9.1 做了什么
+
+| 项 | 内容 |
+|----|------|
+| 运行角色供给 | `backend/scripts/provision_app_role.py`（幂等）：建 `ekb_app`，`NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE`，给 `CONNECT` / `USAGE on schema public` / 表级 `SELECT,INSERT,UPDATE,DELETE` / 序列 `USAGE,SELECT`；**不给 `CREATE on schema`**（建表必须走迁移） |
+| 未来表自动授权 | `ALTER DEFAULT PRIVILEGES FOR ROLE <每个真实表 owner>`，避免「迁移后运行时突然 permission denied」 |
+| 连接分离 | `MIGRATION_DATABASE_URL`（owner，DDL/迁移）+ `DATABASE_URL`（运行角色）。`alembic/env.py`、`app/utils/migration.py`（`AUTO_MIGRATE` 启动路径）都改为优先读前者，未配置时回退后者 |
+| 策略补全 | 迁移 `d7e8f9a0b1c2` 补齐 12 张漏掉的表：`document_chunks`、`knowledge_candidates`、`kb_folders`、`tickets`、`wiki_pages`、`research_jobs`、`constraint_rules`、`constraint_audit_records`、`ai_eval_*_datasets`×4 |
+
+补全前后对比（`ekb` 库实测）：
+
+```
+补全前：48 张带 tenant_id 的表，36 张有 RLS，12 张零防护
+补全后：48 张，48 张 ENABLE + FORCE，缺口 0
+```
+
+> 最容易漏的是 `document_chunks` —— 它存的是切片正文，正是 RAG 召回的原文。
+> 只给 `documents` 开 RLS 而漏掉 chunks，等于隔离只做了目录没做内容。
+
+### 9.2 部署步骤（三行）
+
+```bash
+cd backend
+# 1) 建运行角色（用 owner 连接；口令建议 openssl rand -base64 24）
+.venv/bin/python scripts/provision_app_role.py --password "$(openssl rand -base64 24)"
+
+# 2) 把输出的 DATABASE_URL 写进运行环境；owner 连接留给 MIGRATION_DATABASE_URL
+#    DATABASE_URL=postgresql+asyncpg://ekb_app:<pwd>@<host>:<port>/ekb
+#    MIGRATION_DATABASE_URL=postgresql+asyncpg://ekb:<pwd>@<host>:<port>/ekb
+
+# 3) 复核
+.venv/bin/python scripts/dev_env_check.py   # 会打印「超级用户: 否」
+```
+
+`AUTO_MIGRATE=true` 时启动阶段用的是 `MIGRATION_DATABASE_URL`，所以运行角色没有
+DDL 权限也能正常自动迁移。
+
+### 9.3 守住它的测试
+
+`backend/tests/test_rls_role_split.py`（11 例）：
+
+- `test_role_is_not_superuser_and_cannot_bypass_rls` — 权限位硬断言
+- `test_tenant_isolation_between_two_tenants` — 用与业务表完全一致的策略建探针表，
+  以 `ekb_app` 连接、设置 GUC=租户 A，断言**只能看到 A 的行**
+- `test_every_tenant_table_has_rls_migration` — 静态覆盖门禁：模型里任何带
+  `tenant_id` 的表若没有对应 RLS 迁移，测试直接红（这就是本次能揪出 12 张缺口的原因）
+- `test_unset_guc_is_fail_open_today` — 把「GUC 未设置时全表可见」写成
+  `xfail(strict=True)` 的可执行记录。**关掉 fail-open 后它会变成 XPASS 并失败**，
+  强制改的人同步更新本文档，而不是默默改语义
+
+### 9.4 仍未做的（第 2 步，需决策）
+
+fail-open 分支还在：`current_setting('app.tenant_id', true) IS NULL` 时全表可见。
+关掉它意味着下面这些「没有请求上下文」的路径会立刻失效，需要先给白名单通道：
+
+| 路径 | 现状 |
+|------|------|
+| Celery worker（解析/索引/巡检） | 多数任务不设 GUC，依赖 fail-open 读写全租户数据 |
+| `scripts/*`（迁移、评测、回填） | 无请求上下文 |
+| 单租户兜底模式（未启用多租户的部署） | `request.state.tenant_id` 为空 |
+| 系统级后台任务（补偿扫描、配额统计） | 显式跨租户查询 |
+
+建议路径：先给 Celery `worker_process_init` 和脚本入口统一加「显式跨租户」开关
+（`SET LOCAL app.tenant_id = ''` 或改用带 GUC 的系统角色），把 fail-open 分支
+改成 fail-closed，再逐步收紧。**在完成这一步前，RLS 只能算「有 GUC 的请求路径
+受保护」，不是全链路保护。**
+
+---
+
+## 十、第 2 步已落地：fail-closed 与显式跨租户通道（2026-11-10）
+
+第九章做的第 1 步（拆非 superuser 运行角色）只让 RLS **能够**生效。
+真正把它变成防线的是这一步：**GUC 缺失时不再放行**。
+
+### 10.1 策略从 fail-open 改成 fail-closed
+
+```sql
+-- 之前：GUC 没设置 → 第一个分支恒真 → 全表可见
+USING (current_setting('app.tenant_id', true) IS NULL
+       OR tenant_id::text = current_setting('app.tenant_id', true))
+
+-- 现在：GUC 没设置 → 两边都是 NULL → 一行都看不见
+USING (current_setting('app.tenant_id', true) = '*'
+       OR tenant_id::text = current_setting('app.tenant_id', true))
+WITH CHECK (同上)
+```
+
+迁移 `e8f9a0b1c2d3`，按 ``information_schema`` 动态遍历所有含 ``tenant_id``
+的表，避免"写死 48 张表，以后新表又零防护"。
+
+比较用 ``tenant_id::text`` 而不是 ``::uuid``：GUC 为 ``'*'`` 时
+``'*'::uuid`` 会直接抛 ``invalid input syntax for type uuid``，策略从
+"报错"变成"放行"的反面 —— 跨租户维护脚本会全线失败。
+
+### 10.2 三种身份，没有第四种
+
+| 身份 | 入口 | GUC |
+|------|------|-----|
+| 某个租户 | `tenant_scope()` / `get_db_session` | `<uuid>` |
+| 跨租户（系统路径） | `system_scope(reason=...)` / `get_system_db_session` | `*` |
+| 无身份 | 什么都不设 | 空 → **拒绝所有行** |
+
+所有 GUC 写入收敛到 `app/core/tenant_context.py` 一个模块。
+第 1 步之前这些 SQL 散在 `database.py`、`chat_service`、`memory_manager` 三处。
+
+`system_scope` 强制要 `reason`，并写 `tenant.cross_tenant_scope` 审计日志。
+跨租户本身不是错误，但必须是**可数的、有理由的** —— 否则就是把 fail-open
+换个文件名放回来。
+
+### 10.3 Celery：53 个会话调用点，0 个"无身份"
+
+改之前有 52 处 `task_db_session()` 都在裸跑（依赖 fail-open 才能读到数据）。
+现在：
+
+```
+显式声明（tenant_id= / cross_tenant_reason= / resolve）  39
+靠 ContextVar 从任务参数传递                              14
+无身份来源                                                 0
+```
+
+- **ContextVar 传递**：`celery_app.py` 的 `task_prerun` 信号按函数签名从任务
+  参数里取出 `tenant_id` 存进上下文，`task_db_session()` 无参时自动读取。
+  这样不用改几十个函数签名和它们的调用方。
+- **按主键反查**：拿不到 `tenant_id` 的任务（历史队列消息）用
+  `resolve_task_tenant()`——在 `system_scope` 内只 `SELECT tenant_id` 一列，
+  查完立刻退出跨租户作用域。暴露面被压到"按主键查归属"这一条查询上，
+  而不是让整个任务跑在跨租户下。
+- **系统任务显式跨租户**：定时巡检、outbox flush、日摘要这些工作对象本来就是
+  全租户数据，给它们 `cross_tenant_reason="<module>.<function>"`。
+
+### 10.4 三个实现坑（都是改 fail-closed 时才暴露的）
+
+**① `SET LOCAL` 会被 commit 清掉。** 原实现用 `SET LOCAL app.tenant_id = ...`，
+作用域是当前事务。业务代码只要 `commit()` 过一次，GUC 就失效 —— 之后那次查询在
+fail-open 下看到全部租户（旧行为），在 fail-closed 下返回空集（表现为"偶尔查不到
+数据"，极难定位）。改用 `set_config(name, value, false)`（session 级）。
+
+**② `RESET` 对自定义 GUC 是"设为空串"，不是"恢复未定义"。** 验证工具第一版用
+`RESET app.tenant_id` 来模拟"没有租户"，结果 `current_setting` 返回 `''` 而非
+NULL —— 而 fail-open 策略下 `''` 不匹配任何行。于是"无 GUC 是否越权可见"这条
+最关键的检查，在**策略最松的库上假绿**。现在用**全新连接**做这项探测，只有
+从未设置过的连接 `current_setting` 才是 NULL。
+
+**③ 连接池会把 GUC 带到下一个请求。** `app.tenant_id` 是连接级状态，主引擎是
+QueuePool。归还时若 GUC 还留着上一个请求的租户（最糟是 `'*'`），下一个请求即使
+一个租户都没设也会带着它。现在两道收尾：`get_db_session` 的 finally 先
+`clear_tenant` **再 commit**（直接 close 等价 rollback，RESET 会被一并撤销），
+加上 engine 的 `checkin` 事件在 DBAPI 层再 `RESET` 一次，失败则**丢弃连接**
+而不是放回池。
+
+### 10.5 验证工具（生产可直接跑，只读）
+
+```bash
+# 必须用应用运行角色连接，超级用户会绕过 RLS，测不出任何问题
+backend/.venv/bin/python backend/scripts/verify_rls_isolation.py \
+    --url "postgresql://ekb_app:***@<host>:5432/ekb" --only-critical
+```
+
+对每张表输出「无 GUC / 租户 A / 异租户行数 / 跨租户」四列并判定。
+本地实测（双租户、3 文档、4 切片）：
+
+```
+表名                    无GUC   租户A   异租户   跨租户  结论
+documents                   0       2       0       3  OK
+document_chunks             0       2       0       4  OK
+knowledge_bases             0       1       0       2  OK
+users                       0       1       0       2  OK
+✓ 7 张表全部通过：无 GUC 不可见、租户间零泄漏、跨租户通道可用
+```
+
+工具做了反向验证：把策略 `downgrade` 回 fail-open，脚本立刻报
+`无 GUC 却可见 3 行（策略仍 fail-open）`。
+
+### 10.6 上线前必做的两件事
+
+**① NULL tenant_id 必须回填。** 48 张表里 **47 张的 `tenant_id` 允许为 NULL**。
+fail-closed 下 `tenant_id::text = guc` 对 NULL 恒为 NULL，这批行对**任何身份**
+都不可见（包括跨租户模式也只看得到非 NULL 行）。不报错、不告警，数据凭空消失。
+
+```bash
+backend/.venv/bin/python backend/scripts/check_null_tenant_rows.py \
+    --url "postgresql+asyncpg://<owner>:***@<host>:5432/ekb" --emit-sql
+```
+
+退出码 1 = 有 NULL 行，阻塞上线。脚本会列出每张表的行数并给回填模板。
+
+**② `.env` / compose 的 `DATABASE_URL` 换成 `ekb_app`。** 见 9.2 三行部署步骤。
+
+### 10.7 已知边界（这一版没解决的）
+
+| 边界 | 影响 | 状态 |
+|------|------|------|
+| 测试库跑在 superuser 上 | CI 里 RLS **永远不生效**，5282 个测试测不到 RLS 回归 | 靠 `test_rls_fail_closed.py` 的静态门禁 + `verify_rls_isolation.py` 的生产验证补 |
+| 87 个端点没有认证依赖 | fail-closed 下它们查不到数据（比泄漏好），但本该补认证 | 独立安全问题，不属本轮 |
+| `tenant_id` 可空 | 见 10.6 ① | 靠上线前检查脚本卡住 |
+| 单租户部署 | 无 JWT 的请求没有租户，全部查不到 | 需要显式配置单租户 ID，**没有隐式兜底**了 |
+
+### 10.8 守住它的测试
+
+`backend/tests/test_rls_fail_closed.py`（15 例）：
+
+- `test_strict_predicate_rejects_unset_guc` — 迁移谓词里出现 `IS NULL` 就红。
+  已做反向验证：注入 fail-open 分支 → 精确变红。
+- `test_comparison_uses_text_cast` — 防止有人把 `::text` 改回 `::uuid`
+- `test_every_task_session_declares_identity` — AST 扫描 `tasks/`，
+  任何"无身份还查库"的 `task_db_session()` 直接红
+- `test_cross_tenant_tasks_carry_reason` — 跨租户理由必须是非空字面量
+- `test_no_tenant_sets_no_guc` — 无租户时不许替调用方兜底
+- `test_invalid_tenant_raises` — 非法 tenant_id 必须炸，不能被当成"没有租户"放行
+
+### 10.9 第 3 步：连接池 GUC 泄漏防护
+
+已在**单连接复用**场景实测通过（`pool_size=1` 强制复用）：
+
+```
+session1 (GUC='*')   documents = 3
+session2 (未设 GUC)  documents = 0     backend_pid=4340
+session3                              backend_pid=4340  ← 连接确实被复用
+checkin RESET 失败次数 = 0
+```
+
+第二个会话没有设置任何 GUC，看到的仍是 0 行 —— 说明 `checkin` 里的
+DBAPI 层 `RESET` 在 asyncpg 适配层工作正常，GUC 没有串到下一个会话。
+
+**没做的**：高并发压测。上线后建议观察 `db.tenant_guc_reset_failed` 日志，
+非零说明某些情况下重置失败（那时连接会被丢弃，功能仍然正确但性能下降），
+需要改成 `poolclass=NullPool` 或显式 connection wrapper。
+
+---
+
+## 十一、公开端点收口与性能结论（2026-11-11）
+
+### 11.1 先纠正两个此前的错误结论
+
+| 旧结论 | 实测/复核结果 |
+|---|---|
+| 「87 个端点无认证」 | **错**。319 个路由函数里只有 10 个无认证依赖，且都该公开 |
+| 「9 个公开端点」 | **少算 1 个**。旧 AST 把 `OAuth2PasswordRequestForm` 里的 `oauth2` 当认证依赖，漏了 `auth.login`。精确清单是 10 个，见 `tests/test_public_endpoint_contract.py` |
+| 「`queue_monitor_service` 用独立 `session_factory()`，统计恒 0」 | **错**。它是构造注入 `AsyncSession`，来自 `get_db_session`（有 JWT → 有 GUC），不需要改。已加静态门禁锁住这一点 |
+
+### 11.2 性能分支的收尾结论：走 B，策略一字不动
+
+100 万行双租户压测里 103ms 的全表扫描只在 `SELECT count(*)` 这类
+**无选择性条件的租户级聚合**上出现。静态清点（`307` 个含 select/聚合的函数）
+发现 `document_chunks` 全仓只有 `ChunkService` 查询，且每条都带 `doc_id`
+或主键 + 显式租户过滤，**零租户级扫描**；141 个租户级扫描全部落在
+`documents` / `search_logs` / `usage_records` / `qa_answers` 等比 chunks
+小几个数量级的表上。按实测线性缩放，万行级 <1ms。
+
+因此 **A′（收敛反查 + 换角色 + 改谓词 + 补索引）不执行**，代价（独立连接池、
+事务边界语义变更、约 20 处反查回归、48 张表策略迁移）换不到实际收益；
+**B 也不必做缓存/物化**，因为目标查询在生产代码路径上不存在。
+`e8f9a0b1c2d3` 的谓词与 `guc='*'` 跨租户通道保持原样。
+
+**不确定性**：没有生产行数，`documents` 若达几十万行需重评；静态扫描有误报。
+上线前用 `pg_stat_statements` 或慢查询日志实测一次，不要靠静态推断定架构。
+
+### 11.3 本轮修复的四类遗留风险
+
+1. **三个公开端点的租户上下文**
+   - `widget_ask`：`WidgetTokenService.create_token` 现在**强制**要求
+     `tenant_id`（keyword-only），签进 HMAC 载荷；签发时取自已认证请求的
+     `request.state.tenant_id`。`widget_ask` 校验后 `apply_tenant(db, claims.tenant_id)`，
+     旧令牌（无该字段）直接 401。**身份来自服务端签名令牌，不是请求头**。
+   - `oidc_login`：只拼授权 URL、不查库，直接删掉 `get_db_session` 依赖，
+     `OIDCService()` 允许 `db=None`。
+   - `oidc_callback`：改挂 `get_system_db_session`（登录前按邮箱/sub 找用户
+     与 `auth.login/register` 同构）。同时补上 `OIDCService.login_or_register`
+     签发 JWT 时**漏掉的 `tenant_id`** —— 否则用户能登录但后续请求全程
+     fail-closed；顺带修掉并发注册分支里未定义的 `user_repo`（会 `NameError`）。
+
+2. **`external_webhooks` 的客户端可控租户**
+   - `?tenant_id` 降级为**可选的候选筛选提示**，绝不再作为派发身份；
+   - 凭证查询放进显式 `system_scope(reason="webhook.resolve_credentials")`
+     （旧版用裸 `async_session_factory`，生产 RLS 下恒查 0 行 → 端点恒 401）；
+   - 逐个候选验签，**验签命中的那条凭证的 `tenant_id` 才是身份**；
+   - 无签名密钥的凭证默认拒绝（`WEBHOOK_ALLOW_UNSIGNED=false`），
+     否则任何匿名 POST 都能触发同步；
+   - 私有部署凭证 `tenant_id` 为 NULL 时需显式配置
+     `WEBHOOK_DEFAULT_TENANT_ID`，否则拒绝派发，不静默丢进无 GUC 的会话；
+   - 非法 query UUID 只忽略，不再抛 500。
+
+3. **`high_risk_audit_service` 的自建会话**
+   4 个方法全部新增 `tenant_id` 参数并 `apply_tenant`；`observability.py`
+   三个管理员端点传 `user.tenant_id`。不传时**保持 fail-closed 并打 warning**，
+   绝不兜底到跨租户 —— 审计服务不能成为绕过隔离的后门。
+
+4. **APISIX 的 `os.getenv` 降级路径**
+   外部资料确认：nginx 默认清除 worker 继承的全部环境变量（默认只保留 `TZ`），
+   `os.getenv("TENANT_ROOT_DOMAIN")` 必须配合 `config.yaml` 的
+   `nginx_config.envs` 声明才有效，否则恒为 nil —— 于是 `X-Tenant-Domain`
+   永不注入，`limit-req` 的 key 退化成空串，**全站共用一个限流桶**。
+   现改为网关清洗三个租户头后直接注入 `ngx.var.host`（完整 Host）：
+   不依赖任何环境变量、不需要 `env` 声明、key 恒有值。后端
+   `extract_domain_from_request` 在没有该头时本来就返回完整 hostname，
+   语义无倒退。`docker-compose.apisix.yml` 里无效的 `TENANT_ROOT_DOMAIN`
+   透传已删除。
+
+### 11.4 第 3 步：10 个公开端点逐项确认
+
+| 端点 | 租户通道 | 凭据/签名 | 限流 |
+|---|---|---|---|
+| `auth.register` | `get_system_db_session` | `REGISTRATION_ENABLED` 开关 | 网关 + 全局中间件 |
+| `auth.login` | `get_system_db_session` | 密码校验 | 网关 + 全局中间件 |
+| `oidc.login` | 无 DB | OIDC state / 一次性 code | 网关 + 全局中间件 |
+| `oidc.callback` | `get_system_db_session` | 一次性 code | 网关 + 全局中间件 |
+| `widget.ask` | HMAC 令牌里的 tenant_id | Widget token HMAC | 网关 + 进程内限流 |
+| `webhooks/external` | 验签命中的凭证行 | HMAC（默认强制） | 网关 + 全局中间件 |
+| `im.wecom_callback_verify` | 无 DB | 企微 SHA1 | 网关 + 全局中间件 |
+| `im.wecom_callback_events` | 无 DB | **本轮补上**企微 SHA1 | 网关 + 全局中间件 |
+| `i18n.locales` / `i18n.messages` | 无 DB | 纯静态只读 | 网关 + 全局中间件 |
+
+核对时发现 **POST 企微事件回调此前完全没验签**，任何匿名 POST 都能拿 200；
+虽当前不查库不派发，但接上事件总线就是无门槛写入口，已补齐。同时给
+GET/POST 加了 `WECOM_BOT_TOKEN` 配置缺失守卫 —— 空 token 的 sha1 仍可算，
+不能当成「开发环境放行」。
+
+清单固化为 `tests/test_public_endpoint_contract.py`：AST 扫描出的公开端点
+集合必须**精确等于**清单，新增/删除一律变红，强制重新回答三个问题。
+
+### 11.5 验收与仍未解决的上线边界
+
+本地回归：全量 pytest、`docker compose config`、迁移单头与漂移门禁。
+网关 Lua 片段只做了 YAML/静态门禁校验，**未在真实 APISIX 容器实测**
+（本机无镜像）；`ngx.var.host` 是 nginx 内建变量，不依赖环境变量这一层
+不确定性已消除。
+
+仍未解决（沿用第十章）：
+- `check_null_tenant_rows.py` 是上线阻塞项；47/48 表 `tenant_id` 可空，
+  NULL 行在 fail-closed 下对所有身份不可见。
+- CI 测试库用 superuser，RLS 不生效，双角色隔离只能在本地/预发实测。
+- 单租户部署没有隐式兜底，必须显式配置租户 ID（本轮新增
+  `WEBHOOK_DEFAULT_TENANT_ID` 只覆盖 webhook 一条链路）。
+- `tenant_domain_to_id` 仍没有调用方传入，`tenants` 表的子域映射未启用；
+  网关注入的 `X-Tenant-Domain` 目前只作语义标识与限流维度。
+- `db.tenant_guc_reset_failed` 需上线观察。
+

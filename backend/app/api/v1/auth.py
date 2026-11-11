@@ -12,7 +12,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.database import get_db_session
+from app.database import get_db_session, get_system_db_session
 from app.deps import get_current_active_user
 from app.models.user import User
 from app.schemas.auth import TokenResponse, UserCreate, UserResponse
@@ -25,7 +25,10 @@ router = APIRouter(prefix="/auth", tags=["认证"])
 @router.post("/register", response_model=ApiResponse[UserResponse], status_code=201)
 async def register(
     body: UserCreate,
-    db: AsyncSession = Depends(get_db_session),
+    # 注册发生在"还没有租户归属"的时刻（新用户/新租户尚不存在），
+    # 必须跨租户会话。用 get_db_session 会在 RLS fail-closed 下查不到任何
+    # 用户表，表现为"邮箱永远可用"然后插入失败。
+    db: AsyncSession = Depends(get_system_db_session),
 ) -> ApiResponse[UserResponse]:
     """用户注册。
 
@@ -67,7 +70,10 @@ async def register(
 async def login(
     response: Response,
     form_data: OAuth2PasswordRequestForm = Depends(),
-    db: AsyncSession = Depends(get_db_session),
+    # 登录时用户还没带 JWT，中间件解析不出 tenant_id —— 按邮箱找用户这一步
+    # 天生是跨租户的。fail-closed 下用 get_db_session 会查不到任何用户，
+    # 表现为"所有账号密码错误"。
+    db: AsyncSession = Depends(get_system_db_session),
 ) -> ApiResponse[TokenResponse]:
     """用户登录（OAuth2 兼容）。
 

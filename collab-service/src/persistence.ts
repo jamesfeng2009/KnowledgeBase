@@ -70,6 +70,16 @@ export class PersistenceManager {
   }
 
   /**
+   * 暴露连接池供鉴权模块查询文档归属（``auth.ts`` 的 ``authorizeDocument``）。
+   *
+   * PG 不可用时返回 null —— 鉴权侧据此 fail-closed（拒绝连接），
+   * 而不是"查不到就不管了"。
+   */
+  getPool(): Pool | null {
+    return this.available ? this.pool : null;
+  }
+
+  /**
    * 加载文档二进制状态。
    * @returns 文档的 Yjs state update；不存在或 PG 不可用时返回 null
    */

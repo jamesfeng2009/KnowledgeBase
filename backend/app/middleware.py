@@ -451,8 +451,11 @@ def setup_middleware(app: FastAPI) -> None:
         tenant_id: UUID | None = None
         tenant_domain: str | None = None
         if not path.startswith(_EXEMPT_PATHS):
-            # 解析租户标识：JWT 优先 → 网关 X-Tenant-Id 头 → 子域。
-            # 中间件保持无 DB 访问（子域权威映射由需要时经 TenantService 完成）。
+            # 解析租户标识：默认只认 JWT；解析失败或无 JWT → tenant_id=None
+            # → get_db_session 不设 GUC → RLS fail-closed 拒绝所有行。
+            # X-Tenant-Id / X-Tenant-Domain 客户端可伪造，不再作为兜底，
+            # 详见 app/core/tenant_resolver.py 模块 docstring。
+            # 中间件保持无 DB 访问（子域权威映射需调用方显式传入）。
             from app.core.tenant_resolver import resolve_tenant_id
 
             tenant_id, tenant_domain = resolve_tenant_id(request, settings)

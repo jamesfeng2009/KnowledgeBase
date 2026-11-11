@@ -36,12 +36,22 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 # 导入 app 包 — 确保 Base.metadata 包含所有 ORM 模型
 from app.config import get_settings
 from app.models import Base  # noqa: F401 — 导入触发所有模型注册
+# 下面两个模块里的表定义在 app/models 包之外，不导入会让 autogenerate 认为
+# "库里有表、模型没有" → 生成 DROP TABLE eval_results / tool_audit_log。
+import app.eval.repository  # noqa: F401,E402 — EvalResultRecord
+import app.models.tool_audit  # noqa: F401,E402 — ToolAuditLog
+
+from alembic_drift import include_object  # noqa: E402 — backend/alembic_drift.py
 
 config = context.config
 
-# 从 Settings 读取 DATABASE_URL，覆盖 alembic.ini 中的占位符
+# 迁移用 MIGRATION_DATABASE_URL（表 owner / superuser），而非运行时的 DATABASE_URL。
+# 运行时角色刻意不是 superuser —— PG 对 superuser 无条件绕过 RLS，
+# 一旦让应用用 superuser 连库，多租户行级隔离就完全失效（详见
+# docs/P0-multi-tenant-isolation-design.md 第八章）。
+# 两者未分离时 migration_database_url 回退为 DATABASE_URL，行为与旧版一致。
 settings = get_settings()
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+config.set_main_option("sqlalchemy.url", settings.migration_database_url)
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
@@ -77,6 +87,9 @@ def do_run_migrations(connection: Connection) -> None:
         target_metadata=target_metadata,
         compare_type=True,
         compare_server_default=True,
+        # 迁移是 schema 权威：库里已有、模型未声明的索引/外键/唯一约束不参与
+        # autogenerate 比较，避免"生成即删 84 个索引 + 33 个外键"。详见 alembic_drift.py
+        include_object=include_object,
     )
     with context.begin_transaction():
         context.run_migrations()

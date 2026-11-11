@@ -53,6 +53,7 @@ from app.api.v1.settings import router as settings_router
 from app.api.v1.stats import router as stats_router
 from app.api.v1.tenants import router as tenants_router
 from app.api.v1.testing import router as testing_router
+from app.api.v1.tickets import router as tickets_router
 from app.api.v1.tts import router as tts_router
 from app.api.v1.users import router as users_router
 from app.api.v1.widget import router as widget_router
@@ -98,6 +99,7 @@ api_router.include_router(stats_router)
 api_router.include_router(approvals_router)
 api_router.include_router(models_router)
 api_router.include_router(testing_router)
+api_router.include_router(tickets_router)
 api_router.include_router(ai_eval_router)
 api_router.include_router(compounding_router)
 api_router.include_router(knowledge_approvals_router)

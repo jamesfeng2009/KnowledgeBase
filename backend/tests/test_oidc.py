@@ -16,6 +16,8 @@ import pytest
 
 from app.services.oidc_service import OIDCDisabledError, OIDCError, OIDCService
 
+TENANT_ID = "11111111-1111-1111-1111-111111111111"
+
 
 def _make_service(db=None, **overrides) -> OIDCService:
     settings = SimpleNamespace(
@@ -120,20 +122,28 @@ class TestOIDCLoginOrRegister:
     async def test_existing_user_logs_in(self) -> None:
         db = MagicMock()
         service = _make_service(db)
-        existing = SimpleNamespace(id="user-1", role="viewer")
+        existing = SimpleNamespace(
+            id="user-1", role="viewer", tenant_id=TENANT_ID
+        )
 
         service._existing_by_sub_or_email = AsyncMock(return_value=existing)
-        with patch("app.services.oidc_service.create_access_token", return_value="JWT"):
+        with patch(
+            "app.services.oidc_service.create_access_token", return_value="JWT"
+        ) as mock_token:
             result = await service.login_or_register({"sub": "u1", "email": "a@b.com"})
 
         assert result["access_token"] == "JWT"
         assert result["user_id"] == "user-1"
+        # 关键回归：OIDC 签发的 JWT 必须带 tenant_id，否则后续请求全程 fail-closed
+        assert mock_token.call_args.args[0]["tenant_id"] == TENANT_ID
 
     @pytest.mark.asyncio
     async def test_new_user_registers(self) -> None:
         db = MagicMock()
         service = _make_service(db)
-        new_user = SimpleNamespace(id="user-2", role="admin")
+        new_user = SimpleNamespace(
+            id="user-2", role="admin", tenant_id=TENANT_ID
+        )
 
         # 第一次查不到 → 注册成功
         service._existing_by_sub_or_email = AsyncMock(return_value=None)
@@ -151,11 +161,12 @@ class TestOIDCLoginOrRegister:
             "app.services.oidc_service.UserRepository", return_value=FakeRepo()
         ), patch(
             "app.services.oidc_service.create_access_token", return_value="JWT2"
-        ):
+        ) as mock_token:
             result = await service.login_or_register({"sub": "u1", "email": "a@b.com", "name": "Alice"})
 
         assert result["user_id"] == "user-2"
         assert result["access_token"] == "JWT2"
+        assert mock_token.call_args.args[0]["tenant_id"] == TENANT_ID
 
     @pytest.mark.asyncio
     async def test_missing_sub_raises(self) -> None:
@@ -190,3 +201,23 @@ class TestOIDCAPI:
         paths = {r.path for r in router.routes}
         assert "/auth/oidc/login" in paths
         assert "/auth/oidc/callback" in paths
+
+    def test_login_has_no_db_dependency(self) -> None:
+        """只拼授权 URL，不该为公开端点开一条无 GUC 的会话。"""
+        import inspect
+
+        from app.api.v1 import oidc
+
+        src = inspect.getsource(oidc.oidc_login)
+        assert "Depends(" not in src
+        assert "OIDCService()" in src
+
+    def test_callback_uses_system_session(self) -> None:
+        """登录前按邮箱/sub 找用户是跨租户的，必须显式声明。"""
+        import inspect
+
+        from app.api.v1 import oidc
+
+        src = inspect.getsource(oidc.oidc_callback)
+        assert "Depends(get_system_db_session)" in src
+        assert "Depends(get_db_session)" not in src

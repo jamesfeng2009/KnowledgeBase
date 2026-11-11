@@ -47,7 +47,8 @@ def _make_task_db_session(entries: list[MagicMock]) -> MagicMock:
             return query_result
         return MagicMock()
 
-    def factory():
+    def factory(**_kwargs):
+        # **_kwargs 容忍 task_db_session 的 tenant_id / cross_tenant_reason
         session = AsyncMock()
         session.execute = AsyncMock(side_effect=execute_side_effect)
         session.commit = AsyncMock()

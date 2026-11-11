@@ -28,9 +28,9 @@ const breadcrumb = [{ label: '设置', href: '/settings/tenant' }, { label: 'API
     <ApiKeyTable keys={[]} tbodyId="key-list" emptyText="加载中..." />
   </div>
 
-  <!-- 使用记录 -->
+  <!-- 密钥状态概览 -->
   <div class="card">
-    <div class="card-header"><h3>使用记录（近 24 小时）</h3></div>
+    <div class="card-header"><h3>密钥状态概览</h3></div>
     <div id="usage-records">
       <div class="loading-state">加载中...</div>
     </div>
@@ -202,7 +202,7 @@ const breadcrumb = [{ label: '设置', href: '/settings/tenant' }, { label: 'API
 </style>
 
 <script>
-  import { getApiKeys, createApiKey, deleteApiKey, getApiKeyUsage } from '@/lib/apis/apikeys';
+  import { getApiKeys, createApiKey, deleteApiKey } from '@/lib/apis/apikeys';
   import { ApiError } from '@/lib/api';
 
   interface ApiKey {
@@ -213,7 +213,10 @@ const breadcrumb = [{ label: '设置', href: '/settings/tenant' }, { label: 'API
     scopes: string[];
     created_at: string;
     last_used: string;
+    /** 'active' | 'disabled' */
     status: string;
+    /** 过期时间（ISO 字符串，空表示永不过期） */
+    expires_at?: string;
   }
 
   let keys: ApiKey[] = [];
@@ -258,7 +261,15 @@ const breadcrumb = [{ label: '设置', href: '/settings/tenant' }, { label: 'API
       scopes: Array.isArray(raw.scopes) ? (raw.scopes as string[]) : (Array.isArray(raw.scope) ? (raw.scope as string[]) : []),
       created_at: String(raw.created_at || raw.created_time || '-'),
       last_used: String(raw.last_used || raw.last_used_at || '从未使用'),
-      status: String(raw.status || 'active'),
+      // 后端 ApiKeyResponse 返回的是 `is_active: bool`，没有 `status` 字段。
+      // 原来只读 raw.status，导致已停用的密钥在列表里永远显示「启用」——停用后
+      // 刷新页面仍是绿色徽章，用户以为密钥还能用，实际鉴权早已拒绝。
+      status: typeof raw.status === 'string'
+        ? raw.status
+        : raw.is_active === false
+          ? 'disabled'
+          : 'active',
+      expires_at: typeof raw.expires_at === 'string' ? raw.expires_at : undefined,
     };
   }
 
@@ -339,41 +350,51 @@ const breadcrumb = [{ label: '设置', href: '/settings/tenant' }, { label: 'API
     });
   }
 
-  async function renderUsage(): Promise<void> {
+  /**
+   * 渲染密钥状态概览。
+   *
+   * 这里原来调 `getApiKeyUsage(keyId)` 请求 `/api/v1/apikeys/{id}/usage`，
+   * 但后端从未提供该端点，也没有请求级使用记录表（api_keys 只有 last_used_at
+   * 一列），所以本页每次都 404 并退化成「使用记录功能需要后端支持」。
+   *
+   * 现在改为从已加载的密钥列表聚合真实存在的状态，不再请求不存在的接口。
+   */
+  function renderUsage(): void {
     const container = document.getElementById('usage-records')!;
     if (keys.length === 0) {
-      container.innerHTML = '<div class="empty-state">暂无 API 密钥，无法显示使用记录</div>';
+      container.innerHTML = '<div class="empty-state">暂无 API 密钥，点击右上角创建</div>';
       return;
     }
-    // 尝试调用使用记录接口
-    try {
-      const raw = await getApiKeyUsage(keys[0].id);
-      const records = toItems(raw);
-      if (records.length === 0) {
-        container.innerHTML = '<div class="empty-state">近 24 小时暂无使用记录</div>';
-        return;
-      }
-      container.innerHTML = records
-        .map((r) => {
-          const status = typeof r.status === 'number' ? r.status : 200;
-          const method = String(r.method || 'GET');
-          const endpoint = String(r.endpoint || r.path || '-');
-          const keyName = String(r.key_name || r.key || '-');
-          const time = String(r.time || r.timestamp || '-');
-          return `
-            <div class="usage-record" style="display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) 0; border-bottom: 1px solid var(--border-light);">
-              <span class="badge ${status === 200 ? 'badge-success' : 'badge-danger'}">${escapeHtml(method)}</span>
-              <span style="font-family: var(--font-mono); font-size: var(--text-sm); flex: 1;">${escapeHtml(endpoint)}</span>
-              <span class="text-muted" style="font-size: var(--text-xs);">${escapeHtml(keyName)}</span>
-              <span class="badge ${status === 200 ? 'badge-success' : 'badge-danger'}">${status}</span>
-              <span class="text-muted" style="font-size: var(--text-xs);">${escapeHtml(time)}</span>
-            </div>`;
-        })
-        .join('');
-    } catch (err) {
-      if (isAuthError(err)) return;
-      container.innerHTML = '<div class="empty-state">使用记录功能需要后端支持</div>';
-    }
+    const now = Date.now();
+    const expired = keys.filter(
+      (k) => k.expires_at !== undefined && new Date(k.expires_at).getTime() <= now
+    );
+    const disabled = keys.filter((k) => k.status === 'disabled');
+    const used = keys.filter((k) => k.last_used && k.last_used !== '从未使用');
+
+    const row = (label: string, value: string, danger = false): string => `
+      <div style="display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) 0; border-bottom: 1px solid var(--border-light);">
+        <span style="flex: 1;">${escapeHtml(label)}</span>
+        <span class="badge ${danger ? 'badge-danger' : 'badge-success'}">${escapeHtml(value)}</span>
+      </div>`;
+
+    container.innerHTML = [
+      row('密钥总数', String(keys.length)),
+      row('启用中', String(keys.length - disabled.length - expired.length)),
+      row('已停用', String(disabled.length), disabled.length > 0),
+      row('已过期', String(expired.length), expired.length > 0),
+      row(
+        '最近使用',
+        used.length === 0
+          ? '暂无调用记录'
+          : String(
+              used
+                .map((k) => k.last_used)
+                .sort()
+                .slice(-1)[0]
+            )
+      ),
+    ].join('');
   }
 
   function escapeHtml(s: unknown): string {

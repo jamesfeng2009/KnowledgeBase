@@ -225,8 +225,14 @@ export function getPendingReviews(page = 1, size = 20): Promise<PageResponse<Tes
   return getData<PageResponse<TestReview>>(`${BASE}/reviews/pending`, { page, size });
 }
 
+/**
+ * 查询某个用例的全部评审记录
+ *
+ * 后端路径是资源导向的 `/testing/cases/{id}/reviews`，这里曾写成
+ * `/testing/reviews/case/{id}`（不存在）→ 用例详情页评审列表恒 404。
+ */
 export function getReviewsByCase(caseId: string): Promise<TestReview[]> {
-  return getData<TestReview[]>(`${BASE}/reviews/case/${caseId}`);
+  return getData<TestReview[]>(`${BASE}/cases/${caseId}/reviews`);
 }
 
 export function approveReview(id: string, data?: { comment?: string }): Promise<TestReview> {

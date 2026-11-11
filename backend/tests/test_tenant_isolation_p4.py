@@ -234,25 +234,24 @@ class TestDatabaseSessionRLS:
     为 RLS 策略提供会话变量。
     """
 
-    def test_database_py_imports_text(self) -> None:
-        """database.py 导入了 sqlalchemy text。"""
-        db_path = (
-            Path(__file__).resolve().parent.parent
-            / "app"
-            / "database.py"
-        )
-        content = db_path.read_text()
-        assert "from sqlalchemy import text" in content or "from sqlalchemy.text" in content
+    def test_database_py_uses_tenant_context_module(self) -> None:
+        """GUC 写入必须走 app.core.tenant_context，不允许在 database.py 里手拼。
 
-    def test_database_py_sets_tenant_id(self) -> None:
-        """get_db_session 执行 SET LOCAL app.tenant_id。"""
-        db_path = (
-            Path(__file__).resolve().parent.parent
-            / "app"
-            / "database.py"
-        )
+        这里曾经踩过两次：先是 f-string 拼 ``SET LOCAL``（注入面），
+        之后是 ``SET LOCAL`` 随 commit 失效（业务 commit 后静默查不到数据）。
+        收敛到统一模块后，这条断言防止有人图省事再把 SQL 写回路由层。
+        """
+        from app.core.tenant_context import TENANT_GUC
+
+        db_path = Path(__file__).resolve().parent.parent / "app" / "database.py"
         content = db_path.read_text()
-        assert "SET LOCAL app.tenant_id" in content
+
+        assert TENANT_GUC == "app.tenant_id", "GUC 名必须与迁移里的策略一致"
+        assert "from app.core.tenant_context import" in content
+        assert "apply_tenant" in content
+        assert "SET LOCAL app.tenant_id" not in content, (
+            "database.py 又出现了手写 SET LOCAL —— 请改用 tenant_context"
+        )
 
     def test_database_py_reads_request_state(self) -> None:
         """get_db_session 从 request.state 读取 tenant_id。"""

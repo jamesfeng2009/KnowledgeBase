@@ -728,7 +728,7 @@ class TestScheduledTask:
         )
 
         @asynccontextmanager
-        async def fake_session():
+        async def fake_session(**_kwargs):
             yield db
 
         svc_cls = MagicMock()
@@ -764,7 +764,7 @@ class TestScheduledTask:
         pool_instance.promote_candidate = AsyncMock(side_effect=RuntimeError("llm boom"))
 
         @asynccontextmanager
-        async def fake_session():
+        async def fake_session(**_kwargs):
             yield db
 
         with patch("app.database.task_db_session", fake_session), patch(

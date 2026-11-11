@@ -13,14 +13,35 @@
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.api.v1.external_webhooks import router as external_webhooks_router
+from app.api.v1.external_webhooks import (
+    ResolvedCredential,
+    router as external_webhooks_router,
+)
+
+TENANT_UUID = uuid.UUID("11111111-1111-1111-1111-111111111111")
+VICTIM_UUID = uuid.UUID("22222222-2222-2222-2222-222222222222")
+
+
+def _resolved(creds: dict, tenant_id=TENANT_UUID) -> list[ResolvedCredential]:
+    """凭证查询的返回值：租户归属来自 DB 行，不是请求参数。"""
+    return [ResolvedCredential(tenant_id=tenant_id, secrets=creds)]
+
+
+def _allow_unsigned():
+    """本地 dev 模式开关；默认关闭，仅这两个用例显式打开。"""
+    return patch(
+        "app.api.v1.external_webhooks.get_settings",
+        return_value=SimpleNamespace(WEBHOOK_ALLOW_UNSIGNED=True),
+    )
 from app.services.webhook_signature import (
     _compute_confluence_signature,
     _compute_feishu_signature,
@@ -130,7 +151,7 @@ class TestAuthFailures:
     ) -> None:
         with patch(
             "app.api.v1.external_webhooks._get_credentials",
-            new=AsyncMock(return_value=feishu_credentials),
+            new=AsyncMock(return_value=_resolved(feishu_credentials)),
         ):
             resp = client.post(
                 "/webhooks/external/feishu",
@@ -166,7 +187,7 @@ class TestValidEventDispatch:
         with (
             patch(
                 "app.api.v1.external_webhooks._get_credentials",
-                new=AsyncMock(return_value=feishu_credentials),
+                new=AsyncMock(return_value=_resolved(feishu_credentials)),
             ),
             patch(
                 "app.api.v1.external_webhooks.is_duplicate_event",
@@ -200,13 +221,14 @@ class TestValidEventDispatch:
         client: TestClient,
         confluence_credentials: dict,
     ) -> None:
-        """Confluence 无 webhook_secret（dev 模式）→ 跳过验签，直接派发。"""
+        """Confluence 无 webhook_secret（dev 模式）→ 显式开关打开后才派发。"""
         body = _confluence_event_body(event_id="conf-dispatch-1")
 
         with (
+            _allow_unsigned(),
             patch(
                 "app.api.v1.external_webhooks._get_credentials",
-                new=AsyncMock(return_value=confluence_credentials),
+                new=AsyncMock(return_value=_resolved(confluence_credentials)),
             ),
             patch(
                 "app.api.v1.external_webhooks.is_duplicate_event",
@@ -240,7 +262,7 @@ class TestValidEventDispatch:
         with (
             patch(
                 "app.api.v1.external_webhooks._get_credentials",
-                new=AsyncMock(return_value=creds),
+                new=AsyncMock(return_value=_resolved(creds)),
             ),
             patch(
                 "app.api.v1.external_webhooks.is_duplicate_event",
@@ -282,7 +304,7 @@ class TestDuplicateEvent:
         with (
             patch(
                 "app.api.v1.external_webhooks._get_credentials",
-                new=AsyncMock(return_value=feishu_credentials),
+                new=AsyncMock(return_value=_resolved(feishu_credentials)),
             ),
             patch(
                 "app.api.v1.external_webhooks.is_duplicate_event",
@@ -337,7 +359,7 @@ class TestIrrelevantEvent:
         with (
             patch(
                 "app.api.v1.external_webhooks._get_credentials",
-                new=AsyncMock(return_value=feishu_credentials),
+                new=AsyncMock(return_value=_resolved(feishu_credentials)),
             ),
             patch("tasks.webhook_tasks.sync_external_document") as mock_task,
         ):
@@ -384,7 +406,7 @@ class TestDispatchFailureClearsMark:
         with (
             patch(
                 "app.api.v1.external_webhooks._get_credentials",
-                new=AsyncMock(return_value=feishu_credentials),
+                new=AsyncMock(return_value=_resolved(feishu_credentials)),
             ),
             patch(
                 "app.api.v1.external_webhooks.is_duplicate_event",
@@ -423,9 +445,10 @@ class TestDispatchFailureClearsMark:
         mock_clear = AsyncMock(return_value=True)
 
         with (
+            _allow_unsigned(),
             patch(
                 "app.api.v1.external_webhooks._get_credentials",
-                new=AsyncMock(return_value=confluence_credentials),
+                new=AsyncMock(return_value=_resolved(confluence_credentials)),
             ),
             patch(
                 "app.api.v1.external_webhooks.is_duplicate_event",
@@ -463,7 +486,7 @@ class TestInvalidBody:
     ) -> None:
         with patch(
             "app.api.v1.external_webhooks._get_credentials",
-            new=AsyncMock(return_value=feishu_credentials),
+            new=AsyncMock(return_value=_resolved(feishu_credentials)),
         ):
             resp = client.post(
                 "/webhooks/external/feishu",
@@ -480,7 +503,7 @@ class TestInvalidBody:
         """空 body → 视为 {} → 无有效签名 → 401（不引发 500）。"""
         with patch(
             "app.api.v1.external_webhooks._get_credentials",
-            new=AsyncMock(return_value=feishu_credentials),
+            new=AsyncMock(return_value=_resolved(feishu_credentials)),
         ):
             resp = client.post(
                 "/webhooks/external/feishu",
@@ -489,3 +512,156 @@ class TestInvalidBody:
             )
         # 空 body → body_str="" → 视为 {} → 签名验证失败 → 401
         assert resp.status_code == 401
+
+
+# ==================================================================
+# 租户身份绑定（fail-closed 改造后的回归）
+# ==================================================================
+
+class TestTenantBinding:
+    """派发用的租户必须来自验签命中的凭证行，不能来自 query param。"""
+
+    @staticmethod
+    def _signed_feishu_patch(creds: dict, tenant_id=TENANT_UUID):
+        return patch(
+            "app.api.v1.external_webhooks._get_credentials",
+            new=AsyncMock(return_value=_resolved(creds, tenant_id=tenant_id)),
+        )
+
+    def test_forged_query_tenant_cannot_override_dispatch_tenant(
+        self, client: TestClient, feishu_credentials: dict
+    ) -> None:
+        """带上受害者租户的 query，派发的仍应是凭证自己的租户。"""
+        body = _feishu_event_body(event_id="evt-tenant-forge")
+        timestamp = str(int(datetime.now(timezone.utc).timestamp()))
+        nonce = "n"
+        sig = _compute_feishu_signature(timestamp, nonce, feishu_credentials["encrypt_key"], body)
+
+        with (
+            self._signed_feishu_patch(feishu_credentials),
+            patch(
+                "app.api.v1.external_webhooks.is_duplicate_event",
+                new=AsyncMock(return_value=False),
+            ),
+            patch("tasks.webhook_tasks.sync_external_document") as mock_task,
+        ):
+            resp = client.post(
+                f"/webhooks/external/feishu?tenant_id={VICTIM_UUID}",
+                content=body,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Lark-Request-Timestamp": timestamp,
+                    "X-Lark-Request-Nonce": nonce,
+                    "X-Lark-Signature": sig,
+                },
+            )
+
+        assert resp.status_code == 200
+        assert mock_task.delay.call_args.kwargs["tenant_id"] == str(TENANT_UUID)
+
+    def test_unsigned_credentials_rejected_by_default(
+        self, client: TestClient, confluence_credentials: dict
+    ) -> None:
+        """凭证没配 secret = 任何匿名请求都能触发同步，默认必须拒绝。"""
+        with patch(
+            "app.api.v1.external_webhooks._get_credentials",
+            new=AsyncMock(return_value=_resolved(confluence_credentials)),
+        ):
+            resp = client.post(
+                "/webhooks/external/confluence",
+                content=_confluence_event_body(event_id="conf-unsigned"),
+                headers={"Content-Type": "application/json"},
+            )
+        assert resp.status_code == 401
+
+    def test_null_tenant_credential_needs_explicit_fallback(
+        self, client: TestClient, feishu_credentials: dict
+    ) -> None:
+        """私有部署凭证 tenant_id 为 NULL 时，未配置兜底就拒绝派发。"""
+        body = _feishu_event_body(event_id="evt-null-tenant")
+        timestamp = str(int(datetime.now(timezone.utc).timestamp()))
+        sig = _compute_feishu_signature(timestamp, "n", feishu_credentials["encrypt_key"], body)
+
+        with (
+            self._signed_feishu_patch(feishu_credentials, tenant_id=None),
+            patch(
+                "app.api.v1.external_webhooks.get_settings",
+                return_value=SimpleNamespace(
+                    WEBHOOK_ALLOW_UNSIGNED=True, WEBHOOK_DEFAULT_TENANT_ID=""
+                ),
+            ),
+        ):
+            resp = client.post(
+                "/webhooks/external/feishu",
+                content=body,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Lark-Request-Timestamp": timestamp,
+                    "X-Lark-Request-Nonce": "n",
+                    "X-Lark-Signature": sig,
+                },
+            )
+        assert resp.status_code == 401
+
+    def test_explicit_fallback_tenant_is_used_for_private_deploy(
+        self, client: TestClient, feishu_credentials: dict
+    ) -> None:
+        body = _feishu_event_body(event_id="evt-fallback-tenant")
+        timestamp = str(int(datetime.now(timezone.utc).timestamp()))
+        sig = _compute_feishu_signature(timestamp, "n", feishu_credentials["encrypt_key"], body)
+
+        with (
+            self._signed_feishu_patch(feishu_credentials, tenant_id=None),
+            patch(
+                "app.api.v1.external_webhooks.get_settings",
+                return_value=SimpleNamespace(
+                    WEBHOOK_ALLOW_UNSIGNED=True,
+                    WEBHOOK_DEFAULT_TENANT_ID=str(VICTIM_UUID),
+                ),
+            ),
+            patch(
+                "app.api.v1.external_webhooks.is_duplicate_event",
+                new=AsyncMock(return_value=False),
+            ),
+            patch("tasks.webhook_tasks.sync_external_document") as mock_task,
+        ):
+            resp = client.post(
+                "/webhooks/external/feishu",
+                content=body,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Lark-Request-Timestamp": timestamp,
+                    "X-Lark-Request-Nonce": "n",
+                    "X-Lark-Signature": sig,
+                },
+            )
+        assert resp.status_code == 200
+        assert mock_task.delay.call_args.kwargs["tenant_id"] == str(VICTIM_UUID)
+
+    def test_invalid_query_tenant_hint_does_not_500(
+        self, client: TestClient, feishu_credentials: dict
+    ) -> None:
+        """非法 tenant_id 只应被忽略，不能变成 500。"""
+        body = _feishu_event_body(event_id="evt-bad-hint")
+        timestamp = str(int(datetime.now(timezone.utc).timestamp()))
+        sig = _compute_feishu_signature(timestamp, "n", feishu_credentials["encrypt_key"], body)
+
+        with (
+            self._signed_feishu_patch(feishu_credentials),
+            patch(
+                "app.api.v1.external_webhooks.is_duplicate_event",
+                new=AsyncMock(return_value=False),
+            ),
+            patch("tasks.webhook_tasks.sync_external_document"),
+        ):
+            resp = client.post(
+                "/webhooks/external/feishu?tenant_id=not-a-uuid",
+                content=body,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Lark-Request-Timestamp": timestamp,
+                    "X-Lark-Request-Nonce": "n",
+                    "X-Lark-Signature": sig,
+                },
+            )
+        assert resp.status_code == 200

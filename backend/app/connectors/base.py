@@ -97,3 +97,17 @@ class BaseConnector(ABC):
             可访问的资源 ID 列表，空列表表示不过滤。
         """
         return []
+
+
+class ConnectorNotImplementedError(NotImplementedError):
+    """连接器已启用（配了 api_url/key）但适配器还没对接真实 API。
+
+    为什么单独定义一个异常：此前 ``_call_*_api`` 直接 ``return []``，
+    调用方拿到空列表后无法区分两种情况：
+
+        - 系统级「没配 / 没启用」→ 空列表是正确的降级（不该告警）
+        - 「配好了但适配器是空壳」→ 这是配置错误，应当显式告警
+
+    混成同一返回值会让「启用了连接器却永远搜不到东西」长期无人察觉。
+    适配器对接真实 API 后删掉 raise 即可，调用方无需改动。
+    """

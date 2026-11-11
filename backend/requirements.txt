@@ -90,6 +90,10 @@ pymupdf>=1.24.0
 python-docx>=1.1.0
 python-pptx>=1.0.0
 openpyxl>=3.1.0
+# xlsx 降级解析依赖（app/document/xlsx_parser.py 用 pandas.read_excel，
+# 在 Docling 不可用/解析失败时兜底）。早前遗漏，全新环境该降级路径必
+# ModuleNotFoundError，故显式声明。
+pandas>=2.2.0
 
 # === Wiki HTML 清洗 ===
 # WikiHtmlCleaner 依赖 — Confluence/飞书 Wiki HTML 清洗为语义化 HTML

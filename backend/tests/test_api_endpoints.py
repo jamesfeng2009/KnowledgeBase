@@ -301,8 +301,9 @@ class TestDocumentsCrud:
         """GET /api/v1/documents/{doc_id} 应返回文档详情。"""
         mock_doc = _make_mock_doc()
 
-        # /documents/{doc_id} 路由在 knowledge 路由中优先注册
-        with patch("app.api.v1.knowledge.KnowledgeService") as mock_cls:
+        # 文档级路由的唯一归属是 documents.py（knowledge.py 中曾重复定义
+        # 并被静默遮蔽，P0 修复时已删除，故这里必须 patch documents 模块）
+        with patch("app.api.v1.documents.KnowledgeService") as mock_cls:
             mock_service = mock_cls.return_value
             mock_service.get_document = AsyncMock(return_value=mock_doc)
 
@@ -321,7 +322,8 @@ class TestDocumentsCrud:
         """文档不存在时返回 404。"""
         doc_id = uuid4()
 
-        with patch("app.api.v1.knowledge.KnowledgeService") as mock_cls:
+        # 同 test_documents_crud：路由归属 documents.py
+        with patch("app.api.v1.documents.KnowledgeService") as mock_cls:
             mock_service = mock_cls.return_value
             mock_service.get_document = AsyncMock(
                 side_effect=ValueError(f"文档不存在: {doc_id}")

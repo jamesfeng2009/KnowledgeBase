@@ -1,10 +1,20 @@
 /**
  * Yjs 协同 Provider 管理
- * 负责 Yjs 文档、WebSocket 连接、离线缓存与协作者光标颜色分配
+ * 负责协作者光标颜色分配与协作者颜色池
+ *
+ * ## 鉴权契约（唯一事实来源：HttpOnly Cookie）
+ *
+ * 浏览器 WebSocket API **无法**自定义请求头，所以协同连接的身份只能靠
+ * 同源 Cookie 携带：``access_token`` 由后端登录时以 HttpOnly 下发，
+ * 建立 WebSocket 时浏览器自动附带，collab-service 在握手阶段验签。
+ *
+ * 本文件曾提供 ``createCollabProvider(docId, wsUrl, token)``，把 JWT 拼进
+ * ``?token=`` —— 而 collab-service 早已改成只读 Cookie，两边的注释互相打脸
+ * （前端说"后端从 ?token= 读"，后端说"前端走 Cookie"），且该函数无人调用。
+ * 已删除，避免后来者照着错误注释实现出"token 进访问日志"的版本。
+ *
+ * 实际使用的 Provider 在 ``components/management/CollabEditor.tsx``（Cookie 模式）。
  */
-import * as Y from 'yjs';
-import { WebsocketProvider } from 'y-websocket';
-import { IndexeddbPersistence } from 'y-indexeddb';
 
 /** 协作者光标颜色池（12 种稳定颜色） */
 export const CURSOR_COLORS = [
@@ -12,16 +22,6 @@ export const CURSOR_COLORS = [
   '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E2',
   '#F1948A', '#82E0AA', '#F8B739', '#AED6F1',
 ];
-
-/** 文档评论数据结构 */
-export interface Comment {
-  id: string;
-  doc_id: string;
-  user_id: string;
-  user_name: string;
-  content: string;
-  created_at: string;
-}
 
 /**
  * 基于用户 ID 哈希分配稳定的光标颜色
@@ -39,89 +39,7 @@ export function getUserColor(userId: string): string {
   return CURSOR_COLORS[Math.abs(hash) % CURSOR_COLORS.length];
 }
 
-/**
- * 创建协同编辑 Provider
- * 包含 Yjs 文档、WebSocket 连接与 IndexedDB 离线缓存
- *
- * @param docId - 文档 ID，作为 Yjs 房间名
- * @param wsUrl - WebSocket 服务基础地址
- * @param token - JWT 认证 Token
- * @returns ydoc 与 provider
- */
-export function createCollabProvider(
-  docId: string,
-  wsUrl: string,
-  token: string
-): { ydoc: Y.Doc; provider: WebsocketProvider } {
-  const ydoc = new Y.Doc();
-
-  const provider = new WebsocketProvider(
-    `${wsUrl}/ws/collab`,
-    docId,
-    ydoc,
-    {
-      // 安全说明：浏览器 WebSocket API 无法自定义 Authorization 请求头，
-      // y-websocket 仅支持经 URL query 传递 Token（collab-service 从 ?token= 读取，
-      // 签名由 APISIX 网关验证）。已知风险：Token 会进入 WS 服务访问日志。
-      // 待后端支持「POST 换取短时 ws ticket」后改为 ticket 传递
-      // （当前后端无 ticket 接口，暂保留 URL 参数方案）。
-      params: { token },
-      connect: true,
-      // 重连最大间隔 30s（指数退避），对应 y-websocket 的 maxBackoffTime 选项
-      maxBackoffTime: 30000,
-      resyncInterval: 5000,
-    }
-  );
-
-  // 离线持久化缓存，断网时仍可编辑，恢复后自动同步
-  new IndexeddbPersistence(docId, ydoc);
-
-  return { ydoc, provider };
-}
-
-/**
- * 订阅文档新评论通知
- * 通过独立 WebSocket 连接接收评论事件，与协同编辑连接分离
- *
- * @param docId - 文档 ID
- * @param wsUrl - WebSocket 服务基础地址
- * @param token - JWT 认证 Token
- * @param onNewComment - 收到新评论时的回调
- * @returns 清理函数，调用后关闭连接
- */
-export function subscribeComments(
-  docId: string,
-  wsUrl: string,
-  token: string,
-  onNewComment: (comment: Comment) => void
-): () => void {
-  // 安全说明：浏览器 WebSocket 无法自定义请求头，Token 只能随 URL query 传递
-  // （collab-service /ws/comments 从 ?token= 读取）。已知风险：Token 会进入访问日志；
-  // 待后端支持「POST 换取短时 ws ticket」后改造（当前无 ticket 接口，暂保留）。
-  const params = new URLSearchParams({ doc_id: docId, token });
-  const ws = new WebSocket(`${wsUrl}/ws/comments?${params.toString()}`);
-
-  ws.onmessage = (event: MessageEvent<string>) => {
-    try {
-      const msg = JSON.parse(event.data) as { type: string; data: Comment };
-      if (msg.type === 'new_comment') {
-        onNewComment(msg.data);
-      }
-    } catch {
-      // 忽略无法解析的消息
-    }
-  };
-
-  return () => {
-    if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-      ws.close();
-    }
-  };
-}
-
 export default {
   CURSOR_COLORS,
   getUserColor,
-  createCollabProvider,
-  subscribeComments,
 };

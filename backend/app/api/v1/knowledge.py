@@ -19,7 +19,6 @@ from app.schemas.common import ApiResponse, PageResponse
 from app.schemas.knowledge import (
     DocCreate,
     DocResponse,
-    DocUpdate,
     KbCreate,
     KbResponse,
     KbUpdate,
@@ -182,11 +181,15 @@ async def upload_document(
     """向知识库上传/新建文档。"""
     tenant_id = getattr(request.state, "tenant_id", None)
     service = KnowledgeService(db, user, tenant_id=tenant_id)
+    content_text = body.content_text or ""
     doc = await service.upload_document(
         kb_id=kb_id,
         title=body.title,
-        content=body.content_text or "",
+        content=content_text,
         doc_type=body.doc_type.value,
+        # 纯文本创建无上传文件，按 UTF-8 字节数计入存储配额
+        # （留 NULL 会让 BillingService 走"500KB/篇"的估算兜底）
+        file_size=len(content_text.encode("utf-8")),
     )
     return ApiResponse(
         code=0,
@@ -195,43 +198,16 @@ async def upload_document(
     )
 
 
-@router.get("/documents/{doc_id}", response_model=ApiResponse[DocResponse])
-async def get_document(
-    request: Request,
-    doc_id: UUID,
-    db: AsyncSession = Depends(get_db_session),
-    user: User = Depends(get_current_active_user),
-) -> ApiResponse[DocResponse]:
-    """获取文档详情。"""
-    tenant_id = getattr(request.state, "tenant_id", None)
-    service = KnowledgeService(db, user, tenant_id=tenant_id)
-    doc = await service.get_document(doc_id)
-    return ApiResponse(
-        code=0,
-        data=DocResponse.model_validate(doc),
-        message="success",
-    )
-
-
-@router.put("/documents/{doc_id}", response_model=ApiResponse[DocResponse])
-async def update_document(
-    request: Request,
-    doc_id: UUID,
-    body: DocUpdate,
-    db: AsyncSession = Depends(get_db_session),
-    user: User = Depends(get_current_active_user),
-) -> ApiResponse[DocResponse]:
-    """更新文档内容（支持协同编辑场景）。"""
-    tenant_id = getattr(request.state, "tenant_id", None)
-    service = KnowledgeService(db, user, tenant_id=tenant_id)
-    doc = await service.update_document(
-        doc_id,
-        content_html=body.content_html,
-        content_json=body.content_json,
-        content_text=body.content_text,
-    )
-    return ApiResponse(
-        code=0,
-        data=DocResponse.model_validate(doc),
-        message="success",
-    )
+# ======================================================================
+# 文档级 CRUD（GET/PUT/DELETE /documents/{doc_id}）的唯一归属是
+# app/api/v1/documents.py。
+#
+# P0 修复：本模块曾在此处重复定义 GET /documents/{doc_id} 与
+# PUT /documents/{doc_id}。由于 api/v1/__init__.py 中 knowledge_router
+# 先于 documents_router 注册，FastAPI 只取先注册者，documents.py 中的
+# 实现永不执行，导致：
+#   1. PUT 请求中的 title/doc_type/status/classification 被静默丢弃
+#      （前端标题自动保存返回 200 但库里没改）；
+#   2. documents.py 中"更新前版本快照"逻辑失效，版本历史恒为空。
+# 切勿在此处重新添加文档级路由。
+# ======================================================================

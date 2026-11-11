@@ -55,7 +55,10 @@ class User(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     ldap_dn: Mapped[str | None] = mapped_column(String(500), nullable=True, comment="LDAP DN")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, comment="是否激活")
     tenant_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True, comment="租户 ID"
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", name="fk_users_tenant_id", ondelete="SET NULL"),
+        nullable=True,
+        comment="租户 ID",
     )
 
     department: Mapped[Department | None] = relationship()

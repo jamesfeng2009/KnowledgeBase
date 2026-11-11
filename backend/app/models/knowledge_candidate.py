@@ -41,7 +41,10 @@ class KnowledgeCandidate(UUIDMixin, TimestampMixin, Base):
         String(20),
         nullable=False,
         default="candidate",
-        index=True,
+        # 刻意不声明 index=True：迁移 b0c1d2e3f4a5 已建复合索引
+        # ix_candidates_tenant_status (tenant_id, status)，本仓所有候选查询都
+        # 先过 tenant_id，单列 status 索引纯属冗余写放大。模型侧声明会让
+        # autogenerate 报 add_index，与实际 schema 漂移。
         comment="状态: candidate/promoting/promoted/dismissed/expired",
     )
     representative_question: Mapped[str] = mapped_column(

@@ -12,10 +12,11 @@
 from __future__ import annotations
 
 
-from fastapi import APIRouter, Depends, UploadFile, File
+from fastapi import APIRouter, Depends, File, Response, UploadFile
 from pydantic import BaseModel, Field
 
 from app.api.openapi.deps import require_scope
+from app.api.openapi.responses import not_implemented
 from app.config import get_settings
 from app.schemas.common import ApiResponse
 from app.utils.logger import get_logger
@@ -58,13 +59,16 @@ class ParseResponse(BaseModel):
 
 @router.post("/parse", response_model=ApiResponse[dict])
 async def parse_document(
+    response: Response,
     file: UploadFile = File(..., description="待解析的文档文件"),
     api_key_info: dict = Depends(require_scope("multimedia:parse")),
 ) -> ApiResponse[dict]:
     """文档解析 — 上传文件，返回结构化文本。
 
-    支持的文件类型取决于底层解析引擎（LlamaIndex readers）。
-    当前为预留接口，返回文件元信息供联调。
+    .. warning::
+       **能力尚未实现**，返回 HTTP 501 + ``code=501``。
+       此前返回 ``code=0`` + ``text=""``，集成方会当成"解析成功但内容为空"。
+       对接 LlamaIndex readers 等解析引擎后应替换为真实解析结果。
     """
     filename = file.filename or "unknown"
     content = await file.read()
@@ -79,28 +83,26 @@ async def parse_document(
     # 预留接口：实际解析逻辑由 LlamaIndex readers 实现
     doc_type = filename.rsplit(".", 1)[-1].lower() if "." in filename else "txt"
 
-    return ApiResponse(
-        code=0,
-        data={
-            "filename": filename,
-            "doc_type": doc_type,
-            "text": "",
-            "pages": 0,
-            "message": "文档解析为预留接口，请对接解析引擎后替换",
-        },
-        message="success",
+    return not_implemented(
+        response,
+        "文档解析",
+        hint=f"已接收 {filename}（{doc_type}，{len(content)} 字节），"
+        "但解析引擎尚未接入",
     )
 
 
 @router.post("/vision", response_model=ApiResponse[dict])
 async def vision(
     body: VisionRequest,
+    response: Response,
     api_key_info: dict = Depends(require_scope("multimedia:vision")),
 ) -> ApiResponse[dict]:
     """图片理解（VLM）— 基于视觉语言模型分析图片内容。
 
-    底层 VLM 由 DEPLOY_MODE 决定（私有部署使用 Pixtral-12B）。
-    当前为预留接口，返回占位结构供联调。
+    .. warning::
+       **能力尚未实现**，返回 HTTP 501 + ``code=501``。
+       此前返回 ``code=0`` + ``description=""``，集成方会当成"识别成功但无内容"。
+       底层 VLM 由 DEPLOY_MODE 决定（私有部署使用 Pixtral-12B）。
     """
     logger.info(
         "openapi.multimedia.vision",
@@ -109,25 +111,24 @@ async def vision(
         key_name=api_key_info.get("name"),
     )
 
-    return ApiResponse(
-        code=0,
-        data={
-            "description": "",
-            "model": settings.VLM_MODEL,
-            "message": "VLM 图片理解为预留接口，请对接视觉模型后替换",
-        },
-        message="success",
+    return not_implemented(
+        response,
+        "VLM 图片理解",
+        hint=f"需先接入视觉模型（当前配置 VLM_MODEL={settings.VLM_MODEL}）",
     )
 
 
 @router.post("/transcribe", response_model=ApiResponse[dict])
 async def transcribe(
+    response: Response,
     file: UploadFile = File(..., description="待转写的音频文件"),
     api_key_info: dict = Depends(require_scope("multimedia:parse")),
 ) -> ApiResponse[dict]:
-    """音频转文字 — 语音转文本（预留接口）。
+    """音频转文字 — 语音转文本。
 
-    预留接口，后续对接 ASR 引擎后实现。
+    .. warning::
+       **能力尚未实现**，返回 HTTP 501 + ``code=501``。
+       此前返回 ``code=0`` + ``text=""``，集成方会当成"转写成功但无内容"。
     """
     filename = file.filename or "unknown"
     content = await file.read()
@@ -139,12 +140,8 @@ async def transcribe(
         key_name=api_key_info.get("name"),
     )
 
-    return ApiResponse(
-        code=0,
-        data={
-            "filename": filename,
-            "text": "",
-            "message": "音频转文字为预留接口，请对接 ASR 引擎后替换",
-        },
-        message="success",
+    return not_implemented(
+        response,
+        "音频转文字",
+        hint=f"已接收 {filename}（{len(content)} 字节），但 ASR 引擎尚未接入",
     )

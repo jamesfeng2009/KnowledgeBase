@@ -2,11 +2,23 @@
 Widget 令牌服务 — 单一职责：网站嵌入 Widget 的匿名访问令牌与限流。
 
 设计要点：
-    - 无状态令牌：HMAC-SHA256 签名（payload = kb_id + exp + iat + nonce），
+    - 无状态令牌：HMAC-SHA256 签名（payload = kb_id + tenant_id + exp + iat + nonce），
       服务端不落库，校验即验签 + 过期检查；
     - 密钥：优先 WIDGET_HMAC_SECRET，缺省从 SECRET_KEY 派生（单一主密钥）；
     - 限流：进程内滑动窗口（token 维度），超限抛 WidgetRateLimited；
     - 不存储任何用户信息，仅允许访问令牌绑定的 kb_id。
+
+## 为什么 tenant_id 必须签进令牌
+
+``/widget/ask`` 是**匿名**端点，没有 JWT，``resolve_tenant_id`` 在 fail-closed
+改造后不会再采信任何请求头。如果令牌里没有租户，会话就拿不到 GUC，查询恒 0 行
+—— 表现为「Widget 永远搜不到东西」。
+
+把租户放进 HMAC 签名载荷后，身份来源是**服务端签发的令牌**而非客户端输入：
+攻击者改不动 tenant_id（改了签名就废），也拿不到别的租户的令牌。签发时租户取自
+已认证请求的 ``request.state.tenant_id``（JWT），形成完整的信任链。
+
+旧令牌（改造前签发、没有 tenant_id 字段）一律拒绝，不兜底到任何默认租户。
 """
 
 from __future__ import annotations
@@ -33,11 +45,12 @@ class WidgetRateLimited(Exception):
 
 @dataclass
 class WidgetClaims:
-    """解析后的令牌声明。"""
+    """解析后的令牌声明。``tenant_id=None`` 表示旧令牌，调用方必须拒绝。"""
 
     kb_id: str
     exp: int
     iat: int
+    tenant_id: str | None = None
 
 
 def _derive_secret() -> str:
@@ -59,17 +72,32 @@ class WidgetTokenService:
     # 签发 / 校验
     # ------------------------------------------------------------------
 
-    def create_token(self, kb_id: str, ttl: int | None = None) -> dict[str, Any]:
+    def create_token(
+        self,
+        kb_id: str,
+        *,
+        tenant_id: str,
+        ttl: int | None = None,
+    ) -> dict[str, Any]:
         """签发 widget 令牌。
 
+        ``tenant_id`` 是**必需**的 keyword-only 参数：fail-closed 下不带租户的
+        令牌无法访问任何数据，宁可在签发处就强制报错，也不要产出一张废牌。
+
+        Args:
+            kb_id: 令牌绑定的知识库 ID。
+            tenant_id: 签发方租户 ID，取自已认证请求；会被写入签名载荷。
+            ttl: 有效期（秒），缺省读 ``WIDGET_TOKEN_TTL``。
+
         Returns:
-            {"token": str, "expires_at": int(epoch秒), "kb_id": str}
+            {"token": str, "expires_at": int(epoch秒), "kb_id": str, "tenant_id": str}
         """
         settings = get_settings()
         ttl = ttl or settings.WIDGET_TOKEN_TTL
         now = int(time.time())
         payload = {
             "kb_id": str(kb_id),
+            "tenant_id": str(tenant_id),
             "iat": now,
             "exp": now + ttl,
             "nonce": secrets.token_urlsafe(8),
@@ -79,6 +107,7 @@ class WidgetTokenService:
             "token": token,
             "expires_at": payload["exp"],
             "kb_id": payload["kb_id"],
+            "tenant_id": payload["tenant_id"],
         }
 
     def verify_token(self, token: str) -> WidgetClaims:
@@ -89,10 +118,12 @@ class WidgetTokenService:
             raise WidgetTokenError(f"令牌无效: {exc}") from exc
         if int(payload.get("exp", 0)) < int(time.time()):
             raise WidgetTokenError("令牌已过期")
+        raw_tenant = payload.get("tenant_id")
         return WidgetClaims(
             kb_id=str(payload.get("kb_id", "")),
             exp=int(payload.get("exp", 0)),
             iat=int(payload.get("iat", 0)),
+            tenant_id=str(raw_tenant) if raw_tenant else None,
         )
 
     # ------------------------------------------------------------------

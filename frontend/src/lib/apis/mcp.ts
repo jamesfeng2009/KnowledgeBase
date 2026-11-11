@@ -14,7 +14,10 @@ import { getOpenApiKey, setOpenApiKey, clearOpenApiKey } from './webhooks';
 // 重新导出，方便页面层从 mcp 模块导入
 export { getOpenApiKey as getMcpApiKey, setOpenApiKey as setMcpApiKey, clearOpenApiKey as clearMcpApiKey };
 
-const BASE = '/api/v1/openapi/mcp';
+// 后端在 main.py 里以 `include_router(openapi_router, prefix="/api")` 挂载，
+// openapi_router 自带 prefix="/openapi" → 真实前缀是 /api/openapi（无 v1）。
+// 这里曾写成 /api/v1/openapi，导致 MCP 设置页全部 404。
+const BASE = '/api/openapi/mcp';
 
 // ===== 类型定义 =====
 

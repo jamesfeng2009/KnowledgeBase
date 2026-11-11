@@ -646,7 +646,6 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
 
         const original = data?.original || '';
         const searchQuery = data?.search_query || original;
-        const rewritten = data?.rewritten || '';
         const expandedTerms: string[] = data?.expanded_terms || [];
         const subQueries: string[] = data?.sub_queries || [];
         const hydeDoc = data?.hyde_document || '';
@@ -1121,7 +1120,7 @@ const appName = import.meta.env.PUBLIC_APP_NAME || '企业知识库';
        * 点击后调用 TTS API 合成音频并播放，再次点击停止。
        */
       function bindTTSButton(scope: ParentNode) {
-        const btn = scope.querySelector('.tts-btn') as HTMLElement | null;
+        const btn = scope.querySelector('.tts-btn') as HTMLButtonElement | null;
         if (!btn || btn.dataset.bound === '1') return;
         btn.dataset.bound = '1';
 

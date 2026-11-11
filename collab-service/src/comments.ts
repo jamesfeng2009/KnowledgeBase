@@ -22,6 +22,14 @@ import type { IncomingMessage } from 'http';
 import type { CommentMessage, CommentData, JwtPayload } from './types.js';
 
 /**
+ * 文档权限校验回调 —— 由 ``index.ts`` 注入（内部走 ``auth.authorizeDocument``）。
+ *
+ * 之所以用回调而不是直接 import pg：评论服务不该关心数据来源，
+ * 也便于单测注入假实现。
+ */
+export type DocAuthorizer = (docId: string, mode: 'read' | 'write') => Promise<boolean>;
+
+/**
  * 文档评论 WebSocket 处理器。维护按文档分组的订阅者集合，
  * 并提供新评论广播能力。
  */
@@ -34,15 +42,21 @@ export class CommentsService {
    * @param conn WebSocket 连接
    * @param _req HTTP 升级请求（含 JWT，已在入口校验）
    * @param user 已认证的用户信息（可选）
+   * @param authorize 文档权限校验回调；未提供时**拒绝所有订阅**（fail-closed）
    */
-  handleConnection(conn: WebSocket, _req: IncomingMessage, user?: JwtPayload): void {
+  handleConnection(
+    conn: WebSocket,
+    _req: IncomingMessage,
+    user?: JwtPayload,
+    authorize?: DocAuthorizer
+  ): void {
     // 记录连接关联的用户，便于审计日志
     const username = user?.name ?? user?.sub ?? 'unknown';
     conn.on('message', (raw: Buffer | ArrayBuffer | Uint8Array | string) => {
       try {
         const text = typeof raw === 'string' ? raw : Buffer.from(raw as Buffer).toString('utf8');
         const message = JSON.parse(text) as CommentMessage;
-        this.handleMessage(conn, message, username);
+        void this.handleMessage(conn, message, username, authorize);
       } catch (err) {
         console.error('[comments] 消息解析失败:', err);
         this.send(conn, { type: 'comment_deleted', data: { doc_id: '' } }); // error sentinel
@@ -57,12 +71,37 @@ export class CommentsService {
 
   /**
    * 处理客户端评论消息。
+   *
+   * 修复 IDOR：订阅/发评论前先校验当前用户对该文档有读/写权限。
+   * 修复前任何已登录用户只要知道 doc_id 就能订阅任意文档的评论流。
    */
-  private handleMessage(conn: WebSocket, message: CommentMessage, username: string): void {
+  private async handleMessage(
+    conn: WebSocket,
+    message: CommentMessage,
+    username: string,
+    authorize?: DocAuthorizer
+  ): Promise<void> {
     const { type, data } = message;
     const docId = (data as { doc_id?: string })?.doc_id;
     if (!docId) {
       console.warn('[comments] 缺少 doc_id:', type);
+      return;
+    }
+
+    const isWriteOp =
+      type === 'new_comment' || type === 'resolve_comment' || type === 'delete_comment';
+    const allowed = authorize
+      ? await authorize(docId, isWriteOp ? 'write' : 'read')
+      : false;
+
+    if (!allowed) {
+      console.warn(
+        `[comments] 拒绝 ${type}: 用户 ${username} 无权访问文档 ${docId}`
+      );
+      this.send(conn, {
+        type: 'comment_deleted',
+        data: { doc_id: docId, comment_id: '', author: '', content: '', created_at: '' },
+      });
       return;
     }
 

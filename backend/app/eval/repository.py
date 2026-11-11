@@ -37,6 +37,82 @@ except Exception:  # pragma: no cover - 仅在数据库模块异常时触发
     _session_factory = None  # type: ignore[assignment]
 
 
+# ======================================================================
+# 数据库异常分类 —— 决定「降级」还是「必须炸出来」
+# ======================================================================
+#
+# 这两类错误的处置必须分开，混在一起吞会制造假绿：
+#
+#   availability（连不上 / 池超时 / 事务被中止）
+#       → 环境暂时性问题，降级合理，warning 即可，下次可能就好了。
+#
+#   schema（表或列不存在 / 结构不匹配）
+#       → 代码与库结构不一致，**重试一万次也不会好**。降级成 warning 会让
+#         「eval_results 表根本没建」这类事故长期潜伏：调用方拿到一个看起来
+#         正常的 run_id，评测历史却一条都没落库，回归基线永远是空的。
+#         所以必须 error 级 + 抛出，让迁移缺失在第一次跑评测时就暴露。
+
+#: 结构错误的特征串（asyncpg / psycopg / SQLAlchemy 的措辞差异都兜住）
+_SCHEMA_ERROR_MARKERS: tuple[str, ...] = (
+    "undefinedtable",
+    "undefinedcolumn",
+    "undefinedfunction",
+    "does not exist",
+    "不存在",
+    "undefined_table",
+    "undefined_column",
+    "no such table",
+    "programmingerror",
+    "invalidrequesterror",
+)
+
+
+class EvalSchemaError(RuntimeError):
+    """评测仓储遇到**结构型**数据库错误（表/列缺失、结构不匹配）。
+
+    这类错误不可降级：它意味着迁移没跑到或模型与库不一致。
+    上层捕获后应给出明确提示，而不是假装保存成功。
+    """
+
+    def __init__(self, message: str, original: BaseException | None = None) -> None:
+        super().__init__(message)
+        self.original = original
+
+
+def _is_schema_error(exc: BaseException) -> bool:
+    """判断异常是否为结构型（表/列不存在等），而非连通性/临时性问题。"""
+    from sqlalchemy.exc import (
+        InvalidRequestError,
+        ProgrammingError,
+    )
+
+    if isinstance(exc, (ProgrammingError, InvalidRequestError)):
+        # ProgrammingError 里也包含「连接已关闭」这类非结构错误，
+        # 再叠一层根源判断，避免把临时问题误判成结构问题。
+        if isinstance(exc, ProgrammingError):
+            orig = getattr(exc, "orig", None)
+            text = f"{orig!r} {exc}".lower()
+            if any(marker in text for marker in _SCHEMA_ERROR_MARKERS):
+                return True
+            return orig is not None and type(orig).__name__ in {
+                "UndefinedTableError",
+                "UndefinedColumnError",
+                "UndefinedFunctionError",
+            }
+        return True
+
+    text = f"{type(exc).__name__} {exc}".lower()
+    return any(marker in text for marker in _SCHEMA_ERROR_MARKERS)
+
+
+def _report_db_error(event: str, exc: BaseException, **fields: Any) -> None:
+    """按错误类别记日志：结构错误用 error 级，环境问题用 warning 级。"""
+    if _is_schema_error(exc):
+        log.error(f"{event}.schema_mismatch", error=str(exc), **fields)
+    else:
+        log.warning(f"{event}.degraded", error=str(exc), **fields)
+
+
 class EvalResultRecord(UUIDMixin, TimestampMixin, Base):
     """评测结果记录表 — 持久化每次离线评测运行的汇总指标。
 
@@ -98,10 +174,15 @@ class EvalRepository:
 
     数据库不可用时所有写操作返回降级值（run_id 仍返回但不持久化），
     读操作返回 None / 空列表，不抛异常。
+
+    例外：**结构型错误**（表/列不存在、模型与库结构不一致）不降级，
+    统一抛 ``EvalSchemaError`` —— 见 ``_is_schema_error`` 的说明。
     """
 
     def __init__(self, session: Any | None = None) -> None:
         self._session = session
+        #: 最近一次降级的原因（供调用方 / 测试观察，None 表示无降级）
+        self.last_error: str | None = None
 
     # ------------------------------------------------------------------
     # 会话上下文
@@ -112,8 +193,11 @@ class EvalRepository:
         """获取数据库会话上下文。
 
         - 注入会话：直接 yield，由调用方管理事务（异常向上抛出）；
-        - 自建会话：从全局工厂创建，自动提交/回滚，异常吞掉以优雅降级；
+        - 自建会话：从全局工厂创建，自动提交/回滚；
         - 工厂不可用：yield None。
+
+        连通性问题吞掉降级（记 warning + ``last_error``），结构问题抛
+        ``EvalSchemaError``。
         """
         if self._session is not None:
             yield self._session
@@ -127,9 +211,15 @@ class EvalRepository:
             async with _session_factory() as session:
                 yield session
                 await session.commit()
+        except EvalSchemaError:
+            raise
         except Exception as exc:
-            log.warning("eval_repo.session_error", error=str(exc))
-            # 吞掉异常以实现优雅降级
+            _report_db_error("eval_repo.session_error", exc)
+            if _is_schema_error(exc):
+                raise EvalSchemaError(
+                    f"eval_results 表结构不可用（迁移是否已执行？）：{exc}", exc
+                ) from exc
+            self.last_error = str(exc)
 
     # ------------------------------------------------------------------
     # 写入
@@ -191,8 +281,17 @@ class EvalRepository:
                 )
                 session.add(record)
                 await session.flush()
+        except EvalSchemaError:
+            raise
         except Exception as exc:
-            log.warning("eval_repo.save_error", run_id=run_id, error=str(exc))
+            _report_db_error("eval_repo.save_error", exc, run_id=run_id)
+            if _is_schema_error(exc):
+                raise EvalSchemaError(
+                    f"评测结果落库失败：eval_results 表结构不可用"
+                    f"（迁移是否已执行？）：{exc}",
+                    exc,
+                ) from exc
+            self.last_error = str(exc)
 
         return run_id
 
@@ -223,8 +322,15 @@ class EvalRepository:
                 if row is None:
                     return None
                 return self._record_to_result(row)
+        except EvalSchemaError:
+            raise
         except Exception as exc:
-            log.warning("eval_repo.get_baseline_error", error=str(exc))
+            _report_db_error("eval_repo.get_baseline_error", exc)
+            if _is_schema_error(exc):
+                raise EvalSchemaError(
+                    f"读取评测基线失败：eval_results 表结构不可用：{exc}", exc
+                ) from exc
+            self.last_error = str(exc)
             return None
 
     async def get_by_run_id(self, run_id: str) -> Any | None:
@@ -245,8 +351,15 @@ class EvalRepository:
                 if row is None:
                     return None
                 return self._record_to_result(row)
+        except EvalSchemaError:
+            raise
         except Exception as exc:
-            log.warning("eval_repo.get_by_run_id_error", run_id=run_id, error=str(exc))
+            _report_db_error("eval_repo.get_by_run_id_error", exc, run_id=run_id)
+            if _is_schema_error(exc):
+                raise EvalSchemaError(
+                    f"按 run_id 读取评测结果失败：eval_results 表结构不可用：{exc}", exc
+                ) from exc
+            self.last_error = str(exc)
             return None
 
     async def set_baseline(self, run_id: str) -> None:
@@ -278,8 +391,15 @@ class EvalRepository:
                 )
                 target.is_baseline = True
                 await session.flush()
+        except EvalSchemaError:
+            raise
         except Exception as exc:
-            log.warning("eval_repo.set_baseline_error", run_id=run_id, error=str(exc))
+            _report_db_error("eval_repo.set_baseline_error", exc, run_id=run_id)
+            if _is_schema_error(exc):
+                raise EvalSchemaError(
+                    f"设置评测基线失败：eval_results 表结构不可用：{exc}", exc
+                ) from exc
+            self.last_error = str(exc)
 
     # ------------------------------------------------------------------
     # 查询
@@ -306,8 +426,15 @@ class EvalRepository:
                 )
                 rows = (await session.execute(stmt)).scalars().all()
                 return [self._record_to_summary(r) for r in rows]
+        except EvalSchemaError:
+            raise
         except Exception as exc:
-            log.warning("eval_repo.list_results_error", error=str(exc))
+            _report_db_error("eval_repo.list_results_error", exc)
+            if _is_schema_error(exc):
+                raise EvalSchemaError(
+                    f"列出评测历史失败：eval_results 表结构不可用：{exc}", exc
+                ) from exc
+            self.last_error = str(exc)
             return []
 
     # ------------------------------------------------------------------

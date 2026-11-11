@@ -23,7 +23,10 @@ class QaQuestion(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
         UUID(as_uuid=True), ForeignKey("knowledge_bases.id"), nullable=True, comment="关联知识库"
     )
     tenant_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True, comment="租户 ID"
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", name="fk_qa_questions_tenant_id", ondelete="SET NULL"),
+        nullable=True,
+        comment="租户 ID",
     )
     title: Mapped[str] = mapped_column(String(500), nullable=False, comment="问题标题")
     content: Mapped[str] = mapped_column(Text, nullable=False, comment="问题详情")
@@ -49,7 +52,10 @@ class QaAnswer(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, comment="回答者 ID"
     )
     tenant_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True, comment="租户 ID"
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", name="fk_qa_answers_tenant_id", ondelete="SET NULL"),
+        nullable=True,
+        comment="租户 ID",
     )
     content: Mapped[str] = mapped_column(Text, nullable=False, comment="回答内容")
     is_accepted: Mapped[bool] = mapped_column(Boolean, default=False, comment="是否被采纳")

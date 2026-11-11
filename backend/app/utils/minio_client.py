@@ -250,6 +250,44 @@ async def file_exists(bucket: str, object_name: str) -> bool:
     return await asyncio.to_thread(_exists)
 
 
+async def get_object_size(bucket: str, object_name: str) -> int | None:
+    """读取对象真实字节数（head_object 的 ContentLength）。
+
+    用于上传完成后回填 ``Document.file_size``：存储配额以该列求和统计，
+    缺失会退化成估算值。**失败不抛异常**，返回 None 由调用方决定兜底策略
+    （配额统计宁可用估算，也不能因为一次 HEAD 失败让上传整体失败）。
+
+    Args:
+        bucket: bucket 名称。
+        object_name: 对象存储路径。
+
+    Returns:
+        对象字节数；对象不存在或存储不可用时返回 None。
+    """
+    def _size() -> int | None:
+        client = _get_client()
+        try:
+            resp = client.head_object(Bucket=bucket, Key=object_name)
+        except Exception:
+            log.warning(
+                "s3.head_object_failed", bucket=bucket, object_name=object_name,
+                exc_info=True,
+            )
+            return None
+        length = resp.get("ContentLength")
+        try:
+            return int(length) if length is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    try:
+        return await asyncio.to_thread(_size)
+    except ImportError:
+        # boto3 未安装（本地裸跑/测试环境）：返回 None，由调用方回退
+        log.debug("s3.client_unavailable")
+        return None
+
+
 # ======================================================================
 # P2-A 多段上传(Multipart Upload)— 突破 50MB 限制,支持 GB 级视频
 #

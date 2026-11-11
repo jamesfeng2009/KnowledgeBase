@@ -106,7 +106,12 @@ class TestTaskDbSession:
 
 
 class TestTenantIdValidation:
-    """验证 get_db_session 在拼接 SET LOCAL 前强制校验 tenant_id 为 UUID。"""
+    """验证 get_db_session 写入 RLS GUC 前的校验与语义。
+
+    实现从「字符串拼接 SET LOCAL」改成「参数化 set_config」，并且无租户时
+    不再兜底。这些断言跟着契约走，但守的东西没变：
+    非法值必须在执行任何 SQL 之前被拦掉。
+    """
 
     @pytest.fixture
     def _mock_session_factory(self, monkeypatch):
@@ -118,11 +123,21 @@ class TestTenantIdValidation:
         monkeypatch.setattr("app.database.async_session_factory", factory_mock)
         return session_mock
 
+    @staticmethod
+    def _guc_values(session_mock) -> list[str]:
+        """取出所有 set_config 调用里写入的值。"""
+        return [
+            call.args[1]["value"]
+            for call in session_mock.execute.call_args_list
+            if len(call.args) > 1 and isinstance(call.args[1], dict) and "value" in call.args[1]
+        ]
+
     @pytest.mark.asyncio
     async def test_valid_uuid_tenant_id_sets_rls(self, _mock_session_factory):
-        """合法 UUID 正常设置 RLS 会话变量。"""
+        """合法 UUID 会以参数化方式写入 GUC，且不拼进 SQL 文本。"""
+        tid = uuid.uuid4()
         request = MagicMock()
-        request.state.tenant_id = uuid.uuid4()
+        request.state.tenant_id = tid
 
         gen = get_db_session(request)
         try:
@@ -130,16 +145,18 @@ class TestTenantIdValidation:
         finally:
             await gen.aclose()
 
-        _mock_session_factory.execute.assert_called_once()
-        sql = str(_mock_session_factory.execute.call_args[0][0])
-        assert "SET LOCAL app.tenant_id" in sql
+        values = self._guc_values(_mock_session_factory)
+        assert str(tid) in values
+        # 参数化：值不能出现在 SQL 文本里（防注入的实质）
+        for call in _mock_session_factory.execute.call_args_list:
+            assert str(tid) not in str(call.args[0])
 
     @pytest.mark.asyncio
     async def test_string_uuid_tenant_id_sets_rls(self, _mock_session_factory):
-        """字符串形式的合法 UUID 也会被正确转换并设置。"""
+        """字符串形式的小写化后写入，与 PG 的 uuid 文本输出一致。"""
         tid = uuid.uuid4()
         request = MagicMock()
-        request.state.tenant_id = str(tid)
+        request.state.tenant_id = str(tid).upper()
 
         gen = get_db_session(request)
         try:
@@ -147,25 +164,34 @@ class TestTenantIdValidation:
         finally:
             await gen.aclose()
 
-        _mock_session_factory.execute.assert_called_once()
-        sql = str(_mock_session_factory.execute.call_args[0][0])
-        assert str(tid) in sql
+        assert str(tid).lower() in self._guc_values(_mock_session_factory)
 
     @pytest.mark.asyncio
-    async def test_invalid_tenant_id_raises_value_error(self, _mock_session_factory):
-        """非法 tenant_id 触发 ValueError，不会执行任何 SQL。"""
+    async def test_invalid_tenant_id_raises_before_any_sql(self, _mock_session_factory):
+        """非法 tenant_id 在执行任何 SQL 之前被拦掉。
+
+        异常类型是 ``TenantContextError``（RuntimeError 子类），不是 ValueError ——
+        ``app.main`` 把 ValueError 全局映射成 404，"租户上下文坏了"不该表现成
+        "资源不存在"。
+        """
+        from app.core.tenant_context import TenantContextError
+
         request = MagicMock()
         request.state.tenant_id = "'; DROP TABLE users; --"
 
         gen = get_db_session(request)
-        with pytest.raises(ValueError, match="Invalid tenant_id format"):
+        with pytest.raises(TenantContextError):
             await gen.__anext__()
 
         _mock_session_factory.execute.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_none_tenant_id_skips_rls(self, _mock_session_factory):
-        """tenant_id 为 None 时跳过 SET LOCAL。"""
+    async def test_none_tenant_id_writes_no_tenant_guc(self, _mock_session_factory):
+        """tenant_id 为 None 时不写入任何租户 GUC。
+
+        fail-closed 之后这就是"默认拒绝"：策略两边都是 NULL，一行都查不到。
+        收尾时仍会清一次（写空串），那是安全方向的。
+        """
         request = MagicMock()
         request.state.tenant_id = None
 
@@ -175,4 +201,5 @@ class TestTenantIdValidation:
         finally:
             await gen.aclose()
 
-        _mock_session_factory.execute.assert_not_called()
+        values = self._guc_values(_mock_session_factory)
+        assert [v for v in values if v] == [], f"无租户时不该写入租户 ID：{values}"

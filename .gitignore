@@ -81,3 +81,6 @@ ai-coding-testing-quality.md
 
 # 技能进化 run 运行产物（审计链），不入仓库
 backend/evolution_runs/
+
+# WorkBuddy 本地工作记忆：含本机路径、DB 口令字面量与内部评估笔记，禁止入库
+.workbuddy/

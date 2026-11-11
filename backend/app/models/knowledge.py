@@ -5,7 +5,16 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, LargeBinary, String, Text
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    LargeBinary,
+    String,
+    Text,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -70,8 +79,10 @@ class Document(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
         String(20), default="internal", comment="密级: public/internal/confidential/secret"
     )
     file_path: Mapped[str | None] = mapped_column(String(500), nullable=True, comment="原始文件路径")
+    # 必须是 BIGINT：迁移 c9d0e1f2a3b4 建的就是 BIGINT，且该列用于 GB 级视频分流判断，
+    # INTEGER 上限 2147483647 字节（约 2.1GB）会让超过 2GB 的文件写入直接 overflow。
     file_size: Mapped[int | None] = mapped_column(
-        Integer, nullable=True, comment="文件大小（字节），用于 GB 视频分流判断"
+        BigInteger, nullable=True, comment="文件大小（字节），用于 GB 视频分流判断"
     )
     # P1-B: 内容哈希 — SHA-256(纯文本内容)，用于跨知识库查重和增量更新
     content_hash: Mapped[str | None] = mapped_column(
@@ -118,8 +129,13 @@ class Document(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     series_id: Mapped[str | None] = mapped_column(
         String(100), nullable=True, index=True, comment="所属系列 ID（同系列文档共享）"
     )
+    # 外键必须显式命名并与迁移 c9d0e1f2a3b4 保持一致：不命名时 alembic
+    # autogenerate 会同时报 remove_fk（库里带名的旧约束）+ add_fk（模型的无名约束）
     parent_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("documents.id"), nullable=True, comment="父文档 ID"
+        UUID(as_uuid=True),
+        ForeignKey("documents.id", name="fk_documents_parent_id", ondelete="SET NULL"),
+        nullable=True,
+        comment="父文档 ID",
     )
     path: Mapped[str | None] = mapped_column(
         String(1000), nullable=True, index=True, comment="层级路径 '产品/合规/数据安全'"
@@ -131,7 +147,9 @@ class Document(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
         Integer, default=0, nullable=False, comment="同级排序"
     )
     version_of: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("documents.id"), nullable=True,
+        UUID(as_uuid=True),
+        ForeignKey("documents.id", name="fk_documents_version_of", ondelete="SET NULL"),
+        nullable=True,
         comment="版本族主文档 ID（v2 的 version_of 指向 v1）"
     )
     # === P2 约束文档粗标（GAP-3）===

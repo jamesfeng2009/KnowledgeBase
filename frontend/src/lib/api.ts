@@ -75,7 +75,11 @@ async function request<T = unknown>(
   };
 
   try {
-    console.log('[API Request]', { method, path });
+    // 请求日志仅在开发构建保留：生产环境每请求打一条 console.log 会持续
+    // 污染控制台，并把内部接口路径暴露给任何打开 DevTools 的人。
+    if (import.meta.env.DEV) {
+      console.log('[API Request]', { method, path });
+    }
 
     const response = await fetch(buildUrl(path), config);
 
@@ -91,7 +95,9 @@ async function request<T = unknown>(
     const data = await response.json().catch(() => null);
 
     if (!response.ok) {
-      console.warn('[API Error]', { method, path, status: response.status });
+      if (import.meta.env.DEV) {
+        console.warn('[API Error]', { method, path, status: response.status });
+      }
       const message = (data as { message?: string })?.message || `请求失败 (${response.status})`;
       throw new ApiError(message, response.status, data);
     }

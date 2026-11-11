@@ -10,8 +10,12 @@
 from __future__ import annotations
 
 import os
+import socket
+import sys
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
 import pytest
@@ -21,29 +25,134 @@ import pytest_asyncio
 os.environ.setdefault("SECRET_KEY", "pytest-secret-key-do-not-use-in-prod")
 
 
-def _default_test_db_url() -> str:
-    """推导测试库 URL — 与 backend/.env 的开发库同主机/端口/凭据，库名固定 ekb_test。
+# ---------------------------------------------------------------------------
+# 一、pytest 临时根目录隔离
+# ---------------------------------------------------------------------------
+# 现象：不加 --basetemp 跑本仓全量测试，会冒出近百个 FileExistsError，堆栈落在
+# _pytest.tmpdir.TempPathFactory.getbasetemp 的 basetemp.mkdir() 上。
+#
+# 根因不在项目代码，是「环境 shim + 目录残留」叠加：
+#   1. basetemp 默认取 tempfile.gettempdir()/pytest-of-<user>
+#      （本机即 /var/folders/.../T/pytest-of-<user>），上一轮跑完并不会被清掉；
+#   2. 该运行环境的 sitecustomize 把 shutil.rmtree 换成「移入回收站」，
+#      pytest 建目录前的清场 rm_rf() 对这类路径静默失败 →
+#      紧接着的 mkdir() 撞上已存在目录 → FileExistsError；
+#   3. pytest 只对 "pytest-of-root" 重试一次（换成 "pytest-of-unknown"），
+#      而那个目录同样存在，异常于是逃出到每个用例的 fixture。
+#
+# 处理：导入期把临时根指向一次性的独立目录，mkdir 走「目录不存在」分支即可。
+# 显式传了 --basetemp 时不干预（那是调用方明确的选择）。
+def _isolate_pytest_temproot() -> None:
+    has_explicit_basetemp = any(
+        arg == "--basetemp" or arg.startswith("--basetemp=") for arg in sys.argv
+    )
+    if has_explicit_basetemp or os.environ.get("PYTEST_DEBUG_TEMPROOT"):
+        return
+    root = Path("/tmp")
+    if not root.is_dir():  # Windows / 无 /tmp 的环境保持默认行为
+        return
+    # tempfile.mkdtemp 走 os.mkdir（未被 shim 拦截），目录名保证唯一
+    os.environ["PYTEST_DEBUG_TEMPROOT"] = tempfile.mkdtemp(prefix="ekb-pytest-root-", dir=str(root))
 
-    真实连接型测试（如幂等并发验证）需要可达的 PostgreSQL；
-    端口等随环境变化，硬编码 5432 会在开发库跑在非标准端口时认证失败。
-    """
-    fallback = "postgresql+asyncpg://ekb:ekb@localhost:5432/ekb_test"
+
+_isolate_pytest_temproot()
+
+
+# ---------------------------------------------------------------------------
+# 二、测试库地址解析（端口自动探测）
+# ---------------------------------------------------------------------------
+_FALLBACK_DB_URL = "postgresql+asyncpg://ekb:ekb@localhost:5432/ekb_test"
+#: 本仓常见的 PostgreSQL 宿主端口，按优先级探测：
+#:   55432 — 手工 `docker run` 起的 ekb-pg 容器（本机当前实际在跑的就是它）
+#:   15432 — docker compose（docker-compose.override.yml）的设计值
+#: 5432 不列入候选：本机 5432 常被其它项目的 PostgreSQL 占用，误连代价更高；
+#: 如果 .env 写的就是 5432，它会作为「首选」被直接探测。
+_DB_PORT_CANDIDATES = (55432, 15432)
+
+
+def _db_url_from_env_file() -> str | None:
+    """读 backend/.env 的 DATABASE_URL（不加载 Settings，避免过早实例化配置）。"""
     env_file = Path(__file__).resolve().parents[1] / ".env"
     if not env_file.exists():
-        return fallback
-    for line in env_file.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line.startswith("DATABASE_URL="):
+        return None
+    for raw in env_file.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if line.startswith("#") or not line.startswith("DATABASE_URL="):
             continue
-        url = line.split("=", 1)[1].strip().strip('"').strip("'")
-        base, _, dbname_qs = url.rpartition("/")
-        dbname = dbname_qs.split("?", 1)[0]
-        if base and dbname:
-            return f"{base}/ekb_test"
-    return fallback
+        value = line.split("=", 1)[1].strip().strip('"').strip("'")
+        if value:
+            return value
+    return None
 
 
-os.environ.setdefault("DATABASE_URL", _default_test_db_url())
+def _with_dbname(url: str, dbname: str) -> str:
+    parts = urlsplit(url)
+    return urlunsplit((parts.scheme, parts.netloc, f"/{dbname}", parts.query, parts.fragment))
+
+
+def _with_port(url: str, port: int) -> str:
+    parts = urlsplit(url)
+    userinfo, sep, hostport = parts.netloc.rpartition("@")
+    host = hostport.rsplit(":", 1)[0] if ":" in hostport else hostport
+    return urlunsplit((parts.scheme, f"{userinfo}{sep}{host}:{port}", parts.path, parts.query, parts.fragment))
+
+
+def _tcp_alive(url: str, timeout: float = 0.4) -> bool:
+    parts = urlsplit(url)
+    try:
+        with socket.create_connection((parts.hostname or "localhost", parts.port or 5432), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _resolve_test_db_url() -> str:
+    """返回可达的测试库 URL — 库名固定 ekb_test，端口按实际存活的 PostgreSQL 探测。
+
+    为什么不让调用方自己改：`.env` 里写的是 compose 设计值（15432），而机器上
+    真正在跑的往往是另一个实例（手工起的容器映射 55432）。两者不一致时全量测试
+    会一次性产生两百多个 "Connection refused"，而报错本身不提示端口写错了，
+    排查成本远高于这里自动探测一次。
+    """
+    configured = _with_dbname(_db_url_from_env_file() or _FALLBACK_DB_URL, "ekb_test")
+    configured_port = urlsplit(configured).port or 5432
+    if _tcp_alive(configured):
+        return configured
+    for port in _DB_PORT_CANDIDATES:
+        if port == configured_port:
+            continue
+        candidate = _with_port(configured, port)
+        if _tcp_alive(candidate):
+            print(
+                f"[conftest] .env 里的 PostgreSQL 端口 {configured_port} 不可达，已自动改用 {port}：\n"
+                f"[conftest]   {candidate}\n"
+                f"[conftest] 想固定下来：export DATABASE_URL='{candidate}'，"
+                f"或把 backend/.env 的 DATABASE_URL 改到该端口。",
+                file=sys.stderr,
+            )
+            return candidate
+    print(
+        "[conftest] 未探测到可用的 PostgreSQL（已尝试端口："
+        + ", ".join(str(p) for p in [configured_port, *_DB_PORT_CANDIDATES])
+        + "）。启动方式二选一：\n"
+        "[conftest]   docker compose -f docker-compose.yml -f docker-compose.override.yml up -d postgres   # 宿主 15432\n"
+        "[conftest]   docker run -d --name ekb-pg -p 55432:5432 \\\n"
+        "[conftest]     -e POSTGRES_USER=ekb -e POSTGRES_PASSWORD=ekb -e POSTGRES_DB=ekb pgvector/pgvector:pg16\n"
+        "[conftest] 起来后跑 python scripts/dev_env_check.py 复核。",
+        file=sys.stderr,
+    )
+    return configured
+
+
+if "DATABASE_URL" in os.environ:
+    # 显式导出优先：只在不可达时告警，不擅自改写调用方的选择
+    if not _tcp_alive(os.environ["DATABASE_URL"]):
+        print(
+            f"[conftest] 注意：显式指定的 DATABASE_URL 不可达 → {os.environ['DATABASE_URL']}",
+            file=sys.stderr,
+        )
+else:
+    os.environ["DATABASE_URL"] = _resolve_test_db_url()
 os.environ.setdefault("AUTO_MIGRATE", "false")
 os.environ.setdefault("AUTO_CREATE_TABLES", "false")
 # OpenAI SDK v1 在 api_key 为空时直接抛 OpenAIError — 构造 OpenAIEmbedder/

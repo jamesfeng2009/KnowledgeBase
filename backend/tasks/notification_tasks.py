@@ -34,7 +34,7 @@ async def _daily_personal_digest() -> dict:
     from app.models.user import User
     from app.services.notification_service import NotificationService
 
-    async with task_db_session() as db:
+    async with task_db_session(cross_tenant_reason="notification_tasks._daily_personal_digest") as db:
         # 按租户迭代：先查询所有活跃租户，再逐租户查询用户并生成日报，
         # 确保 NotificationService 带有 tenant_id 实现多租户数据隔离
         tenants_result = await db.execute(
@@ -86,7 +86,7 @@ async def _daily_gap_alert() -> dict:
     from app.models.billing import Tenant
     from app.services.notification_service import NotificationService
 
-    async with task_db_session() as db:
+    async with task_db_session(cross_tenant_reason="notification_tasks._daily_gap_alert") as db:
         # 按租户迭代：逐租户创建带 tenant_id 的 NotificationService，确保多租户隔离
         tenants_result = await db.execute(
             select(Tenant).where(Tenant.deleted_at.is_(None))

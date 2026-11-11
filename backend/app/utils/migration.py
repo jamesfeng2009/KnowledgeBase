@@ -52,8 +52,10 @@ def _get_alembic_config() -> Config:
     backend_dir = str(Path(ini_path).parent)
     config.set_main_option("prepend_sys_path", backend_dir)
 
-    # 从环境变量读取 DATABASE_URL（与 app.config.Settings 一致）
-    db_url = os.environ.get("DATABASE_URL", "")
+    # 迁移必须走「有 DDL 权限」的连接：优先 MIGRATION_DATABASE_URL，
+    # 未配置时回退 DATABASE_URL（单角色部署的兼容路径）。
+    # 顺序与 app.config.Settings.migration_database_url 保持一致。
+    db_url = os.environ.get("MIGRATION_DATABASE_URL") or os.environ.get("DATABASE_URL", "")
     if db_url:
         config.set_main_option("sqlalchemy.url", db_url)
 

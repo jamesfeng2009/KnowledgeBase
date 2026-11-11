@@ -90,8 +90,11 @@ export interface CommentSubscribeData {
 }
 
 /**
- * 已解码的 JWT 用户信息。签名验证由 APISIX 网关完成，
- * 本服务仅解析 payload 以获取用户身份。
+ * 已解码的 JWT 用户信息。
+ *
+ * 注意：本服务**自己在本地验签**（见 ``auth.ts`` 的 ``verifyJwt``，HS256 +
+ * 与后端共享的 SECRET_KEY）。不要再假设"签名由 APISIX 网关验证"——
+ * ``infra/apisix/apisix.yml`` 里没有到本服务的 WebSocket 路由，也没有 JWT 插件。
  */
 export interface JwtPayload {
   /** 用户 ID（sub 字段） */
@@ -106,6 +109,8 @@ export interface JwtPayload {
   tenant_id?: string;
   /** 过期时间（Unix 秒） */
   exp?: number;
+  /** 生效时间（Unix 秒） */
+  nbf?: number;
   /** 签发时间（Unix 秒） */
   iat?: number;
 }

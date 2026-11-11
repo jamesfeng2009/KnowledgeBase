@@ -203,3 +203,95 @@ class TestBuiltinConnectors:
         assert "erp" in ids
         assert "crm" in ids
         assert "mail" in ids
+
+
+# ======================================================================
+# 空壳适配器必须显式报「未对接」，而不是 return [] 假装「没搜到」
+# ======================================================================
+#
+# 背景（P2）：OA/ERP/CRM/邮件 四个连接器的 _call_*_api 过去直接 return []，
+# 于是「没启用连接器」和「启用了但适配器是空壳」返回同一个空列表，
+# 运维看到空结果无法判断是配置问题还是真的没数据。
+
+
+class TestConnectorNotImplemented:
+    """已启用但未对接真实 API → 记 error 日志，返回空列表（不炸调用方）。"""
+
+    @pytest.mark.parametrize(
+        ("module_name", "class_name", "call_attr"),
+        [
+            ("app.connectors.oa", "OAConnector", "_call_oa_api"),
+            ("app.connectors.erp", "ERPConnector", "_call_erp_api"),
+            ("app.connectors.crm", "CRMConnector", "_call_crm_api"),
+            ("app.connectors.mail", "MailConnector", "_call_mail_api"),
+        ],
+    )
+    def test_adapter_raises_not_implemented(
+        self, module_name: str, class_name: str, call_attr: str
+    ) -> None:
+        """底层 _call_*_api 必须抛 ConnectorNotImplementedError。"""
+        import asyncio
+        import importlib
+
+        from app.connectors.base import ConnectorNotImplementedError
+
+        mod = importlib.import_module(module_name)
+        connector = getattr(mod, class_name)()
+        with pytest.raises(ConnectorNotImplementedError):
+            asyncio.run(getattr(connector, call_attr)("k", 1))
+
+    def test_search_logs_api_not_implemented_on_enabled_connector(self) -> None:
+        """启用连接器（配了 api_url）后搜索 → 空列表 + 专用 error 事件。
+
+        关键断言是日志事件名不同于普通的 search_failed：
+        ``connector.oa.api_not_implemented`` 一眼能看出是配置/对接问题。
+        """
+        import asyncio
+        from unittest.mock import patch
+
+        from app.connectors.oa import OAConnector
+
+        connector = OAConnector()
+        connector.is_active = True
+        connector.api_url = "https://oa.example.com"
+
+        with patch("app.connectors.oa.logger") as mock_logger:
+            results = asyncio.run(connector.search("报销"))
+
+        assert results == []
+        mock_logger.error.assert_called_once()
+        assert "connector.oa.api_not_implemented" in mock_logger.error.call_args[0][0]
+        # 不应落到通用失败分支
+        mock_logger.warning.assert_not_called()
+
+    def test_disabled_connector_returns_empty_without_alarm(self) -> None:
+        """未启用（默认）→ 直接空列表，不产生任何错误日志。
+
+        「没配」是正确的降级，不该和其它错误混在一起告警。
+        """
+        import asyncio
+        from unittest.mock import patch
+
+        from app.connectors.erp import ERPConnector
+
+        connector = ERPConnector()
+        connector.is_active = False
+        connector.api_url = ""
+
+        with patch("app.connectors.erp.logger") as mock_logger:
+            results = asyncio.run(connector.search("库存"))
+
+        assert results == []
+        mock_logger.error.assert_not_called()
+        mock_logger.warning.assert_not_called()
+
+    def test_enabled_connector_test_connection_fails(self) -> None:
+        """启用但未对接 → 连接测试返回 False（不要假装连上了）。"""
+        import asyncio
+
+        from app.connectors.crm import CRMConnector
+
+        connector = CRMConnector()
+        connector.is_active = True
+        connector.api_url = "https://crm.example.com"
+        assert asyncio.run(connector.test_connection()) is False

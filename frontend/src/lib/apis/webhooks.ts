@@ -13,7 +13,9 @@
  */
 import { getData, postData, delData, ApiError } from '../api';
 
-const BASE = '/api/v1/openapi/webhooks';
+// 后端真实前缀是 /api/openapi（openapi_router 自带 /openapi 前缀，挂在 /api 下）。
+// 这里曾写成 /api/v1/openapi，导致 Webhook 设置页全部 404。
+const BASE = '/api/openapi/webhooks';
 
 /** OpenAPI API Key 在 localStorage 中的存储键名 */
 const OPENAPI_KEY_STORAGE = 'ekb_openapi_api_key';

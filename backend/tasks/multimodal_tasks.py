@@ -68,6 +68,10 @@ async def _process_document_images(doc_id: str) -> dict:
     kb_id: str | None = None
 
     async with task_db_session() as session:
+        from app.core.tenant_context import apply_tenant, resolve_task_tenant
+        _tid = await resolve_task_tenant(session, doc_id=doc_id, reason="multimodal_tasks._process_document_images")
+        if _tid:
+            await apply_tenant(session, _tid)
         repo = DocumentRepository(session)
         doc = await repo.get_by_id(doc_uuid)
         if doc is None:

@@ -80,7 +80,7 @@ async def milestone_checkpoint_manager() -> AsyncIterator[CheckpointManager]:
     """
     from app.database import task_db_session
 
-    async with task_db_session() as db:
+    async with task_db_session(cross_tenant_reason="milestone_runner.milestone_checkpoint_manager") as db:
         yield CheckpointManager(db)
 
 

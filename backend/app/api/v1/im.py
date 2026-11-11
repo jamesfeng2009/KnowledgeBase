@@ -9,7 +9,9 @@ IM 集成 API — 单一职责：企业微信回调接收与机器人状态查�
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+import re
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -38,6 +40,32 @@ class WeComCallbackQuery(BaseModel):
     echostr: str | None = None
 
 
+# 企微 POST 回调 body 形如
+#   <xml>...<Encrypt><![CDATA[BASE64...]]></Encrypt>...</xml>
+# 签名第 4 个参数是 Encrypt 内容（GET 时是 echostr）。
+_ENCRYPT_RE = re.compile(
+    r"<Encrypt>\s*(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?\s*</Encrypt>", re.DOTALL
+)
+
+
+def _verify_wecom_callback(
+    *, msg_signature: str, timestamp: str, nonce: str, signed_field: str
+) -> None:
+    """验签 + 配置缺失守卫；失败抛 HTTPException。
+
+    ``WECOM_BOT_TOKEN`` 默认为空字符串。空 token 时 sha1(sorted(...)) 仍然
+    算得出来，攻击者只要知道算法就能自己构造签名 —— 所以配置缺失必须
+    显式拒绝，不能当成「开发环境放行」。
+    """
+    token = (get_settings().WECOM_BOT_TOKEN or "").strip()
+    if not token:
+        raise HTTPException(503, detail="企微回调验签 token 未配置")
+    if not WeComBotService.verify_signature(
+        token, timestamp, nonce, signed_field, msg_signature
+    ):
+        raise HTTPException(403, detail="签名校验失败")
+
+
 @router.get("/wecom/callback")
 async def wecom_callback_verify(
     msg_signature: str = Query(...),
@@ -46,18 +74,37 @@ async def wecom_callback_verify(
     echostr: str = Query(default=""),
 ) -> ApiResponse[str]:
     """企微回调 URL 验证（GET 回显 echostr）。"""
-    settings = get_settings()
-    service = WeComBotService()
-    if not service.verify_signature(
-        settings.WECOM_BOT_TOKEN, timestamp, nonce, echostr, msg_signature
-    ):
-        raise HTTPException(status_code=403, detail="签名校验失败")
+    _verify_wecom_callback(
+        msg_signature=msg_signature,
+        timestamp=timestamp,
+        nonce=nonce,
+        signed_field=echostr,
+    )
     return ApiResponse(code=0, data=echostr, message="success")
 
 
 @router.post("/wecom/callback")
-async def wecom_callback_events() -> ApiResponse[dict]:
-    """企微事件回调接收（POST）— 当前仅确认接收，处理逻辑由事件总线接入。"""
+async def wecom_callback_events(
+    request: Request,
+    msg_signature: str = Query(...),
+    timestamp: str = Query(...),
+    nonce: str = Query(...),
+) -> ApiResponse[dict]:
+    """企微事件回调接收（POST）— 先验签，事件处理仍由事件总线接入。
+
+    此前这个端点**没有任何验签**，任何匿名 POST 都能拿到 200。它现在不查库、
+    不派发任务，危害有限，但只要将来接上事件总线，就会变成一条无门槛的
+    写入口。公开端点的签名校验不能等「以后有逻辑了再补」。
+    """
+    raw = (await request.body()).decode("utf-8", errors="replace")
+    match = _ENCRYPT_RE.search(raw)
+    signed_field = match.group(1).strip() if match else ""
+    _verify_wecom_callback(
+        msg_signature=msg_signature,
+        timestamp=timestamp,
+        nonce=nonce,
+        signed_field=signed_field,
+    )
     return ApiResponse(code=0, data={"received": True}, message="success")
 
 

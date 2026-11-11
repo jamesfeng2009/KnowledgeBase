@@ -363,7 +363,7 @@ async def _flush_task_outbox_async() -> dict[str, Any]:
     failed = 0
     dead = 0
 
-    async with task_db_session() as session:
+    async with task_db_session(cross_tenant_reason="scheduled_tasks._flush_task_outbox_async") as session:
         stmt = (
             select(TaskOutbox)
             .where(
@@ -394,7 +394,7 @@ async def _flush_task_outbox_async() -> dict[str, Any]:
 
         # 独立短事务更新状态 — 单条失败不影响其余
         try:
-            async with task_db_session() as session:
+            async with task_db_session(cross_tenant_reason="scheduled_tasks._flush_task_outbox_async") as session:
                 if sent:
                     await session.execute(
                         update(TaskOutbox)
@@ -457,7 +457,7 @@ async def _detect_gaps_async() -> dict[str, Any]:
     from app.models.billing import Tenant
     from app.services.gap_detector_service import GapDetectorService
 
-    async with task_db_session() as session:
+    async with task_db_session(cross_tenant_reason="scheduled_tasks._detect_gaps_async") as session:
         # 按租户迭代：逐租户创建带 tenant_id 的 GapDetectorService，确保多租户隔离
         tenants_result = await session.execute(
             select(Tenant).where(Tenant.deleted_at.is_(None))
@@ -495,7 +495,7 @@ async def _check_expiration_async() -> dict[str, Any]:
     now = datetime.now(timezone.utc)
     threshold = now + timedelta(days=7)
 
-    async with task_db_session() as session:
+    async with task_db_session(cross_tenant_reason="scheduled_tasks._check_expiration_async") as session:
         # 按租户迭代：逐租户查询即将过期的知识实体，确保多租户隔离
         tenants_result = await session.execute(
             select(Tenant).where(Tenant.deleted_at.is_(None))
@@ -545,7 +545,7 @@ async def _cleanup_expired_facts_async() -> dict[str, Any]:
 
     now = datetime.now(timezone.utc)
 
-    async with task_db_session() as session:
+    async with task_db_session(cross_tenant_reason="scheduled_tasks._cleanup_expired_facts_async") as session:
         # 按租户迭代：逐租户查询并清理过期的记忆事实，确保多租户隔离
         tenants_result = await session.execute(
             select(Tenant).where(Tenant.deleted_at.is_(None))
@@ -582,7 +582,7 @@ async def _cleanup_stale_checkpoints_async() -> dict[str, Any]:
     from app.database import task_db_session
 
     stale_days = 7
-    async with task_db_session() as session:
+    async with task_db_session(cross_tenant_reason="scheduled_tasks._cleanup_stale_checkpoints_async") as session:
         result = await session.execute(
             sa_text(
                 "DELETE FROM agent_checkpoints "
@@ -609,7 +609,7 @@ async def _generate_quality_report_async() -> dict[str, Any]:
     from app.models.billing import Tenant
     from app.services.quality_service import QualityService
 
-    async with task_db_session() as session:
+    async with task_db_session(cross_tenant_reason="scheduled_tasks._generate_quality_report_async") as session:
         # 按租户迭代：逐租户创建带 tenant_id 的 QualityService，确保多租户隔离
         tenants_result = await session.execute(
             select(Tenant).where(Tenant.deleted_at.is_(None))
@@ -880,7 +880,7 @@ async def _rescan_stuck_documents_async(settings: Any) -> dict[str, Any]:
         logger.warning("scheduled.rescan_redis_connect_failed", error=str(exc)[:200])
 
     candidates = 0
-    async with task_db_session() as session:
+    async with task_db_session(cross_tenant_reason="scheduled_tasks._rescan_stuck_documents_async") as session:
         stmt = (
             select(Document)
             .where(
@@ -1032,7 +1032,7 @@ async def _rescan_stuck_research_async() -> dict[str, Any]:
     cutoff = datetime.now(timezone.utc) - timedelta(hours=_RESEARCH_STUCK_HOURS)
     candidates = backfilled = marked_failed = 0
 
-    async with task_db_session() as session:
+    async with task_db_session(cross_tenant_reason="scheduled_tasks._rescan_stuck_research_async") as session:
         stmt = (
             select(ResearchJob)
             .where(
@@ -1141,7 +1141,7 @@ async def _promote_knowledge_candidates_async(settings: Any) -> dict[str, Any]:
     kb_uuid = _uuid.UUID(settings.FAQ_KB_ID)
     expired = promoted = dedup_blocked = skipped = failed = 0
 
-    async with task_db_session() as db:
+    async with task_db_session(cross_tenant_reason="scheduled_tasks._promote_knowledge_candidates_async") as db:
         # LLM 不可用降级（_llm_extract_faq 有 None 降级路径）
         try:
             llm = get_llm_provider()

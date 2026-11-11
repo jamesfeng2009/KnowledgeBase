@@ -18,6 +18,9 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 settings = get_settings()
 
+# 记录导入失败的真实原因，便于启动日志一眼定位"为什么退化成 fallback"
+LLAMAINDEX_IMPORT_ERROR: str | None = None
+
 # 延迟导入 LlamaIndex（可能未安装）
 try:
     from llama_index.core import (
@@ -40,13 +43,34 @@ try:
     from llama_index.core.storage.docstore import SimpleDocumentStore
 
     LLAMAINDEX_AVAILABLE = True
-except (ImportError, SyntaxError, AttributeError, TypeError):
-    # 容错不仅限 ImportError：测试会把 pymilvus 整体 mock，导致 llama_index
-    # 的 milvus 类型别名在 typing.Union 解析时报 SyntaxError / AttributeError /
-    # TypeError。这些在"可选重依赖被 mock/缺失"时都应收敛为 fallback 模式，
-    # 而不是炸穿 app.rag 包导入。
+except Exception as exc:  # noqa: BLE001 — 可选重依赖，任何导入失败都必须降级而非炸包
+    # 不能只捕 ImportError —— 这里的异常形态比"依赖没装"多得多：
+    #
+    # 1) ImportError：依赖未安装。
+    # 2) NameError：真实复现过，链路是
+    #      a. 本机 pandas 安装残缺（缺 pandas._libs.hashtable）→
+    #      b. pymilvus/orm/collection.py 模块级 `import pandas as pd` 失败，
+    #         导致 `import pymilvus` 整体失败 →
+    #      c. llama_index/vector_stores/milvus/utils.py 里
+    #         `try: from pymilvus import Function as BaseMilvusBuiltInFunction`
+    #         抛 ImportError，而其 `except ImportError` 只打 warning、
+    #         **没有定义该名字** →
+    #      d. 同包 base.py 模块级 `from ...utils import BaseMilvusBuiltInFunction`
+    #         抛 NameError。
+    #    注意：这不是版本不兼容（pymilvus 2.6.17 确实导出了 Function），
+    #    而是上游 fallback 分支留了未定义名字，任何让 pymilvus 导入失败的
+    #    原因都会以 NameError 的形式冒出来。
+    # 3) SyntaxError / AttributeError / TypeError：测试把 pymilvus 整体 mock 后，
+    #    llama_index 的 milvus 类型别名在 typing.Union 解析阶段炸掉。
+    #
+    # 以上都属于"可选重依赖不可用"，一律收敛为 fallback 模式，
+    # 并把真实异常写进 LLAMAINDEX_IMPORT_ERROR 供启动日志定位。
     LLAMAINDEX_AVAILABLE = False
-    logger.warning("llama_index or milvus unavailable, LlamaIndexPipeline will use fallback mode")
+    LLAMAINDEX_IMPORT_ERROR = f"{type(exc).__name__}: {exc}"
+    logger.warning(
+        "llama_index or milvus unavailable (%s), LlamaIndexPipeline will use fallback mode",
+        LLAMAINDEX_IMPORT_ERROR,
+    )
 
 
 class LlamaIndexPipeline:

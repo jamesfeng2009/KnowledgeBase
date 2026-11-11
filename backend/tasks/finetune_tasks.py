@@ -72,6 +72,19 @@ async def _build_async(
     from app.models.finetune import DatasetExport
 
     async with task_db_session() as session:
+        from app.core.tenant_context import apply_tenant, resolve_tenant_of_row
+
+        # RLS fail-closed：必须先确定导出记录归属哪个租户，否则下面这条
+        # 按主键的查询会返回 None（表现为"记录不存在"，极具误导性）
+        _tid = await resolve_tenant_of_row(
+            session,
+            table="finetune_dataset_exports",
+            row_id=export_id,
+            reason="finetune_tasks._build_async",
+        )
+        if _tid:
+            await apply_tenant(session, _tid)
+
         # 1. 加载导出记录
         record = (
             await session.execute(

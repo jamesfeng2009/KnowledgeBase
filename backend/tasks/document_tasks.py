@@ -693,6 +693,7 @@ async def _parse_and_chunk_async(doc_id: str) -> dict[str, Any]:
         {"chunk_objects": [...], "graph_enabled": bool, "parse_warnings": [...]}
         失败时 {"status": "failed", "error": "..."}
     """
+    from app.core.tenant_context import apply_tenant, resolve_task_tenant
     from app.database import task_db_session
     from app.repositories.knowledge_repository import DocumentRepository
 
@@ -700,13 +701,24 @@ async def _parse_and_chunk_async(doc_id: str) -> dict[str, Any]:
     warnings: list[str] = []
 
     async with task_db_session() as session:
-        # 先无租户过滤地查找文档，获取其 tenant_id
-        repo = DocumentRepository(session)
+        # RLS fail-closed 之后，没设 GUC 的会话查不到任何文档 —— 不能再用
+        # 「无租户过滤地 get_by_id」来拿 tenant_id。改为显式解析：优先用调用方
+        # 传入的 tenant_id，缺失时只在 system_scope 内按主键反查一列。
+        tid = await resolve_task_tenant(
+            session,
+            tenant_id=tenant_id,
+            doc_id=doc_id,
+            reason="tasks.document_tasks.process_document",
+            # 这里不允许"查不到"：能进这个函数说明文档已经入队，
+            # 查不到就是数据异常，早炸比在流水线中途静默空转好。
+            required=True,
+        )
+        await apply_tenant(session, tid)
+
+        repo = DocumentRepository(session, tenant_id=tid)
         doc = await repo.get_by_id(doc_uuid)
         if doc is None:
             return {"doc_id": doc_id, "status": "failed", "error": "文档不存在"}
-        # 后续操作使用租户感知的仓储，确保多租户数据隔离
-        repo = DocumentRepository(session, tenant_id=doc.tenant_id)
 
         # 1. 解析文档内容
         _update_parse_progress(doc_id, stage="parsing", message="正在解析文档内容")
@@ -798,6 +810,10 @@ async def _build_index_async(
         from app.repositories.knowledge_repository import DocumentRepository
 
         async with task_db_session() as session:
+            from app.core.tenant_context import apply_tenant, resolve_task_tenant
+            _tid = await resolve_task_tenant(session, doc_id=doc_id, reason="document_tasks._build_index_async")
+            if _tid:
+                await apply_tenant(session, _tid)
             repo = DocumentRepository(session)
             doc = await repo.get_by_id(uuid.UUID(doc_id))
             if doc and doc.kb_id:
@@ -813,6 +829,10 @@ async def _build_index_async(
         from app.repositories.knowledge_repository import DocumentRepository
 
         async with task_db_session() as session:
+            from app.core.tenant_context import apply_tenant, resolve_task_tenant
+            _tid = await resolve_task_tenant(session, doc_id=doc_id, reason="document_tasks._build_index_async")
+            if _tid:
+                await apply_tenant(session, _tid)
             repo = DocumentRepository(session)
             doc = await repo.get_by_id(uuid.UUID(doc_id))
             if doc is not None:
@@ -842,6 +862,10 @@ async def _build_graph_async(doc_id: str, chunk_objects: list[Chunk]) -> dict[st
 
     warnings: list[str] = []
     async with task_db_session() as session:
+        from app.core.tenant_context import apply_tenant, resolve_task_tenant
+        _tid = await resolve_task_tenant(session, doc_id=doc_id, reason="document_tasks._build_graph_async")
+        if _tid:
+            await apply_tenant(session, _tid)
         # 先无租户过滤地查找文档，获取其 tenant_id
         repo = DocumentRepository(session)
         doc = await repo.get_by_id(uuid.UUID(doc_id))
@@ -886,6 +910,10 @@ async def _finalize_document_async(
 
     doc_uuid = uuid.UUID(doc_id)
     async with task_db_session() as session:
+        from app.core.tenant_context import apply_tenant, resolve_task_tenant
+        _tid = await resolve_task_tenant(session, doc_id=doc_id, reason="document_tasks._finalize_document_async")
+        if _tid:
+            await apply_tenant(session, _tid)
         # 先无租户过滤地查找文档，获取其 tenant_id
         repo = DocumentRepository(session)
         doc = await repo.get_by_id(doc_uuid)
@@ -1063,6 +1091,10 @@ async def _process_document_async(doc_id: str) -> dict[str, Any]:
     warnings: list[str] = []
 
     async with task_db_session() as session:
+        from app.core.tenant_context import apply_tenant, resolve_task_tenant
+        _tid = await resolve_task_tenant(session, doc_id=doc_id, reason="document_tasks._process_document_async")
+        if _tid:
+            await apply_tenant(session, _tid)
         # 先无租户过滤地查找文档，获取其 tenant_id
         repo = DocumentRepository(session)
         doc = await repo.get_by_id(doc_uuid)
@@ -1699,6 +1731,10 @@ def _should_use_multipart_pipeline(doc_id: str) -> bool:
             from app.repositories.knowledge_repository import DocumentRepository
 
             async with task_db_session() as db:
+                from app.core.tenant_context import apply_tenant, resolve_task_tenant
+                _tid = await resolve_task_tenant(db, doc_id=doc_id, reason="document_tasks._should_use_multipart_pipeline")
+                if _tid:
+                    await apply_tenant(db, _tid)
                 # 使用 DocumentRepository 替代裸 select，自动应用软删除过滤；
                 # 此处按主键查找，无需租户过滤（仅判断文档类型与大小）
                 repo = DocumentRepository(db)
@@ -2136,6 +2172,10 @@ async def _submit_for_audit(doc_id: str, owner_id: Any) -> None:
     from app.repositories.base import BaseRepository
 
     async with task_db_session() as session:
+        from app.core.tenant_context import apply_tenant, resolve_task_tenant
+        _tid = await resolve_task_tenant(session, doc_id=doc_id, reason="document_tasks._submit_for_audit")
+        if _tid:
+            await apply_tenant(session, _tid)
         # AuditFlow 模型无 tenant_id 列，BaseRepository._apply_tenant_filter
         # 会自动跳过租户过滤，无需传入 tenant_id
         repo = BaseRepository(AuditFlow, session)
@@ -2163,6 +2203,10 @@ async def _publish_document(doc_id: str) -> None:
     doc_uuid = uuid.UUID(doc_id)
 
     async with task_db_session() as session:
+        from app.core.tenant_context import apply_tenant, resolve_task_tenant
+        _tid = await resolve_task_tenant(session, doc_id=doc_id, reason="document_tasks._publish_document")
+        if _tid:
+            await apply_tenant(session, _tid)
         # 先无租户过滤地查找文档，获取其 tenant_id
         repo = DocumentRepository(session)
         doc = await repo.get_by_id(doc_uuid)
@@ -2315,6 +2359,10 @@ async def _revert_document_to_draft(doc_id: str) -> None:
     doc_uuid = uuid.UUID(doc_id)
 
     async with task_db_session() as session:
+        from app.core.tenant_context import apply_tenant, resolve_task_tenant
+        _tid = await resolve_task_tenant(session, doc_id=doc_id, reason="document_tasks._revert_document_to_draft")
+        if _tid:
+            await apply_tenant(session, _tid)
         repo = DocumentRepository(session)
         doc = await repo.get_by_id(doc_uuid)
         if doc is None:
@@ -2345,6 +2393,10 @@ async def _archive_document(doc_id: str) -> None:
     doc_uuid = uuid.UUID(doc_id)
 
     async with task_db_session() as session:
+        from app.core.tenant_context import apply_tenant, resolve_task_tenant
+        _tid = await resolve_task_tenant(session, doc_id=doc_id, reason="document_tasks._archive_document")
+        if _tid:
+            await apply_tenant(session, _tid)
         repo = DocumentRepository(session)
         doc = await repo.get_by_id(doc_uuid)
         if doc is None:
@@ -2379,6 +2431,10 @@ async def _down_publish_document(doc_id: str) -> None:
     doc_uuid = uuid.UUID(doc_id)
 
     async with task_db_session() as session:
+        from app.core.tenant_context import apply_tenant, resolve_task_tenant
+        _tid = await resolve_task_tenant(session, doc_id=doc_id, reason="document_tasks._down_publish_document")
+        if _tid:
+            await apply_tenant(session, _tid)
         repo = DocumentRepository(session)
         doc = await repo.get_by_id(doc_uuid)
         if doc is None:

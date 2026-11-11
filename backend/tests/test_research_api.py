@@ -4,8 +4,8 @@
     - 认证强制：未携带 token 返回 401；
     - POST /api/v1/research：以 job.id 为 task_id 派发 deep_research_task，
       返回真实 task_id；
-    - 租户透传：请求带 X-Tenant-Id 时，apply_async 收到的 tenant_id=该值；
-      不带时收到 None（全局 scope）。
+    - 租户透传：JWT 中的 tenant_id 传给 apply_async；伪造的 X-Tenant-Id 被忽略；
+      不带 JWT 时收到 None（全局 scope）。
     - P1 权限收敛：kb_ids 与可访问集合取交集 / 收敛失败 fail-closed 置空。
 
 幂等创建的完整行为（并发重试/冲突）见 test_research_idempotency.py（真库）。
@@ -169,14 +169,20 @@ class TestResearchDispatch:
         assert call.kwargs["args"] == ["调研某主题", []]
 
     @pytest.mark.asyncio
-    async def test_passes_tenant_id_from_request_state(self, auth_client) -> None:
-        """请求带 X-Tenant-Id（合法 UUID）时，tenant_id 透传给任务。"""
+    async def test_passes_tenant_id_from_jwt(self, auth_client) -> None:
+        """JWT 中的 tenant_id 透传给任务；伪造的 X-Tenant-Id 不得覆盖它。"""
+        from app.utils.crypto import create_access_token
+
         tid = str(uuid4())
+        token = create_access_token({"sub": "u@test.com", "tenant_id": tid})
         with _patch_dispatch() as mock_dispatch, _patch_perm(None):
             resp = await auth_client.post(
                 "/api/v1/research",
                 json={"goal": "调研某主题"},
-                headers={"X-Tenant-Id": tid},
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "X-Tenant-Id": str(uuid4()),
+                },
             )
         assert resp.status_code == 200
         assert resp.json()["code"] == 0

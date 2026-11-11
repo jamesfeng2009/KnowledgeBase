@@ -24,7 +24,7 @@ from __future__ import annotations
 import math
 import uuid
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -227,6 +227,71 @@ async def update_project(
         data=TestProjectResponse.model_validate(project),
         message="success",
     )
+
+
+@router.delete("/projects/{project_id}")
+async def delete_project(
+    project_id: uuid.UUID,
+    user: User = Depends(require_module("testing_platform")),
+    db: AsyncSession = Depends(get_db_session),
+) -> ApiResponse:
+    """删除测试项目 — 软删除，并级联软删除其下需求点 / 用例 / 计划。
+
+    P1 修复：前端 ``testing.ts`` 的 ``deleteProject()`` 调用此端点，但后端从未实现
+    （只有 cases 有 DELETE），删项目一律 405/404。
+
+    为什么级联：``requirements`` / ``cases`` / ``plans`` 都以 ``project_id`` 挂在项目下，
+    只删项目会让子记录变成可通过 ID 直接访问的孤儿（``GET /cases/{id}`` 仍能读到），
+    等于"删了还在"。执行记录（``test_executions``）无软删除列，保留作为审计痕迹。
+
+    权限：仅项目 owner 或管理员可删（其余成员 403），且按租户过滤。
+
+    Raises:
+        HTTPException: 404 项目不存在；403 非 owner 且非管理员。
+    """
+    from datetime import datetime, timezone
+
+    from sqlalchemy import update as sa_update
+
+    from app.models.testing import TestCase, TestPlan, TestRequirement
+
+    conditions = [
+        TestProject.id == project_id,
+        TestProject.deleted_at.is_(None),
+    ]
+    # 多租户：带上租户过滤，避免跨租户按 ID 猜删（tenant_id 为空视为单租户部署）
+    if getattr(user, "tenant_id", None) is not None:
+        conditions.append(TestProject.tenant_id == user.tenant_id)
+
+    project = (
+        await db.execute(select(TestProject).where(*conditions))
+    ).scalars().first()
+    if project is None:
+        raise HTTPException(status_code=404, detail="项目不存在")
+
+    if project.owner_id != user.id and getattr(user, "role", "") != "admin":
+        raise HTTPException(status_code=403, detail="仅项目负责人或管理员可删除项目")
+
+    now = datetime.now(timezone.utc)
+    for model in (TestRequirement, TestCase, TestPlan):
+        await db.execute(
+            sa_update(model)
+            .where(model.project_id == project_id, model.deleted_at.is_(None))
+            .values(deleted_at=now)
+        )
+    await db.execute(
+        sa_update(TestProject)
+        .where(*conditions)
+        .values(deleted_at=now)
+    )
+    await db.commit()
+
+    logger.info(
+        "test_project.deleted",
+        project_id=str(project_id),
+        by=str(user.id),
+    )
+    return ApiResponse(code=0, data={"id": str(project_id)}, message="success")
 
 
 # ======================================================================

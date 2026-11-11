@@ -773,7 +773,7 @@ class TestFinalizeVideoTask:
         fake_db = AsyncMock()
 
         @asynccontextmanager
-        async def _fake_session():
+        async def _fake_session(**_kwargs):
             yield fake_db
 
         monkeypatch.setattr("app.database.task_db_session", _fake_session)

@@ -203,6 +203,7 @@ class KnowledgeService:
         title: str,
         content: str,
         doc_type: str = "md",
+        file_size: int | None = None,
     ) -> Document:
         """向知识库上传 / 新建文档（校验知识库访问权限）。
 
@@ -214,6 +215,11 @@ class KnowledgeService:
             title: 文档标题。
             content: 文档纯文本内容。
             doc_type: 文档类型 — md / html / docx / pdf。
+            file_size: 原始文件字节数（**必须由调用方传入真实值**）。
+                ``BillingService.get_storage_usage`` 以该列求和统计租户存储占用，
+                恒为 None 会让配额统计永远回退到"content_text 长度 + 每文档 500KB"
+                的估算兜底，与真实占用脱钩。纯文本创建（JSON 体）场景传
+                ``len(content.encode("utf-8"))``。
 
         Returns:
             创建后的 Document 实例。
@@ -224,15 +230,19 @@ class KnowledgeService:
         if not await self.permission.check_write(kb_id):
             raise PermissionError("无权向该知识库上传文档")
 
-        return await self.doc_repo.create(
-            kb_id=kb_id,
-            title=title,
-            content_text=content,
-            doc_type=doc_type,
-            owner_id=self.user.id,
-            dept_id=self.user.dept_id,
-            status="draft",
-        )
+        create_fields: dict = {
+            "kb_id": kb_id,
+            "title": title,
+            "content_text": content,
+            "doc_type": doc_type,
+            "owner_id": self.user.id,
+            "dept_id": self.user.dept_id,
+            "status": "draft",
+        }
+        # 显式判定 None：0 字节空文件也是合法值，不能被 `if file_size` 吃掉
+        if file_size is not None:
+            create_fields["file_size"] = max(int(file_size), 0)
+        return await self.doc_repo.create(**create_fields)
 
     async def update_document(
         self,

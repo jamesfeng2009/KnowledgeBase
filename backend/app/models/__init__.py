@@ -37,6 +37,8 @@ from app.models.notification import Notification
 from app.models.qa import QaAnswer, QaQuestion
 from app.models.research import ResearchJob
 from app.models.task_outbox import TaskOutbox
+from app.models.ticket import Ticket
+from app.models.tool_audit import ToolAuditLog
 from app.models.user import Department, KbMember, User
 from app.models.user_model_preference import UserModelPreference
 from app.models.wiki import WikiPage, WikiPageLink, WikiPageVersion
@@ -123,6 +125,8 @@ __all__ = [
     "TestReview",
     "TestPlan",
     "TestExecution",
+    # IT 帮助台工单
+    "Ticket",
     # AI 评测（Prompt Injection + RAG 检索 + 文档解析 + AI Judge）
     "InjectionTestSuite",
     "InjectionTestCase",
@@ -148,6 +152,8 @@ __all__ = [
     "ResearchJob",
     # P2 轻量 Outbox：任务欠投递发件箱
     "TaskOutbox",
+    # 工具调用审计日志（app/rag/engine.py 写入、delivery_chain 聚合读取）
+    "ToolAuditLog",
     # P0-1 Wiki 模式：自动生成互链知识库
     "WikiPage",
     "WikiPageVersion",

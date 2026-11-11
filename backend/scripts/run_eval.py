@@ -22,7 +22,10 @@
 退出码：
     0 — 正常完成，无回归；
     1 — 存在回归（指标下降超阈值）或数据集为空等错误；
-    2 — RAG 引擎不可用（P2-3：此前静默降级为全 0 仍退出 0，CI 易误判绿）。
+    2 — RAG 引擎不可用（P2-3：此前静默降级为全 0 仍退出 0，CI 易误判绿）；
+    3 — 评测结果无法落库（eval_results 表结构缺失/不匹配）。
+        此前这种情况会降级成 warning，CLI 打出「基线已设置」但其实一条没写，
+        下次跑 --baseline 永远找不到基线。宁可失败也不输出假绿。
 """
 
 from __future__ import annotations
@@ -40,7 +43,7 @@ if _BACKEND_ROOT not in sys.path:
     sys.path.insert(0, _BACKEND_ROOT)
 
 from app.eval.dataset import EvalDataset  # noqa: E402
-from app.eval.repository import EvalRepository  # noqa: E402
+from app.eval.repository import EvalRepository, EvalSchemaError  # noqa: E402
 from app.eval.runner import EvalRunner, EvalRunResult  # noqa: E402
 from app.utils.logger import get_logger  # noqa: E402
 
@@ -507,9 +510,18 @@ def main(argv: list[str] | None = None) -> int:
 
     # 5. 持久化（best-effort）—— 始终保存到历史，--set-baseline 时标记为基线
     repo = EvalRepository()
-    run_id = asyncio.run(
-        repo.save(result, dataset_name, is_baseline=args.set_baseline)
-    )
+    try:
+        run_id = asyncio.run(
+            repo.save(result, dataset_name, is_baseline=args.set_baseline)
+        )
+    except EvalSchemaError as exc:
+        # 表结构缺失/不匹配不可降级：继续往下走会输出「基线已设置」的假绿。
+        print(
+            "[ERROR] 评测结果无法落库：eval_results 表结构不可用，"
+            f"请先执行 alembic upgrade head。原因：{exc}",
+            file=sys.stderr,
+        )
+        return 3
     # 保持 result.run_id 与持久化返回一致
     result.run_id = run_id
 

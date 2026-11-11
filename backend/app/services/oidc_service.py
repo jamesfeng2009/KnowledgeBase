@@ -45,10 +45,28 @@ class OIDCDisabledError(OIDCError):
     """OIDC 未启用。"""
 
 
+def _issue_token(user: Any) -> str:
+    """签发本系统 JWT —— 必须带 tenant_id，否则后续请求全程 fail-closed。
+
+    ``auth_service.login`` 的 payload 是 ``{sub, role, tenant_id}``，OIDC
+    入口此前漏了 tenant_id：用户能登录，但拿到的令牌访问任何业务表都返回空集。
+    """
+    tenant_id = getattr(user, "tenant_id", None)
+    return create_access_token(
+        {
+            "sub": str(user.id),
+            "role": user.role,
+            "tenant_id": str(tenant_id) if tenant_id else None,
+        }
+    )
+
+
 class OIDCService:
     """OIDC 单点登录服务。"""
 
-    def __init__(self, db: AsyncSession) -> None:
+    def __init__(self, db: AsyncSession | None = None) -> None:
+        # ``/auth/oidc/login`` 只拼授权 URL，不查库，传 None 即可。
+        # 允许不发 DB 会话，避免为一个纯字符串构造动作引入跨租户连接。
         self.db = db
         settings = get_settings()
         self.enabled = settings.OIDC_ENABLED
@@ -198,14 +216,13 @@ class OIDCService:
         # 1. 按 sub 查找既有 OIDC 用户；无则查同邮箱普通用户
         existing = await self._existing_by_sub_or_email(sub, email)
         if existing is not None:
-            token = create_access_token({"sub": str(existing.id), "role": existing.role})
             return {
-                "access_token": token,
+                "access_token": _issue_token(existing),
                 "token_type": "bearer",
                 "user_id": str(existing.id),
             }
 
-        # 3. 新用户：随机密码 + oidc-{sub} 邮箱（保证唯一）
+        # 2. 新用户：随机密码 + oidc-{sub} 邮箱（保证唯一）
         random_password = secrets.token_urlsafe(24)
         try:
             user = await auth_service.register(
@@ -214,13 +231,14 @@ class OIDCService:
                 name=name,
             )
         except ValueError:
-            # 并发注册竞争：重查一次
-            user = await user_repo.get_by_email(f"oidc-{sub}@sso.local")
+            # 并发注册竞争：重查一次。
+            # 旧实现这里用了只在 _existing_by_sub_or_email 内部定义的
+            # 局部变量 user_repo → 真走到这个分支会抛 NameError。
+            user = await UserRepository(self.db).get_by_email(f"oidc-{sub}@sso.local")
             if user is None:
                 raise
-        token = create_access_token({"sub": str(user.id), "role": user.role})
         return {
-            "access_token": token,
+            "access_token": _issue_token(user),
             "token_type": "bearer",
             "user_id": str(user.id),
         }

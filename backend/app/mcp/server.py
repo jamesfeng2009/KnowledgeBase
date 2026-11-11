@@ -847,6 +847,8 @@ class KnowledgeBaseMCPServer:
                     owner_id=kb.owner_id,
                     status="draft",
                     doc_type="md",
+                    # 配额统计以该列求和为准，MCP 写入同样要落字节数
+                    file_size=len(content.encode("utf-8")),
                 )
                 result = {
                     "id": str(doc.id),

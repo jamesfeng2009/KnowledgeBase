@@ -392,12 +392,15 @@ async def upload_document_file(
         file_path = f"local://{filename}"
 
     # 创建文档记录（service 层校验知识库写权限；PermissionError 映射为 403）
+    # file_size 必须落真实字节数：BillingService.get_storage_usage 以该列求和统计
+    # 租户存储占用，恒为 None 会让配额永远走估算兜底。
     try:
         doc = await service.upload_document(
             kb_id=kb_id,
             title=title,
             content=content_text,
             doc_type=doc_type,
+            file_size=len(content_bytes),
         )
     except Exception as exc:
         # 补偿：文档创建失败时删除已上传的 MinIO 对象，避免遗留孤儿文件；
@@ -642,6 +645,8 @@ async def complete_multipart_upload(
         )
 
     # 校验 3: 调用 list_parts 对账服务端实际已上传分片
+    # server_parts 提升到 try 外：合并完成后要用它的 size 求和兜底 file_size
+    server_parts: list[dict] = []
     try:
         from app.utils.minio_client import list_parts
 
@@ -703,7 +708,20 @@ async def complete_multipart_upload(
         log.exception("multipart.complete_failed")
         raise HTTPException(500, detail="合并分片失败")
 
-    # 2. 创建文档记录
+    # 2. 计算真实对象大小（file_size 落库用）
+    # 优先 HEAD 对象拿 ContentLength（权威值）；HEAD 失败时用 list_parts 的分片
+    # 大小求和兜底（同一对象，合并后总大小 = 分片大小之和）；都拿不到则留 None。
+    from app.utils.minio_client import get_object_size
+
+    merged_size = await get_object_size(bucket="ekb-documents", object_name=object_name)
+    if merged_size is None:
+        part_sizes = [
+            p.get("size") for p in server_parts if isinstance(p.get("size"), int)
+        ]
+        if part_sizes:
+            merged_size = sum(part_sizes)
+
+    # 3. 创建文档记录
     try:
         kb_id = UUID(kb_id_str)
     except ValueError:
@@ -717,17 +735,18 @@ async def complete_multipart_upload(
             title=title,
             content="",  # 视频文档无文本内容，由 Celery ASR 转写填充
             doc_type=doc_type,
+            file_size=merged_size,
         )
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
-    # 3. 更新 file_path 指向 MinIO 合并后的对象（租户隔离的 Repository）
+    # 4. 更新 file_path 指向 MinIO 合并后的对象（租户隔离的 Repository）
     from app.repositories.knowledge_repository import DocumentRepository
 
     doc_repo = DocumentRepository(db, tenant_id=tenant_id)
     await doc_repo.update(doc.id, file_path=file_path)
 
-    # 4. 触发 Celery 异步解析（复用 P0 逻辑）
+    # 5. 触发 Celery 异步解析（复用 P0 逻辑）
     try:
         from tasks.document_tasks import process_document
 
@@ -738,7 +757,7 @@ async def complete_multipart_upload(
     except Exception:
         log.exception("触发 Celery 解析失败，文档 %s 需手动处理", doc.id)
 
-    # 5. 清理 Redis 会话（异步客户端，不阻塞事件循环）
+    # 6. 清理 Redis 会话（异步客户端，不阻塞事件循环）
     await _delete_multipart_session(upload_id)
 
     return ApiResponse(
@@ -878,6 +897,36 @@ async def get_document(
     )
 
 
+def _plain(value: Any) -> Any:
+    """把 str-Enum 等请求值收敛为可入库的原始值。"""
+    return getattr(value, "value", value)
+
+
+async def _save_version_snapshot(
+    db: AsyncSession,
+    *,
+    doc_id: UUID,
+    content_html: str | None,
+    content_json: dict | None,
+    author_id: UUID,
+    summary: str,
+) -> None:
+    """写入一条文档历史版本快照（调用方负责权限校验与事务提交）。
+
+    summary 列长为 String(255)，而文档标题允许 500 字符，
+    直接拼接会触发 PG StringDataRightTruncation，故此处截断。
+    """
+    await db.execute(
+        DocumentVersion.__table__.insert().values(
+            doc_id=doc_id,
+            content_html=content_html,
+            content_json=content_json,
+            author_id=author_id,
+            summary=summary[:255],
+        )
+    )
+
+
 @router.put("/documents/{doc_id}", response_model=ApiResponse[DocResponse])
 async def update_document(
     request: Request,
@@ -886,51 +935,95 @@ async def update_document(
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse[DocResponse]:
-    """更新文档内容（支持协同编辑场景）。
+    """更新文档（内容 + 元数据），支持协同编辑场景。
 
-    写权限校验通过后自动保存当前内容为版本快照（用于版本回溯），
-    避免无写权限时留下幽灵版本。
+    本端点是 GET/PUT/DELETE /documents/{doc_id} 的唯一定义处，
+    knowledge.py 中不得重复定义（重复注册会被静默遮蔽）。
+
+    行为约定：
+    1. 内容字段（content_html/content_json/content_text）为 None 视为不改；
+       只有内容与库中现值确实不同，才写一条"更新前快照"再更新内容 ——
+       重复提交相同内容不会产生垃圾版本。
+    2. 元数据字段（title/doc_type/status/classification）独立更新，
+       不触发版本快照（编辑器标题防抖保存不会污染版本历史）。
+    3. 权限先校验后写库：写权限或密级不足直接拒绝，不留幽灵版本。
     """
     tenant_id = getattr(request.state, "tenant_id", None)
     service = KnowledgeService(db, user, tenant_id=tenant_id)
-    from app.repositories.knowledge_repository import DocumentRepository
 
-    doc_repo = DocumentRepository(db, tenant_id=tenant_id)
-
-    # 获取更新前的文档（用于版本快照）并校验读权限
-    old_doc = await service.get_document(doc_id)
-
-    # 先执行更新：service.update_document 内部校验知识库写权限与密级。
-    # 若权限不足会抛 PermissionError，此时不会留下幽灵版本快照。
+    # 读权限校验 + 取更新前状态（版本快照与密级校验都要用）
+    doc = await service.get_document(doc_id)
     update_fields = body.model_dump(exclude_unset=True)
-    doc = await service.update_document(
-        doc_id,
-        content_html=update_fields.get("content_html"),
-        content_json=update_fields.get("content_json"),
-        content_text=update_fields.get("content_text"),
-    )
 
-    # 写权限校验已通过，保存更新前快照
-    await doc_repo.session.execute(
-        DocumentVersion.__table__.insert().values(
-            doc_id=old_doc.id,
-            content_html=old_doc.content_html,
-            content_json=old_doc.content_json,
-            author_id=user.id,
-            summary=f"更新前快照 - {body.title or old_doc.title}",
-        )
-    )
-    await doc_repo.session.flush()
+    # —— 密级变更校验：不允许把文档设成自己无权访问的密级 ——
+    if update_fields.get("classification") is not None:
+        new_classification = _plain(update_fields["classification"])
+        if new_classification not in service.permission.allowed_classifications():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="无权将文档设为该密级",
+            )
+        update_fields["classification"] = new_classification
 
-    # 更新其他字段
-    extra_fields = {
-        k: v for k, v in update_fields.items()
-        if k in ("title", "doc_type", "status", "classification") and v is not None
+    # —— 内容字段：只保留真正变化的项 ——
+    changed_content = {
+        key: _plain(update_fields[key])
+        for key in ("content_html", "content_json", "content_text")
+        if update_fields.get(key) is not None
+        and getattr(doc, key) != _plain(update_fields[key])
     }
-    if extra_fields:
-        updated = await doc_repo.update(doc_id, **extra_fields)
+
+    if changed_content:
+        # 快照必须在更新前取：service 内部走同一个 session 的 identity map，
+        # 更新后 doc 就是被修改的同一 ORM 实例，此时再读 .content_html 已是新值。
+        prev_html, prev_json, prev_title = (
+            doc.content_html,
+            doc.content_json,
+            doc.title,
+        )
+
+        # service.update_document 内部校验知识库写权限与密级，
+        # 权限不足抛 PermissionError → 不会留下幽灵版本快照。
+        doc = await service.update_document(
+            doc_id,
+            content_html=changed_content.get("content_html"),
+            content_json=changed_content.get("content_json"),
+            content_text=changed_content.get("content_text"),
+        )
+
+        await _save_version_snapshot(
+            db,
+            doc_id=doc_id,
+            content_html=prev_html,
+            content_json=prev_json,
+            author_id=user.id,
+            summary=f"更新前快照 - {prev_title}",
+        )
+        await db.flush()
+
+    # —— 元数据字段（title/doc_type/status/classification）——
+    meta_fields: dict[str, Any] = {}
+    for key in ("title", "doc_type", "status", "classification"):
+        value = update_fields.get(key)
+        if value is not None:
+            meta_fields[key] = _plain(value)
+
+    if meta_fields:
+        from app.repositories.knowledge_repository import DocumentRepository
+
+        doc_repo = DocumentRepository(db, tenant_id=tenant_id)
+        updated = await doc_repo.update(doc_id, **meta_fields)
         if updated is not None:
             doc = updated
+
+    # 标题变更会改变引用文本，主动失效 Token 缓存（失败不影响本次更新）
+    if "title" in meta_fields:
+        try:
+            from app.rag.cache import TokenCache
+
+            await TokenCache().invalidate_by_doc_id(str(doc_id))
+        except Exception:  # noqa: BLE001 — 缓存不可用不应阻断文档更新
+            log.debug("失效文档 Token 缓存失败 doc_id=%s", doc_id, exc_info=True)
 
     return ApiResponse(
         code=0,
@@ -1203,6 +1296,14 @@ async def restore_document_version(
     tenant_id = getattr(request.state, "tenant_id", None)
     service = KnowledgeService(db, user, tenant_id=tenant_id)
     doc = await service.get_document(doc_id)
+
+    # 写权限校验：get_document 只校验读权限，
+    # 若不补这一步，只读协作者可用 /versions/{id}/restore 覆盖文档内容。
+    if not await service.permission.check_write(doc.kb_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="无权恢复该文档的版本",
+        )
 
     # 查询目标版本
     stmt = select(DocumentVersion).where(
@@ -1529,6 +1630,9 @@ async def import_document_from_source(
             title=doc_title,
             content=fetched.content,
             doc_type=doc_type,
+            # 外部平台只在适配器层拿到文本形态（HTML/Markdown），原始二进制
+            # 不一定存在；按 UTF-8 编码后字节数计入配额，胜过留 NULL 走估算。
+            file_size=len(fetched.content.encode("utf-8")),
         )
     except PermissionError as exc:
         raise HTTPException(
@@ -1641,6 +1745,9 @@ async def clip_document(
             title=body.title,
             content=body.content,
             doc_type="md",
+            # 剪藏是纯文本入库，配额按 UTF-8 字节数计（与上面 check_storage_quota
+            # 的 additional_bytes 口径保持一致，避免预检与实际计入对不上）
+            file_size=len(body.content.encode("utf-8")),
         )
     except Exception as exc:
         if isinstance(exc, PermissionError):

@@ -6,7 +6,11 @@
 
 from __future__ import annotations
 
-from app.connectors.base import BaseConnector, ExternalSearchResult
+from app.connectors.base import (
+    BaseConnector,
+    ConnectorNotImplementedError,
+    ExternalSearchResult,
+)
 from app.config import get_settings
 from app.utils.logger import get_logger
 
@@ -31,6 +35,12 @@ class MailConnector(BaseConnector):
             return []
         try:
             return await self._call_mail_api(keyword, top_k)
+        except ConnectorNotImplementedError as exc:
+            # 已启用但适配器还没对接真实 API —— 配置错误，不是「没搜到」
+            logger.error(
+                "connector.mail.api_not_implemented", keyword=keyword, error=str(exc)
+            )
+            return []
         except Exception as exc:
             logger.warning("connector.mail.search_failed", keyword=keyword, error=str(exc))
             return []
@@ -46,4 +56,7 @@ class MailConnector(BaseConnector):
     async def _call_mail_api(self, keyword: str, top_k: int) -> list[ExternalSearchResult]:
         """调用邮件 API — 子类可覆盖。"""
         # TODO: 对接真实邮件 API（Exchange/Gmail）
-        return []
+        raise ConnectorNotImplementedError(
+            "邮件 连接器已启用（CONNECTOR_MAIL_API_URL 已配置），"
+            "但适配器尚未对接真实 API"
+        )

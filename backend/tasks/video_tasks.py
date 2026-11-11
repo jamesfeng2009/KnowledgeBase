@@ -121,6 +121,10 @@ def _extract_audio_stage(doc_id: str) -> str | None:
             from app.repositories.knowledge_repository import DocumentRepository
 
             async with task_db_session() as db:
+                from app.core.tenant_context import apply_tenant, resolve_task_tenant
+                _tid = await resolve_task_tenant(db, doc_id=doc_id, reason="video_tasks._extract_audio_stage")
+                if _tid:
+                    await apply_tenant(db, _tid)
                 # 按主键查找文档，无需租户过滤（仅读取 file_path）
                 repo = DocumentRepository(db)
                 return await repo.get_by_id(uuid.UUID(doc_id))
@@ -325,6 +329,10 @@ def keyframe_task(doc_id: str) -> dict[str, Any]:
             from app.repositories.knowledge_repository import DocumentRepository
 
             async with task_db_session() as db:
+                from app.core.tenant_context import apply_tenant, resolve_task_tenant
+                _tid = await resolve_task_tenant(db, doc_id=doc_id, reason="video_tasks.keyframe_task")
+                if _tid:
+                    await apply_tenant(db, _tid)
                 # 按主键查找文档，无需租户过滤（仅读取 file_path）
                 repo = DocumentRepository(db)
                 return await repo.get_by_id(uuid.UUID(doc_id))
@@ -470,6 +478,10 @@ def finalize_video_task(
             from app.repositories.knowledge_repository import DocumentRepository
 
             async with task_db_session() as db:
+                from app.core.tenant_context import apply_tenant, resolve_task_tenant
+                _tid = await resolve_task_tenant(db, doc_id=doc_id, reason="video_tasks.finalize_video_task")
+                if _tid:
+                    await apply_tenant(db, _tid)
                 # 先无租户过滤地查找文档，获取其 tenant_id
                 repo = DocumentRepository(db)
                 doc = await repo.get_by_id(uuid.UUID(doc_id))
@@ -491,6 +503,10 @@ def finalize_video_task(
             from app.repositories.knowledge_repository import DocumentRepository
 
             async with task_db_session() as db:
+                from app.core.tenant_context import apply_tenant, resolve_task_tenant
+                _tid = await resolve_task_tenant(db, doc_id=doc_id, reason="video_tasks.finalize_video_task")
+                if _tid:
+                    await apply_tenant(db, _tid)
                 # 按主键查找文档，无需租户过滤（仅读取元数据）
                 repo = DocumentRepository(db)
                 return await repo.get_by_id(uuid.UUID(doc_id))
@@ -554,6 +570,10 @@ def finalize_video_task(
             from app.repositories.knowledge_repository import DocumentRepository
 
             async with task_db_session() as db:
+                from app.core.tenant_context import apply_tenant, resolve_task_tenant
+                _tid = await resolve_task_tenant(db, doc_id=doc_id, reason="video_tasks.finalize_video_task")
+                if _tid:
+                    await apply_tenant(db, _tid)
                 # 先无租户过滤地查找文档，获取其 tenant_id
                 repo = DocumentRepository(db)
                 doc = await repo.get_by_id(uuid.UUID(doc_id))

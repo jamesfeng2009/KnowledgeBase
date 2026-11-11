@@ -441,3 +441,47 @@ if os.environ.get("CELERY_BEAT_SINGLE_INSTANCE") == "1":
     # 修复：锁 TTL 60s 但从不续期会导致锁过期、双 Beat 并发，
     # 启动后台守护线程在 Beat 运行期间定期续期（默认 ttl//3 周期）
     start_beat_lock_renewal(settings.REDIS_URL, lock_value=_beat_lock_value)
+
+
+# ------------------------------------------------------------------
+# 租户上下文传递 — RLS fail-closed 之后任务必须知道自己属于谁
+# ------------------------------------------------------------------
+# 入队时带了 tenant_id 的任务，由 task_prerun 存进 ContextVar；
+# task_db_session() 无参调用时自动读取。拿不到就保持为空 —— 任务在租户表上
+# 查不到任何数据（fail-closed），不会退回全可见。
+#
+# 为什么用信号而不是改所有任务签名：任务的 tenant_id 位置不固定（有的在第二位、
+# 有的在最后、有的只有 kwargs），改签名要动几十个函数和它们的调用方。
+# ContextVar 在 Celery 每个任务独立执行上下文里互不干扰，不会串租户。
+
+from celery.signals import task_postrun, task_prerun  # noqa: E402
+
+
+@task_prerun.connect
+def _bind_tenant_context(
+    task_id: str | None = None,
+    task: object | None = None,
+    args: tuple | None = None,
+    kwargs: dict | None = None,
+    **_: object,
+) -> None:
+    """任务开始前把 tenant_id 绑到当前执行上下文。"""
+    from app.core.task_context import (
+        bind_task_tenant,
+        extract_tenant_from_task,
+        reset_task_tenant,
+    )
+
+    reset_task_tenant()
+    if task is None:
+        return
+    tenant = extract_tenant_from_task(task, tuple(args or ()), dict(kwargs or {}))
+    bind_task_tenant(tenant)
+
+
+@task_postrun.connect
+def _clear_tenant_context(**_: object) -> None:
+    """任务结束后清空，防止同一 worker 进程内下一个任务读到残留值。"""
+    from app.core.task_context import reset_task_tenant
+
+    reset_task_tenant()

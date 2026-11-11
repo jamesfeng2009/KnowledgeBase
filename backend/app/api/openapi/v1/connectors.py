@@ -12,10 +12,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from pydantic import BaseModel, Field
 
 from app.api.openapi.deps import require_scope
+from app.api.openapi.responses import not_implemented
 from app.schemas.common import ApiResponse
 from app.utils.logger import get_logger
 
@@ -59,68 +60,62 @@ class HREmployeeRequest(BaseModel):
 @router.post("/oa/query", response_model=ApiResponse[dict])
 async def query_oa(
     body: OAQueryRequest,
+    response: Response,
     api_key_info: dict = Depends(require_scope("connector:oa")),
 ) -> ApiResponse[dict]:
     """查询 OA 审批状态。
 
-    根据单据编号查询 OA 系统中的审批进度与历史节点。
-    当前为预留接口，返回占位结构供对接联调。
+    .. warning::
+       **能力尚未实现**，返回 HTTP 501 + ``code=501``（不是"查询成功但无数据"）。
+       对接实际 OA 系统后应替换为真实查询结果。
     """
     logger.info(
         "openapi.connector.oa_query",
         bill_no=body.bill_no,
         key_name=api_key_info.get("name"),
     )
-    return ApiResponse(
-        code=0,
-        data={
-            "bill_no": body.bill_no,
-            "status": "pending",
-            "current_node": "部门审批",
-            "history": [],
-            "message": "OA 连接器为预留接口，请对接实际 OA 系统后替换",
-        },
-        message="success",
+    return not_implemented(
+        response,
+        "OA 审批状态查询",
+        hint="需先接入目标 OA 系统并实现审批进度拉取",
     )
 
 
 @router.post("/erp/query", response_model=ApiResponse[dict])
 async def query_erp(
     body: ERPQueryRequest,
+    response: Response,
     api_key_info: dict = Depends(require_scope("connector:erp")),
 ) -> ApiResponse[dict]:
     """查询 ERP 数据。
 
-    根据模块与查询条件从 ERP 系统获取业务数据。
-    当前为预留接口，返回占位结构供对接联调。
+    .. warning::
+       **能力尚未实现**，返回 HTTP 501 + ``code=501``（不是"查询成功但无数据"）。
+       对接实际 ERP 系统后应替换为真实查询结果。
     """
     logger.info(
         "openapi.connector.erp_query",
         module=body.module,
         key_name=api_key_info.get("name"),
     )
-    return ApiResponse(
-        code=0,
-        data={
-            "module": body.module,
-            "filters": body.filters,
-            "records": [],
-            "total": 0,
-            "message": "ERP 连接器为预留接口，请对接实际 ERP 系统后替换",
-        },
-        message="success",
+    return not_implemented(
+        response,
+        "ERP 数据查询",
+        hint="需先接入目标 ERP 系统并实现模块化查询",
     )
 
 
 @router.post("/hr/employee", response_model=ApiResponse[dict])
 async def query_employee(
     body: HREmployeeRequest,
+    response: Response,
     api_key_info: dict = Depends(require_scope("connector:hr")),
 ) -> ApiResponse[dict]:
     """查询员工信息。
 
-    支持按工号、邮箱或姓名查询员工基本信息。
-    当前为预留接口，返回占位结构供对接联调。
+    .. warning::
+       **能力尚未实现**，返回 HTTP 501 + ``code=501``（不是"查无此人"）。
+       对接 HR/LDAP 后应替换为真实查询结果。
     """
     logger.info(
         "openapi.connector.hr_query",
@@ -128,12 +123,8 @@ async def query_employee(
         email=body.email,
         key_name=api_key_info.get("name"),
     )
-    return ApiResponse(
-        code=0,
-        data={
-            "found": False,
-            "employee": None,
-            "message": "HR 连接器为预留接口，请对接实际 HR/LDAP 系统后替换",
-        },
-        message="success",
+    return not_implemented(
+        response,
+        "员工信息查询",
+        hint="需先接入 HR 系统或 LDAP 目录",
     )

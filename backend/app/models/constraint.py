@@ -25,6 +25,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    func,
     text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
@@ -142,3 +143,10 @@ class ConstraintAuditRecord(UUIDMixin, Base):
     severity: Mapped[str] = mapped_column(String(16), nullable=False, default="")
     # 命中的触发器集合（["T2:entity", "T4:kb_domain"]）
     triggers: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    # 审计表只追加不更新，故未继承 TimestampMixin（无 updated_at）。
+    # created_at 由迁移 c7d8e9f0a1b2 建表时以 server_default=now() 提供，
+    # 并且是索引 ix_constraint_audit_rule (rule_id, created_at) 的第二列——
+    # 模型侧此前漏声明，导致按时间窗回放审计时拿不到该属性。
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

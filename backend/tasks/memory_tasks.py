@@ -50,6 +50,19 @@ async def _persist_memory_async(
     }
 
     async with task_db_session() as session:
+        from app.core.tenant_context import apply_tenant, resolve_tenant_of_row
+
+        # RLS fail-closed：会话归属哪个租户必须先查出来，否则下面的
+        # conversations 查询恒为空，会被误判成"会话已删除"而静默跳过写回
+        _tid = await resolve_tenant_of_row(
+            session,
+            table="conversations",
+            row_id=session_id,
+            reason="memory_tasks._persist_memory_async",
+        )
+        if _tid:
+            await apply_tenant(session, _tid)
+
         # P1b 竞态守卫：派发后用户可能已删除会话（软删除）——
         # 此时写回记忆会产生指向已删除会话的"僵尸记忆"，直接跳过。
         try:

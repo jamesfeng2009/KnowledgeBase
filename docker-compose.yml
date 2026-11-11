@@ -100,10 +100,18 @@ services:
   # === Yjs 协作服务 ===
   yjs-server:
     build: ./collab-service
-    ports: ["8001:8001"]
+    # 安全：不再把 8001 发布到宿主机。
+    # 原配置 `ports: ["8001:8001"]` 让协作服务可被直连绕过网关，
+    # 而它当时又不验 JWT 签名（只 base64 解 payload）+ 不校验文档归属，
+    # 等于「伪造 token ⇒ 编辑任意文档」。改为仅集群内可达，由网关/前端转发。
+    expose:
+      - "8001"
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER:-ekb}:${POSTGRES_PASSWORD:-ekb}@postgres:5432/${POSTGRES_DB:-ekb}
       - PORT=8001
+      # 与后端共享的 JWT 签名密钥 —— 协作服务本地验签（HS256）。
+      # 缺失时服务会 fail-closed，拒绝所有连接。
+      - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
     depends_on:
       postgres: { condition: service_healthy }
     healthcheck:

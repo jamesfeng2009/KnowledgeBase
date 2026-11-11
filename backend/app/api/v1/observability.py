@@ -375,6 +375,7 @@ async def list_high_risk_audits(
         review_status=review_status,
         limit=page_size,
         offset=(page - 1) * page_size,
+        tenant_id=str(user.tenant_id) if user.tenant_id else None,
     )
     return ApiResponse(
         code=0,
@@ -416,6 +417,7 @@ async def review_high_risk_audit(
         review_status=body.review_status,
         reviewer_id=user.id,
         comment=body.comment,
+        tenant_id=str(user.tenant_id) if user.tenant_id else None,
     )
     if not updated:
         raise HTTPException(
@@ -440,7 +442,9 @@ async def get_high_risk_misjudgment_stats(
 
     from app.services.high_risk_audit_service import get_high_risk_audit_service
 
-    stats = await get_high_risk_audit_service().get_misjudgment_stats()
+    stats = await get_high_risk_audit_service().get_misjudgment_stats(
+        tenant_id=str(user.tenant_id) if user.tenant_id else None
+    )
     return ApiResponse(
         code=0,
         data=HighRiskMisjudgmentStats(

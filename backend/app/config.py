@@ -39,6 +39,13 @@ class Settings(BaseSettings):
 
     # === 数据库 ===
     DATABASE_URL: str = "postgresql+asyncpg://ekb:ekb@localhost:5432/ekb"
+    # DDL / 迁移专用连接（需要表 owner 权限，通常是建库的那个 superuser）。
+    # 为什么必须能分离：运行时连接应当使用**非 superuser** 角色（见
+    # scripts/provision_app_role.py），否则 PostgreSQL 会无条件绕过 RLS ——
+    # 多租户隔离就只剩应用层 WHERE 一道防线。而建表/改表又必须用 owner，
+    # 两者权限要求相反，只能拆成两条 URL。
+    # 未设置时回退到 DATABASE_URL（保持单角色部署的兼容性）。
+    MIGRATION_DATABASE_URL: str | None = None
     DATABASE_POOL_SIZE: int = 10
     DATABASE_MAX_OVERFLOW: int = 20
     # 启动时自动执行 Alembic 迁移（alembic upgrade head）
@@ -143,6 +150,14 @@ class Settings(BaseSettings):
     WECOM_BOT_TOKEN: str = ""     # 回调验签 token（接收用）
     WECOM_BOT_AES_KEY: str = ""   # 回调解密 AES Key（EncodingAESKey）
     CONNECTOR_WECOM_ENABLED: bool = False
+
+    # === 入站 Webhook（公开端点，安全边界）===
+    # 凭证未配置签名密钥时是否放行。默认关闭：外部平台可匿名触发同步任务，
+    # 关掉才能把「验签」作为唯一身份凭据。仅本地开发可显式打开。
+    WEBHOOK_ALLOW_UNSIGNED: bool = False
+    # 私有部署凭证 tenant_id 为 NULL 时的兜底租户；留空则拒绝派发，
+    # 避免把任务丢进一个没有 GUC 的会话里静默查不到数据。
+    WEBHOOK_DEFAULT_TENANT_ID: str = ""
 
     # === OIDC 单点登录（P1）===
     OIDC_ENABLED: bool = False
@@ -400,6 +415,16 @@ class Settings(BaseSettings):
     # 网关透传租户域名的请求头名（APISIX 转发时注入），
     # 供后端在未认证/API Key 场景下解析租户。
     TENANT_DOMAIN_HEADER: str = "X-Tenant-Domain"
+
+    # === 租户身份可信边界（fail-closed）===
+    # X-Tenant-Id 是普通 HTTP 头，客户端可任意构造。默认完全不采信，
+    # 只认 JWT。打开此开关前必须确保：后端不对公网暴露、APISIX 已剥离
+    # 客户端自带的 X-Tenant-Id / X-Tenant-Domain / X-Gateway-Trust，
+    # 且 TENANT_GATEWAY_TOKEN 已配置为网关与后端共享的高熵随机值。
+    # 否则等于把「伪造租户 ID 读全库」的洞放回来。
+    TRUST_TENANT_ID_HEADER: bool = False
+    TENANT_GATEWAY_TOKEN: str = ""
+    TENANT_GATEWAY_TOKEN_HEADER: str = "X-Gateway-Trust"
 
     # === P1 可观测规模化 ===
     # 启用 Prometheus 指标采集（/metrics 端点 + 中间件埋点）。
@@ -853,6 +878,28 @@ class Settings(BaseSettings):
                 f"当前值: {v}"
             )
         return v
+
+    @field_validator("MIGRATION_DATABASE_URL")
+    @classmethod
+    def validate_migration_database_url(cls, v: str | None) -> str | None:
+        """MIGRATION_DATABASE_URL 可为空（回退到 DATABASE_URL），非空时同样要求 asyncpg 驱动。
+
+        Alembic 的 env.py 会把它塞进 sqlalchemy.url，驱动写法必须一致，
+        否则会出现「运行时能连、迁移连不上」的分裂。
+        """
+        if v is None or v == "":
+            return None
+        if not v.startswith("postgresql+asyncpg://"):
+            raise ValueError(
+                f"MIGRATION_DATABASE_URL 必须使用 postgresql+asyncpg:// 异步驱动，"
+                f"当前值: {v}"
+            )
+        return v
+
+    @property
+    def migration_database_url(self) -> str:
+        """DDL / 迁移实际使用的连接串 — 未单独配置时回退到 DATABASE_URL。"""
+        return self.MIGRATION_DATABASE_URL or self.DATABASE_URL
 
     @field_validator(
         "DATABASE_POOL_SIZE",

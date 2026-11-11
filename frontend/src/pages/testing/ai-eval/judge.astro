@@ -267,8 +267,9 @@ const breadcrumb = [
     const name = (document.getElementById('dataset-name') as HTMLInputElement).value.trim();
     if (!name) { alert('请输入数据集名称'); return; }
     const desc = (document.getElementById('dataset-desc') as HTMLTextAreaElement).value.trim();
-    const checked = Array.from(document.querySelectorAll('#dimension-checkboxes input[type=checkbox]:checked'))
-      .map((el: HTMLInputElement) => el.value);
+    const checked = Array.from(
+      document.querySelectorAll<HTMLInputElement>('#dimension-checkboxes input[type=checkbox]:checked')
+    ).map((el) => el.value);
     const dimensions = checked.length > 0 ? checked : defaultDimensions;
 
     try {

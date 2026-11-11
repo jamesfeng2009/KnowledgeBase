@@ -8,13 +8,11 @@ OIDC 认证路由 — 单一职责：OIDC 登录跳转与回调。
 
 from __future__ import annotations
 
-import secrets
-
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_db_session
+from app.database import get_system_db_session
 from app.schemas.auth import TokenResponse
 from app.schemas.common import ApiResponse
 from app.services.oidc_service import OIDCDisabledError, OIDCError, OIDCService
@@ -23,11 +21,14 @@ router = APIRouter(prefix="/auth/oidc", tags=["认证 · OIDC"])
 
 
 @router.get("/login")
-async def oidc_login(
-    db: AsyncSession = Depends(get_db_session),
-) -> RedirectResponse:
-    """OIDC 登录：跳转授权端点。"""
-    service = OIDCService(db)
+async def oidc_login() -> RedirectResponse:
+    """OIDC 登录：跳转授权端点。
+
+    这一步只拼 URL，不查任何表，因此**不需要 DB 会话**。此前挂了
+    ``get_db_session``，fail-closed 之后会话无 GUC，虽然暂时用不上，
+    但等于给公开端点留了一条「以后加一行查询就静默返回空集」的陷阱。
+    """
+    service = OIDCService()
     try:
         url, state = service.build_authorize_url()
     except OIDCDisabledError as exc:
@@ -42,7 +43,9 @@ async def oidc_login(
 async def oidc_callback(
     code: str = Query(...),
     state: str = Query(default=""),
-    db: AsyncSession = Depends(get_db_session),
+    # 登录前按邮箱/sub 找用户天生是跨租户的（此时还没有本系统 JWT），
+    # 与 /auth/login、/auth/register 同构：必须显式声明跨租户会话。
+    db: AsyncSession = Depends(get_system_db_session),
 ) -> ApiResponse[TokenResponse]:
     """OIDC 回调：令牌交换 → userinfo → 登录/注册 → 本系统 JWT。"""
     del state

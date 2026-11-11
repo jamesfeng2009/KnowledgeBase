@@ -11,6 +11,18 @@
     - 写路径与主流程解耦：调用方用 asyncio.create_task 触发，失败不影响问答链路；
     - session_factory 可注入（测试隔离），默认复用全局 async_session_factory；
     - 遵循优雅降级：任何 DB 异常仅记录日志，不抛出。
+
+## RLS fail-closed 下的租户身份
+
+本服务自己开 ``async_session_factory()``，不走 ``get_db_session``，因此
+**没人替它写 GUC**。改造前所有 4 个方法在生产 RLS 下都只能看到 0 行：
+审计写不进去、管理员复查列表恒空、误判率恒 0，而且因为「优雅降级」全被
+吞成日志，表现为功能悄悄失效。
+
+现在每个方法都接受 ``tenant_id`` 并在会话内显式 ``apply_tenant``。
+调用方是已认证的管理员端点（传 ``user.tenant_id``）与 RAG 引擎
+（传 ``state["tenant_id"]``）。传 None 时**不兜底**，保持 fail-closed
+并打 warning —— 宁可丢一条审计，也不能让审计服务变成跨租户后门。
 """
 
 from __future__ import annotations
@@ -20,7 +32,9 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.tenant_context import apply_tenant
 from app.models.high_risk import HighRiskAuditRecord
 from app.utils.logger import get_logger
 
@@ -50,6 +64,17 @@ class HighRiskAuditService:
 
             self._session_factory = async_session_factory
         return self._session_factory
+
+    @staticmethod
+    async def _bind_tenant(session: AsyncSession, tenant_id: str | None) -> None:
+        """给自建会话写租户 GUC；无租户时保持 fail-closed 并留告警。"""
+        if tenant_id is None or not str(tenant_id).strip():
+            log.warning(
+                "high_risk_audit.missing_tenant_context",
+                reason="调用方未传 tenant_id；保持 fail-closed，不兜底到跨租户",
+            )
+            return
+        await apply_tenant(session, tenant_id)
 
     async def record_block_audit(
         self,
@@ -94,6 +119,7 @@ class HighRiskAuditService:
                 review_status="pending",
             )
             async with self.session_factory() as session:
+                await self._bind_tenant(session, tenant_id)
                 session.add(record)
                 await session.commit()
             log.info(
@@ -115,6 +141,7 @@ class HighRiskAuditService:
         review_status: str | None = None,
         limit: int = 20,
         offset: int = 0,
+        tenant_id: str | None = None,
     ) -> dict[str, Any]:
         """分页查询审计记录（管理员复查入口）。
 
@@ -122,12 +149,14 @@ class HighRiskAuditService:
             review_status: 按复查状态过滤；None 返回全部。
             limit: 每页条数（上限 100）。
             offset: 偏移量。
+            tenant_id: 调用方租户 ID（已认证用户）；None 时保持 fail-closed。
 
         Returns:
             {"total": int, "items": [dict]}；失败时返回空结果。
         """
         try:
             async with self.session_factory() as session:
+                await self._bind_tenant(session, tenant_id)
                 stmt = select(HighRiskAuditRecord)
                 count_stmt = select(func.count(HighRiskAuditRecord.id))
                 if review_status:
@@ -160,6 +189,7 @@ class HighRiskAuditService:
         review_status: str,
         reviewer_id: uuid.UUID,
         comment: str | None = None,
+        tenant_id: str | None = None,
     ) -> bool:
         """标记复查结论。
 
@@ -168,6 +198,7 @@ class HighRiskAuditService:
             review_status: "confirmed"（正确拦截）或 "misjudged"（误判）。
             reviewer_id: 复查人 ID。
             comment: 复查意见（可选）。
+            tenant_id: 调用方租户 ID（已认证用户）；None 时保持 fail-closed。
 
         Returns:
             是否更新成功。
@@ -176,6 +207,7 @@ class HighRiskAuditService:
             raise ValueError(f"无效复查状态: {review_status}")
         try:
             async with self.session_factory() as session:
+                await self._bind_tenant(session, tenant_id)
                 record = await session.get(HighRiskAuditRecord, record_id)
                 if record is None:
                     return False
@@ -194,8 +226,13 @@ class HighRiskAuditService:
             log.warning("high_risk_audit.review_failed", error=str(exc))
             return False
 
-    async def get_misjudgment_stats(self) -> dict[str, Any]:
+    async def get_misjudgment_stats(
+        self, *, tenant_id: str | None = None
+    ) -> dict[str, Any]:
         """误判率统计 — 反哺三档分级阈值调整。
+
+        Args:
+            tenant_id: 调用方租户 ID（已认证用户）；None 时保持 fail-closed。
 
         Returns:
             总量 / 已复查 / 误判数 / 误判率 / 当前分级阈值。
@@ -203,6 +240,7 @@ class HighRiskAuditService:
         """
         try:
             async with self.session_factory() as session:
+                await self._bind_tenant(session, tenant_id)
                 total = (
                     await session.execute(
                         select(func.count(HighRiskAuditRecord.id))
