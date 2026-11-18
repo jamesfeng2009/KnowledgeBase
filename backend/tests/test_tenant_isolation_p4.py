@@ -42,11 +42,15 @@ class TestRLSMigration:
 
     @pytest.fixture
     def rls_migration_content(self) -> str:
-        """读取 RLS 迁移文件内容。"""
+        """读取 P4 RLS 迁移文件内容。
+
+        按 revision ID 精确选取：glob("*rls*.py") 无序取 [0] 会被后续
+        新增的含 rls 字样迁移（如 B6 agent_state）抢占，断言对象漂移。
+        """
         backend = Path(__file__).resolve().parent.parent
         versions_dir = backend / "alembic" / "versions"
-        rls_files = list(versions_dir.glob("*rls*.py"))
-        assert len(rls_files) >= 1, "应有 RLS 迁移文件"
+        rls_files = list(versions_dir.glob("*b8c9d0e1f2a3*.py"))
+        assert len(rls_files) == 1, "应有唯一的 P4 RLS 迁移（b8c9d0e1f2a3）"
         return rls_files[0].read_text()
 
     def test_rls_migration_file_exists(self) -> None:

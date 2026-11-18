@@ -417,7 +417,9 @@ class TestP0ConversationDeletedGuard:
     async def test_skips_when_conversation_deleted(self, monkeypatch):
         from tasks.memory_tasks import _persist_memory_async
 
-        deleted_row = SimpleNamespace(id="i", deleted_at="2026-09-13 00:00:00")
+        deleted_row = SimpleNamespace(
+            id="i", tenant_id=None, deleted_at="2026-09-13 00:00:00"
+        )
         memory_mock = self._patch_env(monkeypatch, deleted_row)
 
         result = await _persist_memory_async(
@@ -449,7 +451,8 @@ class TestP0ConversationDeletedGuard:
     async def test_writes_when_conversation_alive(self, monkeypatch):
         from tasks.memory_tasks import _persist_memory_async
 
-        alive_row = SimpleNamespace(id="i", deleted_at=None)
+        # B3 后查询列为 (tenant_id, deleted_at)，fake 行须带 tenant_id
+        alive_row = SimpleNamespace(id="i", tenant_id=None, deleted_at=None)
         memory_mock = self._patch_env(monkeypatch, alive_row)
 
         result = await _persist_memory_async(

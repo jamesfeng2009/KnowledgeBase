@@ -85,6 +85,11 @@ class _FakeResult:
     def first(self):
         return self._row
 
+    def scalar(self):
+        # B6 后 save_checkpoint 会发 SELECT current_setting 解析租户 GUC，
+        # fake 未设 GUC → 返回 None（单租户/无身份语义）
+        return self._row[0] if isinstance(self._row, tuple) else self._row
+
 
 class TestCheckpointManagerMilestones:
     """CheckpointManager 里程碑方法测试。"""

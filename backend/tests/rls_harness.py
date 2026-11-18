@@ -114,7 +114,9 @@ async def rls_db():
         # NullPool：每会话一条新连接，GUC 不会串到下一个用例
         app_engine = create_async_engine(app_url, poolclass=NullPool)
         factory = sessionmaker(app_engine, class_=AsyncSession, expire_on_commit=False)
-        yield SimpleNamespace(factory=factory, owner_url=owner_dsn())
+        yield SimpleNamespace(
+            factory=factory, owner_url=owner_dsn(), app_url=app_url
+        )
     finally:
         if app_engine is not None:
             await app_engine.dispose()
