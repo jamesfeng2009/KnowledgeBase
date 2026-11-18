@@ -301,6 +301,7 @@ class TestPDFParserParse:
         mock_doc.__len__ = MagicMock(return_value=1)
         mock_doc.__getitem__ = MagicMock(return_value=mock_page)
         mock_doc.close = MagicMock()
+        mock_doc.needs_pass = False
         mock_doc.extract_image.return_value = {
             "image": b"\x89PNG fake bytes",
             "ext": "png",
@@ -319,6 +320,7 @@ class TestPDFParserParse:
             mock_settings.return_value.PDF_TABLE_EXTRACTION_ENABLED = True
             mock_settings.return_value.PDF_IMAGE_EXTRACTION_ENABLED = True
             mock_settings.return_value.PDF_IMAGE_MAX_PER_DOC = 50
+            mock_settings.return_value.PDF_SCAN_OCR_ENABLED = False
 
             parser = PDFParser()
             result = await parser.parse("/fake/doc.pdf")
@@ -345,6 +347,7 @@ class TestPDFParserParse:
         mock_doc.__len__ = MagicMock(return_value=1)
         mock_doc.__getitem__ = MagicMock(return_value=mock_page)
         mock_doc.close = MagicMock()
+        mock_doc.needs_pass = False
         mock_doc.extract_image.return_value = {
             "image": b"fake",
             "ext": "png",
@@ -363,6 +366,7 @@ class TestPDFParserParse:
             mock_settings.return_value.PDF_TABLE_EXTRACTION_ENABLED = False
             mock_settings.return_value.PDF_IMAGE_EXTRACTION_ENABLED = True
             mock_settings.return_value.PDF_IMAGE_MAX_PER_DOC = 3
+            mock_settings.return_value.PDF_SCAN_OCR_ENABLED = False
 
             parser = PDFParser()
             result = await parser.parse("/fake/doc.pdf")
@@ -384,6 +388,7 @@ class TestPDFParserParse:
         mock_doc.__len__ = MagicMock(return_value=1)
         mock_doc.__getitem__ = MagicMock(return_value=mock_page)
         mock_doc.close = MagicMock()
+        mock_doc.needs_pass = False
         mock_doc.extract_image.return_value = {"image": b"fake", "ext": "png"}
 
         mock_fitz = MagicMock()
@@ -2088,6 +2093,7 @@ class TestPDFScanOCR:
             mock_settings.return_value.PDF_TABLE_EXTRACTION_ENABLED = True
             mock_settings.return_value.PDF_IMAGE_EXTRACTION_ENABLED = True
             mock_settings.return_value.PDF_IMAGE_MAX_PER_DOC = 50
+            mock_settings.return_value.PDF_SCAN_OCR_ENABLED = False
             mock_settings.return_value.PDF_SCAN_OCR_ENABLED = True
             mock_settings.return_value.PDF_SCAN_OCR_MAX_PAGES = 20
 

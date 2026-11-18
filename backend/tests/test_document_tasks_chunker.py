@@ -402,7 +402,7 @@ class TestProcessDocumentAsyncIntegration:
 
     @pytest.mark.asyncio
     async def test_process_document_empty_text(self) -> None:
-        """空文档内容应返回 0 个分块但不报错。"""
+        """空文档内容必须显式 failed，不得冒充成功（A2 契约）。"""
         from tasks.document_tasks import _process_document_async
 
         mock_doc = MagicMock()
@@ -438,8 +438,9 @@ class TestProcessDocumentAsyncIntegration:
 
             result = await _process_document_async(_TEST_UUID)
 
-        assert result["status"] == "success"
-        assert result["chunk_count"] == 0
+        assert result["status"] == "failed"
+        assert mock_doc.parse_status == "failed"
+        assert mock_doc.parse_warnings, "空内容必须带用户可见 warning"
 
     @pytest.mark.asyncio
     async def test_process_document_doc_not_found(self) -> None:
