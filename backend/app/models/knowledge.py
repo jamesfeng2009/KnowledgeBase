@@ -88,6 +88,12 @@ class Document(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     content_hash: Mapped[str | None] = mapped_column(
         String(64), nullable=True, comment="内容 SHA-256 哈希（去重 + 增量更新）"
     )
+    # A14: 源文件哈希 — SHA-256(文件字节)，重索引时比对决定是否重解析。
+    # 与 content_hash（解析后文本哈希）语义不同：文件换了但解析文本恰好
+    # 相同时 content_hash 不变，只有源文件哈希能感知"该重新解析了"。
+    file_hash: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, comment="源文件 SHA-256 哈希（重索引重解析判定）"
+    )
     yjs_update: Mapped[bytes | None] = mapped_column(nullable=True, comment="Yjs 二进制状态")
     view_count: Mapped[int] = mapped_column(Integer, default=0, comment="浏览次数")
     summary: Mapped[str | None] = mapped_column(Text, nullable=True, comment="AI 自动摘要")

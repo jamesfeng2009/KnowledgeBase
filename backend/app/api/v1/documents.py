@@ -890,9 +890,18 @@ async def get_document(
     tenant_id = getattr(request.state, "tenant_id", None)
     service = KnowledgeService(db, user, tenant_id=tenant_id)
     doc = await service.get_document(doc_id)
+    data = DocResponse.model_validate(doc)
+    # A11: 输出前 minio:// 图片地址转 presigned HTTP URL（前端不可直访 minio://）；
+    # 存储层保留规范地址，签名仅在响应时生成，失败保留原地址不阻断
+    from app.document.image_storage import resolve_minio_image_urls
+
+    if data.content_text and "minio://" in data.content_text:
+        data.content_text = await resolve_minio_image_urls(data.content_text)
+    if data.content_html and "minio://" in data.content_html:
+        data.content_html = await resolve_minio_image_urls(data.content_html)
     return ApiResponse(
         code=0,
-        data=DocResponse.model_validate(doc),
+        data=data,
         message="success",
     )
 

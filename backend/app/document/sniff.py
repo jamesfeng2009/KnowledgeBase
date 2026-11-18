@@ -75,7 +75,9 @@ def sniff_file_type(data: bytes, max_head: int = 1024) -> FileSniff:
     head = data[:max_head]
 
     # 1) 二进制魔数精确匹配（按常用文档/高危格式优先）
-    if _starts_with(head, b"%PDF-"):
+    # PDF 规范允许文件头前有垃圾字节（邮件头/BOM/传输残留），
+    # 在头部 max_head 字节内搜索魔数而非要求偏移 0。
+    if b"%PDF-" in head:
         return FileSniff("pdf", False, "PDF 文档")
     if _starts_with(head, b"\x89PNG\r\n\x1a\n"):
         return FileSniff("png", False, "PNG 图片")

@@ -157,6 +157,34 @@ async def upload_file(
     return await asyncio.to_thread(_upload)
 
 
+async def get_presigned_url(
+    bucket: str, object_name: str, expires_in: int = 3600
+) -> str:
+    """生成对象的 presigned GET URL（A11：minio:// 地址前端不可直接访问）。
+
+    Args:
+        bucket: bucket 名称。
+        object_name: 对象路径。
+        expires_in: 有效期（秒）。
+
+    Returns:
+        带签名的 HTTP URL，有效期内可匿名读取。
+
+    Raises:
+        ImportError: ``boto3`` 未安装。
+        Exception: 签名失败（client 初始化/凭证问题）。
+    """
+    def _sign() -> str:
+        client = _get_client()
+        return client.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": bucket, "Key": object_name},
+            ExpiresIn=expires_in,
+        )
+
+    return await asyncio.to_thread(_sign)
+
+
 async def download_file(bucket: str, object_name: str) -> bytes:
     """从 S3 兼容存储下载文件。
 

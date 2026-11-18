@@ -33,6 +33,7 @@
 
 from __future__ import annotations
 
+import re
 import struct
 from typing import Any
 
@@ -269,6 +270,90 @@ async def upload_image(
     except Exception as exc:
         log.warning("image_upload.failed", object_name=object_name, error=str(exc))
         return None
+
+
+def extract_pdf_images(
+    file_path: str,
+    min_size: int = 50,
+    max_images: int = 50,
+) -> list[bytes]:
+    """用 fitz 直接从 PDF 提取内嵌图片二进制（A11 跨模态索引用）。
+
+    覆盖 Docling/legacy 全部 PDF 路径 — 替代原先 DoclingParser._parse_raw
+    的二次全量解析（ML 重跑只为拿图片，成本不对等）。
+    小图过滤规则与 upload_image 一致；任何异常由调用方降级。
+    """
+    import fitz
+
+    out: list[bytes] = []
+    doc = fitz.open(file_path)
+    try:
+        for page in doc:
+            for img in page.get_images(full=True):
+                if len(out) >= max_images:
+                    return out
+                try:
+                    info = doc.extract_image(img[0])
+                except Exception:
+                    continue
+                data = info.get("image")
+                if not data:
+                    continue
+                width = info.get("width", 0) or 0
+                height = info.get("height", 0) or 0
+                if width == 0 or height == 0:
+                    width, height = get_image_dimensions(data, info.get("ext", ""))
+                if (
+                    min_size > 0
+                    and width > 0
+                    and height > 0
+                    and (width < min_size or height < min_size)
+                ):
+                    continue
+                out.append(data)
+    finally:
+        doc.close()
+    return out
+
+
+#: minio:// URL 匹配（bucket + object key，停在引号/空白/尖括号边界）
+_MINIO_URL_RE = re.compile(r"minio://([^/\"'\s<>]+)/([^\"'\s<>]+)")
+
+
+async def resolve_minio_image_urls(text: str) -> str:
+    """输出前把文本中的 minio:// 地址统一转为 presigned HTTP URL（A11）。
+
+    存储层保留 minio:// 规范地址（不过期），仅在 API 输出时签名转换；
+    单条签名失败保留原地址并记日志，不阻断响应。
+    """
+    if not text or "minio://" not in text:
+        return text
+
+    settings = get_settings()
+    expires = settings.MINIO_PRESIGNED_EXPIRES_SECONDS
+    if not isinstance(expires, int) or expires <= 0:
+        expires = 3600
+
+    from app.utils.minio_client import get_presigned_url
+
+    cache: dict[str, str] = {}
+    parts: list[str] = []
+    last = 0
+    for m in _MINIO_URL_RE.finditer(text):
+        url = m.group(0)
+        if url not in cache:
+            try:
+                cache[url] = await get_presigned_url(m.group(1), m.group(2), expires)
+            except Exception as exc:
+                log.warning(
+                    "image_url.presign_failed", url=url, error=str(exc)[:200]
+                )
+                cache[url] = url
+        parts.append(text[last:m.start()])
+        parts.append(cache[url])
+        last = m.end()
+    parts.append(text[last:])
+    return "".join(parts)
 
 
 async def upload_images_batch(

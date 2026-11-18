@@ -319,6 +319,9 @@ def sort_reading_order(
 def extract_page_text_ordered(
     page_dict: dict[str, Any],
     page_width: float,
+    page_height: float = 0.0,
+    exclude_bboxes: list[tuple[float, float, float, float]] | None = None,
+    hf_keys: set[tuple] | None = None,
 ) -> str:
     """从 pymupdf ``get_text("dict")`` 结果生成按阅读顺序排列的纯文本。
 
@@ -328,6 +331,10 @@ def extract_page_text_ordered(
     Args:
         page_dict: ``page.get_text("dict")`` 的返回值。
         page_width: 页面宽度（pt），通常取 ``page.rect.width``。
+        page_height: 页面高度（pt），页眉页脚 key 计算需要。
+        exclude_bboxes: 需剔除的区域（如表格 bbox）— 中心落在区域内的
+            block 不进入正文，避免表格文字与 HTML 表格重复入库。
+        hf_keys: 跨页检测出的页眉页脚 key 集合，命中的 block 剔除。
 
     Returns:
         按阅读顺序拼接的文本（block 间以换行分隔）。无文本或异常返回空串。
@@ -338,6 +345,16 @@ def extract_page_text_ordered(
             tb for tb in (TextBlock.from_pymupdf(b) for b in raw_blocks)
             if tb is not None and tb.text.strip()
         ]
+        if exclude_bboxes:
+            blocks = [
+                b for b in blocks
+                if not _center_in_any_bbox(b, exclude_bboxes)
+            ]
+        if hf_keys and page_height > 0:
+            blocks = [
+                b for b in blocks
+                if header_footer_key(b, page_height) not in hf_keys
+            ]
         if not blocks:
             return ""
         ordered = sort_reading_order(blocks, page_width)
@@ -345,3 +362,85 @@ def extract_page_text_ordered(
     except Exception as exc:  # 防御：版式分析绝不能影响主解析流程
         log.warning("pdf.layout_analyze_failed", error=str(exc))
         return ""
+
+
+# 页眉页脚判定区：页面顶部/底部各 15% 高度带
+_HF_ZONE_RATIO: float = 0.15
+# key 的位置量化粒度（pt）：同位置容差，避免微小排版抖动漏判
+_HF_POS_QUANTUM: float = 10.0
+
+
+def header_footer_key(
+    block: TextBlock, page_height: float
+) -> tuple | None:
+    """计算 block 的页眉页脚候选 key；不在顶/底带内返回 None。
+
+    key = (文本,  zone, 量化 x0, 量化距页边距离)。
+    页码变化的页脚（"第 1 页"/"第 2 页"）文本不同，不会互相命中 —
+    这类页脚由调用方按需另行处理，本检测只覆盖恒定型页眉页脚。
+    """
+    text = block.text.strip()
+    if not text or page_height <= 0:
+        return None
+    if block.y1 <= page_height * _HF_ZONE_RATIO:
+        zone, dist = "top", block.y0
+    elif block.y0 >= page_height * (1 - _HF_ZONE_RATIO):
+        zone, dist = "bottom", page_height - block.y1
+    else:
+        return None
+    return (
+        text,
+        zone,
+        round(block.x0 / _HF_POS_QUANTUM),
+        round(dist / _HF_POS_QUANTUM),
+    )
+
+
+def detect_header_footer_keys(
+    page_dicts: list[dict[str, Any]],
+    min_pages: int = 3,
+) -> set[tuple]:
+    """跨页重复块检测 — 同文本同位置出现在 >= min_pages 页的顶/底块判为页眉页脚。
+
+    每页对同一 key 只计一次（同页重复出现不放大计数）。
+    正文中带区内的块不参与判定，避免误删每页重复的正文标语。
+
+    Args:
+        page_dicts: 各页 ``get_text("dict")`` 结果（含 width/height/blocks）。
+        min_pages: 判定阈值（出现页数下限）。
+
+    Returns:
+        页眉页脚 key 集合。页数不足或无重复时为空集。
+    """
+    from collections import Counter
+
+    if len(page_dicts) < min_pages or min_pages < 2:
+        return set()
+    counter: Counter = Counter()
+    for pd in page_dicts:
+        height = float(pd.get("height", 0) or 0)
+        if height <= 0:
+            continue
+        keys = set()
+        for raw in pd.get("blocks", []):
+            tb = TextBlock.from_pymupdf(raw)
+            if tb is None or not tb.text.strip():
+                continue
+            key = header_footer_key(tb, height)
+            if key is not None:
+                keys.add(key)
+        counter.update(keys)
+    return {key for key, count in counter.items() if count >= min_pages}
+
+
+def _center_in_any_bbox(
+    block: TextBlock,
+    bboxes: list[tuple[float, float, float, float]],
+) -> bool:
+    """block 中心是否落在任一剔除区域内。"""
+    cx = (block.x0 + block.x1) / 2
+    cy = (block.y0 + block.y1) / 2
+    return any(
+        x0 <= cx <= x1 and y0 <= cy <= y1
+        for x0, y0, x1, y1 in bboxes
+    )

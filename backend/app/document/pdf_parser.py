@@ -106,6 +106,12 @@ class PDFParser(DocumentParser):
         layout_analysis_enabled = self._bool(
             getattr(settings, "PDF_LAYOUT_ANALYSIS_ENABLED", True), True
         )
+        hf_enabled = self._bool(
+            getattr(settings, "PDF_HEADER_FOOTER_REMOVAL_ENABLED", True), True
+        )
+        hf_min_pages = self._int(
+            getattr(settings, "PDF_HEADER_FOOTER_MIN_PAGES", 3), 3
+        )
 
         sections: list[ParsedSection] = []
         image_count = 0
@@ -117,15 +123,44 @@ class PDFParser(DocumentParser):
         # close 之后 pymupdf Document 不可再访问（len/bool 均抛 ValueError），
         # 页数必须在关闭前缓存。
         page_count = len(doc)
+        # A12: 真实页数元数据 — 供调用方落库 page_count，不再按 <h2> 数推断
+        self.last_page_count = page_count
+
+        # A10: 跨页页眉页脚预检测（同文本同位置 >= N 页的顶/底块）
+        page_dicts: list[dict[str, Any]] = []
+        hf_keys: set[tuple] = set()
+        if layout_analysis_enabled and hf_enabled and page_count >= hf_min_pages:
+            try:
+                from app.document.layout_analyzer import detect_header_footer_keys
+
+                page_dicts = [doc[i].get_text("dict") for i in range(page_count)]
+                hf_keys = detect_header_footer_keys(page_dicts, hf_min_pages)
+            except Exception as exc:
+                log.debug("pdf.hf_detect_failed", error=str(exc))
+                page_dicts = []
 
         try:
             for page_num in range(page_count):
                 page = doc[page_num]
 
-                # 1. 提取文本（Phase 0: 版式分层重建阅读顺序，异常降级为 get_text）
-                text = self._extract_text_ordered(page, layout_analysis_enabled)
+                # 1. 先提取表格（Phase 1）— A13: 正文需按表格 bbox 剔除重复文字
+                table_sections: list[ParsedSection] = []
+                table_bboxes: list[tuple[float, float, float, float]] = []
+                if table_enabled:
+                    table_sections, table_bboxes = self._extract_tables(page, page_num)
+
+                # 2. 提取文本（Phase 0: 版式分层 + 页眉页脚剔除 + 表格区域去重）
+                text = self._extract_text_ordered(
+                    page,
+                    layout_analysis_enabled,
+                    page_dict=page_dicts[page_num] if page_dicts else None,
+                    exclude_bboxes=table_bboxes,
+                    hf_keys=hf_keys,
+                )
+                # 表格文字计入扫描判定，避免纯表格页被误判为扫描页触发 OCR
+                table_chars = sum(len(s.content) for s in table_sections)
                 # 文本覆盖率低于阈值 → 扫描主导页（含带少量文本层的混合扫描页）
-                if scan_ocr_enabled and len(text.strip()) < scan_min_chars:
+                if scan_ocr_enabled and len(text.strip()) + table_chars < scan_min_chars:
                     if scan_ocr_count < scan_ocr_max_pages:
                         scan_ocr_count += 1
                         ocr_text = await self._scan_page_ocr(doc, page, page_num)
@@ -156,10 +191,8 @@ class PDFParser(DocumentParser):
                         ParsedSection(kind="text", content=text, page=page_num)
                     )
 
-                # 2. 提取表格（Phase 1）
-                if table_enabled:
-                    table_sections = self._extract_tables(page, page_num)
-                    sections.extend(table_sections)
+                # 表格片段排在同页文本之后（保持原有输出顺序）
+                sections.extend(table_sections)
 
                 # 3. 提取图片（Phase 2 + Phase 3）
                 if image_enabled and image_count < max_images:
@@ -196,16 +229,26 @@ class PDFParser(DocumentParser):
             page_separator=page_separator,
         )
 
-    def _extract_text_ordered(self, page: Any, layout_analysis_enabled: bool) -> str:
+    def _extract_text_ordered(
+        self,
+        page: Any,
+        layout_analysis_enabled: bool,
+        page_dict: dict[str, Any] | None = None,
+        exclude_bboxes: list[tuple[float, float, float, float]] | None = None,
+        hf_keys: set[tuple] | None = None,
+    ) -> str:
         """提取页面文本，优先经版式分析层重建阅读顺序。
 
         版式分析（layout_analyzer）基于 get_text("dict") 的 block 坐标做
-        栏检测与阅读顺序排序，解决多栏版式乱序；任何异常或结果为空
-        均降级为 page.get_text()，保证内容不丢（仅可能不保顺序）。
+        栏检测与阅读顺序排序，解决多栏版式乱序；任何异常降级为
+        page.get_text()，保证内容不丢（仅可能不保顺序）。
 
         Args:
             page: pymupdf Page 对象。
             layout_analysis_enabled: 是否启用版式分析（配置开关）。
+            page_dict: 预取的 get_text("dict") 结果（页眉页脚预检测复用）。
+            exclude_bboxes: 表格区域 — 中心落入的 block 剔除（A13 去重）。
+            hf_keys: 页眉页脚 key 集合 — 命中的 block 剔除（A10）。
 
         Returns:
             页面纯文本（已 strip）。
@@ -214,18 +257,28 @@ class PDFParser(DocumentParser):
             try:
                 from app.document.layout_analyzer import extract_page_text_ordered
 
+                pd = page_dict if page_dict is not None else page.get_text("dict")
                 ordered = extract_page_text_ordered(
-                    page.get_text("dict"),
+                    pd,
                     float(page.rect.width),
+                    page_height=float(page.rect.height),
+                    exclude_bboxes=exclude_bboxes or None,
+                    hf_keys=hf_keys or None,
                 )
                 if ordered.strip():
                     return ordered.strip()
+                if exclude_bboxes or hf_keys:
+                    # 内容被表格去重/页眉页脚规则全部剔除 — 不得回退
+                    # get_text()，否则被剔除的文字会重新混入正文
+                    return ""
             except Exception as exc:
                 # 版式分析失败不致命 —— 降级为纯文本提取
                 log.debug("pdf.layout_fallback", error=str(exc))
         return page.get_text().strip()
 
-    def _extract_tables(self, page: Any, page_num: int) -> list[ParsedSection]:
+    def _extract_tables(
+        self, page: Any, page_num: int
+    ) -> tuple[list[ParsedSection], list[tuple[float, float, float, float]]]:
         """从 PDF 页面提取表格，转为 HTML <table> 标签。
 
         Args:
@@ -233,18 +286,20 @@ class PDFParser(DocumentParser):
             page_num: 页码。
 
         Returns:
-            表格 ParsedSection 列表。find_tables 不可用或无表格时返回空列表。
+            (表格 ParsedSection 列表, 表格 bbox 列表)。
+            bbox 供正文按区域去重（A13）。find_tables 不可用或无表格时返回 ([], [])。
         """
         try:
             table_finder = page.find_tables()
         except Exception as exc:
             log.debug("pdf.tables.find_failed", page=page_num, error=str(exc))
-            return []
+            return [], []
 
         if not table_finder or not table_finder.tables:
-            return []
+            return [], []
 
         sections: list[ParsedSection] = []
+        bboxes: list[tuple[float, float, float, float]] = []
         for table in table_finder.tables:
             try:
                 rows = table.extract()
@@ -257,8 +312,14 @@ class PDFParser(DocumentParser):
                 sections.append(
                     ParsedSection(kind="table", content=html, page=page_num)
                 )
+                try:
+                    bbox = tuple(float(v) for v in table.bbox)
+                    if len(bbox) == 4:
+                        bboxes.append(bbox)
+                except Exception:
+                    pass
 
-        return sections
+        return sections, bboxes
 
     @staticmethod
     def _rows_to_html(rows: list[list[str | None]]) -> str:

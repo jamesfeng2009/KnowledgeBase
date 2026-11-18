@@ -113,6 +113,8 @@ class Settings(BaseSettings):
     MINIO_ACCESS_KEY: str = ""
     MINIO_SECRET_KEY: str = ""
     MINIO_BUCKET: str = "ekb-documents"
+    # minio:// 图片 URL 输出前转 presigned HTTP URL 的有效期（秒）
+    MINIO_PRESIGNED_EXPIRES_SECONDS: int = 3600
 
     # === Neo4j 知识图谱 ===
     NEO4J_URI: str = "bolt://localhost:7687"
@@ -263,6 +265,10 @@ class Settings(BaseSettings):
     # PDF 版式分层 — 基于 get_text("dict") 坐标重建阅读顺序（借鉴 pdfminer 栏检测），
     # 解决复杂多栏版式乱序；关闭或异常时降级为 get_text() 纯文本
     PDF_LAYOUT_ANALYSIS_ENABLED: bool = True
+    # PDF 页眉页脚剔除 — 跨页重复块检测（同文本同位置出现在 >= N 页的顶/底块），
+    # 依赖版式分析层；关闭时页眉页脚混入正文
+    PDF_HEADER_FOOTER_REMOVAL_ENABLED: bool = True
+    PDF_HEADER_FOOTER_MIN_PAGES: int = 3
     # PPTX 图片提取 + VLM 描述
     PPTX_IMAGE_EXTRACTION_ENABLED: bool = True
     PPTX_IMAGE_MAX_PER_DOC: int = 50

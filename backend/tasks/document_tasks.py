@@ -731,6 +731,8 @@ async def _parse_and_chunk_async(doc_id: str, tenant_id: str | None = None) -> d
         _update_parse_progress(doc_id, stage="parsing", message="正在解析文档内容")
         parse_failed = False
         extracted_images: list[tuple[bytes, str]] = []
+        # A12: 清零旧页数 — 解析器能拿真实页数时优先，拿不到再按文本推断
+        doc.page_count = 0
         try:
             parsed_text, extracted_images = await _parse_document(doc, warnings=warnings)
         except Exception as exc:
@@ -803,7 +805,8 @@ async def _parse_and_chunk_async(doc_id: str, tenant_id: str | None = None) -> d
         doc.parse_status = "partial" if warnings else "parsed"
         doc.parse_warnings = warnings if warnings else None
         doc.char_count = len(parsed_text)
-        doc.page_count = _count_pages_from_text(parsed_text, doc_type)
+        if not (isinstance(getattr(doc, "page_count", 0), int) and doc.page_count > 0):
+            doc.page_count = _count_pages_from_text(parsed_text, doc_type)
         await session.commit()
 
         return {
@@ -1133,6 +1136,8 @@ async def _process_document_async(doc_id: str) -> dict[str, Any]:
         )
         parse_failed = False
         extracted_images: list[tuple[bytes, str]] = []
+        # A12: 清零旧页数 — 解析器能拿真实页数时优先，拿不到再按文本推断
+        doc.page_count = 0
         try:
             parsed_text, extracted_images = await _parse_document(doc, warnings=warnings)
         except Exception as exc:
@@ -1297,7 +1302,8 @@ async def _process_document_async(doc_id: str) -> dict[str, Any]:
         doc.parse_status = parse_status
         doc.parse_warnings = warnings if warnings else None
         doc.char_count = len(parsed_text)
-        doc.page_count = _count_pages_from_text(parsed_text, doc_type)
+        if not (isinstance(getattr(doc, "page_count", 0), int) and doc.page_count > 0):
+            doc.page_count = _count_pages_from_text(parsed_text, doc_type)
 
         if needs_review:
             doc.status = "pending_review"
@@ -1405,12 +1411,45 @@ async def _parse_document(
     Returns:
         (解析后的纯文本内容, 图片数据列表 [(二进制, VLM描述), ...])
     """
-    # 如果已有纯文本内容，直接返回（无图片数据）
-    if doc.content_text:
+    # 无源文件的编辑型文档：已有内容直接返回（无图片数据）
+    if doc.content_text and not doc.file_path:
         return doc.content_text, []
 
     async with _localized_file_path(doc):
-        return await _parse_document_dispatch(doc, warnings)
+        path = doc.file_path
+        doc_type = doc.doc_type or "md"
+        # A14: 按源文件哈希判定是否重解析 — 原实现 content_text 非空即返回，
+        # 文件更新后 reindex 仍用旧文本。视频/音频大文件跳过哈希。
+        can_hash = (
+            isinstance(path, str)
+            and os.path.isfile(path)
+            and doc_type not in _VIDEO_TYPES
+            and doc_type not in _AUDIO_TYPES
+        )
+        current_hash: str | None = None
+        if can_hash:
+            current_hash = _sha256_file(path)
+            if doc.content_text and doc.file_hash and current_hash == doc.file_hash:
+                return doc.content_text, []
+        elif doc.content_text:
+            # 源文件缺失/不可哈希：无法核验变化，维持旧行为返回已有内容
+            return doc.content_text, []
+
+        text, images = await _parse_document_dispatch(doc, warnings)
+        if current_hash and text and text.strip():
+            doc.file_hash = current_hash
+        return text, images
+
+
+def _sha256_file(path: str) -> str:
+    """流式计算文件 SHA-256（GB 级文件不一次性读入内存）。"""
+    import hashlib
+
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 async def _parse_document_dispatch(
@@ -1491,14 +1530,14 @@ async def _extract_images_for_cross_modal(
 
     try:
         if doc_type == "pdf":
-            from app.document.docling_parser import DoclingParser
+            # A11: fitz 直提图片 — 覆盖 Docling/legacy 全部路径，
+            # 消除原 DoclingParser._parse_raw 对 PDF 的二次全量 ML 解析
+            from app.document.image_storage import extract_pdf_images
 
-            parser = DoclingParser()
-            result = await parser._parse_raw(doc.file_path)
-            if result is not None:
-                pictures = DoclingParser._extract_pictures(result)
-                for pic in pictures:
-                    images.append((pic["data"], ""))
+            raw_images = await asyncio.to_thread(
+                extract_pdf_images, doc.file_path
+            )
+            images = [(b, "") for b in raw_images]
         elif doc_type in ("docx", "pptx"):
             # DOCX/PPTX: 使用解析器的图片提取能力
             from app.document.factory import get_parser_with_fallback
@@ -1653,6 +1692,10 @@ async def _parse_pdf(doc: Any, warnings: list[str] | None = None) -> str:
                 )
                 if warnings is not None:
                     warnings.extend(getattr(parser, "last_parse_warnings", []))
+                # A12: 真实页数元数据优先于 <h2> 数推断
+                real_pages = getattr(parser, "last_page_count", 0)
+                if isinstance(real_pages, int) and real_pages > 0:
+                    doc.page_count = real_pages
             else:
                 result = await parser.parse(doc.file_path)
             if result and result.strip():
@@ -1671,6 +1714,7 @@ async def _parse_pdf(doc: Any, warnings: list[str] | None = None) -> str:
         pdf_doc = fitz.open(doc.file_path)
         if pdf_doc.needs_pass and not pdf_doc.authenticate(""):
             raise EncryptedPDFError("PDF 已加密，无法解析，请解密后重新上传")
+        doc.page_count = len(pdf_doc)
         text_parts: list[str] = []
         for page in pdf_doc:
             text_parts.append(page.get_text())
