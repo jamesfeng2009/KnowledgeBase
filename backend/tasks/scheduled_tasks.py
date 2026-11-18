@@ -535,37 +535,21 @@ async def _check_expiration_async() -> dict[str, Any]:
 
 
 async def _cleanup_expired_facts_async() -> dict[str, Any]:
-    """异步清理过期的记忆事实。"""
-    from app.database import task_db_session
-    from app.models.billing import Tenant
-    from app.models.memory import MemoryFact
-    from app.utils.tenant import apply_tenant_filter
-    from sqlalchemy import select
+    """异步清理过期的记忆事实。
+
+    B9: 统一委托 Mem0Manager.cleanup_expired — 退场语义（forgotten_reason
+    + 激活值快照）与手动清理同源；跨租户会话一次扫全表，单租户 NULL 行
+    不再漏清（此前自写 SQL 按租户迭代，既缺退场字段又漏 NULL 行）。
+    """
     from datetime import datetime, timezone
+
+    from app.database import task_db_session
+    from app.memory.mem0_manager import Mem0Manager
 
     now = datetime.now(timezone.utc)
 
     async with task_db_session(cross_tenant_reason="scheduled_tasks._cleanup_expired_facts_async") as session:
-        # 按租户迭代：逐租户查询并清理过期的记忆事实，确保多租户隔离
-        tenants_result = await session.execute(
-            select(Tenant).where(Tenant.deleted_at.is_(None))
-        )
-        tenants = list(tenants_result.scalars().all())
-
-        cleaned_count = 0
-        for tenant in tenants:
-            # 查询已过期但仍然 active 的事实
-            stmt = select(MemoryFact).where(
-                MemoryFact.expires_at.isnot(None),
-                MemoryFact.expires_at < now,
-                MemoryFact.is_active.is_(True),
-            )
-            stmt = apply_tenant_filter(stmt, MemoryFact, tenant.id)
-            result = await session.execute(stmt)
-            for fact in result.scalars().all():
-                fact.is_active = False
-                cleaned_count += 1
-
+        cleaned_count = await Mem0Manager(session).cleanup_expired()
         await session.commit()
 
         return {

@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.llm.base import LLMProvider
 from app.llm.factory import get_llm_provider
 from app.memory import MemoryContext, MemoryManager
+from app.memory.event_log import EventLogManager, event_log_scope
 from app.models.conversation import Conversation, Message as MessageModel
 from app.models.user import User
 from app.rag.factory import get_rag_engine, get_rag_engine_by_model
@@ -199,11 +200,11 @@ class ChatService:
 
         await short_term_cache.append(conversation_id, "user", query)
 
-        # 3. 加载记忆上下文（四级记忆：短期窗口 + Checkpoint + Mem0 偏好 + 工作记忆）
+        # 3. 加载记忆上下文（L2 Checkpoint + L3 Mem0 偏好 + L4 工作记忆；
+        # L1 对话历史由下方热层注入，B8）
         memory_ctx = await self.memory.build_context(
             user_id=self.user.id,
             session_id=str(conversation_id),
-            recent_messages=[{"role": "user", "content": query}],
             query=query,
         )
 
@@ -602,96 +603,109 @@ class ChatService:
                 logger.warning("chat.contradiction_task_init_failed", error=str(exc))
 
             contra_pushed = False
-            try:
+            # B7: 混合恢复接线 — 激活请求级 EventLogManager，trace_node
+            # 装饰器经 contextvar 拾取后真实写节点事件（此前生产零消费）。
+            # 单租户 NULL 会话无 GUC，显式走审计 '*' 通道（B3/B6 同款契约）。
+            with event_log_scope(
+                EventLogManager(
+                    self.db,
+                    tenant_id=self._tenant_id,
+                    null_tenant_reason=(
+                        "chat_service.single_tenant_event_log"
+                        if self._tenant_id is None else None
+                    ),
+                )
+            ):
                 try:
-                    async for chunk in engine.answer(
-                        query=query,
-                        user_id=str(self.user.id),
-                        session_id=str(conversation_id),
-                        memory_context=memory_context,
-                        tenant_id=prepared.tenant_id,
-                        db=self.db,
-                        user_uuid=self.user.id,
-                        # T3 意图触发：IntentResult 透传给约束通道（零 LLM 复用）
-                        intent=intent_result,
-                        # P4-E: 传入对话焦点和漂移信息
-                        conversation_focus=prepared.conversation_focus,
-                        drift_info=prepared.drift_info,
-                        # B2-5: 请求级 ABAC 权限下推（kb_ids 召回层过滤 +
-                        # permission_filter 重排前密级过滤）
-                        kb_ids=accessible_kb_id_strs,
-                        permission_filter=permission_filter,
-                        # Bug3: 缓存 key 加入权限视图维度，跨权限视图互不可见
-                        cache_scope=cache_scope,
-                        # P0 wiki 层级：scope 作为 filters 下推到 retriever
-                        # （filters 指纹已并入 cache_scope，防跨层级缓存泄漏）
-                        filters=prepared.scope,
-                        # P0 密级下推：召回层密级白名单（与 permission_filter
-                        # 同源，Final Gate 仍为 DB 权威兜底）
-                        allowed_classifications=allowed_classifications,
-                    ):
-                        # P4-B: 在 token 流中检查后台矛盾检测是否完成
-                        if contra_task and not contra_pushed and contra_task.done():
-                            try:
-                                contra_result = contra_task.result()
-                                if contra_result.has_contradiction:
-                                    yield SSEEvent(
-                                        data=contra_result.to_dict(),
-                                        event=SSEEventType.CONTRADICTION_DETECTED,
-                                    )
-                            except Exception:
-                                pass  # 优雅降级
-                            contra_pushed = True
-
-                        # B2-5: 忠实度拦截重生成答案 — 已流出的旧答案作废，
-                        # 持久化内容替换为完整新答案（与客户端展示一致）。
-                        if (
-                            isinstance(chunk, SSEEvent)
-                            and chunk.event == SSEEventType.ANSWER_REGENERATED
-                            and isinstance(chunk.data, dict)
-                            and chunk.data.get("answer")
+                    try:
+                        async for chunk in engine.answer(
+                            query=query,
+                            user_id=str(self.user.id),
+                            session_id=str(conversation_id),
+                            memory_context=memory_context,
+                            tenant_id=prepared.tenant_id,
+                            db=self.db,
+                            user_uuid=self.user.id,
+                            # T3 意图触发：IntentResult 透传给约束通道（零 LLM 复用）
+                            intent=intent_result,
+                            # P4-E: 传入对话焦点和漂移信息
+                            conversation_focus=prepared.conversation_focus,
+                            drift_info=prepared.drift_info,
+                            # B2-5: 请求级 ABAC 权限下推（kb_ids 召回层过滤 +
+                            # permission_filter 重排前密级过滤）
+                            kb_ids=accessible_kb_id_strs,
+                            permission_filter=permission_filter,
+                            # Bug3: 缓存 key 加入权限视图维度，跨权限视图互不可见
+                            cache_scope=cache_scope,
+                            # P0 wiki 层级：scope 作为 filters 下推到 retriever
+                            # （filters 指纹已并入 cache_scope，防跨层级缓存泄漏）
+                            filters=prepared.scope,
+                            # P0 密级下推：召回层密级白名单（与 permission_filter
+                            # 同源，Final Gate 仍为 DB 权威兜底）
+                            allowed_classifications=allowed_classifications,
                         ):
-                            full_response_parts = [chunk.data["answer"]]
+                            # P4-B: 在 token 流中检查后台矛盾检测是否完成
+                            if contra_task and not contra_pushed and contra_task.done():
+                                try:
+                                    contra_result = contra_task.result()
+                                    if contra_result.has_contradiction:
+                                        yield SSEEvent(
+                                            data=contra_result.to_dict(),
+                                            event=SSEEventType.CONTRADICTION_DETECTED,
+                                        )
+                                except Exception:
+                                    pass  # 优雅降级
+                                contra_pushed = True
+
+                            # B2-5: 忠实度拦截重生成答案 — 已流出的旧答案作废，
+                            # 持久化内容替换为完整新答案（与客户端展示一致）。
+                            if (
+                                isinstance(chunk, SSEEvent)
+                                and chunk.event == SSEEventType.ANSWER_REGENERATED
+                                and isinstance(chunk.data, dict)
+                                and chunk.data.get("answer")
+                            ):
+                                full_response_parts = [chunk.data["answer"]]
+                                yield chunk
+                                continue
+
+                            if isinstance(chunk, str):
+                                full_response_parts.append(chunk)
                             yield chunk
-                            continue
 
-                        if isinstance(chunk, str):
-                            full_response_parts.append(chunk)
-                        yield chunk
-
-                    # P4-B: 引擎流结束后，检查矛盾检测是否已完成且尚未推送
-                    if contra_task and not contra_pushed:
-                        try:
-                            await asyncio.wait_for(contra_task, timeout=2.0)
-                            if contra_task.done():
-                                contra_result = contra_task.result()
-                                if contra_result.has_contradiction:
-                                    yield SSEEvent(
-                                        data=contra_result.to_dict(),
-                                        event=SSEEventType.CONTRADICTION_DETECTED,
-                                    )
-                        except Exception:
-                            pass  # 超时或异常 — 优雅降级
-                except PermissionError as exc:
-                    # 权限异常 → SSE error 事件（前端可友好展示，而非断流）
-                    logger.info(
-                        "chat.stream_permission_denied",
-                        error=str(exc),
-                        conversation_id=str(conversation_id),
-                    )
-                    yield SSEEvent(
-                        data={"type": "error", "message": str(exc)},
-                        event=SSEEventType.ERROR,
-                    )
-                    return
-            finally:
-                # 外层 try/finally 确保 contra_task 始终被取消或 await，
-                # 避免非 PermissionError 异常路径下后台任务继续运行泄漏。
-                if contra_task is not None:
-                    if not contra_task.done():
-                        contra_task.cancel()
-                    with contextlib.suppress(asyncio.CancelledError, Exception):
-                        await contra_task
+                        # P4-B: 引擎流结束后，检查矛盾检测是否已完成且尚未推送
+                        if contra_task and not contra_pushed:
+                            try:
+                                await asyncio.wait_for(contra_task, timeout=2.0)
+                                if contra_task.done():
+                                    contra_result = contra_task.result()
+                                    if contra_result.has_contradiction:
+                                        yield SSEEvent(
+                                            data=contra_result.to_dict(),
+                                            event=SSEEventType.CONTRADICTION_DETECTED,
+                                        )
+                            except Exception:
+                                pass  # 超时或异常 — 优雅降级
+                    except PermissionError as exc:
+                        # 权限异常 → SSE error 事件（前端可友好展示，而非断流）
+                        logger.info(
+                            "chat.stream_permission_denied",
+                            error=str(exc),
+                            conversation_id=str(conversation_id),
+                        )
+                        yield SSEEvent(
+                            data={"type": "error", "message": str(exc)},
+                            event=SSEEventType.ERROR,
+                        )
+                        return
+                finally:
+                    # 外层 try/finally 确保 contra_task 始终被取消或 await，
+                    # 避免非 PermissionError 异常路径下后台任务继续运行泄漏。
+                    if contra_task is not None:
+                        if not contra_task.done():
+                            contra_task.cancel()
+                        with contextlib.suppress(asyncio.CancelledError, Exception):
+                            await contra_task
 
         # 7-8. 流式结束后的持久化 — 短事务，写完即释放连接回池
         await self._persist_assistant_result(
@@ -1066,129 +1080,128 @@ class ChatService:
         system_prompt = _SYSTEM_PROMPTS.get(agent_type, _SYSTEM_PROMPTS["qa"])
         parts.append(system_prompt)
 
-        # 2. 记忆片段（偏好 + 短期窗口）
+        # 2. 记忆片段（偏好 + 工作记忆 + 进度参考）
         if memory_ctx:
-            fragment = memory_ctx.to_system_prompt(render_short_term=True)
+            fragment = memory_ctx.to_system_prompt()
             if fragment:
                 parts.append(fragment)
 
-        # 3. 对话历史 — 若记忆上下文无 short_term，优先 L1 热层（Redis），miss 回填 PG
-        if not (memory_ctx and memory_ctx.short_term):
-            _HISTORY_WINDOW = 16  # 最近 8 轮对话（16 条消息）
-            history_dicts = None
-            from app.memory.short_term_cache import short_term_cache
+        # 3. 对话历史 — L1 职责唯一归 chat 热层（B8）：优先 Redis，miss 回填 PG
+        _HISTORY_WINDOW = 16  # 最近 8 轮对话（16 条消息）
+        history_dicts = None
+        from app.memory.short_term_cache import short_term_cache
 
-            cached = await short_term_cache.get_window(
-                conversation_id, limit=_HISTORY_WINDOW + 1
+        cached = await short_term_cache.get_window(
+            conversation_id, limit=_HISTORY_WINDOW + 1
+        )
+        if cached is not None:
+            # 与 PG 路径一致：排除最后一条（刚保存的当前用户消息）
+            history_dicts = cached[:-1]
+            logger.debug("chat.history_from_cache", count=len(history_dicts))
+        if history_dicts is None:
+            history = await self.msg_repo.get_by_conversation(
+                conversation_id, limit=_HISTORY_WINDOW
             )
-            if cached is not None:
-                # 与 PG 路径一致：排除最后一条（刚保存的当前用户消息）
-                history_dicts = cached[:-1]
-                logger.debug("chat.history_from_cache", count=len(history_dicts))
-            if history_dicts is None:
-                history = await self.msg_repo.get_by_conversation(
-                    conversation_id, limit=_HISTORY_WINDOW
-                )
-                if history:
-                    history_dicts = [
+            if history:
+                history_dicts = [
+                    {"role": msg.role, "content": msg.content}
+                    for msg in history[:-1]  # 排除最后一条（刚保存的当前用户消息）
+                ]
+                # 回填热层（含当前用户消息，TTL 内后续轮次直读 Redis）
+                await short_term_cache.replace(
+                    conversation_id,
+                    [
                         {"role": msg.role, "content": msg.content}
-                        for msg in history[:-1]  # 排除最后一条（刚保存的当前用户消息）
-                    ]
-                    # 回填热层（含当前用户消息，TTL 内后续轮次直读 Redis）
-                    await short_term_cache.replace(
-                        conversation_id,
-                        [
-                            {"role": msg.role, "content": msg.content}
-                            for msg in history
-                        ],
+                        for msg in history
+                    ],
+                )
+        if history_dicts:
+
+            # P3-C: 滚动摘要压缩 — 旧历史超阈值时压缩为摘要 + 保留近期原文
+            try:
+                from app.config import get_settings
+
+                _settings = get_settings()
+                if _settings.CONVERSATION_SUMMARIZER_ENABLED and history_dicts:
+                    from app.context.conversation_summarizer import (
+                        ConversationSummarizer,
                     )
+
+                    # 获取已有摘要（从 memory_facts 的 summary 类别检索）
+                    existing_summary = ""
+                    if memory_ctx and memory_ctx.user_facts:
+                        for fact in memory_ctx.user_facts[:5]:
+                            if fact.get("category") == "summary":
+                                existing_summary = fact.get("fact_text", "")
+                                break
+
+                    summarizer = ConversationSummarizer(
+                        llm=self.llm,
+                        max_tokens=_settings.CONVERSATION_SUMMARIZER_MAX_TOKENS,
+                        retained_tokens=_settings.CONVERSATION_SUMMARIZER_RETAINED_TOKENS,
+                    )
+                    summary, recent_msgs = await summarizer.summarize_if_needed(
+                        history_dicts, existing_summary=existing_summary,
+                    )
+                    # 摘要非空时注入，recent_msgs 替换 history_dicts
+                    if summary and summary != existing_summary:
+                        parts.append(f"对话摘要：\n{summary}")
+                        # P1-3: 将压缩掉的旧消息段落落库，供"摘要后细节找回"
+                        old_count = len(history_dicts) - len(recent_msgs)
+                        if old_count > 0:
+                            await self._persist_recalled_details(
+                                history_dicts[:old_count],
+                            )
+                    history_dicts = recent_msgs
+            except Exception as exc:
+                logger.warning("chat.conversation_summarizer_failed", error=str(exc))
+                # 降级：使用原始历史
+
+            # P3-B: 语义上下文选择
+            try:
+                from app.config import get_settings
+
+                _settings = get_settings()
+                if _settings.CONTEXT_SELECTOR_ENABLED and resolved_query:
+                    from app.context.context_selector import ContextSelector
+
+                    selector = ContextSelector(
+                        max_tokens=_settings.CONTEXT_SELECTOR_MAX_TOKENS,
+                    )
+                    history_dicts = await selector.select(
+                        resolved_query,
+                        history_dicts,
+                        top_k=_settings.CONTEXT_SELECTOR_TOP_K,
+                    )
+            except Exception as exc:
+                logger.warning("chat.context_selector_failed", error=str(exc))
+                # 降级：使用原始历史
+
+            # P1-3: K 轮之前走检索召回细节 — 从已落库的旧消息中找回
+            # 与当前查询相关的细节，弥补摘要压缩丢失的旧细节（"摘要后细节找回"）
+            try:
+                from app.config import get_settings
+
+                _settings = get_settings()
+                if _settings.DETAIL_RECALL_ENABLED:
+                    recalled = await self._recall_details(
+                        resolved_query,
+                        limit=_settings.DETAIL_RECALL_LIMIT,
+                        max_tokens=_settings.DETAIL_RECALL_MAX_TOKENS,
+                    )
+                    if recalled:
+                        parts.append("历史细节召回：\n" + "\n".join(recalled))
+            except Exception as exc:
+                logger.warning("chat.detail_recall_failed", error=str(exc))
+                # 降级：仅用摘要 + 近期原文
+
             if history_dicts:
-
-                # P3-C: 滚动摘要压缩 — 旧历史超阈值时压缩为摘要 + 保留近期原文
-                try:
-                    from app.config import get_settings
-
-                    _settings = get_settings()
-                    if _settings.CONVERSATION_SUMMARIZER_ENABLED and history_dicts:
-                        from app.context.conversation_summarizer import (
-                            ConversationSummarizer,
-                        )
-
-                        # 获取已有摘要（从 memory_facts 的 summary 类别检索）
-                        existing_summary = ""
-                        if memory_ctx and memory_ctx.user_facts:
-                            for fact in memory_ctx.user_facts[:5]:
-                                if fact.get("category") == "summary":
-                                    existing_summary = fact.get("fact_text", "")
-                                    break
-
-                        summarizer = ConversationSummarizer(
-                            llm=self.llm,
-                            max_tokens=_settings.CONVERSATION_SUMMARIZER_MAX_TOKENS,
-                            retained_tokens=_settings.CONVERSATION_SUMMARIZER_RETAINED_TOKENS,
-                        )
-                        summary, recent_msgs = await summarizer.summarize_if_needed(
-                            history_dicts, existing_summary=existing_summary,
-                        )
-                        # 摘要非空时注入，recent_msgs 替换 history_dicts
-                        if summary and summary != existing_summary:
-                            parts.append(f"对话摘要：\n{summary}")
-                            # P1-3: 将压缩掉的旧消息段落落库，供"摘要后细节找回"
-                            old_count = len(history_dicts) - len(recent_msgs)
-                            if old_count > 0:
-                                await self._persist_recalled_details(
-                                    history_dicts[:old_count],
-                                )
-                        history_dicts = recent_msgs
-                except Exception as exc:
-                    logger.warning("chat.conversation_summarizer_failed", error=str(exc))
-                    # 降级：使用原始历史
-
-                # P3-B: 语义上下文选择
-                try:
-                    from app.config import get_settings
-
-                    _settings = get_settings()
-                    if _settings.CONTEXT_SELECTOR_ENABLED and resolved_query:
-                        from app.context.context_selector import ContextSelector
-
-                        selector = ContextSelector(
-                            max_tokens=_settings.CONTEXT_SELECTOR_MAX_TOKENS,
-                        )
-                        history_dicts = await selector.select(
-                            resolved_query,
-                            history_dicts,
-                            top_k=_settings.CONTEXT_SELECTOR_TOP_K,
-                        )
-                except Exception as exc:
-                    logger.warning("chat.context_selector_failed", error=str(exc))
-                    # 降级：使用原始历史
-
-                # P1-3: K 轮之前走检索召回细节 — 从已落库的旧消息中找回
-                # 与当前查询相关的细节，弥补摘要压缩丢失的旧细节（"摘要后细节找回"）
-                try:
-                    from app.config import get_settings
-
-                    _settings = get_settings()
-                    if _settings.DETAIL_RECALL_ENABLED:
-                        recalled = await self._recall_details(
-                            resolved_query,
-                            limit=_settings.DETAIL_RECALL_LIMIT,
-                            max_tokens=_settings.DETAIL_RECALL_MAX_TOKENS,
-                        )
-                        if recalled:
-                            parts.append("历史细节召回：\n" + "\n".join(recalled))
-                except Exception as exc:
-                    logger.warning("chat.detail_recall_failed", error=str(exc))
-                    # 降级：仅用摘要 + 近期原文
-
-                if history_dicts:
-                    history_lines: list[str] = []
-                    for msg_dict in history_dicts:
-                        role_label = "用户" if msg_dict.get("role") == "user" else "助手"
-                        history_lines.append(f"[{role_label}] {msg_dict.get('content', '')}")
-                    if history_lines:
-                        parts.append("对话历史：\n" + "\n".join(history_lines))
+                history_lines: list[str] = []
+                for msg_dict in history_dicts:
+                    role_label = "用户" if msg_dict.get("role") == "user" else "助手"
+                    history_lines.append(f"[{role_label}] {msg_dict.get('content', '')}")
+                if history_lines:
+                    parts.append("对话历史：\n" + "\n".join(history_lines))
 
         return "\n\n".join(parts)
 

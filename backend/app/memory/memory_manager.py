@@ -29,13 +29,6 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# 短期窗口大小：保留最近 N 条消息作为上下文
-SHORT_TERM_WINDOW_SIZE = 20
-
-# P1-Opt5: L1 短期窗口注入 LLM 的最大消息条数（每条截断到 _SHORT_TERM_MSG_MAX_CHARS）
-_SHORT_TERM_INJECT_SIZE = 8  # 最近 4 轮对话（8 条消息）
-_SHORT_TERM_MSG_MAX_CHARS = 200  # 每条消息截断到 200 字符
-
 # P1-Opt5: L3 用户偏好注入 top-N（从全量 10 条缩减到 top-3，省 ~200 tok）
 _L3_INJECT_TOP_N = 3
 
@@ -60,40 +53,28 @@ def _fact_to_dict(fact) -> dict:
 
 
 class MemoryContext:
-    """聚合后的记忆上下文 — 传递给 Agent Loop 的完整记忆。"""
+    """聚合后的记忆上下文 — 传递给 Agent Loop 的完整记忆。
+
+    B8: L1 短期窗口职责归 chat 的 Redis/PG 热层（short_term_cache +
+    _build_engine_memory_context 历史注入）；原 short_term 字段从未被
+    填充，属僵尸字段，已删除。
+    """
 
     def __init__(self):
-        self.short_term: list[dict] = []       # L1: 最近消息
         self.checkpoint: dict | None = None      # L2: 会话状态
         self.user_facts: list[dict] = []        # L3: 用户偏好和事实
         self.working_memory: list[dict] = []    # L4: 工作记忆
 
-    def to_system_prompt(self, render_short_term: bool = False) -> str:
-        """将记忆上下文转换为 system prompt 片段。
+    def to_system_prompt(self) -> str:
+        """将记忆上下文转换为 system prompt 片段（L2/L3/L4）。
 
-        P1-Opt5: 新增 render_short_term 参数，为 True 时渲染 L1 短期窗口
-        （修复 W7: 之前 L1 加载后不渲染，ChatService 另从 DB 双重加载）。
-        L3 用户偏好从全量 top-10 缩减到 top-3，省 ~200 tok。
-
-        Args:
-            render_short_term: 是否渲染 L1 短期窗口到 system prompt。
-                ChatService 传 True（使用 memory_ctx 中的 short_term，
-                不再从 DB 重新加载）；AgenticRAGEngine 传 False（由
-                Agent Loop 自己管理对话历史）。
+        L3 用户偏好从全量 top-10 缩减到 top-3，省 ~200 tok（P1-Opt5）。
+        L1 对话历史由 chat 热层单独注入，不在此渲染（B8）。
 
         Returns:
             拼接后的 system prompt 片段。
         """
         parts = []
-
-        # P1-Opt5: L1 短期窗口 — 修复 W7（之前加载后不渲染）
-        if render_short_term and self.short_term:
-            recent = self.short_term[-_SHORT_TERM_INJECT_SIZE:]
-            parts.append("=== 近期对话 ===")
-            for msg in recent:
-                role = msg.get("role", "user")
-                content = str(msg.get("content", ""))[:_SHORT_TERM_MSG_MAX_CHARS]
-                parts.append(f"{role}: {content}")
 
         # P1-Opt5: L3 用户偏好 — top-3 而非 top-10
         if self.user_facts:
@@ -126,7 +107,6 @@ class MemoryContext:
 
     def to_dict(self) -> dict:
         return {
-            "short_term": self.short_term,
             "checkpoint": self.checkpoint,
             "user_facts": self.user_facts,
             "working_memory": self.working_memory,
@@ -138,7 +118,7 @@ class MemoryManager:
 
     使用方式：
         memory = MemoryManager(db)
-        ctx = await memory.build_context(user_id, session_id, messages)
+        ctx = await memory.build_context(user_id, session_id, query=query)
         system_prompt = ctx.to_system_prompt()
 
         # 对话结束后保存
@@ -173,16 +153,31 @@ class MemoryManager:
         独立短会话，与 mem0 分支（请求会话内串行 L3→L4）真正并行。
         新会话内传播租户 GUC，保持与请求会话一致的 RLS 边界。
         """
+        from app.core.tenant_context import session_tenant_id, system_scope
         from app.database import async_session_factory
         from sqlalchemy import text
 
         async with async_session_factory() as session:
-            if self._tenant_id is not None:
-                tenant_uuid = uuid.UUID(str(self._tenant_id))
+            tenant_id = self._tenant_id
+            if tenant_id is None:
+                # 构造参数未指定时传播请求会话 GUC，保持 RLS 边界一致
+                tenant_id = await session_tenant_id(self.db)
+            if tenant_id is not None:
+                tenant_uuid = uuid.UUID(str(tenant_id))
                 await session.execute(
                     text(f"SET LOCAL app.tenant_id = '{tenant_uuid}'")
                 )
-            return await CheckpointManager(session).load_checkpoint(session_id)
+                return await CheckpointManager(session).load_checkpoint_with_event_log(
+                    session_id
+                )
+            # B7: 单租户 NULL checkpoint 无 GUC 可读 — 显式审计 '*' 通道
+            # （B3 同款契约）；混合恢复重放 base_seq 之后的事件增量
+            async with system_scope(
+                session, reason="memory_manager.single_tenant_checkpoint_load"
+            ):
+                return await CheckpointManager(session).load_checkpoint_with_event_log(
+                    session_id
+                )
 
     def _get_sidecar(self) -> Any | None:
         """返回副车道检索器；未注入且开关关闭时返回 None（走原逻辑）。
@@ -210,7 +205,6 @@ class MemoryManager:
         self,
         user_id: uuid.UUID,
         session_id: str | None = None,
-        recent_messages: list[dict] | None = None,
         query: str | None = None,
     ) -> MemoryContext:
         """构建完整的记忆上下文（四级合并）。
@@ -218,7 +212,6 @@ class MemoryManager:
         Args:
             user_id: 用户 ID
             session_id: 会话 ID（为 None 则跳过 Checkpoint）
-            recent_messages: 最近消息列表（L1 短期窗口）
             query: 当前用户查询（传入后 L3 长期记忆使用语义检索，
                 而非简单的时间排序平铺）
 
@@ -317,7 +310,6 @@ class MemoryManager:
         logger.info(
             "memory_context_built",
             user_id=str(user_id),
-            short_term_count=len(ctx.short_term),
             has_checkpoint=ctx.checkpoint is not None,
             user_facts_count=len(ctx.user_facts),
             working_memory_count=len(ctx.working_memory),
@@ -346,8 +338,24 @@ class MemoryManager:
         # L2: 保存 Checkpoint — 只有拿到真实状态才写
         if agent_state is not None:
             try:
+                from app.core.tenant_context import session_tenant_id, system_scope
+
                 iteration = agent_state.get("iteration", 0)
-                await self.checkpoint.save_checkpoint(session_id, agent_state, iteration)
+                # B7: 混合恢复接线 — 快照记录 base_seq，加载时重放其后增量
+                if self._tenant_id is None and await session_tenant_id(self.db) is None:
+                    # 单租户 NULL 会话无 GUC，fail-closed 拒写；调用方显式
+                    # 声明审计 '*' 作用域（B3 同款契约，不自动 fail-open）
+                    async with system_scope(
+                        self.db,
+                        reason="memory_manager.single_tenant_checkpoint_save",
+                    ):
+                        await self.checkpoint.save_checkpoint_with_event_log(
+                            session_id, agent_state, iteration
+                        )
+                else:
+                    await self.checkpoint.save_checkpoint_with_event_log(
+                        session_id, agent_state, iteration
+                    )
             except Exception as e:
                 logger.error("checkpoint_save_failed", session_id=session_id, error=str(e))
 

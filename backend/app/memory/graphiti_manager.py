@@ -135,6 +135,9 @@ class GraphitiManager:
             old_value=old_value,
             new_value=new_value,
         )
+        # B9: 事件落库后 best-effort 同步 Neo4j（可选图分析后端，
+        # sync_to_graph 内部吞错只记日志，不阻塞主流程）
+        await self.sync_to_graph(entity_id)
         return event
 
     async def record_preference_change(

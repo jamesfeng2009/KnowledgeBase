@@ -38,6 +38,7 @@ from app.api.v1.knowledge_approvals import router as knowledge_approvals_router
 from app.api.v1.knowledge_candidates import router as knowledge_candidates_router
 from app.api.v1.knowledge_compounding import router as compounding_router
 from app.api.v1.manage import router as manage_router
+from app.api.v1.memory import router as memory_router
 from app.api.v1.models import router as models_router
 from app.api.v1.multimodal import router as multimodal_router
 from app.api.v1.notifications import router as notifications_router
@@ -105,6 +106,7 @@ api_router.include_router(compounding_router)
 api_router.include_router(knowledge_approvals_router)
 api_router.include_router(knowledge_candidates_router)
 api_router.include_router(manage_router)
+api_router.include_router(memory_router)
 api_router.include_router(admin_router)
 api_router.include_router(delivery_chain_router)
 api_router.include_router(observability_router)

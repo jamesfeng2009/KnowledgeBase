@@ -193,8 +193,13 @@ def _make_dashscope_embedder() -> EmbeddingProvider:
 
 @register_embedder("private_overseas")
 @register_embedder("private_domestic")
+@register_embedder("private_finetuned")
 def _make_tei_embedder() -> EmbeddingProvider:
-    """私有部署（海外/国内）：BGE-M3 via TEI。"""
+    """私有部署（海外/国内/微调）：BGE-M3 via TEI。
+
+    private_finetuned 的"微调"仅针对 LLM（vLLM 多 LoRA），embedding
+    与其他私有模式一致走 TEI/BGE-M3（B10）。
+    """
     return TEIEmbedder()
 
 
@@ -203,7 +208,8 @@ def get_embedder() -> EmbeddingProvider:
     """获取当前部署模式的 Embedding Provider（单例，复用底层连接）。
 
     通过 DEPLOY_MODE 切换：saas → OpenAIEmbedder，
-    private_overseas/private_domestic → TEIEmbedder。
+    saas_dashscope → DashScopeEmbedder，
+    private_overseas/private_domestic/private_finetuned → TEIEmbedder。
     """
     mode = settings.DEPLOY_MODE
     factory = _embedder_registry.get(mode)
@@ -220,9 +226,8 @@ def memory_embedding_dim(s: Settings | None = None) -> int:
 
     与 get_embedder 的注册表一一对应，但不实例化客户端（建表/迁移期
     不该依赖 API Key）：saas → OpenAIEmbedder.dim，
-    saas_dashscope → DASHSCOPE_EMBED_DIM，private_* → TEIEmbedder.dim。
-    private_finetuned 尚未注册 embedder（B10），列宽暂按 TEI 兜底，
-    注册后需同步本函数。
+    saas_dashscope → DASHSCOPE_EMBED_DIM，private_*（含 private_finetuned，
+    微调仅针对 LLM）→ TEIEmbedder.dim。
     """
     if s is None:
         s = get_settings()

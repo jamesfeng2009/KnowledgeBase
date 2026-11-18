@@ -302,7 +302,6 @@ class BaseAgent(ABC):
             ctx = await self.memory.build_context(
                 user_id=UUID(user_id),
                 session_id=session_id,
-                recent_messages=[{"role": "user", "content": query}],
                 query=query,
             )
             return ctx.to_system_prompt()

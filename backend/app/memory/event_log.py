@@ -121,9 +121,18 @@ class EventLogManager:
     装饰器已在 end_span 阶段完成 scrub，append 时直接接收 scrubbed 数据）。
     """
 
-    def __init__(self, db: AsyncSession, tenant_id: uuid.UUID | None = None) -> None:
+    def __init__(
+        self,
+        db: AsyncSession,
+        tenant_id: uuid.UUID | None = None,
+        *,
+        null_tenant_reason: str | None = None,
+    ) -> None:
         self.db = db
         self._tenant_id = tenant_id
+        # B7：单租户 NULL 会话无 GUC，fail-closed 会拒绝读写。调用方显式
+        # 提供 reason 时才走审计 '*' 通道（B6 契约：默认无 GUC 写入仍被拒）。
+        self._null_tenant_reason = null_tenant_reason
 
     async def _resolve_tenant_id(self) -> uuid.UUID | None:
         """写入行的租户归属：构造参数优先，其次会话 GUC（与 RLS 同源）。"""
@@ -206,6 +215,26 @@ class EventLogManager:
             RETURNING seq
         """)
 
+        if tenant_id is None and self._null_tenant_reason:
+            from app.core.tenant_context import system_scope
+
+            async with system_scope(self.db, reason=self._null_tenant_reason):
+                return await self._append_with_retry(
+                    stmt, params, session_id, node_name, event_type
+                )
+        return await self._append_with_retry(
+            stmt, params, session_id, node_name, event_type
+        )
+
+    async def _append_with_retry(
+        self,
+        stmt: Any,
+        params: dict[str, Any],
+        session_id: str,
+        node_name: str,
+        event_type: str,
+    ) -> int:
+        """seq 冲突有限重试的 INSERT 主体（savepoint 隔离，B5）。"""
         last_exc: Exception | None = None
         for attempt in range(_MAX_APPEND_ATTEMPTS):
             try:
