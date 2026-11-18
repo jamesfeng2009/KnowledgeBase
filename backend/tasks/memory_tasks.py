@@ -50,90 +50,99 @@ async def _persist_memory_async(
     }
 
     async with task_db_session() as session:
-        from app.core.tenant_context import apply_tenant, resolve_tenant_of_row
+        from contextlib import nullcontext
 
-        # RLS fail-closed：会话归属哪个租户必须先查出来，否则下面的
-        # conversations 查询恒为空，会被误判成"会话已删除"而静默跳过写回
-        _tid = await resolve_tenant_of_row(
-            session,
-            table="conversations",
-            row_id=session_id,
-            reason="memory_tasks._persist_memory_async",
-        )
-        if _tid:
-            await apply_tenant(session, _tid)
+        from sqlalchemy import select
 
-        # P1b 竞态守卫：派发后用户可能已删除会话（软删除）——
-        # 此时写回记忆会产生指向已删除会话的"僵尸记忆"，直接跳过。
+        from app.core.tenant_context import apply_tenant, system_scope
+        from app.models.conversation import Conversation
+
+        # RLS fail-closed 下必须先拿到会话归属才能写记忆。一次 '*' 作用域
+        # 查询同时取 tenant_id 与 deleted_at，区分三种情况：
+        #   行不存在 / 已软删除 → 跳过（竞态守卫，防"僵尸记忆"）
+        #   tenant_id 非空     → 严格租户作用域写入
+        #   tenant_id 为 NULL  → 单租户部署的合法会话。fail-closed 策略里
+        #     NULL 行只在 '*' 下可见/可写，若按"无身份"处理会被误判成
+        #     "会话已删除"而全丢（B3）。写入体放进带审计理由的 '*' 作用域。
         try:
-            from sqlalchemy import select
-
-            from app.models.conversation import Conversation
-
             conv_uuid = _uuid.UUID(session_id)
-            row = (
-                await session.execute(
-                    select(Conversation.id, Conversation.deleted_at).where(
-                        Conversation.id == conv_uuid
-                    )
-                )
-            ).first()
-            if row is None or row.deleted_at is not None:
-                logger.info(
-                    "memory_task.skipped_conversation_gone",
-                    session_id=session_id,
-                    deleted=row is not None,
-                )
-                return result
         except ValueError:
             logger.warning(
                 "memory_task.invalid_session_id", session_id=session_id
             )
             return result
 
-        memory = MemoryManager(session)
+        async with system_scope(
+            session, reason="memory_tasks.lookup_conversation_owner"
+        ):
+            row = (
+                await session.execute(
+                    select(Conversation.tenant_id, Conversation.deleted_at).where(
+                        Conversation.id == conv_uuid
+                    )
+                )
+            ).first()
 
-        # 1. Checkpoint + summary（与 save_session 行为一致）
-        try:
-            await memory.save_session(
-                user_id=_uuid.UUID(user_id),
+        if row is None or row.deleted_at is not None:
+            logger.info(
+                "memory_task.skipped_conversation_gone",
                 session_id=session_id,
-                agent_state=agent_state or {"iteration": 0, "retrieved_docs": []},
-                summary=summary or None,
+                deleted=row is not None,
             )
-            result["session_saved"] = True
-        except Exception as exc:
-            # 记忆写入失败 = 数据丢失，必须 error 级可见（B1：不得静默）
-            logger.error("memory_task.save_session_failed", error=str(exc))
+            return result
 
-        # 2. 事实提取（含溯源）
-        try:
-            from uuid import UUID as _UUID
-
-            result["facts"] = await memory.extract_and_save_facts(
-                _UUID(user_id),
-                [{"role": "user", "content": query}],
-                message_ids=(
-                    [_UUID(user_message_id)] if user_message_id else None
-                ),
+        if row.tenant_id is not None:
+            await apply_tenant(session, row.tenant_id)
+            write_scope = nullcontext()
+        else:
+            write_scope = system_scope(
+                session, reason="memory_tasks.single_tenant_null_tenant"
             )
-        except Exception as exc:
-            logger.error("memory_task.extract_facts_failed", error=str(exc))
 
-        # 3. 关键决策 → working memory（chat_service 路径专属）
-        if extract_decisions:
+        async with write_scope:
+            memory = MemoryManager(session)
+
+            # 1. Checkpoint + summary（与 save_session 行为一致）
+            try:
+                await memory.save_session(
+                    user_id=_uuid.UUID(user_id),
+                    session_id=session_id,
+                    agent_state=agent_state,
+                    summary=summary or None,
+                )
+                result["session_saved"] = True
+            except Exception as exc:
+                # 记忆写入失败 = 数据丢失，必须 error 级可见（B1：不得静默）
+                logger.error("memory_task.save_session_failed", error=str(exc))
+
+            # 2. 事实提取（含溯源）
             try:
                 from uuid import UUID as _UUID
 
-                await memory.extract_and_save_key_decisions(
-                    user_id=_UUID(user_id),
-                    query=query,
-                    answer=assistant_content,
+                result["facts"] = await memory.extract_and_save_facts(
+                    _UUID(user_id),
+                    [{"role": "user", "content": query}],
+                    message_ids=(
+                        [_UUID(user_message_id)] if user_message_id else None
+                    ),
                 )
             except Exception as exc:
-                logger.error("memory_task.key_decisions_failed", error=str(exc))
+                logger.error("memory_task.extract_facts_failed", error=str(exc))
 
-        await session.commit()
+            # 3. 关键决策 → working memory（chat_service 路径专属）
+            if extract_decisions:
+                try:
+                    from uuid import UUID as _UUID
+
+                    await memory.extract_and_save_key_decisions(
+                        user_id=_UUID(user_id),
+                        query=query,
+                        answer=assistant_content,
+                    )
+                except Exception as exc:
+                    logger.error("memory_task.key_decisions_failed", error=str(exc))
+
+            await session.commit()
 
     return result
 

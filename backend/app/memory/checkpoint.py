@@ -133,8 +133,21 @@ class CheckpointManager:
     支持多轮对话中断恢复和 Agent 迭代状态追踪。
     """
 
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession, tenant_id: uuid.UUID | None = None):
         self.db = db
+        self._tenant_id = tenant_id
+
+    async def _resolve_tenant_id(self) -> uuid.UUID | None:
+        """写入行的租户归属：构造参数优先，其次会话 GUC（与 RLS 同源）。
+
+        两者都拿不到时返回 None —— fail-closed RLS 会拒绝写入，
+        不在这里静默兜底（单租户 NULL 会话由调用方显式走 '*' 审计作用域）。
+        """
+        if self._tenant_id is not None:
+            return uuid.UUID(str(self._tenant_id))
+        from app.core.tenant_context import session_tenant_id
+
+        return await session_tenant_id(self.db)
 
     async def save_checkpoint(
         self,
@@ -163,22 +176,30 @@ class CheckpointManager:
             )
 
         state_json = json.dumps(safe_state, ensure_ascii=False)
+        tenant_id = await self._resolve_tenant_id()
 
-        # 使用 upsert：存在则更新，不存在则插入
+        # 使用 upsert：存在则更新，不存在则插入。
+        # 冲突时保留已有租户归属（COALESCE），不用新值覆写所有权。
         await self.db.execute(
             text("""
-                INSERT INTO agent_checkpoints (session_id, agent_state, iteration, updated_at)
-                VALUES (:session_id, CAST(:state AS jsonb), :iteration, NOW())
+                INSERT INTO agent_checkpoints
+                    (session_id, agent_state, iteration, updated_at, tenant_id)
+                VALUES (:session_id, CAST(:state AS jsonb), :iteration, NOW(),
+                        CAST(:tenant_id AS uuid))
                 ON CONFLICT (session_id)
                 DO UPDATE SET
                     agent_state = CAST(:state AS jsonb),
                     iteration = :iteration,
-                    updated_at = NOW()
+                    updated_at = NOW(),
+                    tenant_id = COALESCE(
+                        agent_checkpoints.tenant_id, EXCLUDED.tenant_id
+                    )
             """),
             {
                 "session_id": session_id,
                 "state": state_json,
                 "iteration": iteration,
+                "tenant_id": str(tenant_id) if tenant_id is not None else None,
             },
         )
         await self.db.flush()

@@ -110,13 +110,17 @@ class MemoryContext:
             working = [f["fact_text"] for f in self.working_memory]
             parts.append("当前任务上下文：\n" + "\n".join(f"  - {w}" for w in working))
 
-        # L2: Checkpoint 恢复 — 仅有实质进度时才渲染恢复提示，
-        # 存根 checkpoint（iteration=0 且无检索结果）不渲染，避免误导性文本
+        # L2: Checkpoint 进度参考 — chat 路径的加载只渲染这段文本，
+        # 并不真正恢复 Agent Loop 状态，因此不得谎称「从上次中断处恢复」（B4）。
+        # 存根 checkpoint（iteration=0 且无检索结果）不渲染。
         if self.checkpoint:
             iteration = self.checkpoint.get("iteration", 0)
             retrieved_count = len(self.checkpoint.get("retrieved_docs", []))
             if iteration > 0 or retrieved_count > 0:
-                parts.append(f"（从上次中断处恢复：已迭代 {iteration} 次，已检索 {retrieved_count} 条文档）")
+                parts.append(
+                    f"（历史进度参考：已迭代 {iteration} 次，已检索 {retrieved_count} 条文档；"
+                    "仅供了解既往进度，不代表可从中断处继续执行）"
+                )
 
         return "\n\n".join(parts) if parts else ""
 
@@ -150,7 +154,7 @@ class MemoryManager:
         self.db = db
         self.mem0 = Mem0Manager(db, tenant_id=tenant_id)
         self.graphiti = GraphitiManager(db, tenant_id=tenant_id)
-        self.checkpoint = CheckpointManager(db)
+        self.checkpoint = CheckpointManager(db, tenant_id=tenant_id)
         # 机制二：写入时增量冲突整合（仲裁器复用 mem0 的检索能力）
         self.arbiter = MemoryConflictArbiter(self.mem0)
         # P2-1: 副车道检索器（可注入以便测试；为 None 时按需惰性创建）
@@ -325,7 +329,7 @@ class MemoryManager:
         self,
         user_id: uuid.UUID,
         session_id: str,
-        agent_state: dict,
+        agent_state: dict | None = None,
         summary: str | None = None,
     ) -> None:
         """对话结束后保存记忆。
@@ -333,15 +337,19 @@ class MemoryManager:
         Args:
             user_id: 用户 ID
             session_id: 会话 ID
-            agent_state: Agent Loop 的最终状态
+            agent_state: Agent Loop 的最终状态。**None = 调用方没有真实状态
+                （chat 路径），跳过 checkpoint 写入** —— 此前 chat 每轮传
+                {"iteration": 0, ...} 存根，把 Agent Loop 落下的真实状态
+                覆写掉，L2 恢复形同虚设（B4）。
             summary: 对话摘要（可选，保存到 Mem0）
         """
-        # L2: 保存 Checkpoint
-        try:
-            iteration = agent_state.get("iteration", 0)
-            await self.checkpoint.save_checkpoint(session_id, agent_state, iteration)
-        except Exception as e:
-            logger.error("checkpoint_save_failed", session_id=session_id, error=str(e))
+        # L2: 保存 Checkpoint — 只有拿到真实状态才写
+        if agent_state is not None:
+            try:
+                iteration = agent_state.get("iteration", 0)
+                await self.checkpoint.save_checkpoint(session_id, agent_state, iteration)
+            except Exception as e:
+                logger.error("checkpoint_save_failed", session_id=session_id, error=str(e))
 
         # L3: 保存对话摘要到 Mem0（跨会话记忆）
         if summary:

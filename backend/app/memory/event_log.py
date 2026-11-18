@@ -35,19 +35,27 @@ Agent Loop 事件日志管理器 — 单一职责：与 Checkpoint 互补的混�
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import json
+import random
+import uuid
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from typing import Any, Generator
 
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+#: seq 唯一约束冲突的最大尝试次数（含首次）。并发 MAX+1 竞态下每轮重试
+#: 都会重算 MAX，冲突方逐个错开；有限次数防止病态场景无限循环。
+_MAX_APPEND_ATTEMPTS = 8
 
 #: 当前激活的 EventLogManager（contextvar，跨 async 调用链传递）
 #: 与 span_record._recorder_var 同款模式 — 评测/请求入口注入，节点内拾取
@@ -113,8 +121,17 @@ class EventLogManager:
     装饰器已在 end_span 阶段完成 scrub，append 时直接接收 scrubbed 数据）。
     """
 
-    def __init__(self, db: AsyncSession) -> None:
+    def __init__(self, db: AsyncSession, tenant_id: uuid.UUID | None = None) -> None:
         self.db = db
+        self._tenant_id = tenant_id
+
+    async def _resolve_tenant_id(self) -> uuid.UUID | None:
+        """写入行的租户归属：构造参数优先，其次会话 GUC（与 RLS 同源）。"""
+        if self._tenant_id is not None:
+            return uuid.UUID(str(self._tenant_id))
+        from app.core.tenant_context import session_tenant_id
+
+        return await session_tenant_id(self.db)
 
     # ------------------------------------------------------------------
     # 写入
@@ -132,10 +149,10 @@ class EventLogManager:
     ) -> int:
         """追加一条事件日志，返回会话内 seq。
 
-        seq 通过 ``COALESCE(MAX(seq), 0) + 1`` 在 INSERT 时计算，
-        避免独立的 SELECT-then-INSERT 竞态（同一事务内仍可能有并发 INSERT，
-        但 PG 的 READ COMMITTED + UNIQUE 约束会拒绝重复 seq，调用方
-        收到 IntegrityError 时可重试一次）。
+        seq 通过 ``COALESCE(MAX(seq), 0) + 1`` 在 INSERT 时计算。
+        READ COMMITTED 下并发 INSERT 仍可能算出相同 seq，由
+        (session_id, seq) 唯一约束拒绝冲突方；冲突在 savepoint 内
+        有限重试（每轮重算 MAX），不再静默丢事件（B5）。
 
         Args:
             session_id: 会话 ID。
@@ -153,61 +170,88 @@ class EventLogManager:
         input_json = json.dumps(input_data, default=str, ensure_ascii=False) if input_data else None
         output_json = json.dumps(output_data, default=str, ensure_ascii=False) if output_data else None
         meta_json = json.dumps(metadata or {}, default=str, ensure_ascii=False)
+        tenant_id = await self._resolve_tenant_id()
 
-        try:
-            # 注意：:session_id 在 VALUES 和 WHERE 中复用，asyncpg 会合并为 $1，
-            # 但列是 VARCHAR(64) 而 text() 默认推断为 text，导致
-            # "inconsistent types deduced for parameter" 错误。
-            # 解决：WHERE 子句用 CAST 显式指定类型，避免类型推断冲突。
-            result = await self.db.execute(
-                text("""
-                    INSERT INTO agent_event_logs
-                        (session_id, seq, event_type, node_name, iteration,
-                         input_data, output_data, metadata)
-                    VALUES (
-                        :session_id,
-                        COALESCE(
-                            (SELECT MAX(seq) FROM agent_event_logs
-                             WHERE session_id = CAST(:session_id AS VARCHAR)),
-                            0
-                        ) + 1,
-                        :event_type, :node_name, :iteration,
-                        CAST(:input_data AS jsonb),
-                        CAST(:output_data AS jsonb),
-                        CAST(:metadata AS jsonb)
-                    )
-                    RETURNING seq
-                """),
-                {
-                    "session_id": session_id,
-                    "event_type": event_type,
-                    "node_name": node_name,
-                    "iteration": iteration,
-                    "input_data": input_json,
-                    "output_data": output_json,
-                    "metadata": meta_json,
-                },
+        params = {
+            "session_id": session_id,
+            "event_type": event_type,
+            "node_name": node_name,
+            "iteration": iteration,
+            "input_data": input_json,
+            "output_data": output_json,
+            "metadata": meta_json,
+            "tenant_id": str(tenant_id) if tenant_id is not None else None,
+        }
+        # 注意：:session_id 在 VALUES 和 WHERE 中复用，asyncpg 会合并为 $1，
+        # 但列是 VARCHAR(64) 而 text() 默认推断为 text，导致
+        # "inconsistent types deduced for parameter" 错误。
+        # 解决：WHERE 子句用 CAST 显式指定类型，避免类型推断冲突。
+        stmt = text("""
+            INSERT INTO agent_event_logs
+                (session_id, seq, event_type, node_name, iteration,
+                 input_data, output_data, metadata, tenant_id)
+            VALUES (
+                :session_id,
+                COALESCE(
+                    (SELECT MAX(seq) FROM agent_event_logs
+                     WHERE session_id = CAST(:session_id AS VARCHAR)),
+                    0
+                ) + 1,
+                :event_type, :node_name, :iteration,
+                CAST(:input_data AS jsonb),
+                CAST(:output_data AS jsonb),
+                CAST(:metadata AS jsonb),
+                CAST(:tenant_id AS uuid)
             )
-            await self.db.flush()
-            row = result.first()
-            seq = int(row[0]) if row else 0
-            logger.info(
-                "event_log.appended",
-                session_id=session_id,
-                seq=seq,
-                node_name=node_name,
-                event_type=event_type,
-            )
-            return seq
-        except Exception as exc:
-            # 事件日志失败不阻塞主流程 — Checkpoint 是兜底
-            logger.warning(
-                "event_log.append_error",
-                session_id=session_id,
-                node_name=node_name,
-                error=str(exc),
-            )
-            return 0
+            RETURNING seq
+        """)
+
+        last_exc: Exception | None = None
+        for attempt in range(_MAX_APPEND_ATTEMPTS):
+            try:
+                # B5：savepoint 隔离 — 失败只回滚到保存点，共享会话的
+                # 事务不会进入 aborted 状态而毒死后续所有操作
+                async with self.db.begin_nested():
+                    result = await self.db.execute(stmt, params)
+                    await self.db.flush()
+                    row = result.first()
+                    seq = int(row[0]) if row else 0
+                logger.info(
+                    "event_log.appended",
+                    session_id=session_id,
+                    seq=seq,
+                    node_name=node_name,
+                    event_type=event_type,
+                )
+                return seq
+            except IntegrityError as exc:
+                # B5：seq 唯一约束冲突（并发 MAX+1 竞态）— savepoint 已
+                # 回滚，重算 MAX 再试；此前注释声称「可重试」却无重试，
+                # 冲突事件被静默丢弃
+                last_exc = exc
+                # 退避必须带随机抖动：确定性间隔会把所有败者同步到同一
+                # 时刻重试，每轮只有一路能前进，N 路并发必然耗尽预算
+                await asyncio.sleep(
+                    0.005 * (attempt + 1) + random.uniform(0, 0.02)
+                )
+            except Exception as exc:
+                # 事件日志失败不阻塞主流程 — Checkpoint 是兜底
+                logger.warning(
+                    "event_log.append_error",
+                    session_id=session_id,
+                    node_name=node_name,
+                    error=str(exc),
+                )
+                return 0
+
+        logger.warning(
+            "event_log.append_seq_conflict_gave_up",
+            session_id=session_id,
+            node_name=node_name,
+            attempts=_MAX_APPEND_ATTEMPTS,
+            error=str(last_exc),
+        )
+        return 0
 
     # ------------------------------------------------------------------
     # 读取

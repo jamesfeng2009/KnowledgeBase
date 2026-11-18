@@ -17,10 +17,11 @@ Agent Event Log 模型 — 单一职责：LangGraph Agent Loop 事件流持久�
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 
 from sqlalchemy import BigInteger, DateTime, Integer, String, text
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -99,6 +100,10 @@ class AgentEventLog(Base):
         server_default=text("NOW()"),
         nullable=False,
         comment="事件创建时间",
+    )
+    # B6: 租户隔离 — 与 memory_facts 同款 fail-closed RLS（迁移 f6a7b8c9d0e1）
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), nullable=True, comment="租户 ID（多租户隔离）"
     )
 
 

@@ -757,7 +757,8 @@ class ChatService:
                 await self.memory.save_session(
                     user_id=self.user.id,
                     session_id=str(conversation_id),
-                    agent_state={"iteration": 0, "retrieved_docs": []},
+                    # B4：chat 路径没有 Agent Loop 状态，不传存根 ——
+                    # save_session(None) 跳过 checkpoint，避免覆写真实状态
                     summary=f"用户提问：{query[:60]}；AI回复：{assistant_content[:60]}",
                 )
                 await self.memory.extract_and_save_facts(
