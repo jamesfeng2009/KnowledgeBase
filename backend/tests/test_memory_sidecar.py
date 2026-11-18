@@ -121,7 +121,7 @@ class TestMemoryManagerSidecarIntegration:
         manager.mem0 = mem0  # 替换为 fake
 
         ctx = await manager.build_context(
-            user_id=uuid.uuid4(), query="问题", recent_messages=[{"role": "user", "content": "hi"}]
+            user_id=uuid.uuid4(), query="问题"
         )
         # 副车道返回的 user_facts 被采用
         assert ctx.user_facts[0]["fact_text"] == "偏好A"

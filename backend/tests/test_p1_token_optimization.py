@@ -394,69 +394,12 @@ class TestReflectSummary:
 
 
 # ======================================================================
-# P1-Opt5: MemoryContext L1 渲染测试
+# P1-Opt5: MemoryContext L3 注入测试（B8 后 L1 渲染面已删除，职责归 chat 热层）
 # ======================================================================
 
 
 class TestMemoryContextL1Injection:
-    """P1-Opt5: MemoryContext.to_system_prompt L1 短期窗口渲染测试。"""
-
-    def test_render_short_term_false_no_l1(self) -> None:
-        """render_short_term=False 时不渲染 L1（向后兼容）。"""
-        from app.memory.memory_manager import MemoryContext
-
-        ctx = MemoryContext()
-        ctx.short_term = [
-            {"role": "user", "content": "之前的问题"},
-            {"role": "assistant", "content": "之前的回答"},
-        ]
-        prompt = ctx.to_system_prompt(render_short_term=False)
-        assert "近期对话" not in prompt
-        assert "之前的问题" not in prompt
-
-    def test_render_short_term_true_renders_l1(self) -> None:
-        """render_short_term=True 时应渲染 L1 短期窗口。"""
-        from app.memory.memory_manager import MemoryContext
-
-        ctx = MemoryContext()
-        ctx.short_term = [
-            {"role": "user", "content": "之前的问题"},
-            {"role": "assistant", "content": "之前的回答"},
-        ]
-        prompt = ctx.to_system_prompt(render_short_term=True)
-        assert "近期对话" in prompt
-        assert "之前的问题" in prompt
-        assert "之前的回答" in prompt
-
-    def test_short_term_truncated_to_inject_size(self) -> None:
-        """L1 注入应只取最近 8 条消息。"""
-        from app.memory.memory_manager import MemoryContext, _SHORT_TERM_INJECT_SIZE
-
-        ctx = MemoryContext()
-        ctx.short_term = [
-            {"role": "user", "content": f"消息{i}"} for i in range(20)
-        ]
-        prompt = ctx.to_system_prompt(render_short_term=True)
-
-        # 最近的消息应在 prompt 中
-        assert f"消息{19}" in prompt
-        assert f"消息{12}" in prompt  # 20 - 8 = 12
-        # 更早的消息不应在 prompt 中
-        assert f"消息{11}" not in prompt
-
-    def test_short_term_message_truncated(self) -> None:
-        """每条 L1 消息应截断到 200 字符。"""
-        from app.memory.memory_manager import MemoryContext, _SHORT_TERM_MSG_MAX_CHARS
-
-        ctx = MemoryContext()
-        long_content = "A" * 500
-        ctx.short_term = [{"role": "user", "content": long_content}]
-        prompt = ctx.to_system_prompt(render_short_term=True)
-
-        # 截断后的内容应在 prompt 中
-        assert "A" * _SHORT_TERM_MSG_MAX_CHARS in prompt
-        # 超出部分不应在
-        assert "A" * (_SHORT_TERM_MSG_MAX_CHARS + 1) not in prompt
+    """P1-Opt5: MemoryContext.to_system_prompt L3 偏好/摘要 top-3 注入测试。"""
 
     def test_l3_preferences_limited_to_top3(self) -> None:
         """L3 用户偏好应只注入 top-3。"""
@@ -487,24 +430,6 @@ class TestMemoryContextL1Injection:
         assert "摘要2" in prompt
         assert "摘要3" not in prompt
 
-    def test_empty_short_term_no_l1_section(self) -> None:
-        """L1 为空时不应渲染近期对话部分。"""
-        from app.memory.memory_manager import MemoryContext
-
-        ctx = MemoryContext()
-        ctx.short_term = []
-        prompt = ctx.to_system_prompt(render_short_term=True)
-        assert "近期对话" not in prompt
-
-    def test_backward_compatible_default(self) -> None:
-        """不传 render_short_term 时默认 False（向后兼容）。"""
-        from app.memory.memory_manager import MemoryContext
-
-        ctx = MemoryContext()
-        ctx.short_term = [{"role": "user", "content": "test"}]
-        prompt = ctx.to_system_prompt()
-        assert "近期对话" not in prompt
-
 
 # ======================================================================
 # P1-Opt5: ChatService 历史窗口化测试
@@ -515,12 +440,12 @@ class TestChatServiceWindowing:
     """P1-Opt5: ChatService 历史消息窗口化测试。"""
 
     @pytest.mark.asyncio
-    async def test_uses_memory_ctx_short_term(self) -> None:
-        """有 memory_ctx.short_term 时应使用它，不从 DB 加载。"""
-        from app.memory.memory_manager import MemoryContext
+    async def test_uses_hot_layer_cache_without_db_reload(self) -> None:
+        """B8 后 L1 唯一来源是 chat 热层：Redis 命中时不得再查 DB。"""
+        from unittest.mock import MagicMock, patch
+
         from app.services.chat_service import ChatService
 
-        # Mock 依赖
         mock_msg_repo = AsyncMock()
 
         service = ChatService.__new__(ChatService)
@@ -528,21 +453,31 @@ class TestChatServiceWindowing:
         service.llm = AsyncMock()
         service.memory = AsyncMock()
 
-        memory_ctx = MemoryContext()
-        memory_ctx.short_term = [
+        fake_settings = MagicMock()
+        fake_settings.CONVERSATION_SUMMARIZER_ENABLED = False
+        fake_settings.CONTEXT_SELECTOR_ENABLED = False
+        fake_settings.DETAIL_RECALL_ENABLED = False
+
+        cached_window = [
             {"role": "user", "content": "历史问题1"},
             {"role": "assistant", "content": "历史回答1"},
+            {"role": "user", "content": "当前问题"},
         ]
-        # Mock to_system_prompt 返回包含 short_term 内容的字符串
-        memory_ctx.to_system_prompt = lambda render_short_term=True: "记忆上下文：历史问题1"
+        with (
+            patch(
+                "app.memory.short_term_cache.short_term_cache.get_window",
+                new=AsyncMock(return_value=cached_window),
+            ),
+            patch("app.config.get_settings", return_value=fake_settings),
+        ):
+            result = await service._build_engine_memory_context(
+                "conv-1", "qa", None
+            )
 
-        result = await service._build_engine_memory_context(
-            "conv-1", "qa", memory_ctx
-        )
-
-        # 结果应包含 short_term 内容
         assert "历史问题1" in result
-        # msg_repo.get_by_conversation 不应被调用
+        assert "历史回答1" in result
+        # 当前消息不得重复注入；DB 不得双重加载
+        assert "当前问题" not in result.split("对话历史：")[1]
         mock_msg_repo.get_by_conversation.assert_not_called()
 
     @pytest.mark.asyncio

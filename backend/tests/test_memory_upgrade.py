@@ -119,7 +119,12 @@ class TestP1aParallelBuildContext:
     async def test_checkpoint_uses_isolated_session(self, monkeypatch):
         """checkpoint 分支必须走独立短会话（AsyncSession 不可并发共享）。"""
         mgr, _mem0 = _make_manager()
+        # B7 后无 tenant_id 时先读请求会话 GUC（MagicMock 需可 await）
+        mgr.db.execute = AsyncMock(
+            return_value=SimpleNamespace(scalar=lambda: None)
+        )
         fresh_session = MagicMock()
+        fresh_session.execute = AsyncMock()
         factory_calls: list[int] = []
 
         def fake_factory():
@@ -130,7 +135,7 @@ class TestP1aParallelBuildContext:
             "app.database.async_session_factory", fake_factory
         )
         fake_cm = MagicMock(
-            load_checkpoint=AsyncMock(
+            load_checkpoint_with_event_log=AsyncMock(
                 return_value={"iteration": 2, "retrieved_docs": ["d1"]}
             )
         )
@@ -146,7 +151,7 @@ class TestP1aParallelBuildContext:
         assert ctx.checkpoint is not None
         assert ctx.checkpoint["iteration"] == 2
         assert len(factory_calls) == 1          # 用了独立会话工厂
-        fake_cm.load_checkpoint.assert_awaited_once_with("sess-1")
+        fake_cm.load_checkpoint_with_event_log.assert_awaited_once_with("sess-1")
 
     @pytest.mark.asyncio
     async def test_checkpoint_propagates_tenant_guc(self, monkeypatch):
@@ -164,7 +169,9 @@ class TestP1aParallelBuildContext:
         monkeypatch.setattr(
             "app.memory.memory_manager.CheckpointManager",
             MagicMock(
-                return_value=MagicMock(load_checkpoint=AsyncMock(return_value=None))
+                return_value=MagicMock(
+                    load_checkpoint_with_event_log=AsyncMock(return_value=None)
+                )
             ),
         )
 
@@ -181,15 +188,20 @@ class TestP1aParallelBuildContext:
     async def test_checkpoint_failure_isolated(self, monkeypatch):
         """checkpoint 分支失败不影响 L3/L4。"""
         mgr, mem0 = _make_manager()
+        mgr.db.execute = AsyncMock(
+            return_value=SimpleNamespace(scalar=lambda: None)
+        )
+        fresh_session = MagicMock()
+        fresh_session.execute = AsyncMock()
         monkeypatch.setattr(
             "app.database.async_session_factory",
-            lambda: _FakeAsyncSessionCtx(MagicMock()),
+            lambda: _FakeAsyncSessionCtx(fresh_session),
         )
         monkeypatch.setattr(
             "app.memory.memory_manager.CheckpointManager",
             MagicMock(
                 return_value=MagicMock(
-                    load_checkpoint=AsyncMock(
+                    load_checkpoint_with_event_log=AsyncMock(
                         side_effect=RuntimeError("db down")
                     )
                 )

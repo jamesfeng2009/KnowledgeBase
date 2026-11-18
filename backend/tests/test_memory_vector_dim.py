@@ -266,7 +266,7 @@ class TestB2AlignMigration:
             await engine.dispose()
 
     def test_private_finetuned_column_fallback_declared(self, migration, monkeypatch):
-        """private_finetuned 尚无注册 embedder（B10）：列宽暂按 TEI 1024 兜底。"""
+        """private_finetuned 已注册 TEI embedder（B10）：列宽 1024 与输出维度一致。"""
         from app.config import Settings
         from app.llm.embedder import TEIEmbedder, memory_embedding_dim
 
