@@ -155,8 +155,9 @@ class TestPDFParserExtractTables:
         mock_table_finder.tables = []
         mock_page.find_tables.return_value = mock_table_finder
 
-        result = parser._extract_tables(mock_page, 0)
+        result, bboxes = parser._extract_tables(mock_page, 0)
         assert result == []
+        assert bboxes == []
 
     def test_find_tables_exception(self) -> None:
         """find_tables 异常时返回空列表。"""
@@ -166,8 +167,9 @@ class TestPDFParserExtractTables:
         mock_page = MagicMock()
         mock_page.find_tables.side_effect = Exception("not supported")
 
-        result = parser._extract_tables(mock_page, 0)
+        result, bboxes = parser._extract_tables(mock_page, 0)
         assert result == []
+        assert bboxes == []
 
     def test_table_extraction(self) -> None:
         """成功提取表格转为 HTML。"""
@@ -184,7 +186,7 @@ class TestPDFParserExtractTables:
         mock_page = MagicMock()
         mock_page.find_tables.return_value = mock_table_finder
 
-        result = parser._extract_tables(mock_page, 0)
+        result, _bboxes = parser._extract_tables(mock_page, 0)
         assert len(result) == 1
         assert result[0].kind == "table"
         assert "<th>姓名</th>" in result[0].content

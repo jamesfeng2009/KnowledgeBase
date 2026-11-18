@@ -46,10 +46,13 @@ class TestSniffFileType:
     def test_magic_detection(self, raw: bytes, expected: str) -> None:
         assert sniff_file_type(raw).format == expected
 
-    def test_pdf_requires_head(self) -> None:
-        # 非头部位置的 %PDF- 不应命中
+    def test_pdf_tolerates_leading_garbage(self) -> None:
+        # A15：前 1024 字节内的前导垃圾不影响 PDF 识别
         ok = b"junk-prefix" + PDF
-        assert sniff_file_type(ok).format in ("text", "unknown")
+        assert sniff_file_type(ok).format == "pdf"
+        # 超出头部搜索窗口的 %PDF- 不应命中
+        far = b"\x00" * 1024 + PDF
+        assert sniff_file_type(far).format != "pdf"
 
     def test_webp_riff(self) -> None:
         webp = b"RIFF" + b"\x00\x00\x00\x00" + b"WEBP" + b"VP8 "
