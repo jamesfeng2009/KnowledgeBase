@@ -127,7 +127,7 @@
   - 后果：saas 模式 `flush` 报 dimension mismatch 且不在 try 内（mem0_manager.py:186）；查询侧 pgvector 报错降级 JSONB 后 `zip` 截断**静默算错相似度**（mem0_manager.py:38）。
   - 修复点：记忆向量列宽随 DEPLOY_MODE 对应 embedder.dim（迁移或按模式建列）；降级 zip 前断言维度一致，不一致显式报错不得截断。
   - 验收：跨部署模式参数化测试（saas/saas_dashscope/private_*），断言 embedder.dim == 列宽；维度不一致降级路径打红测试。
-  - 备注：切换 DEPLOY_MODE 后需重跑迁移 e5f6a7b8c9d1（列宽迁移期固定，迁移 docstring 已注明）；private_finetuned 无注册 embedder（B10），列宽暂按 TEI 1024 兜底并有声明测试。
+  - 备注：切换 DEPLOY_MODE 后需重跑迁移 e5f6a7b8c9d1（列宽迁移期固定，迁移 docstring 已注明）；private_finetuned 已注册 TEI embedder（B10，2026-11-19），列宽 1024 与输出维度一致。
 
 ### P1
 
@@ -157,16 +157,20 @@
 
 ### P2（断链/未接线功能）
 
-- [ ] **B7. 混合恢复未接线：event_log 生产零消费**
+- [x] **B7. 混合恢复未接线：event_log 生产零消费** ✅ 2026-11-19（决策：接线，用户已批准）
+  - 完成证据：三处接线缺一不可 —— ① `chat_service.stream_chat` 的 engine.answer 迭代包 `event_log_scope(EventLogManager(...))`，trace_node 经 contextvar 拾取真实写节点事件；单租户 NULL 会话由调用方显式传 `null_tenant_reason="chat_service.single_tenant_event_log"` 走审计 '*' 通道（EventLogManager 新增该关键字参数，默认 None 时保持 B6 契约「无 GUC 写入被拒」不回归）；② `save_session` 改走 `save_checkpoint_with_event_log`（快照嵌 `_base_seq`，单租户 NULL 写入包 `system_scope(reason="memory_manager.single_tenant_checkpoint_save")`，多租户 GUC 不受扰）；③ `_load_checkpoint_isolated` 改走 `load_checkpoint_with_event_log`（重放 base_seq 之后增量），构造未传 tenant 时传播请求会话 GUC，NULL 分支显式 `system_scope(reason="memory_manager.single_tenant_checkpoint_load")`。闸门 `test_b7_hybrid_recovery.py` 5 条（C1 基座 + chat 编排 test_chat_disconnect 同款替身，事件/checkpoint 全真实 DB）：红基线 5 failed（事件恒空 ×2 / 快照无 _base_seq / 只读快照不重放 ['d1']≠['d1','d2'] / NULL checkpoint 隐形）→ 修后 5 passed。变异×5 串行：M-B7a chat 去 scope→2 红 / M-B7b 退回裸 save_checkpoint→1 红 / M-B7c 加载不重放→1 红 / M-B7d 单租户事件通道归 None→1 红 / M-B7e NULL 加载去 '*'→1 红；恢复后全绿。既有 B3–B6 闸门（test_agent_state_rls / test_event_log / test_event_log_append / test_memory_single_tenant / test_chat_disconnect / test_checkpoint_clobber）61 条不回归。
   - 证据：`save/load_checkpoint_with_event_log` 仅测试调用；`agent_event_logs` 恒空；消费方 `delivery_chain.py:226` 查空表。
   - 修复点：主链路接线或显式下线该能力（二选一，不留僵尸代码）。
-- [ ] **B8. build_context 忽略 recent_messages，ctx.short_term 恒空**
+- [x] **B8. build_context 忽略 recent_messages，ctx.short_term 恒空** ✅ 2026-11-19（决策：删死代码，用户已批准）
+  - 完成证据：删除全部死 L1 面 —— `build_context` 的 recent_messages 参数、`MemoryContext.short_term` 字段、`to_system_prompt(render_short_term=...)` 参数与「近期对话」渲染块、`SHORT_TERM_WINDOW_SIZE`/`_SHORT_TERM_INJECT_SIZE`/`_SHORT_TERM_MSG_MAX_CHARS` 三常量、to_dict 的 short_term 键、日志 short_term_count；两个调用方（chat_service / agents.base）同步删参；chat 历史注入去掉恒真条件 `if not (memory_ctx and memory_ctx.short_term)`，L1 职责唯一归 chat 热层（Redis 优先、miss 回填 PG、P3-C 摘要压缩链路原样保留）。闸门 `test_b8_dead_short_term.py` 3 条：红基线 1 failed（删除契约）+ 2 绿正向证人（L2/L3/L4 组装渲染不回归 / chat 历史注入含当前消息排除不回归）→ 修后 3 passed。变异 M-B8a 复活 short_term 字段→1 红；恢复绿。既有测试对齐新契约：test_p1_token_optimization 删 6 条死 L1 渲染测试、short_term 优先测试改写为 Redis 热层命中不查 DB（同意图活契约）；test_memory_upgrade 3 条隔离会话测试 mock 改 load_checkpoint_with_event_log；test_memory_sidecar 删死参。受影响 6 套件 104 passed。
   - 证据：`memory_manager.py:205-322`；历史实际靠 Redis 兜底（chat_service.py:1075-1103）；`SHORT_TERM_WINDOW_SIZE:33` 死代码。
   - 修复点：接线或删除死参数，与 Redis 兜底职责划清。
-- [ ] **B9. 用户纠错/偏好管理无生产入口**
+- [x] **B9. 用户纠错/偏好管理无生产入口** ✅ 2026-11-19（决策：补 API + 统一定时，用户已批准）
+  - 完成证据：新路由 `app/api/v1/memory.py`（prefix=/memory，已注册）—— PUT /preferences（MemoryManager.set_preference：Mem0 事实 + Graphiti 时间线）、POST /facts/{id}/correct（**路由层属主校验** id+user_id，他人事实 404 不泄露存在性；correct_fact 本体不做属主检查）、DELETE /working-memory（working 类停用，偏好不动）。定时清理 `_cleanup_expired_facts_async` 删除自写按租户迭代 SQL，统一委托 `Mem0Manager(session).cleanup_expired()`（跨租户会话一次扫全表：退场语义 forgotten_reason='expired'+激活值快照与手动清理同源，单租户 NULL 行不再漏清）。`graphiti_manager.record_event` 落库后 best-effort `sync_to_graph`（内部吞错不阻塞，Neo4j 可选后端自此有真实写入方）。闸门 `test_b9_memory_api.py` 6 条（ASGITransport + 真实 app 角色会话租户 A GUC）：红基线 5 failed（三入口 404 / NULL 行漏清 1≠2 / 图同步 0 调用）+ 1 平凡绿（跨用户 404 巧合，由 M-B9a 变异证明判据有效）→ 修后 6 passed。变异×3 串行：M-B9a 删属主条件→1 红 / M-B9b 清理缺 forgotten_reason→1 红 / M-B9c 断图同步→1 红；恢复后全绿。既有面（test_preference_graphiti_sync / test_mem0_conflict_correction / test_memory_rls_integration / test_api_endpoints / test_memory_verdict_persistence / test_analytics / test_knowledge_compounding）115 条不回归。
   - 证据：`correct_fact`/`set_preference`/`clear_working_memory`/`Mem0Manager.cleanup_expired`/`sync_to_graph` 无生产调用方；Graphiti 偏好时间线永不写入。
   - 修复点：补 API 入口或下线；cleanup_expired 与定时任务（scheduled_tasks.py:548-570）二选一统一。
-- [ ] **B10. private_finetuned 模式未注册 embedder，记忆退化纯关键词**
+- [x] **B10. private_finetuned 模式未注册 embedder，记忆退化纯关键词** ✅ 2026-11-19（决策：注册 TEI，用户已批准）
+  - 完成证据：`_make_tei_embedder` 增加 `@register_embedder("private_finetuned")` —— 该模式的「微调」仅针对 LLM（vLLM 多 LoRA），embedding 与其他私有模式一致走 TEI/BGE-M3；`memory_embedding_dim` 的 TEI 兜底从「暂按」转正式契约（docstring 同步，B2 声明测试改述）。闸门 `test_b10_finetuned_embedder.py` 3 条：红基线 2 failed（ValueError「不支持的 DEPLOY_MODE」）+ 1 绿正向证人（既有四模式注册不破坏）→ 修后 3 passed。变异 M-B10a 摘注册→2 红；恢复绿。B2 闸门 test_memory_vector_dim 13 条不回归。
   - 证据：`embedder.py:182-198` 注册表无 private_finetuned（有日志，降级合理但属缺口）。
   - 修复点：注册微调 embedder 或文档显式声明该模式记忆降级。
 
@@ -231,6 +235,13 @@ P1 轮范围外发现（2026-11-18，未修复，归 PDF 测试桶）：
 - `test_pdf_pipeline_hardening.py` / `test_pdf_p2_hardening.py` 共 7 条（A3×2 / A1A2×2 / A10×2 / A14×1）**未打桩 VLM 边界**：中文 fitz 生成页走扫描 OCR 分支时真实调用 DashScope `qwen-vl-max`。常态环境下 NO_PROXY 裸 `::1` 使 httpx 客户端构造即失败（见上方共性根因），请求发不出去反而恒绿；一旦 NO_PROXY 被清理（如测试 shim `localhost,127.0.0.1`），真实请求发出 → 404 Model not exist → 断言失败。取证：同批测试无 shim 13 passed / 有 shim 7 failed，与本批记忆模块改动无关。修复方向：VLM 边界打桩或显式声明外部依赖（需单独立项）。
 - 计量口径备注：既有 52 条基线在**无 shim** 条件下测得；加 NO_PROXY shim 后 52 条 httpx 失败转绿、同时暴露上述 7 条 VLM 盲区。P1 收尾全量回归按无 shim 基线口径对比。
 
+P2 轮闸门校准留痕（2026-11-19，红基线阶段取证定性为闸门自身错误，非产品缺陷，均已修复）：
+- B10 正向证人初跑红：TEIEmbedder 构造经 httpx trust_env 解析本机 NO_PROXY 裸 `[::1]` 抛 ValueError（':1]'，与 52 条基线同根因）。闸门加 autouse fixture 剥离 NO_PROXY/no_proxy，与测量环境解耦。
+- B8 正向证人初跑红 ×2 因：① `_load_checkpoint_isolated` 走生产全局 `async_session_factory`（指向 dev 库），闸门未改绑 RLS 测试库 → 恒 None；② 种子未 commit 即调 build_context，独立连接读不到未提交行。补工厂绑定 fixture + 先提交后组装。
+- B7 重放闸初跑红在种子阶段：事件表空首条 append 必得 seq 1，闸门期望 seq 2 缺一条锚点种子事件；同犯未提交即独立连接读取。补 seq 1 种子 + 先提交。
+- B9 API 闸初跑 ERROR ×4：users.tenant_id 外键要求 tenants 行先存在，闸门缺租户种子；补裸 SQL 种子时又踩 ORM 默认值不落 server_default（plan NOT NULL），显式给 plan/max_users/max_storage。教训：裸 SQL 种子不能依赖 ORM 级 default。
+- B9 跨用户闸修复前平凡绿（路由不存在时 404 恰合断言）：由 M-B9a 变异（删属主条件→红）证明其修复后真实守护属主判据。
+
 ---
 
 ## 已完成 / 明确不做
@@ -239,5 +250,6 @@ P1 轮范围外发现（2026-11-18，未修复，归 PDF 测试桶）：
 - A10–A17（2026-11-18，P2）：PDF 链路 8 条修复/验收完成。闸门 `backend/tests/test_pdf_p2_hardening.py` 39 条全绿（A15 闸门在 test_sniff.py）；10 次串行变异自证全部「打红→恢复→绿」；既有受影响 7 套件合跑 441 passed；20 个存量真实样例全部解析成功（4 页、886~1217 字、零告警）。
 - B1/B2/C1（2026-11-18，记忆模块 P0 + RLS 基座）：闸门 `test_memory_rls_integration.py` 7 条 + `test_memory_vector_dim.py` 13 条 + `test_pgvector_migration.py` 8 条（末条对齐新契约），红基线 9 failed/6 passed → 修后 28 passed；7 次串行变异自证全部「打红→恢复→绿」（M1 删 add_fact tenant→5 红 / M2 删 Graphiti tenant→2 红 / M3 维度函数退单配置→2 红 / M4 删维度校验→2 红 / M5 模型绕过函数→1 红 / M6 删 ivfflat 维护栏→1 红 / M7 吞 flush→1 红）；受影响 24 套件合跑 505 passed/1 既有失败；全量回归 52 failed/5397 passed，失败逐文件分布与既有 52 条基线完全一致（中途 3 条 mock 计数回归已修复，见勘误）。
 - B3–B6（2026-11-18，记忆模块 P1）：4 条修复完成，新增闸门 17 条全绿 —— B3 `test_memory_single_tenant.py` 4 条（红基线 1 failed/3 passed，任务引擎须绑非超管 app 角色否则 RLS 被绕过）、B4 `test_checkpoint_clobber.py` 6 条（红基线 3 failed/3 passed）、B5 `test_event_log_append.py` 2 条（红基线 2 failed，修后连跑 ×5 稳定）、B6 `test_agent_state_rls.py` 4 条 + `test_agent_state_migration.py` 1 条（真实 PG 跑生产迁移 upgrade：补列/回填/FORCE RLS）。9 次串行变异自证全部「打红→恢复→绿」（M-B3 NULL 分支退 nullcontext→1 红 / M-B4a chat 恢复存根→1 红 / M-B4b task 恢复存根→1 红 / M-B4c 删 None 守卫→1 红 / M-B4d 恢复旧误导文案→1 红 / M-B5a 删 savepoint→2 红 / M-B5b attempts=1→1 红 / M-B6a checkpoint tenant 恒 None→1 红 / M-B6b 删 FORCE→1 红）。B5 竞态修复含取证：确定性退避会同步化并发 loser（8 worker 实测 seq [0,0,5,0,4,2,1,3]），改 8 次上限+抖动退避后最小复现 10/10 收敛。受影响 27 套件合跑 387 passed/1 xfailed；最终全量回归（无 shim 基线口径）52 failed/5414 passed，失败逐文件分布与既有 52 条基线完全一致，passed 恰为基线 5397+新增闸门 17。本批引入又修复的回归 4 起（fake 行缺 tenant_id ×1 / fake result 缺 scalar ×5 / 迁移 ID 撞号 ×3 / P4 fixture glob 漂移 ×3，见勘误）；范围外新发现 PDF 测试 VLM 边界盲区 ×7（见勘误）。
+- B7–B10（2026-11-19，记忆模块 P2 断链/未接线）：4 条修复完成（决策均经用户批准：B7 接线 / B8 删死代码 / B9 补 API+统一定时 / B10 注册 TEI），新增闸门 17 条全绿 —— B7 `test_b7_hybrid_recovery.py` 5 条（红基线 5 failed）、B8 `test_b8_dead_short_term.py` 3 条（红基线 1 failed + 2 绿正向证人）、B9 `test_b9_memory_api.py` 6 条（红基线 5 failed + 1 平凡绿由变异证真）、B10 `test_b10_finetuned_embedder.py` 3 条（红基线 2 failed + 1 绿正向证人）。10 次串行变异自证全部「打红→恢复→绿」（M-B7a 去 chat scope→2 红 / M-B7b 裸 save→1 红 / M-B7c 不重放→1 红 / M-B7d 单租户事件通道归 None→1 红 / M-B7e NULL 加载去 '*'→1 红 / M-B8a 复活僵尸字段→1 红 / M-B9a 删属主条件→1 红 / M-B9b 清理缺退场语义→1 红 / M-B9c 断图同步→1 红 / M-B10a 摘注册→2 红）。既有测试对齐新契约：test_p1_token_optimization 删 6 条死 L1 测试 + 1 条改写为热层命中契约、test_memory_upgrade 3 条 mock 改混合恢复方法、test_memory_sidecar 删死参、test_memory_vector_dim B10 声明改述。受影响 24 套件合跑 339 passed/13 既有基线失败；最终全量回归（无 shim 基线口径）52 failed/5425 passed，失败逐文件分布与既有 52 条基线完全一致（13+13+8+6+5+3+3+1），passed 恰为 P1 收尾 5414+新增闸门 17−删除死测试 6。闸门校准留痕 5 起（见勘误，均为闸门自身错误非产品缺陷）。
 - 不算缺陷：CRM/ERP/邮件/OA connector 与开放平台多媒体接口为显式 501/ConnectorNotImplementedError，属已知未实现、行为诚实，不在本清单范围。
 - 好消息备查：conflict_arbiter 与 forgetting 已真实接线（memory_manager.py:707、mem0_manager.py:93）；mem0/graphiti 为自研 PG 实现，无外部依赖坑。
