@@ -114,17 +114,20 @@
 
 ### P0
 
-- [ ] **B1. 记忆写入不填 tenant_id，fail-closed RLS 下写入被拒/读取恒空** ★
+- [x] **B1. 记忆写入不填 tenant_id，fail-closed RLS 下写入被拒/读取恒空** ★ ✅ 2026-11-18
+  - 完成证据：`Mem0Manager`/`GraphitiManager` 增加构造参数 `tenant_id`，缺省时经新增 `tenant_context.session_tenant_id()` 从会话 GUC 解析（与 RLS 同源）；`MemoryFact`/`KnowledgeEntity`/`EntityEvent` 三处写入显式填 tenant_id；`MemoryManager` 向两个管理器传播 tenant_id（memory_tasks 的 GUC-only 路径自动覆盖）；memory_tasks 三处写入失败日志 warning→error（数据丢失不得静默）。闸门 `test_memory_rls_integration.py` 7 条（基座见 C1）：红基线 6 failed/1 passed，红因实测为 `new row violates row-level security policy for table "memory_facts"`（非基座问题）→ 修后 7 passed。变异×3 串行：删 add_fact tenant_id → 5 failed；删 Graphiti 两处 tenant_id → 2 failed；add_fact 吞 flush 异常 → 1 failed（日志伪报 fact_added）；恢复后全绿。
   - 证据：`backend/app/memory/mem0_manager.py:171-184` MemoryFact 构造无 tenant_id；`graphiti_manager.py:56-62` register_entity 同；RLS 迁移 e8f9a0b1c2d3:56-59 要求 `tenant_id::text=GUC` 且 FORCE，生产角色 ekb_app 无 BYPASSRLS；失败仅记 warning 静默。对比正确写法：`conversation_repository.py:127-131`。
   - 后果：生产多租户下记忆功能整体失效且无感知。测试用 create_all 不建 RLS（conftest.py:203-204）故全绿。
   - 修复点：add_fact/register_entity 及所有记忆写入路径显式填 tenant_id（从会话/上下文解析）；写入失败不得静默。
   - 验收：带真实 RLS 的集成测试（非 create_all），断言租户 A 写入后租户 B 读不到、租户 A 能读到；先打红。
 
-- [ ] **B2. 向量维度错位残余：saas 模式 3072 维 vs 列宽 1024** ★
+- [x] **B2. 向量维度错位残余：saas 模式 3072 维 vs 列宽 1024** ★ ✅ 2026-11-18
+  - 完成证据：新增 `embedder.memory_embedding_dim()`（saas→OpenAIEmbedder.dim 3072 / saas_dashscope→DASHSCOPE_EMBED_DIM / private_*→TEIEmbedder.dim 1024，与注册表一一对应但不实例化客户端）；`models/memory.py` 列宽改用该函数；新迁移 `e5f6a7b8c9d1` 把存量错宽列重建为当前模式维度（**实测发现 pgvector ivfflat 上限 2000 维**，3072 维列不建 ivfflat，按 user_id 过滤后精确扫描）；`_cosine_similarity` 维度不一致显式 raise ValueError，不再 zip 截断。闸门 `test_memory_vector_dim.py` 13 条：跨 4 模式**子进程真实 PG 建表**读列宽 vs 生产 embedder 注册表实例 dim（两侧不同源）+ 生产迁移 upgrade 真实执行 + JSONB 降级打红；红基线 3 failed（cosine 截断/JSONB 截断/saas 列宽 1024≠3072）→ 修后全绿；`test_pgvector_migration.py` 末条对齐新契约。变异×4 串行：维度函数退回 DASHSCOPE 单配置 → 2 failed；删维度校验 → 2 failed；模型绕过函数 → 1 failed；迁移删 2000 维护栏 → 1 failed（ProgramLimitExceededError）；恢复后全绿。
   - 证据：`backend/app/models/memory.py:62` `Vector(settings.DASHSCOPE_EMBED_DIM)`（默认 1024，config.py:182）；默认 `DEPLOY_MODE="saas"`（config.py:128）→ OpenAIEmbedder dim=3072（embedder.py:48、182-186 注册表）。上次修复（ba9dd63）只对齐 DashScope 路径。
   - 后果：saas 模式 `flush` 报 dimension mismatch 且不在 try 内（mem0_manager.py:186）；查询侧 pgvector 报错降级 JSONB 后 `zip` 截断**静默算错相似度**（mem0_manager.py:38）。
   - 修复点：记忆向量列宽随 DEPLOY_MODE 对应 embedder.dim（迁移或按模式建列）；降级 zip 前断言维度一致，不一致显式报错不得截断。
   - 验收：跨部署模式参数化测试（saas/saas_dashscope/private_*），断言 embedder.dim == 列宽；维度不一致降级路径打红测试。
+  - 备注：切换 DEPLOY_MODE 后需重跑迁移 e5f6a7b8c9d1（列宽迁移期固定，迁移 docstring 已注明）；private_finetuned 无注册 embedder（B10），列宽暂按 TEI 1024 兜底并有声明测试。
 
 ### P1
 
@@ -178,7 +181,7 @@
 
 ## C. 测试体系补强（伴随上述修复，不单独延后）
 
-- [ ] **C1. RLS 集成测试基座**：现有 conftest create_all 不建 RLS（conftest.py:203-204），B1/B6 的验收依赖一个能真实执行 RLS 策略的测试 fixture。
+- [x] **C1. RLS 集成测试基座**：现有 conftest create_all 不建 RLS（conftest.py:203-204），B1/B6 的验收依赖一个能真实执行 RLS 策略的测试 fixture。（2026-11-18：`tests/rls_harness.py` 落地 —— create_all 建表 + **加载生产迁移 e8f9a0b1c2d3 的策略 SQL**（非手抄）+ `provision_app_role.provision` 建非 superuser/NOBYPASSRLS 运行角色（ekb_rls_mem_pytest）+ NullPool 应用角色引擎；B1 的 7 条闸门已在其上实测打红→转绿，B6 可直接复用）
 - [x] **C2. 真实 PDF 端到端闸门**：即 A17，A1-A3 修完必须联合跑通。（2026-11-18：A1-A9 闸门 23 条 + P2 闸门 39 条全绿；存量 20 样例已接入 `TestA17RealSamples` 并实测通过）
 - [ ] **C3. chord 入口真实调用测试**：即 A1 验收，杜绝「函数从未被真实调用」类缺陷再次全绿存活。（2026-11-18：`_parse_and_chunk_async` 已有真实调用集成测试，process_document 任务级入口仍走 mock）
 
@@ -201,11 +204,14 @@
 | tests/test_fault_injection.py | 3 | embedding 超时熔断 |
 | tests/test_fact_extraction.py | 1 | 事实去重 |
 
-疑似共性根因（未验证，仅线索）：provider 构造/endpoint 解析类似（dashscope endpoint 配置或 httpx 版本行为），建议单独立项排查。
+共性根因已实证（2026-11-18，B2 闸门取证时验证，仍未修复、维持范围外）：本机环境变量 `NO_PROXY` 含**裸 `::1`**（`localhost,.localhost,127.0.0.1,127.0.0.0/8,[::1],::1`），httpx 解析 no_proxy 列表时把 `::1` 当 host:port 拆，端口 `':1]'` 抛 `ValueError` → 构造 AsyncOpenAI/httpx 客户端即 `InvalidURL(':1]')`，与 provider/endpoint 配置无关。修复方向二选一：清理本机 NO_PROXY 环境（运维动作），或产品侧客户端构造容错（需单独立项）。测试侧仅在 B2/pgvector 闸门内用 monkeypatch 清理测试进程环境变量（`localhost,127.0.0.1`），不改产品代码。
 
 本次引入又修复的 4 条回归：
 - test_task_lock.py::TestProcessDocumentLockCoverage ×2 —— 测试 fake `_fake_parse(doc_id)` 未接受 A1 新增 tenant_id 关键字，更新 fake 签名（锁行为本身未破坏）。
 - test_upload_summary.py::TestDocumentTaskWarnings ×2 —— A2 失败早退返回值丢了 warnings/parse_status/char_count 字段（下游 eval_resume_seed.py:175 与摘要响应依赖），已在两处早退 dict 补齐字段。
+
+B1/B2 轮全量回归（2026-11-18）：55 failed / 5394 passed。其中 52 条与上表既有失败**逐文件条数完全一致**（13+13+8+6+5+3+3+1）；新增 3 条为本次引入回归，已修复：
+- test_preference_graphiti_sync.py::TestRecordPreferenceChange ×3 —— mock db 按精确 execute 次数排 side_effect，B1 新增的 GUC 兜底解析多发一次查询耗尽序列（StopAsyncIteration）。取证确认产品行为正确（真实 RLS 闸门已覆盖 GUC 路径），按生产 chat_service 路径给测试显式传 tenant_id 消除兜底查询；复跑 6 passed。
 
 ---
 
@@ -213,5 +219,6 @@
 
 - A1–A9（2026-11-18）：PDF 解析链路 9 条修复完成。闸门 `backend/tests/test_pdf_pipeline_hardening.py` 23 条（红基线 21 failed/2 passed → 修后 23 passed）；12 次串行变异自证全部「打红→恢复→绿」；受影响套件合跑全绿；全量回归仅剩 52 条 HEAD 既有失败（见上方勘误）。
 - A10–A17（2026-11-18，P2）：PDF 链路 8 条修复/验收完成。闸门 `backend/tests/test_pdf_p2_hardening.py` 39 条全绿（A15 闸门在 test_sniff.py）；10 次串行变异自证全部「打红→恢复→绿」；既有受影响 7 套件合跑 441 passed；20 个存量真实样例全部解析成功（4 页、886~1217 字、零告警）。
+- B1/B2/C1（2026-11-18，记忆模块 P0 + RLS 基座）：闸门 `test_memory_rls_integration.py` 7 条 + `test_memory_vector_dim.py` 13 条 + `test_pgvector_migration.py` 8 条（末条对齐新契约），红基线 9 failed/6 passed → 修后 28 passed；7 次串行变异自证全部「打红→恢复→绿」（M1 删 add_fact tenant→5 红 / M2 删 Graphiti tenant→2 红 / M3 维度函数退单配置→2 红 / M4 删维度校验→2 红 / M5 模型绕过函数→1 红 / M6 删 ivfflat 维护栏→1 红 / M7 吞 flush→1 红）；受影响 24 套件合跑 505 passed/1 既有失败；全量回归 52 failed/5397 passed，失败逐文件分布与既有 52 条基线完全一致（中途 3 条 mock 计数回归已修复，见勘误）。
 - 不算缺陷：CRM/ERP/邮件/OA connector 与开放平台多媒体接口为显式 501/ConnectorNotImplementedError，属已知未实现、行为诚实，不在本清单范围。
 - 好消息备查：conflict_arbiter 与 forgetting 已真实接线（memory_manager.py:707、mem0_manager.py:93）；mem0/graphiti 为自研 PG 实现，无外部依赖坑。
