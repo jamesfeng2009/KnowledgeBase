@@ -73,32 +73,40 @@
 
 ### P2
 
-- [ ] **A10. 页眉页脚去除不存在**
+- [x] **A10. 页眉页脚去除不存在**（2026-11-18 完成）
   - 证据：layout_analyzer 只排序不剔除，每页页眉页脚混入正文。
   - 修复点：跨页重复块检测（同位置同文本 ≥N 页）剔除。
-- [ ] **A11. 图片链路断裂（minio:// src 前端不可用 + legacy 图片不入跨模态索引）**
+  - 实测：`layout_analyzer.py` 新增 `header_footer_key`（顶/底 15% 带 + 位置量化 10pt）与 `detect_header_footer_keys`（每页去重计数 ≥min_pages）；`pdf_parser.py` 预检测 + `_extract_text_ordered` 剔除；配置 `PDF_HEADER_FOOTER_REMOVAL_ENABLED=True` / `PDF_HEADER_FOOTER_MIN_PAGES=3`。闸门 `test_pdf_p2_hardening.py::TestA10HeaderFooterRemoval` 5 条（含中部重复文本保留 / 2 页不启用 / 开关关闭 3 个正向证人）；变异（hf_keys 置空）红→恢复绿 PASS。
+- [x] **A11. 图片链路断裂（minio:// src 前端不可用 + legacy 图片不入跨模态索引）**（2026-11-18 完成）
   - 证据：上传默认关（`config.py:255`）；`<img src="minio://…">` 全仓库无 presigned/HTTP 转换；跨模态提取仅 Docling 路径（`document_tasks.py:1408-1416`），且 `:1412` `_parse_raw` 对 PDF 二次全量解析。
   - 修复点：输出前统一 minio:// → presigned URL；legacy 路径图片接入跨模态索引；消除二次解析。
-- [ ] **A12. 页码丢失、页数失真**
+  - 实测：`minio_client.get_presigned_url`（boto3 签名，to_thread）；`image_storage.resolve_minio_image_urls`（去重签名、失败保留原址）+ `extract_pdf_images`（fitz 直提，小图过滤）；`documents.py:896-901` 详情端点输出前转换（存储层保留 minio://）；`_extract_images_for_cross_modal` PDF 分支改 fitz 直提，`_parse_raw` 不再被调。闸门 `TestA11ImagePipeline` 7 条（含签名失败保留原址、存储层不污染证人）；变异 3 次（提取置空 / 跳过签名 / 端点不转换）均红→恢复绿 PASS。
+- [x] **A12. 页码丢失、页数失真**（2026-11-18 完成）
   - 证据：`PAGE_SEPARATOR` 默认 ""（`config.py:290`），ParsedSection.page 被丢弃；页数按 `<h2>` 数推断（`document_tasks.py:294-296`）。
   - 修复点：解析结果携带真实页数元数据，落库 page_count 用真实值。
-- [ ] **A13. 表格文本重复入库**
+  - 实测：`PDFParser.last_page_count`（close 前缓存）；`_parse_pdf` 增强/兜底两路均写真实页数；两条管线解析前清零、落库仅在无真实值时回退推断。闸门 `TestA12RealPageCount` 2 条（单测 + 真实管线落库 page_count==3）；变异（last_page_count 置 0）红→恢复绿 PASS。
+- [x] **A13. 表格文本重复入库**（2026-11-18 完成）
   - 证据：get_text 已含表格文字，find_tables 再追加 HTML（`pdf_parser.py:107-129`），无 bbox 去重。
   - 验证方法：解析含表 PDF 对比字符数；修复按 bbox 从正文剔除表格区域文本。
-- [ ] **A14. 重索引不重解析，文件更新后用旧文本**
+  - 实测：`_extract_tables` 返回 (sections, bboxes)（len==4 守卫）；主循环先表格后正文，`_extract_text_ordered` 按 bbox 中心剔除；表格字符计入扫描判定防纯表格页误触 OCR。闸门 `TestA13TableTextDedup` 2 条（特征单元格全文恰好 1 次 + 表格外正文保留证人）；变异（exclude_bboxes=None）红→恢复绿 PASS。
+- [x] **A14. 重索引不重解析，文件更新后用旧文本**（2026-11-18 完成）
   - 证据：`document_tasks.py:1332` content_text 非空即返回。
   - 验证方法：换文件后 reindex，对比 content_hash；修复按 content_hash 判定是否重解析。
-- [ ] **A15. sniff 拒绝带前导垃圾的合法 PDF**
+  - 实测：Document 新增 `file_hash`（SHA-256，迁移 9f8e7d6c5b4a）；`_parse_document` 按源文件哈希判定——未变早退、变了重解析并更新哈希；视频/音频跳过哈希。闸门 `TestA14ReindexHash`（spy dispatch：首解析 1 次→未变不再调→换文件再调且哈希更新）；变异（哈希比较恒 True）红→恢复绿 PASS。
+- [x] **A15. sniff 拒绝带前导垃圾的合法 PDF**（2026-11-18 完成）
   - 证据：`backend/app/document/sniff.py:78` 要求 `%PDF-` 在偏移 0。
   - 修复点：在前 N 字节（如 1024）内搜索魔数。
-- [ ] **A16. 降级路径 fitz 异常不 close，句柄泄漏**
+  - 实测：`sniff.py:80` 改 `b"%PDF-" in head`（head=前 1024 字节）；闸门 `test_sniff.py::test_pdf_tolerates_leading_garbage`（junk 前缀命中 / 超 1024 偏移不命中）；变异（回退 startswith）红→恢复绿 PASS。
+- [x] **A16. 降级路径 fitz 异常不 close，句柄泄漏**（2026-11-18 独立验收完成）
   - 证据：`document_tasks.py:1572-1576`。
   - 修复点：try/finally 或上下文管理器。
   - 备注（2026-11-18）：句柄泄漏已随 A4 的 fitz 兜底重写一并修复（pdf_doc=None + finally close），未做独立验收，待确认后勾选。
-- [ ] **A17. PDF 测试盲区：全 mock，真实样例零引用**
+  - 实测：独立闸门 `TestA16FitzFallbackClose`——强制兜底 + get_text 抛异常 + close 间谍，断言 close 被调且兜底确实进入（page_count==2 正向证人）；变异（finally 不 close）红→恢复绿 PASS。
+- [x] **A17. PDF 测试盲区：全 mock，真实样例零引用**（2026-11-18 完成）
   - 证据：PDF 测试全部 mock fitz；`test_documents/pdf/` 20 个真实样例无任何测试引用。
   - 修复点：新增真实样例端到端解析测试（至少覆盖：普通文本、表格、扫描页、多栏、加密），作为 A1-A3 的联合验收闸门。
   - 备注（2026-11-18）：`tests/test_pdf_pipeline_hardening.py`（23 条）已用真实 fitz 生成样例覆盖文本/多栏/扫描/加密/图片并真实调用管线；`test_documents/pdf/` 20 个存量样例仍无测试引用，未完成。
+  - 实测：`TestA17RealSamples` parametrize 20 个存量样例直跑 PDFParser——全部 4 页、正文 886~1217 字、零告警（断言 len>200 / page_count==4 / warnings==[]）；变异（last_page_count 置 0）20 红→恢复 21 绿 PASS。
 
 ---
 
@@ -171,7 +179,7 @@
 ## C. 测试体系补强（伴随上述修复，不单独延后）
 
 - [ ] **C1. RLS 集成测试基座**：现有 conftest create_all 不建 RLS（conftest.py:203-204），B1/B6 的验收依赖一个能真实执行 RLS 策略的测试 fixture。
-- [ ] **C2. 真实 PDF 端到端闸门**：即 A17，A1-A3 修完必须联合跑通。（2026-11-18：A1-A9 闸门已用真实 fitz 样例联合跑通 23 条，存量 20 样例接入未完成）
+- [x] **C2. 真实 PDF 端到端闸门**：即 A17，A1-A3 修完必须联合跑通。（2026-11-18：A1-A9 闸门 23 条 + P2 闸门 39 条全绿；存量 20 样例已接入 `TestA17RealSamples` 并实测通过）
 - [ ] **C3. chord 入口真实调用测试**：即 A1 验收，杜绝「函数从未被真实调用」类缺陷再次全绿存活。（2026-11-18：`_parse_and_chunk_async` 已有真实调用集成测试，process_document 任务级入口仍走 mock）
 
 ---
@@ -204,5 +212,6 @@
 ## 已完成 / 明确不做
 
 - A1–A9（2026-11-18）：PDF 解析链路 9 条修复完成。闸门 `backend/tests/test_pdf_pipeline_hardening.py` 23 条（红基线 21 failed/2 passed → 修后 23 passed）；12 次串行变异自证全部「打红→恢复→绿」；受影响套件合跑全绿；全量回归仅剩 52 条 HEAD 既有失败（见上方勘误）。
+- A10–A17（2026-11-18，P2）：PDF 链路 8 条修复/验收完成。闸门 `backend/tests/test_pdf_p2_hardening.py` 39 条全绿（A15 闸门在 test_sniff.py）；10 次串行变异自证全部「打红→恢复→绿」；既有受影响 7 套件合跑 441 passed；20 个存量真实样例全部解析成功（4 页、886~1217 字、零告警）。
 - 不算缺陷：CRM/ERP/邮件/OA connector 与开放平台多媒体接口为显式 501/ConnectorNotImplementedError，属已知未实现、行为诚实，不在本清单范围。
 - 好消息备查：conflict_arbiter 与 forgetting 已真实接线（memory_manager.py:707、mem0_manager.py:93）；mem0/graphiti 为自研 PG 实现，无外部依赖坑。
