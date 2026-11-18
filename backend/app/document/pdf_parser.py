@@ -37,6 +37,10 @@ from app.utils.logger import get_logger
 
 log = get_logger(__name__)
 
+
+class EncryptedPDFError(ValueError):
+    """PDF 已加密且无法用空密码解密 — 必须显式失败，不得静默降级为空文本。"""
+
 # VLM 并发控制 — 防止大量图片同时调用 VLM 打满服务
 _VLM_SEMAPHORE_LIMIT: int = 3
 # 图片 VLM 理解 prompt
@@ -58,15 +62,19 @@ class PDFParser(DocumentParser):
     使用 pymupdf (fitz) 完成所有提取，无额外依赖。
     """
 
-    async def parse(self, file_path: str) -> str:
+    async def parse(self, file_path: str, doc_id: str | None = None) -> str:
         """解析 PDF 文档，返回增强文本。
 
         Args:
             file_path: PDF 文件路径。
+            doc_id: 文档 ID — 图片上传的对象命名空间，防止跨文档覆盖。
 
         Returns:
             增强文本（纯文本 + HTML 表格 + 图片描述/URL）。
             pymupdf 未安装或解析失败时返回空字符串。
+
+        Raises:
+            EncryptedPDFError: PDF 已加密且无法解密。
         """
         try:
             import fitz  # pymupdf  # noqa: F401
@@ -81,6 +89,10 @@ class PDFParser(DocumentParser):
         except Exception as exc:
             log.warning("pdf.open_failed", file_path=file_path, error=str(exc))
             return ""
+
+        if doc.needs_pass and not doc.authenticate(""):
+            doc.close()
+            raise EncryptedPDFError("PDF 已加密，无法解析，请解密后重新上传")
 
         settings = get_settings()
         # 使用 _bool()/_int() 辅助函数处理 MagicMock（测试场景）和真实 Settings
@@ -98,30 +110,51 @@ class PDFParser(DocumentParser):
         sections: list[ParsedSection] = []
         image_count = 0
         scan_ocr_count = 0
+        self.last_parse_warnings: list[str] = []
+        scan_min_chars = self._int(
+            getattr(settings, "PDF_SCAN_OCR_MIN_TEXT_CHARS", 32), 32
+        )
+        # close 之后 pymupdf Document 不可再访问（len/bool 均抛 ValueError），
+        # 页数必须在关闭前缓存。
+        page_count = len(doc)
 
         try:
-            for page_num in range(len(doc)):
+            for page_num in range(page_count):
                 page = doc[page_num]
 
                 # 1. 提取文本（Phase 0: 版式分层重建阅读顺序，异常降级为 get_text）
                 text = self._extract_text_ordered(page, layout_analysis_enabled)
-                if text:
+                # 文本覆盖率低于阈值 → 扫描主导页（含带少量文本层的混合扫描页）
+                if scan_ocr_enabled and len(text.strip()) < scan_min_chars:
+                    if scan_ocr_count < scan_ocr_max_pages:
+                        scan_ocr_count += 1
+                        ocr_text = await self._scan_page_ocr(doc, page, page_num)
+                        if ocr_text:
+                            sections.append(
+                                ParsedSection(
+                                    kind="text",
+                                    content=f"[扫描页 OCR]\n{ocr_text}",
+                                    page=page_num,
+                                )
+                            )
+                            log.info("pdf.scan_ocr_success", page=page_num)
+                        elif text.strip():
+                            sections.append(
+                                ParsedSection(kind="text", content=text, page=page_num)
+                            )
+                    else:
+                        self.last_parse_warnings.append(
+                            f"第{page_num + 1}页疑似扫描页，超出扫描页 OCR 上限"
+                            f"（{scan_ocr_max_pages}页），未提取该页文字"
+                        )
+                        if text.strip():
+                            sections.append(
+                                ParsedSection(kind="text", content=text, page=page_num)
+                            )
+                elif text:
                     sections.append(
                         ParsedSection(kind="text", content=text, page=page_num)
                     )
-                elif scan_ocr_enabled and scan_ocr_count < scan_ocr_max_pages:
-                    # 扫描页 — get_text() 返回空，渲染页面为图片做 VLM OCR
-                    ocr_text = await self._scan_page_ocr(doc, page, page_num)
-                    if ocr_text:
-                        sections.append(
-                            ParsedSection(
-                                kind="text",
-                                content=f"[扫描页 OCR]\n{ocr_text}",
-                                page=page_num,
-                            )
-                        )
-                        scan_ocr_count += 1
-                        log.info("pdf.scan_ocr_success", page=page_num)
 
                 # 2. 提取表格（Phase 1）
                 if table_enabled:
@@ -137,6 +170,7 @@ class PDFParser(DocumentParser):
                         max_images - image_count,
                         image_upload_enabled=image_upload_enabled,
                         image_min_size=image_min_size,
+                        doc_id=doc_id,
                     )
                     sections.extend(img_sections)
                     image_count += img_count
@@ -147,7 +181,7 @@ class PDFParser(DocumentParser):
         log.info(
             "pdf.parsed",
             file_path=file_path,
-            pages=len(doc) if doc else 0,
+            pages=page_count,
             sections=len(sections),
             tables=sum(1 for s in sections if s.kind == "table"),
             images=sum(1 for s in sections if s.kind in ("image_desc", "image_url")),
@@ -263,6 +297,7 @@ class PDFParser(DocumentParser):
         remaining: int,
         image_upload_enabled: bool = False,
         image_min_size: int = 50,
+        doc_id: str | None = None,
     ) -> tuple[list[ParsedSection], int]:
         """从 PDF 页面提取图片 — 支持上传 MinIO + VLM 描述 + 小图过滤。
 
@@ -356,7 +391,7 @@ class PDFParser(DocumentParser):
                 url = await upload_image(
                     image_bytes=img_bytes,
                     ext=std_ext,
-                    doc_id=getattr(page, "_doc_id", "unknown"),
+                    doc_id=doc_id or "unknown",
                     page=page_num,
                     idx=idx,
                     min_size=0,  # 已过滤，不再重复

@@ -20,6 +20,7 @@ Docling 统一文档解析器 — 基于 IBM Granite-Docling-258M 模型。
 
 from __future__ import annotations
 
+import asyncio
 import os
 from typing import Any
 
@@ -120,7 +121,8 @@ class DoclingParser(DocumentParser):
             return ""
 
         try:
-            result = converter.convert(file_path)
+            # convert 是同步 CPU/ML 密集调用，必须离开事件循环线程
+            result = await asyncio.to_thread(converter.convert, file_path)
             html: str = result.document.export_to_html()
 
             if not html or not html.strip():
@@ -161,7 +163,7 @@ class DoclingParser(DocumentParser):
             return None
 
         try:
-            result = converter.convert(file_path)
+            result = await asyncio.to_thread(converter.convert, file_path)
             return result
         except Exception as exc:
             log.warning("docling.parse_raw_failed", file_path=file_path, error=str(exc))

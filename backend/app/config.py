@@ -258,6 +258,8 @@ class Settings(BaseSettings):
     # PDF 扫描页 OCR — get_text() 返回空时，页面渲染为图片调用 VLM 提取文字
     PDF_SCAN_OCR_ENABLED: bool = True
     PDF_SCAN_OCR_MAX_PAGES: int = 20  # 单个 PDF 最大 OCR 页数（防止大量扫描页打满 VLM）
+    # 页面文本少于此字符数即视为扫描主导页（含带少量文本层的混合扫描页），触发 OCR
+    PDF_SCAN_OCR_MIN_TEXT_CHARS: int = 32
     # PDF 版式分层 — 基于 get_text("dict") 坐标重建阅读顺序（借鉴 pdfminer 栏检测），
     # 解决复杂多栏版式乱序；关闭或异常时降级为 get_text() 纯文本
     PDF_LAYOUT_ANALYSIS_ENABLED: bool = True

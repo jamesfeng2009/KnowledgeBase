@@ -18,7 +18,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import tempfile
 import uuid
+from contextlib import asynccontextmanager
 from typing import Any
 
 from celery_app import celery_app
@@ -581,7 +584,7 @@ def process_document(self, doc_id: str, tenant_id: str | None = None) -> dict[st
 
         try:
             # ① 串行阶段：解析 + 分块（事件循环中执行）
-            parse_result = asyncio.run(_parse_and_chunk_async(doc_id))
+            parse_result = asyncio.run(_parse_and_chunk_async(doc_id, tenant_id=tenant_id))
 
             if parse_result.get("status") == "failed":
                 return parse_result
@@ -683,11 +686,15 @@ def process_document(self, doc_id: str, tenant_id: str | None = None) -> dict[st
 # ------------------------------------------------------------------
 
 
-async def _parse_and_chunk_async(doc_id: str) -> dict[str, Any]:
+async def _parse_and_chunk_async(doc_id: str, tenant_id: str | None = None) -> dict[str, Any]:
     """chord 入口阶段 — 解析 + 分块 + 检查模块开关。
 
     从 _process_document_async 提取前半段（加载+解析+分块），
     不包含索引/图谱/发布逻辑。
+
+    Args:
+        doc_id: 文档 ID（UUID 字符串）。
+        tenant_id: 调用方入队时携带的租户 ID；缺失时按 doc_id 反查。
 
     Returns:
         {"chunk_objects": [...], "graph_enabled": bool, "parse_warnings": [...]}
@@ -725,7 +732,7 @@ async def _parse_and_chunk_async(doc_id: str) -> dict[str, Any]:
         parse_failed = False
         extracted_images: list[tuple[bytes, str]] = []
         try:
-            parsed_text, extracted_images = await _parse_document(doc)
+            parsed_text, extracted_images = await _parse_document(doc, warnings=warnings)
         except Exception as exc:
             logger.warning("document.parse_failed", doc_id=doc_id, error=str(exc))
             parsed_text = doc.content_text or ""
@@ -736,6 +743,23 @@ async def _parse_and_chunk_async(doc_id: str) -> dict[str, Any]:
             warnings.append(
                 f"旧格式 .{doc.doc_type} 不支持解析，请转换为 .{doc.doc_type}x 后重新上传"
             )
+
+        # 解析失败或结果为空 — 不得标 parsed（空内容冒充成功会污染检索）
+        if parse_failed or not (parsed_text and parsed_text.strip()):
+            if not parse_failed:
+                warnings.append("解析结果为空：未能从文件中提取任何文本")
+            doc.parse_status = "failed"
+            doc.parse_warnings = warnings or None
+            doc.char_count = len(parsed_text or "")
+            await session.commit()
+            return {
+                "doc_id": doc_id,
+                "status": "failed",
+                "error": "; ".join(warnings)[:500] or "解析失败",
+                "warnings": warnings,
+                "parse_status": "failed",
+                "char_count": len(parsed_text or ""),
+            }
 
         # 2. 更新纯文本内容 + 计算内容哈希（P1-B）
         if parsed_text and parsed_text != doc.content_text:
@@ -1110,7 +1134,7 @@ async def _process_document_async(doc_id: str) -> dict[str, Any]:
         parse_failed = False
         extracted_images: list[tuple[bytes, str]] = []
         try:
-            parsed_text, extracted_images = await _parse_document(doc)
+            parsed_text, extracted_images = await _parse_document(doc, warnings=warnings)
         except Exception as exc:
             logger.warning("document.parse_failed", doc_id=doc_id, error=str(exc))
             parsed_text = doc.content_text or ""
@@ -1122,6 +1146,23 @@ async def _process_document_async(doc_id: str) -> dict[str, Any]:
             warnings.append(
                 f"旧格式 .{doc.doc_type} 不支持解析，请转换为 .{doc.doc_type}x 后重新上传"
             )
+
+        # 解析失败或结果为空 — 不得标 parsed（空内容冒充成功会污染检索）
+        if parse_failed or not (parsed_text and parsed_text.strip()):
+            if not parse_failed:
+                warnings.append("解析结果为空：未能从文件中提取任何文本")
+            doc.parse_status = "failed"
+            doc.parse_warnings = warnings or None
+            doc.char_count = len(parsed_text or "")
+            await session.commit()
+            return {
+                "doc_id": doc_id,
+                "status": "failed",
+                "error": "; ".join(warnings)[:500] or "解析失败",
+                "warnings": warnings,
+                "parse_status": "failed",
+                "char_count": len(parsed_text or ""),
+            }
 
         # 2. 更新纯文本内容（检索用）+ 计算内容哈希（P1-B）
         if parsed_text and parsed_text != doc.content_text:
@@ -1310,7 +1351,41 @@ async def _process_document_async(doc_id: str) -> dict[str, Any]:
         }
 
 
-async def _parse_document(doc: Any) -> tuple[str, list[tuple[bytes, str]]]:
+@asynccontextmanager
+async def _localized_file_path(doc: Any):
+    """minio:// / local:// → 本地临时文件，解析结束后恢复原路径。
+
+    解析器（fitz/Docling/python-docx 等）只能读本地路径，而 DB 记录的
+    file_path 是 minio:// 对象地址。这里临时替换 doc.file_path 供全部
+    下游解析函数使用，finally 必然恢复，临时路径不会写回 DB。
+    """
+    original = doc.file_path
+    tmp_path: str | None = None
+    try:
+        if isinstance(original, str) and original.startswith("minio://"):
+            from app.utils.minio_client import download_file_to_path
+
+            bucket, object_name = original[len("minio://"):].split("/", 1)
+            suffix = os.path.splitext(object_name)[1] or ".bin"
+            fd, tmp_path = tempfile.mkstemp(suffix=suffix, prefix="ekb_parse_")
+            os.close(fd)
+            await download_file_to_path(bucket, object_name, tmp_path)
+            doc.file_path = tmp_path
+        elif isinstance(original, str) and original.startswith("local://"):
+            doc.file_path = original[len("local://"):]
+        yield
+    finally:
+        doc.file_path = original
+        if tmp_path:
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+
+
+async def _parse_document(
+    doc: Any, warnings: list[str] | None = None
+) -> tuple[str, list[tuple[bytes, str]]]:
     """解析文档内容 — 优先 Docling 统一解析，降级到原有专用解析器。
 
     解析优先级：
@@ -1324,6 +1399,8 @@ async def _parse_document(doc: Any) -> tuple[str, list[tuple[bytes, str]]]:
 
     Args:
         doc: Document ORM 实例。
+        warnings: 可选的警告收集列表 — 解析器产生的用户可见警告
+            （如扫描页超 OCR 上限）追加到此列表。
 
     Returns:
         (解析后的纯文本内容, 图片数据列表 [(二进制, VLM描述), ...])
@@ -1332,6 +1409,14 @@ async def _parse_document(doc: Any) -> tuple[str, list[tuple[bytes, str]]]:
     if doc.content_text:
         return doc.content_text, []
 
+    async with _localized_file_path(doc):
+        return await _parse_document_dispatch(doc, warnings)
+
+
+async def _parse_document_dispatch(
+    doc: Any, warnings: list[str] | None = None
+) -> tuple[str, list[tuple[bytes, str]]]:
+    """_parse_document 的实际分发逻辑（file_path 已本地化）。"""
     doc_type = doc.doc_type or "md"
 
     # 视频不走 Docling（Docling 不支持视频），直接走专用管线
@@ -1352,7 +1437,7 @@ async def _parse_document(doc: Any) -> tuple[str, list[tuple[bytes, str]]]:
 
     # 2. 降级到原有专用解析器
     if doc_type == "pdf":
-        text = await _parse_pdf(doc)
+        text = await _parse_pdf(doc, warnings=warnings)
     elif doc_type == "docx":
         text = await _parse_docx(doc)
     elif doc_type in ("xlsx", "xls"):
@@ -1540,7 +1625,7 @@ def _legacy_format_fallback(doc: Any, fmt: str) -> str:
     return hint
 
 
-async def _parse_pdf(doc: Any) -> str:
+async def _parse_pdf(doc: Any, warnings: list[str] | None = None) -> str:
     """解析 PDF 文档 — 优先使用增强解析器（表格 + 图片 VLM），降级为纯文本。
 
     增强解析器（app/document/pdf_parser.py）支持：
@@ -1548,9 +1633,12 @@ async def _parse_pdf(doc: Any) -> str:
     - 内嵌图片 VLM 描述（get_images → VLM.understand）。
 
     pymupdf 未安装或增强解析器不可用时优雅降级为纯文本提取。
+    加密 PDF 抛 EncryptedPDFError 显式失败，不得静默降级为空文本。
     """
     if not doc.file_path:
         return ""
+
+    from app.document.pdf_parser import EncryptedPDFError, PDFParser
 
     # 优先尝试增强解析器
     try:
@@ -1558,29 +1646,46 @@ async def _parse_pdf(doc: Any) -> str:
 
         parser = get_parser("pdf")
         if parser is not None:
-            result = await parser.parse(doc.file_path)
+            if isinstance(parser, PDFParser):
+                result = await parser.parse(
+                    doc.file_path,
+                    doc_id=str(getattr(doc, "id", "")) or None,
+                )
+                if warnings is not None:
+                    warnings.extend(getattr(parser, "last_parse_warnings", []))
+            else:
+                result = await parser.parse(doc.file_path)
             if result and result.strip():
                 return result
             # 增强解析器返回空，降级到纯文本
+    except EncryptedPDFError:
+        raise
     except Exception as exc:
         logger.warning("pdf.enhanced_parse_failed", error=str(exc))
 
     # 降级：纯文本提取
+    pdf_doc = None
     try:
         import fitz  # pymupdf
 
         pdf_doc = fitz.open(doc.file_path)
+        if pdf_doc.needs_pass and not pdf_doc.authenticate(""):
+            raise EncryptedPDFError("PDF 已加密，无法解析，请解密后重新上传")
         text_parts: list[str] = []
         for page in pdf_doc:
             text_parts.append(page.get_text())
-        pdf_doc.close()
         return "\n".join(text_parts)
+    except EncryptedPDFError:
+        raise
     except ImportError:
         logger.warning("pdf.parse_skipped", reason="pymupdf not installed")
         return doc.content_text or ""
     except Exception as exc:
         logger.warning("pdf.parse_error", error=str(exc))
         return doc.content_text or ""
+    finally:
+        if pdf_doc is not None:
+            pdf_doc.close()
 
 
 async def _parse_pptx(doc: Any) -> str:

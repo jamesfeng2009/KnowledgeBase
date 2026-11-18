@@ -51,6 +51,8 @@ _CHARS_PER_TOKEN: float = 3.5
 _QA_MAX_TOKENS: int = 1200
 # 结构化分块 — chunk 软上限（字符数）
 _STRUCTURAL_MAX_CHARS: int = 2800  # ~800 tokens
+# HTML 表格片段 — 切分时保持原子性（捕获组保留表格本身）
+_TABLE_SEGMENT_RE = re.compile(r"(<table\b[^>]*>.*?</table>)", re.IGNORECASE | re.DOTALL)
 # 固定长度兜底 — Overlap 重叠字符数（~50 tokens），弥补硬切的边界信息丢失
 _OVERLAP_CHARS: int = 175
 # 固定长度兜底 — 是否启用 Overlap（默认关闭，仅硬切兜底场景需要）
@@ -637,6 +639,26 @@ class SemanticChunker:
         # P3: 维护标题层级栈，用于构建 title_path
         title_stack: list[tuple[int, str]] = []  # [(level, title), ...]
 
+        # 首个标题之前的前导内容保留为独立块，不得丢弃
+        preamble = content[: matches[0].start()].strip()
+        if preamble:
+            for sub in SemanticChunker._split_by_tokens(
+                preamble, int(_STRUCTURAL_MAX_CHARS / _CHARS_PER_TOKEN)
+            ):
+                if sub.strip():
+                    chunks.append(
+                        Chunk(
+                            id=str(uuid.uuid4()),
+                            doc_id=doc_id,
+                            content=sub.strip(),
+                            start_pos=0,
+                            end_pos=matches[0].start(),
+                            token_count=estimate_tokens(sub),
+                            title_path="",
+                            chunk_strategy="structural",
+                        )
+                    )
+
         for idx, match in enumerate(matches):
             level = len(match.group(1))  # # 的个数 = 层级
             title = match.group(2).strip()
@@ -713,6 +735,26 @@ class SemanticChunker:
         chunks: list[Chunk] = []
         # P3: 维护标题层级栈
         title_stack: list[tuple[int, str]] = []
+
+        # 首个标题之前的前导内容保留为独立块，不得丢弃
+        preamble = content[: matches[0].start()].strip()
+        if preamble:
+            for sub in SemanticChunker._split_by_tokens(
+                preamble, int(_STRUCTURAL_MAX_CHARS / _CHARS_PER_TOKEN)
+            ):
+                if sub.strip():
+                    chunks.append(
+                        Chunk(
+                            id=str(uuid.uuid4()),
+                            doc_id=doc_id,
+                            content=sub.strip(),
+                            start_pos=0,
+                            end_pos=matches[0].start(),
+                            token_count=estimate_tokens(sub),
+                            title_path="",
+                            chunk_strategy="structural",
+                        )
+                    )
 
         for idx, match in enumerate(matches):
             tag = match.group(1).lower()
@@ -1012,12 +1054,49 @@ class SemanticChunker:
 
     @staticmethod
     def _split_by_tokens(text: str, max_tokens: int) -> list[str]:
-        """按估算 token 数上限切分文本，尽量在段落 / 句子边界断开。"""
+        """按估算 token 数上限切分文本，尽量在段落 / 句子边界断开。
+
+        HTML 表格保持原子性：绝不从 <table> 中间切断；
+        超长表格按行切分，每个片段重复表头。
+        """
         if max_tokens <= 0:
             return [text]
         max_chars = int(max_tokens * _CHARS_PER_TOKEN)
         if len(text) <= max_chars:
             return [text]
+
+        parts: list[str] = []
+        buf = ""
+        for segment in _TABLE_SEGMENT_RE.split(text):
+            if not segment:
+                continue
+            if segment.lstrip().lower().startswith("<table"):
+                if buf:
+                    parts.append(buf)
+                    buf = ""
+                if len(segment) <= max_chars:
+                    parts.append(segment)
+                else:
+                    parts.extend(
+                        SemanticChunker._split_table_by_rows(segment, max_chars)
+                    )
+                continue
+            for piece in SemanticChunker._split_plain_text(segment, max_chars):
+                if len(buf) + len(piece) <= max_chars:
+                    buf += piece
+                else:
+                    if buf:
+                        parts.append(buf)
+                    buf = piece
+        if buf:
+            parts.append(buf)
+        return parts
+
+    @staticmethod
+    def _split_plain_text(text: str, max_chars: int) -> list[str]:
+        """纯文本按段落 / 句子边界切分，单句超长时硬切。"""
+        if len(text) <= max_chars:
+            return [text] if text else []
 
         parts: list[str] = []
         # 优先在段落边界切分
@@ -1049,4 +1128,27 @@ class SemanticChunker:
                 buf = block
         if buf:
             parts.append(buf)
+        return parts
+
+    @staticmethod
+    def _split_table_by_rows(table_html: str, max_chars: int) -> list[str]:
+        """超长 HTML 表格按行切分，每个片段保留完整表头与 <table> 闭合结构。"""
+        rows = re.findall(r"<tr\b[^>]*>.*?</tr>", table_html, re.IGNORECASE | re.DOTALL)
+        if not rows:
+            return [
+                table_html[i : i + max_chars]
+                for i in range(0, len(table_html), max_chars)
+            ]
+        header = rows[0]
+        prefix = f"<table>\n{header}\n"
+        suffix = "\n</table>"
+        parts: list[str] = []
+        cur = prefix
+        for row in rows[1:]:
+            if len(cur) + len(row) + len(suffix) <= max_chars:
+                cur += row + "\n"
+            else:
+                parts.append(cur + suffix)
+                cur = prefix + row + "\n"
+        parts.append(cur + suffix)
         return parts

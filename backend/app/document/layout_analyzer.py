@@ -155,7 +155,30 @@ def _detect_columns(
     result: list[list[TextBlock]] = []
     for _, col in ordered_pairs:
         result.append(sorted(col, key=lambda b: (b.y0, b.x0)))
-    return result
+
+    # 合并缩进伪栏：x0 起点差异会把单栏内的缩进块（引用/列表）误判为新栏，
+    # 导致其被移到页尾。判据：本栏最左块起点落在左栏主体右缘之内
+    # （间隙 < min_gap）且与左栏垂直重叠 → 实为同栏，按 y 归位。
+    # 左栏右缘用 x1 中位数，避免栏内偶发宽块（短标题）撑大边界误吞右栏。
+    from statistics import median
+
+    merged: list[list[TextBlock]] = []
+    for col in result:
+        if merged:
+            prev = merged[-1]
+            prev_right = median(b.x1 for b in prev)
+            gap = min(b.x0 for b in col) - prev_right
+            # 垂直重叠按行高容差判定 — 缩进块可能恰好落在两行之间的间隙里
+            if gap < min_gap and any(
+                _vertically_overlap(a, b, tolerance=max(a.height, b.height))
+                for a in col
+                for b in prev
+            ):
+                prev.extend(col)
+                prev.sort(key=lambda b: (b.y0, b.x0))
+                continue
+        merged.append(col)
+    return merged
 
 
 def sort_reading_order(
