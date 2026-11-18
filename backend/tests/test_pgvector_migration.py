@@ -67,11 +67,26 @@ class TestPgvectorMigration:
         assert "ix_memory_facts_embedding_vec" in migration_content
         assert "vector_cosine_ops" in migration_content
 
-    def test_orm_column_dim_matches_config(self) -> None:
-        """ORM 列宽必须与 embedder 输出同源，否则 INSERT 维度不匹配。"""
+    def test_orm_column_dim_matches_config(self, monkeypatch) -> None:
+        """ORM 列宽必须与当前部署模式的 embedder 输出同源（B2 新契约）。
+
+        旧契约只对齐 DASHSCOPE_EMBED_DIM —— saas 模式（OpenAI 3072 维）
+        下写入必报 dimension mismatch。现在列宽随 DEPLOY_MODE 取
+        memory_embedding_dim，与生产 embedder 注册表一致。
+        """
         from app.config import get_settings
+        from app.llm.embedder import get_embedder, memory_embedding_dim
         from app.models.memory import MemoryFact
 
-        assert MemoryFact.__table__.c.embedding_vec.type.dim == (
-            get_settings().DASHSCOPE_EMBED_DIM
-        )
+        # 环境 shim：本机 NO_PROXY 含裸 ::1，httpx 解析抛 InvalidURL(':1]')
+        # （task.md 勘误的既有环境根因，范围外），仅清理测试进程环境。
+        monkeypatch.setenv("NO_PROXY", "localhost,127.0.0.1")
+        monkeypatch.setenv("no_proxy", "localhost,127.0.0.1")
+        get_embedder.cache_clear()
+        try:
+            assert MemoryFact.__table__.c.embedding_vec.type.dim == (
+                memory_embedding_dim(get_settings())
+            )
+            assert MemoryFact.__table__.c.embedding_vec.type.dim == get_embedder().dim
+        finally:
+            get_embedder.cache_clear()

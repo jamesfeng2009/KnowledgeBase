@@ -81,7 +81,9 @@ class TestRecordPreferenceChange:
         from app.memory.graphiti_manager import GraphitiManager
 
         mock_db = _make_db_first_change()
-        manager = GraphitiManager(mock_db)
+        # 显式传 tenant_id（生产 chat_service 路径）：否则 B1 的 GUC 兜底
+        # 解析会多发一次 execute，耗尽 mock 的 side_effect 序列
+        manager = GraphitiManager(mock_db, tenant_id=uuid.uuid4())
         user_id = uuid.uuid4()
 
         event = await manager.record_preference_change(
@@ -113,7 +115,7 @@ class TestRecordPreferenceChange:
         existing_entity.id = uuid.uuid4()
 
         mock_db = _make_db_existing_entity(existing_entity)
-        manager = GraphitiManager(mock_db)
+        manager = GraphitiManager(mock_db, tenant_id=uuid.uuid4())
 
         event = await manager.record_preference_change(
             user_id=uuid.uuid4(),
@@ -155,7 +157,7 @@ class TestRecordPreferenceChange:
             side_effect=[entity_result, prev_events_result, refresh_result]
         )
 
-        manager = GraphitiManager(mock_db)
+        manager = GraphitiManager(mock_db, tenant_id=uuid.uuid4())
         await manager.record_preference_change(
             user_id=uuid.uuid4(),
             key="language",
