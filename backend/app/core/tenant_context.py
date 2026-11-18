@@ -121,6 +121,24 @@ async def clear_tenant(session: AsyncSession) -> None:
     await session.execute(_SET_SQL, {"name": TENANT_GUC, "value": ""})
 
 
+async def session_tenant_id(session: AsyncSession) -> uuid.UUID | None:
+    """读取会话当前租户 GUC，返回 UUID；未设置或跨租户哨兵返回 None。
+
+    供写入路径给行填 tenant_id —— 必须与 GUC 一致，否则 fail-closed 的
+    WITH CHECK 会拒绝写入。跨租户作用域（'*'）下无法确定行归属，返回 None
+    由调用方显式传租户。
+    """
+    raw = (
+        await session.execute(text(f"SELECT current_setting('{TENANT_GUC}', true)"))
+    ).scalar()
+    if not raw or raw == CROSS_TENANT:
+        return None
+    try:
+        return uuid.UUID(str(raw))
+    except ValueError:
+        return None
+
+
 @asynccontextmanager
 async def tenant_scope(session: AsyncSession, tenant_id: Any) -> AsyncIterator[str]:
     """在严格租户作用域内执行，退出时清空 GUC。

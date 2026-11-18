@@ -31,6 +31,11 @@ def _cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
     """
     if not vec_a or not vec_b:
         return 0.0
+    if len(vec_a) != len(vec_b):
+        # zip 会按短的截断 —— 不同模型产出的向量混算会静默得到错误相似度
+        raise ValueError(
+            f"向量维度不一致（{len(vec_a)} vs {len(vec_b)}），拒绝截断计算相似度"
+        )
     norm_a = math.sqrt(sum(x * x for x in vec_a))
     norm_b = math.sqrt(sum(x * x for x in vec_b))
     if norm_a == 0 or norm_b == 0:
@@ -86,11 +91,25 @@ _DEFAULT_HALF_LIFE_DAYS = 30.0
 class Mem0Manager:
     """Mem0 当前事实管理器 — 存储和检索跨会话的用户事实。"""
 
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession, tenant_id: uuid.UUID | None = None):
         self.db = db
+        self._tenant_id = tenant_id
         self._embedder = None  # 延迟初始化
         # 机制一：召回时实时算激活值（ACT-R 三因子，纯函数）
         self._activation = DefaultActivation()
+
+    async def _resolve_tenant_id(self) -> uuid.UUID | None:
+        """写入行的租户归属：构造参数优先，其次会话 GUC（RLS 同源）。
+
+        fail-closed RLS 下 tenant_id=NULL 的行写不进也读不出 —— 写入侧
+        必须显式填租户。两者都拿不到时返回 None（单租户历史路径，见 B3），
+        由 RLS 策略本身拒绝，不在这里静默兜底。
+        """
+        if self._tenant_id is not None:
+            return uuid.UUID(str(self._tenant_id))
+        from app.core.tenant_context import session_tenant_id
+
+        return await session_tenant_id(self.db)
 
     @property
     def activation_policy(self) -> DefaultActivation:
@@ -170,6 +189,7 @@ class Mem0Manager:
 
         fact = MemoryFact(
             user_id=user_id,
+            tenant_id=await self._resolve_tenant_id(),
             category=category,
             fact_text=fact_text,
             fact_key=fact_key,

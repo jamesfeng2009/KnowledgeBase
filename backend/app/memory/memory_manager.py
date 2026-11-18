@@ -148,8 +148,8 @@ class MemoryManager:
         tenant_id: uuid.UUID | None = None,
     ):
         self.db = db
-        self.mem0 = Mem0Manager(db)
-        self.graphiti = GraphitiManager(db)
+        self.mem0 = Mem0Manager(db, tenant_id=tenant_id)
+        self.graphiti = GraphitiManager(db, tenant_id=tenant_id)
         self.checkpoint = CheckpointManager(db)
         # 机制二：写入时增量冲突整合（仲裁器复用 mem0 的检索能力）
         self.arbiter = MemoryConflictArbiter(self.mem0)

@@ -42,8 +42,17 @@ PREFERENCE_ENTITY_TYPE = "user_preference"
 class GraphitiManager:
     """Graphiti 时序图谱管理器 — 追踪知识演化和过期。"""
 
-    def __init__(self, db):
+    def __init__(self, db, tenant_id: uuid.UUID | None = None):
         self.db = db
+        self._tenant_id = tenant_id
+
+    async def _resolve_tenant_id(self) -> uuid.UUID | None:
+        """写入行的租户归属：构造参数优先，其次会话 GUC（与 Mem0 同规则）。"""
+        if self._tenant_id is not None:
+            return uuid.UUID(str(self._tenant_id))
+        from app.core.tenant_context import session_tenant_id
+
+        return await session_tenant_id(self.db)
 
     async def register_entity(
         self,
@@ -59,6 +68,7 @@ class GraphitiManager:
             name=name,
             current_version=version,
             valid_from=datetime.utcnow(),
+            tenant_id=await self._resolve_tenant_id(),
         )
         self.db.add(entity)
         await self.db.flush()
@@ -103,6 +113,7 @@ class GraphitiManager:
             new_value=new_value,
             event_source=source,
             valid_from=now,
+            tenant_id=await self._resolve_tenant_id(),
         )
         self.db.add(event)
 

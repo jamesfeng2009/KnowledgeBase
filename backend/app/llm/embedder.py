@@ -18,7 +18,7 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.utils.circuit_breaker import circuit_call
 from app.utils.logger import get_logger
 
@@ -213,3 +213,21 @@ def get_embedder() -> EmbeddingProvider:
             f"已注册: {list(_embedder_registry)}"
         )
     return factory()
+
+
+def memory_embedding_dim(s: Settings | None = None) -> int:
+    """记忆向量列宽 — 必须等于当前部署模式 embedder 的输出维度。
+
+    与 get_embedder 的注册表一一对应，但不实例化客户端（建表/迁移期
+    不该依赖 API Key）：saas → OpenAIEmbedder.dim，
+    saas_dashscope → DASHSCOPE_EMBED_DIM，private_* → TEIEmbedder.dim。
+    private_finetuned 尚未注册 embedder（B10），列宽暂按 TEI 兜底，
+    注册后需同步本函数。
+    """
+    if s is None:
+        s = get_settings()
+    if s.DEPLOY_MODE == "saas":
+        return OpenAIEmbedder.dim
+    if s.DEPLOY_MODE == "saas_dashscope":
+        return s.DASHSCOPE_EMBED_DIM
+    return TEIEmbedder.dim

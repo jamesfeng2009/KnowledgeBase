@@ -25,6 +25,7 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.config import get_settings
+from app.llm.embedder import memory_embedding_dim
 from app.models.base import Base, TimestampMixin, UUIDMixin
 
 settings = get_settings()
@@ -58,8 +59,9 @@ class MemoryFact(UUIDMixin, TimestampMixin, Base):
         JSONB, nullable=True, comment="向量嵌入 JSONB（语义检索降级用）"
     )
     embedding_vec: Mapped[list | None] = mapped_column(
-        # 维度必须与写入侧 embedder 一致，否则 INSERT 报 dimension mismatch
-        Vector(settings.DASHSCOPE_EMBED_DIM),
+        # 列宽随 DEPLOY_MODE 对应 embedder.dim（saas=3072，其余 1024），
+        # 写死单一配置会在别的模式下 INSERT 报 dimension mismatch
+        Vector(memory_embedding_dim(settings)),
         nullable=True,
         comment="向量嵌入 pgvector（语义检索主索引）",
     )

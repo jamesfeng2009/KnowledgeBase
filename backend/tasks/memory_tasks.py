@@ -103,7 +103,8 @@ async def _persist_memory_async(
             )
             result["session_saved"] = True
         except Exception as exc:
-            logger.warning("memory_task.save_session_failed", error=str(exc))
+            # 记忆写入失败 = 数据丢失，必须 error 级可见（B1：不得静默）
+            logger.error("memory_task.save_session_failed", error=str(exc))
 
         # 2. 事实提取（含溯源）
         try:
@@ -117,7 +118,7 @@ async def _persist_memory_async(
                 ),
             )
         except Exception as exc:
-            logger.warning("memory_task.extract_facts_failed", error=str(exc))
+            logger.error("memory_task.extract_facts_failed", error=str(exc))
 
         # 3. 关键决策 → working memory（chat_service 路径专属）
         if extract_decisions:
@@ -130,7 +131,7 @@ async def _persist_memory_async(
                     answer=assistant_content,
                 )
             except Exception as exc:
-                logger.warning("memory_task.key_decisions_failed", error=str(exc))
+                logger.error("memory_task.key_decisions_failed", error=str(exc))
 
         await session.commit()
 
