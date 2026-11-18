@@ -131,22 +131,26 @@
 
 ### P1
 
-- [ ] **B3. 单租户（tenant_id=NULL）异步记忆全丢**
+- [x] **B3. 单租户（tenant_id=NULL）异步记忆全丢** ✅ 2026-11-18
+  - 完成证据：`memory_tasks._persist_memory_async` 改为一次 `system_scope(reason="memory_tasks.lookup_conversation_owner")` 查询同时取 `(tenant_id, deleted_at)`，三分支：行不存在/已软删除→跳过（竞态守卫不回归）；tenant 非空→`apply_tenant` 严格租户作用域；tenant NULL→写入体包进 `system_scope(reason="memory_tasks.single_tenant_null_tenant")`（fail-closed 下 NULL 行仅在 '*' 可见/可写，审计留痕）。闸门 `test_memory_single_tenant.py` 4 条（C1 基座 + 任务引擎改绑非 superuser 运行角色，否则 superuser 绕过 RLS 掩盖缺陷）：红基线 1 failed/3 passed（红因实测 `resolve_owner_missing`→`skipped_conversation_gone`）→ 修后 4 passed。变异 M-B3（NULL 分支退回无身份）→1 红→恢复绿。
   - 证据：`backend/tasks/memory_tasks.py:57-87` resolve_tenant_of_row 返回 None → fail-closed 查不到会话 → 按「会话已删除」跳过写入；默认开关开启（config.py:846）。
   - 修复点：区分「会话不存在」与「单租户 NULL」两种情形，后者正常写入。
   - 验收：tenant_id=NULL 会话的记忆写入集成测试。
 
-- [ ] **B4. checkpoint 每轮被存根覆写，L2 恢复形同虚设**
+- [x] **B4. checkpoint 每轮被存根覆写，L2 恢复形同虚设** ✅ 2026-11-18
+  - 完成证据：`save_session(agent_state: dict | None = None)`——None 时干净跳过 checkpoint 写入（不再抛 AttributeError 被吞）；`chat_service._persist_assistant_result` 同步降级与 `memory_tasks` 均不再传 `{"iteration":0,...}` 存根；Agent Loop 带真实状态的路径照旧写入（正向证人闸门）。加载路径明确降级为「仅进度参考」：prompt 文本改名「历史进度参考：…仅供了解既往进度，不代表可从中断处继续执行」。闸门 `test_checkpoint_clobber.py` 6 条：红基线 3 failed/3 passed（chat 存根覆写 / None 吞崩 / prompt 谎称恢复）→ 修后 6 passed。变异×4 串行：M-B4a chat 恢复存根→1 红 / M-B4b 任务恢复存根默认值→1 红 / M-B4c 去掉 None 守卫→1 红 / M-B4d prompt 恢复旧文案→1 红；恢复后全绿。
   - 证据：`backend/app/services/chat_service.py:760`、`memory_tasks.py:101` 每轮写 `{"iteration":0}`，冲掉 `agents/base.py:335-345` 的真实状态；加载仅渲染提示语（memory_manager.py:115-119），无真状态恢复。
   - 修复点：chat 路径不得覆写 agent checkpoint；恢复路径真正还原状态或明确降级为「仅摘要」并改名去误导。
   - 验收：agent 写入状态 → chat 一轮 → 断言状态未被冲掉。
 
-- [ ] **B5. event_log.append 吞错污染共享事务 + seq 竞态丢事件**
+- [x] **B5. event_log.append 吞错污染共享事务 + seq 竞态丢事件** ✅ 2026-11-18
+  - 完成证据：`append` 的 INSERT+flush 包进 `begin_nested()` savepoint——失败只回滚保存点，共享事务不再进入 aborted；`IntegrityError`（seq 唯一约束冲突）有限重试 8 次，每轮重算 MAX，退避 `0.005*(attempt+1)+random.uniform(0,0.02)`（**实测取证**：确定性退避会把败者同步到同一时刻，每轮仅一路前进，8 路并发 5 次预算必耗尽；加抖动后复现脚本 10/10 收敛）；其余异常保持 return 0 不阻塞主流程契约。闸门 `test_event_log_append.py` 2 条（(session_id,seq) 唯一索引从生产迁移 bd2c3d4e5f70 本体同源执行）：红基线 2 failed（`InFailedSQLTransactionError` 毒死共享事务 / 8 路并发丢 3 事件）→ 修后 2 passed，连跑 5 轮稳定。变异×2 串行：M-B5a 去 savepoint→2 红 / M-B5b 重试预算归 1→1 红；恢复后全绿。既有 `test_event_log.py` 等 76 条不回归。
   - 证据：`backend/app/memory/event_log.py:202-210` 失败仅返回 0，无 savepoint，共享 session 事务 abort 后续操作必挂；`:135-139` seq 竞态 IntegrityError 即丢事件，注释称「可重试」但无重试实现。
   - 修复点：append 用嵌套事务（begin_nested）隔离失败；seq 冲突实现有限重试。
   - 验收：append 失败后同 session 后续操作成功的测试；并发 append 不丢事件的测试。
 
-- [ ] **B6. agent_checkpoints / agent_event_logs 无 tenant 列无 RLS**
+- [x] **B6. agent_checkpoints / agent_event_logs 无 tenant 列无 RLS** ✅ 2026-11-18
+  - 完成证据：两表 ORM 补 `tenant_id` 列；新迁移 `7a8b9c0d1e2f`（接 B2 的 e5f6a7b8c9d1）逐表显式 ADD COLUMN + 按 `session_id→conversations.id` 回填存量租户（task:* 无会话归属留 NULL）+ ENABLE/FORCE RLS + fail-closed `tenant_isolation` 策略（显式语句而非 DO 循环，保证静态覆盖闸门 test_rls_role_split 可检出）；`CheckpointManager`/`EventLogManager` 构造参数 tenant_id 优先、缺省从会话 GUC 解析，写入显式填 tenant，upsert 冲突 `COALESCE` 保留既有归属。闸门 `test_agent_state_rls.py` 4 条（C1 基座：跨租户 load_checkpoint/事件流拒绝 + 无 GUC 写入拒绝/不落库，均带本租户正向证人）+ `test_agent_state_migration.py` 1 条（真实 PG 跑迁移 upgrade：uuid 列/回填/策略/FORCE）：红基线随 B1 批次建立，修后 5 passed。变异×2 串行：M-B6a checkpoint 写入不填租户→1 红 / M-B6b 迁移去 FORCE→1 红；恢复后全绿。既有 `test_task_milestones.py` fake DB 补 `scalar()`（GUC 解析新查询）后 65 条不回归。
   - 证据：`backend/app/models/checkpoint.py:29-51`；隔离全靠上游归属校验（chat_service.py:186-188）。
   - 验证方法：跨租户 session_id 直调 load_checkpoint 是否越权。
   - 修复点：补 tenant 列 + RLS（与 B1 同一迁移批次）。
@@ -213,6 +217,20 @@
 B1/B2 轮全量回归（2026-11-18）：55 failed / 5394 passed。其中 52 条与上表既有失败**逐文件条数完全一致**（13+13+8+6+5+3+3+1）；新增 3 条为本次引入回归，已修复：
 - test_preference_graphiti_sync.py::TestRecordPreferenceChange ×3 —— mock db 按精确 execute 次数排 side_effect，B1 新增的 GUC 兜底解析多发一次查询耗尽序列（StopAsyncIteration）。取证确认产品行为正确（真实 RLS 闸门已覆盖 GUC 路径），按生产 chat_service 路径给测试显式传 tenant_id 消除兜底查询；复跑 6 passed。
 
+P1 轮（B3–B6）范围外发现（2026-11-18，未修复，归测试体系/迁移桶）：
+- `agent_event_logs` 的 `(session_id, seq)` 唯一索引**只存在于迁移 bd2c3d4e5f70**，ORM `models/event_log.py` 无 `__table_args__` 声明 → 一切 `create_all` 基座（conftest/rls_harness）都没有该约束，seq 竞态在这类环境无兜底。生产库经迁移已有索引，B5 重试闸门从迁移本体同源建索引验证；ORM 补声明需单独立项（涉及与迁移索引名对齐）。
+- B5 取证副产物（已在 B5 范围内修复，留档备查）：确定性退避把并发败者同步到同一重试时刻，每轮仅一路前进，N 路并发必然耗尽重试预算——退避必须带随机抖动（复现脚本 10/10 收敛验证）。
+
+P1 轮引入又修复的回归：
+- test_memory_upgrade.py::TestP0ConversationDeletedGuard::test_writes_when_conversation_alive ×1 —— B3 把会话查询列从 `(id, deleted_at)` 改为 `(tenant_id, deleted_at)`，fake 行（SimpleNamespace）缺 tenant_id 属性。产品行为正确（B3 真实 RLS 闸门覆盖），给两条 fake 行补 tenant_id=None 对齐新契约；复跑 27 passed。
+- test_task_milestones.py::TestCheckpointManagerMilestones ×5 —— B6 后 save_checkpoint 发 `SELECT current_setting` 解析租户 GUC，fake `_FakeResult` 缺 `scalar()`。补方法后 65 条全绿（详见 B6 完成证据）。
+- 迁移 revision ID 碰撞 ×3（test_external_credentials_migration / test_model_fields_p0p2 / test_upload_summary 的链断言）—— B6 新迁移初版误用 `f6a7b8c9d0e1`，与存量 `2026_07_21_1400-f6a7b8c9d0e1_add_knowledge_compounding_layer.py` 撞 ID，alembic 图报 Cycle。改唯一 ID `7a8b9c0d1e2f` 并重命名文件后 127 条相关测试全绿。教训：新迁移 ID 必须先对全量 versions 查重（闸门只直跑 upgrade 不建图，查不出碰撞）。
+- test_tenant_isolation_p4.py::TestRLSMigration ×3 —— fixture `glob("*rls*.py")[0]` 无序选取，B6 新迁移文件名含 `rls` 字样抢占 [0]，断言对象漂移到新文件（revision 链/29 表清单/NO FORCE 断言全红）。fixture 改按 revision ID `*b8c9d0e1f2a3*` 精确选取后该文件 24 passed。取证：全量回归 55 failed 中此 3 条之外恰为 52 条基线（逐文件分布一致）。教训：按模糊 glob 选迁移文件的存量测试，新增同类文件即漂移，选取须锚定 revision ID。
+
+P1 轮范围外发现（2026-11-18，未修复，归 PDF 测试桶）：
+- `test_pdf_pipeline_hardening.py` / `test_pdf_p2_hardening.py` 共 7 条（A3×2 / A1A2×2 / A10×2 / A14×1）**未打桩 VLM 边界**：中文 fitz 生成页走扫描 OCR 分支时真实调用 DashScope `qwen-vl-max`。常态环境下 NO_PROXY 裸 `::1` 使 httpx 客户端构造即失败（见上方共性根因），请求发不出去反而恒绿；一旦 NO_PROXY 被清理（如测试 shim `localhost,127.0.0.1`），真实请求发出 → 404 Model not exist → 断言失败。取证：同批测试无 shim 13 passed / 有 shim 7 failed，与本批记忆模块改动无关。修复方向：VLM 边界打桩或显式声明外部依赖（需单独立项）。
+- 计量口径备注：既有 52 条基线在**无 shim** 条件下测得；加 NO_PROXY shim 后 52 条 httpx 失败转绿、同时暴露上述 7 条 VLM 盲区。P1 收尾全量回归按无 shim 基线口径对比。
+
 ---
 
 ## 已完成 / 明确不做
@@ -220,5 +238,6 @@ B1/B2 轮全量回归（2026-11-18）：55 failed / 5394 passed。其中 52 条�
 - A1–A9（2026-11-18）：PDF 解析链路 9 条修复完成。闸门 `backend/tests/test_pdf_pipeline_hardening.py` 23 条（红基线 21 failed/2 passed → 修后 23 passed）；12 次串行变异自证全部「打红→恢复→绿」；受影响套件合跑全绿；全量回归仅剩 52 条 HEAD 既有失败（见上方勘误）。
 - A10–A17（2026-11-18，P2）：PDF 链路 8 条修复/验收完成。闸门 `backend/tests/test_pdf_p2_hardening.py` 39 条全绿（A15 闸门在 test_sniff.py）；10 次串行变异自证全部「打红→恢复→绿」；既有受影响 7 套件合跑 441 passed；20 个存量真实样例全部解析成功（4 页、886~1217 字、零告警）。
 - B1/B2/C1（2026-11-18，记忆模块 P0 + RLS 基座）：闸门 `test_memory_rls_integration.py` 7 条 + `test_memory_vector_dim.py` 13 条 + `test_pgvector_migration.py` 8 条（末条对齐新契约），红基线 9 failed/6 passed → 修后 28 passed；7 次串行变异自证全部「打红→恢复→绿」（M1 删 add_fact tenant→5 红 / M2 删 Graphiti tenant→2 红 / M3 维度函数退单配置→2 红 / M4 删维度校验→2 红 / M5 模型绕过函数→1 红 / M6 删 ivfflat 维护栏→1 红 / M7 吞 flush→1 红）；受影响 24 套件合跑 505 passed/1 既有失败；全量回归 52 failed/5397 passed，失败逐文件分布与既有 52 条基线完全一致（中途 3 条 mock 计数回归已修复，见勘误）。
+- B3–B6（2026-11-18，记忆模块 P1）：4 条修复完成，新增闸门 17 条全绿 —— B3 `test_memory_single_tenant.py` 4 条（红基线 1 failed/3 passed，任务引擎须绑非超管 app 角色否则 RLS 被绕过）、B4 `test_checkpoint_clobber.py` 6 条（红基线 3 failed/3 passed）、B5 `test_event_log_append.py` 2 条（红基线 2 failed，修后连跑 ×5 稳定）、B6 `test_agent_state_rls.py` 4 条 + `test_agent_state_migration.py` 1 条（真实 PG 跑生产迁移 upgrade：补列/回填/FORCE RLS）。9 次串行变异自证全部「打红→恢复→绿」（M-B3 NULL 分支退 nullcontext→1 红 / M-B4a chat 恢复存根→1 红 / M-B4b task 恢复存根→1 红 / M-B4c 删 None 守卫→1 红 / M-B4d 恢复旧误导文案→1 红 / M-B5a 删 savepoint→2 红 / M-B5b attempts=1→1 红 / M-B6a checkpoint tenant 恒 None→1 红 / M-B6b 删 FORCE→1 红）。B5 竞态修复含取证：确定性退避会同步化并发 loser（8 worker 实测 seq [0,0,5,0,4,2,1,3]），改 8 次上限+抖动退避后最小复现 10/10 收敛。受影响 27 套件合跑 387 passed/1 xfailed；最终全量回归（无 shim 基线口径）52 failed/5414 passed，失败逐文件分布与既有 52 条基线完全一致，passed 恰为基线 5397+新增闸门 17。本批引入又修复的回归 4 起（fake 行缺 tenant_id ×1 / fake result 缺 scalar ×5 / 迁移 ID 撞号 ×3 / P4 fixture glob 漂移 ×3，见勘误）；范围外新发现 PDF 测试 VLM 边界盲区 ×7（见勘误）。
 - 不算缺陷：CRM/ERP/邮件/OA connector 与开放平台多媒体接口为显式 501/ConnectorNotImplementedError，属已知未实现、行为诚实，不在本清单范围。
 - 好消息备查：conflict_arbiter 与 forgetting 已真实接线（memory_manager.py:707、mem0_manager.py:93）；mem0/graphiti 为自研 PG 实现，无外部依赖坑。
