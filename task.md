@@ -331,11 +331,27 @@
   - 证据：闸门 `tests/test_e3_sigv4_presign.py` 5 条（query 键判定 X-Amz-Signature/X-Amz-Algorithm 且无 SigV2 裸键 Signature/Expires——避免子串恒真陷阱；真实 MinIO 匿名 GET 200 字节一致；expires_in 透传 X-Amz-Expires；V4 client 常规上传/下载证人；D10 enrich 真实链路 V4 接线证人）；红基线 4 failed / 1 passed（上传下载证人按设计绿）→ 修后 5 绿；D10/E2 合跑 34 绿；31 文件全量回归 **812 passed / 0 failed**（52.69s，807＋5）。
   - 变异（串行 4 条全打红自身判据后还原）：M1 去掉 s3v4（回默认 V2）→4 红 / M2 ExpiresIn 硬编码 3600→透传判据红（精确 1 红）/ M3 secret_key 篡改→真实链路 3 红（URL 形状闸绿＝签名不校验密钥，符合预期）/ M4 addressing_style 改 virtual→真实链路 3 红（bucket 前缀 DNS 不可达）。
   - 校准：M1 还原误用 `git checkout --` 把未提交修复一并退回——重新上修复，后续变异改字符串级替换还原（教训：未提交文件不得用 git checkout 做变异还原）。
-- [ ] **E4. D7 任务级解析开关透传（D7 默认决策「任务级透传随后」）**
-  - 修复点：任务级 parse 覆盖参数，优先级 任务>租户>全局，同白名单校验；设计默认值清单先列再动代码。
-- [ ] **E5. 本地部署演练（用户批准：本地，不触生产）**
-  - 步骤：ekb-pg 容器建 ekb 开发库 → DATABASE_URL 指向它跑 alembic upgrade head 全量迁移 → D11 回填 --dry-run 取证；凭据 env-only 不回显。
-- 环境桶决策（2026-11-19 用户问询后定）：torch 重装仅利于本机 Docling 真链验证、与生产无关，且 maclean 去重根因未除会再删 dylib——暂不装，留痕；NO_PROXY 在用户 shell 配置，不动；ekb 库随 E5 创建。
+- [x] **E4. D7 任务级解析开关透传（D7 默认决策「任务级透传随后」）** ✅ 2026-11-19
+  - 设计默认值清单（2026-11-19，先规范后代码；范围＝本清单）：
+    1. 参数形态：文件上传端点增可选 `parse_config` Form 字段（JSON 字符串）；celery `process_document` 与两个异步入口（`_parse_and_chunk_async` / `_process_document_async`）增 keyword-only `parse_config: dict | None = None`。
+    2. 优先级：逐键合并 任务>租户>全局 — `{**tenant_cfg, **task_cfg}`；未覆盖键回落租户/全局（D7 overlay 机制不动）。
+    3. 校验：同白名单 `validate_parse_config`（8 键）；API 边界 JSON 非法/非对象/白名单外/类型错 → 400（在任何写操作前）；任务入口再校验（队列边界），非法 → status=failed 且不进解析（fail-closed）。
+    4. 一次性语义：任务级覆盖不落库（不写 Tenant.settings / Document），不影响后续任务。
+    5. 接线范围：仅文件上传端点（唯一消费解析成本开关的用户入口）；multipart 视频（专用管线不消费这些开关）、外部导入/剪藏（纯文本 md/html）、knowledge_service.reindex / external_sync（内部调用无用户参数）不接；D11 回填脚本不加 CLI 参数。
+    6. Redis 降级路径：`process_document` 的 `_save_chunks_to_redis` 失败降级 `_process_document_async` 同样透传（否则降级丢覆盖）。
+    7. GB 视频分流 `process_video_multipart` 不消费解析开关，参数忽略。
+  - 验收：任务覆盖压租户（同键）；逐键合并不整体替换；无任务参数租户/全局行为不回归（证人）；非法配置 API 400/任务 fail-closed；覆盖不落库；celery→异步入口→降级路径三级透传接线。
+  - 实现：上传端点增 `parse_config` Form（JSON）——任何写操作前 json.loads＋validate_parse_config，非法 400 零副作用；`process_document` keyword-only parse_config 透传 `_parse_and_chunk_async` 与全部三处降级 `_process_document_async`（Redis 暂存失败/Celery 未装/chord 分发失败——降级会重新解析，丢透传即丢覆盖）；两异步入口队列边界再校验（非法 fail-closed 不进解析），合并 `{**tenant_cfg, **task_cfg}` 进既有 parse_overrides 上下文（D7 overlay 机制不动）；覆盖一次性不落库。
+  - 证据：闸门 `tests/test_e4_task_parse_config.py` 13 条（管线合并 7：压租户/逐键合并/租户证人/全局证人/fail-closed/不落库裸 SQL/降级入口；celery 接线 2：主路径＋Redis 降级；API 4：合法透传/非法 JSON 400 零副作用/白名单外 400/缺省形状证人）；红基线 11 failed / 2 passed（两证人按设计绿）→ 修后 13 绿；D7 既有 15 闸不回归（合跑 28 绿）；32 文件全量回归 **825 passed / 0 failed**（54.76s，812＋13；首轮 3 红系闸门假设错，对齐后复跑全绿）。
+  - 变异（串行 7 条全打红自身判据后还原）：M1 合并顺序反转→压租户判据红（2 红）/ M2 整体替换 task_cfg or tenant_cfg→逐键合并判据红（精确 1 红）/ M3 任务入口跳过校验→fail-closed 判据红 / M4 API delay 丢 parse_config→透传判据红（精确 1 红，兼证校准后 API 闸红光能力）/ M5 API 跳过白名单→400 判据红 / M6 Redis 降级丢透传→降级接线判据红 / M7 celery 主路径丢透传→主接线判据红。
+  - 校准：① API 两闸初红系夹具缺陷——_make_mock_doc 默认 page_count/char_count=None 被 DocResponse pydantic 拒（既有 test_upload_summary 只断言 ≠413 未暴露），补整型字段后由 M4 变异自证红光能力；② 首轮 32 文件回归 3 failed（test_document_tasks_chunker 图谱三闸）——TenantService 替身 get_parse_config 默认返回 AsyncMock 不可解包，与 D7 校准④同类的闸门假设错对齐（补 return_value={}），非产品缺陷。
+- [x] **E5. 本地部署演练（用户批准：本地，不触生产）** ✅ 2026-11-19
+  - 步骤与实测证据（凭据 env-only：.env 进程内解析，不落盘不回显）：
+    1. 建库：ekb-pg 容器（127.0.0.1:55432）`CREATE DATABASE ekb` 成功——.env DATABASE_URL 本就指向 ekb@55432，此前仅库不存在（环境桶「ekb 库缺失」就此关闭）；
+    2. 迁移：`python -m alembic upgrade head` 全链 exit 0，alembic_version=`b7c8d9e0f1a2`（D6 资产化字段为最新头），public schema 71 表；D6 三列（chunk_type/asset_ref/parent_chunk_id）＋D8 parse_meta 列 information_schema 实证在位；RLS fail-closed 迁移（e8f9a0b1c2d3）与 B6 租户列迁移（7a8b9c0d1e2f）均经全链应用；
+    3. 回填演练：`python -m scripts.backfill_asset_chunks --dry-run` 指向新 ekb 库 exit 0，输出「回填目标文档数: 0（dry_run=True）」——空库零目标符合预期，命令端到端可用（排除项 SQL 正常执行、只读 ROLLBACK 收尾）。
+  - 边界：未触生产；未执行真实回填（空库无目标，embedding 成本零）；MIGRATION_DATABASE_URL 未配置，迁移回退 DATABASE_URL（单角色部署语义，env.py:48-54）。
+- 环境桶决策（2026-11-19 用户问询后定）：torch 重装仅利于本机 Docling 真链验证、与生产无关，且 maclean 去重根因未除会再删 dylib——暂不装，留痕；NO_PROXY 在用户 shell 配置，不动；ekb 库已随 E5 创建（见上）。
 
 ---
 
