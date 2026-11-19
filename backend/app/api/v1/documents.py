@@ -17,7 +17,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status, Request
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -283,6 +283,9 @@ async def upload_document_file(
     kb_id: UUID = Query(..., description="目标知识库 ID"),
     title: str = Query(..., min_length=1, max_length=500, description="文档标题"),
     file: UploadFile = File(..., description="上传的文件"),
+    parse_config: str | None = Form(
+        None, description="E4 任务级解析成本开关覆盖（JSON，白名单键，一次性不落库）"
+    ),
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse[DocResponse]:
@@ -295,6 +298,18 @@ async def upload_document_file(
     P0: 上传后自动触发 process_document Celery 任务（修复原端点未调用的缺陷）。
     P0: doc_type_map 补全 pptx/xlsx/xls/txt/csv（修复原映射缺失导致误归 md）。
     """
+    # E4: 任务级覆盖在任何写操作前校验 — 非法 400，不产生 MinIO/DB 副作用
+    parse_cfg: dict | None = None
+    if parse_config is not None:
+        import json
+
+        from app.core.parse_config import validate_parse_config
+
+        try:
+            parse_cfg = validate_parse_config(json.loads(parse_config))
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(status_code=400, detail=f"parse_config 非法: {exc}")
+
     tenant_id = getattr(request.state, "tenant_id", None)
     # 安全：先校验知识库写权限再做任何文件 IO（防 IDOR，与 multipart init 端点一致），
     # 避免未授权用户向他人知识库命名空间写入 MinIO 对象
@@ -428,7 +443,11 @@ async def upload_document_file(
     try:
         from tasks.document_tasks import process_document
 
-        process_document.delay(str(doc.id), tenant_id=str(tenant_id) if tenant_id else None)
+        process_document.delay(
+            str(doc.id),
+            tenant_id=str(tenant_id) if tenant_id else None,
+            parse_config=parse_cfg,
+        )
         log.info("文档 %s 已触发 Celery 异步解析任务", doc.id)
     except ImportError:
         log.warning(

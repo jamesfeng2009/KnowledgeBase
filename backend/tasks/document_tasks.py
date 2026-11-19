@@ -518,7 +518,10 @@ def finalize_document_task(self, results: list, doc_id: str = None) -> dict[str,
     bind=True,
     **make_celery_retry_kwargs(),
 )
-def process_document(self, doc_id: str, tenant_id: str | None = None) -> dict[str, Any]:
+def process_document(
+    self, doc_id: str, tenant_id: str | None = None, *,
+    parse_config: dict | None = None,
+) -> dict[str, Any]:
     """文档处理流水线 — 解析 → 分块 → 向量化 → 索引 → 更新状态。
 
     异步执行文档的完整处理流程，适用于上传后自动处理。
@@ -530,6 +533,8 @@ def process_document(self, doc_id: str, tenant_id: str | None = None) -> dict[st
     Args:
         doc_id: 文档 ID（UUID 字符串）。
         tenant_id: 租户 ID（多租户隔离，可选）。
+        parse_config: E4 任务级解析成本开关覆盖（一次性，不落库），
+            逐键压过租户级配置；白名单校验在异步入口执行。
 
     Returns:
         处理结果字典，包含 doc_id、status、chunk_count 等。
@@ -585,7 +590,11 @@ def process_document(self, doc_id: str, tenant_id: str | None = None) -> dict[st
 
         try:
             # ① 串行阶段：解析 + 分块（事件循环中执行）
-            parse_result = asyncio.run(_parse_and_chunk_async(doc_id, tenant_id=tenant_id))
+            parse_result = asyncio.run(
+                _parse_and_chunk_async(
+                    doc_id, tenant_id=tenant_id, parse_config=parse_config
+                )
+            )
 
             if parse_result.get("status") == "failed":
                 return parse_result
@@ -598,7 +607,9 @@ def process_document(self, doc_id: str, tenant_id: str | None = None) -> dict[st
             if not chunks_saved:
                 # Redis 不可用 → 降级为串行模式（_process_document_async）
                 logger.warning("document.chunks_save_failed_fallback", doc_id=doc_id)
-                result = asyncio.run(_process_document_async(doc_id))
+                result = asyncio.run(
+                    _process_document_async(doc_id, parse_config=parse_config)
+                )
                 return result
 
             # ③ chord 编排：并行 build_index_task + build_graph_task → finalize
@@ -635,13 +646,17 @@ def process_document(self, doc_id: str, tenant_id: str | None = None) -> dict[st
                 # Celery 未安装 → 降级串行（串行路径不消费 Redis 暂存，先清理避免孤儿数据）
                 logger.warning("document.celery_not_installed_fallback", doc_id=doc_id)
                 _cleanup_chunks_redis(doc_id)
-                result = asyncio.run(_process_document_async(doc_id))
+                result = asyncio.run(
+                    _process_document_async(doc_id, parse_config=parse_config)
+                )
                 return result
             except Exception as exc:
                 # chord 分发失败 → 降级串行（串行路径不消费 Redis 暂存，先清理避免孤儿数据）
                 logger.exception("document.chord_failed_fallback", doc_id=doc_id)
                 _cleanup_chunks_redis(doc_id)
-                result = asyncio.run(_process_document_async(doc_id))
+                result = asyncio.run(
+                    _process_document_async(doc_id, parse_config=parse_config)
+                )
                 return result
         except Exception as exc:
             logger.error(
@@ -688,7 +703,8 @@ def process_document(self, doc_id: str, tenant_id: str | None = None) -> dict[st
 
 
 async def _parse_and_chunk_async(
-    doc_id: str, tenant_id: str | None = None, *, force_reparse: bool = False
+    doc_id: str, tenant_id: str | None = None, *,
+    force_reparse: bool = False, parse_config: dict | None = None,
 ) -> dict[str, Any]:
     """chord 入口阶段 — 解析 + 分块 + 检查模块开关。
 
@@ -700,6 +716,8 @@ async def _parse_and_chunk_async(
         tenant_id: 调用方入队时携带的租户 ID；缺失时按 doc_id 反查。
         force_reparse: D11 存量回填专用 — 绕过 A14 哈希早退强制重解析；
             默认 False，日常重索引的 A14 语义不变。
+        parse_config: E4 任务级解析成本开关覆盖 — 逐键压过租户级，
+            一次性不落库；非法配置 fail-closed（不进解析）。
 
     Returns:
         {"chunk_objects": [...], "graph_enabled": bool, "parse_warnings": [...]}
@@ -708,6 +726,14 @@ async def _parse_and_chunk_async(
     from app.core.tenant_context import apply_tenant, resolve_task_tenant
     from app.database import task_db_session
     from app.repositories.knowledge_repository import DocumentRepository
+
+    # E4: 队列边界再校验（API 已校验一次，此处防绕过 API 的入队）
+    from app.core.parse_config import validate_parse_config
+
+    try:
+        task_cfg = validate_parse_config(parse_config) if parse_config else {}
+    except ValueError as exc:
+        return {"doc_id": doc_id, "status": "failed", "error": f"parse_config 非法: {exc}"}
 
     doc_uuid = uuid.UUID(doc_id)
     warnings: list[str] = []
@@ -738,12 +764,12 @@ async def _parse_and_chunk_async(
         extracted_images: list[tuple[bytes, str]] = []
         # A12: 清零旧页数 — 解析器能拿真实页数时优先，拿不到再按文本推断
         doc.page_count = 0
-        # D7: 租户级解析成本开关覆盖（未配置回落全局缺省值）
+        # D7: 租户级解析成本开关覆盖；E4: 任务级逐键压过租户级（一次性）
         from app.core.parse_config import parse_overrides
         from app.services.tenant_service import TenantService
 
-        parse_cfg = await TenantService(session).get_parse_config(doc.tenant_id)
-        with parse_overrides(parse_cfg):
+        tenant_cfg = await TenantService(session).get_parse_config(doc.tenant_id)
+        with parse_overrides({**tenant_cfg, **task_cfg}):
             try:
                 parsed_text, extracted_images = await _parse_document(
                     doc, warnings=warnings, force_reparse=force_reparse
@@ -1105,7 +1131,9 @@ def batch_process_documents(doc_ids: list[str]) -> list[dict[str, Any]]:
 # 异步处理逻辑
 # ------------------------------------------------------------------
 
-async def _process_document_async(doc_id: str) -> dict[str, Any]:
+async def _process_document_async(
+    doc_id: str, *, parse_config: dict | None = None
+) -> dict[str, Any]:
     """文档处理异步流水线。
 
     步骤：
@@ -1118,12 +1146,22 @@ async def _process_document_async(doc_id: str) -> dict[str, Any]:
 
     Args:
         doc_id: 文档 ID（UUID 字符串）。
+        parse_config: E4 任务级解析成本开关覆盖（降级串行路径同样透传，
+            否则降级丢覆盖）；逐键压过租户级，一次性不落库。
 
     Returns:
         处理结果字典。
     """
     from app.database import task_db_session
     from app.repositories.knowledge_repository import DocumentRepository
+
+    # E4: 队列边界再校验 — 非法 fail-closed
+    from app.core.parse_config import validate_parse_config
+
+    try:
+        task_cfg = validate_parse_config(parse_config) if parse_config else {}
+    except ValueError as exc:
+        return {"doc_id": doc_id, "status": "failed", "error": f"parse_config 非法: {exc}"}
 
     doc_uuid = uuid.UUID(doc_id)
 
@@ -1151,12 +1189,12 @@ async def _process_document_async(doc_id: str) -> dict[str, Any]:
         extracted_images: list[tuple[bytes, str]] = []
         # A12: 清零旧页数 — 解析器能拿真实页数时优先，拿不到再按文本推断
         doc.page_count = 0
-        # D7: 租户级解析成本开关覆盖（未配置回落全局缺省值）
+        # D7: 租户级解析成本开关覆盖；E4: 任务级逐键压过租户级（一次性）
         from app.core.parse_config import parse_overrides
         from app.services.tenant_service import TenantService
 
-        parse_cfg = await TenantService(session).get_parse_config(doc.tenant_id)
-        with parse_overrides(parse_cfg):
+        tenant_cfg = await TenantService(session).get_parse_config(doc.tenant_id)
+        with parse_overrides({**tenant_cfg, **task_cfg}):
             try:
                 parsed_text, extracted_images = await _parse_document(doc, warnings=warnings)
             except Exception as exc:
