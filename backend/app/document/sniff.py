@@ -119,7 +119,7 @@ def sniff_file_type(data: bytes, max_head: int = 1024) -> FileSniff:
 
     # 6) OLE2 复合文档：旧版 Office 二进制格式
     if _starts_with(head, b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
-        return _sniff_ole(head)
+        return _sniff_ole(data)
 
     # 7) 文本兜底：头部无空字节且可用 UTF-8 解码 → 视为纯文本
     if b"\x00" not in head:
@@ -157,14 +157,23 @@ def _sniff_ooxml(data: bytes) -> FileSniff:
     return FileSniff("zip", False, "ZIP 归档（非 OOXML 文档）")
 
 
-def _sniff_ole(head: bytes) -> FileSniff:
-    """在 OLE2 复合文档中识别旧版 Office 子类型，含 Workbook 表判为 xls。"""
-    if b"Workbook" in head:
-        return FileSniff("xls", False, "旧版 Excel 工作簿 (xls)")
-    if b"WordDocument" in head:
-        return FileSniff("ole2", False, "旧版 Word 二进制文档 (doc)")
-    if b"PowerPoint Document" in head:
-        return FileSniff("ole2", False, "旧版 PowerPoint 二进制文档 (ppt)")
+def _sniff_ole(data: bytes) -> FileSniff:
+    """在 OLE2 复合文档中识别旧版 Office 子类型，含 Workbook 流判为 xls。
+
+    目录流名为 UTF-16LE 编码且目录扇区常在文件尾部（D4 实测：5.6KB 样例
+    的 Workbook 名在偏移 5248），故按全字节搜索并以 Root Entry 锚定目录区。
+    WordDocument/PowerPoint Document 优先于 Workbook 判定，避免正文恰好
+    含 "Workbook" 字样的 doc/ppt 被误判为 xls。
+    """
+    root = data.find("Root Entry".encode("utf-16-le"))
+    window = data[max(0, root - 4096) : root + 4096] if root != -1 else data
+    for name, fmt, label in (
+        ("WordDocument", "ole2", "旧版 Word 二进制文档 (doc)"),
+        ("PowerPoint Document", "ole2", "旧版 PowerPoint 二进制文档 (ppt)"),
+        ("Workbook", "xls", "旧版 Excel 工作簿 (xls)"),
+    ):
+        if name.encode("utf-16-le") in window:
+            return FileSniff(fmt, False, label)
     return FileSniff("ole2", False, "OLE2 复合文档")
 
 

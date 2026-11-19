@@ -94,6 +94,9 @@ openpyxl>=3.1.0
 # 在 Docling 不可用/解析失败时兜底）。早前遗漏，全新环境该降级路径必
 # ModuleNotFoundError，故显式声明。
 pandas>=2.2.0
+# .xls（BIFF）降级解析依赖：pandas.read_excel 读 .xls 必须 xlrd（D4：早前
+# 遗漏导致 openpyxl 失败后的兜底路径在全新环境必炸）。xlrd 2.x 仅支持 .xls。
+xlrd>=2.0.1
 
 # === Wiki HTML 清洗 ===
 # WikiHtmlCleaner 依赖 — Confluence/飞书 Wiki HTML 清洗为语义化 HTML

@@ -11,7 +11,8 @@ VLM 视觉处理层 — 单一职责：理解图片内容并返回文本描述�
 遵循开闭原则：新增 VisionProvider 只需继承并通过 register_vision_provider 注册，
 无需修改 get_vision_provider 分支逻辑。
 遵循单一职责：本模块只负责图像理解，不涉及检索与生成。
-遵循优雅降级：VLM 服务不可用时返回错误提示而非抛异常。
+遵循优雅降级：VLM 失败时返回 None，由调用方跳过/降级；
+失败文案不得进入文档正文（D1：错误字符串会被当描述嵌入 chunk 污染检索）。
 """
 
 from __future__ import annotations
@@ -45,7 +46,7 @@ class VisionProvider(ABC):
         image: bytes,
         prompt: str,
         mime_type: str = "image/png",
-    ) -> str:
+    ) -> str | None:
         """理解图片内容并返回文本描述。
 
         Args:
@@ -54,7 +55,8 @@ class VisionProvider(ABC):
             mime_type: 图片 MIME 类型（image/png / image/jpeg 等）。
 
         Returns:
-            图片理解结果文本。
+            图片理解结果文本；VLM 调用失败时返回 None（不得返回错误文案，
+            防止被调用方当有效描述嵌入正文）。
         """
         raise NotImplementedError
 
@@ -83,13 +85,23 @@ class VisionProvider(ABC):
             StructuredImageResult.to_dict() 格式字典，含
             status / description / tags / numbers / low_confidence / issues。
         """
-        from app.vlm.structured import build_structured_prompt, parse_structured
+        from app.vlm.structured import (
+            StructuredImageResult,
+            build_structured_prompt,
+            parse_structured,
+        )
 
         raw = await self.understand(
             image=image,
             prompt=build_structured_prompt(image_type),
             mime_type=mime_type,
         )
+        if raw is None:
+            result = StructuredImageResult()
+            result.status = "error"
+            result.low_confidence = True
+            result.issues.append("VLM 调用失败")
+            return result.to_dict()
         return parse_structured(raw, image_type).to_dict()
 
 
@@ -108,7 +120,7 @@ class AnthropicVisionProvider(VisionProvider):
         image: bytes,
         prompt: str,
         mime_type: str = "image/png",
-    ) -> str:
+    ) -> str | None:
         b64 = base64.b64encode(image).decode("utf-8")
         # Anthropic 多模态 content block 格式
         content: list[dict[str, Any]] = [
@@ -133,7 +145,7 @@ class AnthropicVisionProvider(VisionProvider):
                     result += chunk
         except Exception as exc:
             log.error("vlm.anthropic.error", error=str(exc))
-            return f"[图像理解失败: {exc}]"
+            return None
         log.info("vlm.anthropic.done", prompt_len=len(prompt), result_len=len(result))
         return result
 
@@ -165,7 +177,7 @@ class VLLMVisionProvider(VisionProvider):
         image: bytes,
         prompt: str,
         mime_type: str = "image/png",
-    ) -> str:
+    ) -> str | None:
         b64 = base64.b64encode(image).decode("utf-8")
         data_url = f"data:{mime_type};base64,{b64}"
         # OpenAI 兼容多模态格式
@@ -195,7 +207,7 @@ class VLLMVisionProvider(VisionProvider):
                     result += delta.content
         except Exception as exc:
             log.error("vlm.vllm.error", error=str(exc), model=self.model)
-            return f"[图像理解失败: {exc}]"
+            return None
         log.info("vlm.vllm.done", model=self.model, result_len=len(result))
         return result
 

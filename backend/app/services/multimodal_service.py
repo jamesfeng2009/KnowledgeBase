@@ -222,16 +222,19 @@ class MultimodalService:
         prompt: str,
         mime_type: str,
     ) -> str:
-        """安全调用 VLM — 异常时返回占位文本，不阻塞流程。"""
+        """安全调用 VLM — 失败/异常时返回空字符串，不阻塞流程。
+
+        D1 契约：失败文案不得作为内容返回（understand 失败返回 None）。
+        """
         try:
-            return await self.vlm.understand(image, prompt, mime_type)
+            return await self.vlm.understand(image, prompt, mime_type) or ""
         except Exception as exc:
             logger.warning(
                 "multimodal.vlm_failed",
                 prompt_len=len(prompt),
                 error=str(exc),
             )
-            return f"[图像处理失败: {exc}]"
+            return ""
 
     @staticmethod
     def _parse_json(text: str, default: Any = None) -> Any:

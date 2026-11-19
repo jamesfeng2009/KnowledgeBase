@@ -53,6 +53,9 @@ _SHAPE_TYPE_PICTURE = 13
 class PPTXParser(DocumentParser):
     """PPTX 解析器 — python-pptx 文本 + 表格 + 图表 + 图片 URL/VLM + GROUP 递归。"""
 
+    def __init__(self) -> None:
+        self.last_parse_warnings: list[str] = []
+
     async def parse(self, file_path: str) -> str:
         """解析 PPTX 文档，返回增强文本。
 
@@ -677,16 +680,21 @@ class PPTXParser(DocumentParser):
         )
 
     async def _vlm_describe(self, image: bytes, mime_type: str) -> str:
-        """调用 VLM 理解图片内容 — 延迟导入，不可用时返回空字符串。"""
+        """调用 VLM 理解图片内容 — 延迟导入，不可用/失败时返回空字符串。"""
         try:
             from app.vlm.provider import get_vision_provider
 
             vlm = get_vision_provider()
-            return await vlm.understand(
+            result = await vlm.understand(
                 image=image,
                 prompt=_IMAGE_PROMPT,
                 mime_type=mime_type,
             )
+            if result is None:
+                log.warning("pptx.vlm_failed")
+                self.last_parse_warnings.append("图片 VLM 描述失败，已跳过该图片描述")
+                return ""
+            return result
         except ImportError:
             log.warning("pptx.vlm_not_available")
             return ""

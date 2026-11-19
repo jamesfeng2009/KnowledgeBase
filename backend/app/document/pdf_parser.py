@@ -62,6 +62,9 @@ class PDFParser(DocumentParser):
     使用 pymupdf (fitz) 完成所有提取，无额外依赖。
     """
 
+    def __init__(self) -> None:
+        self.last_parse_warnings: list[str] = []
+
     async def parse(self, file_path: str, doc_id: str | None = None) -> str:
         """解析 PDF 文档，返回增强文本。
 
@@ -497,24 +500,29 @@ class PDFParser(DocumentParser):
         return sections, count
 
     async def _vlm_describe(self, image: bytes, mime_type: str) -> str:
-        """调用 VLM 理解图片内容 — 延迟导入，VLM 不可用时返回空字符串。
+        """调用 VLM 理解图片内容 — 延迟导入，VLM 不可用/失败时返回空字符串。
 
         Args:
             image: 图片二进制数据。
             mime_type: 图片 MIME 类型。
 
         Returns:
-            VLM 生成的描述文本。VLM 不可用时返回空字符串。
+            VLM 生成的描述文本。VLM 不可用或失败时返回空字符串并记 warning。
         """
         try:
             from app.vlm.provider import get_vision_provider
 
             vlm = get_vision_provider()
-            return await vlm.understand(
+            result = await vlm.understand(
                 image=image,
                 prompt=_IMAGE_PROMPT,
                 mime_type=mime_type,
             )
+            if result is None:
+                log.warning("pdf.vlm_failed")
+                self.last_parse_warnings.append("图片 VLM 描述失败，已跳过该图片描述")
+                return ""
+            return result
         except ImportError:
             log.warning("pdf.vlm_not_available")
             return ""
@@ -564,7 +572,13 @@ class PDFParser(DocumentParser):
                 prompt=_OCR_PROMPT,
                 mime_type="image/png",
             )
-            return ocr_text or ""
+            if ocr_text is None:
+                log.warning("pdf.scan_ocr_failed", page=page_num)
+                self.last_parse_warnings.append(
+                    f"扫描页 OCR 失败（第 {page_num + 1} 页），该页文字未提取"
+                )
+                return ""
+            return ocr_text
         except ImportError:
             log.warning("pdf.scan_ocr_vlm_not_available")
             return ""
