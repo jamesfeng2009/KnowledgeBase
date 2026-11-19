@@ -2495,10 +2495,12 @@ async def _refresh_index_doc_status(doc_id: str, doc_status: str = "published") 
 
 
 async def _delete_document_from_indexes(doc_id: str) -> None:
-    """从全文/向量索引中删除该文档全部 chunk（归档、下架时清理旧索引）。
+    """从全文/向量/跨模态索引中删除该文档全部 chunk（归档、下架时清理旧索引）。
 
     使用 _delete_by_query 按 doc_id 精确匹配删除，幂等且无需重建向量。
-    两个索引均尽力执行，单个失败仅记录告警，不影响主流程。
+    三个索引均尽力执行，单个失败仅记录告警，不影响主流程。
+    E1: cross-modal 图片 chunk 用随机 UUID ID，upsert 不覆盖旧条目，
+    漏删会在归档/下架后残留可检索的图片向量。
     """
     import httpx
 
@@ -2508,7 +2510,11 @@ async def _delete_document_from_indexes(doc_id: str) -> None:
     payload = {"query": {"term": {"doc_id": doc_id}}}
     headers = {"Content-Type": "application/json"}
     async with httpx.AsyncClient(timeout=10.0) as client:
-        for index in ("ekb_documents", "ekb_knn_vectors"):
+        for index in (
+            "ekb_documents",
+            "ekb_knn_vectors",
+            settings.OPENSEARCH_CROSS_MODAL_INDEX,
+        ):
             try:
                 resp = await client.post(
                     f"{settings.OPENSEARCH_URL}/{index}/_delete_by_query?refresh=true",

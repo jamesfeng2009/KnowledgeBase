@@ -46,7 +46,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import httpx
 from sqlalchemy import or_, select
 
 from app.config import get_settings
@@ -118,33 +117,15 @@ async def load_targets(
 
 
 async def _delete_old_entries(doc_id: str) -> None:
-    """重建前清理旧索引条目 — 全文/k-NN 复用生产 helper，跨模态单独清理。
+    """重建前清理旧索引条目 — 全文/k-NN/跨模态三索引均由生产 helper 覆盖。
 
     跨模态图片 chunk 用随机 UUID ID（cross_modal_service），upsert 不会
     覆盖旧条目，必须显式 delete_by_query，否则重复回填累积重复图片向量。
+    E1 后生产 _delete_document_from_indexes 已含 cross-modal，此处不再补删。
     """
     import tasks.document_tasks as dt
 
     await dt._delete_document_from_indexes(doc_id)
-
-    # trust_env=False：本机 NO_PROXY 含 ::1 条目会让 httpx 解析代理抛 InvalidURL
-    async with httpx.AsyncClient(timeout=10.0, trust_env=False) as client:
-        try:
-            resp = await client.post(
-                f"{settings.OPENSEARCH_URL}/{settings.OPENSEARCH_CROSS_MODAL_INDEX}"
-                "/_delete_by_query?refresh=true",
-                json={"query": {"term": {"doc_id": doc_id}}},
-            )
-            resp.raise_for_status()
-            log.info(
-                "backfill.cross_modal_deleted",
-                doc_id=doc_id,
-                deleted=resp.json().get("deleted", 0),
-            )
-        except Exception as exc:
-            log.warning(
-                "backfill.cross_modal_delete_failed", doc_id=doc_id, error=str(exc)[:200]
-            )
 
 
 async def backfill_one(
