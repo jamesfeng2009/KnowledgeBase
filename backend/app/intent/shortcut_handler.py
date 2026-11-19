@@ -268,16 +268,25 @@ class ShortcutHandler:
             log.warning("shortcut.rerank_failed", error=str(exc))
             reranked = candidates[:_SHORTCUT_RERANK_TOP_K]
 
-        # 3. yield sources 事件
-        sources = [
-            {
+        # 3. yield sources 事件 — E2: 资产出口复用 D10 契约（presigned 下发时
+        #    解析、表格完整 HTML、text 形状不变）。enrich 返回浅拷贝，
+        #    签名 URL 只进 sources 事件，不染指生成上下文/缓存。
+        from app.rag.asset_sources import enrich_asset_docs
+
+        enriched = await enrich_asset_docs(reranked)
+        sources = []
+        for r in enriched:
+            entry = {
                 "doc_id": r.get("doc_id", ""),
                 "title": r.get("title", ""),
                 "score": r.get("score", 0.0),
                 "chunk_id": r.get("chunk_id", ""),
+                "chunk_type": r.get("chunk_type") or "text",
+                "asset_url": r.get("asset_url"),
             }
-            for r in reranked
-        ]
+            if entry["chunk_type"] == "table":
+                entry["content"] = r.get("content", "")
+            sources.append(entry)
         yield SSEEvent(
             data={"sources": sources, "shortcut": True},
             event=SSEEventType.SOURCES,
