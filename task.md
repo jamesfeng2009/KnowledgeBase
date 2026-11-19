@@ -218,10 +218,14 @@
   - 修复点：provider 失败返回 None（或抛专用异常），解析器跳过描述、保留图片引用并记 parse_warning；失败文案不得进入 content_text/chunk。
   - 验收：打桩 VLM 抛错 → 断言产物不含「图像理解失败」且 warning 存在；正向证人：VLM 正常时描述照常嵌入。变异（失败仍返回字符串）须打红。
 
-- [ ] **D2. PDF/DOCX 目录（TOC/书签）真值零利用**
+- [x] **D2. PDF/DOCX 目录（TOC/书签）真值零利用** ✅ 2026-11-19
   - 证据：全库 grep `get_toc`/outline/bookmark 无命中；legacy PDF 完全不产标题层级（纯文本→分块）；DOCX 仅靠 pStyle HeadingN（`docx_parser.py:344-409`），无样式标题的文档层级全丢。knowhere PDF 轨以 outline 树确定性锚定（其 `skeleton_extractor.py:86-108`），可借鉴。
   - 修复点：PDF 用 fitz `get_toc()` 书签锚定标题层级（按页码/位置注入 h 标签）；DOCX 读 outlineLvl/TOC 域作真值，HeadingN 样式降为补充。无 TOC 时维持现状，不引入 LLM 猜层级。
   - 验收：带书签真实 PDF → 标题层级与书签一致；带 TOC 域但无 Heading 样式的 DOCX → 仍产层级；无 TOC 样例行为不回归（正向证人）。
+  - 实现：`pdf_parser.py` get_toc(simple=True) → 页码→[(层级,标题)] 映射，按页注入 <h1>-<h6>（层级钳 1-6、页码钳实际页数）；正文重复标题行去重（`_dedup_toc_lines`，每标题至多剔一次）；标题字符计入扫描判定（长标题章节页不误触发 OCR）。`docx_parser.py` 三级判定：outlineLvl（val 0-8→h1-h6）> HeadingN 样式 > TOC 域条目（TOCN 样式，标题取首个 w:tab 前、剔页码尾巴）精确匹配锚定；TOC listing 自身不产标题。开关 `PDF_TOC_HEADINGS_ENABLED` / `DOCX_OUTLINE_TRUTH_ENABLED` 默认 True，关闭维持现状。全程无 LLM。
+  - 证据：闸门 `tests/test_d2_toc_truth.py` 11 条（真实 fitz set_toc PDF 5 条 + 真实 python-docx outlineLvl/TOC 域 DOCX 6 条，含 3 条正向证人）；红基线 8 failed / 3 passed（证人按设计绿）→ 修复后 11 绿；回归 425 passed（document_parser / pdf_pipeline_hardening / chunk_optimization / document_tasks_chunker / parse_router / D1 / D4 / multimodal）。
+  - 变异（串行 6 条全打红后还原）：M1 去 PDF 标题注入→3 红；M2 去正文去重→去重判据红（count==2）；M3 PDF 开关恒 True→开关判据红；M4 outlineLvl 真值层失效→2 红；M5 TOC 锚定失效→锚定判据红；M6 TOC 页码尾巴不剔（break→continue）→锚定判据红。终验 425 passed。
+  - 校准：heading-only 页闸门初红——原标题 27 字符低于 32 扫描阈值，触发 OCR 属既有阈值语义非 D2 缺陷；标题加长至 34 字符复绿（闸门假设修正，未动产线）。
 
 - [ ] **D3. Docling 主路径无参构造，OCR/表格模式不可控**
   - 证据：`docling_parser.py:81` `DocumentConverter()` 无参；默认 `DOCLING_ENABLED=True`（`config.py:307`），PDF 无条件跑版面+TableFormer+OCR；legacy 路径反而有文本层预检（`pdf_parser.py:163`，32 字符阈值）。
