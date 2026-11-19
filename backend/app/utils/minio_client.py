@@ -82,7 +82,12 @@ def _get_client() -> Any:
         aws_secret_access_key=secret_key,
         region_name=_DEFAULT_REGION,
         # S3 兼容存储通常需要 path-style(避免 virtual-hosted-style DNS 解析问题)
-        config=boto3.session.Config(s3={"addressing_style": "path"}),
+        # E3: 显式 SigV4 — boto3 对自定义 endpoint 默认回落 SigV2,
+        # AWS 新区域仅接受 V4;MinIO/RustFS 两者都收,统一 V4 保证可迁移
+        config=boto3.session.Config(
+            s3={"addressing_style": "path"},
+            signature_version="s3v4",
+        ),
     )
     log.info("s3.client_initialized", endpoint=endpoint)
     return _client
