@@ -249,10 +249,15 @@
   - 证据：`sniff.py:44` ole2 ∈ NON_DOCUMENT_FORMATS → 上传即拒；`documents.py:1522` 存量文档 warning 提示转 OOXML；`factory.py:42-44` 注释显式不注册。行为诚实，非缺陷。
   - 决策：若业务需要，引入 LibreOffice headless 子进程转换（.doc/.ppt/.xls→OOXML，超时+进程隔离+字体依赖，参考 knowhere `office_compat_normalizer.py:48`）；转换有损（嵌入对象/复杂文本框/字体替换），需 warning 留痕。默认维持拒绝，本条挂起待业务输入。
 
-- [ ] **D6. 图片/表格资产化：独立 chunk＋回链＋上传常开（2026-11-19 升级为完整版，产品需求＝答案展示图表/图片本身）**
+- [x] **D6. 图片/表格资产化：独立 chunk＋回链＋上传常开（2026-11-19 升级为完整版，产品需求＝答案展示图表/图片本身）** ✅ 2026-11-19
   - 证据（三处断点，2026-11-19 实证）：① 图片上传默认关（`config.py:255` PDF_IMAGE_UPLOAD=False，DOCX/PPTX 同构），正文只留「[图片描述:…]」；② `models/chunk.py:27-53` DocumentChunk 无 chunk_type/资产引用/parent 字段（parent_id 仅在内存 dataclass）；③ 图片/表格内联正文 HTML（`base.py:157-165`），无独立检索单元标记。knowhere 资产独立 chunk＋双向边属实，但双向图边服务于其 Agentic 导航检索，本项目 chunk RAG 不搬图模型，只搬「可单独命中＋回链」原则。
   - 修复点：a) `PDF_IMAGE_UPLOAD`/DOCX/PPTX 图片上传默认改 True（存储 key 沿用 A7 命名空间）；b) DocumentChunk 增 `chunk_type`（text/image/table）＋`asset_ref`（图片=minio key，表格=内联 HTML）＋`parent_chunk_id` 回链，新迁移（revision ID 先对全量 versions 查重，吸取 B6 撞号教训）；c) chunker 产出资产 chunk：图片 chunk 文本=VLM 描述（D10 归属规则），表格 chunk 沿用 A6 原子表格＋类型标记；d) 检索侧资产 chunk 正常入向量索引，支持 chunk_type 过滤。
   - 验收：含图/表真实文档端到端 → 资产 chunk 独立存在、类型正确、parent 回链正确；图片描述查询单独命中图片 chunk；正文 chunk 不重复含整表/整段描述（对齐 A13/D10 去重契约）；迁移真实 upgrade 闸门；既有 A6/A13 闸门不回归。
+  - 实现：a) PDF/DOCX/PPTX 图片上传默认 True（config 三开关）；b) DocumentChunk 增 chunk_type/asset_ref/parent_chunk_id＋手写迁移 `b7c8d9e0f1a2`（down_revision=a9b8c7d6e5f4，ID 先对全量 versions 查重：e5f6a7b8c9d0/d6e7f8a9b0c1 均已占用被否；IF NOT EXISTS 幂等＋FK 守卫＋存量回填 'text'）；c) chunker 新增 `extract_asset_chunks` **后处理**（chunk() 本体不动，A6 原子表格/确定性 ID 契约不受扰）：表格→独立 table 块（asset_ref=完整 HTML）、minio 图片→独立 image 块（文本=纯 VLM 描述，剥「[图片描述:…]」包装，无描述占位「[图片内容]」），正文块留 [表格]/[图片] 标记；asset_ref 跨父子重复去重；仅发生抽取时重排确定性 ID（纯文本输入原样返回，幂等）；d) init_chunks/_chunk_document 接入抽取＋parent_chunk_id 回链落库；三向量库（OS/Milvus/Qdrant）upsert/检索/fetch 全链携带 chunk_type/asset_ref，filter_builder 支持 chunk_type 单值/多值过滤。
+  - 证据：闸门 `tests/test_d6_asset_chunks.py` 19 条（真实 fitz 图＋表 PDF 走真实 PDFParser，MinIO/VLM 边界替身；迁移走真实 alembic upgrade/downgrade）；红基线 17 failed＋2 errors（迁移 fixture 未建）→ 修复后 19 绿；21 文件全量回归 **698 passed / 0 failed**（741.71s；上轮 696 passed＋2 条旧契约失败，对齐后转绿）。
+  - 变异（串行 7 条全打红自身判据后还原）：M1 上传默认回 False→上传闸门红（assert False is True）/ M2 删 seen 去重→父子去重闸门红 / M3 `if assets or changed` 退回 `if assets`→父块残留整表判据红 / M4 删描述包装剥离→「图片块文本＝纯 VLM 描述」红 / M5 删回链落库→parent_chunk_id 判据红 / M6 键集合删 chunk_type→validate_filters＋常量闸门 2 红 / M7 OS upsert 体删资产字段→KeyError 'chunk_type' 红。终验 698 passed。
+  - 校准：① 管线闸门初版假设错——`_parse_and_chunk_async` 返回 `{chunk_objects, graph_enabled, parse_warnings}`，embedding/索引在外层调用方而非函数内；闸门改断言 chunk_objects（假设修正，未动产线）；② 闸门抓出真缺陷两处并在 D6 范围内修复：VLM 描述带「[图片描述:…]」包装须剥离；父块资产全被去重时替换后正文被丢弃致整表泄漏（changed 标志修复）；③ 2 条旧契约测试对齐（B8/B9 先例）：test_chunks 的 SemanticChunker mock 补 extract_asset_chunks 透传、test_filter_builder 键集合常量补 chunk_type，断言意图不变。
+  - 部署注意：迁移待 `alembic upgrade head`；存量文档资产 chunk 需 D11 显式回填（hash 早退不自然触发）；Milvus 动态 schema 新字段随 upsert 自动带入（与层级字段同模式），OS 旧索引走动态映射（chunk_type 单词小写值 term 过滤两态皆可用），Qdrant payload 无 schema。
 
 - [ ] **D7. 解析成本开关无租户/任务粒度**
   - 证据：`config.py:251-323` 全部全局 env；租户级仅模块开关（`app/core/modules.py`）；任务级 content_type 参数存在但调用方恒传 auto（`document_tasks.py:781/2219`）。knowhere 为任务级请求参数（其 `job.py:56-59`），无租户级。
