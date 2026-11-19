@@ -311,6 +311,10 @@ class Settings(BaseSettings):
     # 启用后优先使用 Docling 解析 PDF/DOCX/PPTX/XLSX/HTML/图片/音频
     # Docling 不可用时自动降级到原有解析器（pymupdf/python-docx/openpyxl 等）
     DOCLING_ENABLED: bool = True
+    # D3: 显式 PDF 管线 — 表格识别模式 FAST（默认，快）/ ACCURATE（TableFormer 高精，慢）；
+    # 非法值回落 FAST。DOCLING_DO_OCR=False 时不加载 OCR 模型（纯数字 PDF 场景省资源）
+    DOCLING_TABLE_MODE: str = "FAST"
+    DOCLING_DO_OCR: bool = True
     # VLM 图片描述增强 — Docling 提取图片位置后用 VLM 生成描述注入 Markdown
     DOCLING_VLM_IMAGE_ENHANCE: bool = False
 

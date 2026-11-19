@@ -76,11 +76,39 @@ class DoclingParser(DocumentParser):
             return self._converter
 
         try:
-            from docling.document_converter import DocumentConverter
+            from docling.datamodel.base_models import InputFormat
+            from docling.datamodel.pipeline_options import (
+                PdfPipelineOptions,
+                TableFormerMode,
+                TableStructureOptions,
+            )
+            from docling.document_converter import DocumentConverter, PdfFormatOption
 
-            self._converter = DocumentConverter()
+            # D3: 显式管线选项 — 表格模式/OCR 开关由配置控制，不再吃库默认值
+            settings = get_settings()
+            mode_raw = str(
+                getattr(settings, "DOCLING_TABLE_MODE", "FAST") or "FAST"
+            ).upper()
+            mode = (
+                TableFormerMode.ACCURATE
+                if mode_raw == "ACCURATE"
+                else TableFormerMode.FAST
+            )
+            do_ocr = self._bool(getattr(settings, "DOCLING_DO_OCR", True), True)
+            pipeline_options = PdfPipelineOptions(
+                do_ocr=do_ocr,
+                do_table_structure=True,
+                table_structure_options=TableStructureOptions(mode=mode),
+            )
+            self._converter = DocumentConverter(
+                format_options={
+                    InputFormat.PDF: PdfFormatOption(
+                        pipeline_options=pipeline_options
+                    )
+                }
+            )
             self._init_checked = True
-            log.info("docling.initialized")
+            log.info("docling.initialized", table_mode=mode.value, do_ocr=do_ocr)
             return self._converter
         except ImportError:
             log.warning("docling.not_installed", reason="pip install docling")
