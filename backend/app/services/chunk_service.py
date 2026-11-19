@@ -114,7 +114,8 @@ class ChunkService:
         if not content.strip():
             raise ValueError("document_empty_content")
 
-        chunks = SemanticChunker().chunk(
+        chunker = SemanticChunker()
+        chunks = chunker.chunk(
             content=content,
             doc_type=doc.doc_type or "md",
             content_type="auto",
@@ -122,6 +123,7 @@ class ChunkService:
         )
         if not chunks:
             raise ValueError("document_chunk_failed")
+        chunks = chunker.extract_asset_chunks(chunks, str(doc_id))
 
         rows: list[DocumentChunk] = []
         for index, chunk in enumerate(chunks):
@@ -133,9 +135,17 @@ class ChunkService:
                 content_text=chunk.content,
                 token_count=chunk.token_count or estimate_tokens(chunk.content),
                 tenant_id=self._tenant_id,
+                chunk_type=chunk.chunk_type,
+                asset_ref=chunk.asset_ref,
             )
             self.db.add(row)
             rows.append(row)
+        await self.db.flush()
+        # 父块回链落库：内存 parent_id → DB 行 ID（资产块→正文块 / 子块→父块）
+        by_chunk_id = {c.id: row for c, row in zip(chunks, rows)}
+        for c, row in zip(chunks, rows):
+            if c.parent_id and c.parent_id in by_chunk_id:
+                row.parent_chunk_id = by_chunk_id[c.parent_id].id
         await self.db.flush()
         log.info("chunk.initialized", doc_id=str(doc_id), count=len(rows))
         return rows
@@ -320,8 +330,11 @@ class ChunkService:
                 id=str(c.id),
                 doc_id=str(doc.id),
                 content=c.content_text,
+                parent_id=str(c.parent_chunk_id) if c.parent_chunk_id else None,
                 token_count=c.token_count,
                 title_path=c.section_path or "",
+                chunk_type=c.chunk_type,
+                asset_ref=c.asset_ref,
             )
             for c in chunks
         ]

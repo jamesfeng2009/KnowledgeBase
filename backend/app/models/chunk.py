@@ -51,6 +51,18 @@ class DocumentChunk(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     tenant_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), nullable=True, comment="租户 ID（多租户隔离）"
     )
+    # D6 资产化 — 图片/表格独立检索单元＋回链
+    chunk_type: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="text", server_default="text",
+        comment="分块类型: text/image/table",
+    )
+    asset_ref: Mapped[str | None] = mapped_column(
+        Text, nullable=True, comment="资产引用: 图片=minio:// 地址, 表格=内联 HTML"
+    )
+    parent_chunk_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("document_chunks.id"), nullable=True,
+        comment="父块回链（资产块→来源正文块 / 子块→父块）",
+    )
 
 
 class ChunkVersion(UUIDMixin, TimestampMixin, Base):

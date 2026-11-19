@@ -161,6 +161,8 @@ class VectorStoreBase(ABC):
         effective_from: Any = None,
         effective_to: Any = None,
         doc_role: str | None = None,
+        chunk_type: str | None = None,
+        asset_ref: str | None = None,
     ) -> dict[str, Any]:
         """格式化搜索结果为统一字典格式。
 
@@ -168,6 +170,8 @@ class VectorStoreBase(ABC):
         recency 加权与生效窗口过滤字段，仅在写入侧提供时出现（向后兼容）。
         ``doc_role`` 为 P2 文档角色粗标（normal/constraint_source），
         供运营在普通召回路径识别约束文档。
+        ``chunk_type`` / ``asset_ref`` 为 D6 资产字段（text/image/table；
+        图片=minio:// 地址，表格=内联 HTML），仅在写入侧提供时出现。
         """
         result: dict[str, Any] = {
             "doc_id": doc_id,
@@ -187,6 +191,10 @@ class VectorStoreBase(ABC):
             result["effective_to"] = effective_to
         if doc_role is not None:
             result["doc_role"] = doc_role
+        if chunk_type is not None:
+            result["chunk_type"] = chunk_type
+        if asset_ref is not None:
+            result["asset_ref"] = asset_ref
         return result
 
     @property

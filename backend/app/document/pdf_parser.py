@@ -13,9 +13,9 @@
     开关 PDF_LAYOUT_ANALYSIS_ENABLED，异常时自动降级为 get_text()。
 
 图片处理模式（由配置开关控制）：
-    - PDF_IMAGE_UPLOAD_ENABLED=True: 上传 MinIO 保留 URL → kind="image_url"
+    - PDF_IMAGE_UPLOAD_ENABLED=True（D6 默认）: 上传 MinIO 保留 URL → kind="image_url"
       + VLM 描述（VLM 可用时同时生成描述，附在 URL 旁）
-    - PDF_IMAGE_UPLOAD_ENABLED=False: 仅 VLM 文本描述 → kind="image_desc"（默认）
+    - PDF_IMAGE_UPLOAD_ENABLED=False: 仅 VLM 文本描述 → kind="image_desc"
     - PDF_IMAGE_MIN_SIZE: 小图过滤阈值（宽或高 < 50px 跳过）
 
 遵循优雅降级：

@@ -118,6 +118,9 @@ class MilvusVectorStore(VectorStoreBase):
                 "content_type",
                 "chunk_strategy",
                 "parent_id",
+                # D6 资产字段（依赖动态 schema，对齐层级字段模式）
+                "chunk_type",
+                "asset_ref",
                 "doc_updated_at",
                 "effective_from",
                 "effective_to",
@@ -196,6 +199,8 @@ class MilvusVectorStore(VectorStoreBase):
                     effective_from=row.get("effective_from") or None,
                     effective_to=row.get("effective_to") or None,
                     doc_role=row.get("doc_role") or None,
+                    chunk_type=row.get("chunk_type") or None,
+                    asset_ref=row.get("asset_ref") or None,
                 )
             )
             if len(results) >= top_k:
@@ -276,6 +281,9 @@ class MilvusVectorStore(VectorStoreBase):
                 "content_type": chunk.content_type,
                 "chunk_strategy": chunk.chunk_strategy,
                 "parent_id": chunk.parent_id or "",
+                # D6 资产字段（依赖动态 schema）
+                "chunk_type": chunk.chunk_type,
+                "asset_ref": chunk.asset_ref or "",
             }
             if doc_updated_at:
                 record["doc_updated_at"] = doc_updated_at

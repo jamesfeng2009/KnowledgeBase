@@ -2294,6 +2294,8 @@ def _chunk_document(
 
     chunker = SemanticChunker()
     chunks = chunker.chunk(text, doc_type=doc_type, content_type=content_type, doc_id=doc_id)
+    # D6 资产化：图片/表格抽取为独立资产块（可单独命中＋回链正文块）
+    chunks = chunker.extract_asset_chunks(chunks, doc_id)
     logger.info(
         "document.chunk_detail",
         chunk_count=len(chunks),

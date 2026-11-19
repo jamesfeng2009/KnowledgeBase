@@ -148,6 +148,9 @@ class OpenSearchVectorStore(VectorStoreBase):
                 "content_type",
                 "chunk_strategy",
                 "parent_id",
+                # D6 资产字段（图片/表格独立检索单元）
+                "chunk_type",
+                "asset_ref",
                 "doc_updated_at",
                 "effective_from",
                 "effective_to",
@@ -205,6 +208,8 @@ class OpenSearchVectorStore(VectorStoreBase):
                     effective_from=source.get("effective_from") or None,
                     effective_to=source.get("effective_to") or None,
                     doc_role=source.get("doc_role") or None,
+                    chunk_type=source.get("chunk_type") or None,
+                    asset_ref=source.get("asset_ref") or None,
                 )
             )
             if len(results) >= top_k:
@@ -296,6 +301,9 @@ class OpenSearchVectorStore(VectorStoreBase):
                 "content_type": chunk.content_type,
                 "chunk_strategy": chunk.chunk_strategy,
                 "parent_id": chunk.parent_id,
+                # D6 资产字段：类型供检索过滤，引用供出口下发（presigned 在 D10 下发时解析）
+                "chunk_type": chunk.chunk_type,
+                "asset_ref": chunk.asset_ref,
             }
             # recency 字段：缺省不写入（旧索引无此 mapping 时依赖动态映射）
             if doc_updated_at:
@@ -389,6 +397,9 @@ class OpenSearchVectorStore(VectorStoreBase):
                     "content_type": {"type": "keyword"},
                     "chunk_strategy": {"type": "keyword"},
                     "parent_id": {"type": "keyword"},
+                    # D6 资产字段：chunk_type 供 term 过滤；asset_ref 只存不索引
+                    "chunk_type": {"type": "keyword"},
+                    "asset_ref": {"type": "text", "index": False},
                     # P0-4 recency：文档更新时间 + 生效窗口（新旧规范冲突裁决）
                     "doc_updated_at": {"type": "date"},
                     "effective_from": {"type": "date"},
@@ -493,6 +504,8 @@ class OpenSearchVectorStore(VectorStoreBase):
                 "doc_id": str(source.get("doc_id") or ""),
                 "content_type": str(source.get("content_type") or ""),
                 "chunk_strategy": str(source.get("chunk_strategy") or ""),
+                "chunk_type": str(source.get("chunk_type") or "text"),
+                "asset_ref": source.get("asset_ref"),
             }
         return result
 

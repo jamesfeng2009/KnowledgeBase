@@ -107,6 +107,9 @@ class QdrantVectorStore(VectorStoreBase):
             "kb_id": self._resolve_kb_id(chunk, doc_id, kb_id),
             "title_path": getattr(chunk, "title_path", None),
             "parent_id": getattr(chunk, "parent_id", None),
+            # D6 资产字段（对齐 OpenSearch 版）
+            "chunk_type": getattr(chunk, "chunk_type", "text"),
+            "asset_ref": getattr(chunk, "asset_ref", None),
         }
         if doc_updated_at is not None:
             payload["updated_at"] = doc_updated_at
@@ -151,6 +154,16 @@ class QdrantVectorStore(VectorStoreBase):
                     FieldCondition(
                         key="path", match=MatchAny(any=[str(path_prefix)])
                     )
+                )
+            chunk_type = filters.get("chunk_type")
+            if chunk_type is not None:
+                values = (
+                    [str(v) for v in chunk_type]
+                    if isinstance(chunk_type, (list, tuple))
+                    else [str(chunk_type)]
+                )
+                conditions.append(
+                    FieldCondition(key="chunk_type", match=MatchAny(any=values))
                 )
         if not conditions:
             return None
@@ -203,6 +216,8 @@ class QdrantVectorStore(VectorStoreBase):
                     effective_from=payload.get("effective_from"),
                     effective_to=payload.get("effective_to"),
                     doc_role=payload.get("doc_role"),
+                    chunk_type=payload.get("chunk_type"),
+                    asset_ref=payload.get("asset_ref"),
                 )
             )
         return results
@@ -292,6 +307,8 @@ class QdrantVectorStore(VectorStoreBase):
                 "title_path": payload.get("title_path"),
                 "parent_id": payload.get("parent_id"),
                 "doc_id": payload.get("doc_id"),
+                "chunk_type": payload.get("chunk_type", "text"),
+                "asset_ref": payload.get("asset_ref"),
             }
         return out
 

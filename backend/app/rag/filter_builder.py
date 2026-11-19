@@ -48,6 +48,7 @@ SUPPORTED_FILTER_KEYS: frozenset[str] = frozenset({
     "doc_status",  # P0-1: 文档状态过滤（published/draft/pending_review/archived）
     "doc_role",    # P2: 文档角色粗标过滤（normal/constraint_source，运营用）
     "classification",  # P0 密级下推：用户可见密级白名单（多值 list）
+    "chunk_type",  # D6: 资产类型过滤（text/image/table，单值或多值 list）
 })
 
 
@@ -113,6 +114,14 @@ _OS_FILTER_BUILDERS: dict[str, tuple[str, Any]] = {
     "doc_status": ("doc_status", lambda v: _os_term("doc_status", str(v))),
     "doc_role": ("doc_role", lambda v: _os_term("doc_role", str(v))),
     "classification": ("classification", _os_classification_clause),
+    "chunk_type": (
+        "chunk_type",
+        lambda v: (
+            {"terms": {"chunk_type": [str(x) for x in v]}}
+            if isinstance(v, (list, tuple))
+            else _os_term("chunk_type", str(v))
+        ),
+    ),
 }
 
 
@@ -220,6 +229,14 @@ _MILVUS_FILTER_BUILDERS: dict[str, tuple[str, Any]] = {
     "doc_status": ("doc_status", lambda v: f"doc_status == {_milvus_str_literal(v)}"),
     "doc_role": ("doc_role", lambda v: f"doc_role == {_milvus_str_literal(v)}"),
     "classification": ("classification", _milvus_classification_expr),
+    "chunk_type": (
+        "chunk_type",
+        lambda v: (
+            "chunk_type in [" + ", ".join(_milvus_str_literal(x) for x in v) + "]"
+            if isinstance(v, (list, tuple))
+            else f"chunk_type == {_milvus_str_literal(v)}"
+        ),
+    ),
 }
 
 

@@ -53,6 +53,16 @@ _QA_MAX_TOKENS: int = 1200
 _STRUCTURAL_MAX_CHARS: int = 2800  # ~800 tokens
 # HTML 表格片段 — 切分时保持原子性（捕获组保留表格本身）
 _TABLE_SEGMENT_RE = re.compile(r"(<table\b[^>]*>.*?</table>)", re.IGNORECASE | re.DOTALL)
+# D6 图片资产 — base._format_section 的规范输出：<p><img/></p> 后紧跟单换行分隔的描述段
+# （section 之间是双换行，不会误吞下一段的 <p>）
+_IMG_BLOCK_RE = re.compile(
+    r'<p><img\s+[^>]*src="(minio://[^"]+)"[^>]*/></p>(?:\n<p>(.*?)</p>)?',
+    re.DOTALL,
+)
+# 裸 <img> 标签（无 <p> 包裹的兜底形态）
+_IMG_TAG_RE = re.compile(r'<img\s+[^>]*src="(minio://[^"]+)"[^>]*/?>')
+# Markdown 图片（Docling/Markdown 路径）
+_MD_IMG_RE = re.compile(r"!\[[^\]]*\]\((minio://[^)\s]+)\)")
 # 固定长度兜底 — Overlap 重叠字符数（~50 tokens），弥补硬切的边界信息丢失
 _OVERLAP_CHARS: int = 175
 # 固定长度兜底 — 是否启用 Overlap（默认关闭，仅硬切兜底场景需要）
@@ -80,6 +90,8 @@ class Chunk:
                     结构化分块时自动提取，非结构化内容为空字符串。
         content_type: 内容类型标签（P1），标记分块来源的内容类型。
         chunk_strategy: 实际使用的分块策略名称（qa / structural / semantic / fallback）。
+        chunk_type: D6 资产类型（text / image / table）。
+        asset_ref: D6 资产引用 — 图片=minio:// 地址，表格=内联 HTML；text 块为 None。
     """
 
     id: str
@@ -92,6 +104,8 @@ class Chunk:
     title_path: str = ""
     content_type: str = ""
     chunk_strategy: str = ""
+    chunk_type: str = "text"
+    asset_ref: str | None = None
 
 
 @dataclass(frozen=True)
@@ -258,6 +272,104 @@ class SemanticChunker:
             new_parent_id = old_to_new[chunk.parent_id] if chunk.parent_id else None
             result.append(replace(chunk, id=new_id, parent_id=new_parent_id))
 
+        return result
+
+    # ------------------------------------------------------------------
+    # D6 资产抽取 — 图片/表格独立 chunk＋回链
+    # ------------------------------------------------------------------
+
+    def extract_asset_chunks(
+        self, chunks: list[Chunk], doc_id: str | None = None
+    ) -> list[Chunk]:
+        """把正文块中的 HTML 表格 / minio 图片抽取为独立资产块（D6）。
+
+        契约：
+            - 表格块：content=asset_ref=原子表格 HTML（A6 原子性不破坏）；
+            - 图片块：content=VLM 描述（无描述时占位文本），asset_ref=minio:// 地址；
+            - 资产块 parent_id 回链来源正文块；正文块中的整表/整段描述被移除，
+              留 [表格]/[图片] 占位标记（不重复含资产内容）；
+            - 同一资产在父子块中重复出现时只产出一个资产块（按 asset_ref 去重）；
+            - 无资产时原样返回（ID/内容不变）；有资产且传入 doc_id 时
+              重分配确定性 ID（幂等）。
+        """
+        if not chunks:
+            return chunks
+
+        result: list[Chunk] = []
+        seen: dict[str, str] = {}
+        extracted = False
+
+        for chunk in chunks:
+            if chunk.chunk_type != "text":
+                result.append(chunk)
+                continue
+
+            assets: list[Chunk] = []
+            changed = False
+
+            def _new_asset(
+                asset_ref: str, content: str, kind: str, source: Chunk
+            ) -> None:
+                if asset_ref in seen:
+                    return
+                aid = str(uuid.uuid4())
+                seen[asset_ref] = aid
+                assets.append(
+                    Chunk(
+                        id=aid,
+                        doc_id=source.doc_id,
+                        content=content,
+                        parent_id=source.id,
+                        token_count=estimate_tokens(content),
+                        title_path=source.title_path,
+                        content_type=source.content_type,
+                        chunk_strategy="asset",
+                        chunk_type=kind,
+                        asset_ref=asset_ref,
+                    )
+                )
+
+            def _table_sub(m: re.Match) -> str:
+                nonlocal extracted, changed
+                extracted = changed = True
+                html = m.group(1)
+                _new_asset(html, html, "table", chunk)
+                return "[表格]"
+
+            def _img_block_sub(m: re.Match) -> str:
+                nonlocal extracted, changed
+                extracted = changed = True
+                url = m.group(1)
+                desc = (m.group(2) or "").strip()
+                # 剥离内联标注包装 — 资产块本身已带 image 类型，包装是冗余噪声
+                wrapped = re.fullmatch(r"\[图片描述[:：]\s*(.*)\]", desc, re.DOTALL)
+                if wrapped:
+                    desc = wrapped.group(1).strip()
+                _new_asset(url, desc or "[图片内容]", "image", chunk)
+                return "[图片]"
+
+            def _img_bare_sub(m: re.Match) -> str:
+                nonlocal extracted, changed
+                extracted = changed = True
+                url = m.group(1)
+                _new_asset(url, "[图片内容]", "image", chunk)
+                return "[图片]"
+
+            content = _TABLE_SEGMENT_RE.sub(_table_sub, chunk.content)
+            content = _IMG_BLOCK_RE.sub(_img_block_sub, content)
+            content = _IMG_TAG_RE.sub(_img_bare_sub, content)
+            content = _MD_IMG_RE.sub(_img_bare_sub, content)
+
+            if assets or changed:
+                result.append(replace(chunk, content=content.strip()))
+                result.extend(assets)
+            else:
+                result.append(chunk)
+
+        if not extracted:
+            return chunks
+        if doc_id:
+            return self._assign_deterministic_ids(result, doc_id)
         return result
 
     # ------------------------------------------------------------------

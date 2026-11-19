@@ -252,9 +252,9 @@ class Settings(BaseSettings):
     # PDF 图片提取 + VLM 描述
     PDF_IMAGE_EXTRACTION_ENABLED: bool = True
     PDF_IMAGE_MAX_PER_DOC: int = 50
-    # PDF 图片上传对象存储 — 启用后图片上传 MinIO 保留 URL（对齐图片流程），
-    # 关闭时仅走 VLM 文本描述（当前模式）
-    PDF_IMAGE_UPLOAD_ENABLED: bool = False
+    # PDF 图片上传对象存储 — D6 资产化默认常开：图片上传 MinIO 保留 URL，
+    # 答案可直接展示图片本身；关闭时仅走 VLM 文本描述
+    PDF_IMAGE_UPLOAD_ENABLED: bool = True
     # PDF 图片最小尺寸过滤 — 宽或高小于此值的图片跳过（剔除图标/装饰小图）
     PDF_IMAGE_MIN_SIZE: int = 50
     # PDF 扫描页 OCR — get_text() 返回空时，页面渲染为图片调用 VLM 提取文字
@@ -275,15 +275,15 @@ class Settings(BaseSettings):
     # PPTX 图片提取 + VLM 描述
     PPTX_IMAGE_EXTRACTION_ENABLED: bool = True
     PPTX_IMAGE_MAX_PER_DOC: int = 50
-    # PPTX 图片上传对象存储 + 小图过滤（对齐 PDF/DOCX）
-    PPTX_IMAGE_UPLOAD_ENABLED: bool = False
+    # PPTX 图片上传对象存储 + 小图过滤（D6 资产化默认常开，对齐 PDF/DOCX）
+    PPTX_IMAGE_UPLOAD_ENABLED: bool = True
     PPTX_IMAGE_MIN_SIZE: int = 50
     # DOCX 表格提取 + 图片 VLM 描述
     DOCX_TABLE_EXTRACTION_ENABLED: bool = True
     DOCX_IMAGE_EXTRACTION_ENABLED: bool = True
     DOCX_IMAGE_MAX_PER_DOC: int = 50
-    # DOCX 图片上传对象存储 + 小图过滤（同 PDF）
-    DOCX_IMAGE_UPLOAD_ENABLED: bool = False
+    # DOCX 图片上传对象存储 + 小图过滤（D6 资产化默认常开，同 PDF）
+    DOCX_IMAGE_UPLOAD_ENABLED: bool = True
     DOCX_IMAGE_MIN_SIZE: int = 50
     # DOCX 分页检测 — 检测 <w:br type="page"/> 和 <w:lastRenderedPageBreak/>
     # 启用后按实际页码分页，关闭时按段落序号排序（当前模式）
