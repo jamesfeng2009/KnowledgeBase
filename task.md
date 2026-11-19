@@ -307,8 +307,30 @@
   - 证据：闸门 `tests/test_d11_asset_backfill.py` 12 条（force 接线 4 条含 3 正向证人：A14 默认早退/编辑型无文件/源文件丢失；回填命令 3 条：资产生成＋三索引先删后建、幂等确定性 ID、dry-run 零写入；目标选取 3 条：kb/租户粒度＋排除项；隔离 2 条：失败不中断批次、未回填文档内容/哈希/状态/索引事件全不变）；红基线 11 failed / 1 passed（A14 证人按设计绿）→ 修后 12 绿；27 文件全量回归 **780 passed / 0 failed**（46.50s，768＋12）；CLI 实测：ekb_test 上 `--dry-run` 正确列出目标 exit 0，非法 UUID exit 1。
   - 变异（串行 9 条全打红自身判据后还原）：M1 去掉 force 早退绕过→force 判据红（3 红）/ M2 force 默认翻 True→A14 证人红 / M3 跨模态清理指向错误索引→三索引清理判据红 / M4 先重建后删除→顺序判据红 / M5 dry-run 也写入→dry-run 判据红 / M6 丢 kb 过滤→kb 粒度判据红 / M7 丢排除项→排除判据红 / M8 失败中断整批→隔离判据红（首版变异未达靶——解析失败走 status 分支而非异常分支，属等价变异，改异 status 分支后打红）/ M9 force 不透传→force 判据红（3 红）。终验 12 绿＋780 passed。
   - 校准：① 本机 NO_PROXY 含 ::1 使生产 helper 的 httpx client（trust_env 默认开）构造即 InvalidURL——闸门边界内 delenv NO_PROXY（既有环境勘误桶，非 D11 缺陷；脚本自身跨模态 client 用 trust_env=False）；② 本机 dev 库 ekb 不存在（PG 容器只有 ekb_test）——CLI 冒烟经进程内 env 覆写指向 ekb_test，凭据不落盘不回显。
-  - 备注（后续项，未混做）：生产 `_delete_document_from_indexes` 只清全文/k-NN 两索引，归档/下架路径同样不清跨模态索引（随机 UUID 条目残留）——2026-11-19 发现，记后续，不顺手修。
+  - 备注（后续项，未混做）：生产 `_delete_document_from_indexes` 只清全文/k-NN 两索引，归档/下架路径同样不清跨模态索引（随机 UUID 条目残留）——2026-11-19 发现，**E1 已修（见 E 组）**。
   - 部署注意：D6 迁移＋D10 上线后显式执行（建议先 `--dry-run` 核对目标）：`python -m scripts.backfill_asset_chunks --kb-id <UUID>`；每文档走完整重解析＋embedding，串行有成本，按库分批；VECTOR_STORE=milvus 部署索引清理仅覆盖 OpenSearch（脚本输出警告，Milvus 需重新触发向量化任务）。
+
+---
+
+## E. 后续批次（2026-11-19，D 组立案后续项，用户点名「请帮我继续完成」授权；部署＝本地演练，环境桶只留痕）
+
+- [x] **E1. 生产删除路径补 cross-modal 索引清理（D11 备注立案）** ✅ 2026-11-19
+  - 证据：`document_tasks.py` `_delete_document_from_indexes` 循环仅 ("ekb_documents", "ekb_knn_vectors")；cross-modal chunk 随机 UUID ID（cross_modal_service.py:121），归档/下架后残留可检索图片向量。调用方：cleanup_document_indexes celery 任务＋同步降级＋D11 回填脚本。
+  - 实现：helper 循环补 `settings.OPENSEARCH_CROSS_MODAL_INDEX`（三索引同 loop 尽力删除、单索引失败隔离契约不变）；D11 脚本 `_delete_old_entries` 删除自补的 cross-modal 块（生产 helper 已覆盖，防重复删除），脚本 httpx 导入随之移除。
+  - 证据：闸门 `tests/test_e1_cross_modal_cleanup.py` 5 条（三索引覆盖/cross-modal term 精确 payload/单索引失败隔离/清理任务接线证人/回填不重复删）；红基线 3 failed / 2 passed（两证人按设计绿）→ 修后 5 绿；D11 既有 12 闸不回归（合跑 17 绿）；29 文件全量回归 **800 passed / 0 failed**（50.53s，795＋5）。
+  - 变异（串行 5 条全打红自身判据后还原）：M1 循环退回两索引→4 红（含回填漏删）/ M2 term 退化为 match→payload 判据红 / M3 except 收窄 ValueError→隔离判据红 / M4 脚本重复补删→不重复判据红 / M5 清理任务跳过 helper→接线判据红。
+  - 备注（新立案，未混做）：`_refresh_index_doc_status` 同构只刷两索引——cross-modal 检索透传 doc_status=published 过滤（retriever.py:317-318 → cm_store.search），confidential 文档发布后其 cross-modal 块仍 pending_review 被排除＝召回缺失（fail-closed 方向，非泄漏）；2026-11-19 取证，记后续。
+- [ ] **E2. shortcut 通道 sources 补资产字段（D10 备注立案）**
+  - 证据：shortcut 通道 sources 形状不同（无 content），未携带 chunk_type/asset_url。
+  - 修复点：复用 asset_sources enrich/presigned 下发时解析契约；闸门＋变异＋证据。
+- [ ] **E3. MinIO presign 升级 SigV4（D10 备注立案）**
+  - 证据：minio_client boto3 默认 SigV2，MinIO 可用但 AWS 新区域需 V4。
+  - 修复点：signature_version=s3v4；真实 MinIO 签名＋匿名 GET 200 闸门；D10 既有 V2/V4 宽判据不回归。
+- [ ] **E4. D7 任务级解析开关透传（D7 默认决策「任务级透传随后」）**
+  - 修复点：任务级 parse 覆盖参数，优先级 任务>租户>全局，同白名单校验；设计默认值清单先列再动代码。
+- [ ] **E5. 本地部署演练（用户批准：本地，不触生产）**
+  - 步骤：ekb-pg 容器建 ekb 开发库 → DATABASE_URL 指向它跑 alembic upgrade head 全量迁移 → D11 回填 --dry-run 取证；凭据 env-only 不回显。
+- 环境桶决策（2026-11-19 用户问询后定）：torch 重装仅利于本机 Docling 真链验证、与生产无关，且 maclean 去重根因未除会再删 dylib——暂不装，留痕；NO_PROXY 在用户 shell 配置，不动；ekb 库随 E5 创建。
 
 ---
 
