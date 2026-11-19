@@ -269,10 +269,14 @@
   - 校准：① 闸门边界初版未关 factory._is_docling_enabled，legacy 层 get_parser 仍路由到 DoclingParser（包可导入但 converter 断）致三级链——闸门补关判定后 legacy 走真实 PDFParser（边界设置修正，未动产线）；② 既有 A14 spy_dispatch 固定签名不收 meta  kwarg 报 TypeError——按 B8/B9 先例对齐 spy 签名（透传 meta），断言意图不变。
   - 部署注意：迁移待 `alembic upgrade head` 应用；历史文档 parse_meta=NULL，下次重解析回填。
 
-- [ ] **D9. PPTX 嵌入音视频被静默忽略，无 warning（决策点，默认仅告警）**
+- [x] **D9. PPTX 嵌入音视频被静默忽略，无 warning（决策点，默认仅告警）** ✅ 2026-11-19
   - 证据：`pptx_parser.py` 全文无 media/audio/video 处理（2026-11-19 grep 零命中）；嵌入媒体内容直接丢失且无感知。对比 knowhere：转换前剥离嵌入媒体并记录为独立资产（其 `formats/pptx/embedded_media.py:100` separate_embedded_media，海报保留、媒体入 `embedded_media/` 可检索、时长准入策略）——其瘦身动机是 PPTX→PDF 转换专用，本项目原生解析不适用，但「媒体不得静默丢」的原则适用。
   - 修复点（按默认值）：检测媒体形状（video/audio 关系类型）→ 记 parse_warning「含 N 个嵌入音视频，未解析」，不做提取。可选升级：提取媒体字节走既有 ASR/VLM 管线（复用独立媒体文件链路），另行批准后实施。
   - 验收：含嵌入视频的真实 PPTX → warning 计数正确；纯图文 PPTX 无 warning（正向证人）；不引入转换依赖。
+  - 实现：`_count_embedded_media` 遍历 slide.part.rels，reltype 以 /video、/audio、/media 结尾计入，同目标 part 去重（video+media 双关系不重计）；parse 开头重置 last_parse_warnings（复用不残留），计数>0 记 warning + 日志。warning 经既有 getattr 链路汇入 doc.parse_warnings。零转换依赖、零提取。
+  - 证据：闸门 `tests/test_d9_pptx_media_warning.py` 6 条（python-pptx add_movie 真实嵌入媒体 part；audio 经 OOXML reltype/videoFile 改写构造）；红基线 4 failed / 2 passed（证人按设计绿）→ 修复后 6 绿；回归 539 passed。
+  - 变异（串行 4 条全打红后还原）：M1 检测恒 0→4 红；M2 reltype 过滤失效（全关系计入）→5 红含正向证人；M3 目标去重失效→计数 3 红；M4 parse 不重置 warning→复用残留判据红。终验 539 passed。
+  - 校准：双视频闸门初红——相同字节被 python-pptx 合并为同一媒体 part（实测 rels 均指 media1.mp4），文件实含 1 个嵌入媒体，产线去重计数正确；闸门改为每视频互异字节后复绿（样本构造修正，未动产线）。
 
 - [ ] **D10. 聊天答案出口无资产通道，图到不了前端（D6 的出口配套）**
   - 证据（2026-11-19 实证）：sources 事件仅 `id/title/content[:200]/score`（`app/rag/engine.py:971-983`），无资产类型/URL 字段；`resolve_minio_image_urls` 全库仅文档详情端点调用（`api/v1/documents.py:896-901`，A11 修复范围），聊天/引用卡片路径未接入；content 截断 200 字符会切碎表格 HTML。
