@@ -79,6 +79,19 @@ class PPTXParser(DocumentParser):
             log.warning("pptx.open_failed", file_path=file_path, error=str(exc))
             return ""
 
+        self.last_parse_warnings = []
+        # D9: 嵌入音视频不得静默丢失 — 按 slide 关系计数并告警（仅告警，不提取）
+        media_count = self._count_embedded_media(prs)
+        if media_count:
+            self.last_parse_warnings.append(
+                f"含 {media_count} 个嵌入音视频，未解析"
+            )
+            log.info(
+                "pptx.embedded_media_detected",
+                file_path=file_path,
+                count=media_count,
+            )
+
         settings = get_settings()
         # P0: 使用 _bool()/_int() 安全转换（处理 MagicMock 测试场景）
         image_enabled = self._bool(
@@ -140,6 +153,26 @@ class PPTXParser(DocumentParser):
         page_sep_raw = getattr(settings, "PAGE_SEPARATOR", "")
         page_separator = page_sep_raw if isinstance(page_sep_raw, str) else ""
         return self.sections_to_text(sections, page_separator=page_separator)
+
+    @staticmethod
+    def _count_embedded_media(prs: Any) -> int:
+        """D9: 统计嵌入音视频 — slide part 关系中 video/audio/media 类型。
+
+        同一目标 part 被多条关系引用（video + media）时按目标去重，
+        避免一个视频计两次。检测异常时返回已计数量，不阻塞解析。
+        """
+        count = 0
+        try:
+            for slide in prs.slides:
+                targets: set[str] = set()
+                for rel in slide.part.rels.values():
+                    rt = rel.reltype or ""
+                    if rt.endswith(("/video", "/audio", "/media")):
+                        targets.add(str(rel.target_ref))
+                count += len(targets)
+        except Exception as exc:
+            log.debug("pptx.media_detect_failed", error=str(exc))
+        return count
 
     def _extract_slide_text(self, slide: Any, slide_num: int) -> list[ParsedSection]:
         """提取幻灯片文本，包装为 <h2> 标题块。
