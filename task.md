@@ -351,7 +351,7 @@
     2. 迁移：`python -m alembic upgrade head` 全链 exit 0，alembic_version=`b7c8d9e0f1a2`（D6 资产化字段为最新头），public schema 71 表；D6 三列（chunk_type/asset_ref/parent_chunk_id）＋D8 parse_meta 列 information_schema 实证在位；RLS fail-closed 迁移（e8f9a0b1c2d3）与 B6 租户列迁移（7a8b9c0d1e2f）均经全链应用；
     3. 回填演练：`python -m scripts.backfill_asset_chunks --dry-run` 指向新 ekb 库 exit 0，输出「回填目标文档数: 0（dry_run=True）」——空库零目标符合预期，命令端到端可用（排除项 SQL 正常执行、只读 ROLLBACK 收尾）。
   - 边界：未触生产；未执行真实回填（空库无目标，embedding 成本零）；MIGRATION_DATABASE_URL 未配置，迁移回退 DATABASE_URL（单角色部署语义，env.py:48-54）。
-- 环境桶决策（2026-11-19 用户问询后定）：torch 重装仅利于本机 Docling 真链验证、与生产无关，且 maclean 去重根因未除会再删 dylib——暂不装，留痕；NO_PROXY 在用户 shell 配置，不动；ekb 库已随 E5 创建（见上）。
+- 环境桶决策与处置（2026-11-19）：torch 经用户点名升级 **2.13.0→2.15.0**（最新稳定，dry-run 确认只动 torch；tensor 实测 OK）；升级打破 torchvision 0.28.0 的 torch==2.13.0 pin（pip check 实证）→ 随升级收尾 torchvision 0.29.2，pip check 清零；**safetensors._safetensors_rust.abi3.so 缺失**（maclean 同类旧伤，取证目录仅剩 .py）经用户批准 `--force-reinstall --no-deps` 修复 → `docling.document_converter.DocumentConverter` 真链导入 OK（此前被 torch dylib＋safetensors 双重阻断）；32 文件回归 **825 passed / 0 failed**（58.11s）零副作用。首跑模型权重下载未执行（本机禁止长占，真链转换验证留待需要时）。**maclean 去重根因未除，再删风险仍在**（留痕）；NO_PROXY 裸 ::1 在用户 shell 配置，不动（闸门边界 delenv/trust_env=False 绕行）；ekb 库已随 E5 创建（见上）。
 
 ---
 
