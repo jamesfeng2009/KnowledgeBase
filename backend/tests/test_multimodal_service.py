@@ -171,12 +171,12 @@ class TestMultimodalService:
         assert result["summary"] == ""
 
     async def test_vlm_failure_graceful_degradation(self):
-        """VLM 不可用时应优雅降级，不抛异常。"""
+        """VLM 不可用时应优雅降级：不抛异常，失败文案不得进入内容（D1 契约）。"""
         service = MultimodalService(vlm=FailingVisionProvider())
 
         # 图片解析
         result = await service.process_image(b"fake_image")
-        assert "失败" in result["description"] or result["description"] != ""
+        assert result["description"] == ""
 
         # 表格结构化
         result = await service.process_table(b"fake_table")
@@ -184,7 +184,7 @@ class TestMultimodalService:
 
         # 扫描件 OCR
         result = await service.process_scanned_pdf(b"fake_scanned")
-        assert "失败" in result or result != ""
+        assert "失败" not in result
 
         # 白板
         result = await service.process_whiteboard(b"fake_whiteboard")
