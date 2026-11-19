@@ -24,6 +24,7 @@ DOCX 文档解析器 — 单一职责：将 DOCX 解析为增强文本（文本 
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import Any
 
 from app.config import get_settings
@@ -84,6 +85,14 @@ class DOCXParser(DocumentParser):
         page_break_detection = self._bool(
             getattr(settings, "DOCX_PAGE_BREAK_DETECTION", True), True
         )
+        outline_truth = self._bool(
+            getattr(settings, "DOCX_OUTLINE_TRUTH_ENABLED", True), True
+        )
+
+        # D2: TOC 域条目真值 — 标题文本 → 层级，锚定无样式正文标题
+        toc_truth: dict[str, int] = {}
+        if outline_truth:
+            toc_truth = self._collect_toc_entries(docx_doc.element.body)
 
         sections: list[ParsedSection] = []
         image_count = 0
@@ -118,7 +127,9 @@ class DOCXParser(DocumentParser):
                         )
                 else:
                     # 常规段落 — 格式化标题/列表/正文
-                    content = self._format_paragraph(element)
+                    content = self._format_paragraph(
+                        element, toc_truth=toc_truth, outline_truth=outline_truth
+                    )
                     if content and content.strip():
                         sections.append(
                             ParsedSection(
@@ -281,19 +292,23 @@ class DOCXParser(DocumentParser):
             return ""
 
     @staticmethod
-    def _format_paragraph(element: Any) -> str:
+    def _format_paragraph(
+        element: Any,
+        toc_truth: dict[str, int] | None = None,
+        outline_truth: bool = True,
+    ) -> str:
         """从 <w:p> XML 元素格式化段落为 HTML — 保留标题层级和列表结构。
 
-        样式映射规则（对齐 mammoth 的语义化映射）：
-            - Title / 标题 / Heading 1 / 标题 1 → <h1>
-            - Heading 2 / 标题 2 → <h2>
-            - Heading 3 / 标题 3 → <h3>
-            - Heading 4 / 标题 4 → <h4>
-            - 列表（含 numPr）→ <ul><li>...</li></ul>
-            - 其他（正文）→ 纯文本
+        标题判定优先级（D2）：
+            1. outlineLvl 大纲真值（Word 导航/TOC 的依据）；
+            2. Title / Heading N / 标题 N 样式（补充）；
+            3. TOC 域条目标题精确匹配（锚定无样式正文标题）。
+        列表（含 numPr）→ <ul><li>...</li></ul>；其他（正文）→ 纯文本。
 
         Args:
             element: <w:p> XML 元素。
+            toc_truth: TOC 域条目 标题→层级 映射（None 表示不启用）。
+            outline_truth: 是否启用 outlineLvl/TOC 真值层。
 
         Returns:
             HTML 字符串。空字符串表示空段落。
@@ -305,8 +320,10 @@ class DOCXParser(DocumentParser):
             if not text:
                 return ""
 
-            # 1. 检测标题样式
-            heading_html = DOCXParser._style_to_heading(element, text)
+            # 1. 检测标题（outlineLvl 真值 > 样式 > TOC 条目锚定）
+            heading_html = DOCXParser._style_to_heading(
+                element, text, toc_truth=toc_truth, outline_truth=outline_truth
+            )
             if heading_html:
                 return heading_html
 
@@ -344,63 +361,84 @@ class DOCXParser(DocumentParser):
             return ""
 
     @staticmethod
-    def _style_to_heading(element: Any, text: str) -> str:
-        """检测段落样式名，返回对应标题 HTML 标签。
+    def _style_to_heading(
+        element: Any,
+        text: str,
+        toc_truth: dict[str, int] | None = None,
+        outline_truth: bool = True,
+    ) -> str:
+        """判定段落标题层级，返回标题 HTML 标签。
 
-        支持中英文样式名：
-            - Title / 标题 → <h1>
-            - Heading 1 / 标题 1 → <h1>
-            - Heading 2 / 标题 2 → <h2>
-            - Heading 3 / 标题 3 → <h3>
-            - Heading 4 / 标题 4 → <h4>
+        优先级（D2）：
+            1. <w:outlineLvl w:val="0-8"/> — Word 大纲真值（导航窗格/TOC 依据），
+               val+1 映射 h1-h6；
+            2. 样式名 Title / Heading N / 标题 N（中英文样式 ID）；
+            3. TOC 域条目标题精确匹配（TOCN 样式条目自身除外）。
 
         Args:
             element: <w:p> XML 元素。
             text: 段落文本（已转义前的原始文本）。
+            toc_truth: TOC 域条目 标题→层级 映射。
+            outline_truth: 是否启用 outlineLvl/TOC 真值层。
 
         Returns:
             标题 HTML 字符串（如 "<h1>章节标题</h1>"），
-            非标题样式返回空字符串。
+            非标题返回空字符串。
         """
         try:
-            # 从 <w:pPr>/<w:pStyle w:val="..."/> 提取样式 ID
             ns = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
             pPr = element.find(f"{ns}pPr")
-            if pPr is None:
-                return ""
-            pStyle = pPr.find(f"{ns}pStyle")
-            if pStyle is None:
-                return ""
 
-            style_id = pStyle.get(f"{ns}val", "")
-            if not style_id:
-                return ""
+            # 1. outlineLvl 大纲真值 — 优先于样式
+            if outline_truth and pPr is not None:
+                ol = pPr.find(f"{ns}outlineLvl")
+                if ol is not None:
+                    try:
+                        val = int(ol.get(f"{ns}val", ""))
+                    except (TypeError, ValueError):
+                        val = -1
+                    if 0 <= val <= 8:
+                        level = min(val + 1, 6)
+                        escaped = DOCXParser._escape_html(text)
+                        return f"<h{level}>{escaped}</h{level}>"
 
-            # 样式 ID 通常为 Heading1/Heading2/Title 等
-            # 也可能是中文名称的 hash，但常见情况下直接是英文名
-            style_lower = style_id.lower()
+            # 2. 样式 ID 映射（补充）
+            style_lower = ""
+            level = 0
+            if pPr is not None:
+                pStyle = pPr.find(f"{ns}pStyle")
+                if pStyle is not None:
+                    style_id = pStyle.get(f"{ns}val", "")
+                    style_lower = (style_id or "").lower()
 
-            # 标题层级映射表
-            heading_map = {
-                "title": 1,
-                "heading1": 1,
-                "heading2": 2,
-                "heading3": 3,
-                "heading4": 4,
-                # 中文样式名（部分文档使用）
-                "1": 1,  # "标题 1" 的某些变体
-            }
+                    heading_map = {
+                        "title": 1,
+                        "heading1": 1,
+                        "heading2": 2,
+                        "heading3": 3,
+                        "heading4": 4,
+                        # 中文样式名（部分文档使用）
+                        "1": 1,  # "标题 1" 的某些变体
+                    }
+                    level = heading_map.get(style_lower, 0)
 
-            level = heading_map.get(style_lower, 0)
+                    # 尝试匹配 HeadingN 模式（Heading5/Heading6 也支持）
+                    if level == 0 and style_lower.startswith("heading"):
+                        try:
+                            level = int(style_lower[7:])
+                            if level > 6:
+                                level = 6
+                        except ValueError:
+                            pass
 
-            # 尝试匹配 HeadingN 模式（Heading5/Heading6 也支持）
-            if level == 0 and style_lower.startswith("heading"):
-                try:
-                    level = int(style_lower[7:])
-                    if level > 6:
-                        level = 6
-                except ValueError:
-                    pass
+            # 3. TOC 域条目锚定 — 目录 listing 自身（TOCN 样式）不产标题
+            if (
+                level == 0
+                and outline_truth
+                and toc_truth
+                and not re.fullmatch(r"toc\d", style_lower.replace(" ", ""))
+            ):
+                level = toc_truth.get(text, 0)
 
             if level == 0:
                 return ""
@@ -410,6 +448,43 @@ class DOCXParser(DocumentParser):
 
         except Exception:
             return ""
+
+    @staticmethod
+    def _collect_toc_entries(body: Any) -> dict[str, int]:
+        """收集 TOC 域条目真值 — TOCN 样式段落 → {标题: 层级}。
+
+        条目文本取首个 <w:tab/> 之前部分（TOC 条目尾部为制表符+页码）。
+        同标题多次出现时保留首次层级。
+        """
+        entries: dict[str, int] = {}
+        try:
+            ns = f"{{{_W_NS}}}"
+            for p in body.iter(f"{ns}p"):
+                pPr = p.find(f"{ns}pPr")
+                if pPr is None:
+                    continue
+                pStyle = pPr.find(f"{ns}pStyle")
+                if pStyle is None:
+                    continue
+                style_id = (pStyle.get(f"{ns}val") or "").lower().replace(" ", "")
+                m = re.fullmatch(r"toc(\d)", style_id)
+                if not m:
+                    continue
+                level = min(int(m.group(1)), 6)
+                # 逐节点累积文本，遇制表符/换行即止（剔除页码尾巴）
+                parts: list[str] = []
+                for node in p.iter():
+                    tag = node.tag.split("}")[-1] if "}" in node.tag else node.tag
+                    if tag in ("tab", "br"):
+                        break
+                    if tag == "t" and node.text:
+                        parts.append(node.text)
+                title = "".join(parts).strip()
+                if title:
+                    entries.setdefault(title, level)
+        except Exception as exc:
+            log.debug("docx.toc_collect_failed", error=str(exc))
+        return entries
 
     @staticmethod
     def _is_list_paragraph(element: Any) -> bool:

@@ -29,6 +29,7 @@
 from __future__ import annotations
 
 import asyncio
+from html import escape
 from typing import Any
 
 from app.config import get_settings
@@ -115,6 +116,9 @@ class PDFParser(DocumentParser):
         hf_min_pages = self._int(
             getattr(settings, "PDF_HEADER_FOOTER_MIN_PAGES", 3), 3
         )
+        toc_enabled = self._bool(
+            getattr(settings, "PDF_TOC_HEADINGS_ENABLED", True), True
+        )
 
         sections: list[ParsedSection] = []
         image_count = 0
@@ -128,6 +132,20 @@ class PDFParser(DocumentParser):
         page_count = len(doc)
         # A12: 真实页数元数据 — 供调用方落库 page_count，不再按 <h2> 数推断
         self.last_page_count = page_count
+
+        # D2: 书签真值 — 页码 → [(层级, 标题)]，按页注入 <h> 标签
+        toc_headings: dict[int, list[tuple[int, str]]] = {}
+        if toc_enabled:
+            try:
+                for level, title, page_no in doc.get_toc(simple=True):
+                    title = (title or "").strip()
+                    if not title or page_no < 1:
+                        continue
+                    lvl = min(max(int(level), 1), 6)
+                    idx = min(page_no - 1, page_count - 1)
+                    toc_headings.setdefault(idx, []).append((lvl, title))
+            except Exception as exc:
+                log.debug("pdf.toc_read_failed", error=str(exc))
 
         # A10: 跨页页眉页脚预检测（同文本同位置 >= N 页的顶/底块）
         page_dicts: list[dict[str, Any]] = []
@@ -162,8 +180,23 @@ class PDFParser(DocumentParser):
                 )
                 # 表格文字计入扫描判定，避免纯表格页被误判为扫描页触发 OCR
                 table_chars = sum(len(s.content) for s in table_sections)
+                # D2: 书签标题注入 — 正文重复标题行去重，标题字符计入扫描判定
+                page_toc = toc_headings.get(page_num, [])
+                toc_chars = 0
+                if page_toc:
+                    titles = [t for _, t in page_toc]
+                    text = self._dedup_toc_lines(text, titles)
+                    toc_chars = sum(len(t) for t in titles)
+                    for lvl, title in page_toc:
+                        sections.append(
+                            ParsedSection(
+                                kind="text",
+                                content=f"<h{lvl}>{escape(title)}</h{lvl}>",
+                                page=page_num,
+                            )
+                        )
                 # 文本覆盖率低于阈值 → 扫描主导页（含带少量文本层的混合扫描页）
-                if scan_ocr_enabled and len(text.strip()) + table_chars < scan_min_chars:
+                if scan_ocr_enabled and len(text.strip()) + table_chars + toc_chars < scan_min_chars:
                     if scan_ocr_count < scan_ocr_max_pages:
                         scan_ocr_count += 1
                         ocr_text = await self._scan_page_ocr(doc, page, page_num)
@@ -231,6 +264,21 @@ class PDFParser(DocumentParser):
             sections,
             page_separator=page_separator,
         )
+
+    @staticmethod
+    def _dedup_toc_lines(text: str, titles: list[str]) -> str:
+        """剔除正文中与书签标题重复的行（每个标题至多剔除一次）。"""
+        if not text:
+            return text
+        remaining = list(titles)
+        out: list[str] = []
+        for line in text.split("\n"):
+            stripped = line.strip()
+            if stripped in remaining:
+                remaining.remove(stripped)
+                continue
+            out.append(line)
+        return "\n".join(out)
 
     def _extract_text_ordered(
         self,

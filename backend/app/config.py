@@ -269,6 +269,9 @@ class Settings(BaseSettings):
     # 依赖版式分析层；关闭时页眉页脚混入正文
     PDF_HEADER_FOOTER_REMOVAL_ENABLED: bool = True
     PDF_HEADER_FOOTER_MIN_PAGES: int = 3
+    # D2: PDF 书签（get_toc）真值 — 按书签页码注入 <h1>-<h6> 标题层级，
+    # 正文重复标题行去重；关闭时维持纯文本输出（不引入 LLM 猜层级）
+    PDF_TOC_HEADINGS_ENABLED: bool = True
     # PPTX 图片提取 + VLM 描述
     PPTX_IMAGE_EXTRACTION_ENABLED: bool = True
     PPTX_IMAGE_MAX_PER_DOC: int = 50
@@ -285,6 +288,9 @@ class Settings(BaseSettings):
     # DOCX 分页检测 — 检测 <w:br type="page"/> 和 <w:lastRenderedPageBreak/>
     # 启用后按实际页码分页，关闭时按段落序号排序（当前模式）
     DOCX_PAGE_BREAK_DETECTION: bool = True
+    # D2: DOCX 大纲真值 — outlineLvl 优先于 HeadingN 样式，
+    # TOC 域条目（TOCN 样式）锚定无样式正文标题；关闭时仅保留样式映射
+    DOCX_OUTLINE_TRUTH_ENABLED: bool = True
     # XLSX 电子表格解析 — openpyxl 读取，每 sheet 转 HTML 表格
     XLSX_TABLE_EXTRACTION_ENABLED: bool = True
     XLSX_MAX_ROWS_PER_SHEET: int = 500  # 每个 sheet 最大提取行数
