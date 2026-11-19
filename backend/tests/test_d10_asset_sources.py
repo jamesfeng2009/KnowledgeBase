@@ -219,8 +219,8 @@ class TestD10RealMinIO:
             out = await enrich_asset_docs([_img_doc(ref)])
             url = out[0]["asset_url"]
             assert url.startswith("http://"), "presigned 必须是 HTTP URL"
-            # boto3 s3 默认 SigV2（Signature=/Expires=），MinIO 接受；
-            # SigV4（X-Amz-Signature=）亦可 — 判据是真实签名参数存在（2026-11-19 校准）
+            # E3 后恒为 SigV4（X-Amz-Signature=）；本闸保留 V2/V4 宽判据
+            # 检验「真实签名存在」，V4 专属判据在 test_e3_sigv4_presign.py
             assert "X-Amz-Signature=" in url or "Signature=" in url, "必须带真实签名"
             async with httpx.AsyncClient(trust_env=False) as client:
                 resp = await client.get(url)
