@@ -294,10 +294,16 @@
   - 备注（后续项，未混做）：shortcut 通道 sources 形状不同（无 content）尚未携带资产字段；minio_client 默认 SigV2 在 MinIO 可用、AWS 新区域需 V4——均记后续，不顺手修。
   - 部署注意：真实签名闸门依赖本机 MinIO（docker compose minio 服务，凭据同 backend/.env）；Docker Hub minio/minio 已不公开（2025 起），本机用 pgsty/minio 社区镜像打标签 minio/minio:latest 供 compose 使用——生产部署需可达镜像源；26 文件回归基线自此要求 MinIO 在跑。
 
-- [ ] **D11. 存量文档资产回填（D6/D10 上线后一次性动作）**
+- [x] **D11. 存量文档资产回填（D6/D10 上线后一次性动作）** ✅ 2026-11-19
   - 证据：A14 按 file_hash 判定重解析——文件未变即早退（`document_tasks.py` _parse_document），存量文档不会自然获得资产 chunk；chunk.py 模块注释明示「存量惰性初始化，不迁移存量向量数据」。
   - 修复点（按默认值）：显式回填命令/管理端点（强制重解析＋重建 chunk，绕过 hash 早退但保留 A14 语义供日常重索引用），按知识库/租户粒度可选执行；不做自动全量重索引（embedding 成本）。
   - 验收：对含图存量文档执行回填 → 资产 chunk 生成、旧 text chunk 不重复残留；未执行回填的文档行为不变（正向证人）；回填幂等（重复执行不产生重复 chunk）。
+  - 实现：① `_parse_document` / `_parse_and_chunk_async` 增 keyword-only `force_reparse=False` — 仅跳过「哈希一致」早退，无源文件/文件丢失两处早退不受影响，默认路径 A14 语义不变；② `scripts/backfill_asset_chunks.py`（沿用 backfill_index_classification 模式）：`load_targets` 以 PG 为权威源（排除软删除/无源文件/视频音频/.doc/.ppt，doc_type NULL 视为可回填），`--kb-id/--tenant-id/--doc-id/--dry-run` 粒度可选；`backfill_one` = 强制重解析分块 → 按 doc_id 删三索引旧条目（全文/k-NN 复用生产 `_delete_document_from_indexes`，跨模态单独 delete_by_query — 其 chunk 为随机 UUID ID，不先删会累积重复）→ `_build_index_async` 重建；串行执行＋单文档失败隔离；不走 `_finalize`（不触发审核/发布/智能处理）；批次有失败 exit 1。
+  - 证据：闸门 `tests/test_d11_asset_backfill.py` 12 条（force 接线 4 条含 3 正向证人：A14 默认早退/编辑型无文件/源文件丢失；回填命令 3 条：资产生成＋三索引先删后建、幂等确定性 ID、dry-run 零写入；目标选取 3 条：kb/租户粒度＋排除项；隔离 2 条：失败不中断批次、未回填文档内容/哈希/状态/索引事件全不变）；红基线 11 failed / 1 passed（A14 证人按设计绿）→ 修后 12 绿；27 文件全量回归 **780 passed / 0 failed**（46.50s，768＋12）；CLI 实测：ekb_test 上 `--dry-run` 正确列出目标 exit 0，非法 UUID exit 1。
+  - 变异（串行 9 条全打红自身判据后还原）：M1 去掉 force 早退绕过→force 判据红（3 红）/ M2 force 默认翻 True→A14 证人红 / M3 跨模态清理指向错误索引→三索引清理判据红 / M4 先重建后删除→顺序判据红 / M5 dry-run 也写入→dry-run 判据红 / M6 丢 kb 过滤→kb 粒度判据红 / M7 丢排除项→排除判据红 / M8 失败中断整批→隔离判据红（首版变异未达靶——解析失败走 status 分支而非异常分支，属等价变异，改异 status 分支后打红）/ M9 force 不透传→force 判据红（3 红）。终验 12 绿＋780 passed。
+  - 校准：① 本机 NO_PROXY 含 ::1 使生产 helper 的 httpx client（trust_env 默认开）构造即 InvalidURL——闸门边界内 delenv NO_PROXY（既有环境勘误桶，非 D11 缺陷；脚本自身跨模态 client 用 trust_env=False）；② 本机 dev 库 ekb 不存在（PG 容器只有 ekb_test）——CLI 冒烟经进程内 env 覆写指向 ekb_test，凭据不落盘不回显。
+  - 备注（后续项，未混做）：生产 `_delete_document_from_indexes` 只清全文/k-NN 两索引，归档/下架路径同样不清跨模态索引（随机 UUID 条目残留）——2026-11-19 发现，记后续，不顺手修。
+  - 部署注意：D6 迁移＋D10 上线后显式执行（建议先 `--dry-run` 核对目标）：`python -m scripts.backfill_asset_chunks --kb-id <UUID>`；每文档走完整重解析＋embedding，串行有成本，按库分批；VECTOR_STORE=milvus 部署索引清理仅覆盖 OpenSearch（脚本输出警告，Milvus 需重新触发向量化任务）。
 
 ---
 
