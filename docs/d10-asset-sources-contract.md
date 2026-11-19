@@ -71,5 +71,27 @@ data: {"citations": [
 
 - 资产块命中后不被父子回溯替换为父块正文（小块→大块扩展对 image/table 豁免）。
 - BM25 全文路与向量路均携带 chunk_type/asset_ref。
-- 快捷通道（shortcut）的 sources 事件尚未携带资产字段（形状不同，
-  无 content），见 task.md D10 备注的后续项。
+
+## shortcut 通道 sources 事件（E2 补齐，2026-11-19）
+
+快捷意图路径（`ShortcutHandler._handle_search`，SSE 带 `"shortcut": true`）
+的 sources 形状与 Agent Loop 不同（无 content 常态），E2 后携带资产字段：
+
+```
+event: sources
+data: {"shortcut": true, "sources": [
+  {
+    "doc_id": "doc-uuid",
+    "title": "…",
+    "score": 0.9,
+    "chunk_id": "chunk-uuid",
+    "chunk_type": "text",        // text | image | table（恒有）
+    "asset_url": null,           // 恒有；image=presigned HTTP URL，其余 null
+    "content": "<table>…</table>" // 仅 table 携带＝完整 HTML 不截断；text/image 无此键
+  }
+]}
+```
+
+- 签名语义同上「签名 URL 语义」：下发时解析，生成上下文/缓存不染指。
+- 前端渲染规则同上表；table 的完整 HTML 在 `content` 键（shortcut 无
+  citations 事件）。

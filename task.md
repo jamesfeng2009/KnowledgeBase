@@ -320,9 +320,11 @@
   - 证据：闸门 `tests/test_e1_cross_modal_cleanup.py` 5 条（三索引覆盖/cross-modal term 精确 payload/单索引失败隔离/清理任务接线证人/回填不重复删）；红基线 3 failed / 2 passed（两证人按设计绿）→ 修后 5 绿；D11 既有 12 闸不回归（合跑 17 绿）；29 文件全量回归 **800 passed / 0 failed**（50.53s，795＋5）。
   - 变异（串行 5 条全打红自身判据后还原）：M1 循环退回两索引→4 红（含回填漏删）/ M2 term 退化为 match→payload 判据红 / M3 except 收窄 ValueError→隔离判据红 / M4 脚本重复补删→不重复判据红 / M5 清理任务跳过 helper→接线判据红。
   - 备注（新立案，未混做）：`_refresh_index_doc_status` 同构只刷两索引——cross-modal 检索透传 doc_status=published 过滤（retriever.py:317-318 → cm_store.search），confidential 文档发布后其 cross-modal 块仍 pending_review 被排除＝召回缺失（fail-closed 方向，非泄漏）；2026-11-19 取证，记后续。
-- [ ] **E2. shortcut 通道 sources 补资产字段（D10 备注立案）**
-  - 证据：shortcut 通道 sources 形状不同（无 content），未携带 chunk_type/asset_url。
-  - 修复点：复用 asset_sources enrich/presigned 下发时解析契约；闸门＋变异＋证据。
+- [x] **E2. shortcut 通道 sources 补资产字段（D10 备注立案）** ✅ 2026-11-19
+  - 证据：`app/intent/shortcut_handler.py:272-280` sources 仅 doc_id/title/score/chunk_id，图片/表格资产到不了前端（D10 备注立案）。
+  - 实现：sources 出口复用 D10 `enrich_asset_docs` 浅拷贝——条目增 chunk_type/asset_url（图片＝下发时 presigned），table 增 content＝完整 HTML 不截断，text 形状不变（无 content 键）；enrich 副本只进 sources 事件，生成上下文（reranked 传 generator）保留 minio:// 规范地址。契约文档 `docs/d10-asset-sources-contract.md` 增「shortcut 通道」段。
+  - 证据：闸门 `tests/test_e2_shortcut_asset_sources.py` 7 条（表格完整 HTML/图片 presigned 接线/text 形状证人/生成上下文不染指/权限清空证人/重排失败降级仍带资产/真实 MinIO 上传→签名→匿名 GET 200 字节一致）；红基线 5 failed / 2 passed（两证人按设计绿；红因 KeyError chunk_type/asset_url）→ 修后 7 绿；D10 既有 22 闸不回归（合跑 29 绿）；30 文件全量回归 **807 passed / 0 failed**（52.34s，800＋7）。
+  - 变异（串行 5 条全打红自身判据后还原）：M1 出口跳过 enrich→4 红 / M2 表格 content 截断 [:200]→2 红 / M3 enrich 副本回灌 reranked→染指判据红 / M4 text 也带 content→形状证人红 / M5 asset_url 取 asset_ref 原址不 presign→3 红（含真实签名闸）。
 - [ ] **E3. MinIO presign 升级 SigV4（D10 备注立案）**
   - 证据：minio_client boto3 默认 SigV2，MinIO 可用但 AWS 新区域需 V4。
   - 修复点：signature_version=s3v4；真实 MinIO 签名＋匿名 GET 200 闸门；D10 既有 V2/V4 宽判据不回归。
