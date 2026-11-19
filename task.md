@@ -1,4 +1,4 @@
-# 缺陷跟踪任务清单 — 记忆模块 & PDF 解析审计
+# 缺陷跟踪任务清单 — 记忆模块 & PDF 解析审计 & 解析策略对齐
 
 > 来源：2026-11-18 全项目代码审计（双研究代理深扫 + P0 逐条人工复核，pymupdf 行为为本机 venv 实测）。
 > 状态标记：`[ ]` 未开始 / `[x]` 已完成（完成必须满足验收标准，DoD＝测试通过＋闸门先打红一次）。
@@ -192,6 +192,84 @@
 - [x] **C1. RLS 集成测试基座**：现有 conftest create_all 不建 RLS（conftest.py:203-204），B1/B6 的验收依赖一个能真实执行 RLS 策略的测试 fixture。（2026-11-18：`tests/rls_harness.py` 落地 —— create_all 建表 + **加载生产迁移 e8f9a0b1c2d3 的策略 SQL**（非手抄）+ `provision_app_role.provision` 建非 superuser/NOBYPASSRLS 运行角色（ekb_rls_mem_pytest）+ NullPool 应用角色引擎；B1 的 7 条闸门已在其上实测打红→转绿，B6 可直接复用）
 - [x] **C2. 真实 PDF 端到端闸门**：即 A17，A1-A3 修完必须联合跑通。（2026-11-18：A1-A9 闸门 23 条 + P2 闸门 39 条全绿；存量 20 样例已接入 `TestA17RealSamples` 并实测通过）
 - [ ] **C3. chord 入口真实调用测试**：即 A1 验收，杜绝「函数从未被真实调用」类缺陷再次全绿存活。（2026-11-18：`_parse_and_chunk_async` 已有真实调用集成测试，process_document 任务级入口仍走 mock）
+
+---
+
+## D. 解析策略对齐（2026-11-19，knowhere 对比调研产出）
+
+> 来源：2026-11-19 双代理逐条取证 knowhere 六条设计声明 + 本项目现状核查（knowhere 侧 6 条中仅「资产一等公民」完全属实，详见当日会话记录）。
+> 行号以 2026-11-19 HEAD 4547bae 为准，修复前先核对漂移。DoD 与 A/B 组相同：测试通过＋闸门先打红一次＋串行变异自证。
+> 决策点默认值清单（一句「按默认值」＝按本清单整体授权，范围仅限 D 组点名文件）：
+> - **D3**：Docling 保持主路径，显式传 PdfPipelineOptions（OCR 自动、表格模式可配），不做文本层预检路由（默认）。
+> - **D4**：补 xlrd>=2.0.1 直读 .xls（默认）；不走 LibreOffice 转换。
+> - **D5**：.doc/.ppt 维持显式拒绝（默认）；LibreOffice 转换轨仅在有真实业务需求时另行立项。
+> - **D6**：完整版资产化（2026-11-19 用户确认产品需求：答案需展示图表/图片本身）——图片/表格独立 chunk＋回链，图片上传常开；不做 knowhere 式双向 connect_to 图模型（本项目为 chunk RAG，parent 回链够用）。
+> - **D7**：开关下探先做租户级（默认），任务级透传随后。
+> - **D9**：PPTX 嵌入媒体仅检测+告警（默认）；提取走 ASR/VLM 为可选升级，另行批准。
+> - **D10**：资产描述归属——VLM 描述归图片 chunk 作检索文本，正文留占位引用＋回链（默认，避免双份 embedding 与重复命中）；presigned URL 在下发时解析而非存储时（默认，防缓存答案里 URL 过期）。
+> - **D11**：存量回填为显式命令、按需执行（默认），不自动全量重索引。
+> 建议顺序：D1→D4（小修、已实锤）→ D2 → D3 → D8 → D9 → D6→D10（资产链路，含迁移）→ D11（回填）→ D7；D5 默认不做。
+
+### P1
+
+- [x] **D1. VLM 失败字符串被当图片描述嵌入正文，污染检索** ✅ 2026-11-19
+  - 完成证据：provider 双实现（Anthropic/vLLM）失败返回 None（抽象签名改 `str | None`）；understand_structured 遇 None 产 status=error/low_confidence 空描述字典；PDF/DOCX/PPTX `_vlm_describe` None→跳过+`last_parse_warnings` 留痕（三解析器补 `__init__` 初始化，管线 document_tasks.py:1694 getattr 自动拾取 DOCX/PPTX 警告）；PDF 扫描页 OCR None→空+页码 warning；multimodal_service._safe_understand 失败文案改空串。闸门 `test_d1_vlm_failure_isolation.py` 9 条（真实 provider 代码+LLM/client 抛错替身+真实 fitz 含图 PDF 端到端+正常描述正向证人）：红基线 9 failed → 修后 9 passed。变异×3 串行：M-D1a Anthropic 退回错误字符串→7 红 / M-D1b vLLM 退回→1 红 / M-D1c 禁 PDF None 守卫→2 红；恢复后全绿。既有 test_multimodal_service::test_vlm_failure_graceful_degradation 断言旧污染契约（「失败」in description），按同意图对齐新契约（降级不抛异常+空描述）；受影响 7 套件合跑 362 passed。
+  - 证据：`backend/app/vlm/provider.py:135/197` 出错返回字符串「[图像理解失败:…]」；调用方 `pdf_parser.py:499`、`docx_parser.py:698`、`pptx_parser.py:542` 不区分失败，直接拼入正文 HTML → 入 chunk/向量。与 A 组「静默失败」同族。
+  - 修复点：provider 失败返回 None（或抛专用异常），解析器跳过描述、保留图片引用并记 parse_warning；失败文案不得进入 content_text/chunk。
+  - 验收：打桩 VLM 抛错 → 断言产物不含「图像理解失败」且 warning 存在；正向证人：VLM 正常时描述照常嵌入。变异（失败仍返回字符串）须打红。
+
+- [ ] **D2. PDF/DOCX 目录（TOC/书签）真值零利用**
+  - 证据：全库 grep `get_toc`/outline/bookmark 无命中；legacy PDF 完全不产标题层级（纯文本→分块）；DOCX 仅靠 pStyle HeadingN（`docx_parser.py:344-409`），无样式标题的文档层级全丢。knowhere PDF 轨以 outline 树确定性锚定（其 `skeleton_extractor.py:86-108`），可借鉴。
+  - 修复点：PDF 用 fitz `get_toc()` 书签锚定标题层级（按页码/位置注入 h 标签）；DOCX 读 outlineLvl/TOC 域作真值，HeadingN 样式降为补充。无 TOC 时维持现状，不引入 LLM 猜层级。
+  - 验收：带书签真实 PDF → 标题层级与书签一致；带 TOC 域但无 Heading 样式的 DOCX → 仍产层级；无 TOC 样例行为不回归（正向证人）。
+
+- [ ] **D3. Docling 主路径无参构造，OCR/表格模式不可控**
+  - 证据：`docling_parser.py:81` `DocumentConverter()` 无参；默认 `DOCLING_ENABLED=True`（`config.py:307`），PDF 无条件跑版面+TableFormer+OCR；legacy 路径反而有文本层预检（`pdf_parser.py:163`，32 字符阈值）。
+  - 修复点（按默认值）：显式传 `PdfPipelineOptions`——do_ocr 保持自动（仅扫描页触发）、新增 `DOCLING_TABLE_MODE`（FAST/ACCURATE，默认 FAST）与 `DOCLING_DO_OCR` 开关；不做文本层预检路由（避免 legacy/Docling 双轨质量分叉）。
+  - 验收：构造参数断言测试（options 真实传入 converter）；开关关闭时 OCR 管线不实例化。既有 A9 线程闸门不回归。
+
+- [x] **D4. .xls 降级路径必炸：xlrd 缺失＋sniff OLE2 子类型恒误判（本机已实锤）** ✅ 2026-11-19
+  - 勘误（立案假设修正）：原证据称「sniff 放行 .xls → 上传能进、解析必败」**不成立**。实测取证：OLE2 目录流名为 UTF-16LE 且目录扇区在文件尾部（5.6KB 样例 Workbook 名在偏移 5248），`_sniff_ole` 却用 ASCII `b"Workbook"` 搜前 1024 字节 → 真实 .xls 恒判 ole2，**上传口即被拒**，到不了解析。双重缺陷同属 .xls 可用路径，一并修复。
+  - 完成证据：① sniff `_sniff_ole` 改全字节 UTF-16LE 标记搜索＋Root Entry ±4KB 目录区锚定，WordDocument/PowerPoint Document 优先于 Workbook 判定（防正文含 "Workbook" 字样的 doc/ppt 误判）；② requirements.txt 补 `xlrd>=2.0.1` 并安装入 venv；③ 新增真实 BIFF8 样例 `test_documents/xls/01_员工花名册.xls`（xlwt 临时生成后卸载，不留未声明依赖）。闸门 `test_d4_xls_fallback.py` 8 条（真实样例 sniff 放行/解析非空含两 sheet、doc/ppt 仍拒正向证人、晚目录标记、损坏文件诚实返空、xlsx 主路径不回归、requirements 声明证人）：红基线 4 failed/4 passed → 修后 8 passed。变异×3 串行：M-D4a 嗅探退回 ASCII→2 红 / M-D4b pandas 强制 openpyxl 引擎→1 红 / M-D4c 撤 xlrd 声明→1 红；恢复后全绿。受影响合跑（D4+sniff+document_parser+D1）268 passed。
+  - 证据：`factory.py:38` xls→XLSXParser 别名；openpyxl 不支持 .xls → `xlsx_parser.py:159` pandas.read_excel 兜底；pandas 读 .xls 依赖 xlrd，`requirements.txt` 无 xlrd；2026-11-19 实测 `backend/.venv/bin/python -c "import xlrd"` → ModuleNotFoundError。
+  - 修复点（按默认值）：requirements.txt 补 `xlrd>=2.0.1`（仅支持 .xls，正合用途）；.xls 解析失败不得静默空（对齐 A2 契约）。
+  - 验收：真实 .xls 样例解析出非空表格文本；缺 xlrd 环境打红（import 守卫或 skip 声明）。
+
+### P2
+
+- [ ] **D5. .doc/.ppt 无转换轨（决策点，默认不做）**
+  - 证据：`sniff.py:44` ole2 ∈ NON_DOCUMENT_FORMATS → 上传即拒；`documents.py:1522` 存量文档 warning 提示转 OOXML；`factory.py:42-44` 注释显式不注册。行为诚实，非缺陷。
+  - 决策：若业务需要，引入 LibreOffice headless 子进程转换（.doc/.ppt/.xls→OOXML，超时+进程隔离+字体依赖，参考 knowhere `office_compat_normalizer.py:48`）；转换有损（嵌入对象/复杂文本框/字体替换），需 warning 留痕。默认维持拒绝，本条挂起待业务输入。
+
+- [ ] **D6. 图片/表格资产化：独立 chunk＋回链＋上传常开（2026-11-19 升级为完整版，产品需求＝答案展示图表/图片本身）**
+  - 证据（三处断点，2026-11-19 实证）：① 图片上传默认关（`config.py:255` PDF_IMAGE_UPLOAD=False，DOCX/PPTX 同构），正文只留「[图片描述:…]」；② `models/chunk.py:27-53` DocumentChunk 无 chunk_type/资产引用/parent 字段（parent_id 仅在内存 dataclass）；③ 图片/表格内联正文 HTML（`base.py:157-165`），无独立检索单元标记。knowhere 资产独立 chunk＋双向边属实，但双向图边服务于其 Agentic 导航检索，本项目 chunk RAG 不搬图模型，只搬「可单独命中＋回链」原则。
+  - 修复点：a) `PDF_IMAGE_UPLOAD`/DOCX/PPTX 图片上传默认改 True（存储 key 沿用 A7 命名空间）；b) DocumentChunk 增 `chunk_type`（text/image/table）＋`asset_ref`（图片=minio key，表格=内联 HTML）＋`parent_chunk_id` 回链，新迁移（revision ID 先对全量 versions 查重，吸取 B6 撞号教训）；c) chunker 产出资产 chunk：图片 chunk 文本=VLM 描述（D10 归属规则），表格 chunk 沿用 A6 原子表格＋类型标记；d) 检索侧资产 chunk 正常入向量索引，支持 chunk_type 过滤。
+  - 验收：含图/表真实文档端到端 → 资产 chunk 独立存在、类型正确、parent 回链正确；图片描述查询单独命中图片 chunk；正文 chunk 不重复含整表/整段描述（对齐 A13/D10 去重契约）；迁移真实 upgrade 闸门；既有 A6/A13 闸门不回归。
+
+- [ ] **D7. 解析成本开关无租户/任务粒度**
+  - 证据：`config.py:251-323` 全部全局 env；租户级仅模块开关（`app/core/modules.py`）；任务级 content_type 参数存在但调用方恒传 auto（`document_tasks.py:781/2219`）。knowhere 为任务级请求参数（其 `job.py:56-59`），无租户级。
+  - 修复点（按默认值）：先做租户级解析配置覆盖（VLM 描述/OCR/MinerU/表格模式），复用 modules 的租户配置模式；任务级透传随后。全局 env 降为缺省值。
+  - 验收：租户 A 关 VLM 描述、租户 B 开 → 同文档解析行为分叉的集成测试；未配置租户回落全局默认（正向证人）。
+
+- [ ] **D8. 解析路径/质量元数据不落库，降级无留痕**
+  - 证据：parser_type（docling/legacy）仅在日志；无 extraction_status 类字段；A2/A8 的 warnings 已落 doc.parse_warnings，但「最终走了哪条引擎、是否降级」不可回溯。
+  - 修复点：Document 增 parse_meta（引擎、降级链、耗时、OCR 页数），解析完成时写入；重索引（A14）时同步刷新。
+  - 验收：Docling 失败降级 legacy 的样例 → parse_meta 记录两级链路；正常路径记录单引擎（正向证人）。
+
+- [ ] **D9. PPTX 嵌入音视频被静默忽略，无 warning（决策点，默认仅告警）**
+  - 证据：`pptx_parser.py` 全文无 media/audio/video 处理（2026-11-19 grep 零命中）；嵌入媒体内容直接丢失且无感知。对比 knowhere：转换前剥离嵌入媒体并记录为独立资产（其 `formats/pptx/embedded_media.py:100` separate_embedded_media，海报保留、媒体入 `embedded_media/` 可检索、时长准入策略）——其瘦身动机是 PPTX→PDF 转换专用，本项目原生解析不适用，但「媒体不得静默丢」的原则适用。
+  - 修复点（按默认值）：检测媒体形状（video/audio 关系类型）→ 记 parse_warning「含 N 个嵌入音视频，未解析」，不做提取。可选升级：提取媒体字节走既有 ASR/VLM 管线（复用独立媒体文件链路），另行批准后实施。
+  - 验收：含嵌入视频的真实 PPTX → warning 计数正确；纯图文 PPTX 无 warning（正向证人）；不引入转换依赖。
+
+- [ ] **D10. 聊天答案出口无资产通道，图到不了前端（D6 的出口配套）**
+  - 证据（2026-11-19 实证）：sources 事件仅 `id/title/content[:200]/score`（`app/rag/engine.py:971-983`），无资产类型/URL 字段；`resolve_minio_image_urls` 全库仅文档详情端点调用（`api/v1/documents.py:896-901`，A11 修复范围），聊天/引用卡片路径未接入；content 截断 200 字符会切碎表格 HTML。
+  - 修复点（按默认值）：a) sources/引用卡片契约扩展 `chunk_type`＋`asset_url`（图片=presigned URL，表格=完整 HTML 不截断）；b) presigned 在**下发时**解析（复用 A11 的 resolve_minio_image_urls/签名失败保留原址契约），存储层与向量库不存签名 URL（防缓存答案过期）；c) 答案正文引用图片的展示契约与前端对齐（前端渲染改动若不在本仓库，输出接口契约文档）。
+  - 验收：检索命中图片 chunk 的问答 → sources 事件含可访问 presigned URL（真实 MinIO 签名）；命中表格 chunk → HTML 完整下发；签名失败降级不炸流（正向证人）；text chunk 行为不回归。
+
+- [ ] **D11. 存量文档资产回填（D6/D10 上线后一次性动作）**
+  - 证据：A14 按 file_hash 判定重解析——文件未变即早退（`document_tasks.py` _parse_document），存量文档不会自然获得资产 chunk；chunk.py 模块注释明示「存量惰性初始化，不迁移存量向量数据」。
+  - 修复点（按默认值）：显式回填命令/管理端点（强制重解析＋重建 chunk，绕过 hash 早退但保留 A14 语义供日常重索引用），按知识库/租户粒度可选执行；不做自动全量重索引（embedding 成本）。
+  - 验收：对含图存量文档执行回填 → 资产 chunk 生成、旧 text chunk 不重复残留；未执行回填的文档行为不变（正向证人）；回填幂等（重复执行不产生重复 chunk）。
 
 ---
 
