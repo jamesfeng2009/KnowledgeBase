@@ -259,10 +259,15 @@
   - 修复点（按默认值）：先做租户级解析配置覆盖（VLM 描述/OCR/MinerU/表格模式），复用 modules 的租户配置模式；任务级透传随后。全局 env 降为缺省值。
   - 验收：租户 A 关 VLM 描述、租户 B 开 → 同文档解析行为分叉的集成测试；未配置租户回落全局默认（正向证人）。
 
-- [ ] **D8. 解析路径/质量元数据不落库，降级无留痕**
+- [x] **D8. 解析路径/质量元数据不落库，降级无留痕** ✅ 2026-11-19
   - 证据：parser_type（docling/legacy）仅在日志；无 extraction_status 类字段；A2/A8 的 warnings 已落 doc.parse_warnings，但「最终走了哪条引擎、是否降级」不可回溯。
   - 修复点：Document 增 parse_meta（引擎、降级链、耗时、OCR 页数），解析完成时写入；重索引（A14）时同步刷新。
   - 验收：Docling 失败降级 legacy 的样例 → parse_meta 记录两级链路；正常路径记录单引擎（正向证人）。
+  - 实现：`Document.parse_meta` JSONB 列 + 手写迁移 `a9b8c7d6e5f4`（down_revision=7a8b9c0d1e2f，ID 先查重：b4c5d6e7f8a9/f1a2b3c4d5e6 均已占用被否）；`_parse_document` 计时并组装 chain/engine/duration_ms，异常路径也留痕（failed=True）；`_rec_meta` 在 dispatch/_try_docling_parse/_parse_pdf 逐级记录（docling ok/empty/error/unavailable → legacy:pdf_enhanced → legacy:pdf_plaintext，video/audio/passthrough 各留痕）；PDFParser 暴露 `last_scan_ocr_count` → meta.ocr_pages。哈希未变早退保留旧 meta，重解析刷新（A14 语义）。
+  - 证据：闸门 `tests/test_d8_parse_meta.py` 10 条（真实 fitz PDF 走真实 legacy PDFParser，Docling 边界替身）；红基线 9 failed / 1 passed（早退证人按设计绿）→ 修复后 10 绿；回归 533 passed（含 A14 重索引闸门、upload_summary、pdf_p2_hardening）。
+  - 变异（串行 5 条全打红后还原）：M1 成功路径 meta 不落 doc→7 红；M2 docling empty 不留痕→链路判据红；M3 error 不留痕→error 判据红；M4 OCR 页数恒 0→ocr 判据红；M5 早退误清 meta→早退判据红。终验 533 passed。
+  - 校准：① 闸门边界初版未关 factory._is_docling_enabled，legacy 层 get_parser 仍路由到 DoclingParser（包可导入但 converter 断）致三级链——闸门补关判定后 legacy 走真实 PDFParser（边界设置修正，未动产线）；② 既有 A14 spy_dispatch 固定签名不收 meta  kwarg 报 TypeError——按 B8/B9 先例对齐 spy 签名（透传 meta），断言意图不变。
+  - 部署注意：迁移待 `alembic upgrade head` 应用；历史文档 parse_meta=NULL，下次重解析回填。
 
 - [ ] **D9. PPTX 嵌入音视频被静默忽略，无 warning（决策点，默认仅告警）**
   - 证据：`pptx_parser.py` 全文无 media/audio/video 处理（2026-11-19 grep 零命中）；嵌入媒体内容直接丢失且无感知。对比 knowhere：转换前剥离嵌入媒体并记录为独立资产（其 `formats/pptx/embedded_media.py:100` separate_embedded_media，海报保留、媒体入 `embedded_media/` 可检索、时长准入策略）——其瘦身动机是 PPTX→PDF 转换专用，本项目原生解析不适用，但「媒体不得静默丢」的原则适用。
