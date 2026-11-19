@@ -227,10 +227,14 @@
   - 变异（串行 6 条全打红后还原）：M1 去 PDF 标题注入→3 红；M2 去正文去重→去重判据红（count==2）；M3 PDF 开关恒 True→开关判据红；M4 outlineLvl 真值层失效→2 红；M5 TOC 锚定失效→锚定判据红；M6 TOC 页码尾巴不剔（break→continue）→锚定判据红。终验 425 passed。
   - 校准：heading-only 页闸门初红——原标题 27 字符低于 32 扫描阈值，触发 OCR 属既有阈值语义非 D2 缺陷；标题加长至 34 字符复绿（闸门假设修正，未动产线）。
 
-- [ ] **D3. Docling 主路径无参构造，OCR/表格模式不可控**
+- [x] **D3. Docling 主路径无参构造，OCR/表格模式不可控** ✅ 2026-11-19
   - 证据：`docling_parser.py:81` `DocumentConverter()` 无参；默认 `DOCLING_ENABLED=True`（`config.py:307`），PDF 无条件跑版面+TableFormer+OCR；legacy 路径反而有文本层预检（`pdf_parser.py:163`，32 字符阈值）。
   - 修复点（按默认值）：显式传 `PdfPipelineOptions`——do_ocr 保持自动（仅扫描页触发）、新增 `DOCLING_TABLE_MODE`（FAST/ACCURATE，默认 FAST）与 `DOCLING_DO_OCR` 开关；不做文本层预检路由（避免 legacy/Docling 双轨质量分叉）。
   - 验收：构造参数断言测试（options 真实传入 converter）；开关关闭时 OCR 管线不实例化。既有 A9 线程闸门不回归。
+  - 实现：`_get_converter` 显式构造 `PdfPipelineOptions(do_ocr, do_table_structure=True, table_structure_options=TableStructureOptions(mode))`，经 `format_options={InputFormat.PDF: PdfFormatOption(...)}` 传入 converter；模式非法值回落 FAST；初始化日志带 table_mode/do_ocr。实测库默认 mode=ACCURATE（docling 2.95.0），FAST 为真实降本变更。
+  - 证据：闸门 `tests/test_d3_docling_options.py` 6 条；红基线 5 failed / 1 passed（接线证人按设计绿）→ 修复后 6 绿；回归 431 passed（含 A9 线程闸门 2 条）。
+  - 变异（串行 4 条全打红后还原）：M1 默认模式翻转→3 红；M2 do_ocr 恒 True→OCR 判据红；M3 表格模式配置失效→ACCURATE 判据红；M4 options 不传 converter（回到无参）→4 红。终验 431 passed。
+  - 校准（环境限制，非闸门假设错）：本机 torch 动态库缺失致 `docling.document_converter` 真实导入链断（见范围外勘误 2026-11-19），converter 边界用捕获替身；断言侧用真实 `docling.datamodel` pydantic 模型/枚举（可独立导入，非同源镜像）。「开关关闭时 OCR 管线不实例化」只能断言到 options.do_ocr=False 层，真实管线实例化验证待 torch 环境修复后补。
 
 - [x] **D4. .xls 降级路径必炸：xlrd 缺失＋sniff OLE2 子类型恒误判（本机已实锤）** ✅ 2026-11-19
   - 勘误（立案假设修正）：原证据称「sniff 放行 .xls → 上传能进、解析必败」**不成立**。实测取证：OLE2 目录流名为 UTF-16LE 且目录扇区在文件尾部（5.6KB 样例 Workbook 名在偏移 5248），`_sniff_ole` 却用 ASCII `b"Workbook"` 搜前 1024 字节 → 真实 .xls 恒判 ole2，**上传口即被拒**，到不了解析。双重缺陷同属 .xls 可用路径，一并修复。
@@ -295,6 +299,8 @@
 | tests/test_fact_extraction.py | 1 | 事实去重 |
 
 共性根因已实证（2026-11-18，B2 闸门取证时验证，仍未修复、维持范围外）：本机环境变量 `NO_PROXY` 含**裸 `::1`**（`localhost,.localhost,127.0.0.1,127.0.0.0/8,[::1],::1`），httpx 解析 no_proxy 列表时把 `::1` 当 host:port 拆，端口 `':1]'` 抛 `ValueError` → 构造 AsyncOpenAI/httpx 客户端即 `InvalidURL(':1]')`，与 provider/endpoint 配置无关。修复方向二选一：清理本机 NO_PROXY 环境（运维动作），或产品侧客户端构造容错（需单独立项）。测试侧仅在 B2/pgvector 闸门内用 monkeypatch 清理测试进程环境变量（`localhost,127.0.0.1`），不改产品代码。
+
+环境勘误（2026-11-19，D3 取证时发现，未修复、归环境桶）：backend/.venv 的 torch 动态库缺失——`torch/_C.cpython-312-darwin.so` 依赖的 `libtorch_cpu.dylib` 不存在（`torch/lib/` 下被删），`import docling.document_converter` 即 ImportError。症状与 maclean 重复文件去重永久删 venv .so/.dylib 的已知事故吻合（见用户记忆 reference-maclean-cleaner-app）。影响：本机 Docling 主路径实际不可用，`_get_converter` 捕获异常降级 legacy（产品优雅降级按设计生效，非产品缺陷）；D3 闸门只能在 options 层断言。修复方向：重装 torch（运维动作，需授权；本机禁止长占，下载量约百 MB 级）；修复后补「DOCLING_DO_OCR=False 时 OCR 模型不实例化」的真实管线闸门。
 
 本次引入又修复的 4 条回归：
 - test_task_lock.py::TestProcessDocumentLockCoverage ×2 —— 测试 fake `_fake_parse(doc_id)` 未接受 A1 新增 tenant_id 关键字，更新 fake 签名（锁行为本身未破坏）。
