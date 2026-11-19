@@ -315,7 +315,7 @@ class TestValidateFilters:
         assert set(unknown) == {"foo", "bar"}
 
     def test_supported_keys_constant(self) -> None:
-        """SUPPORTED_FILTER_KEYS 应包含全部标准 key（P0 层级 5 个 + P0-1 doc_status + P2 doc_role + P0 密级下推 classification）。"""
+        """SUPPORTED_FILTER_KEYS 应包含全部标准 key（P0 层级 5 个 + P0-1 doc_status + P2 doc_role + P0 密级下推 classification + D6 chunk_type）。"""
         assert SUPPORTED_FILTER_KEYS == frozenset(
             {
                 "series_id",
@@ -326,5 +326,6 @@ class TestValidateFilters:
                 "doc_status",
                 "doc_role",
                 "classification",
+                "chunk_type",
             }
         )

@@ -84,6 +84,10 @@ async def test_init_chunks_persists_chunks() -> None:
     ]
     with patch("app.services.chunk_service.SemanticChunker") as mock_cls:
         mock_cls.return_value.chunk.return_value = fake_chunks
+        # D6 对齐：init_chunks 追加资产抽取，纯文本输入原样透传
+        mock_cls.return_value.extract_asset_chunks.side_effect = (
+            lambda chunks, doc_id=None: chunks
+        )
         rows = await service.init_chunks(doc.id)
 
     assert len(rows) == 2
