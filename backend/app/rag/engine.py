@@ -48,6 +48,7 @@ from app.observability.langfuse_tracer import (
     map_span_type,
     trace_node,
 )
+from app.rag.asset_sources import build_sources_payload, enrich_asset_docs
 from app.rag.cache import TokenCache
 from app.core.ab_context import effective_max_iterations, peek_ab_metadata
 from app.rag.constitution import get_constraint_reminder, get_system_prompt
@@ -966,39 +967,10 @@ class AgenticRAGEngine:
                 event=SSEEventType.ANSWER_REGENERATED,
             )
 
-        # 6. yield sources 事件（引用来源）
-        if state["retrieved_docs"]:
-            sources = [
-                {
-                    "id": doc.get("chunk_id", ""),
-                    "title": doc.get("title", doc.get("doc_title", "")),
-                    "content": doc.get("content", "")[:200],
-                    "score": doc.get("score", 0.0),
-                }
-                for doc in state["retrieved_docs"]
-            ]
-            yield SSEEvent(
-                data={"sources": sources},
-                event=SSEEventType.SOURCES,
-            )
-
-        # 6.5 P0-2: 结构化引用卡片 — 在 SOURCES 之后、QUALITY 之前下发。
-        # 复用懒加载的 CitationExtractor；答案含 [n] 标注时产出卡片写入 state
-        # 并下发，无标注时静默跳过（引用卡片是参考答案，非强制拦截）。
-        try:
-            if state.get("retrieved_docs") and state.get("answer"):
-                extractor = self._get_citation_extractor()
-                extracted_citations = extractor.extract(
-                    state["answer"], state["retrieved_docs"]
-                )
-                state["citations"] = extracted_citations
-                if extracted_citations:
-                    yield SSEEvent(
-                        data={"citations": extracted_citations},
-                        event=SSEEventType.CITATIONS,
-                    )
-        except Exception as exc:
-            log.warning("engine.citation_extract_error", error=str(exc))
+        # 6. yield sources 事件（引用来源）＋ 6.5 结构化引用卡片 —
+        # D10 资产出口：chunk_type/asset_url，presigned 下发时解析。
+        async for _src_ev in self._emit_sources_events(state):
+            yield _src_ev
 
         # 7. yield quality 事件（质量评分 + 低置信度标记 + 幻觉防护结果）
         quality_data: dict[str, Any] = {
@@ -3702,6 +3674,34 @@ class AgenticRAGEngine:
             from app.rag.citation import CitationExtractor
             self._citation_extractor = CitationExtractor()
         return self._citation_extractor
+
+    async def _emit_sources_events(self, state: AgentState):
+        """SOURCES＋CITATIONS 出口（D10 资产通道）。
+
+        presigned 仅在此处（下发时）解析，enrich 用浅拷贝 —
+        state["retrieved_docs"]/快照/答案缓存不存签名 URL（防过期）。
+        引用卡片复用懒加载 CitationExtractor；答案含 [n] 标注时产出，
+        无标注静默跳过；提取异常不阻断流（P0-2 契约不变）。
+        """
+        if not state.get("retrieved_docs"):
+            return
+        enriched = await enrich_asset_docs(state["retrieved_docs"])
+        yield SSEEvent(
+            data={"sources": build_sources_payload(enriched)},
+            event=SSEEventType.SOURCES,
+        )
+        try:
+            if state.get("answer"):
+                extractor = self._get_citation_extractor()
+                extracted_citations = extractor.extract(state["answer"], enriched)
+                state["citations"] = extracted_citations
+                if extracted_citations:
+                    yield SSEEvent(
+                        data={"citations": extracted_citations},
+                        event=SSEEventType.CITATIONS,
+                    )
+        except Exception as exc:
+            log.warning("engine.citation_extract_error", error=str(exc))
 
     async def _check_contradiction(
         self,

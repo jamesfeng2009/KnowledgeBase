@@ -378,7 +378,7 @@ class HybridRetriever:
         payload: dict[str, Any] = {
             "size": top_k,
             "query": query_clause,
-            "_source": ["doc_id", "chunk_id", "content", "title_path", "kb_id", "content_type", "parent_id"],
+            "_source": ["doc_id", "chunk_id", "content", "title_path", "kb_id", "content_type", "parent_id", "chunk_type", "asset_ref"],
         }
 
         try:
@@ -420,6 +420,8 @@ class HybridRetriever:
                     "kb_id": str(source.get("kb_id") or "") or None,
                     "title": source.get("title_path") or source.get("title"),
                     "parent_id": source.get("parent_id") or None,
+                    "chunk_type": source.get("chunk_type") or None,
+                    "asset_ref": source.get("asset_ref") or None,
                 }
             )
             if len(results) >= top_k:
@@ -604,10 +606,12 @@ class HybridRetriever:
             return results
 
         # 收集所有 parent_id（去重、过滤空值）
+        # D10: 资产块（image/table）本身即交付物，不回溯父块正文
         parent_ids: set[str] = {
             doc["parent_id"]
             for doc in results
             if doc.get("parent_id")
+            and doc.get("chunk_type") not in ("image", "table")
         }
 
         if not parent_ids:
@@ -634,6 +638,8 @@ class HybridRetriever:
         backtrack_count = 0
         for doc in results:
             pid = doc.get("parent_id")
+            if doc.get("chunk_type") in ("image", "table"):
+                pid = None  # D10: 资产块按自身 chunk_id 保留，不被父块去重吞并
             context_key = pid if pid else doc.get("chunk_id")
             if not context_key:
                 continue

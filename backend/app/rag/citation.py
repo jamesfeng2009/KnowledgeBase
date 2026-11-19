@@ -88,8 +88,10 @@ class CitationExtractor:
                     "citation_id": int,    # 引用编号
                     "doc_id": str,
                     "title": str | None,
-                    "snippet": str,        # 文档内容摘要
+                    "snippet": str,        # 文档内容摘要（表格为完整 HTML）
                     "url": str | None,
+                    "chunk_type": str,     # D10: text/image/table
+                    "asset_url": str | None,  # D10: 图片 presigned URL（下发时解析）
                 }
         """
         citation_ids = self._find_citation_ids(text)
@@ -111,6 +113,8 @@ class CitationExtractor:
                     "title": source.get("title"),
                     "snippet": snippet,
                     "url": source.get("url"),
+                    "chunk_type": source.get("chunk_type") or "text",
+                    "asset_url": source.get("asset_url"),
                 }
             )
         log.debug("citation.extracted", count=len(citations), text_len=len(text))
@@ -262,6 +266,9 @@ class CitationExtractor:
             or ""
         )
         content = str(content).strip()
+        # D10: 表格 HTML 截断即碎（前端无法渲染），完整下发
+        if source.get("chunk_type") == "table":
+            return content
         if len(content) <= _SNIPPET_MAX:
             return content
         return content[:_SNIPPET_MAX] + "..."
