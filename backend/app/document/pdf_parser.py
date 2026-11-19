@@ -33,6 +33,7 @@ from html import escape
 from typing import Any
 
 from app.config import get_settings
+from app.core.parse_config import get_parse_settings
 from app.document.base import DocumentParser, ParsedSection
 from app.utils.logger import get_logger
 
@@ -99,7 +100,7 @@ class PDFParser(DocumentParser):
             doc.close()
             raise EncryptedPDFError("PDF 已加密，无法解析，请解密后重新上传")
 
-        settings = get_settings()
+        settings = get_parse_settings()
         # 使用 _bool()/_int() 辅助函数处理 MagicMock（测试场景）和真实 Settings
         table_enabled = self._bool(getattr(settings, "PDF_TABLE_EXTRACTION_ENABLED", True), True)
         image_enabled = self._bool(getattr(settings, "PDF_IMAGE_EXTRACTION_ENABLED", True), True)

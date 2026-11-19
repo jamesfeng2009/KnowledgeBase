@@ -217,3 +217,43 @@ class TenantService:
         return await self.update_enabled_modules(
             sorted(current_set), tenant_id
         )
+
+    async def get_parse_config(
+        self, tenant_id: uuid.UUID | None = None
+    ) -> dict:
+        """D7: 读取租户解析成本开关覆盖（settings.parse_config JSONB）。
+
+        未配置/租户不存在返回空 dict — 调用方回落全局 env 缺省值。
+        """
+        tenant = await self.get_tenant(tenant_id)
+        if tenant is None:
+            return {}
+        cfg = (tenant.settings or {}).get("parse_config")
+        return dict(cfg) if isinstance(cfg, dict) else {}
+
+    async def update_parse_config(
+        self,
+        config: dict,
+        tenant_id: uuid.UUID | None = None,
+    ) -> dict:
+        """D7: 更新租户解析成本开关覆盖（白名单校验后写 JSONB）。
+
+        与 update_enabled_modules 同模式：函数式更新构造新 dict，
+        避免裸 JSONB 列原地突变导致变更检测丢失。
+
+        Raises:
+            ValueError: 配置键/值非法或租户不存在。
+        """
+        from app.core.parse_config import validate_parse_config
+
+        validated = validate_parse_config(config)
+        tenant = await self.get_tenant(tenant_id)
+        if tenant is None:
+            raise ValueError("租户不存在")
+
+        settings = dict(tenant.settings or {})
+        settings["parse_config"] = validated
+        tenant.settings = settings
+
+        await self._db.flush()
+        return validated

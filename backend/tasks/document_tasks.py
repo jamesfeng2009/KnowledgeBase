@@ -738,15 +738,21 @@ async def _parse_and_chunk_async(
         extracted_images: list[tuple[bytes, str]] = []
         # A12: 清零旧页数 — 解析器能拿真实页数时优先，拿不到再按文本推断
         doc.page_count = 0
-        try:
-            parsed_text, extracted_images = await _parse_document(
-                doc, warnings=warnings, force_reparse=force_reparse
-            )
-        except Exception as exc:
-            logger.warning("document.parse_failed", doc_id=doc_id, error=str(exc))
-            parsed_text = doc.content_text or ""
-            parse_failed = True
-            warnings.append(f"解析异常: {str(exc)[:200]}")
+        # D7: 租户级解析成本开关覆盖（未配置回落全局缺省值）
+        from app.core.parse_config import parse_overrides
+        from app.services.tenant_service import TenantService
+
+        parse_cfg = await TenantService(session).get_parse_config(doc.tenant_id)
+        with parse_overrides(parse_cfg):
+            try:
+                parsed_text, extracted_images = await _parse_document(
+                    doc, warnings=warnings, force_reparse=force_reparse
+                )
+            except Exception as exc:
+                logger.warning("document.parse_failed", doc_id=doc_id, error=str(exc))
+                parsed_text = doc.content_text or ""
+                parse_failed = True
+                warnings.append(f"解析异常: {str(exc)[:200]}")
 
         if doc.doc_type in ("doc", "ppt"):
             warnings.append(
@@ -1145,13 +1151,19 @@ async def _process_document_async(doc_id: str) -> dict[str, Any]:
         extracted_images: list[tuple[bytes, str]] = []
         # A12: 清零旧页数 — 解析器能拿真实页数时优先，拿不到再按文本推断
         doc.page_count = 0
-        try:
-            parsed_text, extracted_images = await _parse_document(doc, warnings=warnings)
-        except Exception as exc:
-            logger.warning("document.parse_failed", doc_id=doc_id, error=str(exc))
-            parsed_text = doc.content_text or ""
-            parse_failed = True
-            warnings.append(f"解析异常: {str(exc)[:200]}")
+        # D7: 租户级解析成本开关覆盖（未配置回落全局缺省值）
+        from app.core.parse_config import parse_overrides
+        from app.services.tenant_service import TenantService
+
+        parse_cfg = await TenantService(session).get_parse_config(doc.tenant_id)
+        with parse_overrides(parse_cfg):
+            try:
+                parsed_text, extracted_images = await _parse_document(doc, warnings=warnings)
+            except Exception as exc:
+                logger.warning("document.parse_failed", doc_id=doc_id, error=str(exc))
+                parsed_text = doc.content_text or ""
+                parse_failed = True
+                warnings.append(f"解析异常: {str(exc)[:200]}")
 
         # 检测旧格式降级提示
         if doc.doc_type in ("doc", "ppt"):

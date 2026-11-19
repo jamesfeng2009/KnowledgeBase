@@ -28,6 +28,7 @@ import re
 from typing import Any
 
 from app.config import get_settings
+from app.core.parse_config import get_parse_settings
 from app.document.base import DocumentParser, ParsedSection
 from app.utils.logger import get_logger
 
@@ -76,7 +77,7 @@ class DOCXParser(DocumentParser):
             log.warning("docx.open_failed", file_path=file_path, error=str(exc))
             return ""
 
-        settings = get_settings()
+        settings = get_parse_settings()
         table_enabled = self._bool(getattr(settings, "DOCX_TABLE_EXTRACTION_ENABLED", True), True)
         image_enabled = self._bool(getattr(settings, "DOCX_IMAGE_EXTRACTION_ENABLED", True), True)
         max_images = self._int(getattr(settings, "DOCX_IMAGE_MAX_PER_DOC", 50), 50)

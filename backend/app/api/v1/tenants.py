@@ -280,3 +280,43 @@ async def toggle_tenant_module(
         data={"module_id": module_id, "enabled_modules": result},
         message="success",
     )
+
+
+@router.get("/tenants/parse-config", response_model=ApiResponse)
+async def get_tenant_parse_config(
+    db: AsyncSession = Depends(get_db_session),
+    user: User = Depends(get_current_active_user),
+) -> ApiResponse:
+    """D7: 读取当前租户解析成本开关覆盖（未配置返回空对象＝全局缺省）。"""
+    service = TenantService(db)
+    cfg = await service.get_parse_config(tenant_id=user.tenant_id)
+    return ApiResponse(code=0, data={"parse_config": cfg}, message="success")
+
+
+@router.put("/tenants/parse-config", response_model=ApiResponse)
+async def update_tenant_parse_config(
+    config: dict = Body(..., embed=True, description="解析成本开关覆盖（白名单键）"),
+    db: AsyncSession = Depends(get_db_session),
+    user: User = Depends(get_current_active_user),
+) -> ApiResponse:
+    """D7: 更新当前租户解析成本开关覆盖（仅 admin）。
+
+    白名单外键/非法值返回 400；传入 tenant_id 防跨租户写入。
+    """
+    if user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="仅管理员可修改解析配置",
+        )
+
+    service = TenantService(db)
+    try:
+        cfg = await service.update_parse_config(config, tenant_id=user.tenant_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+    await db.commit()
+    return ApiResponse(code=0, data={"parse_config": cfg}, message="success")

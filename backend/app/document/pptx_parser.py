@@ -33,6 +33,7 @@ import asyncio
 from typing import Any
 
 from app.config import get_settings
+from app.core.parse_config import get_parse_settings
 from app.document.base import DocumentParser, ParsedSection
 from app.utils.logger import get_logger
 
@@ -92,7 +93,7 @@ class PPTXParser(DocumentParser):
                 count=media_count,
             )
 
-        settings = get_settings()
+        settings = get_parse_settings()
         # P0: 使用 _bool()/_int() 安全转换（处理 MagicMock 测试场景）
         image_enabled = self._bool(
             getattr(settings, "PPTX_IMAGE_EXTRACTION_ENABLED", True), True

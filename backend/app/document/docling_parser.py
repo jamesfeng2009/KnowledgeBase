@@ -25,6 +25,7 @@ import os
 from typing import Any
 
 from app.config import get_settings
+from app.core.parse_config import get_parse_settings
 from app.document.base import DocumentParser
 from app.utils.logger import get_logger
 
@@ -85,7 +86,7 @@ class DoclingParser(DocumentParser):
             from docling.document_converter import DocumentConverter, PdfFormatOption
 
             # D3: 显式管线选项 — 表格模式/OCR 开关由配置控制，不再吃库默认值
-            settings = get_settings()
+            settings = get_parse_settings()
             mode_raw = str(
                 getattr(settings, "DOCLING_TABLE_MODE", "FAST") or "FAST"
             ).upper()
@@ -158,7 +159,7 @@ class DoclingParser(DocumentParser):
                 return ""
 
             # 可选：VLM 图片描述增强
-            settings = get_settings()
+            settings = get_parse_settings()
             vlm_enhance = getattr(settings, "DOCLING_VLM_IMAGE_ENHANCE", False)
             if vlm_enhance:
                 html = await self._enhance_with_vlm(html, result)
@@ -316,7 +317,7 @@ class DoclingParser(DocumentParser):
             - mineru_by_doc_complexity：复杂度达到阈值也升级 MinerU。
         MinerU 未启用 / 未配置独立 venv / 不可用时返回 False（回落 Docling）。
         """
-        settings = get_settings()
+        settings = get_parse_settings()
         if not self._bool(getattr(settings, "MINERU_ENABLED", False), False):
             return False
         if not self._mineru_python():
