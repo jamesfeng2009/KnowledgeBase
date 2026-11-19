@@ -20,6 +20,7 @@ import asyncio
 import json
 import os
 import tempfile
+import time
 import uuid
 from contextlib import asynccontextmanager
 from typing import Any
@@ -1435,7 +1436,21 @@ async def _parse_document(
             # 源文件缺失/不可哈希：无法核验变化，维持旧行为返回已有内容
             return doc.content_text, []
 
-        text, images = await _parse_document_dispatch(doc, warnings)
+        # D8: 解析路径元数据 — 引擎/降级链/耗时，随主任务 commit 落库；
+        # 哈希未变早退（上方 return）保留旧 meta，重解析在此刷新
+        meta: dict = {"chain": []}
+        t0 = time.perf_counter()
+        try:
+            text, images = await _parse_document_dispatch(doc, warnings, meta=meta)
+        except Exception:
+            meta["duration_ms"] = int((time.perf_counter() - t0) * 1000)
+            meta["engine"] = meta["chain"][-1]["engine"] if meta["chain"] else "unknown"
+            meta["failed"] = True
+            doc.parse_meta = meta
+            raise
+        meta["duration_ms"] = int((time.perf_counter() - t0) * 1000)
+        meta["engine"] = meta["chain"][-1]["engine"] if meta["chain"] else "unknown"
+        doc.parse_meta = meta
         if current_hash and text and text.strip():
             doc.file_hash = current_hash
         return text, images
@@ -1452,8 +1467,14 @@ def _sha256_file(path: str) -> str:
     return h.hexdigest()
 
 
+def _rec_meta(meta: dict | None, engine: str, outcome: str, **extra: Any) -> None:
+    """D8: 向降级链追加一级引擎记录（meta 为 None 时静默跳过）。"""
+    if meta is not None:
+        meta.setdefault("chain", []).append({"engine": engine, "outcome": outcome, **extra})
+
+
 async def _parse_document_dispatch(
-    doc: Any, warnings: list[str] | None = None
+    doc: Any, warnings: list[str] | None = None, meta: dict | None = None
 ) -> tuple[str, list[tuple[bytes, str]]]:
     """_parse_document 的实际分发逻辑（file_path 已本地化）。"""
     doc_type = doc.doc_type or "md"
@@ -1461,14 +1482,16 @@ async def _parse_document_dispatch(
     # 视频不走 Docling（Docling 不支持视频），直接走专用管线
     if doc_type in _VIDEO_TYPES:
         text = await _parse_video(doc)
+        _rec_meta(meta, "video_pipeline", "ok")
         return text, []
 
     # .doc/.ppt 旧格式 — Docling 也无法解析，返回降级提示
     if doc_type in ("doc", "ppt"):
+        _rec_meta(meta, "legacy_format_hint", "ok")
         return _legacy_format_fallback(doc, doc_type), []
 
     # 1. 优先尝试 Docling 统一解析
-    docling_result = await _try_docling_parse(doc, doc_type)
+    docling_result = await _try_docling_parse(doc, doc_type, meta=meta)
     if docling_result is not None:
         # Docling 解析成功 — 尝试提取图片用于跨模态索引
         images = await _extract_images_for_cross_modal(doc, doc_type)
@@ -1476,20 +1499,26 @@ async def _parse_document_dispatch(
 
     # 2. 降级到原有专用解析器
     if doc_type == "pdf":
-        text = await _parse_pdf(doc, warnings=warnings)
+        text = await _parse_pdf(doc, warnings=warnings, meta=meta)
     elif doc_type == "docx":
         text = await _parse_docx(doc)
+        _rec_meta(meta, "legacy:docx", "ok" if text.strip() else "empty")
     elif doc_type in ("xlsx", "xls"):
         text = await _parse_xlsx(doc)
+        _rec_meta(meta, f"legacy:{doc_type}", "ok" if text.strip() else "empty")
     elif doc_type == "html":
         text = _parse_html(doc)
+        _rec_meta(meta, "legacy:html", "ok" if text.strip() else "empty")
     elif doc_type == "pptx":
         text = await _parse_pptx(doc)
+        _rec_meta(meta, "legacy:pptx", "ok" if text.strip() else "empty")
     elif doc_type in _AUDIO_TYPES:
         text = await _parse_audio(doc)
+        _rec_meta(meta, "audio_pipeline", "ok")
     else:
         # Markdown 或纯文本，直接返回
         text = doc.content_html or doc.content_text or ""
+        _rec_meta(meta, "content_passthrough", "ok")
 
     # 非视频/音频文档提取图片用于跨模态索引
     images = await _extract_images_for_cross_modal(doc, doc_type)
@@ -1578,7 +1607,9 @@ async def _extract_images_for_cross_modal(
     return images
 
 
-async def _try_docling_parse(doc: Any, doc_type: str) -> str | None:
+async def _try_docling_parse(
+    doc: Any, doc_type: str, meta: dict | None = None
+) -> str | None:
     """尝试用 Docling 解析文档 — 成功返回 Markdown，不适用返回 None。
 
     Docling 可用且支持该类型时，调用 DoclingParser.parse()。
@@ -1588,11 +1619,13 @@ async def _try_docling_parse(doc: Any, doc_type: str) -> str | None:
     Args:
         doc: Document ORM 实例。
         doc_type: 文档类型。
+        meta: D8 降级链收集器（可选）。
 
     Returns:
         Markdown 文本（成功）或 None（需降级）。
     """
     if not doc.file_path:
+        _rec_meta(meta, "docling", "unavailable")
         return None
 
     try:
@@ -1600,6 +1633,7 @@ async def _try_docling_parse(doc: Any, doc_type: str) -> str | None:
 
         parser, parser_type = get_parser_with_fallback(doc_type)
         if parser is None or parser_type != "docling":
+            _rec_meta(meta, "docling", "unavailable")
             return None
 
         result = await parser.parse(doc.file_path)
@@ -1610,14 +1644,17 @@ async def _try_docling_parse(doc: Any, doc_type: str) -> str | None:
                 doc_type=doc_type,
                 content_len=len(result),
             )
+            _rec_meta(meta, "docling", "ok")
             return result
 
         # Docling 返回空 — 降级
         logger.info("document.docling_empty_fallback", doc_type=doc_type)
+        _rec_meta(meta, "docling", "empty")
         return None
 
     except Exception as exc:
         logger.warning("document.docling_failed_fallback", doc_type=doc_type, error=str(exc))
+        _rec_meta(meta, "docling", "error", error=str(exc)[:200])
         return None
 
 
@@ -1664,7 +1701,9 @@ def _legacy_format_fallback(doc: Any, fmt: str) -> str:
     return hint
 
 
-async def _parse_pdf(doc: Any, warnings: list[str] | None = None) -> str:
+async def _parse_pdf(
+    doc: Any, warnings: list[str] | None = None, meta: dict | None = None
+) -> str:
     """解析 PDF 文档 — 优先使用增强解析器（表格 + 图片 VLM），降级为纯文本。
 
     增强解析器（app/document/pdf_parser.py）支持：
@@ -1696,15 +1735,21 @@ async def _parse_pdf(doc: Any, warnings: list[str] | None = None) -> str:
                 real_pages = getattr(parser, "last_page_count", 0)
                 if isinstance(real_pages, int) and real_pages > 0:
                     doc.page_count = real_pages
+                # D8: 扫描 OCR 页数落 parse_meta
+                if meta is not None:
+                    meta["ocr_pages"] = getattr(parser, "last_scan_ocr_count", 0)
             else:
                 result = await parser.parse(doc.file_path)
             if result and result.strip():
+                _rec_meta(meta, "legacy:pdf_enhanced", "ok")
                 return result
             # 增强解析器返回空，降级到纯文本
+            _rec_meta(meta, "legacy:pdf_enhanced", "empty")
     except EncryptedPDFError:
         raise
     except Exception as exc:
         logger.warning("pdf.enhanced_parse_failed", error=str(exc))
+        _rec_meta(meta, "legacy:pdf_enhanced", "error", error=str(exc)[:200])
 
     # 降级：纯文本提取
     pdf_doc = None
@@ -1718,6 +1763,7 @@ async def _parse_pdf(doc: Any, warnings: list[str] | None = None) -> str:
         text_parts: list[str] = []
         for page in pdf_doc:
             text_parts.append(page.get_text())
+        _rec_meta(meta, "legacy:pdf_plaintext", "ok")
         return "\n".join(text_parts)
     except EncryptedPDFError:
         raise

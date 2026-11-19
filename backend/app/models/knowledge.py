@@ -116,6 +116,11 @@ class Document(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     char_count: Mapped[int] = mapped_column(
         Integer, default=0, nullable=False, comment="正文字符数"
     )
+    # D8: 解析路径元数据 — 引擎/降级链/耗时/OCR 页数，降级可回溯；
+    # 重索引重解析时刷新（哈希未变早退保留旧值）
+    parse_meta: Mapped[dict | None] = mapped_column(
+        JSONB, nullable=True, comment="解析元数据: engine/chain/duration_ms/ocr_pages"
+    )
     # 多租户隔离 — SaaS 模式下按租户隔离文档，私有部署为 NULL
     tenant_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), nullable=True, comment="租户 ID（多租户隔离）"

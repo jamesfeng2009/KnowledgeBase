@@ -65,6 +65,7 @@ class PDFParser(DocumentParser):
 
     def __init__(self) -> None:
         self.last_parse_warnings: list[str] = []
+        self.last_scan_ocr_count: int = 0
 
     async def parse(self, file_path: str, doc_id: str | None = None) -> str:
         """解析 PDF 文档，返回增强文本。
@@ -246,6 +247,9 @@ class PDFParser(DocumentParser):
 
         finally:
             doc.close()
+
+        # D8: 扫描 OCR 页数元数据 — 供调用方落 parse_meta.ocr_pages
+        self.last_scan_ocr_count = scan_ocr_count
 
         log.info(
             "pdf.parsed",
