@@ -200,9 +200,9 @@ class TestA14ReindexHash:
         calls = {"n": 0}
         orig_dispatch = dt._parse_document_dispatch
 
-        async def spy_dispatch(d, warnings=None):
+        async def spy_dispatch(d, warnings=None, meta=None):
             calls["n"] += 1
-            return await orig_dispatch(d, warnings)
+            return await orig_dispatch(d, warnings, meta=meta)
 
         monkeypatch.setattr(dt, "_parse_document_dispatch", spy_dispatch)
 
