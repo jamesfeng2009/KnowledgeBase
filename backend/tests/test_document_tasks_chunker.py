@@ -599,6 +599,8 @@ class TestParallelPipelineAndGraphBuild:
         # mock TenantService.is_module_enabled 返回 True
         mock_tenant_svc = AsyncMock()
         mock_tenant_svc.is_module_enabled = AsyncMock(return_value=True)
+        # E4 对齐：逐键合并要求 get_parse_config 返回 dict（AsyncMock 默认返回值不可解包）
+        mock_tenant_svc.get_parse_config = AsyncMock(return_value={})
 
         with patch("app.database.async_session_factory", return_value=mock_session_cm), \
              patch(
@@ -632,6 +634,8 @@ class TestParallelPipelineAndGraphBuild:
 
         mock_tenant_svc = AsyncMock()
         mock_tenant_svc.is_module_enabled = AsyncMock(return_value=True)
+        # E4 对齐：逐键合并要求 get_parse_config 返回 dict（AsyncMock 默认返回值不可解包）
+        mock_tenant_svc.get_parse_config = AsyncMock(return_value={})
 
         with patch("app.database.async_session_factory", return_value=mock_session_cm), \
              patch(
@@ -671,6 +675,8 @@ class TestParallelPipelineAndGraphBuild:
 
         mock_tenant_svc = AsyncMock()
         mock_tenant_svc.is_module_enabled = AsyncMock(return_value=True)
+        # E4 对齐：逐键合并要求 get_parse_config 返回 dict（AsyncMock 默认返回值不可解包）
+        mock_tenant_svc.get_parse_config = AsyncMock(return_value={})
 
         # 捕获两个函数接收的 chunk_objects
         index_chunks: list = []
