@@ -283,10 +283,16 @@
   - 变异（串行 4 条全打红后还原）：M1 检测恒 0→4 红；M2 reltype 过滤失效（全关系计入）→5 红含正向证人；M3 目标去重失效→计数 3 红；M4 parse 不重置 warning→复用残留判据红。终验 539 passed。
   - 校准：双视频闸门初红——相同字节被 python-pptx 合并为同一媒体 part（实测 rels 均指 media1.mp4），文件实含 1 个嵌入媒体，产线去重计数正确；闸门改为每视频互异字节后复绿（样本构造修正，未动产线）。
 
-- [ ] **D10. 聊天答案出口无资产通道，图到不了前端（D6 的出口配套）**
+- [x] **D10. 聊天答案出口无资产通道，图到不了前端（D6 的出口配套）** ✅ 2026-11-19
   - 证据（2026-11-19 实证）：sources 事件仅 `id/title/content[:200]/score`（`app/rag/engine.py:971-983`），无资产类型/URL 字段；`resolve_minio_image_urls` 全库仅文档详情端点调用（`api/v1/documents.py:896-901`，A11 修复范围），聊天/引用卡片路径未接入；content 截断 200 字符会切碎表格 HTML。
   - 修复点（按默认值）：a) sources/引用卡片契约扩展 `chunk_type`＋`asset_url`（图片=presigned URL，表格=完整 HTML 不截断）；b) presigned 在**下发时**解析（复用 A11 的 resolve_minio_image_urls/签名失败保留原址契约），存储层与向量库不存签名 URL（防缓存答案过期）；c) 答案正文引用图片的展示契约与前端对齐（前端渲染改动若不在本仓库，输出接口契约文档）。
   - 验收：检索命中图片 chunk 的问答 → sources 事件含可访问 presigned URL（真实 MinIO 签名）；命中表格 chunk → HTML 完整下发；签名失败降级不炸流（正向证人）；text chunk 行为不回归。
+  - 实现：新增 `app/rag/asset_sources.py`（enrich_asset_docs 浅拷贝＋图片 presigned 下发时解析＋表格 content 取 asset_ref 完整 HTML；build_sources_payload 表格不截断/text 保持 [:200]）；engine sources/citations 段抽为 `_emit_sources_events`（run() 原位接线，行为不变）；引用卡片＋chunk_type/asset_url、表格 snippet 不截断；**检索侧两处必要接线**：父子回溯对 image/table 豁免（资产块本身即交付物，否则被父块正文替换＋去重吞并）、BM25 路 _source/解析携带 chunk_type/asset_ref；接口契约 `docs/d10-asset-sources-contract.md`（前端渲染改动不在 D 组范围，按修复点 c 输出契约文档）。
+  - 证据：闸门 `tests/test_d10_asset_sources.py` 22 条（含 1 条真实 MinIO 上传→presign→匿名 GET 200 字节一致；签名失败保留原址/不炸流、text 不截断回归、普通子块回溯等 4 条正向证人）；红基线 21 failed / 1 passed（回溯证人按设计绿）→ 修后 22 绿；26 文件全量回归 **768 passed / 0 failed**（计数分解 698＋D10 22＋引用/引擎/p0 48 核实；向量套件因网络 fail-fast 由 741s 降至 37.61s，环境变化非跳测）。
+  - 变异（串行 8 条全打红自身判据后还原）：M1 图片不 presign→asset_url 判据红 / M2 表格不取 asset_ref→完整 HTML 判据红 / M3 payload 表格也截断→不截断判据红 / M4 卡片 snippet 截断表格→卡片判据红 / M5 卡片丢资产字段→KeyError 红 / M6 删回溯豁免→资产内容被父块替换红 / M7 BM25 _source 丢字段→请求判据红 / M8 enrich 污染原 docs→「存储层不存签名 URL」不变量红。终验 768 passed。
+  - 校准：① 闸门初设回溯后 chunk_id 换父 id——产线保留子块 id（既有契约），闸门对齐；② 表格夹具 content 与 asset_ref 初版同源恒真——content 改摘要文本、asset_ref 为唯一权威源（断言两侧不许同源）；③ 真实签名闸门初只认 SigV4——boto3 s3 默认 SigV2（Signature=/Expires=），MinIO 接受且匿名 GET 200，判据改「真实签名参数存在（V2/V4）＋GET 200」；④ 本机 NO_PROXY 含 ::1 炸 httpx 环境代理解析——闸门 trust_env=False（既有环境勘误桶，非产品缺陷）。
+  - 备注（后续项，未混做）：shortcut 通道 sources 形状不同（无 content）尚未携带资产字段；minio_client 默认 SigV2 在 MinIO 可用、AWS 新区域需 V4——均记后续，不顺手修。
+  - 部署注意：真实签名闸门依赖本机 MinIO（docker compose minio 服务，凭据同 backend/.env）；Docker Hub minio/minio 已不公开（2025 起），本机用 pgsty/minio 社区镜像打标签 minio/minio:latest 供 compose 使用——生产部署需可达镜像源；26 文件回归基线自此要求 MinIO 在跑。
 
 - [ ] **D11. 存量文档资产回填（D6/D10 上线后一次性动作）**
   - 证据：A14 按 file_hash 判定重解析——文件未变即早退（`document_tasks.py` _parse_document），存量文档不会自然获得资产 chunk；chunk.py 模块注释明示「存量惰性初始化，不迁移存量向量数据」。
