@@ -369,6 +369,7 @@ class TestProcessDocumentAsyncIntegration:
         mock_doc.file_path = None
         mock_doc.classification = "internal"
         mock_doc.owner_id = _uuid.UUID(_TEST_UUID)
+        mock_doc.tenant_id = None  # D7 对齐：私有部署语义，租户配置回落全局
 
         mock_repo = AsyncMock()
         mock_repo.get_by_id = AsyncMock(return_value=mock_doc)
@@ -414,6 +415,7 @@ class TestProcessDocumentAsyncIntegration:
         mock_doc.file_path = None
         mock_doc.classification = "internal"
         mock_doc.owner_id = _uuid.UUID(_TEST_UUID)
+        mock_doc.tenant_id = None  # D7 对齐：私有部署语义，租户配置回落全局
 
         mock_repo = AsyncMock()
         mock_repo.get_by_id = AsyncMock(return_value=mock_doc)

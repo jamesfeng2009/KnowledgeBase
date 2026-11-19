@@ -578,6 +578,7 @@ class TestDocumentTaskWarnings:
         mock_doc.classification = "internal"
         mock_doc.content_text = "已有内容"
         mock_doc.owner_id = uuid4()
+        mock_doc.tenant_id = None  # D7 对齐：私有部署语义，租户配置回落全局
         mock_doc.status = "draft"
 
         # async_session_factory 和 DocumentRepository 都是函数内导入，
@@ -624,6 +625,7 @@ class TestDocumentTaskWarnings:
         mock_doc.classification = "internal"
         mock_doc.content_text = ""
         mock_doc.owner_id = uuid4()
+        mock_doc.tenant_id = None  # D7 对齐：私有部署语义，租户配置回落全局
         mock_doc.status = "draft"
 
         mock_session = AsyncMock()
@@ -665,6 +667,7 @@ class TestDocumentTaskWarnings:
         mock_doc.classification = "internal"
         mock_doc.content_text = ""
         mock_doc.owner_id = uuid4()
+        mock_doc.tenant_id = None  # D7 对齐：私有部署语义，租户配置回落全局
         mock_doc.status = "draft"
 
         mock_session = AsyncMock()
@@ -885,6 +888,7 @@ class TestTaskPersistsParseMetadata:
         mock_doc.classification = "internal"
         mock_doc.content_text = ""
         mock_doc.owner_id = uuid4()
+        mock_doc.tenant_id = None  # D7 对齐：私有部署语义，租户配置回落全局
         mock_doc.status = "draft"
 
         mock_session = AsyncMock()
@@ -924,6 +928,7 @@ class TestTaskPersistsParseMetadata:
         mock_doc.classification = "internal"
         mock_doc.content_text = ""
         mock_doc.owner_id = uuid4()
+        mock_doc.tenant_id = None  # D7 对齐：私有部署语义，租户配置回落全局
         mock_doc.status = "draft"
 
         mock_session = AsyncMock()
@@ -965,6 +970,7 @@ class TestTaskPersistsParseMetadata:
         mock_doc.classification = "internal"
         mock_doc.content_text = ""
         mock_doc.owner_id = uuid4()
+        mock_doc.tenant_id = None  # D7 对齐：私有部署语义，租户配置回落全局
         mock_doc.status = "draft"
 
         mock_session = AsyncMock()
@@ -1005,6 +1011,7 @@ class TestTaskPersistsParseMetadata:
         mock_doc.classification = "internal"
         mock_doc.content_text = ""
         mock_doc.owner_id = uuid4()
+        mock_doc.tenant_id = None  # D7 对齐：私有部署语义，租户配置回落全局
         mock_doc.status = "draft"
 
         mock_session = AsyncMock()

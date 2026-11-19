@@ -275,7 +275,8 @@ class TestPDFParserParse:
 
         import sys
         with patch.dict(sys.modules, {"fitz": mock_fitz}), \
-             patch("app.document.pdf_parser.get_settings") as mock_settings:
+             patch("app.document.pdf_parser.get_parse_settings") as mock_settings:
+            # D7 对齐：消费点改读 get_parse_settings（断言意图不变）
             mock_settings.return_value.PDF_TABLE_EXTRACTION_ENABLED = False
             mock_settings.return_value.PDF_IMAGE_EXTRACTION_ENABLED = False
             mock_settings.return_value.PDF_IMAGE_MAX_PER_DOC = 50
@@ -317,7 +318,7 @@ class TestPDFParserParse:
 
         import sys
         with patch.dict(sys.modules, {"fitz": mock_fitz}), \
-             patch("app.document.pdf_parser.get_settings") as mock_settings, \
+             patch("app.document.pdf_parser.get_parse_settings") as mock_settings, \
              patch("app.vlm.provider.get_vision_provider", return_value=mock_vlm):
             mock_settings.return_value.PDF_TABLE_EXTRACTION_ENABLED = True
             mock_settings.return_value.PDF_IMAGE_EXTRACTION_ENABLED = True
@@ -363,7 +364,7 @@ class TestPDFParserParse:
 
         import sys
         with patch.dict(sys.modules, {"fitz": mock_fitz}), \
-             patch("app.document.pdf_parser.get_settings") as mock_settings, \
+             patch("app.document.pdf_parser.get_parse_settings") as mock_settings, \
              patch("app.vlm.provider.get_vision_provider", return_value=mock_vlm):
             mock_settings.return_value.PDF_TABLE_EXTRACTION_ENABLED = False
             mock_settings.return_value.PDF_IMAGE_EXTRACTION_ENABLED = True
@@ -912,7 +913,7 @@ class TestDOCXParserParse:
             parser = DOCXParser()
             with patch.object(parser, "_format_paragraph", return_value="文本"), \
                  patch("app.vlm.provider.get_vision_provider", return_value=mock_vlm), \
-                 patch("app.document.docx_parser.get_settings") as mock_settings:
+                 patch("app.document.docx_parser.get_parse_settings") as mock_settings:
                 mock_settings.return_value.DOCX_TABLE_EXTRACTION_ENABLED = True
                 mock_settings.return_value.DOCX_IMAGE_EXTRACTION_ENABLED = True
                 mock_settings.return_value.DOCX_IMAGE_MAX_PER_DOC = 3
@@ -2091,7 +2092,7 @@ class TestPDFScanOCR:
         import sys
         with patch.dict(sys.modules, {"fitz": mock_fit}), \
              patch("app.vlm.provider.get_vision_provider", return_value=mock_vlm), \
-             patch("app.document.pdf_parser.get_settings") as mock_settings:
+             patch("app.document.pdf_parser.get_parse_settings") as mock_settings:
             mock_settings.return_value.PDF_TABLE_EXTRACTION_ENABLED = True
             mock_settings.return_value.PDF_IMAGE_EXTRACTION_ENABLED = True
             mock_settings.return_value.PDF_IMAGE_MAX_PER_DOC = 50
@@ -2125,7 +2126,7 @@ class TestPDFScanOCR:
 
         import sys
         with patch.dict(sys.modules, {"fitz": mock_fit}), \
-             patch("app.document.pdf_parser.get_settings") as mock_settings:
+             patch("app.document.pdf_parser.get_parse_settings") as mock_settings:
             mock_settings.return_value.PDF_TABLE_EXTRACTION_ENABLED = False
             mock_settings.return_value.PDF_IMAGE_EXTRACTION_ENABLED = False
             mock_settings.return_value.PDF_IMAGE_MAX_PER_DOC = 50
