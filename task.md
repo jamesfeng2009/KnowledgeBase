@@ -325,9 +325,12 @@
   - 实现：sources 出口复用 D10 `enrich_asset_docs` 浅拷贝——条目增 chunk_type/asset_url（图片＝下发时 presigned），table 增 content＝完整 HTML 不截断，text 形状不变（无 content 键）；enrich 副本只进 sources 事件，生成上下文（reranked 传 generator）保留 minio:// 规范地址。契约文档 `docs/d10-asset-sources-contract.md` 增「shortcut 通道」段。
   - 证据：闸门 `tests/test_e2_shortcut_asset_sources.py` 7 条（表格完整 HTML/图片 presigned 接线/text 形状证人/生成上下文不染指/权限清空证人/重排失败降级仍带资产/真实 MinIO 上传→签名→匿名 GET 200 字节一致）；红基线 5 failed / 2 passed（两证人按设计绿；红因 KeyError chunk_type/asset_url）→ 修后 7 绿；D10 既有 22 闸不回归（合跑 29 绿）；30 文件全量回归 **807 passed / 0 failed**（52.34s，800＋7）。
   - 变异（串行 5 条全打红自身判据后还原）：M1 出口跳过 enrich→4 红 / M2 表格 content 截断 [:200]→2 红 / M3 enrich 副本回灌 reranked→染指判据红 / M4 text 也带 content→形状证人红 / M5 asset_url 取 asset_ref 原址不 presign→3 红（含真实签名闸）。
-- [ ] **E3. MinIO presign 升级 SigV4（D10 备注立案）**
+- [x] **E3. MinIO presign 升级 SigV4（D10 备注立案）** ✅ 2026-11-19
   - 证据：minio_client boto3 默认 SigV2，MinIO 可用但 AWS 新区域需 V4。
-  - 修复点：signature_version=s3v4；真实 MinIO 签名＋匿名 GET 200 闸门；D10 既有 V2/V4 宽判据不回归。
+  - 实现：`_get_client` Config 显式 `signature_version="s3v4"`（minio_client.py:85-90，path-style 不变）；契约文档签名语义段改 SigV4；D10 真实签名闸保留 V2/V4 宽判据（注释指向 E3 专属闸）。
+  - 证据：闸门 `tests/test_e3_sigv4_presign.py` 5 条（query 键判定 X-Amz-Signature/X-Amz-Algorithm 且无 SigV2 裸键 Signature/Expires——避免子串恒真陷阱；真实 MinIO 匿名 GET 200 字节一致；expires_in 透传 X-Amz-Expires；V4 client 常规上传/下载证人；D10 enrich 真实链路 V4 接线证人）；红基线 4 failed / 1 passed（上传下载证人按设计绿）→ 修后 5 绿；D10/E2 合跑 34 绿；31 文件全量回归 **812 passed / 0 failed**（52.69s，807＋5）。
+  - 变异（串行 4 条全打红自身判据后还原）：M1 去掉 s3v4（回默认 V2）→4 红 / M2 ExpiresIn 硬编码 3600→透传判据红（精确 1 红）/ M3 secret_key 篡改→真实链路 3 红（URL 形状闸绿＝签名不校验密钥，符合预期）/ M4 addressing_style 改 virtual→真实链路 3 红（bucket 前缀 DNS 不可达）。
+  - 校准：M1 还原误用 `git checkout --` 把未提交修复一并退回——重新上修复，后续变异改字符串级替换还原（教训：未提交文件不得用 git checkout 做变异还原）。
 - [ ] **E4. D7 任务级解析开关透传（D7 默认决策「任务级透传随后」）**
   - 修复点：任务级 parse 覆盖参数，优先级 任务>租户>全局，同白名单校验；设计默认值清单先列再动代码。
 - [ ] **E5. 本地部署演练（用户批准：本地，不触生产）**

@@ -58,8 +58,9 @@ data: {"citations": [
   前端对 `minio://` 开头的值按「不可直接访问」处理，走回退渲染。
 - URL 过期后不可刷新复用：重新提问获取新 sources，或经文档详情端点
   （`GET /documents/{id}` 的 content_html 已含下发时签名）取新地址。
-- 签名算法为 boto3 s3 默认 SigV2（`Signature=`/`Expires=` 参数），
-  MinIO 接受；若未来迁移 AWS 新区域需升级 SigV4（见 task.md 勘误桶）。
+- 签名算法为 SigV4（E3 升级，2026-11-19：boto3 client 显式
+  `signature_version="s3v4"`，URL 带 `X-Amz-Signature=`/`X-Amz-Expires=`），
+  MinIO 与 AWS 新区域均接受；此前默认 SigV2 已被闸门禁止回退。
 
 ## 答案正文契约
 
