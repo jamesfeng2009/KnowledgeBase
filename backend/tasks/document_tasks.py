@@ -687,7 +687,9 @@ def process_document(self, doc_id: str, tenant_id: str | None = None) -> dict[st
 # ------------------------------------------------------------------
 
 
-async def _parse_and_chunk_async(doc_id: str, tenant_id: str | None = None) -> dict[str, Any]:
+async def _parse_and_chunk_async(
+    doc_id: str, tenant_id: str | None = None, *, force_reparse: bool = False
+) -> dict[str, Any]:
     """chord 入口阶段 — 解析 + 分块 + 检查模块开关。
 
     从 _process_document_async 提取前半段（加载+解析+分块），
@@ -696,6 +698,8 @@ async def _parse_and_chunk_async(doc_id: str, tenant_id: str | None = None) -> d
     Args:
         doc_id: 文档 ID（UUID 字符串）。
         tenant_id: 调用方入队时携带的租户 ID；缺失时按 doc_id 反查。
+        force_reparse: D11 存量回填专用 — 绕过 A14 哈希早退强制重解析；
+            默认 False，日常重索引的 A14 语义不变。
 
     Returns:
         {"chunk_objects": [...], "graph_enabled": bool, "parse_warnings": [...]}
@@ -735,7 +739,9 @@ async def _parse_and_chunk_async(doc_id: str, tenant_id: str | None = None) -> d
         # A12: 清零旧页数 — 解析器能拿真实页数时优先，拿不到再按文本推断
         doc.page_count = 0
         try:
-            parsed_text, extracted_images = await _parse_document(doc, warnings=warnings)
+            parsed_text, extracted_images = await _parse_document(
+                doc, warnings=warnings, force_reparse=force_reparse
+            )
         except Exception as exc:
             logger.warning("document.parse_failed", doc_id=doc_id, error=str(exc))
             parsed_text = doc.content_text or ""
@@ -1391,7 +1397,7 @@ async def _localized_file_path(doc: Any):
 
 
 async def _parse_document(
-    doc: Any, warnings: list[str] | None = None
+    doc: Any, warnings: list[str] | None = None, *, force_reparse: bool = False
 ) -> tuple[str, list[tuple[bytes, str]]]:
     """解析文档内容 — 优先 Docling 统一解析，降级到原有专用解析器。
 
@@ -1408,6 +1414,8 @@ async def _parse_document(
         doc: Document ORM 实例。
         warnings: 可选的警告收集列表 — 解析器产生的用户可见警告
             （如扫描页超 OCR 上限）追加到此列表。
+        force_reparse: D11 存量回填专用 — True 时跳过哈希一致的早退，
+            强制重解析（无源文件/文件丢失的早退不受影响）。
 
     Returns:
         (解析后的纯文本内容, 图片数据列表 [(二进制, VLM描述), ...])
@@ -1430,7 +1438,12 @@ async def _parse_document(
         current_hash: str | None = None
         if can_hash:
             current_hash = _sha256_file(path)
-            if doc.content_text and doc.file_hash and current_hash == doc.file_hash:
+            if (
+                doc.content_text
+                and doc.file_hash
+                and current_hash == doc.file_hash
+                and not force_reparse
+            ):
                 return doc.content_text, []
         elif doc.content_text:
             # 源文件缺失/不可哈希：无法核验变化，维持旧行为返回已有内容
