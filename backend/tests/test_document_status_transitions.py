@@ -231,17 +231,21 @@ class TestDeleteDocumentFromIndexes:
 
         settings = MagicMock()
         settings.OPENSEARCH_URL = "http://os:9200"
+        # E1: cross-modal 图片 chunk 用随机 UUID，upsert 不覆盖旧条目，
+        # 归档/下架必须一并删除，否则残留可检索图片向量。
+        settings.OPENSEARCH_CROSS_MODAL_INDEX = "ekb_cross_modal_vectors"
 
         with patch("httpx.AsyncClient", return_value=mock_client), \
              patch("app.config.get_settings", return_value=settings):
 
             await _delete_document_from_indexes(_DOC_UUID)
 
-        assert mock_client.post.await_count == 2
-        # 两次调用均命中文档级索引删除端点
+        assert mock_client.post.await_count == 3
+        # 三次调用分别命中全文 / 向量 / 跨模态索引删除端点
         urls = [call.args[0] for call in mock_client.post.await_args_list]
         assert "ekb_documents/_delete_by_query" in urls[0]
         assert "ekb_knn_vectors/_delete_by_query" in urls[1]
+        assert "ekb_cross_modal_vectors/_delete_by_query" in urls[2]
         for call in mock_client.post.await_args_list:
             assert call.kwargs["json"]["query"]["term"]["doc_id"] == _DOC_UUID
 

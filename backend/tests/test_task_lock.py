@@ -496,7 +496,7 @@ class TestProcessDocumentLockCoverage:
         """任务执行期间锁保持持有，正常返回后在 finally 中释放。"""
         body_entered = {"v": False}
 
-        async def _fake_parse(doc_id, tenant_id=None):
+        async def _fake_parse(doc_id, tenant_id=None, parse_config=None):
             body_entered["v"] = True
             # 关键断言：主体执行期间锁不得提前释放
             assert fake_lock.instances[0].exited == 0, "任务执行期间锁被提前释放"
@@ -531,7 +531,7 @@ class TestProcessDocumentLockCoverage:
         """Redis 不可用（获取锁异常）时降级为无锁模式，任务继续执行。"""
         fake_lock.acquire_error = ConnectionError("redis down")
 
-        async def _fake_parse(doc_id, tenant_id=None):
+        async def _fake_parse(doc_id, tenant_id=None, parse_config=None):
             return {"status": "failed", "error": "x"}
 
         monkeypatch.setattr(mod, "_parse_and_chunk_async", _fake_parse)

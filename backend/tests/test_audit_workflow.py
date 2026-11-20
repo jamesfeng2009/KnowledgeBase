@@ -184,6 +184,13 @@ class TestDocumentClassificationRouting:
         mock_session = AsyncMock()
         mock_session.flush = AsyncMock()
         mock_session.commit = AsyncMock()
+        # D7: _process_document_async 会调 TenantService.get_parse_config →
+        # get_tenant → db.execute()。SQLAlchemy 的 await execute() 返回同步 Result，
+        # 需用 MagicMock 模拟 Result.scalars().first() 同步链；返回 None 表示
+        # 租户未配置 parse_config 覆盖，回落全局默认值。
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.first.return_value = None
+        mock_session.execute = AsyncMock(return_value=mock_result)
 
         mock_session_cm = AsyncMock()
         mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)

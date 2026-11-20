@@ -609,11 +609,12 @@ class TestServerSkillIntegration:
         server = KnowledgeBaseMCPServer(db_factory=mock_db_factory)
 
         index = server.get_skill_index()
-        assert len(index) == 7  # P1-1: 新增 read_tool_result 工具
+        assert len(index) == 8  # P1-1: read_tool_result；归因分析: analyze_outcome_attribution
         names = [item["name"] for item in index]
         assert "knowledge_search" in names
         assert "document_create" in names
         assert "create_it_ticket" in names
+        assert "analyze_outcome_attribution" in names
 
     def test_server_skill_index_has_category(self) -> None:
         """技能索引包含 category 字段。"""
@@ -808,7 +809,7 @@ class TestMCPClientSkillIntegration:
         client = MCPClient(server)
 
         index = client.get_skill_index()
-        assert len(index) == 7  # P1-1: 新增 read_tool_result 工具
+        assert len(index) == 8  # P1-1: read_tool_result；归因分析: analyze_outcome_attribution
 
     @pytest.mark.asyncio
     async def test_client_get_tools_by_names(self) -> None:
