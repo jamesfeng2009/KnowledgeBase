@@ -20,7 +20,6 @@ import asyncio
 import os
 import random
 import sys
-from pathlib import Path
 
 _BACKEND_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _BACKEND_ROOT not in sys.path:
@@ -42,19 +41,26 @@ _SEED_KB_ID = None
 async def load_chunks() -> tuple[list[str], list]:
     """重新加载种子 KB 的文档并分块（分块确定性，与入库时一致；排除历史脏 KB）。"""
     global _SEED_KB_ID
-    from tasks.document_tasks import _chunk_document
-
     from app.models.knowledge import KnowledgeBase
+    from tasks.document_tasks import _chunk_document
 
     all_chunks: list = []
     async with async_session_factory() as session:
         kb = (
-            await session.execute(
-                select(KnowledgeBase).where(KnowledgeBase.name == _SEED_KB_NAME).limit(1)
+            (
+                await session.execute(
+                    select(KnowledgeBase)
+                    .where(KnowledgeBase.name == _SEED_KB_NAME)
+                    .limit(1)
+                )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
         if kb is None:
-            raise SystemExit(f"[ERROR] 种子 KB 不存在: {_SEED_KB_NAME}（先跑 eval_resume_seed.py）")
+            raise SystemExit(
+                f"[ERROR] 种子 KB 不存在: {_SEED_KB_NAME}（先跑 eval_resume_seed.py）"
+            )
         _SEED_KB_ID = kb.id
         result = await session.execute(
             select(Document)
@@ -90,7 +96,9 @@ def normalize_triple(t: tuple[str, str, str]) -> tuple[str, str, str]:
 
 async def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--sample", type=int, default=30, help="抽样质量对比的 chunk 数（0=跳过）")
+    parser.add_argument(
+        "--sample", type=int, default=30, help="抽样质量对比的 chunk 数（0=跳过）"
+    )
     parser.add_argument("--no-llm", action="store_true", help="跳过真实 LLM 抽样")
     args = parser.parse_args()
 
@@ -112,7 +120,9 @@ async def main() -> int:
             hit_chunks += 1
             rule_triple_total += len(triples)
     coverage = hit_chunks / n if n else 0.0
-    print(f"[M1-A] 规则覆盖率: {hit_chunks}/{n} = {coverage:.1%}（规则三元组共 {rule_triple_total} 条）")
+    print(
+        f"[M1-A] 规则覆盖率: {hit_chunks}/{n} = {coverage:.1%}（规则三元组共 {rule_triple_total} 条）"
+    )
 
     # ---------- B. LLM 调用节省（mock 计数，不真调 API；按文档分组，对齐生产语义） ----------
     llm_calls = {"count": 0}
@@ -135,8 +145,12 @@ async def main() -> int:
         # 策略 B（生产现状）：规则优先 + LLM 兜底（threshold=3，全局累计）
         for did, doc_chunks in by_doc.items():
             await gs.extract_triples_from_chunks(
-                doc_chunks, doc_id=did, llm_provider=fake_provider,
-                use_rules=True, use_llm=True, llm_fallback_threshold=3
+                doc_chunks,
+                doc_id=did,
+                llm_provider=fake_provider,
+                use_rules=True,
+                use_llm=True,
+                llm_fallback_threshold=3,
             )
         hybrid_calls = llm_calls["count"]
 
@@ -144,8 +158,12 @@ async def main() -> int:
         llm_calls["count"] = 0
         for did, doc_chunks in by_doc.items():
             await gs.extract_triples_from_chunks(
-                doc_chunks, doc_id=did, llm_provider=fake_provider,
-                use_rules=False, use_llm=True, llm_fallback_threshold=10**9
+                doc_chunks,
+                doc_id=did,
+                llm_provider=fake_provider,
+                use_rules=False,
+                use_llm=True,
+                llm_fallback_threshold=10**9,
             )
         pure_llm_calls = llm_calls["count"]
     finally:
@@ -168,8 +186,13 @@ async def main() -> int:
         exact = partial = miss = 0
         all_rule = all_llm = all_overlap = 0
         for c in sample_chunks:
-            rule_set = {normalize_triple(t) for t in gs._extract_triples_by_rules(c.content or "")}
-            llm_set = {normalize_triple(t) for t in await real_llm(c.content or "", provider)}
+            rule_set = {
+                normalize_triple(t)
+                for t in gs._extract_triples_by_rules(c.content or "")
+            }
+            llm_set = {
+                normalize_triple(t) for t in await real_llm(c.content or "", provider)
+            }
             overlap = rule_set & llm_set
             all_rule += len(rule_set)
             all_llm += len(llm_set)

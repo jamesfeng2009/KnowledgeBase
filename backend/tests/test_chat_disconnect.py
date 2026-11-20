@@ -14,6 +14,7 @@
 其后无 assistant 时显示"重新生成"，点击用同一 conversation_id 重发
 （RAG 缓存 + 重复提问检测兜底重放成本）。
 """
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -115,9 +116,14 @@ class TestChatDisconnect:
         svc = _make_service(engine)
         p1, p2, p3 = _patch_stream_env(engine)
 
-        with patch.object(
-            ChatService, "_persist_assistant_result", new=AsyncMock()
-        ) as spy_persist, p1, p2, p3:
+        with (
+            patch.object(
+                ChatService, "_persist_assistant_result", new=AsyncMock()
+            ) as spy_persist,
+            p1,
+            p2,
+            p3,
+        ):
             gen = svc.chat(query="测试问题", conversation_id=None, agent_type="qa")
             await gen.__anext__()  # META 事件
             assert await gen.__anext__() == "部分一"
@@ -133,7 +139,9 @@ class TestChatDisconnect:
     @pytest.mark.asyncio
     async def test_full_stream_persists_complete_assistant_message(self) -> None:
         """对照组：流正常走完 → assistant 消息完整落库（断言区分两种结局）。"""
-        engine = _fake_engine(["答案A", "答案B", SSEEvent(data={}, event=SSEEventType.DONE)])
+        engine = _fake_engine(
+            ["答案A", "答案B", SSEEvent(data={}, event=SSEEventType.DONE)]
+        )
         svc = _make_service(engine)
         p1, p2, p3 = _patch_stream_env(engine)
 

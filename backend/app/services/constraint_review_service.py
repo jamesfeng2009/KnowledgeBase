@@ -11,8 +11,9 @@ get_misjudgment_stats 的反哺模式）。
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -73,7 +74,9 @@ class ConstraintReviewService:
                             stmt.order_by(
                                 ConstraintRule.classifier_confidence.desc(),
                                 ConstraintRule.created_at.desc(),
-                            ).limit(limit).offset(offset)
+                            )
+                            .limit(limit)
+                            .offset(offset)
                         )
                     )
                     .scalars()
@@ -227,13 +230,9 @@ class ConstraintReviewService:
             "trigger_domains": list(rule.trigger_domains or []),
             "classifier_confidence": rule.classifier_confidence,
             "version": rule.version,
-            "superseded_by": (
-                str(rule.superseded_by) if rule.superseded_by else None
-            ),
+            "superseded_by": (str(rule.superseded_by) if rule.superseded_by else None),
             "reviewed_by": str(rule.reviewed_by) if rule.reviewed_by else None,
-            "reviewed_at": (
-                rule.reviewed_at.isoformat() if rule.reviewed_at else None
-            ),
+            "reviewed_at": (rule.reviewed_at.isoformat() if rule.reviewed_at else None),
             "review_comment": rule.review_comment,
             "created_at": rule.created_at.isoformat(),
         }

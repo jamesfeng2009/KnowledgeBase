@@ -7,11 +7,8 @@ SSE 通知推送 Hub 测试 — 测试 Redis Pub/Sub 桥接和 SSE 流格式。
 from __future__ import annotations
 
 import asyncio
-import json
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
 
 from app.services.notification_hub import (
     _channel_name,
@@ -143,7 +140,7 @@ class TestNotificationHub:
 
             try:
                 await asyncio.wait_for(collect(), timeout=2.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
 
         # 应该收到消息事件
@@ -182,6 +179,7 @@ class TestNotificationHub:
             ):
                 events: list[str] = []
                 try:
+
                     async def collect():
                         async for event in subscribe_stream(user_id):
                             events.append(event)
@@ -189,7 +187,7 @@ class TestNotificationHub:
                                 break
 
                     await asyncio.wait_for(collect(), timeout=3.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     pass
 
         # 应该收到心跳或至少有事件产出

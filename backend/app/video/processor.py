@@ -21,10 +21,10 @@ import asyncio
 import os
 import tempfile
 from dataclasses import dataclass
+from functools import lru_cache
 
 from app.config import get_settings
 from app.utils.logger import get_logger
-from functools import lru_cache
 
 log = get_logger(__name__)
 
@@ -76,12 +76,17 @@ class VideoProcessor:
         wav_path = tempfile.mktemp(suffix=".wav", prefix="asr_")
 
         cmd = [
-            "ffmpeg", "-i", video_path,
-            "-vn",                          # 丢弃视频
-            "-acodec", "pcm_s16le",         # PCM 16-bit
-            "-ar", "16000",                 # 16kHz
-            "-ac", "1",                     # 单声道
-            "-y",                           # 覆盖输出
+            "ffmpeg",
+            "-i",
+            video_path,
+            "-vn",  # 丢弃视频
+            "-acodec",
+            "pcm_s16le",  # PCM 16-bit
+            "-ar",
+            "16000",  # 16kHz
+            "-ac",
+            "1",  # 单声道
+            "-y",  # 覆盖输出
             wav_path,
         ]
 
@@ -252,9 +257,12 @@ class VideoProcessor:
         """
         cmd = [
             "ffmpeg",
-            "-ss", f"{timestamp}",
-            "-i", video_path,
-            "-frames:v", "1",
+            "-ss",
+            f"{timestamp}",
+            "-i",
+            video_path,
+            "-frames:v",
+            "1",
             "-y",
             frame_path,
         ]
@@ -344,9 +352,13 @@ class VideoProcessor:
     async def _get_duration(self, video_path: str) -> float:
         """获取视频时长（秒）。"""
         cmd = [
-            "ffprobe", "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
             video_path,
         ]
         try:

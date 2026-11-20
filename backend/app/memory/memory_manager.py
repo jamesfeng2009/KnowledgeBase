@@ -61,9 +61,9 @@ class MemoryContext:
     """
 
     def __init__(self):
-        self.checkpoint: dict | None = None      # L2: 会话状态
-        self.user_facts: list[dict] = []        # L3: 用户偏好和事实
-        self.working_memory: list[dict] = []    # L4: 工作记忆
+        self.checkpoint: dict | None = None  # L2: 会话状态
+        self.user_facts: list[dict] = []  # L3: 用户偏好和事实
+        self.working_memory: list[dict] = []  # L4: 工作记忆
 
     def to_system_prompt(self) -> str:
         """将记忆上下文转换为 system prompt 片段（L2/L3/L4）。
@@ -78,13 +78,27 @@ class MemoryContext:
 
         # P1-Opt5: L3 用户偏好 — top-3 而非 top-10
         if self.user_facts:
-            prefs = [f["fact_text"] for f in self.user_facts if f.get("category") == "preference"]
+            prefs = [
+                f["fact_text"]
+                for f in self.user_facts
+                if f.get("category") == "preference"
+            ]
             if prefs:
-                parts.append("用户偏好：\n" + "\n".join(f"  - {p}" for p in prefs[:_L3_INJECT_TOP_N]))
+                parts.append(
+                    "用户偏好：\n"
+                    + "\n".join(f"  - {p}" for p in prefs[:_L3_INJECT_TOP_N])
+                )
 
-            summaries = [f["fact_text"] for f in self.user_facts if f.get("category") == "summary"]
+            summaries = [
+                f["fact_text"]
+                for f in self.user_facts
+                if f.get("category") == "summary"
+            ]
             if summaries:
-                parts.append("历史摘要：\n" + "\n".join(f"  - {s}" for s in summaries[:_L3_INJECT_TOP_N]))
+                parts.append(
+                    "历史摘要：\n"
+                    + "\n".join(f"  - {s}" for s in summaries[:_L3_INJECT_TOP_N])
+                )
 
         # L4: 工作记忆
         if self.working_memory:
@@ -142,9 +156,7 @@ class MemoryManager:
         # P1a: 租户上下文 — checkpoint 独立会话需要传播 app.tenant_id（RLS）
         self._tenant_id = tenant_id
 
-    async def _load_checkpoint_isolated(
-        self, session_id: str
-    ) -> dict[str, Any] | None:
+    async def _load_checkpoint_isolated(self, session_id: str) -> dict[str, Any] | None:
         """L2 Checkpoint 加载 — 独立短会话执行（P1a 并发安全修复）。
 
         SQLAlchemy AsyncSession 不允许并发使用：gather 各分支若共享请求
@@ -153,9 +165,10 @@ class MemoryManager:
         独立短会话，与 mem0 分支（请求会话内串行 L3→L4）真正并行。
         新会话内传播租户 GUC，保持与请求会话一致的 RLS 边界。
         """
+        from sqlalchemy import text
+
         from app.core.tenant_context import session_tenant_id, system_scope
         from app.database import async_session_factory
-        from sqlalchemy import text
 
         async with async_session_factory() as session:
             tenant_id = self._tenant_id
@@ -260,7 +273,9 @@ class MemoryManager:
         if sidecar is not None:
             # P2-1: 副车道检索 — L3/L4 走独立通道（轻量模型改写 + 召回），
             # 不污染主对话 Prompt Cache 前缀
-            sidecar_task = sidecar.retrieve(user_id=user_id, query=query, mem0=self.mem0)
+            sidecar_task = sidecar.retrieve(
+                user_id=user_id, query=query, mem0=self.mem0
+            )
             tasks = [checkpoint_task, sidecar_task]
         else:
             tasks = [checkpoint_task, _search_l3_l4()]
@@ -357,7 +372,9 @@ class MemoryManager:
                         session_id, agent_state, iteration
                     )
             except Exception as e:
-                logger.error("checkpoint_save_failed", session_id=session_id, error=str(e))
+                logger.error(
+                    "checkpoint_save_failed", session_id=session_id, error=str(e)
+                )
 
         # L3: 保存对话摘要到 Mem0（跨会话记忆）
         if summary:
@@ -394,9 +411,7 @@ class MemoryManager:
         try:
             from app.repositories.conversation_repository import MessageRepository
 
-            msgs = await MessageRepository(self.db).get_by_conversation(
-                conversation_id
-            )
+            msgs = await MessageRepository(self.db).get_by_conversation(conversation_id)
             stats["facts"] = await self.mem0.deactivate_facts_by_source_refs(
                 user_id, [m.id for m in msgs], categories=["working", "summary"]
             )
@@ -502,8 +517,17 @@ class MemoryManager:
         """
         # 启发式判断是否包含关键决策
         decision_keywords = [
-            "确认", "已选择", "已设定", "已配置", "金额", "日期",
-            "选择", "决定", "设定", "审批通过", "已批准",
+            "确认",
+            "已选择",
+            "已设定",
+            "已配置",
+            "金额",
+            "日期",
+            "选择",
+            "决定",
+            "设定",
+            "审批通过",
+            "已批准",
         ]
         has_decision = any(kw in query or kw in answer for kw in decision_keywords)
         if not has_decision:
@@ -577,9 +601,7 @@ class MemoryManager:
 
             _settings = get_settings()
             if _settings.LLM_FACT_EXTRACTION_ENABLED:
-                return await self._llm_extract_facts(
-                    user_id, messages, message_ids
-                )
+                return await self._llm_extract_facts(user_id, messages, message_ids)
         except Exception as exc:
             logger.warning("llm_fact_extraction_skipped", error=str(exc))
 
@@ -610,10 +632,10 @@ class MemoryManager:
             "分析以下对话，提取值得长期记住的用户偏好和事实。\n"
             "只提取用户本人明确表达的偏好和事实，不要推测。\n"
             "负规则（以下一律不提取）：\n"
-            "1. 寒暄/问候/礼貌用语（如\"你好\"\"谢谢\"\"辛苦了\"）— 不是记忆；\n"
+            '1. 寒暄/问候/礼貌用语（如"你好""谢谢""辛苦了"）— 不是记忆；\n'
             "2. 知识库检索结果、文档内容、工具返回结果 — 那是系统知识，不是用户信息；\n"
             "3. AI 回复中陈述的内容 — 只认用户消息里的话；\n"
-            "4. 一次性的临时任务指令（如\"帮我查X\"\"帮我总结Y\"）— 不是持久偏好。\n"
+            '4. 一次性的临时任务指令（如"帮我查X""帮我总结Y"）— 不是持久偏好。\n'
             "输出格式：每行一个事实，格式为 category|importance|content\n"
             "category 可选：preference（用户偏好）/ fact（事实信息）\n"
             "importance 为 1-5 的整数（5=非常重要，1=可有可无）\n"
@@ -677,9 +699,7 @@ class MemoryManager:
                         raw_excerpt=self._source_excerpt(messages),
                     )
                     if written is None:
-                        logger.debug(
-                            "fact_skipped_consolidation", content=content[:50]
-                        )
+                        logger.debug("fact_skipped_consolidation", content=content[:50])
                         continue
                     extracted.append(content)
 
@@ -726,8 +746,11 @@ class MemoryManager:
             if await self._check_duplicate(user_id, fact_text, category):
                 return None
             return await self.mem0.add_fact(
-                user_id=user_id, fact_text=fact_text, category=category,
-                source_type=source_type, source_ref_id=source_ref_id,
+                user_id=user_id,
+                fact_text=fact_text,
+                category=category,
+                source_type=source_type,
+                source_ref_id=source_ref_id,
                 raw_excerpt=raw_excerpt,
             )
 
@@ -735,8 +758,11 @@ class MemoryManager:
             return None
 
         new_fact = await self.mem0.add_fact(
-            user_id=user_id, fact_text=fact_text, category=category,
-            source_type=source_type, source_ref_id=source_ref_id,
+            user_id=user_id,
+            fact_text=fact_text,
+            category=category,
+            source_type=source_type,
+            source_ref_id=source_ref_id,
             raw_excerpt=raw_excerpt,
             verdict_reason=verdict.reason or None,
         )
@@ -798,7 +824,9 @@ class MemoryManager:
             # 偏好检测：包含"我喜欢"/"请用"/"偏好"等
             for keyword in ["我喜欢", "我偏好", "请用", "请使用", "我希望"]:
                 if keyword in content:
-                    fact = content[content.index(keyword):content.index(keyword) + 100]
+                    fact = content[
+                        content.index(keyword) : content.index(keyword) + 100
+                    ]
                     written = await self._consolidated_add(
                         user_id,
                         fact,
@@ -834,7 +862,9 @@ class MemoryManager:
         return excerpt[:500] or None
 
     @staticmethod
-    def _source_ref(message_ids: list[uuid.UUID] | None, messages: list[dict]) -> uuid.UUID | None:
+    def _source_ref(
+        message_ids: list[uuid.UUID] | None, messages: list[dict]
+    ) -> uuid.UUID | None:
         """LLM 路径：整段对话提取的事实统一绑定到最近一条消息。"""
         if not message_ids or not messages:
             return None

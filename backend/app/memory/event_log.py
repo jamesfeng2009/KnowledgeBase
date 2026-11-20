@@ -40,10 +40,9 @@ import copy
 import json
 import random
 import uuid
-from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
-from typing import Any, Generator
+from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
@@ -65,13 +64,15 @@ _event_log_var: ContextVar[EventLogManager | None] = ContextVar(
 
 #: list 类型字段的合并策略 — extend（与 LangGraph Annotated[list, operator.add] 对齐）
 #: 重放时这些字段的 output_data 会被 extend 到 base_state 对应字段
-_LIST_FIELDS: frozenset[str] = frozenset({
-    "messages",
-    "retrieved_docs",
-    "tool_results",
-    "quarantined_docs",
-    "milestones",
-})
+_LIST_FIELDS: frozenset[str] = frozenset(
+    {
+        "messages",
+        "retrieved_docs",
+        "tool_results",
+        "quarantined_docs",
+        "milestones",
+    }
+)
 
 
 @dataclass
@@ -176,8 +177,16 @@ class EventLogManager:
             新事件的 seq；写入失败时返回 0（不抛异常，仅记日志 — 事件日志
             不应阻塞主流程，Checkpoint 仍是兜底恢复机制）。
         """
-        input_json = json.dumps(input_data, default=str, ensure_ascii=False) if input_data else None
-        output_json = json.dumps(output_data, default=str, ensure_ascii=False) if output_data else None
+        input_json = (
+            json.dumps(input_data, default=str, ensure_ascii=False)
+            if input_data
+            else None
+        )
+        output_json = (
+            json.dumps(output_data, default=str, ensure_ascii=False)
+            if output_data
+            else None
+        )
         meta_json = json.dumps(metadata or {}, default=str, ensure_ascii=False)
         tenant_id = await self._resolve_tenant_id()
 
@@ -260,9 +269,7 @@ class EventLogManager:
                 last_exc = exc
                 # 退避必须带随机抖动：确定性间隔会把所有败者同步到同一
                 # 时刻重试，每轮只有一路能前进，N 路并发必然耗尽预算
-                await asyncio.sleep(
-                    0.005 * (attempt + 1) + random.uniform(0, 0.02)
-                )
+                await asyncio.sleep(0.005 * (attempt + 1) + random.uniform(0, 0.02))
             except Exception as exc:
                 # 事件日志失败不阻塞主流程 — Checkpoint 是兜底
                 logger.warning(
@@ -472,14 +479,20 @@ class EventLogManager:
     def _row_to_record(row: Any) -> EventRecord:
         """将数据库行转为 EventRecord。"""
         # JSONB 字段可能是 dict 或 str（取决于驱动）
-        input_data = row[4] if isinstance(row[4], dict) else (
-            json.loads(row[4]) if row[4] else None
+        input_data = (
+            row[4]
+            if isinstance(row[4], dict)
+            else (json.loads(row[4]) if row[4] else None)
         )
-        output_data = row[5] if isinstance(row[5], dict) else (
-            json.loads(row[5]) if row[5] else None
+        output_data = (
+            row[5]
+            if isinstance(row[5], dict)
+            else (json.loads(row[5]) if row[5] else None)
         )
-        metadata = row[6] if isinstance(row[6], dict) else (
-            json.loads(row[6]) if row[6] else {}
+        metadata = (
+            row[6]
+            if isinstance(row[6], dict)
+            else (json.loads(row[6]) if row[6] else {})
         )
         created_at = row[7].isoformat() if hasattr(row[7], "isoformat") else str(row[7])
 

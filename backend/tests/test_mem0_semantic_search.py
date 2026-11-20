@@ -11,11 +11,10 @@ Mem0 语义检索测试 — app/memory/mem0_manager.py。
 
 from __future__ import annotations
 
-import math
 import sys
 import uuid
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -204,7 +203,9 @@ class TestSearchFactsSemantic:
 
         manager = Mem0Manager(mock_db)
         manager._embedder = MagicMock()
-        manager._embedder.embed = AsyncMock(side_effect=Exception("embedder unavailable"))
+        manager._embedder.embed = AsyncMock(
+            side_effect=Exception("embedder unavailable")
+        )
 
         results = await manager.search_facts(
             user_id=uuid.uuid4(),
@@ -499,9 +500,7 @@ class TestTimeDecaySearch:
         # 就把 get_settings() 的结果绑成了模块变量，而 test_crypto 之流会调
         # get_settings.cache_clear()，之后再取的 Settings 已是另一个对象 ——
         # 补丁打到那份上等于没打，用例结果会随执行顺序漂移。
-        monkeypatch.setattr(
-            mem0_module.settings, "MEMORY_ACTIVATION_ENABLED", False
-        )
+        monkeypatch.setattr(mem0_module.settings, "MEMORY_ACTIVATION_ENABLED", False)
 
         mock_db = MagicMock()
         mock_db.execute = AsyncMock()

@@ -230,7 +230,7 @@ def _extract_answer(faq_content: str) -> str:
     for separator in ["\n\n答：", "\n答：", "\n\n答:", "\n答:", "\n\nA:", "\nA:"]:
         idx = faq_content.find(separator)
         if idx != -1:
-            answer = faq_content[idx + len(separator):].strip()
+            answer = faq_content[idx + len(separator) :].strip()
             if answer:
                 return answer
 
@@ -238,7 +238,7 @@ def _extract_answer(faq_content: str) -> str:
     for separator in ["\n\nA:", "\nA:", "\n\nAnswer:", "\nAnswer:"]:
         idx = faq_content.find(separator)
         if idx != -1:
-            answer = faq_content[idx + len(separator):].strip()
+            answer = faq_content[idx + len(separator) :].strip()
             if answer:
                 return answer
 

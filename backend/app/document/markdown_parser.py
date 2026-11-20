@@ -9,6 +9,7 @@ chunker 的 _is_markdown + _split_markdown 会按 # / ## / ### 标题分块。
 - 支持 frontmatter 解析（YAML 元数据头），提取标题/日期/标签
 - 支持图片链接保持 ![](url) 格式（与 base.py Markdown 模式一致）
 """
+
 from __future__ import annotations
 
 import re
@@ -20,9 +21,7 @@ from app.utils.logger import get_logger
 log = get_logger(__name__)
 
 # frontmatter 正则 — 匹配 YAML 元数据头（--- ... ---）
-_FRONTMATTER_PATTERN = re.compile(
-    r"^---\s*\n(.*?)\n---\s*\n?", re.DOTALL
-)
+_FRONTMATTER_PATTERN = re.compile(r"^---\s*\n(.*?)\n---\s*\n?", re.DOTALL)
 
 # frontmatter 中的 title 字段
 _TITLE_PATTERN = re.compile(r"^title:\s*(.+)$", re.MULTILINE)
@@ -109,7 +108,7 @@ class MarkdownParser(DocumentParser):
                 title = title_match.group(1).strip().strip('"').strip("'")
 
             # 去除 frontmatter，保留正文
-            body = content[frontmatter_match.end():]
+            body = content[frontmatter_match.end() :]
 
         # 如果 frontmatter 有 title 且正文不以 h1 标题（"# "）开头，
         # 补一个 h1 标题让 chunker 能结构化分块

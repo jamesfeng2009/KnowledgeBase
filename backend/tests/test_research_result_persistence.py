@@ -15,6 +15,7 @@ P0-2 验收："卡死的 queued 任务被补偿扫描回填或标 failed 释放�
 
 真库夹具沿用 test_research_idempotency.py 的写法。
 """
+
 from __future__ import annotations
 
 import os
@@ -23,9 +24,8 @@ from unittest.mock import patch
 from uuid import uuid4
 
 import httpx
-import pytest
 import pytest_asyncio
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
@@ -39,7 +39,6 @@ from app.services.research_job_service import (
     mark_research_job_status,
 )
 
-
 # ======================================================================
 # 夹具 — 真 PostgreSQL（DATABASE_URL 必须为 postgresql+asyncpg）
 # ======================================================================
@@ -48,8 +47,8 @@ from app.services.research_job_service import (
 @pytest_asyncio.fixture(scope="module")
 async def pg_engine():
     """模块级引擎 — create_all 幂等建表 + 清空本模块相关表保证可重跑。"""
-    from app.models.base import Base
     import app.models  # noqa: F401  确保全部模型注册进 metadata
+    from app.models.base import Base
 
     engine = create_async_engine(
         os.environ["DATABASE_URL"], echo=False, poolclass=NullPool
@@ -139,10 +138,13 @@ class TestMarkFinalize:
         """mark(success, output) — status/output_json/finished_at 同条 UPDATE 落库。"""
         async with await db_maker() as s:
             job, _ = await create_research_job(
-                s, user_id=owner.id, tenant_id=None,
+                s,
+                user_id=owner.id,
+                tenant_id=None,
                 idempotency_key=None,
                 input_hash=compute_input_hash("收尾落库", None),
-                goal="收尾落库", kb_ids=None,
+                goal="收尾落库",
+                kb_ids=None,
             )
             await s.commit()
 
@@ -160,10 +162,13 @@ class TestMarkFinalize:
         """mark(failed) — finished_at 落库，output_json 保持 NULL。"""
         async with await db_maker() as s:
             job, _ = await create_research_job(
-                s, user_id=owner.id, tenant_id=None,
+                s,
+                user_id=owner.id,
+                tenant_id=None,
                 idempotency_key=None,
                 input_hash=compute_input_hash("失败收尾", None),
-                goal="失败收尾", kb_ids=None,
+                goal="失败收尾",
+                kb_ids=None,
             )
             await s.commit()
 
@@ -179,16 +184,17 @@ class TestMarkFinalize:
         """only_when_queued 守卫 — 已终态的行绝不被回填覆盖。"""
         async with await db_maker() as s:
             job, _ = await create_research_job(
-                s, user_id=owner.id, tenant_id=None,
+                s,
+                user_id=owner.id,
+                tenant_id=None,
                 idempotency_key=None,
                 input_hash=compute_input_hash("终态守卫", None),
-                goal="终态守卫", kb_ids=None,
+                goal="终态守卫",
+                kb_ids=None,
             )
             await s.commit()
         real_report = {"summary": "真实结果"}
-        await mark_research_job_status(
-            str(job.id), "success", output=real_report
-        )
+        await mark_research_job_status(str(job.id), "success", output=real_report)
 
         # 迟到的 Redis 旧失败记录 — 不允许把成功翻成失败
         changed = await backfill_result_from_redis(
@@ -230,8 +236,8 @@ def _install_overrides(app, db_maker, mock_user):
 @pytest_asyncio.fixture
 async def api_factory(db_maker):
     """客户端工厂 — 可按不同用户身份创建客户端（测归属校验需两方）。"""
-    from app.main import app
     import app.middleware as _mw
+    from app.main import app
 
     _mw._rate_limiter = None
     _mw._tenant_rate_limiter = None
@@ -241,7 +247,8 @@ async def api_factory(db_maker):
     async def _make(user: SimpleNamespace) -> httpx.AsyncClient:
         _install_overrides(app, db_maker, user)
         client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://test",
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://test",
         )
         made.append(client)
         return client
@@ -255,10 +262,13 @@ async def api_factory(db_maker):
 async def _make_job(db_maker, owner, goal: str, key: str | None = None):
     async with await db_maker() as s:
         job, _ = await create_research_job(
-            s, user_id=owner.id, tenant_id=None,
+            s,
+            user_id=owner.id,
+            tenant_id=None,
             idempotency_key=key,
             input_hash=compute_input_hash(goal, None),
-            goal=goal, kb_ids=None,
+            goal=goal,
+            kb_ids=None,
         )
         await s.commit()
     return job
@@ -313,9 +323,7 @@ class TestResultEndpoint:
         """排队/执行中且 Redis 无终态 → running（语义不变）。"""
         job = await _make_job(db_maker, owner, "还在跑")
         api = await api_factory(owner)
-        with patch(
-            "app.services.research_progress.load_result", return_value=None
-        ):
+        with patch("app.services.research_progress.load_result", return_value=None):
             resp = await api.get(f"/api/v1/research/{job.id}/result")
         assert resp.json()["data"]["status"] == "running"
 
@@ -333,9 +341,7 @@ class TestResultEndpoint:
         assert resp_owner.json()["data"]["report"] == report
 
         stranger_api = await api_factory(stranger)
-        resp_stranger = await stranger_api.get(
-            f"/api/v1/research/{job.id}/result"
-        )
+        resp_stranger = await stranger_api.get(f"/api/v1/research/{job.id}/result")
         assert resp_stranger.json()["code"] == 403
 
     async def test_missing_or_invalid_id_404(self, api_factory, owner) -> None:
@@ -358,9 +364,7 @@ class TestRescanStuckResearch:
 
         return await _rescan_stuck_research_async()
 
-    async def test_stuck_with_redis_result_backfilled(
-        self, db_maker, owner
-    ) -> None:
+    async def test_stuck_with_redis_result_backfilled(self, db_maker, owner) -> None:
         """卡死 + Redis 有终态 → 回填 DB（救 mark 静默失败）。"""
         job = await _make_job(db_maker, owner, "卡死但有结果")
         await _age_job(db_maker, job.id, hours=3)
@@ -386,9 +390,7 @@ class TestRescanStuckResearch:
         job = await _make_job(db_maker, owner, "卡死无结果", key=key)
         await _age_job(db_maker, job.id, hours=3)
 
-        with patch(
-            "app.services.research_progress.load_result", return_value=None
-        ):
+        with patch("app.services.research_progress.load_result", return_value=None):
             result = await self._scan()
 
         assert result["marked_failed"] >= 1
@@ -399,10 +401,13 @@ class TestRescanStuckResearch:
         # 幂等键已释放 — 原键重试可创建新任务
         async with await db_maker() as s:
             job2, created = await create_research_job(
-                s, user_id=owner.id, tenant_id=None,
+                s,
+                user_id=owner.id,
+                tenant_id=None,
                 idempotency_key=key,
                 input_hash=compute_input_hash("卡死无结果", None),
-                goal="卡死无结果", kb_ids=None,
+                goal="卡死无结果",
+                kb_ids=None,
             )
             await s.commit()
         assert created is True

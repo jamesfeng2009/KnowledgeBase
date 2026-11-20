@@ -147,8 +147,8 @@ def _resolve_eval_provider(
 def _build_judge_with_model(judge_model: str | None) -> Any | None:
     """P2-7: 构建可指定裁判模型的 LLMJudgeService。"""
     try:
-        from app.observability.llm_judge import LLMJudgeService
         from app.llm.factory import get_llm_provider
+        from app.observability.llm_judge import LLMJudgeService
 
         default = get_llm_provider()
         provider = _resolve_eval_provider(judge_model, "JUDGE", default)
@@ -198,7 +198,12 @@ def _format_report(result: EvalRunResult, dataset_name: str) -> str:
     # RAGAS 指标
     if result.avg_ragas:
         lines.append("  RAGAS 指标:")
-        for key in ("faithfulness", "answer_relevancy", "context_precision", "context_recall"):
+        for key in (
+            "faithfulness",
+            "answer_relevancy",
+            "context_precision",
+            "context_recall",
+        ):
             val = result.avg_ragas.get(key, 0.0)
             lines.append(f"    {key:<22}: {val:.4f}")
 
@@ -254,9 +259,7 @@ def _format_report(result: EvalRunResult, dataset_name: str) -> str:
     lines.append(header)
     for i, c in enumerate(result.case_results, start=1):
         judge_val = (
-            f"{c.judge_scores.get('total_score', 0.0):.2f}"
-            if c.judge_scores
-            else "-"
+            f"{c.judge_scores.get('total_score', 0.0):.2f}" if c.judge_scores else "-"
         )
         ragas_val = "-"
         if c.ragas_scores:
@@ -299,9 +302,7 @@ def _format_comparison(comparison: dict[str, Any]) -> str:
     case_diffs = comparison.get("case_diffs") or []
     regressed_cases = [d for d in case_diffs if d.get("regressed")]
     if regressed_cases:
-        lines.append(
-            f"case 级回归: {len(regressed_cases)} 条用例退化"
-        )
+        lines.append(f"case 级回归: {len(regressed_cases)} 条用例退化")
         for d in regressed_cases:
             detail = (
                 f"  [{d['change']}] {d['query'][:40]}  "

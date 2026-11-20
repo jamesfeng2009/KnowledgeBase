@@ -34,13 +34,14 @@ import json
 import logging
 import random
 import sys
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 logger = logging.getLogger("train_dpo")
 
 # 分组切分与 MPS 缓存清理回调统一收敛到 finetune_utils（评审 #2/#10）
-from finetune_utils import (
+from finetune_utils import (  # noqa: E402  — 有意延迟导入（依赖上方初始化）
     grouped_split_indices,
     last_user_content,
     make_mps_cache_cleanup_callback,
@@ -87,7 +88,11 @@ def _validate_messages(messages: Any) -> bool:
             return False
         role = msg.get("role")
         content = msg.get("content")
-        if not isinstance(role, str) or not isinstance(content, str) or not content.strip():
+        if (
+            not isinstance(role, str)
+            or not isinstance(content, str)
+            or not content.strip()
+        ):
             return False
     return True
 
@@ -102,17 +107,29 @@ def load_dpo_jsonl(path: str | Path) -> list[dict]:
     """
     records: list[dict] = []
     for lineno, obj in iter_jsonl(path):
-        prompt, chosen, rejected = obj.get("prompt"), obj.get("chosen"), obj.get("rejected")
+        prompt, chosen, rejected = (
+            obj.get("prompt"),
+            obj.get("chosen"),
+            obj.get("rejected"),
+        )
         if not all(_validate_messages(x) for x in (prompt, chosen, rejected)):
-            logger.warning("跳过样本 %s:%d — prompt/chosen/rejected 必须为非空消息列表", path, lineno)
+            logger.warning(
+                "跳过样本 %s:%d — prompt/chosen/rejected 必须为非空消息列表",
+                path,
+                lineno,
+            )
             continue
         chosen_text = chosen[-1]["content"].strip()
         rejected_text = rejected[-1]["content"].strip()
         if chosen_text == rejected_text:
-            logger.warning("跳过样本 %s:%d — chosen 与 rejected 相同，无偏好信号", path, lineno)
+            logger.warning(
+                "跳过样本 %s:%d — chosen 与 rejected 相同，无偏好信号", path, lineno
+            )
             continue
         meta = obj.get("meta") if isinstance(obj.get("meta"), dict) else {}
-        records.append({"prompt": prompt, "chosen": chosen, "rejected": rejected, "meta": meta})
+        records.append(
+            {"prompt": prompt, "chosen": chosen, "rejected": rejected, "meta": meta}
+        )
     logger.info("加载 DPO 样本 %d 条 — %s", len(records), path)
     return records
 
@@ -151,25 +168,52 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--data", required=True, help="dpo.jsonl 路径")
-    parser.add_argument("--base_model", default="Qwen/Qwen2.5-7B-Instruct", help="基座模型（HF repo 或本地路径）")
-    parser.add_argument("--sft_adapter", default=None,
-                        help="可选：SFT 阶段产出的 LoRA adapter 路径；提供时先 merge 进基座再做 DPO")
-    parser.add_argument("--output_dir", default="outputs/lora-dpo", help="DPO LoRA adapter 输出目录")
-    parser.add_argument("--beta", type=float, default=0.1, help="DPO 温度系数（越小越偏离参考模型）")
+    parser.add_argument(
+        "--base_model",
+        default="Qwen/Qwen2.5-7B-Instruct",
+        help="基座模型（HF repo 或本地路径）",
+    )
+    parser.add_argument(
+        "--sft_adapter",
+        default=None,
+        help="可选：SFT 阶段产出的 LoRA adapter 路径；提供时先 merge 进基座再做 DPO",
+    )
+    parser.add_argument(
+        "--output_dir", default="outputs/lora-dpo", help="DPO LoRA adapter 输出目录"
+    )
+    parser.add_argument(
+        "--beta", type=float, default=0.1, help="DPO 温度系数（越小越偏离参考模型）"
+    )
     parser.add_argument("--lora_rank", type=int, default=16, help="LoRA rank")
     parser.add_argument("--lora_alpha", type=int, default=32, help="LoRA alpha")
     parser.add_argument("--lora_dropout", type=float, default=0.05, help="LoRA dropout")
-    parser.add_argument("--lr", type=float, default=5e-5, help="学习率（DPO 通常小于 SFT）")
-    parser.add_argument("--epochs", type=float, default=1, help="训练轮数（DPO 容易过拟合，1-2 轮为宜）")
-    parser.add_argument("--batch_size", type=int, default=2, help="单卡 micro batch size（每条含 chosen+rejected 两个序列）")
+    parser.add_argument(
+        "--lr", type=float, default=5e-5, help="学习率（DPO 通常小于 SFT）"
+    )
+    parser.add_argument(
+        "--epochs", type=float, default=1, help="训练轮数（DPO 容易过拟合，1-2 轮为宜）"
+    )
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=2,
+        help="单卡 micro batch size（每条含 chosen+rejected 两个序列）",
+    )
     parser.add_argument("--grad_accum", type=int, default=16, help="梯度累积步数")
-    parser.add_argument("--qlora", action="store_true", help="启用 4bit NF4 量化加载基座")
-    parser.add_argument("--max_len", type=int, default=2048, help="prompt+completion 最大总长")
+    parser.add_argument(
+        "--qlora", action="store_true", help="启用 4bit NF4 量化加载基座"
+    )
+    parser.add_argument(
+        "--max_len", type=int, default=2048, help="prompt+completion 最大总长"
+    )
     parser.add_argument("--eval_ratio", type=float, default=0.05, help="验证集比例")
     parser.add_argument("--seed", type=int, default=42, help="随机种子")
-    parser.add_argument("--no_gradient_checkpointing", action="store_true",
-                        help="关闭梯度检查点。1.5B 小模型推荐开启（实测内存不变快40%%）；"
-                             "7B 勿用——权重占大头，关 ckpt 激活翻倍会 OOM。见微调.md 附录D")
+    parser.add_argument(
+        "--no_gradient_checkpointing",
+        action="store_true",
+        help="关闭梯度检查点。1.5B 小模型推荐开启（实测内存不变快40%%）；"
+        "7B 勿用——权重占大头，关 ckpt 激活翻倍会 OOM。见微调.md 附录D",
+    )
     return parser.parse_args(argv)
 
 
@@ -183,7 +227,10 @@ def _detect_bf16() -> bool:
 
     if torch.cuda.is_available():
         return bool(torch.cuda.is_bf16_supported())
-    if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+    if (
+        getattr(torch.backends, "mps", None) is not None
+        and torch.backends.mps.is_available()
+    ):
         try:
             torch.zeros(1, dtype=torch.bfloat16, device="mps")
             return True
@@ -194,7 +241,9 @@ def _detect_bf16() -> bool:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
 
     # ---- 重依赖延迟导入：保证无 GPU 环境下 import 本模块（做单测）不报错 ----
     import torch
@@ -282,7 +331,10 @@ def main(argv: list[str] | None = None) -> int:
 
     # ---- MPS 缓存清理回调（仅 MPS 设备启用，工厂来自 finetune_utils）----
     mps_callbacks = []
-    if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+    if (
+        getattr(torch.backends, "mps", None) is not None
+        and torch.backends.mps.is_available()
+    ):
         mps_callbacks.append(make_mps_cache_cleanup_callback(every_n_steps=5))
         logger.info("已添加 MPS 缓存清理回调（每 5 步 torch.mps.empty_cache()）")
 
@@ -301,7 +353,11 @@ def main(argv: list[str] | None = None) -> int:
         "base_model": args.base_model,
         "sft_adapter": args.sft_adapter,
         "beta": args.beta,
-        "lora": {"rank": args.lora_rank, "alpha": args.lora_alpha, "dropout": args.lora_dropout},
+        "lora": {
+            "rank": args.lora_rank,
+            "alpha": args.lora_alpha,
+            "dropout": args.lora_dropout,
+        },
         "lr": args.lr,
         "epochs": args.epochs,
         "effective_batch_size": args.batch_size * args.grad_accum,

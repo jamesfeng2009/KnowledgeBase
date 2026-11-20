@@ -9,6 +9,7 @@ Bug4: KnowledgeService.get_document / update_document 补密级校验 —
 Bug5: documents.py multipart 上传会话归属校验 + 文档列表租户过滤 —
       修复 IDOR 与跨租户数据可见（安全）
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -38,7 +39,6 @@ from app.rag.vector_store.opensearch_store import OpenSearchVectorStore
 from app.services.knowledge_service import KnowledgeService
 from app.utils.pagination import PageResult
 
-
 # ======================================================================
 # 公共测试辅助
 # ======================================================================
@@ -58,7 +58,9 @@ class _FakeEmbedder:
 class _MockResp:
     """模拟 httpx.Response。"""
 
-    def __init__(self, status_code: int = 200, json_data: Any = None, text: str = "") -> None:
+    def __init__(
+        self, status_code: int = 200, json_data: Any = None, text: str = ""
+    ) -> None:
         self.status_code = status_code
         self._json_data = json_data or {}
         self.text = text
@@ -75,7 +77,9 @@ class _MockResp:
             )
 
 
-def _recording_http(post_response: _MockResp | None = None) -> tuple[MagicMock, list[dict], dict]:
+def _recording_http(
+    post_response: _MockResp | None = None,
+) -> tuple[MagicMock, list[dict], dict]:
     """创建记录 POST 调用参数的 mock http client。
 
     返回 (client, calls, state)。state["exc"] 置为非 None 时 post 抛异常，
@@ -100,11 +104,15 @@ def _recording_http(post_response: _MockResp | None = None) -> tuple[MagicMock, 
 
 
 def _make_user(role: str = "viewer", clearance: str = "internal") -> SimpleNamespace:
-    return SimpleNamespace(id=uuid4(), role=role, clearance_level=clearance, dept_id=None)
+    return SimpleNamespace(
+        id=uuid4(), role=role, clearance_level=clearance, dept_id=None
+    )
 
 
 def _make_doc(classification: str = "internal") -> SimpleNamespace:
-    return SimpleNamespace(id=uuid4(), kb_id=uuid4(), classification=classification, deleted_at=None)
+    return SimpleNamespace(
+        id=uuid4(), kb_id=uuid4(), classification=classification, deleted_at=None
+    )
 
 
 def _make_chunk(doc_id: str = "doc-001") -> Chunk:
@@ -176,7 +184,9 @@ class TestBug1CacheTenantIsolation:
         await cache.set("报销流程是什么", "租户A的内部答案", tenant_id="tenant-a")
 
         # 同租户语义命中（同 query embedding 相同，相似度 1.0）
-        assert await cache.get("报销流程是什么", tenant_id="tenant-a") == "租户A的内部答案"
+        assert (
+            await cache.get("报销流程是什么", tenant_id="tenant-a") == "租户A的内部答案"
+        )
         # 跨租户负向用例：即使语义完全相同也不得命中
         assert await cache.get("报销流程是什么", tenant_id="tenant-b") is None
         assert await cache.get("报销流程是什么") is None
@@ -194,7 +204,10 @@ class TestBug2VectorStoreKbId:
         """显式入参 kb_id 优先。"""
         chunk = _make_chunk()
         object.__setattr__(chunk, "kb_id", "kb-from-chunk")  # Chunk 为 frozen dataclass
-        assert VectorStoreBase._resolve_kb_id(chunk, "doc-1", "kb-explicit") == "kb-explicit"
+        assert (
+            VectorStoreBase._resolve_kb_id(chunk, "doc-1", "kb-explicit")
+            == "kb-explicit"
+        )
 
     def test_resolve_chunk_carried_kb_id(self) -> None:
         """chunk 携带 kb_id 属性时次之。"""
@@ -281,7 +294,10 @@ class TestBug3OpenSearchRetriever:
         await retriever._fulltext_search("报销流程", None, 5)
 
         assert len(calls) == 1
-        assert calls[0]["url"] == f"{settings.OPENSEARCH_URL}/{settings.OPENSEARCH_INDEX}/_search"
+        assert (
+            calls[0]["url"]
+            == f"{settings.OPENSEARCH_URL}/{settings.OPENSEARCH_INDEX}/_search"
+        )
         assert "document_chunks" not in calls[0]["url"]
 
     @pytest.mark.asyncio
@@ -291,7 +307,9 @@ class TestBug3OpenSearchRetriever:
         await retriever._fulltext_search("报销流程", ["kb-1", "kb-2"], 5)
 
         payload = calls[0]["json"]
-        assert payload["query"]["bool"]["filter"] == [{"terms": {"kb_id": ["kb-1", "kb-2"]}}]
+        assert payload["query"]["bool"]["filter"] == [
+            {"terms": {"kb_id": ["kb-1", "kb-2"]}}
+        ]
 
     @pytest.mark.asyncio
     async def test_fulltext_query_fields_match_write_side(self) -> None:
@@ -310,9 +328,13 @@ class TestBug3OpenSearchRetriever:
         # 查询字段必须包含 content（写入方字段名）
         assert "content" in fields, f"查询字段 {fields} 缺少 content（写入方字段名）"
         # 查询字段必须包含 title_path（写入方字段名），不能是旧名 title
-        assert any("title_path" in f for f in fields), f"查询字段 {fields} 缺少 title_path"
+        assert any(
+            "title_path" in f for f in fields
+        ), f"查询字段 {fields} 缺少 title_path"
         # 不能使用旧字段名 chunk_text
-        assert not any("chunk_text" in f for f in fields), f"查询字段 {fields} 不应包含 chunk_text"
+        assert not any(
+            "chunk_text" in f for f in fields
+        ), f"查询字段 {fields} 不应包含 chunk_text"
 
     @pytest.mark.asyncio
     async def test_fulltext_source_includes_write_side_fields(self) -> None:
@@ -649,9 +671,7 @@ class TestBug5MultipartEndpointIDOR:
         viewer_id = str(viewer_client._ekb_viewer.id)  # type: ignore[attr-defined]
         with patch(
             "app.api.v1.documents._load_multipart_session",
-            new=AsyncMock(
-                return_value={"user_id": viewer_id, "object_name": "kb-x/a"}
-            ),
+            new=AsyncMock(return_value={"user_id": viewer_id, "object_name": "kb-x/a"}),
         ):
             resp = await viewer_client.put(
                 f"/api/v1/documents/multipart/{uuid4()}/parts/1",
@@ -749,7 +769,9 @@ class TestBug5ListDocumentsTenantFilter:
         admin = _make_user(role="admin")
         page = PageResult(items=[], total=0, page=1, size=20, pages=0)
 
-        with patch("app.api.v1.documents.paginate", new=AsyncMock(return_value=page)) as mock_paginate:
+        with patch(
+            "app.api.v1.documents.paginate", new=AsyncMock(return_value=page)
+        ) as mock_paginate:
             resp = await list_documents(
                 request,
                 kb_id=None,
@@ -774,7 +796,9 @@ class TestBug5ListDocumentsTenantFilter:
         admin = _make_user(role="admin")
         page = PageResult(items=[], total=0, page=1, size=20, pages=0)
 
-        with patch("app.api.v1.documents.paginate", new=AsyncMock(return_value=page)) as mock_paginate:
+        with patch(
+            "app.api.v1.documents.paginate", new=AsyncMock(return_value=page)
+        ) as mock_paginate:
             await list_documents(
                 request,
                 kb_id=None,

@@ -6,9 +6,10 @@
     - chat 协议：继承 VLLMProvider，流式/非流式/tool_use 复用既有逻辑
       （此处仅验证构造与注册，深层协议由 vllm/dashscope 测试覆盖）。
 """
+
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -17,11 +18,12 @@ from app.llm.openai_provider import OpenAIProvider
 
 class TestOpenAIProviderInit:
     def test_init_uses_config(self) -> None:
-        with patch(
-            "app.llm.openai_provider.AsyncOpenAI", return_value=MagicMock()
-        ) as mock_client, patch(
-            "app.llm.openai_provider.settings"
-        ) as mock_settings:
+        with (
+            patch(
+                "app.llm.openai_provider.AsyncOpenAI", return_value=MagicMock()
+            ) as mock_client,
+            patch("app.llm.openai_provider.settings") as mock_settings,
+        ):
             mock_settings.OPENAI_BASE_URL = "https://api.deepseek.com/v1"
             mock_settings.OPENAI_API_KEY = "sk-test"
             mock_settings.OPENAI_LLM_MODEL = "deepseek-chat"
@@ -35,9 +37,7 @@ class TestOpenAIProviderInit:
             assert provider.default_model == "deepseek-chat"
 
     def test_init_with_explicit_model(self) -> None:
-        with patch(
-            "app.llm.openai_provider.AsyncOpenAI", return_value=MagicMock()
-        ):
+        with patch("app.llm.openai_provider.AsyncOpenAI", return_value=MagicMock()):
             provider = OpenAIProvider(model="moonshot-v1-8k")
             assert provider.default_model == "moonshot-v1-8k"
 
@@ -66,9 +66,7 @@ class TestOpenAIRegistry:
         assert entry.type == "llm"
         assert entry.breaker_name == "openai"
         # 工厂函数可调用并返回 OpenAIProvider 实例
-        with patch(
-            "app.llm.openai_provider.AsyncOpenAI", return_value=MagicMock()
-        ):
+        with patch("app.llm.openai_provider.AsyncOpenAI", return_value=MagicMock()):
             instance = entry.factory()
             assert isinstance(instance, OpenAIProvider)
 
@@ -79,18 +77,22 @@ class TestProviderByModelOpenAI:
         """按 model_id 创建 openai provider 并缓存（复用既有工厂路径）。"""
         from app.llm import factory
 
-        with patch(
-            "app.llm.openai_provider.AsyncOpenAI", return_value=MagicMock()
-        ) as mock_client, patch.object(
-            factory, "get_model_by_id", return_value={
-                "id": "deepseek-test",
-                "model_id": "deepseek-chat",
-                "provider_type": "openai",
-                "deploy_mode": "saas",
-                "enabled": True,
-            }
-        ), patch.object(
-            factory.settings, "DEPLOY_MODE", "saas"
+        with (
+            patch(
+                "app.llm.openai_provider.AsyncOpenAI", return_value=MagicMock()
+            ) as mock_client,
+            patch.object(
+                factory,
+                "get_model_by_id",
+                return_value={
+                    "id": "deepseek-test",
+                    "model_id": "deepseek-chat",
+                    "provider_type": "openai",
+                    "deploy_mode": "saas",
+                    "enabled": True,
+                },
+            ),
+            patch.object(factory.settings, "DEPLOY_MODE", "saas"),
         ):
             factory.clear_model_provider_cache()
             provider = factory.get_llm_provider_by_model("deepseek-test")

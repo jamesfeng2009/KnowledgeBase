@@ -16,9 +16,9 @@ import asyncio
 import uuid
 from typing import Any
 
-from celery_app import celery_app
 from app.utils.logger import get_logger
 from app.utils.retry import make_celery_retry_kwargs
+from celery_app import celery_app
 from tasks.document_tasks import _send_to_dead_letter
 
 logger = get_logger(__name__)
@@ -29,7 +29,9 @@ logger = get_logger(__name__)
     bind=True,
     **make_celery_retry_kwargs(),
 )
-def build_search_index(self, doc_id: str, tenant_id: str | None = None) -> dict[str, Any]:
+def build_search_index(
+    self, doc_id: str, tenant_id: str | None = None
+) -> dict[str, Any]:
     """构建文档的全文索引（OpenSearch）。
 
     将文档内容索引到 OpenSearch，支持全文检索。
@@ -56,7 +58,12 @@ def build_search_index(self, doc_id: str, tenant_id: str | None = None) -> dict[
                 kwargs={"tenant_id": tenant_id},
                 exc=exc,
             )
-            return {"status": "failed", "doc_id": doc_id, "error": str(exc)[:500], "dead_lettered": True}
+            return {
+                "status": "failed",
+                "doc_id": doc_id,
+                "error": str(exc)[:500],
+                "dead_lettered": True,
+            }
         raise self.retry(exc=exc)
 
 
@@ -65,7 +72,9 @@ def build_search_index(self, doc_id: str, tenant_id: str | None = None) -> dict[
     bind=True,
     **make_celery_retry_kwargs(),
 )
-def build_vector_index(self, doc_id: str, tenant_id: str | None = None) -> dict[str, Any]:
+def build_vector_index(
+    self, doc_id: str, tenant_id: str | None = None
+) -> dict[str, Any]:
     """构建文档的向量索引（Milvus）。
 
     将文档内容向量化后存入 Milvus，支持语义检索。
@@ -92,7 +101,12 @@ def build_vector_index(self, doc_id: str, tenant_id: str | None = None) -> dict[
                 kwargs={"tenant_id": tenant_id},
                 exc=exc,
             )
-            return {"status": "failed", "doc_id": doc_id, "error": str(exc)[:500], "dead_lettered": True}
+            return {
+                "status": "failed",
+                "doc_id": doc_id,
+                "error": str(exc)[:500],
+                "dead_lettered": True,
+            }
         raise self.retry(exc=exc)
 
 
@@ -127,13 +141,19 @@ def rebuild_kb_index(self, kb_id: str, tenant_id: str | None = None) -> dict[str
                 kwargs={"tenant_id": tenant_id},
                 exc=exc,
             )
-            return {"status": "failed", "kb_id": kb_id, "error": str(exc)[:500], "dead_lettered": True}
+            return {
+                "status": "failed",
+                "kb_id": kb_id,
+                "error": str(exc)[:500],
+                "dead_lettered": True,
+            }
         raise self.retry(exc=exc)
 
 
 # ------------------------------------------------------------------
 # 异步实现
 # ------------------------------------------------------------------
+
 
 async def _build_search_index_async(
     doc_id: str, tenant_id: str | None = None
@@ -164,6 +184,7 @@ async def _build_search_index_async(
         if current_hash:
             try:
                 from opensearchpy import AsyncOpenSearch
+
                 from app.config import get_settings
 
                 settings = get_settings()
@@ -190,6 +211,7 @@ async def _build_search_index_async(
     # 延迟导入 OpenSearch 客户端
     try:
         from opensearchpy import AsyncOpenSearch
+
         from app.config import get_settings
 
         settings = get_settings()
@@ -228,7 +250,11 @@ async def _build_search_index_async(
         return {"doc_id": doc_id, "status": "success", "index": "opensearch"}
     except ImportError:
         logger.warning("index.search_skipped", reason="opensearch-py not installed")
-        return {"doc_id": doc_id, "status": "skipped", "reason": "opensearch-py not installed"}
+        return {
+            "doc_id": doc_id,
+            "status": "skipped",
+            "reason": "opensearch-py not installed",
+        }
     except Exception as exc:
         logger.warning("index.search_error", error=str(exc))
         raise
@@ -257,6 +283,7 @@ async def _build_vector_index_async(
     # 生成向量嵌入
     try:
         from app.llm.embedder import get_embedder
+
         embedder = get_embedder()
         embeddings = await embedder.embed([content])
         if not embeddings:
@@ -264,11 +291,16 @@ async def _build_vector_index_async(
         embedding = embeddings[0]
     except Exception as exc:
         logger.warning("index.vector_embed_failed", error=str(exc))
-        return {"doc_id": doc_id, "status": "skipped", "reason": f"embedder error: {exc}"}
+        return {
+            "doc_id": doc_id,
+            "status": "skipped",
+            "reason": f"embedder error: {exc}",
+        }
 
     # 延迟导入 Milvus 客户端
     try:
-        from pymilvus import connections, Collection, utility
+        from pymilvus import Collection, connections, utility
+
         from app.config import get_settings
 
         settings = get_settings()
@@ -281,22 +313,32 @@ async def _build_vector_index_async(
         collection_name = "ekb_documents"
         if not utility.has_collection(collection_name):
             logger.warning("milvus.collection_not_found", collection=collection_name)
-            return {"doc_id": doc_id, "status": "skipped", "reason": "collection not found"}
+            return {
+                "doc_id": doc_id,
+                "status": "skipped",
+                "reason": "collection not found",
+            }
 
         collection = Collection(collection_name)
-        collection.insert([
-            [doc_id],           # doc_id 列
-            [0],                # chunk_id 列
-            [content[:200]],    # content 列（预览）
-            [embedding],         # embedding 列
-        ])
+        collection.insert(
+            [
+                [doc_id],  # doc_id 列
+                [0],  # chunk_id 列
+                [content[:200]],  # content 列（预览）
+                [embedding],  # embedding 列
+            ]
+        )
         collection.load()
 
         logger.info("index.vector_built", doc_id=doc_id)
         return {"doc_id": doc_id, "status": "success", "index": "milvus"}
     except ImportError:
         logger.warning("index.vector_skipped", reason="pymilvus not installed")
-        return {"doc_id": doc_id, "status": "skipped", "reason": "pymilvus not installed"}
+        return {
+            "doc_id": doc_id,
+            "status": "skipped",
+            "reason": "pymilvus not installed",
+        }
     except Exception as exc:
         logger.warning("index.vector_error", error=str(exc))
         raise
@@ -329,12 +371,19 @@ async def _delete_kb_indices(kb_id: str, doc_ids: list[str]) -> None:
                 index=index_name,
                 body={"query": {"term": {"kb_id": kb_id}}},
             )
-            logger.info("index.rebuild_deleted_opensearch", kb_id=kb_id, doc_count=len(doc_ids))
+            logger.info(
+                "index.rebuild_deleted_opensearch", kb_id=kb_id, doc_count=len(doc_ids)
+            )
         await client.close()
     except ImportError:
-        logger.debug("index.rebuild_delete_opensearch_skipped", reason="opensearch-py not installed")
+        logger.debug(
+            "index.rebuild_delete_opensearch_skipped",
+            reason="opensearch-py not installed",
+        )
     except Exception as exc:
-        logger.warning("index.rebuild_delete_opensearch_failed", kb_id=kb_id, error=str(exc))
+        logger.warning(
+            "index.rebuild_delete_opensearch_failed", kb_id=kb_id, error=str(exc)
+        )
 
     # --- 删除 Milvus 旧向量 ---
     try:
@@ -353,12 +402,18 @@ async def _delete_kb_indices(kb_id: str, doc_ids: list[str]) -> None:
             collection = Collection(collection_name)
             # 通过 doc_id 列表删除（Milvus 用 expr 过滤）
             ids_str = ", ".join(f'"{did}"' for did in doc_ids)
-            collection.delete(f'doc_id in [{ids_str}]')
-            logger.info("index.rebuild_deleted_milvus", kb_id=kb_id, doc_count=len(doc_ids))
+            collection.delete(f"doc_id in [{ids_str}]")
+            logger.info(
+                "index.rebuild_deleted_milvus", kb_id=kb_id, doc_count=len(doc_ids)
+            )
     except ImportError:
-        logger.debug("index.rebuild_delete_milvus_skipped", reason="pymilvus not installed")
+        logger.debug(
+            "index.rebuild_delete_milvus_skipped", reason="pymilvus not installed"
+        )
     except Exception as exc:
-        logger.warning("index.rebuild_delete_milvus_failed", kb_id=kb_id, error=str(exc))
+        logger.warning(
+            "index.rebuild_delete_milvus_failed", kb_id=kb_id, error=str(exc)
+        )
 
 
 async def _rebuild_kb_index_async(

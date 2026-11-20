@@ -14,6 +14,7 @@
     - support_evidence 落库
 - TestGateInExtractPath: 闸门接入 extract_from_chat_feedback 的 skip 留痕
 """
+
 from __future__ import annotations
 
 import sys
@@ -53,7 +54,9 @@ def _make_mock_db():
 def _make_db_with_rows(rows_by_call: list[list]):
     """创建按调用次序返回不同行的 Mock DB — 用于闸门多查询场景。"""
     db = _make_mock_db()
-    results = [MagicMock(fetchall=MagicMock(return_value=rows)) for rows in rows_by_call]
+    results = [
+        MagicMock(fetchall=MagicMock(return_value=rows)) for rows in rows_by_call
+    ]
     db.execute = AsyncMock(side_effect=results)
     return db
 
@@ -201,7 +204,7 @@ class TestCheckBeforeExtract:
         asset_row = (uuid.uuid4(), "公司差旅报销标准是什么？")
         # 调用次序：好评支持度 → 采纳支持度 → 资产查重
         gate = DistillationGate(
-            _make_db_with_rows([ [], [], [asset_row] ]), tenant_id=None
+            _make_db_with_rows([[], [], [asset_row]]), tenant_id=None
         )
         verdict = await gate.check_before_extract(
             question_hint="公司差旅报销标准是什么？",  # 归一化后与标题一致 → 1.0
@@ -221,7 +224,7 @@ class TestCheckBeforeExtract:
 
         asset_row = (uuid.uuid4(), "如何申请年假？年假流程说明")
         gate = DistillationGate(
-            _make_db_with_rows([ [], [], [asset_row] ]), tenant_id=None
+            _make_db_with_rows([[], [], [asset_row]]), tenant_id=None
         )
         verdict = await gate.check_before_extract(
             question_hint="公司差旅报销标准？",
@@ -283,9 +286,7 @@ class TestCheckAfterExtract:
         vec = [0.1, 0.2, 0.3]
         embedder = MagicMock()
         embedder.embed = AsyncMock(return_value=[vec, vec])  # 问题与标题同向量
-        with patch(
-            "app.llm.embedder.get_embedder", return_value=embedder
-        ):
+        with patch("app.llm.embedder.get_embedder", return_value=embedder):
             verdict = await gate.check_after_extract(
                 question="公司差旅报销标准？", target_kb_id=uuid.uuid4()
             )
@@ -303,12 +304,8 @@ class TestCheckAfterExtract:
         gate = DistillationGate(_make_db_with_rows([[doc_row]]), tenant_id=None)
 
         embedder = MagicMock()
-        embedder.embed = AsyncMock(
-            return_value=[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
-        )
-        with patch(
-            "app.llm.embedder.get_embedder", return_value=embedder
-        ):
+        embedder.embed = AsyncMock(return_value=[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+        with patch("app.llm.embedder.get_embedder", return_value=embedder):
             verdict = await gate.check_after_extract(
                 question="公司差旅报销标准？", target_kb_id=uuid.uuid4()
             )
@@ -338,9 +335,7 @@ class TestEmbedCached:
         embedder.embed = AsyncMock(
             side_effect=lambda texts: [[1.0, 0.0] for _ in texts]
         )
-        with patch(
-            "app.llm.embedder.get_embedder", return_value=embedder
-        ):
+        with patch("app.llm.embedder.get_embedder", return_value=embedder):
             await gate.check_after_extract(
                 question="全新问题甲", target_kb_id=uuid.uuid4()
             )
@@ -453,26 +448,34 @@ class TestGateInExtractPath:
         added_tasks: list = []
         db.add = MagicMock(side_effect=lambda obj: added_tasks.append(obj))
 
-        with patch.object(
-            # P3: 闸门直沉路径测试 — 显式关闭候选池（默认开启会先行入池返回 queued）
-            get_settings(),
-            "CHAT_FAQ_CANDIDATE_POOL_ENABLED",
-            False,
-        ), patch.object(
-            service, "_get_asset_by_source", new=AsyncMock(return_value=None)
-        ), patch.object(
-            service, "_load_chat_feedback_context",
-            new=AsyncMock(return_value={
-                "feedback_id": str(feedback_id),
-                "user_id": uuid.uuid4(),
-                "conversation_id": str(uuid.uuid4()),
-                "user_query": "公司差旅报销标准？",
-                "assistant_answer": "经济舱按实报销...",
-                "feedback_content": "回答很详细",
-            }),
-        ), patch(
-            "app.services.knowledge_compounding.compounding_service.DistillationGate"
-        ) as MockGate:
+        with (
+            patch.object(
+                # P3: 闸门直沉路径测试 — 显式关闭候选池（默认开启会先行入池返回 queued）
+                get_settings(),
+                "CHAT_FAQ_CANDIDATE_POOL_ENABLED",
+                False,
+            ),
+            patch.object(
+                service, "_get_asset_by_source", new=AsyncMock(return_value=None)
+            ),
+            patch.object(
+                service,
+                "_load_chat_feedback_context",
+                new=AsyncMock(
+                    return_value={
+                        "feedback_id": str(feedback_id),
+                        "user_id": uuid.uuid4(),
+                        "conversation_id": str(uuid.uuid4()),
+                        "user_query": "公司差旅报销标准？",
+                        "assistant_answer": "经济舱按实报销...",
+                        "feedback_content": "回答很详细",
+                    }
+                ),
+            ),
+            patch(
+                "app.services.knowledge_compounding.compounding_service.DistillationGate"
+            ) as MockGate,
+        ):
             MockGate.return_value.check_before_extract = AsyncMock(
                 return_value={
                     "action": "skip",
@@ -511,41 +514,58 @@ class TestGateInExtractPath:
             "window_days": 30,
         }
 
-        with patch.object(
-            # P3: 闸门直沉路径测试 — 显式关闭候选池
-            get_settings(),
-            "CHAT_FAQ_CANDIDATE_POOL_ENABLED",
-            False,
-        ), patch.object(
-            service, "_get_asset_by_source", new=AsyncMock(return_value=None)
-        ), patch.object(
-            service, "_load_chat_feedback_context",
-            new=AsyncMock(return_value={
-                "feedback_id": str(uuid.uuid4()),
-                "user_id": uuid.uuid4(),
-                "conversation_id": str(uuid.uuid4()),
-                "user_query": "公司差旅报销标准？",
-                "assistant_answer": "经济舱按实报销...",
-                "feedback_content": "回答很详细",
-            }),
-        ), patch(
-            "app.services.knowledge_compounding.compounding_service.DistillationGate"
-        ) as MockGate, patch.object(
-            service, "_llm_extract_faq",
-            new=AsyncMock(return_value={
-                "question": "公司差旅报销标准是什么？",
-                "answer": "经济舱按实报销...",
-                "tags": [],
-                "confidence": 0.9,
-            }),
-        ), patch.object(
-            service, "_precipitate_faq_asset", new=AsyncMock(return_value=asset_mock)
-        ), patch.object(
-            service, "_detect_conflicts_for_assets", new=AsyncMock(return_value=[])
-        ), patch(
-            "app.services.knowledge_approval_service.KnowledgeApprovalService.submit_for_review",
-            new=AsyncMock(return_value=MagicMock()),
-        ) as mock_submit:
+        with (
+            patch.object(
+                # P3: 闸门直沉路径测试 — 显式关闭候选池
+                get_settings(),
+                "CHAT_FAQ_CANDIDATE_POOL_ENABLED",
+                False,
+            ),
+            patch.object(
+                service, "_get_asset_by_source", new=AsyncMock(return_value=None)
+            ),
+            patch.object(
+                service,
+                "_load_chat_feedback_context",
+                new=AsyncMock(
+                    return_value={
+                        "feedback_id": str(uuid.uuid4()),
+                        "user_id": uuid.uuid4(),
+                        "conversation_id": str(uuid.uuid4()),
+                        "user_query": "公司差旅报销标准？",
+                        "assistant_answer": "经济舱按实报销...",
+                        "feedback_content": "回答很详细",
+                    }
+                ),
+            ),
+            patch(
+                "app.services.knowledge_compounding.compounding_service.DistillationGate"
+            ) as MockGate,
+            patch.object(
+                service,
+                "_llm_extract_faq",
+                new=AsyncMock(
+                    return_value={
+                        "question": "公司差旅报销标准是什么？",
+                        "answer": "经济舱按实报销...",
+                        "tags": [],
+                        "confidence": 0.9,
+                    }
+                ),
+            ),
+            patch.object(
+                service,
+                "_precipitate_faq_asset",
+                new=AsyncMock(return_value=asset_mock),
+            ),
+            patch.object(
+                service, "_detect_conflicts_for_assets", new=AsyncMock(return_value=[])
+            ),
+            patch(
+                "app.services.knowledge_approval_service.KnowledgeApprovalService.submit_for_review",
+                new=AsyncMock(return_value=MagicMock()),
+            ) as mock_submit,
+        ):
             MockGate.return_value.check_before_extract = AsyncMock(
                 return_value={
                     "action": "proceed",

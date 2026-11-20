@@ -16,6 +16,7 @@
 -  20: 日志/遥测（structlog/LangFuse flush）
 -  10: 最低优先级兜底
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -114,7 +115,7 @@ class ResourceManager:
                 else:
                     entry.close_fn()  # type: ignore[call-arg]
                 log.info("resource_manager.cleaned", name=entry.name)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 log.warning("resource_manager.cleanup_timeout", name=entry.name)
             except Exception as exc:
                 log.warning(

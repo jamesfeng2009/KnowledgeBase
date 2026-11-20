@@ -9,6 +9,7 @@
 的库变安全，所以按仓库既有做法（参考 d0652e7caf21）由后续 revision
 b8d2a0f3c5e7 补齐。测试因此校验「两张迁移合起来达成的最终 schema」。
 """
+
 from __future__ import annotations
 
 import re
@@ -73,14 +74,34 @@ class TestExternalCredentialsMigration:
         assert [str(fk.target_fullname) for fk in fks] == ["tenants.id"]
 
     def test_enable_row_level_security(self, migration_content: str) -> None:
-        assert 'ALTER TABLE "external_credentials" ENABLE ROW LEVEL SECURITY' in migration_content
-        assert 'ALTER TABLE "external_credentials" FORCE ROW LEVEL SECURITY' in migration_content
+        assert (
+            'ALTER TABLE "external_credentials" ENABLE ROW LEVEL SECURITY'
+            in migration_content
+        )
+        assert (
+            'ALTER TABLE "external_credentials" FORCE ROW LEVEL SECURITY'
+            in migration_content
+        )
 
     def test_creates_tenant_isolation_policy(self, migration_content: str) -> None:
-        assert 'CREATE POLICY tenant_isolation ON "external_credentials"' in migration_content
+        assert (
+            'CREATE POLICY tenant_isolation ON "external_credentials"'
+            in migration_content
+        )
         assert "current_setting('app.tenant_id', true)" in migration_content
 
-    def test_downgrade_drops_policy_and_disables_rls(self, migration_content: str) -> None:
-        assert 'DROP POLICY IF EXISTS tenant_isolation ON "external_credentials"' in migration_content
-        assert 'ALTER TABLE "external_credentials" NO FORCE ROW LEVEL SECURITY' in migration_content
-        assert 'ALTER TABLE "external_credentials" DISABLE ROW LEVEL SECURITY' in migration_content
+    def test_downgrade_drops_policy_and_disables_rls(
+        self, migration_content: str
+    ) -> None:
+        assert (
+            'DROP POLICY IF EXISTS tenant_isolation ON "external_credentials"'
+            in migration_content
+        )
+        assert (
+            'ALTER TABLE "external_credentials" NO FORCE ROW LEVEL SECURITY'
+            in migration_content
+        )
+        assert (
+            'ALTER TABLE "external_credentials" DISABLE ROW LEVEL SECURITY'
+            in migration_content
+        )

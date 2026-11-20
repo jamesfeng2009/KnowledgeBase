@@ -21,7 +21,7 @@ from app.deps import get_current_active_user
 from app.models.knowledge import Document
 from app.models.user import User
 from app.schemas.common import ApiResponse
-from app.schemas.folder import FolderCreate, FolderRename, DocumentMove
+from app.schemas.folder import DocumentMove, FolderCreate, FolderRename
 from app.services.folder_service import FolderService
 from app.services.permission_service import PermissionService
 from app.utils.logger import get_logger
@@ -33,13 +33,13 @@ router = APIRouter(tags=["文件夹管理"])
 
 
 def _folder_service(db: AsyncSession, request: Request, user: User) -> FolderService:
-    return FolderService(
-        db, user, tenant_id=getattr(request.state, "tenant_id", None)
-    )
+    return FolderService(db, user, tenant_id=getattr(request.state, "tenant_id", None))
 
 
 def _perm(db: AsyncSession, request: Request, user: User) -> PermissionService:
-    return PermissionService(db, user, tenant_id=getattr(request.state, "tenant_id", None))
+    return PermissionService(
+        db, user, tenant_id=getattr(request.state, "tenant_id", None)
+    )
 
 
 @router.get("/knowledge/{kb_id}/folders/tree", response_model=ApiResponse[dict])
@@ -73,19 +73,29 @@ async def create_folder(
     service = _folder_service(db, request, user)
     try:
         folder = await service.create(
-            kb_id, name=body.name, parent_path=body.parent_path, sort_order=body.sort_order or 0
+            kb_id,
+            name=body.name,
+            parent_path=body.parent_path,
+            sort_order=body.sort_order or 0,
         )
     except ValueError as exc:
         return ApiResponse(code=400, data=None, message=str(exc))
     await db.commit()
     return ApiResponse(
         code=0,
-        data={"id": str(folder.id), "name": folder.name, "path": folder.path, "depth": folder.depth},
+        data={
+            "id": str(folder.id),
+            "name": folder.name,
+            "path": folder.path,
+            "depth": folder.depth,
+        },
         message="success",
     )
 
 
-@router.patch("/knowledge/{kb_id}/folders/{folder_id}", response_model=ApiResponse[dict])
+@router.patch(
+    "/knowledge/{kb_id}/folders/{folder_id}", response_model=ApiResponse[dict]
+)
 async def rename_folder(
     kb_id: UUID,
     folder_id: UUID,
@@ -106,7 +116,12 @@ async def rename_folder(
     await db.commit()
     return ApiResponse(
         code=0,
-        data={"id": str(folder.id), "name": folder.name, "path": folder.path, "depth": folder.depth},
+        data={
+            "id": str(folder.id),
+            "name": folder.name,
+            "path": folder.path,
+            "depth": folder.depth,
+        },
         message="success",
     )
 
@@ -144,7 +159,9 @@ async def move_document(
     """把文档移动到指定文件夹（path=None 表示根级）。"""
     # 先取文档归属的知识库用于权限校验
     stmt = select(Document).where(Document.id == doc_id, Document.deleted_at.is_(None))
-    stmt = apply_tenant_filter(stmt, Document, getattr(request.state, "tenant_id", None))
+    stmt = apply_tenant_filter(
+        stmt, Document, getattr(request.state, "tenant_id", None)
+    )
     result = await db.execute(stmt)
     doc = result.scalars().first()
     if doc is None:
@@ -154,7 +171,9 @@ async def move_document(
         return ApiResponse(code=403, data=None, message="无知识库写权限")
     service = _folder_service(db, request, user)
     try:
-        updated = await service.move_document(doc_id, body.path, sort_order=body.sort_order)
+        updated = await service.move_document(
+            doc_id, body.path, sort_order=body.sort_order
+        )
     except ValueError as exc:
         return ApiResponse(code=400, data=None, message=str(exc))
     await db.commit()

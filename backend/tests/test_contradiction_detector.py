@@ -12,7 +12,6 @@ P4-B 矛盾检测器单元测试。
     - ContradictionDetector 无 LLM 降级
 """
 
-import json
 import pytest
 
 from app.context.contradiction_detector import (
@@ -20,10 +19,10 @@ from app.context.contradiction_detector import (
     ContradictionResult,
 )
 
-
 # ============================================================
 # ContradictionResult
 # ============================================================
+
 
 class TestContradictionResult:
     """ContradictionResult 数据结构测试。"""
@@ -58,6 +57,7 @@ class TestContradictionResult:
 # Mock LLM Provider
 # ============================================================
 
+
 class MockLLMProvider:
     """Mock LLM Provider — 返回预设 JSON 响应。"""
 
@@ -80,6 +80,7 @@ class FailingLLMProvider:
 # 用户陈述矛盾检测
 # ============================================================
 
+
 class TestUserContradiction:
     """用户陈述矛盾检测测试。"""
 
@@ -96,7 +97,8 @@ class TestUserContradiction:
             {"role": "user", "content": "北京今天限号3"},
         ]
         result = await detector.check_user_contradiction(
-            "北京今天限号3", history,
+            "北京今天限号3",
+            history,
         )
         assert result.has_contradiction is True
         assert result.contradiction_type == "user_statement"
@@ -116,7 +118,8 @@ class TestUserContradiction:
             {"role": "user", "content": "北京今天天气情况"},
         ]
         result = await detector.check_user_contradiction(
-            "北京今天天气情况", history,
+            "北京今天天气情况",
+            history,
         )
         assert result.has_contradiction is False
 
@@ -125,7 +128,8 @@ class TestUserContradiction:
         """历史不足 2 条 → 跳过。"""
         detector = ContradictionDetector(llm=MockLLMProvider())
         result = await detector.check_user_contradiction(
-            "问题", [{"role": "user", "content": "只有一个"}],
+            "问题",
+            [{"role": "user", "content": "只有一个"}],
         )
         assert result.has_contradiction is False
         assert result.contradiction_type == "user_statement"
@@ -141,7 +145,8 @@ class TestUserContradiction:
             {"role": "user", "content": "今天午饭吃什么"},
         ]
         result = await detector.check_user_contradiction(
-            "今天午饭吃什么", history,
+            "今天午饭吃什么",
+            history,
         )
         # 无共同实体 → 跳过，返回无矛盾
         assert result.has_contradiction is False
@@ -156,7 +161,8 @@ class TestUserContradiction:
             {"role": "user", "content": "北京限号3"},
         ]
         result = await detector.check_user_contradiction(
-            "北京限号3", history,
+            "北京限号3",
+            history,
         )
         assert result.has_contradiction is False
 
@@ -177,6 +183,7 @@ class TestUserContradiction:
 # 回答-知识库矛盾检测
 # ============================================================
 
+
 class TestAnswerConsistency:
     """回答-知识库矛盾检测测试。"""
 
@@ -192,7 +199,8 @@ class TestAnswerConsistency:
             {"doc_id": "doc_2", "content": "上海不限号"},
         ]
         result = await detector.check_answer_consistency(
-            "北京限号是3", docs,
+            "北京限号是3",
+            docs,
         )
         assert result.has_contradiction is True
         assert result.contradiction_type == "answer_vs_kb"
@@ -208,7 +216,8 @@ class TestAnswerConsistency:
         detector = ContradictionDetector(llm=llm)
         docs = [{"doc_id": "doc_1", "content": "北京限号是5"}]
         result = await detector.check_answer_consistency(
-            "北京限号是5", docs,
+            "北京限号是5",
+            docs,
         )
         assert result.has_contradiction is False
 
@@ -225,7 +234,8 @@ class TestAnswerConsistency:
         """空回答 → 跳过。"""
         detector = ContradictionDetector(llm=MockLLMProvider())
         result = await detector.check_answer_consistency(
-            "", [{"doc_id": "1", "content": "内容"}],
+            "",
+            [{"doc_id": "1", "content": "内容"}],
         )
         assert result.has_contradiction is False
 
@@ -241,6 +251,7 @@ class TestAnswerConsistency:
 # ============================================================
 # 文档间矛盾检测
 # ============================================================
+
 
 class TestDocContradiction:
     """文档间矛盾检测测试。"""
@@ -301,6 +312,7 @@ class TestDocContradiction:
 # ============================================================
 # JSON 解析
 # ============================================================
+
 
 class TestLLMJsonParsing:
     """LLM JSON 响应解析测试。"""

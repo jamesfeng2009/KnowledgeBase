@@ -14,6 +14,7 @@ FakeMergingGraph 精确模拟 LangGraph 通道合并语义：
 - 只有节点返回的增量 dict 被合并进通道状态，aget_state 读取该状态
   （即真实 checkpointer 持有的 values）。
 """
+
 from __future__ import annotations
 
 import sys

@@ -5,10 +5,11 @@
     - patrol：空批次 / 混合结果 / 失败容忍 / 并发限流
     - Celery 任务：禁用开关 / 正常调度
 """
+
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -18,10 +19,10 @@ from app.services.external_sync_service import (
     RefreshResult,
 )
 
-
 # ==================================================================
 # 辅助 — 构造 mock Document
 # ==================================================================
+
 
 def _make_doc(
     doc_id: uuid.UUID | None = None,
@@ -42,6 +43,7 @@ def _make_doc(
 # get_stale_external_docs — 查询逻辑
 # ==================================================================
 
+
 class TestGetStaleExternalDocs:
     """查询过期外部文档。"""
 
@@ -58,8 +60,10 @@ class TestGetStaleExternalDocs:
 
         with patch(
             "app.database.async_session_factory",
-            return_value=MagicMock(__aenter__=AsyncMock(return_value=mock_session),
-                                   __aexit__=AsyncMock(return_value=None)),
+            return_value=MagicMock(
+                __aenter__=AsyncMock(return_value=mock_session),
+                __aexit__=AsyncMock(return_value=None),
+            ),
         ):
             result = await service.get_stale_external_docs(
                 max_age_hours=24, batch_size=50
@@ -80,8 +84,10 @@ class TestGetStaleExternalDocs:
 
         with patch(
             "app.database.async_session_factory",
-            return_value=MagicMock(__aenter__=AsyncMock(return_value=mock_session),
-                                   __aexit__=AsyncMock(return_value=None)),
+            return_value=MagicMock(
+                __aenter__=AsyncMock(return_value=mock_session),
+                __aexit__=AsyncMock(return_value=None),
+            ),
         ):
             result = await service.get_stale_external_docs()
 
@@ -98,8 +104,10 @@ class TestGetStaleExternalDocs:
 
         with patch(
             "app.database.async_session_factory",
-            return_value=MagicMock(__aenter__=AsyncMock(return_value=mock_session),
-                                   __aexit__=AsyncMock(return_value=None)),
+            return_value=MagicMock(
+                __aenter__=AsyncMock(return_value=mock_session),
+                __aexit__=AsyncMock(return_value=None),
+            ),
         ):
             await service.get_stale_external_docs(batch_size=10)
 
@@ -110,6 +118,7 @@ class TestGetStaleExternalDocs:
 # ==================================================================
 # patrol — 批量巡检编排
 # ==================================================================
+
 
 class TestPatrol:
     """patrol 批量巡检逻辑。"""
@@ -124,8 +133,11 @@ class TestPatrol:
             result = await service.patrol()
 
         assert result == {
-            "total": 0, "fresh": 0, "updated": 0,
-            "failed": 0, "skipped": 0,
+            "total": 0,
+            "fresh": 0,
+            "updated": 0,
+            "failed": 0,
+            "skipped": 0,
         }
 
     @pytest.mark.asyncio
@@ -140,10 +152,13 @@ class TestPatrol:
             RefreshResult(status="updated", content="new"),
             RefreshResult(status="skipped", reason="no_cred"),
         ]
-        with patch.object(
-            service, "get_stale_external_docs", new=AsyncMock(return_value=docs)
-        ), patch.object(
-            service, "verify_and_refresh", new=AsyncMock(side_effect=results)
+        with (
+            patch.object(
+                service, "get_stale_external_docs", new=AsyncMock(return_value=docs)
+            ),
+            patch.object(
+                service, "verify_and_refresh", new=AsyncMock(side_effect=results)
+            ),
         ):
             result = await service.patrol(concurrency=2)
 
@@ -164,10 +179,11 @@ class TestPatrol:
                 raise RuntimeError("timeout")
             return RefreshResult(status="fresh")
 
-        with patch.object(
-            service, "get_stale_external_docs", new=AsyncMock(return_value=docs)
-        ), patch.object(
-            service, "verify_and_refresh", new=fake_verify
+        with (
+            patch.object(
+                service, "get_stale_external_docs", new=AsyncMock(return_value=docs)
+            ),
+            patch.object(service, "verify_and_refresh", new=fake_verify),
         ):
             result = await service.patrol(concurrency=2)
 
@@ -189,14 +205,16 @@ class TestPatrol:
             current += 1
             max_concurrent = max(max_concurrent, current)
             import asyncio
+
             await asyncio.sleep(0.01)
             current -= 1
             return RefreshResult(status="fresh")
 
-        with patch.object(
-            service, "get_stale_external_docs", new=AsyncMock(return_value=docs)
-        ), patch.object(
-            service, "verify_and_refresh", new=fake_verify
+        with (
+            patch.object(
+                service, "get_stale_external_docs", new=AsyncMock(return_value=docs)
+            ),
+            patch.object(service, "verify_and_refresh", new=fake_verify),
         ):
             await service.patrol(concurrency=2)
 
@@ -209,11 +227,15 @@ class TestPatrol:
         service = ExternalSyncService()
         docs = [_make_doc() for _ in range(3)]
 
-        with patch.object(
-            service, "get_stale_external_docs", new=AsyncMock(return_value=docs)
-        ), patch.object(
-            service, "verify_and_refresh",
-            new=AsyncMock(side_effect=RuntimeError("boom")),
+        with (
+            patch.object(
+                service, "get_stale_external_docs", new=AsyncMock(return_value=docs)
+            ),
+            patch.object(
+                service,
+                "verify_and_refresh",
+                new=AsyncMock(side_effect=RuntimeError("boom")),
+            ),
         ):
             result = await service.patrol(concurrency=2)
 
@@ -228,10 +250,11 @@ class TestPatrol:
         docs = [_make_doc()]
 
         mock_verify = AsyncMock(return_value=RefreshResult(status="fresh"))
-        with patch.object(
-            service, "get_stale_external_docs", new=AsyncMock(return_value=docs)
-        ), patch.object(
-            service, "verify_and_refresh", new=mock_verify
+        with (
+            patch.object(
+                service, "get_stale_external_docs", new=AsyncMock(return_value=docs)
+            ),
+            patch.object(service, "verify_and_refresh", new=mock_verify),
         ):
             await service.patrol()
 
@@ -243,6 +266,7 @@ class TestPatrol:
 # ==================================================================
 # Celery 任务入口
 # ==================================================================
+
 
 class TestPatrolCeleryTask:
     """patrol_external_docs Celery 任务。"""
@@ -271,13 +295,14 @@ class TestPatrolCeleryTask:
         mock_settings.EXTERNAL_SYNC_PATROL_BATCH_SIZE = 50
         mock_settings.EXTERNAL_SYNC_PATROL_CONCURRENCY = 2
 
-        expected = {
-            "total": 5, "fresh": 3, "updated": 1, "failed": 1, "skipped": 0
-        }
-        with patch("app.config.get_settings", return_value=mock_settings), patch(
-            "tasks.scheduled_tasks._patrol_external_docs_async",
-            new=AsyncMock(return_value=expected),
-        ) as mock_patrol_async:
+        expected = {"total": 5, "fresh": 3, "updated": 1, "failed": 1, "skipped": 0}
+        with (
+            patch("app.config.get_settings", return_value=mock_settings),
+            patch(
+                "tasks.scheduled_tasks._patrol_external_docs_async",
+                new=AsyncMock(return_value=expected),
+            ) as mock_patrol_async,
+        ):
             result = patrol_external_docs()
 
         assert result == expected
@@ -288,6 +313,7 @@ class TestPatrolCeleryTask:
 # 集成验证 — 方案 A 无盲区
 # ==================================================================
 
+
 class TestPlanA_NoBlindSpot:
     """方案 A 核心保证：无类别过滤，所有外部文档统一阈值。"""
 
@@ -297,15 +323,19 @@ class TestPlanA_NoBlindSpot:
         service = ExternalSyncService()
         # 模拟包含技术笔记（非强时效类）的文档
         docs = [
-            _make_doc(source_doc_id="policy-1"),    # 政策
+            _make_doc(source_doc_id="policy-1"),  # 政策
             _make_doc(source_doc_id="tech-note-1"),  # 技术笔记
-            _make_doc(source_doc_id="faq-1"),        # FAQ
+            _make_doc(source_doc_id="faq-1"),  # FAQ
         ]
-        with patch.object(
-            service, "get_stale_external_docs", new=AsyncMock(return_value=docs)
-        ), patch.object(
-            service, "verify_and_refresh",
-            new=AsyncMock(return_value=RefreshResult(status="fresh")),
+        with (
+            patch.object(
+                service, "get_stale_external_docs", new=AsyncMock(return_value=docs)
+            ),
+            patch.object(
+                service,
+                "verify_and_refresh",
+                new=AsyncMock(return_value=RefreshResult(status="fresh")),
+            ),
         ):
             result = await service.patrol()
 

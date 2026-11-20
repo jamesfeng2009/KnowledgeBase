@@ -30,11 +30,17 @@ class DocumentChunk(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     __tablename__ = "document_chunks"
 
     doc_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("documents.id"), nullable=False, index=True,
+        UUID(as_uuid=True),
+        ForeignKey("documents.id"),
+        nullable=False,
+        index=True,
         comment="所属文档 ID",
     )
     kb_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("knowledge_bases.id"), nullable=False, index=True,
+        UUID(as_uuid=True),
+        ForeignKey("knowledge_bases.id"),
+        nullable=False,
+        index=True,
         comment="所属知识库 ID",
     )
     chunk_index: Mapped[int] = mapped_column(
@@ -43,7 +49,9 @@ class DocumentChunk(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     section_path: Mapped[str | None] = mapped_column(
         String(500), nullable=True, comment="标题路径锚点（P3），如 '产品 > 概述'"
     )
-    content_text: Mapped[str] = mapped_column(Text, nullable=False, comment="分块正文（可编辑）")
+    content_text: Mapped[str] = mapped_column(
+        Text, nullable=False, comment="分块正文（可编辑）"
+    )
     token_count: Mapped[int] = mapped_column(
         Integer, default=0, nullable=False, comment="估算 token 数"
     )
@@ -53,14 +61,19 @@ class DocumentChunk(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     )
     # D6 资产化 — 图片/表格独立检索单元＋回链
     chunk_type: Mapped[str] = mapped_column(
-        String(16), nullable=False, default="text", server_default="text",
+        String(16),
+        nullable=False,
+        default="text",
+        server_default="text",
         comment="分块类型: text/image/table",
     )
     asset_ref: Mapped[str | None] = mapped_column(
         Text, nullable=True, comment="资产引用: 图片=minio:// 地址, 表格=内联 HTML"
     )
     parent_chunk_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("document_chunks.id"), nullable=True,
+        UUID(as_uuid=True),
+        ForeignKey("document_chunks.id"),
+        nullable=True,
         comment="父块回链（资产块→来源正文块 / 子块→父块）",
     )
 
@@ -71,13 +84,18 @@ class ChunkVersion(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "chunk_versions"
 
     chunk_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("document_chunks.id"), nullable=False, index=True,
+        UUID(as_uuid=True),
+        ForeignKey("document_chunks.id"),
+        nullable=False,
+        index=True,
         comment="分块 ID",
     )
     version_seq: Mapped[int] = mapped_column(
         Integer, nullable=False, default=1, comment="版本号（文档内递增，从 1 开始）"
     )
-    content_text: Mapped[str] = mapped_column(Text, nullable=False, comment="版本正文快照")
+    content_text: Mapped[str] = mapped_column(
+        Text, nullable=False, comment="版本正文快照"
+    )
     author_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, comment="操作者 ID"
     )

@@ -8,6 +8,7 @@
 - 仅已发布（published）文档可归档/下架，非 published 状态不产生副作用；
 - 归档/下架后会异步清理旧索引（draft/archived 均不参与检索）。
 """
+
 from __future__ import annotations
 
 import sys
@@ -100,10 +101,14 @@ class TestArchiveDocument:
 
         session, cm = _make_session_cm()
 
-        with patch("app.database.task_db_session", return_value=cm), \
-             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo), \
-             patch("tasks.document_tasks._dispatch_index_cleanup") as mock_dispatch:
-
+        with (
+            patch("app.database.task_db_session", return_value=cm),
+            patch(
+                "app.repositories.knowledge_repository.DocumentRepository",
+                return_value=mock_repo,
+            ),
+            patch("tasks.document_tasks._dispatch_index_cleanup") as mock_dispatch,
+        ):
             await _archive_document(_DOC_UUID)
 
         assert mock_doc.status == "archived"
@@ -123,10 +128,14 @@ class TestArchiveDocument:
 
         session, cm = _make_session_cm()
 
-        with patch("app.database.task_db_session", return_value=cm), \
-             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo), \
-             patch("tasks.document_tasks._dispatch_index_cleanup") as mock_dispatch:
-
+        with (
+            patch("app.database.task_db_session", return_value=cm),
+            patch(
+                "app.repositories.knowledge_repository.DocumentRepository",
+                return_value=mock_repo,
+            ),
+            patch("tasks.document_tasks._dispatch_index_cleanup") as mock_dispatch,
+        ):
             await _archive_document(_DOC_UUID)
 
         assert mock_doc.status == "draft"
@@ -143,10 +152,14 @@ class TestArchiveDocument:
 
         session, cm = _make_session_cm()
 
-        with patch("app.database.task_db_session", return_value=cm), \
-             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo), \
-             patch("tasks.document_tasks._dispatch_index_cleanup") as mock_dispatch:
-
+        with (
+            patch("app.database.task_db_session", return_value=cm),
+            patch(
+                "app.repositories.knowledge_repository.DocumentRepository",
+                return_value=mock_repo,
+            ),
+            patch("tasks.document_tasks._dispatch_index_cleanup") as mock_dispatch,
+        ):
             await _archive_document(_DOC_UUID)
 
         session.commit.assert_not_called()
@@ -174,10 +187,14 @@ class TestDownPublishDocument:
 
         session, cm = _make_session_cm()
 
-        with patch("app.database.task_db_session", return_value=cm), \
-             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo), \
-             patch("tasks.document_tasks._dispatch_index_cleanup") as mock_dispatch:
-
+        with (
+            patch("app.database.task_db_session", return_value=cm),
+            patch(
+                "app.repositories.knowledge_repository.DocumentRepository",
+                return_value=mock_repo,
+            ),
+            patch("tasks.document_tasks._dispatch_index_cleanup") as mock_dispatch,
+        ):
             await _down_publish_document(_DOC_UUID)
 
         assert mock_doc.status == "draft"
@@ -197,10 +214,14 @@ class TestDownPublishDocument:
 
         session, cm = _make_session_cm()
 
-        with patch("app.database.task_db_session", return_value=cm), \
-             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo), \
-             patch("tasks.document_tasks._dispatch_index_cleanup") as mock_dispatch:
-
+        with (
+            patch("app.database.task_db_session", return_value=cm),
+            patch(
+                "app.repositories.knowledge_repository.DocumentRepository",
+                return_value=mock_repo,
+            ),
+            patch("tasks.document_tasks._dispatch_index_cleanup") as mock_dispatch,
+        ):
             await _down_publish_document(_DOC_UUID)
 
         assert mock_doc.status == "pending_review"
@@ -235,9 +256,10 @@ class TestDeleteDocumentFromIndexes:
         # 归档/下架必须一并删除，否则残留可检索图片向量。
         settings.OPENSEARCH_CROSS_MODAL_INDEX = "ekb_cross_modal_vectors"
 
-        with patch("httpx.AsyncClient", return_value=mock_client), \
-             patch("app.config.get_settings", return_value=settings):
-
+        with (
+            patch("httpx.AsyncClient", return_value=mock_client),
+            patch("app.config.get_settings", return_value=settings),
+        ):
             await _delete_document_from_indexes(_DOC_UUID)
 
         assert mock_client.post.await_count == 3
@@ -285,9 +307,13 @@ class TestIndexCleanupDispatch:
         mock_cleanup = MagicMock()
         mock_cleanup.delay = MagicMock()
 
-        with patch("tasks.document_tasks.cleanup_document_indexes", mock_cleanup), \
-             patch("tasks.document_tasks._delete_document_from_indexes", new_callable=AsyncMock) as mock_del:
-
+        with (
+            patch("tasks.document_tasks.cleanup_document_indexes", mock_cleanup),
+            patch(
+                "tasks.document_tasks._delete_document_from_indexes",
+                new_callable=AsyncMock,
+            ) as mock_del,
+        ):
             _dispatch_index_cleanup(_DOC_UUID)
 
         mock_cleanup.delay.assert_called_once_with(_DOC_UUID)
@@ -305,10 +331,11 @@ class TestIndexCleanupDispatch:
         # 用 no-op 替换后仅需验证降级路径触发了索引删除调用
         mock_del = MagicMock()
 
-        with patch("tasks.document_tasks.cleanup_document_indexes", mock_cleanup), \
-             patch("tasks.document_tasks._delete_document_from_indexes", mock_del), \
-             patch("tasks.document_tasks.asyncio.run", new=lambda _: None):
-
+        with (
+            patch("tasks.document_tasks.cleanup_document_indexes", mock_cleanup),
+            patch("tasks.document_tasks._delete_document_from_indexes", mock_del),
+            patch("tasks.document_tasks.asyncio.run", new=lambda _: None),
+        ):
             _dispatch_index_cleanup(_DOC_UUID)
 
         mock_del.assert_called_once_with(_DOC_UUID)
@@ -340,7 +367,6 @@ class TestArchiveEndpoint:
     @pytest.mark.asyncio
     async def test_archive_published_doc_success(self) -> None:
         """已发布文档归档成功，调用 _archive_document 并返回归档后文档。"""
-        from fastapi import status as http_status
         from app.api.v1.documents import archive_document
 
         published = _make_doc(status="published")
@@ -351,9 +377,12 @@ class TestArchiveEndpoint:
         user.id = published.owner_id
         user.role = "user"
 
-        with patch("app.api.v1.documents.KnowledgeService", return_value=service), \
-             patch("tasks.document_tasks._archive_document", new_callable=AsyncMock) as mock_archive:
-
+        with (
+            patch("app.api.v1.documents.KnowledgeService", return_value=service),
+            patch(
+                "tasks.document_tasks._archive_document", new_callable=AsyncMock
+            ) as mock_archive,
+        ):
             result = await archive_document(
                 _make_request(), _uuid.UUID(_DOC_UUID), MagicMock(), user
             )
@@ -366,6 +395,7 @@ class TestArchiveEndpoint:
     async def test_archive_requires_write_permission(self) -> None:
         """无写权限时返回 403。"""
         from fastapi import HTTPException
+
         from app.api.v1.documents import archive_document
 
         published = _make_doc(status="published")
@@ -376,9 +406,12 @@ class TestArchiveEndpoint:
         user.id = published.owner_id
         user.role = "user"
 
-        with patch("app.api.v1.documents.KnowledgeService", return_value=service), \
-             patch("tasks.document_tasks._archive_document", new_callable=AsyncMock) as mock_archive:
-
+        with (
+            patch("app.api.v1.documents.KnowledgeService", return_value=service),
+            patch(
+                "tasks.document_tasks._archive_document", new_callable=AsyncMock
+            ) as mock_archive,
+        ):
             with pytest.raises(HTTPException) as exc:
                 await archive_document(
                     _make_request(), _uuid.UUID(_DOC_UUID), MagicMock(), user
@@ -391,6 +424,7 @@ class TestArchiveEndpoint:
     async def test_archive_rejects_non_published(self) -> None:
         """非 published 文档归档返回 400。"""
         from fastapi import HTTPException
+
         from app.api.v1.documents import archive_document
 
         draft = _make_doc(status="draft")
@@ -400,9 +434,12 @@ class TestArchiveEndpoint:
         user.id = draft.owner_id
         user.role = "user"
 
-        with patch("app.api.v1.documents.KnowledgeService", return_value=service), \
-             patch("tasks.document_tasks._archive_document", new_callable=AsyncMock) as mock_archive:
-
+        with (
+            patch("app.api.v1.documents.KnowledgeService", return_value=service),
+            patch(
+                "tasks.document_tasks._archive_document", new_callable=AsyncMock
+            ) as mock_archive,
+        ):
             with pytest.raises(HTTPException) as exc:
                 await archive_document(
                     _make_request(), _uuid.UUID(_DOC_UUID), MagicMock(), user
@@ -428,9 +465,12 @@ class TestDownPublishEndpoint:
         user.id = published.owner_id
         user.role = "user"
 
-        with patch("app.api.v1.documents.KnowledgeService", return_value=service), \
-             patch("tasks.document_tasks._down_publish_document", new_callable=AsyncMock) as mock_down:
-
+        with (
+            patch("app.api.v1.documents.KnowledgeService", return_value=service),
+            patch(
+                "tasks.document_tasks._down_publish_document", new_callable=AsyncMock
+            ) as mock_down,
+        ):
             result = await down_publish_document(
                 _make_request(), _uuid.UUID(_DOC_UUID), MagicMock(), user
             )
@@ -443,6 +483,7 @@ class TestDownPublishEndpoint:
     async def test_down_publish_requires_write_permission(self) -> None:
         """无写权限时返回 403。"""
         from fastapi import HTTPException
+
         from app.api.v1.documents import down_publish_document
 
         published = _make_doc(status="published")
@@ -453,9 +494,12 @@ class TestDownPublishEndpoint:
         user.id = published.owner_id
         user.role = "user"
 
-        with patch("app.api.v1.documents.KnowledgeService", return_value=service), \
-             patch("tasks.document_tasks._down_publish_document", new_callable=AsyncMock) as mock_down:
-
+        with (
+            patch("app.api.v1.documents.KnowledgeService", return_value=service),
+            patch(
+                "tasks.document_tasks._down_publish_document", new_callable=AsyncMock
+            ) as mock_down,
+        ):
             with pytest.raises(HTTPException) as exc:
                 await down_publish_document(
                     _make_request(), _uuid.UUID(_DOC_UUID), MagicMock(), user
@@ -468,6 +512,7 @@ class TestDownPublishEndpoint:
     async def test_down_publish_rejects_non_published(self) -> None:
         """非 published 文档下架返回 400。"""
         from fastapi import HTTPException
+
         from app.api.v1.documents import down_publish_document
 
         archived = _make_doc(status="archived")
@@ -477,9 +522,12 @@ class TestDownPublishEndpoint:
         user.id = archived.owner_id
         user.role = "user"
 
-        with patch("app.api.v1.documents.KnowledgeService", return_value=service), \
-             patch("tasks.document_tasks._down_publish_document", new_callable=AsyncMock) as mock_down:
-
+        with (
+            patch("app.api.v1.documents.KnowledgeService", return_value=service),
+            patch(
+                "tasks.document_tasks._down_publish_document", new_callable=AsyncMock
+            ) as mock_down,
+        ):
             with pytest.raises(HTTPException) as exc:
                 await down_publish_document(
                     _make_request(), _uuid.UUID(_DOC_UUID), MagicMock(), user

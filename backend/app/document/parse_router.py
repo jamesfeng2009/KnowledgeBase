@@ -13,7 +13,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 #: 图片类型 — 命中即强制走 OCR（MinerU）
 IMAGE_TYPES: frozenset[str] = frozenset(
@@ -38,10 +38,10 @@ class ParseSignals:
     """解析复杂度信号（0~1 标度，越大越复杂/越需要 MinerU）。"""
 
     doc_type: str = "pdf"
-    text_layer_ratio: float = 1.0   # 0=纯扫描(无文本层) 1=全文本
+    text_layer_ratio: float = 1.0  # 0=纯扫描(无文本层) 1=全文本
     n_images: int = 0
     formula_markers: int = 0
-    complex_table: bool = False     # 含双层表头/合并单元格等复杂表结构
+    complex_table: bool = False  # 含双层表头/合并单元格等复杂表结构
 
 
 def compute_complexity(s: ParseSignals) -> float:

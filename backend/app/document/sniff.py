@@ -30,7 +30,7 @@ _OOXML_AMBIGUOUS = "ooxml_unknown"
 # 被识别为非文档解析目标（可执行/归档/图片等）的格式，上传时应拒绝
 NON_DOCUMENT_FORMATS = frozenset(
     {
-        "zip",      # 无 OOXML 标记的通用 ZIP
+        "zip",  # 无 OOXML 标记的通用 ZIP
         "7z",
         "rar",
         "gzip",
@@ -41,7 +41,7 @@ NON_DOCUMENT_FORMATS = frozenset(
         "webp",
         "gif",
         "bmp",
-        "ole2",     # 旧版 Office 二进制复合文档（.doc/.ppt）
+        "ole2",  # 旧版 Office 二进制复合文档（.doc/.ppt）
         "elf",
         "pe",
         "unknown",
@@ -53,9 +53,11 @@ NON_DOCUMENT_FORMATS = frozenset(
 class FileSniff:
     """文件实际类型的嗅探结果。"""
 
-    format: str            # 规范化格式标识（见 DOC_TYPES_BY_SNIFF / NON_DOCUMENT_FORMATS / "text"）
-    is_text: bool          # 是否为纯文本（md/txt/csv/html 无魔数）
-    comment: str = ""      # 供日志/错误提示的可读说明
+    format: (
+        str  # 规范化格式标识（见 DOC_TYPES_BY_SNIFF / NON_DOCUMENT_FORMATS / "text"）
+    )
+    is_text: bool  # 是否为纯文本（md/txt/csv/html 无魔数）
+    comment: str = ""  # 供日志/错误提示的可读说明
 
 
 def sniff_file_type(data: bytes, max_head: int = 1024) -> FileSniff:
@@ -177,7 +179,9 @@ def _sniff_ole(data: bytes) -> FileSniff:
     return FileSniff("ole2", False, "OLE2 复合文档")
 
 
-def resolve_upload_doc_type(data: bytes, declared_ext: str) -> tuple[str, Optional[str]]:
+def resolve_upload_doc_type(
+    data: bytes, declared_ext: str
+) -> tuple[str, Optional[str]]:
     """对上传播放字节做类型校验并纠正 doc_type。
 
     Args:
@@ -205,6 +209,4 @@ def resolve_upload_doc_type(data: bytes, declared_ext: str) -> tuple[str, Option
         return declared_ext, None
 
     # 其余（图片/归档/数据库/可执行/无法识别）一律拒绝，防止伪装文件进入解析链路
-    return declared_ext, (
-        sniff.comment or f"不支持的文件类型：{sniff.format}"
-    )
+    return declared_ext, (sniff.comment or f"不支持的文件类型：{sniff.format}")

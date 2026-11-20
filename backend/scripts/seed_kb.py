@@ -171,9 +171,7 @@ def collect_test_docs(count: int | None = None) -> list[dict[str, str]]:
     """读取 test_documents/ 下全部真实文件，统一成灌库输入结构。"""
     root = Path(_BACKEND_ROOT).parent / "test_documents"
     files = sorted(
-        p
-        for p in root.rglob("*")
-        if p.is_file() and p.suffix.lower() in _TEST_DOC_EXTS
+        p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in _TEST_DOC_EXTS
     )
     out: list[dict[str, str]] = []
     for p in files:
@@ -228,7 +226,9 @@ class SeedReport:
         }
 
 
-def score_answer(question: dict[str, Any], retrieved_text: str) -> tuple[bool, float, list[str]]:
+def score_answer(
+    question: dict[str, Any], retrieved_text: str
+) -> tuple[bool, float, list[str]]:
     """运行层命中判定：检索正文对期望要点（中文/英文不区分大小写）的关键词覆盖率。
 
     Returns:
@@ -261,7 +261,9 @@ async def _ensure_tenant_user_kb(
         from app.models.billing import Tenant
 
         tenant = (
-            await session.execute(select(Tenant).where(Tenant.id == uuid.UUID(tenant_id)))
+            await session.execute(
+                select(Tenant).where(Tenant.id == uuid.UUID(tenant_id))
+            )
         ).scalar_one_or_none()
         if tenant is None:
             raise ValueError(f"租户不存在: {tenant_id}")
@@ -275,7 +277,9 @@ async def _ensure_tenant_user_kb(
     return tenant, user, kb
 
 
-def _doc_id_for(report: SeedReport, tenant_id: uuid.UUID, kb_id: uuid.UUID, key: str) -> str:
+def _doc_id_for(
+    report: SeedReport, tenant_id: uuid.UUID, kb_id: uuid.UUID, key: str
+) -> str:
     return deterministic_doc_id(report.source, str(tenant_id), str(kb_id), key)
 
 
@@ -309,7 +313,11 @@ async def _upsert_document(
         )
     ).scalar_one_or_none()
 
-    if existing is not None and existing.content_hash == new_hash and existing.status == "published":
+    if (
+        existing is not None
+        and existing.content_hash == new_hash
+        and existing.status == "published"
+    ):
         report.skipped += 1
         return False
 
@@ -362,7 +370,9 @@ async def _index_document(doc_id_str: str, title: str, report: SeedReport) -> No
         report.errors.append(f"{title}: EXC {type(exc).__name__} {str(exc)[:120]}")
 
 
-async def run_seed(source: str, *, tenant_id: str | None, kb_name: str, count: int | None) -> SeedReport:
+async def run_seed(
+    source: str, *, tenant_id: str | None, kb_name: str, count: int | None
+) -> SeedReport:
     """灌库主流程：两阶段——先全部写库 commit，再逐个跑建索引流水线。"""
     from app.database import async_session_factory
 
@@ -397,11 +407,16 @@ async def run_seed(source: str, *, tenant_id: str | None, kb_name: str, count: i
                 )
                 if should_index:
                     needs_index.append(
-                        (_doc_id_for(report, tenant.id, kb.id, spec["key"]), spec["title"])
+                        (
+                            _doc_id_for(report, tenant.id, kb.id, spec["key"]),
+                            spec["title"],
+                        )
                     )
             except Exception as exc:  # 单篇失败不中断整批
                 report.failed += 1
-                report.errors.append(f"{spec['title']}: EXC {type(exc).__name__} {str(exc)[:120]}")
+                report.errors.append(
+                    f"{spec['title']}: EXC {type(exc).__name__} {str(exc)[:120]}"
+                )
         await session.commit()
 
     # 阶段 2：逐个建索引（每个文档在独立 session 里加载）
@@ -457,17 +472,27 @@ async def run_verify(kb_name: str) -> dict[str, Any]:
                             or result.get("content")
                             or " ".join(
                                 str(c.get("content", ""))
-                                for c in (result.get("contexts") or result.get("sources") or [])
+                                for c in (
+                                    result.get("contexts")
+                                    or result.get("sources")
+                                    or []
+                                )
                                 if isinstance(c, dict)
                             )
                         )
                     ok, ratio, hit = score_answer(q, text)
                     if ok:
                         hits += 1
-                    details.append({"q": q["q"], "hit": ok, "ratio": ratio, "points": hit})
+                    details.append(
+                        {"q": q["q"], "hit": ok, "ratio": ratio, "points": hit}
+                    )
                 except Exception as exc:
                     details.append(
-                        {"q": q["q"], "hit": False, "error": f"{type(exc).__name__} {str(exc)[:100]}"}
+                        {
+                            "q": q["q"],
+                            "hit": False,
+                            "error": f"{type(exc).__name__} {str(exc)[:100]}",
+                        }
                     )
 
     return {
@@ -492,9 +517,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="seed",
         help="灌库来源：seed=40 篇内置样本文档；test_documents=真实文件；all=两者（默认 seed）",
     )
-    parser.add_argument("--tenant", default=None, help="目标租户 UUID（不传则建/取默认种子租户）")
+    parser.add_argument(
+        "--tenant", default=None, help="目标租户 UUID（不传则建/取默认种子租户）"
+    )
     parser.add_argument("--kb-name", default=_DEFAULT_KB_NAME, help="目标知识库名称")
-    parser.add_argument("--count", type=int, default=None, help="只灌前 N 篇（默认全部）")
+    parser.add_argument(
+        "--count", type=int, default=None, help="只灌前 N 篇（默认全部）"
+    )
     parser.add_argument(
         "--verify", action="store_true", help="灌库后跑 P1 十问运行层评测，输出 N/10"
     )
@@ -510,7 +539,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 async def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
-    print(f"[SEED-KB] source={args.source} kb={args.kb_name} count={args.count or 'ALL'}")
+    print(
+        f"[SEED-KB] source={args.source} kb={args.kb_name} count={args.count or 'ALL'}"
+    )
     try:
         report = await run_seed(
             args.source,

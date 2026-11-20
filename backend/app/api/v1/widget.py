@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,8 +22,8 @@ from app.models.knowledge import Document
 from app.models.user import User
 from app.schemas.common import ApiResponse
 from app.services.widget_token_service import (
-    WidgetRateLimiter,
     WidgetRateLimited,
+    WidgetRateLimiter,
     WidgetTokenError,
     WidgetTokenService,
 )
@@ -94,7 +94,9 @@ async def widget_ask(
 
     if not claims.tenant_id:
         # 改造前签发的旧令牌没有租户字段；不兜底到任何默认租户。
-        raise HTTPException(status_code=401, detail="Widget 令牌缺少租户上下文，请重新签发")
+        raise HTTPException(
+            status_code=401, detail="Widget 令牌缺少租户上下文，请重新签发"
+        )
     try:
         await apply_tenant(db, claims.tenant_id)
     except TenantContextError as exc:

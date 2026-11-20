@@ -54,7 +54,7 @@ def extract_called_tools(spans: list[dict[str, Any]]) -> list[str]:
         name = s.get("name") or ""
         if not name.startswith(_TOOL_SPAN_NAME_PREFIX):
             continue
-        tool_name = name[len(_TOOL_SPAN_NAME_PREFIX):].strip()
+        tool_name = name[len(_TOOL_SPAN_NAME_PREFIX) :].strip()
         if not tool_name or tool_name in seen:
             continue
         seen.add(tool_name)
@@ -85,12 +85,9 @@ def compute_tool_selection_metrics(
 
     called_set = set(called_tools)
     expected_set = set(expected)
-    forbidden_set = set(forbidden)
 
     expected_hit = expected_set & called_set
-    recall = (
-        len(expected_hit) / len(expected_set) if expected_set else 1.0
-    )
+    recall = len(expected_hit) / len(expected_set) if expected_set else 1.0
     # precision：实际调用中有多少是期望的；无调用时——无期望则满分（什么都没
     # 调是对的），有期望但未调用则 0（全漏）
     if called_set:

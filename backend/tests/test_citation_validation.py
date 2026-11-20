@@ -5,12 +5,11 @@
     - validate_citations: 强制校验答案是否包含有效引用
     - CitationValidationResult: 数据类和 to_dict
 """
+
 from __future__ import annotations
 
 import sys
 from unittest.mock import MagicMock
-
-import pytest
 
 # Mock celery
 if "celery" not in sys.modules:

@@ -14,6 +14,7 @@ Bug 背景：LLM 抛错时，原实现将错误文本 ``"\\n\\n[生成出错: ..
 - 正常流不受影响（行为保持）；
 - 端到端（engine 级）：LLM 故障时 cache.set 不被调用；成功时正常回写。
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -23,7 +24,6 @@ import pytest
 
 from app.rag.generator import Generator
 
-
 # ---------------------------------------------------------------------------
 # Fake LLM
 # ---------------------------------------------------------------------------
@@ -32,7 +32,9 @@ from app.rag.generator import Generator
 class _FailingLLM:
     """chat() 立即抛错的 LLM。"""
 
-    async def chat(self, messages, tools=None, stream=False, **kwargs) -> AsyncIterator[str]:
+    async def chat(
+        self, messages, tools=None, stream=False, **kwargs
+    ) -> AsyncIterator[str]:
         raise RuntimeError("LLM 服务不可用")
         yield  # pragma: no cover — 使本方法成为 async generator
 
@@ -40,7 +42,9 @@ class _FailingLLM:
 class _PartialFailingLLM:
     """先产出部分答案、随后连接中断的 LLM。"""
 
-    async def chat(self, messages, tools=None, stream=False, **kwargs) -> AsyncIterator[str]:
+    async def chat(
+        self, messages, tools=None, stream=False, **kwargs
+    ) -> AsyncIterator[str]:
         yield "前半部分"
         raise RuntimeError("连接中断")
 
@@ -51,7 +55,9 @@ class _OKLLM:
     def __init__(self, think_response: str = "generate"):
         self._think_response = think_response
 
-    async def chat(self, messages, tools=None, stream=False, **kwargs) -> AsyncIterator[str]:
+    async def chat(
+        self, messages, tools=None, stream=False, **kwargs
+    ) -> AsyncIterator[str]:
         if not stream:
             yield self._think_response
             return
@@ -165,16 +171,22 @@ class _NullQualityGuard:
     def check_retrieval_quality(self, reranked_docs: list) -> None:
         return None
 
-    def should_retry_retrieval(self, query: str, reranked_docs: list, retry_count: int) -> bool:
+    def should_retry_retrieval(
+        self, query: str, reranked_docs: list, retry_count: int
+    ) -> bool:
         return False
 
     def get_expanded_top_k(self) -> int:
         return 5
 
-    async def check_generation_quality(self, query: str, answer: str, contexts: list) -> None:
+    async def check_generation_quality(
+        self, query: str, answer: str, contexts: list
+    ) -> None:
         return None
 
-    async def check_and_regenerate(self, query: str, answer: str, contexts: list, generator) -> tuple:
+    async def check_and_regenerate(
+        self, query: str, answer: str, contexts: list, generator
+    ) -> tuple:
         """空实现 — 不重生成，eval_result 为 None（与幻觉防护流水线接口对齐）。"""
         return answer, None
 
@@ -182,7 +194,7 @@ class _NullQualityGuard:
         return False
 
 
-def _make_engine(llm, cache) -> "object":
+def _make_engine(llm, cache) -> object:
     """构造最小可用的 AgenticRAGEngine（空质量守卫，避免外部依赖）。"""
     from app.rag import engine as engine_mod
 

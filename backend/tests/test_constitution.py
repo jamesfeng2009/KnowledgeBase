@@ -6,14 +6,13 @@
 - engine 集成：_THINK_SYSTEM_STABLE / _CONSTRAINT_REMINDER 由宪法派生
 - base 集成：BaseAgent.system_prompt 默认取自宪法
 """
-from __future__ import annotations
 
-import pytest
+from __future__ import annotations
 
 from app.rag import constitution
 from app.rag.constitution import (
-    get_constraint_reminder,
     get_constitution_path,
+    get_constraint_reminder,
     get_system_prompt,
 )
 
@@ -47,7 +46,9 @@ class TestConstitutionLoader:
 
     def test_extract_section_missing_falls_back(self, monkeypatch):
         """缺失节时应回退到内置默认值。"""
-        monkeypatch.setattr(constitution, "_read_constitution", lambda: "## 决策大脑\n内容")
+        monkeypatch.setattr(
+            constitution, "_read_constitution", lambda: "## 决策大脑\n内容"
+        )
         # 必须遵守节缺失 → 回退默认
         reminder = get_constraint_reminder()
         assert "必须遵守" in reminder

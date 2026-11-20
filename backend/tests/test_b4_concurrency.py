@@ -5,6 +5,7 @@
 - Generator.last_usage：ContextVar 按 asyncio 任务隔离，并发请求互不污染
 - MCPClient.call_tool_from_llm：tenant_id 透传 server.call_tool
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -119,8 +120,12 @@ class TestRetrieverParallelExecution:
             }
 
         retriever._vector_search = AsyncMock(return_value=[_doc("c1", 0.9, "vector")])  # type: ignore[method-assign]
-        retriever._fulltext_search = AsyncMock(return_value=[_doc("c2", 0.8, "fulltext")])  # type: ignore[method-assign]
-        retriever._cross_modal_search = AsyncMock(return_value=[_doc("c3", 0.7, "cross_modal")])  # type: ignore[method-assign]
+        retriever._fulltext_search = AsyncMock(
+            return_value=[_doc("c2", 0.8, "fulltext")]
+        )  # type: ignore[method-assign]
+        retriever._cross_modal_search = AsyncMock(
+            return_value=[_doc("c3", 0.7, "cross_modal")]
+        )  # type: ignore[method-assign]
         retriever._graph_search = AsyncMock(return_value=[_doc("c4", 0.6, "graph")])  # type: ignore[method-assign]
 
         results = await retriever.search("合并测试", top_k=10)
@@ -137,10 +142,19 @@ class TestRetrieverParallelExecution:
             raise RuntimeError("模拟子方法逃逸异常")
 
         retriever._vector_search = _boom  # type: ignore[method-assign]
-        retriever._fulltext_search = AsyncMock(return_value=[{
-            "doc_id": "d1", "chunk_id": "c1", "content": "x",
-            "score": 0.5, "source": "fulltext", "kb_id": None, "title": None,
-        }])  # type: ignore[method-assign]
+        retriever._fulltext_search = AsyncMock(
+            return_value=[
+                {
+                    "doc_id": "d1",
+                    "chunk_id": "c1",
+                    "content": "x",
+                    "score": 0.5,
+                    "source": "fulltext",
+                    "kb_id": None,
+                    "title": None,
+                }
+            ]
+        )  # type: ignore[method-assign]
         retriever._cross_modal_search = AsyncMock(return_value=[])  # type: ignore[method-assign]
         retriever._graph_search = AsyncMock(return_value=[])  # type: ignore[method-assign]
 
@@ -192,7 +206,12 @@ class _FakeLLM:
         if self._stall is not None:
             await self._stall.wait()
         usage_in = 100 if query.startswith("A") else 200
-        yield {"type": "usage", "input_tokens": usage_in, "output_tokens": 10, "model": "fake"}
+        yield {
+            "type": "usage",
+            "input_tokens": usage_in,
+            "output_tokens": 10,
+            "model": "fake",
+        }
 
 
 class TestGeneratorUsageConcurrencyIsolation:
@@ -297,7 +316,12 @@ class TestMCPCallToolFromLLMTenant:
         """传入 tenant_id → server.call_tool 收到相同 tenant_id。"""
         client, mock_call = self._make_client()
 
-        tool_use = {"type": "tool_use", "id": "tu_1", "name": "knowledge_search", "input": {"query": "报销"}}
+        tool_use = {
+            "type": "tool_use",
+            "id": "tu_1",
+            "name": "knowledge_search",
+            "input": {"query": "报销"},
+        }
         result = await client.call_tool_from_llm(tool_use, tenant_id="t-uuid-1")
 
         assert result == '{"ok": true}'
@@ -310,7 +334,12 @@ class TestMCPCallToolFromLLMTenant:
         """不传 tenant_id → 透传 None（向后兼容，server 侧走不过滤兜底）。"""
         client, mock_call = self._make_client()
 
-        tool_use = {"type": "tool_use", "id": "tu_2", "name": "knowledge_search", "input": {}}
+        tool_use = {
+            "type": "tool_use",
+            "id": "tu_2",
+            "name": "knowledge_search",
+            "input": {},
+        }
         await client.call_tool_from_llm(tool_use)
 
         mock_call.assert_awaited_once_with("knowledge_search", {}, tenant_id=None)

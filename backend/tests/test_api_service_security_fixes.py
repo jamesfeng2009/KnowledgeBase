@@ -7,6 +7,7 @@
 4. /chat/stream 连接池治理 — 准备阶段完成后释放 DB 连接，流式期间不持有；
 5. admin 密级口径统一 + chat SSE 权限异常 → SSE error 事件。
 """
+
 from __future__ import annotations
 
 import json
@@ -17,6 +18,7 @@ from uuid import uuid4
 import httpx
 import pytest
 import pytest_asyncio
+from fastapi import HTTPException
 
 from app.api.v1.documents import (
     _check_content_length,
@@ -31,8 +33,6 @@ from app.services.health_check import (
     sanitize_providers,
 )
 from app.utils.sse import SSEEvent, SSEEventType
-from fastapi import HTTPException
-
 
 # ======================================================================
 # 工具
@@ -155,9 +155,7 @@ class TestUploadSizeGates:
         """端点集成：声明超大 Content-Length → 413，且业务 service 未被调用。"""
         # 使用 admin 角色跳过权限查询，确保只验证 Content-Length 预检逻辑
         auth_client._ekb_user.role = "admin"  # type: ignore[attr-defined]
-        with patch(
-            "app.api.v1.documents.KnowledgeService"
-        ) as mock_service_cls:
+        with patch("app.api.v1.documents.KnowledgeService") as mock_service_cls:
             resp = await auth_client.post(
                 "/api/v1/documents/upload",
                 params={"kb_id": str(uuid4()), "title": "大文件"},
@@ -191,11 +189,10 @@ class TestUploadFileTypeSniff:
         """把 PNG 改名为 .pdf → 400，且未触发任何业务/存储侧写操作。"""
         auth_client._ekb_user.role = "admin"  # type: ignore[attr-defined]
         png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
-        with patch(
-            "app.api.v1.documents.KnowledgeService"
-        ) as mock_service_cls, patch(
-            "app.utils.minio_client.upload_file"
-        ) as mock_minio:
+        with (
+            patch("app.api.v1.documents.KnowledgeService") as mock_service_cls,
+            patch("app.utils.minio_client.upload_file") as mock_minio,
+        ):
             resp = await self._upload(auth_client, "report.pdf", png)
         assert resp.status_code == 400
         assert "文件类型不被支持" in resp.json()["detail"]
@@ -209,11 +206,10 @@ class TestUploadFileTypeSniff:
         """伪装成文档的 ELF/Linux 可执行文件 → 400。"""
         auth_client._ekb_user.role = "admin"  # type: ignore[attr-defined]
         elf = b"\x7fELF" + b"\x02\x01\x01\x00" + b"\x00" * 16
-        with patch(
-            "app.api.v1.documents.KnowledgeService"
-        ) as mock_service_cls, patch(
-            "app.utils.minio_client.upload_file"
-        ) as mock_minio:
+        with (
+            patch("app.api.v1.documents.KnowledgeService") as mock_service_cls,
+            patch("app.utils.minio_client.upload_file") as mock_minio,
+        ):
             resp = await self._upload(auth_client, "说明.docx", elf)
         assert resp.status_code == 400
         mock_service_cls.return_value.upload_document.assert_not_called()
@@ -226,11 +222,10 @@ class TestUploadFileTypeSniff:
         """把 7z 压缩包改名为 .txt → 400。"""
         auth_client._ekb_user.role = "admin"  # type: ignore[attr-defined]
         seven_z = b"7z\xbc\xaf\x27\x1c" + b"\x00" * 16
-        with patch(
-            "app.api.v1.documents.KnowledgeService"
-        ) as mock_service_cls, patch(
-            "app.utils.minio_client.upload_file"
-        ) as mock_minio:
+        with (
+            patch("app.api.v1.documents.KnowledgeService") as mock_service_cls,
+            patch("app.utils.minio_client.upload_file") as mock_minio,
+        ):
             resp = await self._upload(auth_client, "notes.txt", seven_z)
         assert resp.status_code == 400
         mock_service_cls.return_value.upload_document.assert_not_called()
@@ -248,29 +243,31 @@ class TestUploadFileTypeSniff:
         created = SimpleNamespace(id=uuid4(), file_path=None)
         doc_repo = MagicMock()
         doc_repo.update = AsyncMock()
-        with patch(
-            "app.api.v1.documents.KnowledgeService"
-        ) as mock_service_cls, patch(
-            "app.utils.minio_client.upload_file",
-            new=AsyncMock(return_value="minio://ekb-documents/kb/x"),
-        ), patch(
-            "tasks.document_tasks.process_document"
-        ), patch(
-            "app.repositories.knowledge_repository.DocumentRepository",
-            return_value=doc_repo,
-        ), patch(
-            "app.api.v1.documents.DocResponse.model_validate",
-            return_value={
-                "id": created.id,
-                "kb_id": str(uuid4()),
-                "title": "审计取证",
-                "doc_type": "docx",
-                "status": "draft",
-                "owner_id": str(uuid4()),
-                "classification": "internal",
-                "created_at": "2026-08-22T00:00:00Z",
-                "updated_at": "2026-08-22T00:00:00Z",
-            },
+        with (
+            patch("app.api.v1.documents.KnowledgeService") as mock_service_cls,
+            patch(
+                "app.utils.minio_client.upload_file",
+                new=AsyncMock(return_value="minio://ekb-documents/kb/x"),
+            ),
+            patch("tasks.document_tasks.process_document"),
+            patch(
+                "app.repositories.knowledge_repository.DocumentRepository",
+                return_value=doc_repo,
+            ),
+            patch(
+                "app.api.v1.documents.DocResponse.model_validate",
+                return_value={
+                    "id": created.id,
+                    "kb_id": str(uuid4()),
+                    "title": "审计取证",
+                    "doc_type": "docx",
+                    "status": "draft",
+                    "owner_id": str(uuid4()),
+                    "classification": "internal",
+                    "created_at": "2026-08-22T00:00:00Z",
+                    "updated_at": "2026-08-22T00:00:00Z",
+                },
+            ),
         ):
             mock_service_cls.return_value.upload_document = AsyncMock(
                 return_value=created
@@ -607,9 +604,7 @@ class TestChatServiceStream:
         prepared = _make_prepared(user.id)
         engine = _FakeEngine(exc=PermissionError("无权访问密级文档"))
 
-        with patch(
-            "app.services.chat_service.get_rag_engine", return_value=engine
-        ):
+        with patch("app.services.chat_service.get_rag_engine", return_value=engine):
             events = [e async for e in service.stream_chat(prepared)]
 
         error_events = [
@@ -633,11 +628,12 @@ class TestChatServiceStream:
             chunks=["你", "好", SSEEvent(data={}, event=SSEEventType.DONE)]
         )
 
-        with patch(
-            "app.services.chat_service.get_rag_engine", return_value=engine
-        ), patch(
-            "tasks.memory_tasks.dispatch_memory_write", return_value=True
-        ) as mock_dispatch:
+        with (
+            patch("app.services.chat_service.get_rag_engine", return_value=engine),
+            patch(
+                "tasks.memory_tasks.dispatch_memory_write", return_value=True
+            ) as mock_dispatch,
+        ):
             events = [e async for e in service.stream_chat(prepared)]
 
         # meta 事件先行
@@ -679,10 +675,9 @@ class TestChatServiceStream:
             chunks=["你", "好", SSEEvent(data={}, event=SSEEventType.DONE)]
         )
 
-        with patch(
-            "app.services.chat_service.get_rag_engine", return_value=engine
-        ), patch(
-            "tasks.memory_tasks.dispatch_memory_write", return_value=False
+        with (
+            patch("app.services.chat_service.get_rag_engine", return_value=engine),
+            patch("tasks.memory_tasks.dispatch_memory_write", return_value=False),
         ):
             events = [e async for e in service.stream_chat(prepared)]
 
@@ -711,9 +706,7 @@ class TestChatStreamEndpoint:
             async def prepare_chat(self, **kwargs):
                 raise PermissionError("无权访问该对话")
 
-        with patch(
-            "app.api.v1.chat.ChatService", return_value=_DeniedService()
-        ):
+        with patch("app.api.v1.chat.ChatService", return_value=_DeniedService()):
             resp = await auth_client.post(
                 "/api/v1/chat/stream",
                 json={"query": "问题", "conversation_id": str(uuid4())},
@@ -762,9 +755,7 @@ class TestChatStreamEndpoint:
         mock_db.commit = AsyncMock(side_effect=_commit)
         mock_db.close = AsyncMock(side_effect=_close)
 
-        with patch(
-            "app.api.v1.chat.ChatService", return_value=_TrackingService()
-        ):
+        with patch("app.api.v1.chat.ChatService", return_value=_TrackingService()):
             resp = await auth_client.post(
                 "/api/v1/chat/stream",
                 json={"query": "问题"},

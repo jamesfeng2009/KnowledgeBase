@@ -74,7 +74,6 @@ async def get_subscription(
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse[dict]:
     """获取当前租户的订阅与计划状态。"""
-    tenant_id = _current_tenant_id(request)
     billing = BillingService(db)
     sub = await billing.get_subscription(user.tenant_id)
     plan_status = await billing.get_plan_status(user.tenant_id)
@@ -144,7 +143,9 @@ async def cancel_subscription(
     )
 
 
-@router.post("/subscription/reactivate", response_model=ApiResponse[SubscriptionResponse])
+@router.post(
+    "/subscription/reactivate", response_model=ApiResponse[SubscriptionResponse]
+)
 async def reactivate_subscription(
     request: Request,
     db: AsyncSession = Depends(get_db_session),

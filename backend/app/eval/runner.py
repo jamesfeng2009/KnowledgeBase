@@ -130,9 +130,7 @@ def _percentile(sorted_values: list[float], pct: int) -> float:
 # ======================================================================
 
 
-def recall_at_k(
-    retrieved_ids: list[str], relevant_ids: list[str], k: int
-) -> float:
+def recall_at_k(retrieved_ids: list[str], relevant_ids: list[str], k: int) -> float:
     """计算 Recall@K — 前 K 条检索结果中命中相关文档的比例。
 
     Args:
@@ -170,9 +168,7 @@ def mrr(retrieved_ids: list[str], relevant_ids: list[str]) -> float:
     return 0.0
 
 
-def ndcg(
-    retrieved_ids: list[str], relevant_ids: list[str], k: int
-) -> float:
+def ndcg(retrieved_ids: list[str], relevant_ids: list[str], k: int) -> float:
     """计算 NDCG@K（二值相关性）— 归一化折损累积增益。
 
     DCG@K  = sum_{i=1}^{K} rel_i / log2(i + 1)
@@ -195,7 +191,9 @@ def ndcg(
     dcg = 0.0
     for i, doc_id in enumerate(retrieved_ids[:k]):
         if doc_id in relevant_set:
-            dcg += 1.0 / math.log2(i + 2)  # i 从 0 开始，rank=i+1，log2(rank+1)=log2(i+2)
+            dcg += 1.0 / math.log2(
+                i + 2
+            )  # i 从 0 开始，rank=i+1，log2(rank+1)=log2(i+2)
 
     # IDCG：理想情况下相关文档全部排在最前
     ideal_hits = min(len(relevant_set), k)
@@ -449,7 +447,9 @@ class EvalRunner:
                 dataset_version = ""
 
         if self.engine is None:
-            log.warning("eval_runner.engine_none", msg="engine 未注入，检索指标将降级为 0")
+            log.warning(
+                "eval_runner.engine_none", msg="engine 未注入，检索指标将降级为 0"
+            )
 
         for case in cases:
             case_result = await self._eval_case(case, kb_ids, with_generation)
@@ -482,7 +482,12 @@ class EvalRunner:
         ragas_list = [c for c in case_results if c.ragas_scores is not None]
         avg_ragas: dict[str, float] = {}
         if ragas_list:
-            ragas_keys = {"faithfulness", "answer_relevancy", "context_precision", "context_recall"}
+            ragas_keys = {
+                "faithfulness",
+                "answer_relevancy",
+                "context_precision",
+                "context_recall",
+            }
             for key in ragas_keys:
                 values = [
                     float(c.ragas_scores[key])  # type: ignore[index]
@@ -662,8 +667,7 @@ class EvalRunner:
         answer: str | None = None
 
         has_answer_fn = (
-            self.engine is not None
-            and getattr(self.engine, "answer", None) is not None
+            self.engine is not None and getattr(self.engine, "answer", None) is not None
         )
 
         if with_generation and has_answer_fn:
@@ -685,9 +689,11 @@ class EvalRunner:
                     query=query[:50],
                     msg="answer() 未产生 retrieve span 证据，回退直调 _retrieve",
                 )
-                retrieved_doc_ids, retrieved_docs, retr_error = (
-                    await self._retrieve_only(query, kb_ids_for_case)
-                )
+                (
+                    retrieved_doc_ids,
+                    retrieved_docs,
+                    retr_error,
+                ) = await self._retrieve_only(query, kb_ids_for_case)
                 contexts = [
                     str(d.get("content", ""))
                     for d in retrieved_docs
@@ -722,9 +728,7 @@ class EvalRunner:
         ragas_scores: dict[str, Any] | None = None
 
         if answer is not None and self.judge_service is not None:
-            judge_scores, judge_err = await self._judge_answer(
-                query, answer, contexts
-            )
+            judge_scores, judge_err = await self._judge_answer(query, answer, contexts)
             if judge_err is not None:
                 error = f"{error} | {judge_err}" if error else judge_err
 
@@ -751,7 +755,9 @@ class EvalRunner:
                 forbidden_content=getattr(case, "forbidden_content", None),
             )
         except Exception as exc:
-            log.warning("eval_runner.rule_score_error", query=query[:50], error=str(exc))
+            log.warning(
+                "eval_runner.rule_score_error", query=query[:50], error=str(exc)
+            )
 
         return EvalCaseResult(
             query=query,

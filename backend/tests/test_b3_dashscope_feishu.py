@@ -11,13 +11,13 @@
   elem["content"]，真实环境提取全文为空）、mention_doc 标题提取、
   平铺 content 防御性回退。
 """
+
 from __future__ import annotations
 
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 
 # ======================================================================
 # 注册表完整性
@@ -61,7 +61,9 @@ class TestSaasDashscopeRegistry:
         with patch("app.vlm.provider.settings") as mock_settings:
             mock_settings.DEPLOY_MODE = "saas_dashscope"
             mock_settings.DASHSCOPE_API_KEY = "sk-test"
-            mock_settings.DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            mock_settings.DASHSCOPE_BASE_URL = (
+                "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            )
             mock_settings.DASHSCOPE_VLM_MODEL = "qwen-vl-max"
 
             from app.vlm.provider import DashScopeVisionProvider, get_vision_provider
@@ -194,7 +196,9 @@ class TestDashScopeVisionProvider:
     def test_init_points_to_dashscope(self) -> None:
         with patch("app.vlm.provider.settings") as mock_settings:
             mock_settings.DASHSCOPE_API_KEY = "sk-vlm"
-            mock_settings.DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            mock_settings.DASHSCOPE_BASE_URL = (
+                "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            )
             mock_settings.DASHSCOPE_VLM_MODEL = "qwen-vl-max"
 
             from app.vlm.provider import DashScopeVisionProvider
@@ -207,7 +211,9 @@ class TestDashScopeVisionProvider:
     def test_model_override(self) -> None:
         with patch("app.vlm.provider.settings") as mock_settings:
             mock_settings.DASHSCOPE_API_KEY = "sk-vlm"
-            mock_settings.DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            mock_settings.DASHSCOPE_BASE_URL = (
+                "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            )
             mock_settings.DASHSCOPE_VLM_MODEL = "qwen-vl-max"
 
             from app.vlm.provider import DashScopeVisionProvider
@@ -284,9 +290,12 @@ class TestFeishuExtractText:
         adapter = self._adapter()
 
         assert adapter._extract_text({"block_type": 2, "text": {"elements": []}}) == ""
-        assert adapter._extract_text(
-            {"block_type": 2, "text": {"elements": ["not-a-dict", None]}}
-        ) == ""
+        assert (
+            adapter._extract_text(
+                {"block_type": 2, "text": {"elements": ["not-a-dict", None]}}
+            )
+            == ""
+        )
         assert adapter._extract_text({"block_type": 2}) == ""
 
     def test_blocks_to_markdown_real_structure(self) -> None:
@@ -302,7 +311,9 @@ class TestFeishuExtractText:
             {
                 "block_id": "b2",
                 "block_type": 2,
-                "text": {"elements": [{"text_run": {"content": "本制度适用于全体员工。"}}]},
+                "text": {
+                    "elements": [{"text_run": {"content": "本制度适用于全体员工。"}}]
+                },
             },
         ]
 

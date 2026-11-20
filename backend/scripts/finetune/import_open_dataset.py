@@ -108,6 +108,7 @@ DATASET_CONFIGS: dict[str, dict[str, str]] = {
 # 辅助函数
 # ---------------------------------------------------------------------------
 
+
 def _first_nonempty(items: object) -> str | None:
     """从字符串或字符串列表中取第一个非空项（strip 后非空）。
 
@@ -157,6 +158,7 @@ def _extract_first_answer(answers: object) -> str | None:
 # ---------------------------------------------------------------------------
 # 转换函数（纯函数，可独立测试，不依赖网络 / datasets 库）
 # ---------------------------------------------------------------------------
+
 
 def convert_t2ranking_record(raw: dict) -> dict | None:
     """T2Ranking (C-MTEB/T2Reranking) 单条记录 → embedding.jsonl 三元组。
@@ -277,6 +279,7 @@ CONVERTERS = {
 # JSONL 写入
 # ---------------------------------------------------------------------------
 
+
 def write_jsonl(records: list[dict], path: str | Path) -> int:
     """将记录列表写入 JSONL 文件（ensure_ascii=False，中文原样落盘）。
 
@@ -294,6 +297,7 @@ def write_jsonl(records: list[dict], path: str | Path) -> int:
 # ---------------------------------------------------------------------------
 # HuggingFace 数据集下载 + 转换
 # ---------------------------------------------------------------------------
+
 
 def _load_hf_dataset(hf_name: str, config: str, split: str):
     """下载 HuggingFace 数据集（重依赖 datasets 延迟导入）。
@@ -357,6 +361,7 @@ def load_and_convert(
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="开源数据集导入 — HuggingFace 公开数据集 → 微调 jsonl",
@@ -410,30 +415,36 @@ def main(argv: list[str] | None = None) -> int:
 
     for key in keys:
         cfg = DATASET_CONFIGS[key]
-        logger.info("正在处理数据集：%s (%s, config=%s)", key, cfg["hf_name"], cfg["config"])
+        logger.info(
+            "正在处理数据集：%s (%s, config=%s)", key, cfg["hf_name"], cfg["config"]
+        )
         try:
             records, converted, skipped = load_and_convert(key, args.limit, args.split)
         except (ImportError, RuntimeError) as exc:
             logger.error("%s", exc)
-            stats.append({
-                "dataset": key,
-                "error": str(exc).splitlines()[0],
-                "converted": 0,
-                "skipped": 0,
-                "output": str(output_dir / cfg["output_file"]),
-            })
+            stats.append(
+                {
+                    "dataset": key,
+                    "error": str(exc).splitlines()[0],
+                    "converted": 0,
+                    "skipped": 0,
+                    "output": str(output_dir / cfg["output_file"]),
+                }
+            )
             continue
 
         out_file = cfg["output_file"]
         file_records.setdefault(out_file, []).extend(records)
         out_path = output_dir / out_file
-        stats.append({
-            "dataset": key,
-            "hf_name": cfg["hf_name"],
-            "converted": converted,
-            "skipped": skipped,
-            "output": str(out_path),
-        })
+        stats.append(
+            {
+                "dataset": key,
+                "hf_name": cfg["hf_name"],
+                "converted": converted,
+                "skipped": skipped,
+                "output": str(out_path),
+            }
+        )
 
     # 统一写入（同文件多数据集记录合并）
     for out_file, records in file_records.items():

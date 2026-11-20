@@ -5,6 +5,7 @@
 请求体不定义为 Pydantic 模型 — 签名验证需要原始 body 字节，
 端点通过 ``await request.body()`` 读取原始字节后再解析为 dict。
 """
+
 from __future__ import annotations
 
 from typing import Any

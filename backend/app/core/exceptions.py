@@ -99,6 +99,7 @@ class InfiniteLoopDetected(AgentError):
 # 安全相关异常 —— 用于 SECURITY_VETO 集中判断
 # ------------------------------------------------------------------
 
+
 class SecurityViolation(AgentError):
     """安全违规 —— 注入检测 / 权限拒绝 / 污点追踪拦截。"""
 

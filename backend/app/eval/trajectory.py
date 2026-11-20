@@ -115,6 +115,6 @@ def _tool_of(name: str, span_type: str) -> str | None:
     if span_type != "tool.call":
         return None
     if name.startswith(_TOOL_PREFIX):
-        tool = name[len(_TOOL_PREFIX):].strip()
+        tool = name[len(_TOOL_PREFIX) :].strip()
         return tool or None
     return None

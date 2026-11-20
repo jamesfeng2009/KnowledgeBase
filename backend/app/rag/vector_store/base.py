@@ -118,9 +118,7 @@ class VectorStoreBase(ABC):
         ...
 
     @abstractmethod
-    async def fetch_by_ids(
-        self, chunk_ids: list[str]
-    ) -> dict[str, dict[str, Any]]:
+    async def fetch_by_ids(self, chunk_ids: list[str]) -> dict[str, dict[str, Any]]:
         """按 chunk_id 批量获取文档元数据（不含向量）。
 
         父子索引回溯核心：检索命中子块后，按 ``parent_id`` 批量获取
@@ -146,7 +144,12 @@ class VectorStoreBase(ABC):
         优先级：显式入参 ``kb_id`` > chunk 携带的 ``kb_id`` 属性 >
         ``chunk.doc_id`` / ``doc_id``（兼容旧调用方的兜底值）。
         """
-        return kb_id or getattr(chunk, "kb_id", None) or getattr(chunk, "doc_id", None) or doc_id
+        return (
+            kb_id
+            or getattr(chunk, "kb_id", None)
+            or getattr(chunk, "doc_id", None)
+            or doc_id
+        )
 
     @staticmethod
     def _format_result(

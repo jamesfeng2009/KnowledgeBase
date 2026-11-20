@@ -61,9 +61,7 @@ class S3StorageBackend(StorageBackend):
         if self._bucket_ready:
             return
         try:
-            await asyncio_to_thread(
-                self._client.head_bucket, Bucket=self._bucket
-            )
+            await asyncio_to_thread(self._client.head_bucket, Bucket=self._bucket)
         except Exception:
             try:
                 await asyncio_to_thread(self._client.create_bucket, Bucket=self._bucket)

@@ -67,9 +67,7 @@ def extract_multi_turn_metrics(
 
     total_refs = len(retrieval_refs)
     unique_refs = len(set(retrieval_refs))
-    redundancy = (
-        (total_refs - unique_refs) / total_refs if total_refs > 0 else 0.0
-    )
+    redundancy = (total_refs - unique_refs) / total_refs if total_refs > 0 else 0.0
 
     early_convergence = iterations_used < max_iterations
     convergence_efficiency = (

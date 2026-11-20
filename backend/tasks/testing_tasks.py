@@ -246,9 +246,7 @@ try:
         )
         try:
             result = _run_async(
-                _extract_requirements(
-                    project_id, doc_id, target_categories, tenant_id
-                )
+                _extract_requirements(project_id, doc_id, target_categories, tenant_id)
             )
             logger.info(
                 "testing.extract_requirements_task_completed",

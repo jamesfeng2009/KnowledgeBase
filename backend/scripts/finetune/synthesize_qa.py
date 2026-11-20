@@ -286,7 +286,9 @@ def _parse_line_by_line(text: str) -> list[dict[str, str]]:
 # ------------------------------------------------------------------
 
 
-async def _call_llm(llm_provider: Any, messages: list[dict[str, str]], **kwargs: Any) -> str:
+async def _call_llm(
+    llm_provider: Any, messages: list[dict[str, str]], **kwargs: Any
+) -> str:
     """消费 provider.chat() 异步生成器，拼接返回完整文本。
 
     provider.chat() 在非流式模式下 yield 完整文本（str）和可能的 usage dict；
@@ -378,7 +380,9 @@ async def run_synthesis(
     docs: list[Any] = []
     skipped_classification = 0
     for doc in all_docs:
-        weight = CLASSIFICATION_WEIGHT.get(getattr(doc, "classification", "internal"), 1)
+        weight = CLASSIFICATION_WEIGHT.get(
+            getattr(doc, "classification", "internal"), 1
+        )
         if weight <= threshold:
             docs.append(doc)
         else:
@@ -417,7 +421,9 @@ async def run_synthesis(
 
             qa_pairs = parse_qa_response(llm_output)
             if not qa_pairs:
-                logger.warning("文档 %s QA 解析失败（空结果），跳过", getattr(doc, "id", "?"))
+                logger.warning(
+                    "文档 %s QA 解析失败（空结果），跳过", getattr(doc, "id", "?")
+                )
                 stats["docs_failed"] += 1
                 continue
 
@@ -425,8 +431,14 @@ async def run_synthesis(
 
             for qa in qa_pairs:
                 if dry_run:
-                    logger.info("[dry-run] 文档 %s Q: %s", getattr(doc, "id", "?"), qa["question"])
-                    logger.info("[dry-run] 文档 %s A: %s", getattr(doc, "id", "?"), qa["answer"])
+                    logger.info(
+                        "[dry-run] 文档 %s Q: %s",
+                        getattr(doc, "id", "?"),
+                        qa["question"],
+                    )
+                    logger.info(
+                        "[dry-run] 文档 %s A: %s", getattr(doc, "id", "?"), qa["answer"]
+                    )
                 else:
                     question_id = uuid.uuid4()
                     question = QaQuestion(
@@ -475,9 +487,9 @@ async def run_synthesis(
             stats["docs_processed"] += 1
             # 按场景分布（文档自动分类）
             category = getattr(doc, "category", None) or "uncategorized"
-            stats["scene_distribution"][category] = (
-                stats["scene_distribution"].get(category, 0) + len(qa_pairs)
-            )
+            stats["scene_distribution"][category] = stats["scene_distribution"].get(
+                category, 0
+            ) + len(qa_pairs)
 
         except Exception as exc:
             logger.warning("文档 %s 合成失败: %s", getattr(doc, "id", "?"), exc)
@@ -615,7 +627,9 @@ async def _run(
     return 0
 
 
-def main(argv: list[str] | None = None, *, llm_provider: Any = None, db: Any = None) -> int:
+def main(
+    argv: list[str] | None = None, *, llm_provider: Any = None, db: Any = None
+) -> int:
     """CLI 入口 —— 解析参数并通过 asyncio.run 执行异步逻辑。
 
     Args:

@@ -1,4 +1,5 @@
 """APISIX 边缘网关配置安全测试。"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -37,6 +38,6 @@ class TestApisixConfig:
         for route in routes:
             limit_req = route.get("plugins", {}).get("limit-req")
             if limit_req is not None:
-                assert "header" not in limit_req, (
-                    f"route {route.get('id')} 的 limit-req 包含无效 header 字段"
-                )
+                assert (
+                    "header" not in limit_req
+                ), f"route {route.get('id')} 的 limit-req 包含无效 header 字段"

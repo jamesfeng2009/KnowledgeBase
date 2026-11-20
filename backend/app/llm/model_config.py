@@ -27,6 +27,7 @@
 
 P2-1: 创建 models.json 配置文件（Git 管理）
 """
+
 from __future__ import annotations
 
 import json
@@ -40,7 +41,9 @@ from app.utils.logger import get_logger
 log = get_logger(__name__)
 
 # models.json 文件路径 — 相对于 backend/ 根目录
-_MODELS_JSON_PATH = Path(__file__).resolve().parent.parent.parent / "config" / "models.json"
+_MODELS_JSON_PATH = (
+    Path(__file__).resolve().parent.parent.parent / "config" / "models.json"
+)
 
 
 class ModelConfig(TypedDict, total=False):
@@ -48,15 +51,15 @@ class ModelConfig(TypedDict, total=False):
 
     id: str
     display_name: str
-    provider_type: str          # anthropic / dashscope / vllm
-    deploy_mode: str            # saas / saas_dashscope / private_overseas / private_domestic
-    model_id: str               # Provider 实际使用的模型 ID
-    max_tokens: int             # 上下文窗口
-    max_output_tokens: int      # 最大输出 token
+    provider_type: str  # anthropic / dashscope / vllm
+    deploy_mode: str  # saas / saas_dashscope / private_overseas / private_domestic
+    model_id: str  # Provider 实际使用的模型 ID
+    max_tokens: int  # 上下文窗口
+    max_output_tokens: int  # 最大输出 token
     description: str
-    tier: str                   # premium / standard / lite
+    tier: str  # premium / standard / lite
     enabled: bool
-    is_default: bool            # 该 deploy_mode 的默认模型
+    is_default: bool  # 该 deploy_mode 的默认模型
     supports_streaming: bool
     supports_tool_use: bool
     supports_vision: bool
@@ -89,7 +92,8 @@ def get_available_models() -> list[ModelConfig]:
     deploy_mode = settings.DEPLOY_MODE
     all_models = _load_models_raw()
     return [
-        m for m in all_models
+        m
+        for m in all_models
         if m.get("deploy_mode") == deploy_mode and m.get("enabled", True)
     ]
 

@@ -20,7 +20,10 @@ class QaQuestion(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, comment="提问者 ID"
     )
     kb_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("knowledge_bases.id"), nullable=True, comment="关联知识库"
+        UUID(as_uuid=True),
+        ForeignKey("knowledge_bases.id"),
+        nullable=True,
+        comment="关联知识库",
     )
     tenant_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
@@ -35,7 +38,9 @@ class QaQuestion(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     )
     view_count: Mapped[int] = mapped_column(Integer, default=0, comment="浏览数")
     answer_count: Mapped[int] = mapped_column(Integer, default=0, comment="回答数")
-    tags: Mapped[str | None] = mapped_column(String(500), nullable=True, comment="标签（逗号分隔）")
+    tags: Mapped[str | None] = mapped_column(
+        String(500), nullable=True, comment="标签（逗号分隔）"
+    )
 
     answers: Mapped[list["QaAnswer"]] = relationship(back_populates="question")
 
@@ -46,7 +51,10 @@ class QaAnswer(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     __tablename__ = "qa_answers"
 
     question_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("qa_questions.id"), nullable=False, comment="问题 ID"
+        UUID(as_uuid=True),
+        ForeignKey("qa_questions.id"),
+        nullable=False,
+        comment="问题 ID",
     )
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, comment="回答者 ID"
@@ -58,7 +66,9 @@ class QaAnswer(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
         comment="租户 ID",
     )
     content: Mapped[str] = mapped_column(Text, nullable=False, comment="回答内容")
-    is_accepted: Mapped[bool] = mapped_column(Boolean, default=False, comment="是否被采纳")
+    is_accepted: Mapped[bool] = mapped_column(
+        Boolean, default=False, comment="是否被采纳"
+    )
     is_ai_generated: Mapped[bool] = mapped_column(
         Boolean, default=False, comment="是否 AI 生成"
     )

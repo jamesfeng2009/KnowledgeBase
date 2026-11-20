@@ -32,9 +32,7 @@ class DocumentAction(UUIDMixin, TimestampMixin, Base):
     deadline: Mapped[date | None] = mapped_column(
         Date, nullable=True, comment="截止日期"
     )
-    content: Mapped[str] = mapped_column(
-        Text, nullable=False, comment="行动内容"
-    )
+    content: Mapped[str] = mapped_column(Text, nullable=False, comment="行动内容")
     priority: Mapped[str] = mapped_column(
         String(20), default="medium", comment="优先级: high/medium/low"
     )

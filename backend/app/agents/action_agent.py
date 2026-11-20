@@ -51,9 +51,17 @@ class ActionAgent(BaseAgent):
     #: 上游 IntentRouter（app.intent.router）已有 LLM 兜底分类，
     #: 此处保持零成本规则匹配即可。
     _IT_TICKET_KEYWORDS: tuple[str, ...] = (
-        "工单", "故障", "报修", "报错", "无法访问",
-        "系统异常", "系统崩溃", "网络问题", "密码重置",
-        "账号锁定", "权限不足",
+        "工单",
+        "故障",
+        "报修",
+        "报错",
+        "无法访问",
+        "系统异常",
+        "系统崩溃",
+        "网络问题",
+        "密码重置",
+        "账号锁定",
+        "权限不足",
     )
 
     # P0 prompt 外置：从 prompts/action.md 加载，缺失时回退内置默认（与历史硬编码一致）
@@ -83,9 +91,7 @@ class ActionAgent(BaseAgent):
         ):
             # 幂等注入：reflect 重试会重新执行 execute()，已存在的
             # 同内容 system 消息不重复 append，避免上下文膨胀。
-            state["messages"].append(
-                {"role": "system", "content": action_context}
-            )
+            state["messages"].append({"role": "system", "content": action_context})
 
         # 2. 流式生成回复（含执行结果摘要）
         try:
@@ -189,9 +195,7 @@ class ActionAgent(BaseAgent):
                 )
                 return None
 
-            state["tool_results"].append(
-                {"tool": "create_it_ticket", "result": result}
-            )
+            state["tool_results"].append({"tool": "create_it_ticket", "result": result})
 
             ticket_id = result.get("ticket_id", "未知")
             priority = result.get("priority", "normal")

@@ -52,7 +52,10 @@ class UserBehavior(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, comment="用户 ID"
     )
     doc_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("documents.id"), nullable=False, comment="文档 ID"
+        UUID(as_uuid=True),
+        ForeignKey("documents.id"),
+        nullable=False,
+        comment="文档 ID",
     )
     action_type: Mapped[str] = mapped_column(
         String(20), nullable=False, comment="行为类型: view/search_click/collect/like"

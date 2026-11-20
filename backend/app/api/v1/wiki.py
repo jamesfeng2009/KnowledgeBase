@@ -32,10 +32,12 @@ def _wiki_service(db: AsyncSession, request: Request, user: User) -> WikiService
 
 
 def _perm(db: AsyncSession, request: Request, user: User) -> PermissionService:
-    return PermissionService(db, user, tenant_id=getattr(request.state, "tenant_id", None))
+    return PermissionService(
+        db, user, tenant_id=getattr(request.state, "tenant_id", None)
+    )
 
 
-def _page_dict(page, links=None) -> dict:  # noqa: ANN001
+def _page_dict(page, links=None) -> dict:
     data = {
         "id": str(page.id),
         "kb_id": str(page.kb_id),
@@ -49,12 +51,13 @@ def _page_dict(page, links=None) -> dict:  # noqa: ANN001
     }
     if links is not None:
         data["outbound_links"] = [
-            {"to_page_id": str(l.to_page_id), "text": l.link_text} for l in links
+            {"to_page_id": str(link.to_page_id), "text": link.link_text}
+            for link in links
         ]
     return data
 
 
-def _version_dict(version) -> dict:  # noqa: ANN001
+def _version_dict(version) -> dict:
     return {
         "id": str(version.id),
         "version_seq": version.version_seq,
@@ -82,7 +85,7 @@ async def generate_wiki(
         result = await service.generate(kb_id, author_id=user.id)
     except ValueError as exc:
         return ApiResponse(code=400, data=None, message=str(exc))
-    except Exception as exc:  # noqa: BLE001 — LLM 链路异常统一降级为 502
+    except Exception as exc:
         log.error("wiki.generate_error", kb_id=str(kb_id), error=str(exc))
         return ApiResponse(code=502, data=None, message=f"生成失败: {exc}")
     await db.commit()
@@ -103,10 +106,16 @@ async def list_wiki_pages(
     service = _wiki_service(db, request, user)
     pages = await service.list_pages(kb_id)
     items = [
-        {k: v for k, v in _page_dict(p).items() if k not in ("content_md", "outbound_links")}
+        {
+            k: v
+            for k, v in _page_dict(p).items()
+            if k not in ("content_md", "outbound_links")
+        }
         for p in pages
     ]
-    return ApiResponse(code=0, data={"items": items, "total": len(items)}, message="success")
+    return ApiResponse(
+        code=0, data={"items": items, "total": len(items)}, message="success"
+    )
 
 
 @router.get("/knowledge/{kb_id}/wiki/graph", response_model=ApiResponse[dict])
@@ -162,8 +171,11 @@ async def update_wiki_page(
         return ApiResponse(code=403, data=None, message="无知识库写权限")
     try:
         updated = await service.update_page(
-            page_id, title=body.title, content_md=body.content_md,
-            author_id=user.id, summary=body.summary,
+            page_id,
+            title=body.title,
+            content_md=body.content_md,
+            author_id=user.id,
+            summary=body.summary,
         )
     except ValueError as exc:
         return ApiResponse(code=400, data=None, message=str(exc))

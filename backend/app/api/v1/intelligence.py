@@ -49,9 +49,7 @@ async def trigger_intelligence(
     from app.services.doc_intelligence_service import DocIntelligenceService
 
     # 验证文档存在
-    result = await db.execute(
-        select(Document).where(Document.id == UUID(doc_id))
-    )
+    result = await db.execute(select(Document).where(Document.id == UUID(doc_id)))
     doc = result.scalars().first()
     if not doc:
         return ApiResponse(code=404, data=None, message="文档不存在")
@@ -77,9 +75,7 @@ async def get_intelligence_status(
     """查询文档智能处理状态 — 检查摘要/标签/分类是否已生成。"""
     from uuid import UUID
 
-    result = await db.execute(
-        select(Document).where(Document.id == UUID(doc_id))
-    )
+    result = await db.execute(select(Document).where(Document.id == UUID(doc_id)))
     doc = result.scalars().first()
     if not doc:
         return ApiResponse(code=404, data=None, message="文档不存在")
@@ -103,9 +99,7 @@ async def update_summary(
     """手动修改文档摘要 — 修正 AI 生成结果。"""
     from uuid import UUID
 
-    result = await db.execute(
-        select(Document).where(Document.id == UUID(doc_id))
-    )
+    result = await db.execute(select(Document).where(Document.id == UUID(doc_id)))
     doc = result.scalars().first()
     if not doc:
         return ApiResponse(code=404, data=None, message="文档不存在")
@@ -125,9 +119,7 @@ async def update_tags(
     """手动修改文档标签 — 增删 AI 生成的标签。"""
     from uuid import UUID
 
-    result = await db.execute(
-        select(Document).where(Document.id == UUID(doc_id))
-    )
+    result = await db.execute(select(Document).where(Document.id == UUID(doc_id)))
     doc = result.scalars().first()
     if not doc:
         return ApiResponse(code=404, data=None, message="文档不存在")

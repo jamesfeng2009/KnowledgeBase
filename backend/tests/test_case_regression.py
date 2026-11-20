@@ -12,8 +12,6 @@ from __future__ import annotations
 import sys
 from unittest.mock import MagicMock
 
-import pytest
-
 # Mock celery（测试环境未安装，参考 test_eval.py）
 if "celery" not in sys.modules:
     mock_celery = MagicMock()
@@ -32,10 +30,7 @@ def _make_run_result(
     """构造 EvalRunResult。case_specs: (query, recall_at_5, error)。"""
     from app.eval.runner import EvalCaseResult, EvalRunResult
 
-    cases = [
-        EvalCaseResult(query=q, recall_at_5=r, error=e)
-        for q, r, e in case_specs
-    ]
+    cases = [EvalCaseResult(query=q, recall_at_5=r, error=e) for q, r, e in case_specs]
     return EvalRunResult(
         case_results=cases,
         total=len(cases),
@@ -192,12 +187,8 @@ class TestCompareCases:
 
     def test_judge_score_drop_detected(self) -> None:
         """Judge total_score 4.5 → 2.0（相对下降 ~55%）应触发退化。"""
-        cur = _wrap_run(
-            _make_case_with_metrics(recall_at_5=1.0, judge_total=2.0)
-        )
-        base = _wrap_run(
-            _make_case_with_metrics(recall_at_5=1.0, judge_total=4.5)
-        )
+        cur = _wrap_run(_make_case_with_metrics(recall_at_5=1.0, judge_total=2.0))
+        base = _wrap_run(_make_case_with_metrics(recall_at_5=1.0, judge_total=4.5))
         diffs, regressed = self._compare(cur, base, threshold=0.05)
         assert regressed is True
         drops = {m["metric"]: m for m in diffs[0].get("metric_drops", [])}
@@ -206,14 +197,10 @@ class TestCompareCases:
     def test_ragas_faithfulness_drop_detected(self) -> None:
         """RAGAS faithfulness 0.9 → 0.3（相对下降 ~66%）应触发退化。"""
         cur = _wrap_run(
-            _make_case_with_metrics(
-                recall_at_5=1.0, ragas={"faithfulness": 0.3}
-            )
+            _make_case_with_metrics(recall_at_5=1.0, ragas={"faithfulness": 0.3})
         )
         base = _wrap_run(
-            _make_case_with_metrics(
-                recall_at_5=1.0, ragas={"faithfulness": 0.9}
-            )
+            _make_case_with_metrics(recall_at_5=1.0, ragas={"faithfulness": 0.9})
         )
         diffs, regressed = self._compare(cur, base, threshold=0.05)
         assert regressed is True
@@ -222,12 +209,8 @@ class TestCompareCases:
 
     def test_metric_from_computable_to_none_is_full_drop(self) -> None:
         """基线有 Judge 分而当前为 None（生成失败）视为完全退化（drop=1.0）。"""
-        cur = _wrap_run(
-            _make_case_with_metrics(recall_at_5=1.0, judge_total=None)
-        )
-        base = _wrap_run(
-            _make_case_with_metrics(recall_at_5=1.0, judge_total=4.0)
-        )
+        cur = _wrap_run(_make_case_with_metrics(recall_at_5=1.0, judge_total=None))
+        base = _wrap_run(_make_case_with_metrics(recall_at_5=1.0, judge_total=4.0))
         diffs, regressed = self._compare(cur, base, threshold=0.05)
         assert regressed is True
         drops = {m["metric"]: m for m in diffs[0].get("metric_drops", [])}
@@ -236,8 +219,12 @@ class TestCompareCases:
 
     def test_no_regression_when_metrics_stable(self) -> None:
         """recall/mrr/judge/ragas 全部稳定时不触发退化。"""
-        shared = dict(recall_at_5=0.8, mrr=0.5, judge_total=3.5,
-                      ragas={"faithfulness": 0.8, "answer_relevancy": 0.7})
+        shared = dict(
+            recall_at_5=0.8,
+            mrr=0.5,
+            judge_total=3.5,
+            ragas={"faithfulness": 0.8, "answer_relevancy": 0.7},
+        )
         cur = _wrap_run(_make_case_with_metrics(**shared))
         base = _wrap_run(_make_case_with_metrics(**shared))
         diffs, regressed = self._compare(cur, base, threshold=0.05)

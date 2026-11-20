@@ -46,8 +46,8 @@ class TestTextExtractionPR:
 class TestTableStructure:
     def _table_html(self) -> str:
         return (
-            "<table border=\"1\"><thead>"
-            "<tr><th rowspan=\"2\">Item</th><th colspan=\"3\">Amount</th></tr>"
+            '<table border="1"><thead>'
+            '<tr><th rowspan="2">Item</th><th colspan="3">Amount</th></tr>'
             "<tr><th>Revenue</th><th>Cost</th><th>Profit</th></tr></thead>"
             "<tbody>"
             "<tr><td>First quarter</td><td>2,910</td><td>1,680</td><td>1,230</td></tr>"

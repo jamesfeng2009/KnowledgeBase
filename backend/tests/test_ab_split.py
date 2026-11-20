@@ -55,16 +55,28 @@ class TestBasicSplit:
     def test_empty_model_returns_empty(self, monkeypatch):
         _set_experiments(
             monkeypatch,
-            [{"name": "e1", "control_model": CONTROL,
-              "treatment_model": TREATMENT, "traffic_pct": 100}],
+            [
+                {
+                    "name": "e1",
+                    "control_model": CONTROL,
+                    "treatment_model": TREATMENT,
+                    "traffic_pct": 100,
+                }
+            ],
         )
         assert apply_ab_split("", user_id="u1") == ""
 
     def test_traffic_100_all_treatment(self, monkeypatch):
         _set_experiments(
             monkeypatch,
-            [{"name": "e1", "control_model": CONTROL,
-              "treatment_model": TREATMENT, "traffic_pct": 100}],
+            [
+                {
+                    "name": "e1",
+                    "control_model": CONTROL,
+                    "treatment_model": TREATMENT,
+                    "traffic_pct": 100,
+                }
+            ],
         )
         for i in range(20):
             assert apply_ab_split(CONTROL, user_id=f"u{i}") == TREATMENT
@@ -72,8 +84,14 @@ class TestBasicSplit:
     def test_traffic_0_no_treatment(self, monkeypatch):
         _set_experiments(
             monkeypatch,
-            [{"name": "e1", "control_model": CONTROL,
-              "treatment_model": TREATMENT, "traffic_pct": 0}],
+            [
+                {
+                    "name": "e1",
+                    "control_model": CONTROL,
+                    "treatment_model": TREATMENT,
+                    "traffic_pct": 0,
+                }
+            ],
         )
         for i in range(20):
             assert apply_ab_split(CONTROL, user_id=f"u{i}") == CONTROL
@@ -85,8 +103,14 @@ class TestStickyBucketing:
     def test_same_user_same_bucket(self, monkeypatch):
         _set_experiments(
             monkeypatch,
-            [{"name": "e1", "control_model": CONTROL,
-              "treatment_model": TREATMENT, "traffic_pct": 50}],
+            [
+                {
+                    "name": "e1",
+                    "control_model": CONTROL,
+                    "treatment_model": TREATMENT,
+                    "traffic_pct": 50,
+                }
+            ],
         )
         first = apply_ab_split(CONTROL, user_id="user-42")
         for _ in range(10):
@@ -96,12 +120,17 @@ class TestStickyBucketing:
         """50% 配置在 500 用户上命中比例应落在 40%-60%。"""
         _set_experiments(
             monkeypatch,
-            [{"name": "e1", "control_model": CONTROL,
-              "treatment_model": TREATMENT, "traffic_pct": 50}],
+            [
+                {
+                    "name": "e1",
+                    "control_model": CONTROL,
+                    "treatment_model": TREATMENT,
+                    "traffic_pct": 50,
+                }
+            ],
         )
         hits = sum(
-            apply_ab_split(CONTROL, user_id=f"u{i}") == TREATMENT
-            for i in range(500)
+            apply_ab_split(CONTROL, user_id=f"u{i}") == TREATMENT for i in range(500)
         )
         assert 200 <= hits <= 300, f"50% 配置命中 {hits}/500，分布异常"
 
@@ -112,8 +141,14 @@ class TestExplicitChoice:
     def test_non_control_model_untouched(self, monkeypatch):
         _set_experiments(
             monkeypatch,
-            [{"name": "e1", "control_model": CONTROL,
-              "treatment_model": TREATMENT, "traffic_pct": 100}],
+            [
+                {
+                    "name": "e1",
+                    "control_model": CONTROL,
+                    "treatment_model": TREATMENT,
+                    "traffic_pct": 100,
+                }
+            ],
         )
         # 用户显式选了另一个模型 → 即使 traffic 100% 也不劫持
         assert apply_ab_split("claude-haiku-4", user_id="u1") == "claude-haiku-4"
@@ -125,9 +160,15 @@ class TestTenantGray:
     def test_allowlist_forces_treatment(self, monkeypatch):
         _set_experiments(
             monkeypatch,
-            [{"name": "e1", "control_model": CONTROL,
-              "treatment_model": TREATMENT, "traffic_pct": 0,
-              "tenant_allowlist": ["tenant-A"]}],
+            [
+                {
+                    "name": "e1",
+                    "control_model": CONTROL,
+                    "treatment_model": TREATMENT,
+                    "traffic_pct": 0,
+                    "tenant_allowlist": ["tenant-A"],
+                }
+            ],
         )
         # traffic 0% 但租户在白名单 → 100% treatment
         assert apply_ab_split(CONTROL, tenant_id="tenant-A", user_id="u1") == TREATMENT
@@ -137,9 +178,15 @@ class TestTenantGray:
     def test_blocklist_locks_control(self, monkeypatch):
         _set_experiments(
             monkeypatch,
-            [{"name": "e1", "control_model": CONTROL,
-              "treatment_model": TREATMENT, "traffic_pct": 100,
-              "tenant_blocklist": ["tenant-SAFE"]}],
+            [
+                {
+                    "name": "e1",
+                    "control_model": CONTROL,
+                    "treatment_model": TREATMENT,
+                    "traffic_pct": 100,
+                    "tenant_blocklist": ["tenant-SAFE"],
+                }
+            ],
         )
         # traffic 100% 但租户在黑名单 → 锁死 control
         assert apply_ab_split(CONTROL, tenant_id="tenant-SAFE", user_id="u1") == CONTROL
@@ -164,12 +211,24 @@ class TestConfigFaultTolerance:
         _set_experiments(
             monkeypatch,
             [
-                {"name": "", "control_model": CONTROL,
-                 "treatment_model": TREATMENT, "traffic_pct": 100},  # 名字缺失 → 跳过
-                {"name": "e2", "control_model": CONTROL,
-                 "treatment_model": TREATMENT, "traffic_pct": 500},  # 越界 → 跳过
-                {"name": "e3", "control_model": CONTROL,
-                 "treatment_model": TREATMENT, "traffic_pct": 100},  # 合法
+                {
+                    "name": "",
+                    "control_model": CONTROL,
+                    "treatment_model": TREATMENT,
+                    "traffic_pct": 100,
+                },  # 名字缺失 → 跳过
+                {
+                    "name": "e2",
+                    "control_model": CONTROL,
+                    "treatment_model": TREATMENT,
+                    "traffic_pct": 500,
+                },  # 越界 → 跳过
+                {
+                    "name": "e3",
+                    "control_model": CONTROL,
+                    "treatment_model": TREATMENT,
+                    "traffic_pct": 100,
+                },  # 合法
             ],
         )
         assert apply_ab_split(CONTROL, user_id="u1") == TREATMENT
@@ -177,8 +236,14 @@ class TestConfigFaultTolerance:
     def test_disabled_experiment_ignored(self, monkeypatch):
         _set_experiments(
             monkeypatch,
-            [{"name": "e1", "control_model": CONTROL,
-              "treatment_model": TREATMENT, "traffic_pct": 100,
-              "enabled": False}],
+            [
+                {
+                    "name": "e1",
+                    "control_model": CONTROL,
+                    "treatment_model": TREATMENT,
+                    "traffic_pct": 100,
+                    "enabled": False,
+                }
+            ],
         )
         assert apply_ab_split(CONTROL, user_id="u1") == CONTROL

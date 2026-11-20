@@ -24,8 +24,6 @@ import importlib.util
 import re
 from pathlib import Path
 
-import pytest
-
 # backend/ 目录（tests/ 的上一级）
 BACKEND_ROOT = Path(__file__).parent.parent
 # 项目根目录（backend/ 的上一级）
@@ -91,9 +89,7 @@ class TestTaskQueues:
         """全部 7 个业务队列都已声明。"""
         declared = {q.name for q in celery_app.conf.task_queues}
         expected = set(_ALL_QUEUES)
-        assert expected <= declared, (
-            f"缺失队列: {expected - declared}"
-        )
+        assert expected <= declared, f"缺失队列: {expected - declared}"
 
     def test_default_queue_in_task_queues(self):
         """默认队列 'celery' 必须在 task_queues 中（兜底消费）。"""
@@ -133,9 +129,7 @@ class TestTaskRoutes:
             pattern = f"{module}.*"
             if pattern not in routes:
                 missing.append(module)
-        assert not missing, (
-            f"以下任务模块缺少 task_routes 路由规则: {missing}"
-        )
+        assert not missing, f"以下任务模块缺少 task_routes 路由规则: {missing}"
 
     def test_route_targets_are_declared_queues(self):
         """路由目标队列必须存在于 task_queues 中（防笔误）。"""
@@ -143,9 +137,7 @@ class TestTaskRoutes:
         routes = celery_app.conf.task_routes
         for pattern, route in routes.items():
             queue = route.get("queue")
-            assert queue in declared, (
-                f"路由 {pattern} 指向未声明的队列: {queue}"
-            )
+            assert queue in declared, f"路由 {pattern} 指向未声明的队列: {queue}"
 
     def test_heavy_tasks_not_on_default_queue(self):
         """重任务模块不得路由到默认队列（防阻塞兜底通道）。"""
@@ -157,9 +149,7 @@ class TestTaskRoutes:
         ]
         for pattern in heavy_modules:
             queue = routes[pattern]["queue"]
-            assert queue != "celery", (
-                f"{pattern} 路由到默认队列，重任务会阻塞兜底通道"
-            )
+            assert queue != "celery", f"{pattern} 路由到默认队列，重任务会阻塞兜底通道"
 
 
 class TestReliabilityConfig:
@@ -188,9 +178,9 @@ class TestReliabilityConfig:
         二者缺一不可。
         """
         non_durable = [q.name for q in celery_app.conf.task_queues if not q.durable]
-        assert not non_durable, (
-            f"以下队列非 durable，broker 重启后消息丢失: {non_durable}"
-        )
+        assert (
+            not non_durable
+        ), f"以下队列非 durable，broker 重启后消息丢失: {non_durable}"
 
     def test_publish_retry_enabled(self):
         """发布确认必须开启（API 侧投递失败自动重试）。"""
@@ -270,8 +260,7 @@ class TestBeatSchedule:
                     matched_queue = route["queue"]
                     break
             assert matched_queue in declared, (
-                f"beat 任务 {name}({task_name}) 路由到未声明队列 "
-                f"{matched_queue}"
+                f"beat 任务 {name}({task_name}) 路由到未声明队列 " f"{matched_queue}"
             )
 
 
@@ -302,6 +291,6 @@ class TestDockerComposeWorkerCommand:
 
         consumed = set(q_match.group(1).split(","))
         expected = set(_ALL_QUEUES)
-        assert expected <= consumed, (
-            f"worker -Q 参数未覆盖全部队列，缺失: {expected - consumed}"
-        )
+        assert (
+            expected <= consumed
+        ), f"worker -Q 参数未覆盖全部队列，缺失: {expected - consumed}"

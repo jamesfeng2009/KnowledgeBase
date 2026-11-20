@@ -14,21 +14,19 @@ P3-A 焦点追踪 + 指代消解单元测试。
 
 import pytest
 
-from app.context.focus_tracker import ConversationFocus, TopicTracker
 from app.context.coreference_resolver import CoreferenceResolver
-
+from app.context.focus_tracker import ConversationFocus, TopicTracker
 
 # ============================================================
 # ConversationFocus
 # ============================================================
 
+
 class TestConversationFocus:
     """ConversationFocus 数据结构测试。"""
 
     def test_to_context_str(self):
-        focus = ConversationFocus(
-            topic="限号政策", entity="北京", intent="查询"
-        )
+        focus = ConversationFocus(topic="限号政策", entity="北京", intent="查询")
         s = focus.to_context_str()
         assert "限号政策" in s
         assert "北京" in s
@@ -52,6 +50,7 @@ class TestConversationFocus:
 # ============================================================
 # TopicTracker
 # ============================================================
+
 
 class TestTopicTrackerRuleExtract:
     """TopicTracker 规则提取测试。"""
@@ -139,6 +138,7 @@ class TestTopicTrackerLLM:
     @pytest.mark.asyncio
     async def test_llm_extract_success(self):
         """LLM 提取焦点成功。"""
+
         class MockLLM:
             async def chat(self, messages, stream=True, max_tokens=80):
                 yield "限号政策|上海|查询"
@@ -156,6 +156,7 @@ class TestTopicTrackerLLM:
     @pytest.mark.asyncio
     async def test_llm_extract_malformed(self):
         """LLM 输出格式错误 — 返回 None。"""
+
         class MockLLM:
             async def chat(self, messages, stream=True, max_tokens=80):
                 yield "无法分析"
@@ -171,6 +172,7 @@ class TestTopicTrackerLLM:
     @pytest.mark.asyncio
     async def test_llm_extract_exception(self):
         """LLM 异常 — 优雅降级。"""
+
         class MockLLM:
             async def chat(self, messages, stream=True, max_tokens=80):
                 raise RuntimeError("API error")
@@ -189,6 +191,7 @@ class TestTopicTrackerLLM:
 # CoreferenceResolver
 # ============================================================
 
+
 class TestCoreferenceResolverDetection:
     """CoreferenceResolver.needs_resolution 检测测试。"""
 
@@ -203,7 +206,12 @@ class TestCoreferenceResolverDetection:
 
     def test_no_resolution_long_query(self):
         """长句 → 不需要消解。"""
-        assert self.resolver.needs_resolution("这是一个非常长的查询超过三十个字符所以不需要进行指代消解") is False
+        assert (
+            self.resolver.needs_resolution(
+                "这是一个非常长的查询超过三十个字符所以不需要进行指代消解"
+            )
+            is False
+        )
 
     def test_no_resolution_explicit_verb(self):
         """包含明确动词 → 不需要消解。"""
@@ -251,6 +259,7 @@ class TestCoreferenceResolverLLM:
     @pytest.mark.asyncio
     async def test_llm_resolve_success(self):
         """LLM 补全成功。"""
+
         class MockLLM:
             async def chat(self, messages, stream=True, max_tokens=100):
                 yield "上海今天车辆限号多少？"
@@ -263,6 +272,7 @@ class TestCoreferenceResolverLLM:
     @pytest.mark.asyncio
     async def test_llm_resolve_same_as_original(self):
         """LLM 返回与原查询相同 → 返回原查询。"""
+
         class MockLLM:
             async def chat(self, messages, stream=True, max_tokens=100):
                 yield "那上海呢？"
@@ -275,6 +285,7 @@ class TestCoreferenceResolverLLM:
     @pytest.mark.asyncio
     async def test_llm_resolve_exception(self):
         """LLM 异常 → 优雅降级为规则补全。"""
+
         class MockLLM:
             async def chat(self, messages, stream=True, max_tokens=100):
                 raise RuntimeError("API error")
@@ -290,6 +301,7 @@ class TestCoreferenceResolverLLM:
     @pytest.mark.asyncio
     async def test_llm_resolve_too_long(self):
         """LLM 输出过长 → 规则补全降级。"""
+
         class MockLLM:
             async def chat(self, messages, stream=True, max_tokens=100):
                 yield "x" * 300  # 超过 200 字符
@@ -305,6 +317,7 @@ class TestCoreferenceResolverLLM:
 # ============================================================
 # TopicTracker reset
 # ============================================================
+
 
 class TestTopicTrackerReset:
     """TopicTracker reset 方法测试。"""

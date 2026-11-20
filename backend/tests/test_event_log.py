@@ -19,6 +19,7 @@ DB 不可用时自动跳过 DB 集成测试（参考 conftest 的 db_session fix
 from __future__ import annotations
 
 import sys
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -94,11 +95,17 @@ class TestReplayAlgorithm:
         manager.list_after = AsyncMock(return_value=[])  # type: ignore
         manager.list_after.return_value = [
             EventRecord(
-                seq=1, event_type="node_end", node_name="retrieve", iteration=1,
+                seq=1,
+                event_type="node_end",
+                node_name="retrieve",
+                iteration=1,
                 output_data={"messages": [{"role": "tool", "content": "doc1"}]},
             ),
             EventRecord(
-                seq=2, event_type="node_end", node_name="tool_call", iteration=1,
+                seq=2,
+                event_type="node_end",
+                node_name="tool_call",
+                iteration=1,
                 output_data={"messages": [{"role": "tool", "content": "result1"}]},
             ),
         ]
@@ -119,12 +126,17 @@ class TestReplayAlgorithm:
         from app.memory.event_log import EventLogManager, EventRecord
 
         manager = EventLogManager(db=MagicMock())
-        manager.list_after = AsyncMock(return_value=[
-            EventRecord(
-                seq=1, event_type="node_end", node_name="think", iteration=2,
-                output_data={"iteration": 2, "answer": "new answer"},
-            ),
-        ])  # type: ignore
+        manager.list_after = AsyncMock(
+            return_value=[
+                EventRecord(
+                    seq=1,
+                    event_type="node_end",
+                    node_name="think",
+                    iteration=2,
+                    output_data={"iteration": 2, "answer": "new answer"},
+                ),
+            ]
+        )  # type: ignore
 
         base_state = {"iteration": 1, "answer": "old answer", "query": "q1"}
         result = await manager.replay("s1", base_state, after_seq=0)
@@ -139,12 +151,17 @@ class TestReplayAlgorithm:
         from app.memory.event_log import EventLogManager, EventRecord
 
         manager = EventLogManager(db=MagicMock())
-        manager.list_after = AsyncMock(return_value=[
-            EventRecord(
-                seq=1, event_type="node_end", node_name="retrieve", iteration=1,
-                output_data={"messages": [{"role": "tool", "content": "new"}]},
-            ),
-        ])  # type: ignore
+        manager.list_after = AsyncMock(
+            return_value=[
+                EventRecord(
+                    seq=1,
+                    event_type="node_end",
+                    node_name="retrieve",
+                    iteration=1,
+                    output_data={"messages": [{"role": "tool", "content": "new"}]},
+                ),
+            ]
+        )  # type: ignore
 
         base_state = {"messages": [{"role": "user", "content": "orig"}]}
         original_messages = list(base_state["messages"])
@@ -182,14 +199,31 @@ class TestReplayAlgorithm:
         from app.memory.event_log import EventLogManager, EventRecord
 
         manager = EventLogManager(db=MagicMock())
-        manager.list_after = AsyncMock(return_value=[
-            EventRecord(seq=1, event_type="node_end", node_name="think", iteration=1,
-                       output_data=None),
-            EventRecord(seq=2, event_type="node_end", node_name="think", iteration=1,
-                       output_data="not a dict"),  # type: ignore
-            EventRecord(seq=3, event_type="node_end", node_name="retrieve", iteration=1,
-                       output_data={"messages": [{"role": "tool", "content": "doc"}]}),
-        ])  # type: ignore
+        manager.list_after = AsyncMock(
+            return_value=[
+                EventRecord(
+                    seq=1,
+                    event_type="node_end",
+                    node_name="think",
+                    iteration=1,
+                    output_data=None,
+                ),
+                EventRecord(
+                    seq=2,
+                    event_type="node_end",
+                    node_name="think",
+                    iteration=1,
+                    output_data="not a dict",
+                ),  # type: ignore
+                EventRecord(
+                    seq=3,
+                    event_type="node_end",
+                    node_name="retrieve",
+                    iteration=1,
+                    output_data={"messages": [{"role": "tool", "content": "doc"}]},
+                ),
+            ]
+        )  # type: ignore
 
         base_state = {"messages": []}
         result = await manager.replay("s1", base_state, after_seq=0)
@@ -202,10 +236,17 @@ class TestReplayAlgorithm:
         from app.memory.event_log import EventLogManager, EventRecord
 
         manager = EventLogManager(db=MagicMock())
-        manager.list_after = AsyncMock(return_value=[
-            EventRecord(seq=1, event_type="node_end", node_name="think", iteration=1,
-                       output_data={"messages": "not a list"}),  # type: ignore
-        ])  # type: ignore
+        manager.list_after = AsyncMock(
+            return_value=[
+                EventRecord(
+                    seq=1,
+                    event_type="node_end",
+                    node_name="think",
+                    iteration=1,
+                    output_data={"messages": "not a list"},
+                ),  # type: ignore
+            ]
+        )  # type: ignore
 
         base_state = {"messages": [{"role": "user", "content": "orig"}]}
         result = await manager.replay("s1", base_state, after_seq=0)
@@ -218,10 +259,17 @@ class TestReplayAlgorithm:
         from app.memory.event_log import EventLogManager, EventRecord
 
         manager = EventLogManager(db=MagicMock())
-        manager.list_after = AsyncMock(return_value=[
-            EventRecord(seq=1, event_type="node_end", node_name="retrieve", iteration=1,
-                       output_data={"messages": [{"role": "tool", "content": "new"}]}),
-        ])  # type: ignore
+        manager.list_after = AsyncMock(
+            return_value=[
+                EventRecord(
+                    seq=1,
+                    event_type="node_end",
+                    node_name="retrieve",
+                    iteration=1,
+                    output_data={"messages": [{"role": "tool", "content": "new"}]},
+                ),
+            ]
+        )  # type: ignore
 
         base_state = {"messages": None}  # 异常情况
         result = await manager.replay("s1", base_state, after_seq=0)
@@ -233,19 +281,31 @@ class TestReplayAlgorithm:
         from app.memory.event_log import EventLogManager, EventRecord
 
         manager = EventLogManager(db=MagicMock())
-        manager.list_after = AsyncMock(return_value=[
-            EventRecord(seq=1, event_type="node_end", node_name="retrieve", iteration=1,
-                       output_data={
-                           "messages": [{"role": "tool", "content": "m1"}],
-                           "retrieved_docs": [{"id": "d1"}],
-                           "tool_results": [{"name": "t1", "result": "r1"}],
-                       }),
-            EventRecord(seq=2, event_type="node_end", node_name="tool_call", iteration=1,
-                       output_data={
-                           "messages": [{"role": "tool", "content": "m2"}],
-                           "tool_results": [{"name": "t2", "result": "r2"}],
-                       }),
-        ])  # type: ignore
+        manager.list_after = AsyncMock(
+            return_value=[
+                EventRecord(
+                    seq=1,
+                    event_type="node_end",
+                    node_name="retrieve",
+                    iteration=1,
+                    output_data={
+                        "messages": [{"role": "tool", "content": "m1"}],
+                        "retrieved_docs": [{"id": "d1"}],
+                        "tool_results": [{"name": "t1", "result": "r1"}],
+                    },
+                ),
+                EventRecord(
+                    seq=2,
+                    event_type="node_end",
+                    node_name="tool_call",
+                    iteration=1,
+                    output_data={
+                        "messages": [{"role": "tool", "content": "m2"}],
+                        "tool_results": [{"name": "t2", "result": "r2"}],
+                    },
+                ),
+            ]
+        )  # type: ignore
 
         base_state = {
             "messages": [{"role": "user", "content": "q"}],
@@ -283,7 +343,10 @@ class TestEventRecord:
         from app.memory.event_log import EventRecord
 
         rec = EventRecord(
-            seq=5, event_type="node_end", node_name="retrieve", iteration=2,
+            seq=5,
+            event_type="node_end",
+            node_name="retrieve",
+            iteration=2,
             input_data={"query": "q"},
             output_data={"messages": []},
             metadata={"latency_ms": 100.0},
@@ -308,14 +371,22 @@ class TestContextVarIntegration:
         assert get_current_event_log() is None
 
     def test_manager_active_in_scope(self) -> None:
-        from app.memory.event_log import EventLogManager, event_log_scope, get_current_event_log
+        from app.memory.event_log import (
+            EventLogManager,
+            event_log_scope,
+            get_current_event_log,
+        )
 
         manager = EventLogManager(db=MagicMock())
         with event_log_scope(manager):
             assert get_current_event_log() is manager
 
     def test_manager_cleared_after_scope(self) -> None:
-        from app.memory.event_log import EventLogManager, event_log_scope, get_current_event_log
+        from app.memory.event_log import (
+            EventLogManager,
+            event_log_scope,
+            get_current_event_log,
+        )
 
         manager = EventLogManager(db=MagicMock())
         with event_log_scope(manager):
@@ -323,7 +394,11 @@ class TestContextVarIntegration:
         assert get_current_event_log() is None
 
     def test_nested_scopes_isolated(self) -> None:
-        from app.memory.event_log import EventLogManager, event_log_scope, get_current_event_log
+        from app.memory.event_log import (
+            EventLogManager,
+            event_log_scope,
+            get_current_event_log,
+        )
 
         outer = EventLogManager(db=MagicMock())
         inner = EventLogManager(db=MagicMock())
@@ -388,9 +463,11 @@ class TestAppendEventLogInTracer:
         from app.observability.langfuse_tracer import _append_event_log
 
         manager = EventLogManager(db=MagicMock())
+
         # 让 append 返回 awaitable
         async def _mock_append(**kwargs):
             return 1
+
         manager.append = _mock_append  # type: ignore
 
         with event_log_scope(manager):
@@ -413,9 +490,11 @@ class TestAppendEventLogInTracer:
         captured: dict = {}
 
         manager = EventLogManager(db=MagicMock())
+
         async def _mock_append(**kwargs):
             captured.update(kwargs)
             return 1
+
         manager.append = _mock_append  # type: ignore
 
         with event_log_scope(manager):
@@ -440,9 +519,11 @@ class TestAppendEventLogInTracer:
 
         captured: dict = {}
         manager = EventLogManager(db=MagicMock())
+
         async def _mock_append(**kwargs):
             captured.update(kwargs)
             return 1
+
         manager.append = _mock_append  # type: ignore
 
         with event_log_scope(manager):
@@ -466,8 +547,10 @@ class TestAppendEventLogInTracer:
         from app.observability.langfuse_tracer import _append_event_log
 
         manager = EventLogManager(db=MagicMock())
+
         async def _raise(**kwargs):
             raise RuntimeError("DB down")
+
         manager.append = _raise  # type: ignore
 
         with event_log_scope(manager):
@@ -499,9 +582,11 @@ class TestTraceNodeEventLogIntegration:
 
         manager = EventLogManager(db=MagicMock())
         captured: list[dict] = []
+
         async def _capture_append(**kwargs):
             captured.append(kwargs)
             return len(captured)
+
         manager.append = _capture_append  # type: ignore
 
         class FakeEngine:
@@ -520,7 +605,9 @@ class TestTraceNodeEventLogIntegration:
         assert captured[0]["session_id"] == "s1"
         assert captured[0]["node_name"] == "think"
         assert captured[0]["event_type"] == "node_end"
-        assert captured[0]["output_data"] == {"messages": [{"role": "tool", "content": "decision"}]}
+        assert captured[0]["output_data"] == {
+            "messages": [{"role": "tool", "content": "decision"}]
+        }
         assert captured[0]["iteration"] == 1
 
     @pytest.mark.asyncio
@@ -658,24 +745,40 @@ async def test_db_replay_from_checkpoint(db_session) -> None:
 
     # 模拟 Checkpoint 之前的 2 个事件
     await manager.append(
-        session_id=session_id, event_type="node_end", node_name="think",
-        output_data={"messages": [{"role": "user", "content": "q1"}]}, iteration=1,
+        session_id=session_id,
+        event_type="node_end",
+        node_name="think",
+        output_data={"messages": [{"role": "user", "content": "q1"}]},
+        iteration=1,
     )
     cp_seq = await manager.append(
-        session_id=session_id, event_type="node_end", node_name="retrieve",
-        output_data={"messages": [{"role": "tool", "content": "doc1"}], "retrieved_docs": [{"id": "d1"}]},
+        session_id=session_id,
+        event_type="node_end",
+        node_name="retrieve",
+        output_data={
+            "messages": [{"role": "tool", "content": "doc1"}],
+            "retrieved_docs": [{"id": "d1"}],
+        },
         iteration=1,
     )
 
     # 模拟 Checkpoint 之后又执行了 2 个事件
     await manager.append(
-        session_id=session_id, event_type="node_end", node_name="tool_call",
-        output_data={"messages": [{"role": "tool", "content": "result1"}], "tool_results": [{"name": "t1"}]},
+        session_id=session_id,
+        event_type="node_end",
+        node_name="tool_call",
+        output_data={
+            "messages": [{"role": "tool", "content": "result1"}],
+            "tool_results": [{"name": "t1"}],
+        },
         iteration=1,
     )
     await manager.append(
-        session_id=session_id, event_type="node_end", node_name="think",
-        output_data={"iteration": 2}, iteration=2,
+        session_id=session_id,
+        event_type="node_end",
+        node_name="think",
+        output_data={"iteration": 2},
+        iteration=2,
     )
 
     # 混合恢复：从 Checkpoint 状态（含到 cp_seq 为止的所有事件效果）+ 重放后续
@@ -706,8 +809,11 @@ async def test_db_truncate(db_session) -> None:
 
     for i in range(5):
         await manager.append(
-            session_id=session_id, event_type="node_end", node_name="think",
-            output_data={"i": i}, iteration=i,
+            session_id=session_id,
+            event_type="node_end",
+            node_name="think",
+            output_data={"i": i},
+            iteration=i,
         )
 
     # 保留最近 2 条
@@ -728,12 +834,18 @@ async def test_db_delete_all(db_session) -> None:
     session_id = "test-session-del"
 
     await manager.append(
-        session_id=session_id, event_type="node_end", node_name="think",
-        output_data={}, iteration=1,
+        session_id=session_id,
+        event_type="node_end",
+        node_name="think",
+        output_data={},
+        iteration=1,
     )
     await manager.append(
-        session_id=session_id, event_type="node_end", node_name="retrieve",
-        output_data={}, iteration=1,
+        session_id=session_id,
+        event_type="node_end",
+        node_name="retrieve",
+        output_data={},
+        iteration=1,
     )
 
     deleted = await manager.delete_all(session_id)
@@ -752,12 +864,18 @@ async def test_db_get_event_count(db_session) -> None:
 
     assert await manager.get_event_count(session_id) == 0
     await manager.append(
-        session_id=session_id, event_type="node_end", node_name="think",
-        output_data={}, iteration=1,
+        session_id=session_id,
+        event_type="node_end",
+        node_name="think",
+        output_data={},
+        iteration=1,
     )
     await manager.append(
-        session_id=session_id, event_type="node_end", node_name="retrieve",
-        output_data={}, iteration=1,
+        session_id=session_id,
+        event_type="node_end",
+        node_name="retrieve",
+        output_data={},
+        iteration=1,
     )
     assert await manager.get_event_count(session_id) == 2
 
@@ -779,17 +897,28 @@ async def test_checkpoint_save_with_event_log(db_session) -> None:
     # 先追加 2 个事件
     event_log = EventLogManager(db_session)
     await event_log.append(
-        session_id=session_id, event_type="node_end", node_name="think",
-        output_data={"messages": [{"role": "user", "content": "q1"}]}, iteration=1,
+        session_id=session_id,
+        event_type="node_end",
+        node_name="think",
+        output_data={"messages": [{"role": "user", "content": "q1"}]},
+        iteration=1,
     )
     await event_log.append(
-        session_id=session_id, event_type="node_end", node_name="retrieve",
-        output_data={"messages": [{"role": "tool", "content": "doc1"}]}, iteration=1,
+        session_id=session_id,
+        event_type="node_end",
+        node_name="retrieve",
+        output_data={"messages": [{"role": "tool", "content": "doc1"}]},
+        iteration=1,
     )
 
     # 保存 Checkpoint（自动取最新 seq 作为 base_seq）
     cp_manager = CheckpointManager(db_session)
-    state = {"messages": [{"role": "user", "content": "q1"}, {"role": "tool", "content": "doc1"}]}
+    state = {
+        "messages": [
+            {"role": "user", "content": "q1"},
+            {"role": "tool", "content": "doc1"},
+        ]
+    }
     await cp_manager.save_checkpoint_with_event_log(session_id, state, iteration=1)
 
     # 验证 _base_seq 已嵌入
@@ -811,24 +940,42 @@ async def test_checkpoint_load_with_event_log_replay(db_session) -> None:
 
     # 阶段 1: 追加 2 个事件 + 保存 Checkpoint
     await event_log.append(
-        session_id=session_id, event_type="node_end", node_name="think",
-        output_data={"messages": [{"role": "user", "content": "q1"}]}, iteration=1,
+        session_id=session_id,
+        event_type="node_end",
+        node_name="think",
+        output_data={"messages": [{"role": "user", "content": "q1"}]},
+        iteration=1,
     )
     await event_log.append(
-        session_id=session_id, event_type="node_end", node_name="retrieve",
-        output_data={"messages": [{"role": "tool", "content": "doc1"}], "retrieved_docs": [{"id": "d1"}]},
+        session_id=session_id,
+        event_type="node_end",
+        node_name="retrieve",
+        output_data={
+            "messages": [{"role": "tool", "content": "doc1"}],
+            "retrieved_docs": [{"id": "d1"}],
+        },
         iteration=1,
     )
     state_at_checkpoint = {
-        "messages": [{"role": "user", "content": "q1"}, {"role": "tool", "content": "doc1"}],
+        "messages": [
+            {"role": "user", "content": "q1"},
+            {"role": "tool", "content": "doc1"},
+        ],
         "retrieved_docs": [{"id": "d1"}],
     }
-    await cp_manager.save_checkpoint_with_event_log(session_id, state_at_checkpoint, iteration=1)
+    await cp_manager.save_checkpoint_with_event_log(
+        session_id, state_at_checkpoint, iteration=1
+    )
 
     # 阶段 2: Checkpoint 之后又执行了 1 个事件（未存 Checkpoint）
     await event_log.append(
-        session_id=session_id, event_type="node_end", node_name="tool_call",
-        output_data={"messages": [{"role": "tool", "content": "result1"}], "tool_results": [{"name": "t1"}]},
+        session_id=session_id,
+        event_type="node_end",
+        node_name="tool_call",
+        output_data={
+            "messages": [{"role": "tool", "content": "result1"}],
+            "tool_results": [{"name": "t1"}],
+        },
         iteration=1,
     )
 
@@ -857,8 +1004,11 @@ async def test_checkpoint_load_no_replay(db_session) -> None:
     cp_manager = CheckpointManager(db_session)
 
     await event_log.append(
-        session_id=session_id, event_type="node_end", node_name="think",
-        output_data={"messages": [{"role": "user", "content": "q1"}]}, iteration=1,
+        session_id=session_id,
+        event_type="node_end",
+        node_name="think",
+        output_data={"messages": [{"role": "user", "content": "q1"}]},
+        iteration=1,
     )
     await cp_manager.save_checkpoint_with_event_log(
         session_id, {"messages": [{"role": "user", "content": "q1"}]}, iteration=1
@@ -866,12 +1016,17 @@ async def test_checkpoint_load_no_replay(db_session) -> None:
 
     # 阶段 2: 追加事件但未存 Checkpoint
     await event_log.append(
-        session_id=session_id, event_type="node_end", node_name="retrieve",
-        output_data={"messages": [{"role": "tool", "content": "doc1"}]}, iteration=1,
+        session_id=session_id,
+        event_type="node_end",
+        node_name="retrieve",
+        output_data={"messages": [{"role": "tool", "content": "doc1"}]},
+        iteration=1,
     )
 
     # 不重放 — 仅返回 Checkpoint 快照
-    snapshot = await cp_manager.load_checkpoint_with_event_log(session_id, replay_events=False)
+    snapshot = await cp_manager.load_checkpoint_with_event_log(
+        session_id, replay_events=False
+    )
     assert snapshot is not None
     # 快照中 messages 不含 retrieve 事件
     messages = snapshot.get("messages", [])
@@ -890,8 +1045,11 @@ async def test_checkpoint_load_no_new_events(db_session) -> None:
     cp_manager = CheckpointManager(db_session)
 
     await event_log.append(
-        session_id=session_id, event_type="node_end", node_name="think",
-        output_data={"messages": [{"role": "user", "content": "q1"}]}, iteration=1,
+        session_id=session_id,
+        event_type="node_end",
+        node_name="think",
+        output_data={"messages": [{"role": "user", "content": "q1"}]},
+        iteration=1,
     )
     await cp_manager.save_checkpoint_with_event_log(
         session_id, {"messages": [{"role": "user", "content": "q1"}]}, iteration=1

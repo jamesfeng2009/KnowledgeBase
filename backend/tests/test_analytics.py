@@ -5,7 +5,6 @@
 """
 
 import os
-import uuid
 
 import pytest
 import pytest_asyncio
@@ -13,7 +12,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.models.action import DocumentAction
 from app.models.analytics import SearchLog
 from app.models.base import Base
 from app.models.knowledge import Document, KnowledgeBase
@@ -119,7 +117,9 @@ class TestAnalyticsMetrics:
     async def test_knowledge_coverage_with_data(self, db_session):
         """有数据时的覆盖率计算。"""
         # 创建用户和知识库（PostgreSQL 强制外键，需先建 User）
-        owner = User(email="owner1@test.com", hashed_password="fake", name="owner", role="viewer")
+        owner = User(
+            email="owner1@test.com", hashed_password="fake", name="owner", role="viewer"
+        )
         db_session.add(owner)
         await db_session.flush()
         kb = KnowledgeBase(name="测试KB", owner_id=owner.id)
@@ -163,8 +163,12 @@ class TestAnalyticsMetrics:
         dashboard = await service.get_dashboard(days=30)
 
         expected_keys = [
-            "search_hotwords", "zero_click_queries", "popular_documents",
-            "knowledge_coverage", "knowledge_freshness", "top_contributors",
+            "search_hotwords",
+            "zero_click_queries",
+            "popular_documents",
+            "knowledge_coverage",
+            "knowledge_freshness",
+            "top_contributors",
         ]
         for key in expected_keys:
             assert key in dashboard, f"Missing metric: {key}"
@@ -186,7 +190,9 @@ class TestAnalyticsMetrics:
 
     async def test_freshness_from_pg_with_fresh_docs(self, db_session):
         """PG 降级 — 新文档不算过期。"""
-        owner = User(email="owner2@test.com", hashed_password="fake", name="owner", role="viewer")
+        owner = User(
+            email="owner2@test.com", hashed_password="fake", name="owner", role="viewer"
+        )
         db_session.add(owner)
         await db_session.flush()
         kb = KnowledgeBase(name="测试KB", owner_id=owner.id)
@@ -218,7 +224,9 @@ class TestAnalyticsMetrics:
 
         from app.services.analytics_service import FRESHNESS_EXPIRE_DAYS
 
-        owner = User(email="owner3@test.com", hashed_password="fake", name="owner", role="viewer")
+        owner = User(
+            email="owner3@test.com", hashed_password="fake", name="owner", role="viewer"
+        )
         db_session.add(owner)
         await db_session.flush()
         kb = KnowledgeBase(name="测试KB", owner_id=owner.id)
@@ -263,12 +271,9 @@ class TestAnalyticsMetrics:
         assert "expired" in result
         assert "freshness_rate" in result
 
-    async def test_freshness_pg_fallback_with_tenant_no_graph(
-        self, db_session
-    ):
+    async def test_freshness_pg_fallback_with_tenant_no_graph(self, db_session):
         """租户未启用 knowledge_graph → 走 PG 降级。"""
         from app.models.billing import Tenant
-        from app.services.tenant_service import TenantService
 
         # 创建 free 套餐租户（不含 knowledge_graph）
         tenant = Tenant(name="免费租户", plan="free")
@@ -276,7 +281,9 @@ class TestAnalyticsMetrics:
         await db_session.flush()
 
         # 创建文档
-        owner = User(email="owner4@test.com", hashed_password="fake", name="owner", role="viewer")
+        owner = User(
+            email="owner4@test.com", hashed_password="fake", name="owner", role="viewer"
+        )
         db_session.add(owner)
         await db_session.flush()
         kb = KnowledgeBase(name="KB", owner_id=owner.id)
@@ -300,9 +307,7 @@ class TestAnalyticsMetrics:
         assert result["total_documents"] == 1
         assert result["expired"] == 0
 
-    async def test_freshness_pg_fallback_with_tenant_graph_enabled(
-        self, db_session
-    ):
+    async def test_freshness_pg_fallback_with_tenant_graph_enabled(self, db_session):
         """租户启用了 knowledge_graph 但无 Neo4j → GraphitiManager 返回空数据。
 
         GraphitiManager 在无 Neo4j 环境下不会抛异常，
@@ -321,7 +326,9 @@ class TestAnalyticsMetrics:
         db_session.add(tenant)
         await db_session.flush()
 
-        owner = User(email="owner5@test.com", hashed_password="fake", name="owner", role="viewer")
+        owner = User(
+            email="owner5@test.com", hashed_password="fake", name="owner", role="viewer"
+        )
         db_session.add(owner)
         await db_session.flush()
         kb = KnowledgeBase(name="KB", owner_id=owner.id)

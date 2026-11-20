@@ -50,7 +50,7 @@ def _load_file_secrets(secret_dir: str) -> None:
         if not os.path.isfile(path):
             continue
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 value = f.read().strip()
             # 已由环境变量显式设置的值不覆盖（显式 env 优先）
             if name in os.environ:
@@ -85,7 +85,7 @@ def _load_aws_secrets(
             for secret in page.get("SecretList", []):
                 name = secret.get("Name", "")
                 if not prefix or name.startswith(prefix):
-                    var_name = name[len(prefix):] if prefix else name
+                    var_name = name[len(prefix) :] if prefix else name
                     var_name = var_name.replace("/", "_").upper()
                     if not var_name:
                         continue
@@ -96,7 +96,9 @@ def _load_aws_secrets(
                         os.environ[var_name] = value
                         log.info("secrets.aws_loaded", name=name, var=var_name)
                     except Exception as exc:
-                        log.warning("secrets.aws_fetch_failed", name=name, error=str(exc))
+                        log.warning(
+                            "secrets.aws_fetch_failed", name=name, error=str(exc)
+                        )
     except Exception as exc:
         log.warning("secrets.aws_failed", error=str(exc)[:200])
 

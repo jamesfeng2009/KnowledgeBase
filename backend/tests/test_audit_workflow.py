@@ -8,6 +8,7 @@
 - AuditService.reject：驳回不触发发布
 - 密级路由边界条件
 """
+
 from __future__ import annotations
 
 import sys
@@ -62,9 +63,10 @@ class TestSubmitForAudit:
 
         owner_id = _uuid.UUID(_TEST_UUID)
 
-        with patch("app.database.task_db_session", return_value=mock_session_cm), \
-             patch("app.repositories.base.BaseRepository", return_value=mock_repo):
-
+        with (
+            patch("app.database.task_db_session", return_value=mock_session_cm),
+            patch("app.repositories.base.BaseRepository", return_value=mock_repo),
+        ):
             await _submit_for_audit(_TEST_UUID, owner_id)
 
         mock_repo.create.assert_called_once()
@@ -89,9 +91,10 @@ class TestSubmitForAudit:
         mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session_cm.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("app.database.task_db_session", return_value=mock_session_cm), \
-             patch("app.repositories.base.BaseRepository", return_value=mock_repo):
-
+        with (
+            patch("app.database.task_db_session", return_value=mock_session_cm),
+            patch("app.repositories.base.BaseRepository", return_value=mock_repo),
+        ):
             await _submit_for_audit(_TEST_UUID, _uuid.UUID(_TEST_UUID))
 
         mock_session.commit.assert_called_once()
@@ -123,9 +126,13 @@ class TestPublishDocument:
         mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session_cm.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("app.database.task_db_session", return_value=mock_session_cm), \
-             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo):
-
+        with (
+            patch("app.database.task_db_session", return_value=mock_session_cm),
+            patch(
+                "app.repositories.knowledge_repository.DocumentRepository",
+                return_value=mock_repo,
+            ),
+        ):
             await _publish_document(_TEST_UUID)
 
         assert mock_doc.status == "published"
@@ -146,9 +153,13 @@ class TestPublishDocument:
         mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session_cm.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("app.database.task_db_session", return_value=mock_session_cm), \
-             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo):
-
+        with (
+            patch("app.database.task_db_session", return_value=mock_session_cm),
+            patch(
+                "app.repositories.knowledge_repository.DocumentRepository",
+                return_value=mock_repo,
+            ),
+        ):
             # 不应抛出异常
             await _publish_document(_TEST_UUID)
 
@@ -210,13 +221,23 @@ class TestDocumentClassificationRouting:
         mock_doc = self._make_mock_doc(classification="confidential")
         mocks = self._setup_mocks(mock_doc)
 
-        with patch("app.database.task_db_session", return_value=mocks["session_cm"]), \
-             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mocks["repo"]), \
-             patch("tasks.document_tasks._generate_embeddings", new_callable=AsyncMock, return_value=[]), \
-             patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock), \
-             patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock) as mock_audit, \
-             patch("tasks.intelligence_tasks.process_intelligence.delay"):
-
+        with (
+            patch("app.database.task_db_session", return_value=mocks["session_cm"]),
+            patch(
+                "app.repositories.knowledge_repository.DocumentRepository",
+                return_value=mocks["repo"],
+            ),
+            patch(
+                "tasks.document_tasks._generate_embeddings",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock),
+            patch(
+                "tasks.document_tasks._submit_for_audit", new_callable=AsyncMock
+            ) as mock_audit,
+            patch("tasks.intelligence_tasks.process_intelligence.delay"),
+        ):
             result = await _process_document_async(_TEST_UUID)
 
         assert result["status"] == "success"
@@ -232,13 +253,23 @@ class TestDocumentClassificationRouting:
         mock_doc = self._make_mock_doc(classification="secret")
         mocks = self._setup_mocks(mock_doc)
 
-        with patch("app.database.task_db_session", return_value=mocks["session_cm"]), \
-             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mocks["repo"]), \
-             patch("tasks.document_tasks._generate_embeddings", new_callable=AsyncMock, return_value=[]), \
-             patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock), \
-             patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock) as mock_audit, \
-             patch("tasks.intelligence_tasks.process_intelligence.delay"):
-
+        with (
+            patch("app.database.task_db_session", return_value=mocks["session_cm"]),
+            patch(
+                "app.repositories.knowledge_repository.DocumentRepository",
+                return_value=mocks["repo"],
+            ),
+            patch(
+                "tasks.document_tasks._generate_embeddings",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock),
+            patch(
+                "tasks.document_tasks._submit_for_audit", new_callable=AsyncMock
+            ) as mock_audit,
+            patch("tasks.intelligence_tasks.process_intelligence.delay"),
+        ):
             result = await _process_document_async(_TEST_UUID)
 
         assert result["doc_status"] == "pending_review"
@@ -252,13 +283,23 @@ class TestDocumentClassificationRouting:
         mock_doc = self._make_mock_doc(classification="public")
         mocks = self._setup_mocks(mock_doc)
 
-        with patch("app.database.task_db_session", return_value=mocks["session_cm"]), \
-             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mocks["repo"]), \
-             patch("tasks.document_tasks._generate_embeddings", new_callable=AsyncMock, return_value=[]), \
-             patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock), \
-             patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock) as mock_audit, \
-             patch("tasks.intelligence_tasks.process_intelligence.delay"):
-
+        with (
+            patch("app.database.task_db_session", return_value=mocks["session_cm"]),
+            patch(
+                "app.repositories.knowledge_repository.DocumentRepository",
+                return_value=mocks["repo"],
+            ),
+            patch(
+                "tasks.document_tasks._generate_embeddings",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock),
+            patch(
+                "tasks.document_tasks._submit_for_audit", new_callable=AsyncMock
+            ) as mock_audit,
+            patch("tasks.intelligence_tasks.process_intelligence.delay"),
+        ):
             result = await _process_document_async(_TEST_UUID)
 
         assert result["doc_status"] == "published"
@@ -273,13 +314,23 @@ class TestDocumentClassificationRouting:
         mock_doc = self._make_mock_doc(classification="internal")
         mocks = self._setup_mocks(mock_doc)
 
-        with patch("app.database.task_db_session", return_value=mocks["session_cm"]), \
-             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mocks["repo"]), \
-             patch("tasks.document_tasks._generate_embeddings", new_callable=AsyncMock, return_value=[]), \
-             patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock), \
-             patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock) as mock_audit, \
-             patch("tasks.intelligence_tasks.process_intelligence.delay"):
-
+        with (
+            patch("app.database.task_db_session", return_value=mocks["session_cm"]),
+            patch(
+                "app.repositories.knowledge_repository.DocumentRepository",
+                return_value=mocks["repo"],
+            ),
+            patch(
+                "tasks.document_tasks._generate_embeddings",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock),
+            patch(
+                "tasks.document_tasks._submit_for_audit", new_callable=AsyncMock
+            ) as mock_audit,
+            patch("tasks.intelligence_tasks.process_intelligence.delay"),
+        ):
             result = await _process_document_async(_TEST_UUID)
 
         assert result["doc_status"] == "published"
@@ -293,13 +344,23 @@ class TestDocumentClassificationRouting:
         mock_doc = self._make_mock_doc(classification=None)
         mocks = self._setup_mocks(mock_doc)
 
-        with patch("app.database.task_db_session", return_value=mocks["session_cm"]), \
-             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mocks["repo"]), \
-             patch("tasks.document_tasks._generate_embeddings", new_callable=AsyncMock, return_value=[]), \
-             patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock), \
-             patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock) as mock_audit, \
-             patch("tasks.intelligence_tasks.process_intelligence.delay"):
-
+        with (
+            patch("app.database.task_db_session", return_value=mocks["session_cm"]),
+            patch(
+                "app.repositories.knowledge_repository.DocumentRepository",
+                return_value=mocks["repo"],
+            ),
+            patch(
+                "tasks.document_tasks._generate_embeddings",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock),
+            patch(
+                "tasks.document_tasks._submit_for_audit", new_callable=AsyncMock
+            ) as mock_audit,
+            patch("tasks.intelligence_tasks.process_intelligence.delay"),
+        ):
             result = await _process_document_async(_TEST_UUID)
 
         assert result["doc_status"] == "published"
@@ -502,13 +563,16 @@ class TestAuditServiceReject:
         service = AuditService(MagicMock(), mock_user)
         service._repo = mock_repo
 
-        with patch(
-            "app.services.audit_service.AuditService._revert_document_after_reject",
-            new_callable=AsyncMock,
-        ) as mock_revert, patch(
-            "tasks.document_tasks._publish_document",
-            new_callable=AsyncMock,
-        ) as mock_publish:
+        with (
+            patch(
+                "app.services.audit_service.AuditService._revert_document_after_reject",
+                new_callable=AsyncMock,
+            ) as mock_revert,
+            patch(
+                "tasks.document_tasks._publish_document",
+                new_callable=AsyncMock,
+            ) as mock_publish,
+        ):
             result = await service.reject(_uuid.UUID(_TEST_UUID), comment="内容不合规")
 
         mock_publish.assert_not_called()
@@ -607,10 +671,16 @@ class TestRevertDocumentToDraft:
         mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session_cm.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("app.database.task_db_session", return_value=mock_session_cm), \
-             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo), \
-             patch("tasks.document_tasks._refresh_index_doc_status", new_callable=AsyncMock) as mock_refresh:
-
+        with (
+            patch("app.database.task_db_session", return_value=mock_session_cm),
+            patch(
+                "app.repositories.knowledge_repository.DocumentRepository",
+                return_value=mock_repo,
+            ),
+            patch(
+                "tasks.document_tasks._refresh_index_doc_status", new_callable=AsyncMock
+            ) as mock_refresh,
+        ):
             await _revert_document_to_draft(_TEST_UUID)
 
         assert mock_doc.status == "draft"
@@ -635,10 +705,16 @@ class TestRevertDocumentToDraft:
         mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session_cm.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("app.database.task_db_session", return_value=mock_session_cm), \
-             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo), \
-             patch("tasks.document_tasks._refresh_index_doc_status", new_callable=AsyncMock) as mock_refresh:
-
+        with (
+            patch("app.database.task_db_session", return_value=mock_session_cm),
+            patch(
+                "app.repositories.knowledge_repository.DocumentRepository",
+                return_value=mock_repo,
+            ),
+            patch(
+                "tasks.document_tasks._refresh_index_doc_status", new_callable=AsyncMock
+            ) as mock_refresh,
+        ):
             await _revert_document_to_draft(_TEST_UUID)
 
         mock_session.commit.assert_not_called()
@@ -662,10 +738,18 @@ class TestRevertDocumentToDraft:
         mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session_cm.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("app.database.task_db_session", return_value=mock_session_cm), \
-             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo), \
-             patch("tasks.document_tasks._refresh_index_doc_status", new_callable=AsyncMock,
-                   side_effect=Exception("OS unavailable")):
+        with (
+            patch("app.database.task_db_session", return_value=mock_session_cm),
+            patch(
+                "app.repositories.knowledge_repository.DocumentRepository",
+                return_value=mock_repo,
+            ),
+            patch(
+                "tasks.document_tasks._refresh_index_doc_status",
+                new_callable=AsyncMock,
+                side_effect=Exception("OS unavailable"),
+            ),
+        ):
             await _revert_document_to_draft(_TEST_UUID)
 
         assert mock_doc.status == "draft"
@@ -683,19 +767,23 @@ class TestRequiresReviewConstant:
     def test_confidential_requires_review(self) -> None:
         """confidential 密级需要审核。"""
         from tasks.document_tasks import _REQUIRES_REVIEW
+
         assert "confidential" in _REQUIRES_REVIEW
 
     def test_secret_requires_review(self) -> None:
         """secret 密级需要审核。"""
         from tasks.document_tasks import _REQUIRES_REVIEW
+
         assert "secret" in _REQUIRES_REVIEW
 
     def test_public_does_not_require_review(self) -> None:
         """public 密级不需要审核。"""
         from tasks.document_tasks import _REQUIRES_REVIEW
+
         assert "public" not in _REQUIRES_REVIEW
 
     def test_internal_does_not_require_review(self) -> None:
         """internal 密级不需要审核。"""
         from tasks.document_tasks import _REQUIRES_REVIEW
+
         assert "internal" not in _REQUIRES_REVIEW

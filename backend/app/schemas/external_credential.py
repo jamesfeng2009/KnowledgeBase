@@ -17,7 +17,9 @@ from pydantic import BaseModel, ConfigDict, Field
 class ExternalCredentialCreate(BaseModel):
     """创建/更新外部凭证请求。"""
 
-    adapter_id: str = Field(..., description="适配器 ID: feishu/confluence/notion/obsidian")
+    adapter_id: str = Field(
+        ..., description="适配器 ID: feishu/confluence/notion/obsidian"
+    )
     credentials: dict[str, Any] = Field(
         ...,
         description="平台凭证（明文，服务端加密存储）。"

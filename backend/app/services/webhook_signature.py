@@ -16,6 +16,7 @@
 
 遵循单一职责：仅做签名计算与比对，不涉及事件解析或 DB 访问。
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -49,6 +50,7 @@ class SignatureResult:
 # ==================================================================
 # 飞书签名验证
 # ==================================================================
+
 
 def verify_feishu_signature(
     *,
@@ -117,6 +119,7 @@ def _is_timestamp_fresh(timestamp: str) -> bool:
 # Confluence 签名验证
 # ==================================================================
 
+
 def verify_confluence_signature(
     *,
     body: str,
@@ -154,6 +157,7 @@ def _compute_confluence_signature(secret: str, body: str) -> str:
 # ==================================================================
 # 统一入口 — 按 adapter_id 分发 + 凭证策略
 # ==================================================================
+
 
 def verify_webhook_signature(
     *,

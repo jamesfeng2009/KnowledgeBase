@@ -15,13 +15,9 @@ from __future__ import annotations
 import glob
 from pathlib import Path
 
-import pytest
-
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _REAL_XLS = _REPO_ROOT / "test_documents" / "xls" / "01_员工花名册.xls"
-_REAL_XLSX = sorted(
-    glob.glob(str(_REPO_ROOT / "test_documents" / "xlsx" / "*.xlsx"))
-)
+_REAL_XLSX = sorted(glob.glob(str(_REPO_ROOT / "test_documents" / "xlsx" / "*.xlsx")))
 
 _OLE2_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 

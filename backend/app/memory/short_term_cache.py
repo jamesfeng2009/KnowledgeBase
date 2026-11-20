@@ -86,18 +86,14 @@ class ShortTermCache:
     # 公开 API
     # ------------------------------------------------------------------
 
-    async def append(
-        self, conversation_id: str, role: str, content: str
-    ) -> bool:
+    async def append(self, conversation_id: str, role: str, content: str) -> bool:
         """写穿透一条消息 — RPUSH + LTRIM 保留最近 window 条 + 续期 TTL。"""
         redis = self._get_redis()
         if redis is None:
             return False
         try:
             key = self._key(conversation_id)
-            payload = json.dumps(
-                {"role": role, "content": content}, ensure_ascii=False
-            )
+            payload = json.dumps({"role": role, "content": content}, ensure_ascii=False)
             async with redis.pipeline(transaction=True) as pipe:
                 pipe.rpush(key, payload)
                 pipe.ltrim(key, -self._window, -1)
@@ -140,11 +136,13 @@ class ShortTermCache:
             return False
         try:
             key = self._key(conversation_id)
-            tail = messages[-self._window:]
+            tail = messages[-self._window :]
             if not tail:
                 return True
             payloads = [
-                json.dumps({"role": m["role"], "content": m["content"]}, ensure_ascii=False)
+                json.dumps(
+                    {"role": m["role"], "content": m["content"]}, ensure_ascii=False
+                )
                 for m in tail
             ]
             async with redis.pipeline(transaction=True) as pipe:

@@ -140,8 +140,10 @@ class TestReviewService:
             ``(reviews, total)`` — 当前页评审列表与总记录数。
         """
         # 总数
-        count_stmt = select(func.count()).select_from(TestReview).where(
-            TestReview.status == "pending"
+        count_stmt = (
+            select(func.count())
+            .select_from(TestReview)
+            .where(TestReview.status == "pending")
         )
         count_stmt = apply_tenant_filter(count_stmt, TestReview, self._tenant_id)
         total = (await self.db.execute(count_stmt)).scalar_one()
@@ -150,11 +152,7 @@ class TestReviewService:
         offset = (page - 1) * size
         stmt = select(TestReview).where(TestReview.status == "pending")
         stmt = apply_tenant_filter(stmt, TestReview, self._tenant_id)
-        stmt = (
-            stmt.order_by(TestReview.created_at.desc())
-            .offset(offset)
-            .limit(size)
-        )
+        stmt = stmt.order_by(TestReview.created_at.desc()).offset(offset).limit(size)
         result = await self.db.execute(stmt)
         reviews = list(result.scalars().all())
         return reviews, total

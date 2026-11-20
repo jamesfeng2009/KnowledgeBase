@@ -9,6 +9,7 @@
 
 权限：需 admin/kb_admin 角色（候选驳回影响知识沉淀走向）。
 """
+
 from __future__ import annotations
 
 import math
@@ -42,6 +43,7 @@ def _require_admin(user: User) -> None:
 
 def _candidate_to_dict(row: Any) -> dict[str, Any]:
     """候选行（SQL Row / ORM 实例）→ 字典（Row 支持按列名属性访问）。"""
+
     def _v(key: str) -> Any:
         return getattr(row, key, None)
 
@@ -60,8 +62,12 @@ def _candidate_to_dict(row: Any) -> dict[str, Any]:
         "distinct_users": int(_v("distinct_users") or 0),
         "first_seen_at": _iso(_v("first_seen_at")),
         "last_seen_at": _iso(_v("last_seen_at")),
-        "promoted_asset_id": str(_v("promoted_asset_id")) if _v("promoted_asset_id") else None,
-        "promoted_doc_id": str(_v("promoted_doc_id")) if _v("promoted_doc_id") else None,
+        "promoted_asset_id": str(_v("promoted_asset_id"))
+        if _v("promoted_asset_id")
+        else None,
+        "promoted_doc_id": str(_v("promoted_doc_id"))
+        if _v("promoted_doc_id")
+        else None,
         "dismissed_reason": _v("dismissed_reason"),
         "created_at": _iso(_v("created_at")),
         "updated_at": _iso(_v("updated_at")),
@@ -76,7 +82,9 @@ def _iso(value: Any) -> str | None:
 async def list_candidates(
     request: Request,
     candidate_status: str | None = Query(
-        default=None, alias="status", description="状态过滤（candidate/promoting/promoted/dismissed/expired）"
+        default=None,
+        alias="status",
+        description="状态过滤（candidate/promoting/promoted/dismissed/expired）",
     ),
     page: int = Query(default=1, ge=1, description="页码"),
     size: int = Query(default=20, ge=1, le=100, description="每页数量"),
@@ -132,4 +140,8 @@ async def dismiss_candidate(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="候选不存在或当前状态不可驳回（仅 candidate 可驳回）",
         )
-    return ApiResponse(code=0, data={"id": str(candidate_id), "status": "dismissed"}, message="候选已驳回")
+    return ApiResponse(
+        code=0,
+        data={"id": str(candidate_id), "status": "dismissed"},
+        message="候选已驳回",
+    )

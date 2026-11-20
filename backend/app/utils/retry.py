@@ -20,7 +20,8 @@ from __future__ import annotations
 
 import asyncio
 import functools
-from typing import Any, Callable, TypeVar
+from collections.abc import Callable
+from typing import Any, TypeVar
 
 import httpx
 from tenacity import (
@@ -42,6 +43,7 @@ F = TypeVar("F", bound=Callable[..., Any])
 # ------------------------------------------------------------------
 # L2: 函数级 tenacity 重试
 # ------------------------------------------------------------------
+
 
 def _log_retry(retry_state: RetryCallState) -> None:
     """tenacity before_sleep 回调 — 记录每次重试日志。"""
@@ -99,12 +101,15 @@ def with_retry(
     """
     settings = get_settings()
     _max_attempts = max_attempts or settings.RETRY_MAX_ATTEMPTS
-    _base_delay = base_delay if base_delay is not None else settings.RETRY_BACKOFF_BASE_DB
+    _base_delay = (
+        base_delay if base_delay is not None else settings.RETRY_BACKOFF_BASE_DB
+    )
     _max_delay = max_delay if max_delay is not None else settings.RETRY_BACKOFF_MAX
     _jitter = jitter if jitter is not None else settings.RETRY_JITTER
 
     def decorator(fn: F) -> F:
         if asyncio.iscoroutinefunction(fn):
+
             @functools.wraps(fn)
             @retry(
                 stop=stop_after_attempt(_max_attempts),
@@ -122,6 +127,7 @@ def with_retry(
 
             return async_wrapper  # type: ignore[return-value]
         else:
+
             @functools.wraps(fn)
             @retry(
                 stop=stop_after_attempt(_max_attempts),
@@ -145,6 +151,7 @@ def with_retry(
 # ------------------------------------------------------------------
 # L1: HTTP Transport 重试
 # ------------------------------------------------------------------
+
 
 def build_retry_http_client(
     *,
@@ -190,7 +197,9 @@ def build_retry_http_client(
         ) from exc
 
     settings = get_settings()
-    _max_retries = max_retries if max_retries is not None else settings.RETRY_MAX_ATTEMPTS
+    _max_retries = (
+        max_retries if max_retries is not None else settings.RETRY_MAX_ATTEMPTS
+    )
     _retry_codes = retry_status_codes or [429, 500, 502, 503, 504]
 
     policy = RetryPolicy(
@@ -218,6 +227,7 @@ def build_retry_http_client(
 # ------------------------------------------------------------------
 # L3: Celery 任务级重试
 # ------------------------------------------------------------------
+
 
 def make_celery_retry_kwargs() -> dict[str, Any]:
     """生成 Celery @task 装饰器的指数退避重试参数（L3）。

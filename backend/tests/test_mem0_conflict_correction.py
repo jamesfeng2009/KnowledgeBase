@@ -146,7 +146,9 @@ class TestDeactivateConflicting:
         """多条冲突旧事实全部停用。"""
         from app.memory.mem0_manager import Mem0Manager
 
-        old1 = _make_fact(text="style: detailed", fact_key="style", fact_value="detailed")
+        old1 = _make_fact(
+            text="style: detailed", fact_key="style", fact_value="detailed"
+        )
         old2 = _make_fact(text="style: verbose", fact_key="style", fact_value="verbose")
         mock_db = _mock_db_with_facts([old1, old2])
         manager = Mem0Manager(mock_db)

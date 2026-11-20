@@ -70,7 +70,7 @@ class EvolutionConfig:
     diagnose_top_k: int = 5
 
     @classmethod
-    def from_settings(cls) -> "EvolutionConfig":
+    def from_settings(cls) -> EvolutionConfig:
         s = get_settings()
         return cls(
             edit_budget=s.EVOLUTION_EDIT_BUDGET,
@@ -241,9 +241,7 @@ def load_cases(path: Path) -> list[RolloutCase]:
             query = str(raw.get("query", "")).strip()
             contexts = [str(c) for c in raw.get("contexts", []) if str(c).strip()]
             if not case_id or not query or not contexts:
-                invalid.append(
-                    f"line {idx}: 缺少 case_id/query/非空 contexts"
-                )
+                invalid.append(f"line {idx}: 缺少 case_id/query/非空 contexts")
                 continue
             cases.append(RolloutCase(case_id=case_id, query=query, contexts=contexts))
     if invalid:
@@ -343,9 +341,7 @@ class EvolutionLoop:
                 parts.append(token)
         return "".join(parts).strip()
 
-    async def _judge_once(
-        self, case: RolloutCase, answer: str
-    ) -> EvalResult:
+    async def _judge_once(self, case: RolloutCase, answer: str) -> EvalResult:
         self._budget.spend()
         return await self._judge.evaluate_single(case.query, answer, case.contexts)
 
@@ -472,10 +468,7 @@ class EvolutionLoop:
         with self._rejected_buffer_path().open("a", encoding="utf-8") as f:
             for item in skipped:
                 f.write(
-                    json.dumps(
-                        {"round": round_no, **item}, ensure_ascii=False
-                    )
-                    + "\n"
+                    json.dumps({"round": round_no, **item}, ensure_ascii=False) + "\n"
                 )
 
     def _write_round(
@@ -587,9 +580,7 @@ class EvolutionLoop:
                     continue
 
                 # 4. 候选评测
-                candidate_metrics = await self._metrics(
-                    outcome.lines, self._redline
-                )
+                candidate_metrics = await self._metrics(outcome.lines, self._redline)
 
                 # 5. 门控
                 decision = evaluate_gate(
@@ -601,9 +592,7 @@ class EvolutionLoop:
                     "accepted" if decision.accepted else "rejected"
                 )
                 round_record["reason"] = decision.reason
-                candidate_text = render_guidance_file(
-                    outcome.lines, self._redline
-                )
+                candidate_text = render_guidance_file(outcome.lines, self._redline)
                 self._write_round(
                     round_no, candidate_text, decision.reason, decision.accepted
                 )

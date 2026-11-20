@@ -7,11 +7,11 @@ P4 Tavily 提供商 / 限速 / 配额测试。
     - TavilyProvider：真实 HTTP 结构解析（MockTransport 注入）、失败降级为空
     - build_provider：Tavily+Key → TavilyProvider；缺 Key / mock → MockProvider
 """
+
 from __future__ import annotations
 
 import asyncio
 import time
-from unittest.mock import MagicMock
 
 import httpx
 import pytest
@@ -74,8 +74,8 @@ class TestDailyQuotaMemory:
         """按 scope（tenant）隔离配额：租户 A 的超限不影响租户 B。"""
         q = DailyQuota(2, use_redis=False)
         assert [await q.consume("tenant:a") for _ in range(2)] == [True, True]
-        assert await q.consume("tenant:a") is False   # A 已到顶
-        assert await q.consume("tenant:b") is True    # B 独立计数，仍放行
+        assert await q.consume("tenant:a") is False  # A 已到顶
+        assert await q.consume("tenant:b") is True  # B 独立计数，仍放行
 
 
 class TestTavilyProvider:
@@ -85,15 +85,26 @@ class TestTavilyProvider:
 
         def handler(request: httpx.Request) -> httpx.Response:
             assert request.headers["Authorization"] == "Bearer test-key"
-            return httpx.Response(200, json={
-                "results": [
-                    {"title": "甲", "url": "https://a.com/x", "content": "快照A",
-                     "score": 0.9},
-                    {"title": "乙", "url": "https://b.com/y", "content": "快照B",
-                     "score": 0.7},
-                    {"title": "no-url", "content": "无 url 应跳过", "score": 0.5},
-                ]
-            })
+            return httpx.Response(
+                200,
+                json={
+                    "results": [
+                        {
+                            "title": "甲",
+                            "url": "https://a.com/x",
+                            "content": "快照A",
+                            "score": 0.9,
+                        },
+                        {
+                            "title": "乙",
+                            "url": "https://b.com/y",
+                            "content": "快照B",
+                            "score": 0.7,
+                        },
+                        {"title": "no-url", "content": "无 url 应跳过", "score": 0.5},
+                    ]
+                },
+            )
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         provider = TavilyProvider("test-key", client=client)
@@ -121,7 +132,7 @@ class TestTavilyProvider:
 
     def test_requires_api_key(self) -> None:
         with pytest.raises(ValueError):
-            TavilyProvider("")  # noqa: E1120 空 Key 拒绝构建
+            TavilyProvider("")
 
 
 class TestBuildProvider:
@@ -142,7 +153,7 @@ class TestDedup:
     def test_url_dedup_only(self) -> None:
         hits = [
             {"title": "a", "url": "https://x.com/1"},
-            {"title": "a2", "url": "https://x.com/1"},   # 同 URL 去重
+            {"title": "a2", "url": "https://x.com/1"},  # 同 URL 去重
             {"title": "b", "url": "https://x.com/2"},
         ]
         out = dedup_web_by_url(hits)

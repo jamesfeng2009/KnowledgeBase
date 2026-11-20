@@ -26,7 +26,6 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-import uuid
 from datetime import datetime, timezone
 
 # 环境变量必须在 app 导入前设置（get_settings 首次调用即固化）
@@ -62,7 +61,10 @@ SEED_RULES = [
         "chunk_id": "eval_m4_rule_invoice",
         "kb": SEED_KB_NAME,
         "rule_text": "单张发票金额超过 1000 元的报销须部门负责人签批；发票遗失时需提供消费凭证并经直属经理审批后方可报销。",
-        "normalized": {"statement": "报销金额>1000需部门负责人签批", "amount_limits": {"invoice_cny": 1000}},
+        "normalized": {
+            "statement": "报销金额>1000需部门负责人签批",
+            "amount_limits": {"invoice_cny": 1000},
+        },
         "severity": "block",
         "trigger_entities": ["invoice", "报销"],
         "trigger_domains": ["finance"],
@@ -71,7 +73,10 @@ SEED_RULES = [
         "chunk_id": "eval_m4_rule_contract",
         "kb": SEED_KB_NAME,
         "rule_text": "对外合同签署前必须经法务部合规审查并留存审查记录；金额超过 50 万的合同需法务与财务双重会签。",
-        "normalized": {"statement": "合同签署前须法务审查", "amount_limits": {"contract_cny": 500000}},
+        "normalized": {
+            "statement": "合同签署前须法务审查",
+            "amount_limits": {"contract_cny": 500000},
+        },
         "severity": "confirm",
         "trigger_entities": ["contract", "招标"],
         "trigger_domains": ["legal"],
@@ -89,7 +94,10 @@ SEED_RULES = [
         "chunk_id": "eval_m4_rule_entertain",
         "kb": HR_KB_NAME,
         "rule_text": "业务招待费人均上限 300 元，超出部分不予报销；单次招待超过 10 人须提前一个工作日备案。",
-        "normalized": {"statement": "招待费人均上限300元", "amount_limits": {"entertain_cny_per_head": 300}},
+        "normalized": {
+            "statement": "招待费人均上限300元",
+            "amount_limits": {"entertain_cny_per_head": 300},
+        },
         "severity": "warn",
         "trigger_entities": ["招待"],
         "trigger_domains": [],
@@ -104,11 +112,36 @@ CASES = [
     # 正例（应命中）
     {"q": "发票抬头开错了还能报销吗？", "label": 1, "expect": "T2", "kb": "seed"},
     {"q": "合同续签需要走什么审批流程？", "label": 1, "expect": "T2", "kb": "seed"},
-    {"q": "导出全部知识库数据给第三方做分析，需要什么手续？", "label": 1, "expect": "T2", "kb": "seed"},
-    {"q": "上海出差住宿每晚最多能报多少钱？", "label": 1, "expect": "T1(语义,无实体词)", "kb": "seed"},
-    {"q": "跟合作方签协议之前要做哪些合规检查？", "label": 1, "expect": "T2/T1(协议→contract同义词)", "kb": "seed"},
-    {"q": "公司知识库整库备份到本地需要谁批准？", "label": 1, "expect": "T1(语义,无实体词)", "kb": "seed"},
-    {"q": "招待客户吃饭的费用怎么报销？", "label": 1, "expect": "T4(高风险域默认)", "kb": "hr"},
+    {
+        "q": "导出全部知识库数据给第三方做分析，需要什么手续？",
+        "label": 1,
+        "expect": "T2",
+        "kb": "seed",
+    },
+    {
+        "q": "上海出差住宿每晚最多能报多少钱？",
+        "label": 1,
+        "expect": "T1(语义,无实体词)",
+        "kb": "seed",
+    },
+    {
+        "q": "跟合作方签协议之前要做哪些合规检查？",
+        "label": 1,
+        "expect": "T2/T1(协议→contract同义词)",
+        "kb": "seed",
+    },
+    {
+        "q": "公司知识库整库备份到本地需要谁批准？",
+        "label": 1,
+        "expect": "T1(语义,无实体词)",
+        "kb": "seed",
+    },
+    {
+        "q": "招待客户吃饭的费用怎么报销？",
+        "label": 1,
+        "expect": "T4(高风险域默认)",
+        "kb": "hr",
+    },
     # 负例（不应命中）
     {"q": "Kubernetes 集群节点怎么扩容？", "label": 0, "kb": "seed"},
     {"q": "知识库全文检索的同义词库怎么维护？", "label": 0, "kb": "seed"},
@@ -116,8 +149,12 @@ CASES = [
     {"q": "API 限流阈值在哪里配置？", "label": 0, "kb": "seed"},
     {"q": "Milvus 向量索引选 HNSW 还是 IVF？", "label": 0, "kb": "seed"},
     {"q": "怎么给文档打标签方便检索？", "label": 0, "kb": "seed"},
-    {"q": "财务系统的接口文档在哪里？", "label": 0, "kb": "hr",
-     "note": "T4 高风险域按设计无条件注入（保守策略），不计入误报"},
+    {
+        "q": "财务系统的接口文档在哪里？",
+        "label": 0,
+        "kb": "hr",
+        "note": "T4 高风险域按设计无条件注入（保守策略），不计入误报",
+    },
 ]
 
 
@@ -129,9 +166,7 @@ async def setup(session) -> dict:
     if tenant is None:
         raise SystemExit("[ERROR] 种子租户不存在，先跑 eval_resume_seed.py")
     user = (
-        await session.execute(
-            select(User).where(User.email == "eval_seed@local.test")
-        )
+        await session.execute(select(User).where(User.email == "eval_seed@local.test"))
     ).scalar_one_or_none()
 
     kbs: dict[str, KnowledgeBase] = {}
@@ -143,8 +178,12 @@ async def setup(session) -> dict:
         ).scalar_one_or_none()
         if kb is None:
             kb = KnowledgeBase(
-                name=name, owner_id=user.id, tenant_id=tenant.id,
-                description="约束注入评测库" if category is None else "高风险域兜底评测库",
+                name=name,
+                owner_id=user.id,
+                tenant_id=tenant.id,
+                description="约束注入评测库"
+                if category is None
+                else "高风险域兜底评测库",
                 **({"category": category} if category else {}),
             )
             session.add(kb)
@@ -155,17 +194,25 @@ async def setup(session) -> dict:
     docs: dict[str, Document] = {}
     for key, kb in kbs.items():
         doc = (
-            await session.execute(
-                select(Document)
-                .where(Document.kb_id == kb.id, Document.status == "published")
-                .limit(1)
+            (
+                await session.execute(
+                    select(Document)
+                    .where(Document.kb_id == kb.id, Document.status == "published")
+                    .limit(1)
+                )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
         if doc is None:
             doc = Document(
-                kb_id=kb.id, owner_id=user.id, tenant_id=tenant.id,
-                title=f"约束制度文档-{key}", doc_type="md",
-                content_text="制度文档占位内容", classification="internal",
+                kb_id=kb.id,
+                owner_id=user.id,
+                tenant_id=tenant.id,
+                title=f"约束制度文档-{key}",
+                doc_type="md",
+                content_text="制度文档占位内容",
+                classification="internal",
                 status="published",
             )
             session.add(doc)
@@ -177,27 +224,31 @@ async def setup(session) -> dict:
     for spec in SEED_RULES:
         exists = (
             await session.execute(
-                select(ConstraintRule).where(ConstraintRule.chunk_id == spec["chunk_id"])
+                select(ConstraintRule).where(
+                    ConstraintRule.chunk_id == spec["chunk_id"]
+                )
             )
         ).scalar_one_or_none()
         if exists is not None:
             continue
         kb_key = "seed" if spec["kb"] == SEED_KB_NAME else "hr"
-        session.add(ConstraintRule(
-            tenant_id=tenant.id,
-            kb_id=kbs[kb_key].id,
-            document_id=docs[kb_key].id,
-            chunk_id=spec["chunk_id"],
-            scope="kb",
-            rule_text=spec["rule_text"],
-            normalized=spec["normalized"],
-            severity=spec["severity"],
-            actions=["inject"],
-            trigger_entities=spec["trigger_entities"],
-            trigger_domains=spec["trigger_domains"],
-            status="active",
-            classifier_confidence=1.0,
-        ))
+        session.add(
+            ConstraintRule(
+                tenant_id=tenant.id,
+                kb_id=kbs[kb_key].id,
+                document_id=docs[kb_key].id,
+                chunk_id=spec["chunk_id"],
+                scope="kb",
+                rule_text=spec["rule_text"],
+                normalized=spec["normalized"],
+                severity=spec["severity"],
+                actions=["inject"],
+                trigger_entities=spec["trigger_entities"],
+                trigger_domains=spec["trigger_domains"],
+                status="active",
+                classifier_confidence=1.0,
+            )
+        )
         n_new += 1
     await session.commit()
     print(f"[M4] 规则种子完成（新增 {n_new} 条，共 {len(SEED_RULES)} 条）")
@@ -219,16 +270,22 @@ async def fetch_hits(session, query: str) -> list[ConstraintAuditRecord]:
 
 
 async def main() -> None:
+    # 运营流程：注册领域实体（数据导出），供 T2 词典识别
+    from app.ontology.entity_registry import (
+        EntityDefinition,
+        EntityRegistry,
+        EntityType,
+    )
     from app.rag.constraint_channel import ConstraintChannel
 
-    # 运营流程：注册领域实体（数据导出），供 T2 词典识别
-    from app.ontology.entity_registry import EntityDefinition, EntityRegistry, EntityType
-
-    EntityRegistry.register(EntityDefinition(
-        canonical_name="数据导出", display_name="数据导出",
-        entity_type=EntityType.CONCEPT,
-        synonyms=["数据导出", "全量导出", "导出数据", "整库备份"],
-    ))
+    EntityRegistry.register(
+        EntityDefinition(
+            canonical_name="数据导出",
+            display_name="数据导出",
+            entity_type=EntityType.CONCEPT,
+            synonyms=["数据导出", "全量导出", "导出数据", "整库备份"],
+        )
+    )
 
     channel = ConstraintChannel(cache=None)
 
@@ -278,12 +335,10 @@ async def main() -> None:
         # ---------- 统计 ----------
         positives = [r for r in rows if r["case"]["label"] == 1]
         neg_seed = [
-            r for r in rows
-            if r["case"]["label"] == 0 and r["case"].get("kb") == "seed"
+            r for r in rows if r["case"]["label"] == 0 and r["case"].get("kb") == "seed"
         ]
         neg_hr = [
-            r for r in rows
-            if r["case"]["label"] == 0 and r["case"].get("kb") == "hr"
+            r for r in rows if r["case"]["label"] == 0 and r["case"].get("kb") == "hr"
         ]
 
         hits = sum(1 for r in positives if r["hit"])
@@ -293,7 +348,7 @@ async def main() -> None:
         t4_hits = sum(1 for r in rows if any(t.startswith("T4") for t in r["triggers"]))
 
         # ---------- Phase B：enforce 抽查（实际注入载荷） ----------
-        print(f"\n[M4] Phase B：enforce 模式抽查注入载荷")
+        print("\n[M4] Phase B：enforce 模式抽查注入载荷")
         print("-" * 72)
         os.environ["CONSTRAINT_INJECT_MODE"] = "enforce"
         from app.config import get_settings
@@ -306,9 +361,13 @@ async def main() -> None:
         ]
         for q, kb_key in probe_cases:
             payload = await channel.fetch(
-                query=q, kb_ids=[str(kbs[kb_key].id)], tenant_id=tenant.id,
-                session_id=RUN_TAG + "-enforce", user_id=ctx["user"].id,
-                perm_filter=allow_all, intent=None,
+                query=q,
+                kb_ids=[str(kbs[kb_key].id)],
+                tenant_id=tenant.id,
+                session_id=RUN_TAG + "-enforce",
+                user_id=ctx["user"].id,
+                perm_filter=allow_all,
+                intent=None,
             )
             for item in payload:
                 print(
@@ -322,12 +381,20 @@ async def main() -> None:
         print("\n" + "=" * 64)
         print("[M4] 约束注入指标（observe 灰度口径）")
         print("=" * 64)
-        print(f"  约束注入命中率   : {hits}/{len(positives)} = {hits / len(positives):.1%}")
-        print(f"  误报率           : {fps}/{len(neg_seed)} = {fps / len(neg_seed):.1%}"
-              f"（高风险域 KB 的 T4 保守注入 {sum(1 for r in neg_hr if r['hit'])}/{len(neg_hr)} 为设计内行为，不计误报）")
-        print(f"  触发器分布(查询级): T2实体={t2_hits}  T1域分类={t1_hits}  T4域兜底={t4_hits}")
-        print(f"  零 LLM 触发占比  : {(t2_hits + t4_hits) / max(t2_hits + t1_hits + t4_hits, 1):.0%}"
-              f"（T2/T4 为零 LLM 确定性触发，T1 为轻量分类兜底）")
+        print(
+            f"  约束注入命中率   : {hits}/{len(positives)} = {hits / len(positives):.1%}"
+        )
+        print(
+            f"  误报率           : {fps}/{len(neg_seed)} = {fps / len(neg_seed):.1%}"
+            f"（高风险域 KB 的 T4 保守注入 {sum(1 for r in neg_hr if r['hit'])}/{len(neg_hr)} 为设计内行为，不计误报）"
+        )
+        print(
+            f"  触发器分布(查询级): T2实体={t2_hits}  T1域分类={t1_hits}  T4域兜底={t4_hits}"
+        )
+        print(
+            f"  零 LLM 触发占比  : {(t2_hits + t4_hits) / max(t2_hits + t1_hits + t4_hits, 1):.0%}"
+            f"（T2/T4 为零 LLM 确定性触发，T1 为轻量分类兜底）"
+        )
         print("=" * 64)
 
 

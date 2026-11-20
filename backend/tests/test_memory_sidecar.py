@@ -5,11 +5,12 @@
 - SidecarMemoryRetriever.retrieve：L3/L4 召回编排、mem0 异常降级
 - MemoryManager.build_context：注入 sidecar 时走副车道；未注入时走原逻辑
 """
+
 from __future__ import annotations
 
 import uuid
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -35,7 +36,9 @@ class _FakeMem0:
         self.facts = facts or []
         self.calls: list[dict] = []
 
-    async def search_facts(self, user_id, query=None, category=None, limit=10, **kwargs):
+    async def search_facts(
+        self, user_id, query=None, category=None, limit=10, **kwargs
+    ):
         self.calls.append({"query": query, "category": category, "limit": limit})
         return [f for f in self.facts if (category is None or f.category == category)]
 
@@ -120,9 +123,7 @@ class TestMemoryManagerSidecarIntegration:
         manager = self._make_manager(sidecar=sidecar)
         manager.mem0 = mem0  # 替换为 fake
 
-        ctx = await manager.build_context(
-            user_id=uuid.uuid4(), query="问题"
-        )
+        ctx = await manager.build_context(user_id=uuid.uuid4(), query="问题")
         # 副车道返回的 user_facts 被采用
         assert ctx.user_facts[0]["fact_text"] == "偏好A"
         # 副车道内部走了一次 mem0 检索

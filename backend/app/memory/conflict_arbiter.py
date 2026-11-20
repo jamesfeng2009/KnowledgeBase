@@ -37,7 +37,7 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
 # 裁决动作
-ACTION_WRITE = "write"      # 新记忆落盘（可携带需退场的旧记忆 ID）
+ACTION_WRITE = "write"  # 新记忆落盘（可携带需退场的旧记忆 ID）
 ACTION_DISCARD = "discard"  # 新记忆丢弃（语义等价，无增量信息）
 
 
@@ -98,9 +98,7 @@ class MemoryConflictArbiter:
                 new_fact=fact_text[:50],
                 similarity=candidates[0][1],
             )
-            return ConsolidateVerdict(
-                ACTION_DISCARD, reason="equivalent_shortcircuit"
-            )
+            return ConsolidateVerdict(ACTION_DISCARD, reason="equivalent_shortcircuit")
 
         if not settings.MEMORY_CONSOLIDATION_LLM_ENABLED:
             return ConsolidateVerdict(ACTION_WRITE, reason="llm_arbitration_disabled")
@@ -165,9 +163,7 @@ class MemoryConflictArbiter:
 
         parsed = self._parse_verdicts(response, candidates)
         if parsed is None:
-            logger.warning(
-                "conflict_arbitration_parse_failed", response=response[:200]
-            )
+            logger.warning("conflict_arbitration_parse_failed", response=response[:200])
             return {}
         return parsed
 

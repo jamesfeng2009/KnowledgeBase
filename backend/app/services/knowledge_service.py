@@ -50,9 +50,7 @@ class KnowledgeService:
         self.kb_repo: KnowledgeBaseRepository = KnowledgeBaseRepository(
             db, tenant_id=tenant_id
         )
-        self.doc_repo: DocumentRepository = DocumentRepository(
-            db, tenant_id=tenant_id
-        )
+        self.doc_repo: DocumentRepository = DocumentRepository(db, tenant_id=tenant_id)
         self.permission: PermissionService = PermissionService(
             db, user, tenant_id=tenant_id
         )
@@ -168,25 +166,18 @@ class KnowledgeService:
 
         if self.user.role == "admin":
             # admin 可见全部知识库
-            stmt = select(KnowledgeBase).where(
-                KnowledgeBase.deleted_at.is_(None)
-            )
+            stmt = select(KnowledgeBase).where(KnowledgeBase.deleted_at.is_(None))
             stmt = apply_tenant_filter(stmt, KnowledgeBase, self._tenant_id)
             stmt = stmt.order_by(KnowledgeBase.created_at.desc())
         else:
             # 普通用户：所有者或成员
-            member_subq = select(KbMember.kb_id).where(
-                KbMember.user_id == self.user.id
-            )
-            stmt = (
-                select(KnowledgeBase)
-                .where(
-                    KnowledgeBase.deleted_at.is_(None),
-                    or_(
-                        KnowledgeBase.owner_id == self.user.id,
-                        KnowledgeBase.id.in_(member_subq),
-                    ),
-                )
+            member_subq = select(KbMember.kb_id).where(KbMember.user_id == self.user.id)
+            stmt = select(KnowledgeBase).where(
+                KnowledgeBase.deleted_at.is_(None),
+                or_(
+                    KnowledgeBase.owner_id == self.user.id,
+                    KnowledgeBase.id.in_(member_subq),
+                ),
             )
             stmt = apply_tenant_filter(stmt, KnowledgeBase, self._tenant_id)
             stmt = stmt.order_by(KnowledgeBase.created_at.desc())
@@ -301,7 +292,9 @@ class KnowledgeService:
             # P0-2: 文档更新后触发重建索引 — 消除"文本已更新但向量仍是旧版本"的混合状态。
             # 异步触发 process_document 任务，先删除旧向量再重新解析+分块+向量化+索引。
             # 优雅降级：Celery 不可用时仅记录日志，不影响文档更新操作本身。
-            await self._trigger_reindex(str(doc_id), str(updated.kb_id) if updated.kb_id else None)
+            await self._trigger_reindex(
+                str(doc_id), str(updated.kb_id) if updated.kb_id else None
+            )
             return updated
         return doc
 
@@ -329,9 +322,7 @@ class KnowledgeService:
             raise PermissionError("密级不足，无权访问该文档")
         return doc
 
-    async def list_documents(
-        self, kb_id: UUID, page: int, size: int
-    ) -> PageResult:
+    async def list_documents(self, kb_id: UUID, page: int, size: int) -> PageResult:
         """分页查询指定知识库下的文档列表。
 
         权限校验：
@@ -355,13 +346,10 @@ class KnowledgeService:
         params = PaginationParams(page=page, size=size)
         allowed = self.permission.allowed_classifications()
 
-        stmt = (
-            select(Document)
-            .where(
-                Document.kb_id == kb_id,
-                Document.deleted_at.is_(None),
-                Document.classification.in_(allowed),
-            )
+        stmt = select(Document).where(
+            Document.kb_id == kb_id,
+            Document.deleted_at.is_(None),
+            Document.classification.in_(allowed),
         )
         stmt = apply_tenant_filter(stmt, Document, self._tenant_id)
         stmt = stmt.order_by(Document.created_at.desc())
@@ -383,6 +371,7 @@ class KnowledgeService:
             count = await cache.invalidate_by_doc_id(doc_id)
             if count > 0:
                 from app.utils.logger import get_logger
+
                 get_logger(__name__).info(
                     "knowledge.cache_invalidated",
                     doc_id=doc_id,
@@ -407,11 +396,13 @@ class KnowledgeService:
         优雅降级：Celery 不可用时仅记录日志，不影响文档更新操作。
         """
         from app.utils.logger import get_logger
+
         logger = get_logger(__name__)
 
         # 异步触发重建索引（向量清理在任务内执行，此处不再预删）
         try:
             from tasks.document_tasks import process_document
+
             process_document.delay(doc_id)
             logger.info("knowledge.reindex_triggered", doc_id=doc_id, kb_id=kb_id)
         except Exception as exc:

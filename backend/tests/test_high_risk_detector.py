@@ -5,12 +5,11 @@
     - verify_against_sources: 高风险信息与来源文档一致性核验
     - HighRiskItem / HighRiskResult: 数据类和 to_dict
 """
+
 from __future__ import annotations
 
 import sys
 from unittest.mock import MagicMock
-
-import pytest
 
 # Mock celery
 if "celery" not in sys.modules:
@@ -100,7 +99,7 @@ class TestDetectHighRiskTerms:
         assert len(amounts) == 1
         assert amounts[0].start >= 0
         assert amounts[0].end > amounts[0].start
-        assert text[amounts[0].start:amounts[0].end] == amounts[0].value
+        assert text[amounts[0].start : amounts[0].end] == amounts[0].value
 
 
 class TestVerifyAgainstSources:

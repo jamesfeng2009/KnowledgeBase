@@ -32,7 +32,7 @@ import asyncio
 from html import escape
 from typing import Any
 
-from app.config import get_settings
+from app.config import get_settings  # noqa: F401  — 测试 patch 目标（模块属性）
 from app.core.parse_config import get_parse_settings
 from app.document.base import DocumentParser, ParsedSection
 from app.utils.logger import get_logger
@@ -42,6 +42,7 @@ log = get_logger(__name__)
 
 class EncryptedPDFError(ValueError):
     """PDF 已加密且无法用空密码解密 — 必须显式失败，不得静默降级为空文本。"""
+
 
 # VLM 并发控制 — 防止大量图片同时调用 VLM 打满服务
 _VLM_SEMAPHORE_LIMIT: int = 3
@@ -83,7 +84,7 @@ class PDFParser(DocumentParser):
             EncryptedPDFError: PDF 已加密且无法解密。
         """
         try:
-            import fitz  # pymupdf  # noqa: F401
+            import fitz  # pymupdf
         except ImportError:
             log.warning("pdf.parser_skipped", reason="pymupdf not installed")
             return ""
@@ -102,12 +103,22 @@ class PDFParser(DocumentParser):
 
         settings = get_parse_settings()
         # 使用 _bool()/_int() 辅助函数处理 MagicMock（测试场景）和真实 Settings
-        table_enabled = self._bool(getattr(settings, "PDF_TABLE_EXTRACTION_ENABLED", True), True)
-        image_enabled = self._bool(getattr(settings, "PDF_IMAGE_EXTRACTION_ENABLED", True), True)
+        table_enabled = self._bool(
+            getattr(settings, "PDF_TABLE_EXTRACTION_ENABLED", True), True
+        )
+        image_enabled = self._bool(
+            getattr(settings, "PDF_IMAGE_EXTRACTION_ENABLED", True), True
+        )
         max_images = self._int(getattr(settings, "PDF_IMAGE_MAX_PER_DOC", 50), 50)
-        scan_ocr_enabled = self._bool(getattr(settings, "PDF_SCAN_OCR_ENABLED", True), True)
-        scan_ocr_max_pages = self._int(getattr(settings, "PDF_SCAN_OCR_MAX_PAGES", 20), 20)
-        image_upload_enabled = self._bool(getattr(settings, "PDF_IMAGE_UPLOAD_ENABLED", False), False)
+        scan_ocr_enabled = self._bool(
+            getattr(settings, "PDF_SCAN_OCR_ENABLED", True), True
+        )
+        scan_ocr_max_pages = self._int(
+            getattr(settings, "PDF_SCAN_OCR_MAX_PAGES", 20), 20
+        )
+        image_upload_enabled = self._bool(
+            getattr(settings, "PDF_IMAGE_UPLOAD_ENABLED", False), False
+        )
         image_min_size = self._int(getattr(settings, "PDF_IMAGE_MIN_SIZE", 50), 50)
         layout_analysis_enabled = self._bool(
             getattr(settings, "PDF_LAYOUT_ANALYSIS_ENABLED", True), True
@@ -115,9 +126,7 @@ class PDFParser(DocumentParser):
         hf_enabled = self._bool(
             getattr(settings, "PDF_HEADER_FOOTER_REMOVAL_ENABLED", True), True
         )
-        hf_min_pages = self._int(
-            getattr(settings, "PDF_HEADER_FOOTER_MIN_PAGES", 3), 3
-        )
+        hf_min_pages = self._int(getattr(settings, "PDF_HEADER_FOOTER_MIN_PAGES", 3), 3)
         toc_enabled = self._bool(
             getattr(settings, "PDF_TOC_HEADINGS_ENABLED", True), True
         )
@@ -198,7 +207,10 @@ class PDFParser(DocumentParser):
                             )
                         )
                 # 文本覆盖率低于阈值 → 扫描主导页（含带少量文本层的混合扫描页）
-                if scan_ocr_enabled and len(text.strip()) + table_chars + toc_chars < scan_min_chars:
+                if (
+                    scan_ocr_enabled
+                    and len(text.strip()) + table_chars + toc_chars < scan_min_chars
+                ):
                     if scan_ocr_count < scan_ocr_max_pages:
                         scan_ocr_count += 1
                         ocr_text = await self._scan_page_ocr(doc, page, page_num)
@@ -583,9 +595,7 @@ class PDFParser(DocumentParser):
             log.warning("pdf.vlm_error", error=str(exc))
             return ""
 
-    async def _scan_page_ocr(
-        self, doc: Any, page: Any, page_num: int
-    ) -> str:
+    async def _scan_page_ocr(self, doc: Any, page: Any, page_num: int) -> str:
         """扫描页 OCR — 将页面渲染为图片，调用 VLM 提取文字。
 
         当 page.get_text() 返回空字符串时（扫描 PDF / 图片型 PDF），

@@ -88,7 +88,9 @@ class TableResult:
         if self.no_guc_rows != 0:
             out.append(f"无 GUC 却可见 {self.no_guc_rows} 行（策略仍 fail-open）")
         if self.tenant_a_foreign:
-            out.append(f"租户 A 视角看到 {self.tenant_a_foreign} 行其他租户数据（泄漏）")
+            out.append(
+                f"租户 A 视角看到 {self.tenant_a_foreign} 行其他租户数据（泄漏）"
+            )
         if self.tenant_a_rows != self.expected_a:
             out.append(
                 f"租户 A 应见 {self.expected_a} 行，实见 {self.tenant_a_rows}（漏行）"
@@ -130,11 +132,11 @@ async def _group_top_tenants(conn, tables: tuple[str, ...]) -> list[str]:
     for t in tables:
         try:
             rows = await conn.fetch(
-                f'SELECT tenant_id::text AS tid, count(*) AS n '
+                f"SELECT tenant_id::text AS tid, count(*) AS n "
                 f'FROM public."{t}" WHERE tenant_id IS NOT NULL '
                 f"GROUP BY tenant_id ORDER BY n DESC LIMIT 2"
             )
-        except Exception:  # noqa: BLE001 - 表结构差异不该中断探测
+        except Exception:
             continue
         if len(rows) >= 2:
             return [r["tid"] for r in rows]
@@ -229,7 +231,7 @@ async def verify(url: str, tables: list[str] | None, only_critical: bool) -> int
     dsn = _to_asyncpg_dsn(url)
     try:
         conn = await asyncpg.connect(dsn)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         print(f"✗ 连接失败：{type(exc).__name__}: {exc}", file=sys.stderr)
         return 2
 
@@ -311,7 +313,9 @@ async def verify(url: str, tables: list[str] | None, only_critical: bool) -> int
         await conn.execute("ROLLBACK")
 
         # --- 输出 ---
-        header = f"{'表名':<34} {'无GUC':>6} {'租户A':>7} {'异租户':>7} {'跨租户':>7}  结论"
+        header = (
+            f"{'表名':<34} {'无GUC':>6} {'租户A':>7} {'异租户':>7} {'跨租户':>7}  结论"
+        )
         print(header)
         print("-" * len(header.encode("gbk", errors="replace")))
         failed: list[TableResult] = []
@@ -326,7 +330,9 @@ async def verify(url: str, tables: list[str] | None, only_critical: bool) -> int
 
         print()
         if not failed:
-            print(f"✓ {len(results)} 张表全部通过：无 GUC 不可见、租户间零泄漏、跨租户通道可用")
+            print(
+                f"✓ {len(results)} 张表全部通过：无 GUC 不可见、租户间零泄漏、跨租户通道可用"
+            )
             return 0
 
         print(f"✗ {len(failed)} 张表未通过：", file=sys.stderr)
@@ -368,7 +374,9 @@ def main() -> int:
         url = get_settings().DATABASE_URL
 
     tables = (
-        [t.strip() for t in args.tables.split(",") if t.strip()] if args.tables else None
+        [t.strip() for t in args.tables.split(",") if t.strip()]
+        if args.tables
+        else None
     )
     return asyncio.run(verify(url, tables, args.only_critical))
 

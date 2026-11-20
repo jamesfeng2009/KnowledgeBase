@@ -7,6 +7,7 @@
 
 遵循单一职责：本模块只负责数据管道，不做 Agent 决策、不做 LLM 生成。
 """
+
 from __future__ import annotations
 
 import os
@@ -24,26 +25,26 @@ LLAMAINDEX_IMPORT_ERROR: str | None = None
 # 延迟导入 LlamaIndex（可能未安装）
 try:
     from llama_index.core import (
-        SimpleDirectoryReader,
-        VectorStoreIndex,
-        StorageContext,
         Settings,
+        SimpleDirectoryReader,
+        StorageContext,
+        VectorStoreIndex,
     )
     from llama_index.core.node_parser import (
         HierarchicalNodeParser,
         get_leaf_nodes,
     )
     from llama_index.core.retrievers import (
-        VectorIndexRetriever,
         KeywordTableSimpleRetriever,
         QueryFusionRetriever,
+        VectorIndexRetriever,
     )
     from llama_index.core.schema import NodeWithScore
-    from llama_index.vector_stores.milvus import MilvusVectorStore
     from llama_index.core.storage.docstore import SimpleDocumentStore
+    from llama_index.vector_stores.milvus import MilvusVectorStore
 
     LLAMAINDEX_AVAILABLE = True
-except Exception as exc:  # noqa: BLE001 — 可选重依赖，任何导入失败都必须降级而非炸包
+except Exception as exc:
     # 不能只捕 ImportError —— 这里的异常形态比"依赖没装"多得多：
     #
     # 1) ImportError：依赖未安装。
@@ -188,7 +189,9 @@ class LlamaIndexPipeline:
             return len(leaf_nodes)
 
         except Exception as e:
-            logger.error("llamaindex_pipeline.ingest_error", doc_id=doc_id, error=str(e))
+            logger.error(
+                "llamaindex_pipeline.ingest_error", doc_id=doc_id, error=str(e)
+            )
             return 0
 
     async def ingest_text(
@@ -216,9 +219,14 @@ class LlamaIndexPipeline:
         try:
             from llama_index.core.schema import Document
 
-            doc = Document(text=text, metadata={"doc_id": doc_id, "title": title, **(metadata or {})})
+            doc = Document(
+                text=text,
+                metadata={"doc_id": doc_id, "title": title, **(metadata or {})},
+            )
 
-            node_parser = HierarchicalNodeParser.from_defaults(chunk_sizes=[1024, 512, 256])
+            node_parser = HierarchicalNodeParser.from_defaults(
+                chunk_sizes=[1024, 512, 256]
+            )
             nodes = node_parser.get_nodes_from_documents([doc])
             leaf_nodes = get_leaf_nodes(nodes)
 
@@ -235,7 +243,9 @@ class LlamaIndexPipeline:
             return len(leaf_nodes)
 
         except Exception as e:
-            logger.error("llamaindex_pipeline.ingest_text_error", doc_id=doc_id, error=str(e))
+            logger.error(
+                "llamaindex_pipeline.ingest_text_error", doc_id=doc_id, error=str(e)
+            )
             return 0
 
     async def hybrid_search(
@@ -286,14 +296,16 @@ class LlamaIndexPipeline:
                 doc_id = node.metadata.get("doc_id", "")
                 if kb_ids and node.metadata.get("kb_id") not in kb_ids:
                     continue
-                results.append({
-                    "doc_id": doc_id,
-                    "chunk_id": node.node_id,
-                    "content": node.text,
-                    "score": float(node.score) if node.score else 0.0,
-                    "source": "llamaindex_hybrid",
-                    "metadata": node.metadata,
-                })
+                results.append(
+                    {
+                        "doc_id": doc_id,
+                        "chunk_id": node.node_id,
+                        "content": node.text,
+                        "score": float(node.score) if node.score else 0.0,
+                        "source": "llamaindex_hybrid",
+                        "metadata": node.metadata,
+                    }
+                )
 
             logger.info(
                 "llamaindex_pipeline.search_done",
@@ -308,18 +320,18 @@ class LlamaIndexPipeline:
 
     async def build_graph_index(self, documents: list, kb_id: str) -> bool:
         """构建知识图谱索引 — 从文档中提取三元组建图。
-        
+
         使用 LlamaIndex 的 KnowledgeGraphIndex 自动提取 (subject, predicate, object) 三元组，
         存入 Neo4j 图数据库。
         """
         if not LLAMAINDEX_AVAILABLE:
             return False
-        
+
         self._ensure_initialized()
         try:
             from llama_index.core import KnowledgeGraphIndex
             from llama_index.graph_stores.neo4j import Neo4jGraphStore
-            
+
             # 配置 Neo4j 图存储
             graph_store = Neo4jGraphStore(
                 username=settings.NEO4J_USER,
@@ -327,15 +339,15 @@ class LlamaIndexPipeline:
                 url=settings.NEO4J_URI,
                 database=settings.NEO4J_DATABASE,
             )
-            
+
             # 构建图谱索引（自动提取三元组）
-            kg_index = KnowledgeGraphIndex.from_documents(
+            KnowledgeGraphIndex.from_documents(
                 documents,
                 storage_context=StorageContext.from_defaults(graph_store=graph_store),
                 max_triplets_per_chunk=10,  # 每块最多提取 10 个三元组
                 show_progress=False,
             )
-            
+
             logger.info("llamaindex_pipeline.graph_indexed", kb_id=kb_id)
             return True
         except Exception as e:
@@ -344,29 +356,31 @@ class LlamaIndexPipeline:
 
     async def graph_search(self, query: str, top_k: int = 10) -> list[dict[str, Any]]:
         """图谱检索 — 基于实体关系的语义检索。
-        
+
         通过图遍历查找与查询实体相关的文档节点，
         补充向量检索的"关系维度"。
         """
         if not LLAMAINDEX_AVAILABLE:
             return []
-        
+
         self._ensure_initialized()
         try:
-            
             # 使用已有图谱索引检索
             retriever = self._vector_index.as_retriever(
                 similarity_top_k=top_k,
             )
             # KnowledgeGraphIndex 的 retriever 支持图遍历
             nodes = retriever.retrieve(query)
-            
-            return [{
-                "doc_id": n.metadata.get("doc_id", ""),
-                "content": n.text[:200],
-                "score": float(n.score) if n.score else 0.0,
-                "source": "graph_traversal",
-            } for n in nodes]
+
+            return [
+                {
+                    "doc_id": n.metadata.get("doc_id", ""),
+                    "content": n.text[:200],
+                    "score": float(n.score) if n.score else 0.0,
+                    "source": "graph_traversal",
+                }
+                for n in nodes
+            ]
         except Exception as e:
             logger.error("llamaindex_pipeline.graph_search_error", error=str(e))
             return []
@@ -389,7 +403,9 @@ class LlamaIndexPipeline:
             logger.info("llamaindex_pipeline.deleted", doc_id=doc_id)
             return True
         except Exception as e:
-            logger.error("llamaindex_pipeline.delete_error", doc_id=doc_id, error=str(e))
+            logger.error(
+                "llamaindex_pipeline.delete_error", doc_id=doc_id, error=str(e)
+            )
             return False
 
 

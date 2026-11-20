@@ -50,9 +50,10 @@ import json
 import logging
 import random
 import sys
+from collections.abc import Iterator
 from contextlib import nullcontext
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 logger = logging.getLogger("train_grpo")
 
@@ -60,7 +61,7 @@ logger = logging.getLogger("train_grpo")
 # - BOUNDARY_KEYWORDS 为强信号 v2 版，剔除"怎么办/怎么做/出差/预订/劳动"等泛词
 #   （旧版实测 36% 工作问题被误判为边界，实质回答反被 -1 惩罚）
 # - REFUSAL_KEYWORDS 与 eval_boundary_200 严格对齐（剔除"欢迎随时提问"等弱信号）
-from finetune_utils import (
+from finetune_utils import (  # noqa: E402  — 有意延迟导入（依赖上方初始化）
     BOUNDARY_KEYWORDS,
     ENTERPRISE_SYSTEMS,
     GUIDANCE_SIGNALS,
@@ -74,8 +75,13 @@ from finetune_utils import (
 
 #: LoRA 注入目标模块（与 train_lora.py / train_dpo.py 保持一致）
 DEFAULT_TARGET_MODULES = [
-    "q_proj", "k_proj", "v_proj", "o_proj",
-    "gate_proj", "up_proj", "down_proj",
+    "q_proj",
+    "k_proj",
+    "v_proj",
+    "o_proj",
+    "gate_proj",
+    "up_proj",
+    "down_proj",
 ]
 
 
@@ -104,7 +110,9 @@ def _validate_messages(messages: Any) -> bool:
     for msg in messages:
         if not isinstance(msg, dict):
             return False
-        if not isinstance(msg.get("role"), str) or not isinstance(msg.get("content"), str):
+        if not isinstance(msg.get("role"), str) or not isinstance(
+            msg.get("content"), str
+        ):
             return False
         if not msg["content"].strip():
             return False
@@ -147,7 +155,9 @@ def _completion_text(completion: Any) -> str:
     return str(completion)
 
 
-def enterprise_boundary_reward_v1(prompts: list, completions: list, **kwargs) -> list[float]:
+def enterprise_boundary_reward_v1(
+    prompts: list, completions: list, **kwargs
+) -> list[float]:
     """二值 reward（v1）：仅 ±1 两档，作为 GRPO baseline 用于和 v2 对比。
 
     边界问题：含拒答信号（含或不含引导）→ +1.0；硬答 → -1.0
@@ -170,14 +180,18 @@ def enterprise_boundary_reward_v1(prompts: list, completions: list, **kwargs) ->
         is_substantive = len(comp_text) >= SUBSTANTIVE_MIN_LEN
 
         if is_boundary:
-            r = 1.0 if has_refusal else -1.0        # 拒答(含/不含引导) vs 硬答
+            r = 1.0 if has_refusal else -1.0  # 拒答(含/不含引导) vs 硬答
         else:
-            r = 1.0 if (is_substantive and not has_refusal) else -1.0  # 实质回答 vs 误拒答/空话
+            r = (
+                1.0 if (is_substantive and not has_refusal) else -1.0
+            )  # 实质回答 vs 误拒答/空话
         rewards.append(r)
     return rewards
 
 
-def enterprise_boundary_reward(prompts: list, completions: list, **kwargs) -> list[float]:
+def enterprise_boundary_reward(
+    prompts: list, completions: list, **kwargs
+) -> list[float]:
     """连续 reward（v2）：多梯度分值减少组内 std=0，让 GRPO 有持续学习信号。
 
     边界问题：拒答+引导=1.0 / 干拒答=0.5 / 硬答=-1.0
@@ -201,20 +215,20 @@ def enterprise_boundary_reward(prompts: list, completions: list, **kwargs) -> li
 
         if is_boundary:
             if has_refusal and has_guidance:
-                r = 1.0    # 拒答+引导（最佳）
+                r = 1.0  # 拒答+引导（最佳）
             elif has_refusal:
-                r = 0.5    # 干拒答，无替代方案
+                r = 0.5  # 干拒答，无替代方案
             else:
-                r = -1.0   # 硬答（最差）
+                r = -1.0  # 硬答（最差）
         else:
             if has_refusal:
-                r = -1.0   # 工作问题误拒答
+                r = -1.0  # 工作问题误拒答
             elif has_enterprise and is_substantive:
-                r = 1.0    # 实质+企业入口（最佳）
+                r = 1.0  # 实质+企业入口（最佳）
             elif is_substantive:
-                r = 0.6    # 实质但无企业入口
+                r = 0.6  # 实质但无企业入口
             else:
-                r = 0.1    # 短/空话
+                r = 0.1  # 短/空话
         rewards.append(r)
     return rewards
 
@@ -271,22 +285,29 @@ class LLMJudgeReward:
         （即未训练的 7B）打分——保证 judge 在训练全程恒为同一基座，不受 LoRA 更新影响。
         """
         import re
+
         import torch
+
         msgs = [
             {"role": "system", "content": JUDGE_SYS_PROMPT},
             {"role": "user", "content": f"问题:{user_text}\n回答:{completion}\n评分:"},
         ]
         text = self.judge_tokenizer.apply_chat_template(
-            msgs, add_generation_prompt=True, tokenize=False)
+            msgs, add_generation_prompt=True, tokenize=False
+        )
         inputs = self.judge_tokenizer(text, return_tensors="pt").to(self.judge.device)
         # use_base 模式下 disable_adapter（PeftModel 上下文管理器）；否则空上下文
         adapter_ctx = self.judge.disable_adapter() if self.use_base else nullcontext()
         with adapter_ctx, torch.no_grad():
             out = self.judge.generate(
-                **inputs, max_new_tokens=8, do_sample=False,
-                pad_token_id=self.judge_tokenizer.eos_token_id)
+                **inputs,
+                max_new_tokens=8,
+                do_sample=False,
+                pad_token_id=self.judge_tokenizer.eos_token_id,
+            )
         score_text = self.judge_tokenizer.decode(
-            out[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True).strip()
+            out[0][inputs["input_ids"].shape[1] :], skip_special_tokens=True
+        ).strip()
         m = re.search(r"[0-9]*\.?[0-9]+", score_text)
         if m:
             try:
@@ -298,7 +319,11 @@ class LLMJudgeReward:
     def __call__(self, prompts: list, completions: list, **kwargs) -> list[float]:
         rewards: list[float] = []
         for prompt, completion in zip(prompts, completions):
-            rewards.append(self._judge_one(_extract_user_text(prompt), _completion_text(completion)))
+            rewards.append(
+                self._judge_one(
+                    _extract_user_text(prompt), _completion_text(completion)
+                )
+            )
         return rewards
 
 
@@ -325,58 +350,125 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         description="GRPO 在线强化训练（trl GRPOTrainer，rule-based reward）",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--data", required=True, help="dpo.jsonl 路径（仅取 prompt 列）")
-    parser.add_argument("--base_model", default="Qwen/Qwen2.5-1.5B-Instruct",
-                        help="基座模型（HF repo 或本地路径）")
-    parser.add_argument("--sft_adapter", default=None,
-                        help="可选：SFT LoRA adapter 路径；提供时先 merge 进基座再做 GRPO")
-    parser.add_argument("--dpo_adapter", default=None,
-                        help="可选：DPO LoRA adapter 路径；在 SFT 合并后继续合并，作为 GRPO 起点")
-    parser.add_argument("--output_dir", default="outputs/grpo-v1", help="GRPO LoRA adapter 输出目录")
+    parser.add_argument(
+        "--data", required=True, help="dpo.jsonl 路径（仅取 prompt 列）"
+    )
+    parser.add_argument(
+        "--base_model",
+        default="Qwen/Qwen2.5-1.5B-Instruct",
+        help="基座模型（HF repo 或本地路径）",
+    )
+    parser.add_argument(
+        "--sft_adapter",
+        default=None,
+        help="可选：SFT LoRA adapter 路径；提供时先 merge 进基座再做 GRPO",
+    )
+    parser.add_argument(
+        "--dpo_adapter",
+        default=None,
+        help="可选：DPO LoRA adapter 路径；在 SFT 合并后继续合并，作为 GRPO 起点",
+    )
+    parser.add_argument(
+        "--output_dir", default="outputs/grpo-v1", help="GRPO LoRA adapter 输出目录"
+    )
     # GRPO 生成参数
-    parser.add_argument("--num_generations", type=int, default=4,
-                        help="每个 prompt 采样 G 个回复（组大小，冒烟用 4 省时）")
-    parser.add_argument("--max_prompt_length", type=int, default=256, help="prompt 最大长度（超出左截断）")
-    parser.add_argument("--max_completion_length", type=int, default=128, help="生成回复最大长度")
-    parser.add_argument("--generation_batch_size", type=int, default=4,
-                        help="一次生成的 prompt 数（×num_generations=总生成数）")
-    parser.add_argument("--temperature", type=float, default=1.0, help="生成温度（组内需多样性，默认1.0）")
-    parser.add_argument("--beta", type=float, default=0.04, help="KL 系数（0=无约束，0.04=轻约束防偏离）")
+    parser.add_argument(
+        "--num_generations",
+        type=int,
+        default=4,
+        help="每个 prompt 采样 G 个回复（组大小，冒烟用 4 省时）",
+    )
+    parser.add_argument(
+        "--max_prompt_length",
+        type=int,
+        default=256,
+        help="prompt 最大长度（超出左截断）",
+    )
+    parser.add_argument(
+        "--max_completion_length", type=int, default=128, help="生成回复最大长度"
+    )
+    parser.add_argument(
+        "--generation_batch_size",
+        type=int,
+        default=4,
+        help="一次生成的 prompt 数（×num_generations=总生成数）",
+    )
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=1.0,
+        help="生成温度（组内需多样性，默认1.0）",
+    )
+    parser.add_argument(
+        "--beta",
+        type=float,
+        default=0.04,
+        help="KL 系数（0=无约束，0.04=轻约束防偏离）",
+    )
     # reward 选择
-    parser.add_argument("--reward_version", default="v2", choices=["v1", "v2"],
-                        help="rule-based reward 版本（仅当未指定 --judge_model 时生效）："
-                             "v1 二值 ±1（baseline，易致组内 std=0）；"
-                             "v2 连续 5 档 -1/0.1/0.5/0.6/1.0（减少 std=0，见微调.md 9.5b）")
-    parser.add_argument("--judge_model", default=None,
-                        help="LLM-as-judge reward：模型路径（如 models/Qwen2.5-7B-Instruct）"
-                             "单独加载一份 judge；或 'self' 复用 policy 基座（disable_adapter，省一份显存，"
-                             "双 7B 本机可跑）。提供时用该模型给每条 completion 打 0-1 浮点分，替代 rule-based "
-                             "reward；几乎消除组内 std=0（见微调.md 9.6）。不提供则用 rule-based reward")
+    parser.add_argument(
+        "--reward_version",
+        default="v2",
+        choices=["v1", "v2"],
+        help="rule-based reward 版本（仅当未指定 --judge_model 时生效）："
+        "v1 二值 ±1（baseline，易致组内 std=0）；"
+        "v2 连续 5 档 -1/0.1/0.5/0.6/1.0（减少 std=0，见微调.md 9.5b）",
+    )
+    parser.add_argument(
+        "--judge_model",
+        default=None,
+        help="LLM-as-judge reward：模型路径（如 models/Qwen2.5-7B-Instruct）"
+        "单独加载一份 judge；或 'self' 复用 policy 基座（disable_adapter，省一份显存，"
+        "双 7B 本机可跑）。提供时用该模型给每条 completion 打 0-1 浮点分，替代 rule-based "
+        "reward；几乎消除组内 std=0（见微调.md 9.6）。不提供则用 rule-based reward",
+    )
     # LoRA
     parser.add_argument("--lora_rank", type=int, default=8, help="LoRA rank")
     parser.add_argument("--lora_alpha", type=int, default=16, help="LoRA alpha")
     parser.add_argument("--lora_dropout", type=float, default=0.05, help="LoRA dropout")
     # 训练
-    parser.add_argument("--lr", type=float, default=1e-6, help="学习率（GRPO 对 lr 敏感，远小于 SFT）")
-    parser.add_argument("--epochs", type=float, default=1, help="训练轮数（冒烟用 max_steps 限制）")
-    parser.add_argument("--max_steps", type=int, default=-1, help="最大步数（>0 时覆盖 epochs，冒烟用 10）")
+    parser.add_argument(
+        "--lr", type=float, default=1e-6, help="学习率（GRPO 对 lr 敏感，远小于 SFT）"
+    )
+    parser.add_argument(
+        "--epochs", type=float, default=1, help="训练轮数（冒烟用 max_steps 限制）"
+    )
+    parser.add_argument(
+        "--max_steps",
+        type=int,
+        default=-1,
+        help="最大步数（>0 时覆盖 epochs，冒烟用 10）",
+    )
     parser.add_argument("--grad_accum", type=int, default=1, help="梯度累积步数")
-    parser.add_argument("--limit", type=int, default=None, help="冒烟：只取前 N 条 prompt")
+    parser.add_argument(
+        "--limit", type=int, default=None, help="冒烟：只取前 N 条 prompt"
+    )
     parser.add_argument("--eval_ratio", type=float, default=0.1, help="验证集比例")
-    parser.add_argument("--eval_steps", type=int, default=10,
-                        help="每隔 N 步在验证集上评估一次（reward 均值趋势，评审 #11 修复前 eval 从不生效）")
+    parser.add_argument(
+        "--eval_steps",
+        type=int,
+        default=10,
+        help="每隔 N 步在验证集上评估一次（reward 均值趋势，评审 #11 修复前 eval 从不生效）",
+    )
     parser.add_argument("--seed", type=int, default=42, help="随机种子")
-    parser.add_argument("--no_gradient_checkpointing", action="store_true",
-                        help="关闭梯度检查点（1.5B 可关提速；见微调.md 附录D）")
+    parser.add_argument(
+        "--no_gradient_checkpointing",
+        action="store_true",
+        help="关闭梯度检查点（1.5B 可关提速；见微调.md 附录D）",
+    )
     return parser.parse_args(argv)
 
 
 def _detect_bf16() -> bool:
     """检测训练设备是否支持 bf16（CUDA 或 Apple Silicon MPS）。"""
     import torch
+
     if torch.cuda.is_available():
         return bool(torch.cuda.is_bf16_supported())
-    if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+    if (
+        getattr(torch.backends, "mps", None) is not None
+        and torch.backends.mps.is_available()
+    ):
         try:
             torch.zeros(1, dtype=torch.bfloat16, device="mps")
             return True
@@ -387,7 +479,9 @@ def _detect_bf16() -> bool:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
 
     import torch
     from peft import LoraConfig, PeftModel
@@ -442,7 +536,9 @@ def main(argv: list[str] | None = None) -> int:
     judge_self = args.judge_model == "self"
     if args.judge_model and not judge_self:
         logger.info("加载独立 LLM-as-judge reward 模型: %s", args.judge_model)
-        judge_tokenizer = AutoTokenizer.from_pretrained(args.judge_model, trust_remote_code=True)
+        judge_tokenizer = AutoTokenizer.from_pretrained(
+            args.judge_model, trust_remote_code=True
+        )
         if judge_tokenizer.pad_token is None:
             judge_tokenizer.pad_token = judge_tokenizer.eos_token
         judge_model = AutoModelForCausalLM.from_pretrained(
@@ -456,14 +552,20 @@ def main(argv: list[str] | None = None) -> int:
             p.requires_grad = False  # judge 只推理不训练，省优化器显存
         reward_func = LLMJudgeReward(judge_model, judge_tokenizer, use_base=False)
         reward_name = f"llm-as-judge ({args.judge_model} 0-1 float)"
-        logger.info("LLM-as-judge 就绪（独立模型，eval + no_grad），reward 由 judge 浮点打分")
+        logger.info(
+            "LLM-as-judge 就绪（独立模型，eval + no_grad），reward 由 judge 浮点打分"
+        )
     elif judge_self:
         # 共享基座 judge：不加载第二份模型，复用 policy PeftModel + disable_adapter。
         # judge 引用在 trainer 创建后注入（trainer 才会把模型包成 PeftModel）。
         reward_func = LLMJudgeReward(None, tokenizer, use_base=True)
-        reward_name = f"llm-as-judge self ({args.base_model} 基座, disable_adapter 0-1 float)"
-        logger.info("LLM-as-judge self 模式：复用 policy 基座（disable_adapter）作 judge，省一份 %s 显存",
-                    args.base_model)
+        reward_name = (
+            f"llm-as-judge self ({args.base_model} 基座, disable_adapter 0-1 float)"
+        )
+        logger.info(
+            "LLM-as-judge self 模式：复用 policy 基座（disable_adapter）作 judge，省一份 %s 显存",
+            args.base_model,
+        )
     elif args.reward_version == "v1":
         reward_func = enterprise_boundary_reward_v1
         reward_name = "rule-based v1 (binary ±1, baseline)"
@@ -515,7 +617,9 @@ def main(argv: list[str] | None = None) -> int:
     # reward_func 仅在 trainer.train() 时被调用，此注入在 train 之前完成，时序安全。
     if judge_self:
         reward_func.judge = trainer.model
-        logger.info("LLM-as-judge self 注入完成：judge = trainer.model (PeftModel, disable_adapter 打分)")
+        logger.info(
+            "LLM-as-judge self 注入完成：judge = trainer.model (PeftModel, disable_adapter 打分)"
+        )
 
     repro_info = {
         "base_model": args.base_model,
@@ -530,7 +634,11 @@ def main(argv: list[str] | None = None) -> int:
         "max_completion_length": args.max_completion_length,
         "beta": args.beta,
         "temperature": args.temperature,
-        "lora": {"rank": args.lora_rank, "alpha": args.lora_alpha, "dropout": args.lora_dropout},
+        "lora": {
+            "rank": args.lora_rank,
+            "alpha": args.lora_alpha,
+            "dropout": args.lora_dropout,
+        },
         "lr": args.lr,
         "max_steps": args.max_steps,
         "epochs": args.epochs,

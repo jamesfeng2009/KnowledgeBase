@@ -37,7 +37,9 @@ class EkbClient:
             "X-API-Key": api_key,
             "Content-Type": "application/json",
         }
-        self._http = client or httpx.Client(base_url=self.base_url, headers=headers, timeout=timeout)
+        self._http = client or httpx.Client(
+            base_url=self.base_url, headers=headers, timeout=timeout
+        )
 
     # ------------------------------------------------------------------
     # 请求基元
@@ -49,9 +51,7 @@ class EkbClient:
         except httpx.HTTPError as exc:
             raise EkbClientError(f"请求失败: {exc}") from exc
         if resp.status_code >= 400:
-            raise EkbClientError(
-                f"HTTP {resp.status_code}: {resp.text[:200]}"
-            )
+            raise EkbClientError(f"HTTP {resp.status_code}: {resp.text[:200]}")
         data = resp.json()
         if isinstance(data, dict) and data.get("code") not in (None, 0):
             raise EkbClientError(
@@ -71,11 +71,14 @@ class EkbClient:
     def create_knowledge_base(self, name: str, description: str = "") -> dict[str, Any]:
         """创建知识库。"""
         return self._request(
-            "POST", "/api/v1/knowledge",
+            "POST",
+            "/api/v1/knowledge",
             json={"name": name, "description": description},
         )
 
-    def search(self, query: str, top_k: int = 5, kb_id: str | None = None) -> list[dict[str, Any]]:
+    def search(
+        self, query: str, top_k: int = 5, kb_id: str | None = None
+    ) -> list[dict[str, Any]]:
         """全局检索。"""
         params: dict[str, Any] = {"query": query, "top_k": top_k}
         if kb_id:
@@ -99,9 +102,7 @@ class EkbClient:
         data: dict[str, Any] = {"kb_id": kb_id}
         if title:
             data["title"] = title
-        resp = self._http.post(
-            "/api/v1/documents/upload", files=files, data=data
-        )
+        resp = self._http.post("/api/v1/documents/upload", files=files, data=data)
         if resp.status_code >= 400:
             raise EkbClientError(f"HTTP {resp.status_code}: {resp.text[:200]}")
         payload = resp.json()
@@ -123,7 +124,7 @@ class EkbClient:
         """关闭底层连接。"""
         self._http.close()
 
-    def __enter__(self) -> "EkbClient":
+    def __enter__(self) -> EkbClient:
         return self
 
     def __exit__(self, *exc: Any) -> None:

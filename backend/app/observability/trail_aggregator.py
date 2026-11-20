@@ -123,9 +123,7 @@ def _compute_summary(records: list[_SessionRecord]) -> dict[str, Any]:
             "tool_hit_rate": round(tool_hit_sessions / total, 4),
             "avg_iterations": round(total_iterations / completed_total, 2),
             "avg_think_latency_ms": round(total_think_latency_ms / total, 2),
-            "avg_retrieve_latency_ms": round(
-                total_retrieve_latency_ms / total, 2
-            ),
+            "avg_retrieve_latency_ms": round(total_retrieve_latency_ms / total, 2),
             "avg_tool_latency_ms": round(total_tool_latency_ms / total, 2),
         },
         "tool_distribution": dict(tool_name_counts),
@@ -164,6 +162,7 @@ class TrailAggregator:
 
     def _ensure_lock(self) -> Any:
         import asyncio
+
         if self._lock is None:
             self._lock = asyncio.Lock()
         return self._lock

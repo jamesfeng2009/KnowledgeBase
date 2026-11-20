@@ -10,7 +10,6 @@ from __future__ import annotations
 import glob
 import os
 import uuid
-from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -21,14 +20,12 @@ import pytest
 
 from app.config import get_settings
 from app.document.pdf_parser import PDFParser
-
 from tests.test_pdf_pipeline_hardening import (
     _make_image_pdf,
     _make_text_pdf,
     _png_bytes,
     _seed_document,
 )
-
 
 # ----------------------------------------------------------------------
 # P2 专用真实 PDF 构造工具
@@ -144,7 +141,9 @@ class TestA13TableTextDedup:
         result = await PDFParser().parse(path)
         assert "<table>" in result, "表格应以 HTML 结构输出"
         for cell in ("单元格甲", "单元格乙", "单元格丙", "单元格丁"):
-            assert result.count(cell) == 1, f"{cell} 应只出现一次（表格内），实际 {result.count(cell)}"
+            assert (
+                result.count(cell) == 1
+            ), f"{cell} 应只出现一次（表格内），实际 {result.count(cell)}"
 
     @pytest.mark.asyncio
     async def test_text_outside_table_kept(self, tmp_path):
@@ -168,7 +167,9 @@ class TestA12RealPageCount:
         assert parser.last_page_count == 3
 
     @pytest.mark.asyncio
-    async def test_pipeline_persists_real_page_count(self, db_session, tmp_path, monkeypatch):
+    async def test_pipeline_persists_real_page_count(
+        self, db_session, tmp_path, monkeypatch
+    ):
         monkeypatch.setattr(get_settings(), "DOCLING_ENABLED", False, raising=False)
         from tasks.document_tasks import _parse_and_chunk_async
 
@@ -189,7 +190,9 @@ class TestA12RealPageCount:
 
 class TestA14ReindexHash:
     @pytest.mark.asyncio
-    async def test_changed_file_reparsed_and_hash_updated(self, db_session, tmp_path, monkeypatch):
+    async def test_changed_file_reparsed_and_hash_updated(
+        self, db_session, tmp_path, monkeypatch
+    ):
         monkeypatch.setattr(get_settings(), "DOCLING_ENABLED", False, raising=False)
         import tasks.document_tasks as dt
 

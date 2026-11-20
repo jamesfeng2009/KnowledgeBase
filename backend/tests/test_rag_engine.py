@@ -10,22 +10,21 @@
 - 权限过滤在重排之前执行（核心安全约束）；
 - _reflect 正常执行不抛异常。
 """
+
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from typing import Any
-from unittest.mock import AsyncMock
 
 import pytest
 
 from app.rag.engine import (
     _CLARIFY_ANSWER,
     _INTERRUPT_ANSWER,
-    AgentState,
     AgenticRAGEngine,
+    AgentState,
 )
 from app.utils.sse import SSEEvent, SSEEventType
-
 
 # ======================================================================
 # Mock 实现
@@ -246,7 +245,9 @@ class TestParseDecision:
 
     def test_parse_decision_retrieve(self) -> None:
         """包含 'retrieve' 的文本应解析为 retrieve。"""
-        assert AgenticRAGEngine._parse_decision("please retrieve knowledge") == "retrieve"
+        assert (
+            AgenticRAGEngine._parse_decision("please retrieve knowledge") == "retrieve"
+        )
 
     def test_parse_decision_tool_call(self) -> None:
         """包含 'tool' 的文本应解析为 tool_call。"""
@@ -278,7 +279,7 @@ class TestThink:
         class ErrorLLM:
             async def chat(self, *args, **kwargs):
                 raise RuntimeError("LLM unavailable")
-                yield  # noqa: E701 — 使其为 async generator
+                yield
 
         engine = AgenticRAGEngine(
             llm=ErrorLLM(),
@@ -348,9 +349,7 @@ class TestRetrieve:
         assert call_order[1] == "rerank"
         # 重排器收到的是过滤后的文档（不含 secret）
         assert len(reranker.received_docs) == 2
-        assert all(
-            d.get("classification") != "secret" for d in reranker.received_docs
-        )
+        assert all(d.get("classification") != "secret" for d in reranker.received_docs)
 
     @pytest.mark.asyncio
     async def test_retrieve_without_permission_filter(self) -> None:
@@ -467,12 +466,15 @@ class TestRuleLevelExits:
     @pytest.mark.asyncio
     async def test_single_empty_retrieval_does_not_clarify(self) -> None:
         """仅一次空检索不应触发 Clarify — 允许 Agent 换查询/换库再试。"""
+
         # 第一次 retrieve 返回空，第二次返回文档，随后 generate → 正常继续
         class _TwoPhaseRetriever:
             def __init__(self) -> None:
                 self.calls = 0
 
-            async def search(self, query, kb_ids=None, top_k=20, filters=None, classifications=None):
+            async def search(
+                self, query, kb_ids=None, top_k=20, filters=None, classifications=None
+            ):
                 self.calls += 1
                 if self.calls == 1:
                     return []
@@ -514,9 +516,7 @@ class TestSuccessCriteria:
     @pytest.mark.asyncio
     async def test_criteria_satisfied_when_met(self) -> None:
         """答案满足全部成功标准 → criteria_satisfied=True。"""
-        llm = SequenceLLM([
-            '{"satisfied": true, "unmet": [], "reason": "完整覆盖"}'
-        ])
+        llm = SequenceLLM(['{"satisfied": true, "unmet": [], "reason": "完整覆盖"}'])
         engine, _, _, _ = _make_engine(llm_response="generate")
         engine.llm = llm
         state = _make_state(
@@ -532,10 +532,12 @@ class TestSuccessCriteria:
     @pytest.mark.asyncio
     async def test_criteria_not_satisfied_when_unmet(self) -> None:
         """答案未满足部分成功标准 → criteria_satisfied=False，记录 unmet。"""
-        llm = SequenceLLM([
-            '{"satisfied": false, "unmet": ["答案应明确报销流程"],'
-            ' "reason": "缺少流程细节"}'
-        ])
+        llm = SequenceLLM(
+            [
+                '{"satisfied": false, "unmet": ["答案应明确报销流程"],'
+                ' "reason": "缺少流程细节"}'
+            ]
+        )
         engine, _, _, _ = _make_engine(llm_response="generate")
         engine.llm = llm
         state = _make_state(
@@ -580,10 +582,12 @@ class TestSuccessCriteria:
     async def test_reflect_sets_criteria_satisfied(self) -> None:
         """_reflect 对照成功标准判定 Finish — 结果写入 state 与 _span_evidence。"""
         # 第一个响应给 _reflect_inline，第二个给 _check_success_criteria
-        llm = SequenceLLM([
-            "satisfied",
-            '{"satisfied": true, "unmet": [], "reason": "ok"}',
-        ])
+        llm = SequenceLLM(
+            [
+                "satisfied",
+                '{"satisfied": true, "unmet": [], "reason": "ok"}',
+            ]
+        )
         engine, _, _, _ = _make_engine(llm_response="generate")
         engine.llm = llm
         state = _make_state(
@@ -713,10 +717,12 @@ class TestObservations:
     @pytest.mark.asyncio
     async def test_reflect_span_evidence_carries_observations(self) -> None:
         """_reflect 的 _span_evidence 携带完整观察列表供离线评测回溯。"""
-        llm = SequenceLLM([
-            "satisfied",
-            '{"satisfied": true, "unmet": [], "reason": "ok"}',
-        ])
+        llm = SequenceLLM(
+            [
+                "satisfied",
+                '{"satisfied": true, "unmet": [], "reason": "ok"}',
+            ]
+        )
         engine, _, _, _ = _make_engine(llm_response="generate")
         engine.llm = llm
         state = _make_state(

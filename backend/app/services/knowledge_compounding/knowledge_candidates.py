@@ -382,9 +382,7 @@ class KnowledgeCandidatePool:
                 ).fetchone()
                 answer = mrow.content if mrow else None
         if not answer:
-            log.warning(
-                "candidates.promote_no_answer_source", candidate_id=str(cid)
-            )
+            log.warning("candidates.promote_no_answer_source", candidate_id=str(cid))
             return {"status": "skipped", "reason": "no_answer_source", "id": str(cid)}
 
         # 2. 标记晋升中（防并发重复晋升）
@@ -433,11 +431,7 @@ class KnowledgeCandidatePool:
 
         # 5. 沉淀 + 冲突检测 + 审批提交（复用既有 5 步框架，不改语义）
         owner_id = next(
-            (
-                uuid.UUID(str(e["user_id"]))
-                for e in events
-                if e.get("user_id")
-            ),
+            (uuid.UUID(str(e["user_id"])) for e in events if e.get("user_id")),
             None,
         )
         if owner_id is None:

@@ -14,7 +14,6 @@
 from __future__ import annotations
 
 import math
-from typing import Any
 
 from app.llm.embedder import EmbeddingProvider
 from app.utils.logger import get_logger
@@ -82,7 +81,8 @@ class ContextSelector:
             # 向量化查询和历史消息
             query_vec = (await embedder.embed([query]))[0]
             history_texts = [
-                f"{m.get('role', 'user')}: {m.get('content', '')[:200]}" for m in history
+                f"{m.get('role', 'user')}: {m.get('content', '')[:200]}"
+                for m in history
             ]
             history_vecs = await embedder.embed(history_texts)
 
@@ -135,7 +135,7 @@ class ContextSelector:
 
     def _fallback_select(self, history: list[dict[str, str]]) -> list[dict[str, str]]:
         """降级策略：固定窗口（取最近 N 条）。"""
-        return list(history[-self._always_keep_recent * 2:])
+        return list(history[-self._always_keep_recent * 2 :])
 
     async def _get_embedder(self) -> EmbeddingProvider | None:
         """懒初始化 Embedder。"""

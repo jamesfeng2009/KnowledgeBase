@@ -17,6 +17,7 @@ P2 核心流程：
     - 只能从 pending → approved/rejected（不能从 approved 回到 pending）
     - expired 状态不可审批
 """
+
 from __future__ import annotations
 
 import uuid
@@ -41,9 +42,7 @@ log = get_logger(__name__)
 class KnowledgeApprovalService:
     """知识回流审批服务 — FAQ 沉淀后的审批流转。"""
 
-    def __init__(
-        self, db: AsyncSession, tenant_id: UUID | None = None
-    ) -> None:
+    def __init__(self, db: AsyncSession, tenant_id: UUID | None = None) -> None:
         """初始化审批服务。
 
         Args:
@@ -154,9 +153,7 @@ class KnowledgeApprovalService:
             doc_id=doc_id,
             kb_id=kb_id,
             status=(
-                "approved" if auto_approve
-                else "rejected" if auto_reject
-                else "pending"
+                "approved" if auto_approve else "rejected" if auto_reject else "pending"
             ),
             quality_score=quality_score,
             pii_detected=pii_detected,
@@ -164,15 +161,17 @@ class KnowledgeApprovalService:
             auto_detected_risks=risks if risks else None,
             support_evidence=support,
             expire_at=(
-                None if auto_approve or auto_reject
+                None
+                if auto_approve or auto_reject
                 else now + timedelta(seconds=settings.CHAT_FAQ_APPROVAL_TTL_SECONDS)
             ),
             reviewed_at=now if (auto_approve or auto_reject) else None,
             auto_approved=auto_approve,
             # 自动拒绝以 review_note 标记（reviewer_id 保持 NULL = 无人介入）
             review_note=(
-                f"auto_rejected: quality {quality_score:.2f} < "
-                f"{reject_threshold}" if auto_reject else None
+                f"auto_rejected: quality {quality_score:.2f} < " f"{reject_threshold}"
+                if auto_reject
+                else None
             ),
             tenant_id=self._tenant_id,
         )
@@ -320,9 +319,7 @@ class KnowledgeApprovalService:
         size: int = 20,
     ) -> PageResult:
         """分页查询待审批列表。"""
-        stmt = select(KnowledgeApproval).where(
-            KnowledgeApproval.status == "pending"
-        )
+        stmt = select(KnowledgeApproval).where(KnowledgeApproval.status == "pending")
         stmt = apply_tenant_filter(stmt, KnowledgeApproval, self._tenant_id)
         stmt = stmt.order_by(KnowledgeApproval.created_at.desc())
         params = PaginationParams(page=page, size=size)
@@ -358,18 +355,13 @@ class KnowledgeApprovalService:
             status_counts[status_val] = count
             total += count
 
-        auto_approved = sum(
-            1 for s, c in status_counts.items()
-            if s == "approved"
-        )  # approved 含自动 + 人工，精确计数需 auto_approved 字段
+        # approved 含自动 + 人工，精确计数走下方 auto_approved 字段统计
 
         # 精确统计 auto_approved
         auto_stmt = select(func.count(KnowledgeApproval.id)).where(
             KnowledgeApproval.auto_approved.is_(True)
         )
-        auto_stmt = apply_tenant_filter(
-            auto_stmt, KnowledgeApproval, self._tenant_id
-        )
+        auto_stmt = apply_tenant_filter(auto_stmt, KnowledgeApproval, self._tenant_id)
         auto_count = (await self.db.execute(auto_stmt)).scalar() or 0
 
         # 自动拒绝：status=rejected 且无人工 reviewer（review_note 以
@@ -381,9 +373,7 @@ class KnowledgeApprovalService:
         auto_rej_stmt = apply_tenant_filter(
             auto_rej_stmt, KnowledgeApproval, self._tenant_id
         )
-        auto_rejected = (
-            (await self.db.execute(auto_rej_stmt)).scalar() or 0
-        )
+        auto_rejected = (await self.db.execute(auto_rej_stmt)).scalar() or 0
 
         return {
             "total": total,
@@ -432,17 +422,13 @@ class KnowledgeApprovalService:
             # PII 检测失败 → 保守起见标记为需人工审批（不自动通过）
             return (True, ["detect_failed"])
 
-    async def _get_approval(
-        self, approval_id: uuid.UUID
-    ) -> KnowledgeApproval | None:
+    async def _get_approval(self, approval_id: uuid.UUID) -> KnowledgeApproval | None:
         """按 ID 加载审批记录。"""
         stmt = select(KnowledgeApproval).where(KnowledgeApproval.id == approval_id)
         stmt = apply_tenant_filter(stmt, KnowledgeApproval, self._tenant_id)
         return (await self.db.execute(stmt)).scalar_one_or_none()
 
-    async def _get_asset(
-        self, asset_id: uuid.UUID
-    ) -> KnowledgeAsset | None:
+    async def _get_asset(self, asset_id: uuid.UUID) -> KnowledgeAsset | None:
         """按 ID 加载知识资产。"""
         stmt = select(KnowledgeAsset).where(KnowledgeAsset.id == asset_id)
         stmt = apply_tenant_filter(stmt, KnowledgeAsset, self._tenant_id)
@@ -462,9 +448,7 @@ class KnowledgeApprovalService:
         if doc is not None:
             doc.status = status
 
-    async def _soft_delete_doc(
-        self, doc_id: uuid.UUID | None
-    ) -> None:
+    async def _soft_delete_doc(self, doc_id: uuid.UUID | None) -> None:
         """软删除文档（拒绝审批时，保留审计痕迹）。"""
         if doc_id is None:
             return

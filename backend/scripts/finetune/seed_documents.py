@@ -425,7 +425,7 @@ _SEED_DOCS: list[tuple[str, str, str, str]] = [
         "2. 系统基于语义检索 + 关键词召回返回最相关的文档片段，按相关度排序；\n"
         "3. 结果卡片显示文档标题、片段摘要、密级标识与来源，点击可跳转原文；\n"
         "4. 支持过滤：按知识库、文档分类、密级、时间范围筛选；\n"
-        "5. 高级语法：双引号精确匹配（\"VPN 配置\"）、减号排除（报销 -差旅）、site: 限定知识库；\n"
+        '5. 高级语法：双引号精确匹配（"VPN 配置"）、减号排除（报销 -差旅）、site: 限定知识库；\n'
         "6. 检索历史保存在「我的搜索」，可收藏常用查询。\n"
         "若检索不到结果，可切换为「智能问答」模式由 AI 综合作答并标注引用来源。",
         "public",
@@ -738,9 +738,7 @@ async def run_seed(
         logger.info("已清理租户 %s 的 seed 文档 %d 篇", tenant_id, cleared)
 
     # 2. 解析 kb_id / owner_id（自动兜底）
-    kb_id, owner_id = await _resolve_kb_and_owner(
-        session, tenant_id, kb_id, owner_id
-    )
+    kb_id, owner_id = await _resolve_kb_and_owner(session, tenant_id, kb_id, owner_id)
 
     # 3. 查询已存在（未软删）的标题，用于幂等跳过
     existing_titles: set[str] = set(
@@ -751,7 +749,9 @@ async def run_seed(
                     Document.deleted_at.is_(None),
                 )
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
 
     # 4. 选出待灌文档
@@ -817,7 +817,9 @@ def _print_report(result: dict[str, Any]) -> None:
         logger.info("  清理旧 seed 文档: %d 篇", result["cleared"])
     logger.info("  按场景分布:")
     for scenario in SCENARIOS:
-        logger.info("    %-6s: %d 篇", scenario, result["scenario_dist"].get(scenario, 0))
+        logger.info(
+            "    %-6s: %d 篇", scenario, result["scenario_dist"].get(scenario, 0)
+        )
     logger.info("  按密级分布:")
     for cls in VALID_CLASSIFICATIONS:
         logger.info("    %-14s: %d 篇", cls, result["classification_dist"].get(cls, 0))

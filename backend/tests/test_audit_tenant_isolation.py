@@ -8,12 +8,12 @@
 5. 迁移文件包含 audit_flows RLS 策略
 6. 参数化配置项存在且验证正确
 """
+
 from __future__ import annotations
 
 import sys
-import uuid
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -50,9 +50,9 @@ class TestAuditFlowModel:
         from app.models.audit import AuditFlow
 
         index_names = [idx.name for idx in AuditFlow.__table__.indexes]
-        assert "ix_audit_flows_tenant_id" in index_names, (
-            "audit_flows 表应包含 ix_audit_flows_tenant_id 索引"
-        )
+        assert (
+            "ix_audit_flows_tenant_id" in index_names
+        ), "audit_flows 表应包含 ix_audit_flows_tenant_id 索引"
 
 
 # ==================================================================
@@ -68,48 +68,48 @@ class TestAuditRepositoryTenantFilter:
         from app.repositories.audit_repository import AuditRepository
 
         docstring = AuditRepository.__doc__ or ""
-        assert "无法过滤" not in docstring, (
-            "AuditRepository 文档不应再包含'无法过滤'警告"
-        )
-        assert "tenant_id" in docstring, (
-            "AuditRepository 文档应说明 tenant_id 过滤已激活"
-        )
+        assert (
+            "无法过滤" not in docstring
+        ), "AuditRepository 文档不应再包含'无法过滤'警告"
+        assert (
+            "tenant_id" in docstring
+        ), "AuditRepository 文档应说明 tenant_id 过滤已激活"
 
     def test_get_by_status_uses_apply_all_filters(self):
         """get_by_status 方法应调用 _apply_all_filters 注入租户过滤。"""
-        from app.repositories.audit_repository import AuditRepository
-
         # 检查方法源码是否包含 _apply_all_filters 调用
         import inspect
 
+        from app.repositories.audit_repository import AuditRepository
+
         source = inspect.getsource(AuditRepository.get_by_status)
-        assert "_apply_all_filters" in source, (
-            "get_by_status 应通过 _apply_all_filters 注入租户过滤"
-        )
+        assert (
+            "_apply_all_filters" in source
+        ), "get_by_status 应通过 _apply_all_filters 注入租户过滤"
 
     def test_get_by_resource_uses_apply_all_filters(self):
         """get_by_resource 方法应调用 _apply_all_filters。"""
-        from app.repositories.audit_repository import AuditRepository
-
         import inspect
+
+        from app.repositories.audit_repository import AuditRepository
 
         source = inspect.getsource(AuditRepository.get_by_resource)
         assert "_apply_all_filters" in source
 
     def test_get_by_submitter_uses_apply_all_filters(self):
         """get_by_submitter 方法应调用 _apply_all_filters。"""
-        from app.repositories.audit_repository import AuditRepository
-
         import inspect
+
+        from app.repositories.audit_repository import AuditRepository
 
         source = inspect.getsource(AuditRepository.get_by_submitter)
         assert "_apply_all_filters" in source
 
     def test_get_by_reviewer_uses_apply_all_filters(self):
         """get_by_reviewer 方法应调用 _apply_all_filters。"""
-        from app.repositories.audit_repository import AuditRepository
-
         import inspect
+
+        from app.repositories.audit_repository import AuditRepository
 
         source = inspect.getsource(AuditRepository.get_by_reviewer)
         assert "_apply_all_filters" in source
@@ -125,25 +125,21 @@ class TestAuditServiceTenantFilter:
 
     def test_list_pending_filters_tenant_id(self):
         """list_pending 方法应包含 tenant_id 过滤条件。"""
-        from app.services.audit_service import AuditService
-
         import inspect
 
+        from app.services.audit_service import AuditService
+
         source = inspect.getsource(AuditService.list_pending)
-        assert "tenant_id" in source, (
-            "list_pending 方法应包含 tenant_id 过滤逻辑"
-        )
+        assert "tenant_id" in source, "list_pending 方法应包含 tenant_id 过滤逻辑"
 
     def test_submit_for_review_sets_tenant_id(self):
         """submit_for_review 方法应设置 tenant_id。"""
-        from app.services.audit_service import AuditService
-
         import inspect
 
+        from app.services.audit_service import AuditService
+
         source = inspect.getsource(AuditService.submit_for_review)
-        assert "tenant_id" in source, (
-            "submit_for_review 方法应设置 tenant_id"
-        )
+        assert "tenant_id" in source, "submit_for_review 方法应设置 tenant_id"
 
 
 # ==================================================================
@@ -231,16 +227,18 @@ class TestParameterizedConfig:
 
     def test_positive_float_validator_rejects_zero(self):
         """正浮点数验证器应拒绝 0 值。"""
-        from app.config import Settings
         from pydantic import ValidationError
+
+        from app.config import Settings
 
         with pytest.raises(ValidationError):
             Settings(RETRY_BACKOFF_BASE=0.0)
 
     def test_positive_int_validator_rejects_zero(self):
         """正整数验证器应拒绝 0 值。"""
-        from app.config import Settings
         from pydantic import ValidationError
+
+        from app.config import Settings
 
         with pytest.raises(ValidationError):
             Settings(CIRCUIT_BREAKER_FAILURE_THRESHOLD=0)
@@ -281,9 +279,9 @@ class TestVideoTasksBugFix:
         """process_video_multipart 应注册为 Celery 任务（BUG-2 修复）。"""
         import tasks.video_tasks as vt
 
-        assert hasattr(vt.process_video_multipart, "delay"), (
-            "process_video_multipart 应有 .delay 方法（注册为 Celery 任务）"
-        )
+        assert hasattr(
+            vt.process_video_multipart, "delay"
+        ), "process_video_multipart 应有 .delay 方法（注册为 Celery 任务）"
 
     def test_asr_multipart_task_is_task(self):
         """asr_multipart_task 应注册为 Celery 任务。"""
@@ -308,12 +306,12 @@ class TestVideoTasksBugFix:
         import tasks.video_tasks as vt
 
         source = open(vt.__file__).read()
-        assert "process_document_intelligence" not in source, (
-            "video_tasks.py 不应引用不存在的 process_document_intelligence"
-        )
-        assert "process_intelligence" in source, (
-            "video_tasks.py 应引用正确的 process_intelligence"
-        )
+        assert (
+            "process_document_intelligence" not in source
+        ), "video_tasks.py 不应引用不存在的 process_document_intelligence"
+        assert (
+            "process_intelligence" in source
+        ), "video_tasks.py 应引用正确的 process_intelligence"
 
 
 # ==================================================================
@@ -359,9 +357,9 @@ class TestRebuildIndexBugFix:
         """_delete_kb_indices 函数应存在。"""
         import tasks.index_tasks as it
 
-        assert hasattr(it, "_delete_kb_indices"), (
-            "index_tasks 应包含 _delete_kb_indices 函数（BUG-5 修复）"
-        )
+        assert hasattr(
+            it, "_delete_kb_indices"
+        ), "index_tasks 应包含 _delete_kb_indices 函数（BUG-5 修复）"
 
     def test_rebuild_calls_delete_before_build(self):
         """_rebuild_kb_index_async 应在构建前调用 _delete_kb_indices。"""

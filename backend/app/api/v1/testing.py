@@ -43,6 +43,7 @@ from app.schemas.testing import (
     TestCaseUpdate,
     TestExecutionCreate,
     TestExecutionResponse,
+    TestingStatsResponse,
     TestPlanCreate,
     TestPlanOrchestrateRequest,
     TestPlanResponse,
@@ -54,7 +55,6 @@ from app.schemas.testing import (
     TestReviewAction,
     TestReviewResponse,
     TestReviewSubmit,
-    TestingStatsResponse,
 )
 from app.services.testing import (
     RequirementAnalysisService,
@@ -150,9 +150,12 @@ async def list_projects(
     """分页查询测试项目列表。"""
     conditions = [TestProject.deleted_at.is_(None)]
 
-    total = await db.scalar(
-        select(func.count()).select_from(TestProject).where(*conditions)
-    ) or 0
+    total = (
+        await db.scalar(
+            select(func.count()).select_from(TestProject).where(*conditions)
+        )
+        or 0
+    )
 
     offset = (page - 1) * size
     result = await db.execute(
@@ -264,8 +267,8 @@ async def delete_project(
         conditions.append(TestProject.tenant_id == user.tenant_id)
 
     project = (
-        await db.execute(select(TestProject).where(*conditions))
-    ).scalars().first()
+        (await db.execute(select(TestProject).where(*conditions))).scalars().first()
+    )
     if project is None:
         raise HTTPException(status_code=404, detail="项目不存在")
 
@@ -279,11 +282,7 @@ async def delete_project(
             .where(model.project_id == project_id, model.deleted_at.is_(None))
             .values(deleted_at=now)
         )
-    await db.execute(
-        sa_update(TestProject)
-        .where(*conditions)
-        .values(deleted_at=now)
-    )
+    await db.execute(sa_update(TestProject).where(*conditions).values(deleted_at=now))
     await db.commit()
 
     logger.info(
@@ -381,9 +380,7 @@ async def update_requirement(
     service = RequirementAnalysisService(_get_llm_or_none(), db, tenant_id=tenant_id)
     update_data = body.model_dump(exclude_unset=True, exclude_none=True)
     try:
-        requirement = await service.update_requirement(
-            requirement_id, **update_data
-        )
+        requirement = await service.update_requirement(requirement_id, **update_data)
     except ValueError as exc:
         return ApiResponse(code=404, data=None, message=str(exc))
     await db.commit()

@@ -70,10 +70,14 @@ ENTITY_CANDIDATES: list[tuple[str, str, list[str]]] = [
 async def get_seed_kb() -> KnowledgeBase:
     async with async_session_factory() as session:
         kb = (
-            await session.execute(
-                select(KnowledgeBase).where(KnowledgeBase.name == KB_NAME).limit(1)
+            (
+                await session.execute(
+                    select(KnowledgeBase).where(KnowledgeBase.name == KB_NAME).limit(1)
+                )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
     if kb is None:
         raise SystemExit("[ERROR] 种子 KB 不存在，先跑 eval_resume_seed.py")
     return kb
@@ -98,7 +102,11 @@ async def register_corpus_entities() -> dict[str, list[str]]:
 
     Returns: {canonical: [关联 doc_id 列表]}
     """
-    from app.ontology.entity_registry import EntityDefinition, EntityRegistry, EntityType
+    from app.ontology.entity_registry import (
+        EntityDefinition,
+        EntityRegistry,
+        EntityType,
+    )
 
     kb = await get_seed_kb()
     docs = await _load_docs(kb.id)
@@ -109,7 +117,9 @@ async def register_corpus_entities() -> dict[str, list[str]]:
     s = get_settings()
     from neo4j import AsyncGraphDatabase
 
-    driver = AsyncGraphDatabase.driver(s.NEO4J_URI, auth=(s.NEO4J_USER, s.NEO4J_PASSWORD))
+    driver = AsyncGraphDatabase.driver(
+        s.NEO4J_URI, auth=(s.NEO4J_USER, s.NEO4J_PASSWORD)
+    )
     entity_docs: dict[str, list[str]] = {}
     registered = 0
     try:
@@ -130,13 +140,15 @@ async def register_corpus_entities() -> dict[str, list[str]]:
             if not linked:
                 print(f"  [SKIP] {canonical} — 图谱中无关联已发布文档")
                 continue
-            EntityRegistry.register(EntityDefinition(
-                canonical_name=canonical,
-                display_name=canonical,
-                entity_type=EntityType.CONCEPT,
-                synonyms=synonyms,
-                description=desc,
-            ))
+            EntityRegistry.register(
+                EntityDefinition(
+                    canonical_name=canonical,
+                    display_name=canonical,
+                    entity_type=EntityType.CONCEPT,
+                    synonyms=synonyms,
+                    description=desc,
+                )
+            )
             entity_docs[canonical] = [doc_id for doc_id, _ in linked]
             registered += 1
             print(
@@ -179,7 +191,7 @@ async def build_hard_dataset() -> None:
             f"2. 严禁出现「{canonical}」这个词或其任何子串；\n"
             f"3. 严禁出现文档标题中的技术名词；\n"
             f"4. 问题自然口语化，像不懂技术的人问的；\n"
-            f"5. 只输出 JSON 数组，格式 [\"问题1\", \"问题2\"]。\n\n"
+            f'5. 只输出 JSON 数组，格式 ["问题1", "问题2"]。\n\n'
             f"文档标题：{doc.title}"
         )
         out = ""
@@ -202,13 +214,17 @@ async def build_hard_dataset() -> None:
             has_syn = any(syn.lower() in q.lower() for syn in synonyms)
             if not has_syn or canonical.lower() in q.lower():
                 continue
-            cases.append({
-                "query": q,
-                "expected_doc_ids": [str(doc.id)],
-                "kb_ids": [str(kb.id)],
-                "tags": ["kg_hard", canonical],
-            })
-        print(f"  [HARD] {canonical:<18} +{sum(1 for c in cases if c['tags'][1]==canonical)} 题")
+            cases.append(
+                {
+                    "query": q,
+                    "expected_doc_ids": [str(doc.id)],
+                    "kb_ids": [str(kb.id)],
+                    "tags": ["kg_hard", canonical],
+                }
+            )
+        print(
+            f"  [HARD] {canonical:<18} +{sum(1 for c in cases if c['tags'][1]==canonical)} 题"
+        )
 
     HARD_DATASET_PATH.write_text(
         "\n".join(json.dumps(c, ensure_ascii=False) for c in cases), encoding="utf-8"
@@ -235,7 +251,7 @@ async def build_dataset() -> None:
             "基于以下文档内容，生成 2 个企业员工可能会提出的中文问题，"
             "要求：1) 问题自然口语化，不要直接复述文档标题；"
             "2) 一个问具体细节，一个需要理解内容后归纳；"
-            "3) 只输出 JSON 数组，格式 [\"问题1\", \"问题2\"]。\n\n"
+            '3) 只输出 JSON 数组，格式 ["问题1", "问题2"]。\n\n'
             f"文档标题：{doc.title}\n\n文档内容：\n{text}"
         )
         out = ""
@@ -253,12 +269,14 @@ async def build_dataset() -> None:
             continue
         for q in questions[:2]:
             if isinstance(q, str) and q.strip():
-                cases.append({
-                    "query": q.strip(),
-                    "expected_doc_ids": [str(doc.id)],
-                    "kb_ids": [str(kb.id)],
-                    "tags": ["kg_ablation", doc.title],
-                })
+                cases.append(
+                    {
+                        "query": q.strip(),
+                        "expected_doc_ids": [str(doc.id)],
+                        "kb_ids": [str(kb.id)],
+                        "tags": ["kg_ablation", doc.title],
+                    }
+                )
         print(f"  [GEN] {doc.title[:30]:<34} +{min(2, len(questions))} 问题")
 
     DATASET_PATH.write_text(
@@ -303,8 +321,12 @@ async def run_arm(retriever, cases: list[dict], kb_id: str, label: str) -> dict:
 
 async def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--build-dataset", action="store_true", help="（重新）生成常规评测数据集")
-    parser.add_argument("--build-hard", action="store_true", help="（重新）生成词汇鸿沟难题集")
+    parser.add_argument(
+        "--build-dataset", action="store_true", help="（重新）生成常规评测数据集"
+    )
+    parser.add_argument(
+        "--build-hard", action="store_true", help="（重新）生成词汇鸿沟难题集"
+    )
     args = parser.parse_args()
 
     if args.build_dataset:
@@ -332,7 +354,9 @@ async def main() -> int:
     easy_cases = load(DATASET_PATH)
     hard_cases = load(HARD_DATASET_PATH)
     kb = await get_seed_kb()
-    print(f"[M2] 常规集 {len(easy_cases)} 条 | 难题集 {len(hard_cases)} 条 | KB={kb.name}")
+    print(
+        f"[M2] 常规集 {len(easy_cases)} 条 | 难题集 {len(hard_cases)} 条 | KB={kb.name}"
+    )
 
     from app.rag.retriever import HybridRetriever
 
@@ -344,11 +368,17 @@ async def main() -> int:
         retriever = HybridRetriever()
         return await run_arm(retriever, cases, str(kb.id), label)
 
-    for set_name, cases in (("常规集（文档术语可直接命中）", easy_cases),
-                            ("难题集（词汇鸿沟，仅口语同义词）", hard_cases)):
+    for set_name, cases in (
+        ("常规集（文档术语可直接命中）", easy_cases),
+        ("难题集（词汇鸿沟，仅口语同义词）", hard_cases),
+    ):
         # B 先跑（基线），A 后跑 — 每臂新建 retriever，公平对比
-        result_b = await arm(graph=False, entity=False, label="B·双路基线(向量+BM25)", cases=cases)
-        result_a = await arm(graph=True, entity=True, label="A·四路(+实体扩展+图谱)", cases=cases)
+        result_b = await arm(
+            graph=False, entity=False, label="B·双路基线(向量+BM25)", cases=cases
+        )
+        result_a = await arm(
+            graph=True, entity=True, label="A·四路(+实体扩展+图谱)", cases=cases
+        )
 
         print(f"\n===== 指标2 · 图谱第四路 A/B 对比 · {set_name} =====")
         for r in (result_b, result_a):

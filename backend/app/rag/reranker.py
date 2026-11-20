@@ -20,7 +20,6 @@ from collections.abc import Callable
 from functools import lru_cache
 from typing import Any
 
-
 from app.config import get_settings
 from app.utils.circuit_breaker import circuit_call
 from app.utils.logger import get_logger
@@ -30,7 +29,7 @@ log = get_logger(__name__)
 settings = get_settings()
 
 # Reranker 工厂注册表 — deploy_mode → 工厂函数。
-_reranker_registry: dict[str, Callable[[], "RerankerBase"]] = {}
+_reranker_registry: dict[str, Callable[[], RerankerBase]] = {}
 
 
 class RerankerBase(ABC):
@@ -88,9 +87,15 @@ class CohereReranker(RerankerBase):
         if not documents:
             return []
         import time
+
         t0 = time.monotonic()
         texts = [_extract_content(d) for d in documents]
-        log.info("reranker.cohere.start", query_len=len(query), doc_count=len(texts), top_k=top_k)
+        log.info(
+            "reranker.cohere.start",
+            query_len=len(query),
+            doc_count=len(texts),
+            top_k=top_k,
+        )
         resp = await self.client.rerank(
             model=self.model,
             query=query,
@@ -147,6 +152,7 @@ class TEIReranker(RerankerBase):
         if not documents:
             return []
         import time
+
         t0 = time.monotonic()
         texts = [_extract_content(d) for d in documents]
         payload: dict[str, Any] = {
@@ -154,7 +160,12 @@ class TEIReranker(RerankerBase):
             "texts": texts,
             "top_k": min(top_k, len(texts)),
         }
-        log.info("reranker.tei.start", query_len=len(query), doc_count=len(texts), top_k=top_k)
+        log.info(
+            "reranker.tei.start",
+            query_len=len(query),
+            doc_count=len(texts),
+            top_k=top_k,
+        )
         resp = await self.client.post(
             f"{self.base_url}/rerank",
             json=payload,
@@ -226,7 +237,9 @@ class DashScopeReranker(RerankerBase):
     返回 ``output.results[*] = {"index": int, "relevance_score": float}``。
     """
 
-    _API_URL = "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank"
+    _API_URL = (
+        "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank"
+    )
 
     def __init__(self) -> None:
         from app.utils.retry import build_retry_http_client
@@ -249,6 +262,7 @@ class DashScopeReranker(RerankerBase):
         if not documents:
             return []
         import time
+
         t0 = time.monotonic()
         texts = [_extract_content(d) for d in documents]
         payload: dict[str, Any] = {
@@ -265,12 +279,16 @@ class DashScopeReranker(RerankerBase):
             doc_count=len(texts),
             top_k=top_k,
         )
-        resp = await self.client.post(self._API_URL, json=payload, headers=self._headers)
+        resp = await self.client.post(
+            self._API_URL, json=payload, headers=self._headers
+        )
         resp.raise_for_status()
         data: Any = resp.json()
         results = self._parse_response(data, texts, top_k)
         elapsed_ms = round((time.monotonic() - t0) * 1000, 2)
-        log.info("reranker.dashscope.success", count=len(results), latency_ms=elapsed_ms)
+        log.info(
+            "reranker.dashscope.success", count=len(results), latency_ms=elapsed_ms
+        )
         return results
 
     @staticmethod
@@ -313,12 +331,12 @@ class DashScopeReranker(RerankerBase):
 
 def register_reranker(
     deploy_mode: str,
-) -> Callable[[Callable[[], "RerankerBase"]], Callable[[], "RerankerBase"]]:
+) -> Callable[[Callable[[], RerankerBase]], Callable[[], RerankerBase]]:
     """装饰器：注册某部署模式对应的 Reranker 工厂函数。"""
 
     def decorator(
-        factory: Callable[[], "RerankerBase"],
-    ) -> Callable[[], "RerankerBase"]:
+        factory: Callable[[], RerankerBase],
+    ) -> Callable[[], RerankerBase]:
         _reranker_registry[deploy_mode] = factory
         return factory
 

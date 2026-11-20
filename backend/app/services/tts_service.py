@@ -19,7 +19,6 @@ P1: 为 AI 对话回复提供语音输出能力。
 from __future__ import annotations
 
 import io
-from typing import Any
 
 from app.config import get_settings
 from app.utils.logger import get_logger
@@ -116,7 +115,4 @@ def get_available_voices() -> list[dict[str, str]]:
     Returns:
         语音信息列表，每项含 voice 和 description。
     """
-    return [
-        {"voice": v, "description": desc}
-        for v, desc in SUPPORTED_VOICES.items()
-    ]
+    return [{"voice": v, "description": desc} for v, desc in SUPPORTED_VOICES.items()]

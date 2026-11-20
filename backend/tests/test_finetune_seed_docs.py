@@ -112,7 +112,13 @@ class TestSeedDocuments:
     def test_field_completeness_and_content_length(self) -> None:
         docs = _load_module().get_seed_documents()
         for d in docs:
-            assert set(d) == {"title", "content", "classification", "category", "source"}
+            assert set(d) == {
+                "title",
+                "content",
+                "classification",
+                "category",
+                "source",
+            }
             assert isinstance(d["title"], str) and d["title"].strip()
             assert isinstance(d["content"], str) and d["content"].strip()
             assert len(d["content"]) >= 50, f"内容过短: {d['title']}"
@@ -265,7 +271,9 @@ class TestRunSeed:
         first5 = mod.get_seed_documents()[:5]
         expected_scenario = {}
         for d in first5:
-            expected_scenario[d["category"]] = expected_scenario.get(d["category"], 0) + 1
+            expected_scenario[d["category"]] = (
+                expected_scenario.get(d["category"], 0) + 1
+            )
         assert result["scenario_dist"] == expected_scenario
 
     @pytest.mark.asyncio
@@ -277,9 +285,7 @@ class TestRunSeed:
         kb_id = uuid4()
         owner_id = uuid4()
 
-        await mod.run_seed(
-            session, tenant_id=tid, kb_id=kb_id, owner_id=owner_id
-        )
+        await mod.run_seed(session, tenant_id=tid, kb_id=kb_id, owner_id=owner_id)
 
         first = session.add.call_args_list[0].args[0]
         assert first.kb_id == kb_id
@@ -302,9 +308,7 @@ class TestRunSeed:
         docs = mod.get_seed_documents()
         # 清理后仍有 3 篇非 seed 文档标题与内置文档重名 → 跳过
         leftover = [d["title"] for d in docs[:3]]
-        session = _make_session(
-            [_delete_result(5), _titles_result(leftover)]
-        )
+        session = _make_session([_delete_result(5), _titles_result(leftover)])
 
         result = await mod.run_seed(
             session,
@@ -354,9 +358,7 @@ class TestMain:
         """main --clear：先 delete 再灌库。"""
         mod = _load_module()
         total = len(mod.get_seed_documents())
-        session = _make_session(
-            [_delete_result(8), _titles_result([])]
-        )
+        session = _make_session([_delete_result(8), _titles_result([])])
 
         @asynccontextmanager
         async def fake_session():

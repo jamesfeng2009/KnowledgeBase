@@ -41,13 +41,14 @@ import json
 import logging
 import random
 import sys
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 logger = logging.getLogger("train_lora")
 
 # 分组切分工具（评审 #2：同义变体不得跨 train/eval）
-from finetune_utils import (
+from finetune_utils import (  # noqa: E402  — 有意延迟导入（依赖上方初始化）
     grouped_split_indices,
     last_user_content,
     question_group_key,
@@ -123,11 +124,15 @@ def render_chat(messages: list[dict], tokenizer: Any | None = None) -> str:
     tokenizer 缺失或无模板时回退为 ``<|role|>\ncontent`` 纯文本拼接（便于离线单测）。
     """
     if tokenizer is not None and getattr(tokenizer, "chat_template", None):
-        return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
+        return tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=False
+        )
     return "\n".join(f"<|{m['role']}|>\n{m['content']}" for m in messages)
 
 
-def render_prompt_completion(messages: list[dict], tokenizer: Any | None = None) -> tuple[str, str]:
+def render_prompt_completion(
+    messages: list[dict], tokenizer: Any | None = None
+) -> tuple[str, str]:
     """将 messages 拆为 (prompt, completion) —— 供 trl completion_only_loss 使用（评审 #7）。
 
     prompt 渲染到最后一条 assistant 消息之前（add_generation_prompt=True，让模板
@@ -139,9 +144,13 @@ def render_prompt_completion(messages: list[dict], tokenizer: Any | None = None)
     prompt_msgs, completion_msg = messages[:-1], messages[-1]
     if tokenizer is not None and getattr(tokenizer, "chat_template", None):
         prompt = tokenizer.apply_chat_template(
-            prompt_msgs, tokenize=False, add_generation_prompt=True)
+            prompt_msgs, tokenize=False, add_generation_prompt=True
+        )
     else:
-        prompt = "\n".join(f"<|{m['role']}|>\n{m['content']}" for m in prompt_msgs) + "\n<|assistant|>\n"
+        prompt = (
+            "\n".join(f"<|{m['role']}|>\n{m['content']}" for m in prompt_msgs)
+            + "\n<|assistant|>\n"
+        )
     return prompt, completion_msg["content"]
 
 
@@ -159,7 +168,9 @@ def build_hf_dataset(records: list[dict], tokenizer: Any, eval_ratio: float, see
         rows.append({"prompt": prompt, "completion": completion})
     ds = Dataset.from_list(rows)
     if len(ds) < 2:
-        raise ValueError(f"样本过少（{len(ds)} 条），无法划分训练/验证集，请至少提供数十条样本")
+        raise ValueError(
+            f"样本过少（{len(ds)} 条），无法划分训练/验证集，请至少提供数十条样本"
+        )
     keys = [question_group_key(last_user_content(r["messages"])) for r in records]
     test_size = max(1, round(len(ds) * eval_ratio))
     train_idx, test_idx = grouped_split_indices(keys, test_size=test_size, seed=seed)
@@ -172,22 +183,46 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--data", required=True, help="sft.jsonl 路径")
-    parser.add_argument("--base_model", default="Qwen/Qwen2.5-7B-Instruct", help="基座模型（HF repo 或本地路径）")
-    parser.add_argument("--output_dir", default="outputs/lora-sft", help="LoRA adapter 输出目录")
+    parser.add_argument(
+        "--base_model",
+        default="Qwen/Qwen2.5-7B-Instruct",
+        help="基座模型（HF repo 或本地路径）",
+    )
+    parser.add_argument(
+        "--output_dir", default="outputs/lora-sft", help="LoRA adapter 输出目录"
+    )
     parser.add_argument("--lora_rank", type=int, default=16, help="LoRA rank")
-    parser.add_argument("--lora_alpha", type=int, default=32, help="LoRA alpha（缩放 = alpha/rank）")
+    parser.add_argument(
+        "--lora_alpha", type=int, default=32, help="LoRA alpha（缩放 = alpha/rank）"
+    )
     parser.add_argument("--lora_dropout", type=float, default=0.05, help="LoRA dropout")
     parser.add_argument("--lr", type=float, default=1e-4, help="学习率")
     parser.add_argument("--epochs", type=float, default=3, help="训练轮数")
-    parser.add_argument("--batch_size", type=int, default=4, help="单卡 micro batch size")
-    parser.add_argument("--grad_accum", type=int, default=8, help="梯度累积步数（等效 batch = batch_size × grad_accum）")
-    parser.add_argument("--qlora", action="store_true", help="启用 4bit NF4 量化（QLoRA，需要 bitsandbytes）")
-    parser.add_argument("--max_len", type=int, default=2048, help="最大序列长度（超出截断）")
+    parser.add_argument(
+        "--batch_size", type=int, default=4, help="单卡 micro batch size"
+    )
+    parser.add_argument(
+        "--grad_accum",
+        type=int,
+        default=8,
+        help="梯度累积步数（等效 batch = batch_size × grad_accum）",
+    )
+    parser.add_argument(
+        "--qlora",
+        action="store_true",
+        help="启用 4bit NF4 量化（QLoRA，需要 bitsandbytes）",
+    )
+    parser.add_argument(
+        "--max_len", type=int, default=2048, help="最大序列长度（超出截断）"
+    )
     parser.add_argument("--eval_ratio", type=float, default=0.05, help="验证集比例")
     parser.add_argument("--seed", type=int, default=42, help="随机种子")
-    parser.add_argument("--no_gradient_checkpointing", action="store_true",
-                        help="关闭梯度检查点。1.5B 小模型推荐开启（实测内存不变快40%%）；"
-                             "7B 勿用——权重占大头，关 ckpt 激活翻倍会 OOM。见微调.md 附录D")
+    parser.add_argument(
+        "--no_gradient_checkpointing",
+        action="store_true",
+        help="关闭梯度检查点。1.5B 小模型推荐开启（实测内存不变快40%%）；"
+        "7B 勿用——权重占大头，关 ckpt 激活翻倍会 OOM。见微调.md 附录D",
+    )
     return parser.parse_args(argv)
 
 
@@ -201,7 +236,10 @@ def _detect_bf16() -> bool:
 
     if torch.cuda.is_available():
         return bool(torch.cuda.is_bf16_supported())
-    if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+    if (
+        getattr(torch.backends, "mps", None) is not None
+        and torch.backends.mps.is_available()
+    ):
         try:
             torch.zeros(1, dtype=torch.bfloat16, device="mps")
             return True
@@ -212,7 +250,9 @@ def _detect_bf16() -> bool:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
 
     # ---- 重依赖延迟导入：保证无 GPU 环境下 import 本模块（做单测）不报错 ----
     import torch
@@ -233,7 +273,9 @@ def main(argv: list[str] | None = None) -> int:
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    split = build_hf_dataset(records, tokenizer, eval_ratio=args.eval_ratio, seed=args.seed)
+    split = build_hf_dataset(
+        records, tokenizer, eval_ratio=args.eval_ratio, seed=args.seed
+    )
     train_ds, eval_ds = split["train"], split["test"]
     logger.info("训练集 %d 条 / 验证集 %d 条", len(train_ds), len(eval_ds))
 
@@ -254,7 +296,9 @@ def main(argv: list[str] | None = None) -> int:
         device_map="auto",
         trust_remote_code=True,
     )
-    model.config.use_cache = False  # 训练时关闭 KV cache，配合 gradient checkpointing 省显存
+    model.config.use_cache = (
+        False  # 训练时关闭 KV cache，配合 gradient checkpointing 省显存
+    )
     if args.qlora:
         model = prepare_model_for_kbit_training(model)
 
@@ -308,8 +352,12 @@ def main(argv: list[str] | None = None) -> int:
     repro_info = {
         "base_model": args.base_model,
         "mode": "qlora-4bit" if args.qlora else "lora-bf16",
-        "lora": {"rank": args.lora_rank, "alpha": args.lora_alpha, "dropout": args.lora_dropout,
-                 "target_modules": DEFAULT_TARGET_MODULES},
+        "lora": {
+            "rank": args.lora_rank,
+            "alpha": args.lora_alpha,
+            "dropout": args.lora_dropout,
+            "target_modules": DEFAULT_TARGET_MODULES,
+        },
         "lr": args.lr,
         "epochs": args.epochs,
         "effective_batch_size": args.batch_size * args.grad_accum,
@@ -325,11 +373,18 @@ def main(argv: list[str] | None = None) -> int:
 
     trainable = sum(p.numel() for p in trainer.model.parameters() if p.requires_grad)
     total = sum(p.numel() for p in trainer.model.parameters())
-    logger.info("可训练参数: %s / %s (%.4f%%)", f"{trainable:,}", f"{total:,}", 100 * trainable / total)
+    logger.info(
+        "可训练参数: %s / %s (%.4f%%)",
+        f"{trainable:,}",
+        f"{total:,}",
+        100 * trainable / total,
+    )
 
     # ---- 训练 & 保存 ----
     trainer.train()
-    trainer.save_model(args.output_dir)  # 保存 LoRA adapter（adapter_model.safetensors + config）
+    trainer.save_model(
+        args.output_dir
+    )  # 保存 LoRA adapter（adapter_model.safetensors + config）
     tokenizer.save_pretrained(args.output_dir)
     logger.info("LoRA adapter 与 tokenizer 已保存至 %s", args.output_dir)
 

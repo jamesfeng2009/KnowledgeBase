@@ -11,6 +11,7 @@ FastAPI 应用入口 — 单一职责：创建应用实例、注册中间件与�
 from __future__ import annotations
 
 import asyncio
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -61,7 +62,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if settings.AUTO_CREATE_TABLES:
         try:
             from app.database import engine
-            from app.models import Base  # noqa: F401 — 触发所有模型注册
+            from app.models import Base
 
             async with engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
@@ -72,10 +73,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # P1-5: 服务重启恢复 — 扫描 pending 审批，标记过期，加载活跃审批
     # P0 修复：按租户隔离恢复，避免一次性加载所有租户的 pending 审批。
     try:
+        from sqlalchemy import select
+
         from app.database import async_session_factory
         from app.models.billing import Tenant
         from app.services.approval_service import ApprovalService
-        from sqlalchemy import select
 
         async with async_session_factory() as session:
             tenant_ids: list[uuid.UUID] = []
@@ -146,7 +148,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             resource_manager.cleanup(timeout=settings.SHUTDOWN_TIMEOUT),
             timeout=settings.SHUTDOWN_TIMEOUT + 5,  # 总超时比单资源超时多 5 秒
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         log.warning("app.shutdown_timeout_exceeded", timeout=settings.SHUTDOWN_TIMEOUT)
     log.info("app.stopped", app_name=settings.APP_NAME)
 
@@ -162,6 +164,7 @@ app = FastAPI(
 setup_middleware(app)
 
 # --- 异常处理 ---
+
 
 @app.exception_handler(ValueError)
 async def value_error_handler(request: Request, exc: ValueError) -> JSONResponse:

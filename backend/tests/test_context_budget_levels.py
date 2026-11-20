@@ -9,8 +9,6 @@ P0-2 五级渐进压缩测试。
     - get_stats 暴露最近压缩级别
 """
 
-import pytest
-
 from app.rag.context_budget import (
     CompressionLevel,
     ContextBudgetManager,
@@ -29,7 +27,10 @@ def _make_tool_messages(n_tool: int = 3, tool_size: int = 3000, extra: int = 2):
     ]
     for i in range(n_tool):
         msgs.append(
-            {"role": "user", "content": f"[系统] 工具结果：第{i + 1}轮 " + "x" * tool_size}
+            {
+                "role": "user",
+                "content": f"[系统] 工具结果：第{i + 1}轮 " + "x" * tool_size,
+            }
         )
     for i in range(extra):
         msgs.append({"role": "user", "content": f"当前状态：迭代 {i + 1}/5"})

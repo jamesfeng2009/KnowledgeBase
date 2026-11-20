@@ -40,7 +40,9 @@ class KbFolder(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
         index=True,
         comment="知识库 ID",
     )
-    name: Mapped[str] = mapped_column(String(255), nullable=False, comment="文件夹名（末级名称）")
+    name: Mapped[str] = mapped_column(
+        String(255), nullable=False, comment="文件夹名（末级名称）"
+    )
     path: Mapped[str] = mapped_column(
         String(1000), nullable=False, index=True, comment="完整路径 '产品/合规'"
     )

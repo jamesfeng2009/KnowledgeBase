@@ -177,19 +177,16 @@ async def get_observability_stats(
     # 总体统计
     from sqlalchemy import case
 
-    overall_stmt = (
-        select(
-            func.count(UsageRecord.id).label("total_requests"),
-            func.sum(UsageRecord.input_tokens).label("total_input"),
-            func.sum(UsageRecord.output_tokens).label("total_output"),
-            func.sum(UsageRecord.cost_cents).label("total_cost"),
-            func.avg(UsageRecord.duration_ms).label("avg_duration"),
-            func.sum(
-                case((UsageRecord.success == True, 1), else_=0)  # noqa: E712
-            ).label("success_count"),
-        )
-        .where(UsageRecord.created_at >= start_date)
-    )
+    overall_stmt = select(
+        func.count(UsageRecord.id).label("total_requests"),
+        func.sum(UsageRecord.input_tokens).label("total_input"),
+        func.sum(UsageRecord.output_tokens).label("total_output"),
+        func.sum(UsageRecord.cost_cents).label("total_cost"),
+        func.avg(UsageRecord.duration_ms).label("avg_duration"),
+        func.sum(
+            case((UsageRecord.success == True, 1), else_=0)  # noqa: E712
+        ).label("success_count"),
+    ).where(UsageRecord.created_at >= start_date)
     row = (await db.execute(overall_stmt)).one()
 
     total_requests = int(row.total_requests or 0)
@@ -379,9 +376,7 @@ async def list_high_risk_audits(
     )
     return ApiResponse(
         code=0,
-        data=HighRiskAuditListResponse(
-            total=result["total"], items=result["items"]
-        ),
+        data=HighRiskAuditListResponse(total=result["total"], items=result["items"]),
     )
 
 
@@ -424,7 +419,9 @@ async def review_high_risk_audit(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="审计记录不存在",
         )
-    return ApiResponse(code=0, data={"id": record_id, "review_status": body.review_status})
+    return ApiResponse(
+        code=0, data={"id": record_id, "review_status": body.review_status}
+    )
 
 
 @router.get(

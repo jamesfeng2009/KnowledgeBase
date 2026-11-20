@@ -5,6 +5,7 @@
     - 异步实现：卡死重投 / 进度存活跳过 / 锁存活跳过 /
       Redis 不可用不重投 / 投递失败容忍 / tenant_id 透传
 """
+
 from __future__ import annotations
 
 import uuid
@@ -13,10 +14,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
 # ==================================================================
 # 辅助 — 构造 mock Document / mock 环境
 # ==================================================================
+
 
 def _make_doc(
     doc_id: uuid.UUID | None = None,
@@ -27,9 +28,7 @@ def _make_doc(
     doc = MagicMock()
     doc.id = doc_id or uuid.uuid4()
     doc.tenant_id = tenant_id
-    doc.updated_at = updated_at or (
-        datetime.now(timezone.utc) - timedelta(hours=3)
-    )
+    doc.updated_at = updated_at or (datetime.now(timezone.utc) - timedelta(hours=3))
     return doc
 
 
@@ -74,6 +73,7 @@ def _make_db_session(docs: list[MagicMock]) -> MagicMock:
 # Celery 任务入口
 # ==================================================================
 
+
 class TestRescanCeleryTask:
     """rescan_stuck_documents Celery 任务。"""
 
@@ -103,10 +103,13 @@ class TestRescanCeleryTask:
             "dispatched": 2,
             "dispatch_failed": 0,
         }
-        with patch("app.config.get_settings", return_value=mock_settings), patch(
-            "tasks.scheduled_tasks._rescan_stuck_documents_async",
-            new=AsyncMock(return_value=expected),
-        ) as mock_scan_async:
+        with (
+            patch("app.config.get_settings", return_value=mock_settings),
+            patch(
+                "tasks.scheduled_tasks._rescan_stuck_documents_async",
+                new=AsyncMock(return_value=expected),
+            ) as mock_scan_async,
+        ):
             result = rescan_stuck_documents()
 
         assert result == expected
@@ -116,6 +119,7 @@ class TestRescanCeleryTask:
 # ==================================================================
 # 异步实现 — 卡死判定与重投
 # ==================================================================
+
 
 class TestRescanAsync:
     """_rescan_stuck_documents_async 核心逻辑。"""
@@ -130,9 +134,11 @@ class TestRescanAsync:
         settings = _make_settings()
         client = _make_redis_client()  # 所有 key 均不存在
 
-        with patch("app.database.task_db_session", return_value=_make_db_session(docs)), \
-             patch("redis.from_url", return_value=client), \
-             patch("tasks.document_tasks.process_document.delay") as mock_delay:
+        with (
+            patch("app.database.task_db_session", return_value=_make_db_session(docs)),
+            patch("redis.from_url", return_value=client),
+            patch("tasks.document_tasks.process_document.delay") as mock_delay,
+        ):
             result = await _rescan_stuck_documents_async(settings)
 
         assert result["candidates"] == 2
@@ -152,13 +158,13 @@ class TestRescanAsync:
 
         doc = _make_doc()
         settings = _make_settings()
-        client = _make_redis_client(
-            progress_keys={f"ekb:parse_progress:{doc.id}"}
-        )
+        client = _make_redis_client(progress_keys={f"ekb:parse_progress:{doc.id}"})
 
-        with patch("app.database.task_db_session", return_value=_make_db_session([doc])), \
-             patch("redis.from_url", return_value=client), \
-             patch("tasks.document_tasks.process_document.delay") as mock_delay:
+        with (
+            patch("app.database.task_db_session", return_value=_make_db_session([doc])),
+            patch("redis.from_url", return_value=client),
+            patch("tasks.document_tasks.process_document.delay") as mock_delay,
+        ):
             result = await _rescan_stuck_documents_async(settings)
 
         assert result["skipped_alive"] == 1
@@ -172,13 +178,13 @@ class TestRescanAsync:
 
         doc = _make_doc()
         settings = _make_settings()
-        client = _make_redis_client(
-            lock_keys={f"lock:task:process_document:{doc.id}"}
-        )
+        client = _make_redis_client(lock_keys={f"lock:task:process_document:{doc.id}"})
 
-        with patch("app.database.task_db_session", return_value=_make_db_session([doc])), \
-             patch("redis.from_url", return_value=client), \
-             patch("tasks.document_tasks.process_document.delay") as mock_delay:
+        with (
+            patch("app.database.task_db_session", return_value=_make_db_session([doc])),
+            patch("redis.from_url", return_value=client),
+            patch("tasks.document_tasks.process_document.delay") as mock_delay,
+        ):
             result = await _rescan_stuck_documents_async(settings)
 
         assert result["skipped_alive"] == 1
@@ -193,9 +199,11 @@ class TestRescanAsync:
         docs = [_make_doc()]
         settings = _make_settings()
 
-        with patch("app.database.task_db_session", return_value=_make_db_session(docs)), \
-             patch("redis.from_url", side_effect=ConnectionError("redis down")), \
-             patch("tasks.document_tasks.process_document.delay") as mock_delay:
+        with (
+            patch("app.database.task_db_session", return_value=_make_db_session(docs)),
+            patch("redis.from_url", side_effect=ConnectionError("redis down")),
+            patch("tasks.document_tasks.process_document.delay") as mock_delay,
+        ):
             result = await _rescan_stuck_documents_async(settings)
 
         assert result["candidates"] == 1
@@ -211,12 +219,14 @@ class TestRescanAsync:
         settings = _make_settings()
         client = _make_redis_client()
 
-        with patch("app.database.task_db_session", return_value=_make_db_session(docs)), \
-             patch("redis.from_url", return_value=client), \
-             patch(
-                 "tasks.document_tasks.process_document.delay",
-                 side_effect=[Exception("broker down"), None],
-             ) as mock_delay:
+        with (
+            patch("app.database.task_db_session", return_value=_make_db_session(docs)),
+            patch("redis.from_url", return_value=client),
+            patch(
+                "tasks.document_tasks.process_document.delay",
+                side_effect=[Exception("broker down"), None],
+            ) as mock_delay,
+        ):
             result = await _rescan_stuck_documents_async(settings)
 
         assert result["candidates"] == 2
@@ -234,9 +244,11 @@ class TestRescanAsync:
         client = MagicMock()
         client.exists = MagicMock(side_effect=ConnectionError("timeout"))
 
-        with patch("app.database.task_db_session", return_value=_make_db_session(docs)), \
-             patch("redis.from_url", return_value=client), \
-             patch("tasks.document_tasks.process_document.delay") as mock_delay:
+        with (
+            patch("app.database.task_db_session", return_value=_make_db_session(docs)),
+            patch("redis.from_url", return_value=client),
+            patch("tasks.document_tasks.process_document.delay") as mock_delay,
+        ):
             result = await _rescan_stuck_documents_async(settings)
 
         assert result["dispatched"] == 0

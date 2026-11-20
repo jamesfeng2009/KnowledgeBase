@@ -29,7 +29,7 @@ from app.utils.logger import get_logger
 log = get_logger(__name__)
 
 # ASR Provider 工厂注册表 — deploy_mode → 工厂函数
-_asr_registry: dict[str, Callable[[], "ASRProvider"]] = {}
+_asr_registry: dict[str, Callable[[], ASRProvider]] = {}
 
 
 @dataclass(frozen=True)
@@ -111,7 +111,11 @@ class ASRProvider(ABC):
             return await self.transcribe(audio_path, language)
 
         # 2. 计算分段数
-        total_segments = max(1, int(duration / segment_duration) + (1 if duration % segment_duration else 0))
+        total_segments = max(
+            1,
+            int(duration / segment_duration)
+            + (1 if duration % segment_duration else 0),
+        )
         log.info(
             "asr.multipart.start",
             duration=duration,
@@ -130,17 +134,30 @@ class ASRProvider(ABC):
 
                 # ffmpeg 切片（-ss 跳过 + -t 时长 + -ar 16kHz mono）
                 cmd = [
-                    "ffmpeg", "-y", "-loglevel", "error",
-                    "-ss", str(start_offset),
-                    "-t", str(segment_duration),
-                    "-i", audio_path,
-                    "-ar", "16000", "-ac", "1",
+                    "ffmpeg",
+                    "-y",
+                    "-loglevel",
+                    "error",
+                    "-ss",
+                    str(start_offset),
+                    "-t",
+                    str(segment_duration),
+                    "-i",
+                    audio_path,
+                    "-ar",
+                    "16000",
+                    "-ac",
+                    "1",
                     seg_path,
                 ]
                 try:
                     subprocess.run(cmd, check=True, capture_output=True, timeout=120)
                 except subprocess.CalledProcessError as exc:
-                    log.warning("asr.multipart.slice_failed", seg_idx=seg_idx, error=exc.stderr.decode()[:200])
+                    log.warning(
+                        "asr.multipart.slice_failed",
+                        seg_idx=seg_idx,
+                        error=exc.stderr.decode()[:200],
+                    )
                     continue
                 except subprocess.TimeoutExpired:
                     log.warning("asr.multipart.slice_timeout", seg_idx=seg_idx)
@@ -167,7 +184,9 @@ class ASRProvider(ABC):
                 # 进度回调
                 if progress_callback:
                     try:
-                        progress_callback(seg_idx + 1, total_segments, len(all_segments))
+                        progress_callback(
+                            seg_idx + 1, total_segments, len(all_segments)
+                        )
                     except Exception:
                         pass
 
@@ -202,9 +221,13 @@ class ASRProvider(ABC):
 
         try:
             cmd = [
-                "ffprobe", "-v", "error",
-                "-show_entries", "format=duration",
-                "-of", "default=noprint_wrappers=1:nokey=1",
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
                 audio_path,
             ]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
@@ -389,8 +412,7 @@ def get_asr_provider() -> ASRProvider:
     factory = _asr_registry.get(mode)
     if factory is None:
         raise ValueError(
-            f"不支持的 DEPLOY_MODE（ASR）: {mode}，"
-            f"已注册: {list(_asr_registry)}"
+            f"不支持的 DEPLOY_MODE（ASR）: {mode}，" f"已注册: {list(_asr_registry)}"
         )
     return factory()
 

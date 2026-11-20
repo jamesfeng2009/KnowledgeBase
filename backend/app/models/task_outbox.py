@@ -41,7 +41,11 @@ class TaskOutbox(UUIDMixin, TimestampMixin, Base):
         JSONB, nullable=False, default=dict, comment="派发参数"
     )
     status: Mapped[str] = mapped_column(
-        String(20), index=True, nullable=False, default="pending", comment="pending/sent/dead"
+        String(20),
+        index=True,
+        nullable=False,
+        default="pending",
+        comment="pending/sent/dead",
     )
     attempts: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, comment="已补投次数"

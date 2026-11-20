@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.rag.engine import AgentState, AgenticRAGEngine
+from app.rag.engine import AgenticRAGEngine, AgentState
 
 
 class CapturingLLM:
@@ -93,7 +93,11 @@ class TestThinkFocusInjection:
         """有焦点时，_think 的动态上下文包含焦点信息。"""
         engine, llm = _make_engine()
         state = _make_base_state(
-            conversation_focus={"topic": "限号政策", "entity": "北京", "intent": "查询"},
+            conversation_focus={
+                "topic": "限号政策",
+                "entity": "北京",
+                "intent": "查询",
+            },
         )
 
         await engine._think(state)

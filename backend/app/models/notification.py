@@ -27,15 +27,23 @@ class Notification(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "notifications"
 
     user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, comment="接收用户 ID"
+        UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False,
+        comment="接收用户 ID",
     )
     notification_type: Mapped[str] = mapped_column(
-        String(30), nullable=False, comment="通知类型: personal_digest/document_change/gap_alert"
+        String(30),
+        nullable=False,
+        comment="通知类型: personal_digest/document_change/gap_alert",
     )
     title: Mapped[str] = mapped_column(String(255), nullable=False, comment="通知标题")
     content: Mapped[str] = mapped_column(Text, nullable=False, comment="通知内容")
     doc_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("documents.id"), nullable=True, comment="关联文档 ID"
+        UUID(as_uuid=True),
+        ForeignKey("documents.id"),
+        nullable=True,
+        comment="关联文档 ID",
     )
     is_read: Mapped[bool] = mapped_column(Boolean, default=False, comment="是否已读")
     # P1-3: read_at 改为 DateTime 类型（原 String(30) 无法做时间范围查询/排序）

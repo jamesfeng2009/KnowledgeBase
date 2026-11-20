@@ -272,8 +272,16 @@ class PlanManager:
 
         示例: "已完成[1.检索文档]；剩余[2.生成答案]"
         """
-        done = [f"{s['step_id']}.{s['description']}" for s in plan if s.get("status") == STEP_DONE]
-        pending = [f"{s['step_id']}.{s['description']}" for s in plan if s.get("status") == STEP_PENDING]
+        done = [
+            f"{s['step_id']}.{s['description']}"
+            for s in plan
+            if s.get("status") == STEP_DONE
+        ]
+        pending = [
+            f"{s['step_id']}.{s['description']}"
+            for s in plan
+            if s.get("status") == STEP_PENDING
+        ]
         parts: list[str] = []
         if done:
             parts.append("已完成[" + "；".join(done) + "]")
@@ -304,9 +312,10 @@ class PlanManager:
         Returns:
             偏离度 0.0-1.0。
         """
-        remaining = self.format_plan_brief(
-            [s for s in plan if s.get("status") == STEP_PENDING]
-        ) or "无"
+        remaining = (
+            self.format_plan_brief([s for s in plan if s.get("status") == STEP_PENDING])
+            or "无"
+        )
         try:
             text = await self._chat(
                 _DEVIATION_PROMPT.format(
@@ -348,10 +357,15 @@ class PlanManager:
             新步骤清单（done 保留 + 新生成的 pending）。
         """
         done = self.done_steps(plan)
-        done_brief = "；".join(f"{s['step_id']}.{s['description']}" for s in done) or "无"
-        remaining_brief = "；".join(
-            f"{s['step_id']}.{s['description']}" for s in self.pending_steps(plan)
-        ) or "无"
+        done_brief = (
+            "；".join(f"{s['step_id']}.{s['description']}" for s in done) or "无"
+        )
+        remaining_brief = (
+            "；".join(
+                f"{s['step_id']}.{s['description']}" for s in self.pending_steps(plan)
+            )
+            or "无"
+        )
 
         try:
             text = await self._chat(
@@ -366,12 +380,14 @@ class PlanManager:
             if new_pending:
                 # 强制最后一步为 generate（收敛保证）
                 if new_pending[-1].get("action") != "generate":
-                    new_pending.append({
-                        "step_id": len(done) + len(new_pending) + 1,
-                        "action": "generate",
-                        "description": "生成最终答案",
-                        "status": STEP_PENDING,
-                    })
+                    new_pending.append(
+                        {
+                            "step_id": len(done) + len(new_pending) + 1,
+                            "action": "generate",
+                            "description": "生成最终答案",
+                            "status": STEP_PENDING,
+                        }
+                    )
                 log.info(
                     "planner.replanned",
                     kept_done=len(done),
@@ -401,17 +417,13 @@ class PlanManager:
         return text
 
     @staticmethod
-    def _parse_steps(
-        text: str, start_id: int = 1
-    ) -> list[dict[str, Any]]:
+    def _parse_steps(text: str, start_id: int = 1) -> list[dict[str, Any]]:
         """从 LLM 响应文本解析步骤清单，过滤非法动作。"""
         data = PlanManager._extract_json(text)
         return PlanManager._steps_from_data(data, start_id)
 
     @staticmethod
-    def _steps_from_data(
-        data: Any, start_id: int = 1
-    ) -> list[dict[str, Any]]:
+    def _steps_from_data(data: Any, start_id: int = 1) -> list[dict[str, Any]]:
         """从已解析 JSON 数据解析步骤清单，过滤非法动作。"""
         if not isinstance(data, list):
             return []
@@ -420,12 +432,14 @@ class PlanManager:
             action = str(item.get("action", "")).strip()
             if action not in STEP_ACTIONS:
                 continue
-            steps.append({
-                "step_id": start_id + len(steps),
-                "action": action,
-                "description": str(item.get("description", action))[:100],
-                "status": STEP_PENDING,
-            })
+            steps.append(
+                {
+                    "step_id": start_id + len(steps),
+                    "action": action,
+                    "description": str(item.get("description", action))[:100],
+                    "status": STEP_PENDING,
+                }
+            )
         return steps
 
     @staticmethod

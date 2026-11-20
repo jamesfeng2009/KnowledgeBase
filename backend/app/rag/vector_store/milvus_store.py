@@ -103,6 +103,7 @@ class MilvusVectorStore(VectorStoreBase):
             return []
 
         import time
+
         t0 = time.monotonic()
         url = f"{self._base_url()}/v2/vectordb/entities/search"
         payload: dict[str, Any] = {
@@ -166,7 +167,9 @@ class MilvusVectorStore(VectorStoreBase):
         self._available = True
         results = self._parse_results(data, top_k)
         elapsed_ms = round((time.monotonic() - t0) * 1000, 2)
-        log.info("vector_store.milvus.search_done", count=len(results), latency_ms=elapsed_ms)
+        log.info(
+            "vector_store.milvus.search_done", count=len(results), latency_ms=elapsed_ms
+        )
         return results
 
     @staticmethod
@@ -345,9 +348,7 @@ class MilvusVectorStore(VectorStoreBase):
     # fetch_by_ids — 父子回溯基础
     # ------------------------------------------------------------------
 
-    async def fetch_by_ids(
-        self, chunk_ids: list[str]
-    ) -> dict[str, dict[str, Any]]:
+    async def fetch_by_ids(self, chunk_ids: list[str]) -> dict[str, dict[str, Any]]:
         """按 chunk_id 批量获取文档元数据（不含向量）。
 
         父子索引回溯核心：检索命中子块后，按 ``parent_id`` 批量获取
@@ -364,7 +365,9 @@ class MilvusVectorStore(VectorStoreBase):
             try:
                 safe_ids.append(_safe_filter_value(cid))
             except ValueError:
-                log.warning("vector_store.milvus.fetch_by_ids_skip_invalid", chunk_id=cid)
+                log.warning(
+                    "vector_store.milvus.fetch_by_ids_skip_invalid", chunk_id=cid
+                )
 
         if not safe_ids:
             return {}

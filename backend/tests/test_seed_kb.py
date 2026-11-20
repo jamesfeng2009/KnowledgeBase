@@ -66,7 +66,15 @@ def test_collect_seed_docs():
     m = _load_module()
     docs = m.collect_seed_docs()
     assert 35 <= len(docs) <= 45, len(docs)
-    required = {"key", "title", "content", "doc_type", "classification", "category", "source"}
+    required = {
+        "key",
+        "title",
+        "content",
+        "doc_type",
+        "classification",
+        "category",
+        "source",
+    }
     for d in docs:
         assert required <= set(d)
         assert d["title"] and len(d["content"]) >= 50
@@ -84,7 +92,9 @@ def test_collect_test_documents():
 def test_score_answer():
     m = _load_module()
     q = {"points": ["报销单", "发票", "审批", "财务部"], "q": "报销流程"}
-    ok, ratio, hit = m.score_answer(q, "员工需先在OA填写报销单并附发票，经审批后交财务部。")
+    ok, ratio, hit = m.score_answer(
+        q, "员工需先在OA填写报销单并附发票，经审批后交财务部。"
+    )
     assert ok is True and ratio >= 0.5 and len(hit) >= 2
     ok2, ratio2, _ = m.score_answer(q, "无相关信息")
     assert ok2 is False and ratio2 == 0.0
@@ -120,7 +130,9 @@ def _session_with_doc(doc):
     session = AsyncMock()
     result = MagicMock()
     result.scalar_one_or_none.return_value = doc
-    session.execute.return_value = result  # 显式 MagicMock，避免 AsyncMock 链式生成 coroutine
+    session.execute.return_value = (
+        result  # 显式 MagicMock，避免 AsyncMock 链式生成 coroutine
+    )
     return session
 
 
@@ -187,7 +199,11 @@ async def test_upsert_reindexes_when_content_changed():
 
     # 阶段 2：建索引
     proc_result = {"status": "success", "chunk_count": 2}
-    with patch("tasks.document_tasks._process_document_async", new_callable=AsyncMock, return_value=proc_result) as proc:
+    with patch(
+        "tasks.document_tasks._process_document_async",
+        new_callable=AsyncMock,
+        return_value=proc_result,
+    ) as proc:
         await m._index_document("doc-id", "doc-b", report)
         proc.assert_awaited_once()
     assert report.indexed == 1 and report.failed == 0

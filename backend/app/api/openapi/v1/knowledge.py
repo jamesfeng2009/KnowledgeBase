@@ -10,6 +10,7 @@
 - 仅暴露只读接口，不提供创建/修改/删除能力；
 - 需要 scope: ``knowledge:read``。
 """
+
 from __future__ import annotations
 
 from uuid import UUID

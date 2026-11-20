@@ -14,13 +14,12 @@
 - P2: 新增 Response Schema（NotificationResponse 等）
 - 迁移文件验证
 """
+
 from __future__ import annotations
 
 import inspect
 import os
-from datetime import datetime
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
@@ -28,14 +27,13 @@ import pytest
 from app.models.action import DocumentAction
 from app.models.analytics import SearchLog
 from app.models.billing import Subscription, UsageRecord
+from app.models.checkpoint import AgentCheckpoint
 from app.models.comment import DocumentComment
 from app.models.conversation import Conversation, Message
 from app.models.feedback import Feedback
 from app.models.knowledge import Document, KnowledgeBase
 from app.models.memory import EntityEvent, KnowledgeEntity, MemoryFact
 from app.models.notification import Notification
-from app.models.checkpoint import AgentCheckpoint
-
 
 # ======================================================================
 # P0-1: Document.tenant_id / KnowledgeBase.tenant_id 模型字段
@@ -185,9 +183,9 @@ class TestP04StreamAgentResponse:
 
         method = getattr(ChatService, "stream_agent_response")
         # 异步生成器函数
-        assert inspect.isasyncgenfunction(method), (
-            "stream_agent_response 应为异步生成器函数"
-        )
+        assert inspect.isasyncgenfunction(
+            method
+        ), "stream_agent_response 应为异步生成器函数"
 
 
 # ======================================================================
@@ -284,9 +282,9 @@ class TestP13NotificationReadAt:
         from sqlalchemy import DateTime
 
         col = Notification.__table__.columns["read_at"]
-        assert isinstance(col.type, DateTime), (
-            f"read_at 应为 DateTime 类型，实际: {type(col.type)}"
-        )
+        assert isinstance(
+            col.type, DateTime
+        ), f"read_at 应为 DateTime 类型，实际: {type(col.type)}"
 
     def test_notification_has_tenant_id(self) -> None:
         """Notification 也应有 tenant_id 字段。"""
@@ -318,12 +316,12 @@ class TestP14TenantIdAllModels:
     )
     def test_model_has_tenant_id(self, model_class, table_name) -> None:
         """每个模型都应有 tenant_id 列且允许 NULL。"""
-        assert model_class.__tablename__ == table_name, (
-            f"表名应为 {table_name}，实际: {model_class.__tablename__}"
-        )
-        assert "tenant_id" in model_class.__table__.columns, (
-            f"{model_class.__name__} 应有 tenant_id 字段"
-        )
+        assert (
+            model_class.__tablename__ == table_name
+        ), f"表名应为 {table_name}，实际: {model_class.__tablename__}"
+        assert (
+            "tenant_id" in model_class.__table__.columns
+        ), f"{model_class.__name__} 应有 tenant_id 字段"
         col = model_class.__table__.columns["tenant_id"]
         assert col.nullable is True, f"{model_class.__name__}.tenant_id 应允许 NULL"
 
@@ -347,9 +345,9 @@ class TestP15UsageRecordFields:
 
     def test_duration_ms_default_zero(self) -> None:
         col = UsageRecord.__table__.columns["duration_ms"]
-        assert col.default is not None or col.server_default is not None, (
-            "duration_ms 应有默认值"
-        )
+        assert (
+            col.default is not None or col.server_default is not None
+        ), "duration_ms 应有默认值"
 
 
 # ======================================================================
@@ -391,7 +389,16 @@ class TestP2ResponseSchemas:
         from app.schemas.billing import NotificationResponse
 
         fields = NotificationResponse.model_fields
-        for f in ("id", "user_id", "title", "content", "is_read", "read_at", "created_at", "updated_at"):
+        for f in (
+            "id",
+            "user_id",
+            "title",
+            "content",
+            "is_read",
+            "read_at",
+            "created_at",
+            "updated_at",
+        ):
             assert f in fields, f"NotificationResponse 缺少字段: {f}"
 
     def test_knowledge_gap_response_exists(self) -> None:
@@ -405,7 +412,16 @@ class TestP2ResponseSchemas:
         from app.schemas.billing import DocumentActionResponse
 
         fields = DocumentActionResponse.model_fields
-        for f in ("id", "doc_id", "user_id", "action_type", "description", "status", "created_at", "updated_at"):
+        for f in (
+            "id",
+            "doc_id",
+            "user_id",
+            "action_type",
+            "description",
+            "status",
+            "created_at",
+            "updated_at",
+        ):
             assert f in fields, f"DocumentActionResponse 缺少字段: {f}"
 
     def test_search_log_response_exists(self) -> None:
@@ -419,21 +435,45 @@ class TestP2ResponseSchemas:
         from app.schemas.billing import MemoryFactResponse
 
         fields = MemoryFactResponse.model_fields
-        for f in ("id", "user_id", "category", "fact_text", "is_active", "created_at", "updated_at"):
+        for f in (
+            "id",
+            "user_id",
+            "category",
+            "fact_text",
+            "is_active",
+            "created_at",
+            "updated_at",
+        ):
             assert f in fields, f"MemoryFactResponse 缺少字段: {f}"
 
     def test_usage_record_response_exists(self) -> None:
         from app.schemas.billing import UsageRecordResponse
 
         fields = UsageRecordResponse.model_fields
-        for f in ("id", "tenant_id", "user_id", "model", "duration_ms", "success", "request_id"):
+        for f in (
+            "id",
+            "tenant_id",
+            "user_id",
+            "model",
+            "duration_ms",
+            "success",
+            "request_id",
+        ):
             assert f in fields, f"UsageRecordResponse 缺少字段: {f}"
 
     def test_subscription_response_exists(self) -> None:
         from app.schemas.billing import SubscriptionResponse
 
         fields = SubscriptionResponse.model_fields
-        for f in ("id", "tenant_id", "plan", "status", "billing_cycle", "seats", "auto_renew"):
+        for f in (
+            "id",
+            "tenant_id",
+            "plan",
+            "status",
+            "billing_cycle",
+            "seats",
+            "auto_renew",
+        ):
             assert f in fields, f"SubscriptionResponse 缺少字段: {f}"
 
 
@@ -535,7 +575,9 @@ class TestP0P2MigrationFile:
             "2026_07_19_1400-b2c3d4e5f6a7_add_tenant_id_checkpoint_and_usage_metadata.py",
         )
 
-        spec = importlib.util.spec_from_file_location("migration_p0p2_down", migration_path)
+        spec = importlib.util.spec_from_file_location(
+            "migration_p0p2_down", migration_path
+        )
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
 

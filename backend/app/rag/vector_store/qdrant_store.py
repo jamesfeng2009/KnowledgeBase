@@ -119,8 +119,14 @@ class QdrantVectorStore(VectorStoreBase):
             payload["effective_to"] = effective_to
         if doc_meta:
             for field in (
-                "series_id", "path", "doc_parent_id", "depth", "version_of",
-                "doc_status", "classification", "doc_role",
+                "series_id",
+                "path",
+                "doc_parent_id",
+                "depth",
+                "version_of",
+                "doc_status",
+                "classification",
+                "doc_role",
             ):
                 val = doc_meta.get(field)
                 if val is not None:
@@ -133,27 +139,25 @@ class QdrantVectorStore(VectorStoreBase):
         """构造 Qdrant Filter — 支持 kb_ids 与常用层级字段。"""
         conditions: list[FieldCondition] = []
         if kb_ids:
-            conditions.append(
-                FieldCondition(key="kb_id", match=MatchAny(any=kb_ids))
-            )
+            conditions.append(FieldCondition(key="kb_id", match=MatchAny(any=kb_ids)))
         if filters:
             for key in (
-                "series_id", "doc_parent_id", "version_of", "doc_status",
-                "classification", "doc_role",
+                "series_id",
+                "doc_parent_id",
+                "version_of",
+                "doc_status",
+                "classification",
+                "doc_role",
             ):
                 val = filters.get(key)
                 if val is not None:
                     conditions.append(
-                        FieldCondition(
-                            key=key, match=MatchAny(any=[str(val)])
-                        )
+                        FieldCondition(key=key, match=MatchAny(any=[str(val)]))
                     )
             path_prefix = filters.get("path_prefix")
             if path_prefix is not None:
                 conditions.append(
-                    FieldCondition(
-                        key="path", match=MatchAny(any=[str(path_prefix)])
-                    )
+                    FieldCondition(key="path", match=MatchAny(any=[str(path_prefix)]))
                 )
             chunk_type = filters.get("chunk_type")
             if chunk_type is not None:
@@ -245,8 +249,13 @@ class QdrantVectorStore(VectorStoreBase):
                 id=chunks[i].id,
                 vector=embeddings[i],
                 payload=self._payload_for_chunk(
-                    doc_id, chunks[i], kb_id, doc_updated_at,
-                    effective_from, effective_to, doc_meta,
+                    doc_id,
+                    chunks[i],
+                    kb_id,
+                    doc_updated_at,
+                    effective_from,
+                    effective_to,
+                    doc_meta,
                 ),
             )
             for i in range(n)
@@ -272,18 +281,14 @@ class QdrantVectorStore(VectorStoreBase):
                 collection_name=self._collection,
                 points_selector=Filter(
                     must=[
-                        FieldCondition(
-                            key="doc_id", match=MatchAny(any=[str(doc_id)])
-                        )
+                        FieldCondition(key="doc_id", match=MatchAny(any=[str(doc_id)]))
                     ]
                 ),
             )
         except Exception as exc:
             log.warning("vector_store.qdrant.delete_failed", error=str(exc)[:200])
 
-    async def fetch_by_ids(
-        self, chunk_ids: list[str]
-    ) -> dict[str, dict[str, Any]]:
+    async def fetch_by_ids(self, chunk_ids: list[str]) -> dict[str, dict[str, Any]]:
         """按 chunk_id 批量获取元数据（不含向量）。"""
         if not chunk_ids or self._client is None:
             return {}

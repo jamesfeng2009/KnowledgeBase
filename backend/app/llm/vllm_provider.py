@@ -116,15 +116,21 @@ class VLLMProvider(LLMProvider):
         half_open_probe = self._cb.state == CircuitState.HALF_OPEN
 
         import time
+
         t0 = time.monotonic()
         # 调用结果是否已记录到熔断器（成功/失败均置 True）
         outcome_recorded = False
 
         try:
             api_kwargs = self._build_api_kwargs(messages, tools, kwargs)
-            log.info("llm.chat.start", provider=self._circuit_breaker_name,
-                     model=api_kwargs.get("model"),
-                     msg_count=len(messages), stream=stream, has_tools=bool(tools))
+            log.info(
+                "llm.chat.start",
+                provider=self._circuit_breaker_name,
+                model=api_kwargs.get("model"),
+                msg_count=len(messages),
+                stream=stream,
+                has_tools=bool(tools),
+            )
 
             if stream:
                 api_kwargs["stream"] = True
@@ -189,7 +195,8 @@ class VLLMProvider(LLMProvider):
                     yield {
                         "type": "usage",
                         "input_tokens": getattr(_stream_usage, "prompt_tokens", 0) or 0,
-                        "output_tokens": getattr(_stream_usage, "completion_tokens", 0) or 0,
+                        "output_tokens": getattr(_stream_usage, "completion_tokens", 0)
+                        or 0,
                         "model": api_kwargs.get("model", ""),
                     }
 
@@ -214,13 +221,18 @@ class VLLMProvider(LLMProvider):
                     yield {
                         "type": "usage",
                         "input_tokens": getattr(resp.usage, "prompt_tokens", 0) or 0,
-                        "output_tokens": getattr(resp.usage, "completion_tokens", 0) or 0,
+                        "output_tokens": getattr(resp.usage, "completion_tokens", 0)
+                        or 0,
                         "model": api_kwargs.get("model", ""),
                     }
 
             # 调用成功 — 记录到熔断器
             elapsed_ms = round((time.monotonic() - t0) * 1000, 2)
-            log.info("llm.chat.success", provider=self._circuit_breaker_name, latency_ms=elapsed_ms)
+            log.info(
+                "llm.chat.success",
+                provider=self._circuit_breaker_name,
+                latency_ms=elapsed_ms,
+            )
             self._cb._record_success()
             outcome_recorded = True
 
@@ -229,8 +241,12 @@ class VLLMProvider(LLMProvider):
         except Exception as exc:
             # 调用失败 — 记录到熔断器
             elapsed_ms = round((time.monotonic() - t0) * 1000, 2)
-            log.warning("llm.chat.error", provider=self._circuit_breaker_name,
-                        error=str(exc), latency_ms=elapsed_ms)
+            log.warning(
+                "llm.chat.error",
+                provider=self._circuit_breaker_name,
+                error=str(exc),
+                latency_ms=elapsed_ms,
+            )
             self._cb._record_failure()
             outcome_recorded = True
             raise

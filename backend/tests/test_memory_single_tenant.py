@@ -8,6 +8,7 @@
 LLM 事实提取属外部边界，按 B1 同款方式打桩；save_session / add_fact /
 checkpoint 写入全部走真实 DB。
 """
+
 from __future__ import annotations
 
 import uuid

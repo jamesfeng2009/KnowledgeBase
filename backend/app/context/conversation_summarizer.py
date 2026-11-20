@@ -145,7 +145,9 @@ class ConversationSummarizer:
                 )
                 prompt_input = ""
                 if existing_summary:
-                    prompt_input = f"已有摘要：{existing_summary}\n\n新对话：\n{history_text}"
+                    prompt_input = (
+                        f"已有摘要：{existing_summary}\n\n新对话：\n{history_text}"
+                    )
                 else:
                     prompt_input = history_text
 

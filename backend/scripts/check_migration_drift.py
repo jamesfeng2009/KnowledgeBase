@@ -37,19 +37,18 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from alembic.autogenerate import compare_metadata  # noqa: E402
-from alembic.migration import MigrationContext  # noqa: E402
 from sqlalchemy.ext.asyncio import create_async_engine  # noqa: E402
 
+from alembic.autogenerate import compare_metadata  # noqa: E402
+from alembic.migration import MigrationContext  # noqa: E402
 from alembic_drift import include_object, split_by_severity, summarize  # noqa: E402
 
 
-def _load_metadata():  # noqa: ANN202 — 返回 MetaData，延迟导入避免影响 --help
-    from app.models import Base
-
+def _load_metadata():
     # 表定义在 app/models 包之外的模块，必须显式导入，否则会被判成"多余的表"
-    import app.eval.repository  # noqa: F401
+    import app.eval.repository
     import app.models.tool_audit  # noqa: F401
+    from app.models import Base
 
     return Base.metadata
 
@@ -58,7 +57,8 @@ async def _collect_diffs(url: str) -> list:
     engine = create_async_engine(url)
     try:
         async with engine.connect() as conn:
-            def _compare(sync_conn):  # noqa: ANN202
+
+            def _compare(sync_conn):
                 ctx = MigrationContext.configure(
                     sync_conn,
                     opts={
@@ -102,7 +102,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         diffs = asyncio.run(_collect_diffs(args.url))
-    except Exception as exc:  # noqa: BLE001 — 门禁脚本需兜住所有连接/配置异常
+    except Exception as exc:
         print(f"ERROR: 无法对比 schema：{exc}", file=sys.stderr)
         return 2
 

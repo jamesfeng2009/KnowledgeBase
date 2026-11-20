@@ -148,7 +148,9 @@ class TestScrubTextIdCard:
         from app.observability.pii_scrubber import PIIScrubber
 
         s = PIIScrubber()
-        assert s.scrub_text("身份证号110101199003070019已记录") == "身份证号[IDCARD]已记录"
+        assert (
+            s.scrub_text("身份证号110101199003070019已记录") == "身份证号[IDCARD]已记录"
+        )
 
     def test_idcard_boundary_letter_not_matched(self) -> None:
         """身份证前后是字母时不命中（避免吞并长字母数字串）。"""
@@ -174,7 +176,9 @@ class TestScrubTextEmail:
         from app.observability.pii_scrubber import PIIScrubber
 
         s = PIIScrubber()
-        assert s.scrub_text("contact: john.doe+filter@example.co.uk") == "contact: [EMAIL]"
+        assert (
+            s.scrub_text("contact: john.doe+filter@example.co.uk") == "contact: [EMAIL]"
+        )
 
     def test_email_at_start(self) -> None:
         from app.observability.pii_scrubber import PIIScrubber
@@ -266,7 +270,9 @@ class TestScrubTextMixed:
         from app.observability.pii_scrubber import PIIScrubber
 
         s = PIIScrubber()
-        text = "id=110101199003070019 bank=6222020200011111 phone=13800138000 mail=a@b.com"
+        text = (
+            "id=110101199003070019 bank=6222020200011111 phone=13800138000 mail=a@b.com"
+        )
         result = s.scrub_text(text)
         assert result == "id=[IDCARD] bank=[BANKCARD] phone=[PHONE] mail=[EMAIL]"
 
@@ -320,10 +326,12 @@ class TestScrubValue:
         from app.observability.pii_scrubber import PIIScrubber
 
         s = PIIScrubber()
-        result = s.scrub_value({
-            "outer": {"inner": "id 110101199003070019"},
-            "list": ["mail a@b.com", "plain text"],
-        })
+        result = s.scrub_value(
+            {
+                "outer": {"inner": "id 110101199003070019"},
+                "list": ["mail a@b.com", "plain text"],
+            }
+        )
         assert result == {
             "outer": {"inner": "id [IDCARD]"},
             "list": ["mail [EMAIL]", "plain text"],
@@ -392,9 +400,11 @@ class TestScrubValue:
         from app.observability.pii_scrubber import PIIScrubber
 
         s = PIIScrubber()
-        result = s.scrub_value({
-            "a": {"b": {"c": {"d": "13800138000"}}},
-        })
+        result = s.scrub_value(
+            {
+                "a": {"b": {"c": {"d": "13800138000"}}},
+            }
+        )
         assert result == {"a": {"b": {"c": {"d": "[PHONE]"}}}}
 
     def test_empty_structures(self) -> None:

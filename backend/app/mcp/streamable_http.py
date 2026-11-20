@@ -36,38 +36,32 @@ JSONRPCResponse → HTTP Response (JSON or SSE)
 from __future__ import annotations
 
 import json
-import time
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 from app.mcp.protocol import (
+    INTERNAL_ERROR,
     INVALID_PARAMS,
-    JSONRPCError,
-    JSONRPCRequest,
-    JSONRPCResponse,
     METHOD_NOT_FOUND,
+    METHOD_NOTIFICATION_INITIALIZED,
     METHOD_RESOURCES_LIST,
     METHOD_RESOURCES_READ,
-    METHOD_TOOLS_CALL,
-    METHOD_TOOLS_LIST,
     METHOD_TASKS_CANCEL,
     METHOD_TASKS_CREATE,
     METHOD_TASKS_GET,
-    METHOD_NOTIFICATION_INITIALIZED,
-    INTERNAL_ERROR,
+    METHOD_TOOLS_CALL,
+    METHOD_TOOLS_LIST,
     RESOURCE_NOT_FOUND,
-    TOOL_NOT_FOUND,
-    TOOL_EXECUTION_ERROR,
-    TASK_NOT_FOUND,
-    TASK_ALREADY_TERMINAL,
     SUPPORTED_MCP_METHODS,
-    make_success_response,
+    TASK_ALREADY_TERMINAL,
+    TASK_NOT_FOUND,
+    TOOL_EXECUTION_ERROR,
+    JSONRPCError,
+    JSONRPCRequest,
+    JSONRPCResponse,
     make_error_response,
     make_notification_response,
-    make_tools_list_params,
-    make_tools_call_params,
-    make_tasks_create_params,
-    make_tasks_get_params,
-    make_tasks_cancel_params,
+    make_success_response,
     parse_request,
 )
 from app.mcp.server import KnowledgeBaseMCPServer
@@ -297,14 +291,20 @@ class StreamableHTTPTransport:
         # 检查工具是否存在
         if not self._server.is_long_running(tool_name):
             return await self._handle_sync_tool_call(
-                request, tool_name, arguments, tenant_id=tenant_id,
+                request,
+                tool_name,
+                arguments,
+                tenant_id=tenant_id,
             )
 
         # 长耗时工具 → 异步创建任务，通过 SSE 流式推送
         # _handle_async_tool_call 是 async generator（yield 值），
         # 返回 generator 对象供 handle_request 识别为 SSE 流
         return self._handle_async_tool_call(
-            request, tool_name, arguments, tenant_id=tenant_id,
+            request,
+            tool_name,
+            arguments,
+            tenant_id=tenant_id,
         )
 
     async def _handle_sync_tool_call(
@@ -318,7 +318,9 @@ class StreamableHTTPTransport:
         """同步调用工具 — 直接返回结果。"""
         try:
             result_str = await self._server.call_tool(
-                tool_name, arguments, tenant_id=tenant_id,
+                tool_name,
+                arguments,
+                tenant_id=tenant_id,
             )
             try:
                 result_data: Any = json.loads(result_str)
@@ -330,7 +332,9 @@ class StreamableHTTPTransport:
                     "content": [
                         {
                             "type": "text",
-                            "text": json.dumps(result_data, ensure_ascii=False, default=str),
+                            "text": json.dumps(
+                                result_data, ensure_ascii=False, default=str
+                            ),
                         },
                     ],
                     "isError": False,
@@ -377,7 +381,9 @@ class StreamableHTTPTransport:
         # 后台执行
         try:
             result_str = await self._server.call_tool(
-                tool_name, arguments, tenant_id=tenant_id,
+                tool_name,
+                arguments,
+                tenant_id=tenant_id,
             )
             try:
                 result_data: Any = json.loads(result_str)
@@ -439,7 +445,9 @@ class StreamableHTTPTransport:
 
         # 通过 Server 创建异步任务
         result_str = await self._server.call_tool_async(
-            tool_name, arguments, tenant_id=tenant_id,
+            tool_name,
+            arguments,
+            tenant_id=tenant_id,
         )
 
         try:

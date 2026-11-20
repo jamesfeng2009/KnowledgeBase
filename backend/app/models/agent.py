@@ -31,9 +31,7 @@ class AgentConfig(UUIDMixin, TimestampMixin, Base):
         nullable=True,
         comment="租户 ID（私有部署可空）",
     )
-    name: Mapped[str] = mapped_column(
-        String(255), nullable=False, comment="Agent 名称"
-    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False, comment="Agent 名称")
     type: Mapped[str] = mapped_column(
         String(50), nullable=False, comment="Agent 类型: qa/workflow/action"
     )
@@ -43,6 +41,4 @@ class AgentConfig(UUIDMixin, TimestampMixin, Base):
     config: Mapped[dict | None] = mapped_column(
         JSONB, nullable=True, comment="Agent 专属配置（system_prompt/tools/model 等）"
     )
-    is_enabled: Mapped[bool] = mapped_column(
-        Boolean, default=True, comment="是否启用"
-    )
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, comment="是否启用")

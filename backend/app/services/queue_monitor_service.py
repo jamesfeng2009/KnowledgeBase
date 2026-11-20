@@ -35,8 +35,13 @@ def get_all_queue_names() -> list[str]:
         return list(_ALL_QUEUES)
     except Exception:
         return [
-            "celery", "documents", "indexing", "scheduled",
-            "notifications", "multimodal", "dead_letter",
+            "celery",
+            "documents",
+            "indexing",
+            "scheduled",
+            "notifications",
+            "multimodal",
+            "dead_letter",
         ]
 
 
@@ -64,8 +69,14 @@ class QueueMonitorService:
         queues = await self._fetch_mgmt_queues()
         if queues is None:
             return [
-                {"queue": q, "ready": None, "unacked": None,
-                 "total": None, "consumers": 0, "state": "unavailable"}
+                {
+                    "queue": q,
+                    "ready": None,
+                    "unacked": None,
+                    "total": None,
+                    "consumers": 0,
+                    "state": "unavailable",
+                }
                 for q in get_all_queue_names()
             ]
 
@@ -111,8 +122,7 @@ class QueueMonitorService:
         """统计 task_outbox 状态分布与死信占比。"""
         try:
             rows = await self.db.execute(
-                select(TaskOutbox.status, func.count())
-                .group_by(TaskOutbox.status)
+                select(TaskOutbox.status, func.count()).group_by(TaskOutbox.status)
             )
             counts: dict[str, int] = {}
             for status, count in rows.all():

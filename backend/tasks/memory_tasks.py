@@ -18,8 +18,8 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from celery_app import celery_app
 from app.utils.logger import get_logger
+from celery_app import celery_app
 
 logger = get_logger(__name__)
 
@@ -67,9 +67,7 @@ async def _persist_memory_async(
         try:
             conv_uuid = _uuid.UUID(session_id)
         except ValueError:
-            logger.warning(
-                "memory_task.invalid_session_id", session_id=session_id
-            )
+            logger.warning("memory_task.invalid_session_id", session_id=session_id)
             return result
 
         async with system_scope(
@@ -122,9 +120,7 @@ async def _persist_memory_async(
                 result["facts"] = await memory.extract_and_save_facts(
                     _UUID(user_id),
                     [{"role": "user", "content": query}],
-                    message_ids=(
-                        [_UUID(user_message_id)] if user_message_id else None
-                    ),
+                    message_ids=([_UUID(user_message_id)] if user_message_id else None),
                 )
             except Exception as exc:
                 logger.error("memory_task.extract_facts_failed", error=str(exc))

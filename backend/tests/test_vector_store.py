@@ -9,10 +9,9 @@
 - document_tasks 集成：_build_vector_index 通过适配器写入
 - 向后兼容：_build_milvus_index 委托到 _build_vector_index
 """
+
 from __future__ import annotations
 
-import asyncio
-import json
 import sys
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -194,11 +193,9 @@ class TestVectorStoreBase:
 
     def test_default_dimension(self) -> None:
         """P2-Step2: 向量维度动态从 Embedder 获取，而非硬编码 1024。"""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
 
-        store = OpenSearchVectorStore(
-            http_client=_make_mock_http()
-        )
+        store = OpenSearchVectorStore(http_client=_make_mock_http())
         # Mock embedder 返回 1024 维（TEI/BGE-M3 场景）
         mock_embedder = MagicMock()
         mock_embedder.dim = 1024
@@ -214,10 +211,10 @@ class TestVectorStoreBase:
         """P2-Step2: Embedder 不可用时降级为默认维度 1024。"""
         from unittest.mock import patch
 
-        store = OpenSearchVectorStore(
-            http_client=_make_mock_http()
-        )
-        with patch("app.llm.embedder.get_embedder", side_effect=Exception("no embedder")):
+        store = OpenSearchVectorStore(http_client=_make_mock_http())
+        with patch(
+            "app.llm.embedder.get_embedder", side_effect=Exception("no embedder")
+        ):
             assert store.dimension == 1024
 
 
@@ -270,9 +267,7 @@ class TestOpenSearchVectorStore:
         client = _make_mock_http(post_return=search_response)
         store = OpenSearchVectorStore(http_client=client)
 
-        results = await store.search(
-            query_vec=[0.1] * 1024, top_k=10
-        )
+        results = await store.search(query_vec=[0.1] * 1024, top_k=10)
         assert len(results) == 2
         assert results[0]["doc_id"] == "doc-001"
         assert results[0]["chunk_id"] == "chunk-0"
@@ -283,9 +278,7 @@ class TestOpenSearchVectorStore:
     @pytest.mark.asyncio
     async def test_search_with_kb_ids_filter(self) -> None:
         """search 支持 kb_ids 过滤。"""
-        search_response = MockResponse(
-            json_data={"hits": {"hits": []}}
-        )
+        search_response = MockResponse(json_data={"hits": {"hits": []}})
         client = _make_mock_http(post_return=search_response)
         store = OpenSearchVectorStore(http_client=client)
 
@@ -379,9 +372,7 @@ class TestOpenSearchVectorStore:
     @pytest.mark.asyncio
     async def test_health_check_returns_true_when_available(self) -> None:
         """服务可用时 health_check 返回 True。"""
-        health_resp = MockResponse(
-            json_data={"status": "green"}
-        )
+        health_resp = MockResponse(json_data={"status": "green"})
         client = _make_mock_http(get_return=health_resp)
         store = OpenSearchVectorStore(http_client=client)
 
@@ -529,9 +520,7 @@ class TestMilvusVectorStore:
         client = _make_mock_http(post_return=search_response)
         store = MilvusVectorStore(http_client=client)
 
-        results = await store.search(
-            query_vec=[0.1] * 1024, top_k=10
-        )
+        results = await store.search(query_vec=[0.1] * 1024, top_k=10)
         assert len(results) == 1
         assert results[0]["doc_id"] == "doc-001"
         assert results[0]["chunk_id"] == "chunk-0"
@@ -600,9 +589,7 @@ class TestMilvusVectorStore:
     @pytest.mark.asyncio
     async def test_upsert_writes_vectors(self) -> None:
         """upsert 批量写入向量数据到 Milvus。"""
-        upsert_resp = MockResponse(
-            json_data={"upsertCnt": 2}
-        )
+        upsert_resp = MockResponse(json_data={"upsertCnt": 2})
         client = _make_mock_http(post_return=upsert_resp)
         store = MilvusVectorStore(http_client=client)
 
@@ -647,9 +634,7 @@ class TestMilvusVectorStore:
     @pytest.mark.asyncio
     async def test_health_check_returns_true_when_available(self) -> None:
         """服务可用时 health_check 返回 True。"""
-        health_resp = MockResponse(
-            json_data={"data": {"collection_names": []}}
-        )
+        health_resp = MockResponse(json_data={"data": {"collection_names": []}})
         client = _make_mock_http(post_return=health_resp)
         store = MilvusVectorStore(http_client=client)
 
@@ -888,7 +873,9 @@ class TestRetrieverWithVectorStore:
         )
 
         # Embedder 返回 None
-        with patch("app.rag.retriever.get_embedder", side_effect=Exception("no embedder")):
+        with patch(
+            "app.rag.retriever.get_embedder", side_effect=Exception("no embedder")
+        ):
             retriever = HybridRetriever(
                 http_client=mock_http,
                 vector_store=mock_store,
@@ -1210,15 +1197,18 @@ class TestDocumentTasksVectorIndex:
         chunks = _make_chunks(2)
         embeddings = _make_embeddings(2)
 
-        with patch(
-            "app.rag.vector_store.get_vector_store", return_value=mock_store
-        ):
+        with patch("app.rag.vector_store.get_vector_store", return_value=mock_store):
             count = await _build_vector_index("doc-001", chunks, embeddings)
 
         assert count == 2
         mock_store.upsert.assert_called_once_with(
-            "doc-001", chunks, embeddings, kb_id=None,
-            doc_updated_at=None, effective_from=None, effective_to=None,
+            "doc-001",
+            chunks,
+            embeddings,
+            kb_id=None,
+            doc_updated_at=None,
+            effective_from=None,
+            effective_to=None,
             doc_meta=None,
         )
 
@@ -1230,9 +1220,7 @@ class TestDocumentTasksVectorIndex:
         mock_store = MagicMock(spec=VectorStoreBase)
         mock_store.upsert = AsyncMock(return_value=0)
 
-        with patch(
-            "app.rag.vector_store.get_vector_store", return_value=mock_store
-        ):
+        with patch("app.rag.vector_store.get_vector_store", return_value=mock_store):
             count = await _build_vector_index("doc-001", [], [])
 
         assert count == 0
@@ -1249,9 +1237,7 @@ class TestDocumentTasksVectorIndex:
         chunks = _make_chunks(1)
         embeddings = _make_embeddings(1)
 
-        with patch(
-            "app.rag.vector_store.get_vector_store", return_value=mock_store
-        ):
+        with patch("app.rag.vector_store.get_vector_store", return_value=mock_store):
             # 不应抛出异常
             await _build_milvus_index("doc-001", chunks, embeddings)
 
@@ -1266,18 +1252,19 @@ class TestDocumentTasksVectorIndex:
         chunks_text = [c.content for c in chunks]
         embeddings = _make_embeddings(2)
 
-        with patch(
-            "tasks.document_tasks._build_opensearch_index",
-            new_callable=AsyncMock,
-        ) as mock_os, patch(
-            "tasks.document_tasks._build_vector_index",
-            new_callable=AsyncMock,
-            return_value=2,
-        ) as mock_vec:
+        with (
+            patch(
+                "tasks.document_tasks._build_opensearch_index",
+                new_callable=AsyncMock,
+            ) as mock_os,
+            patch(
+                "tasks.document_tasks._build_vector_index",
+                new_callable=AsyncMock,
+                return_value=2,
+            ) as mock_vec,
+        ):
             await _build_indexes("doc-001", chunks, chunks_text, embeddings)
-            mock_os.assert_called_once_with(
-                "doc-001", chunks, kb_id=None, doc=None
-            )
+            mock_os.assert_called_once_with("doc-001", chunks, kb_id=None, doc=None)
             mock_vec.assert_called_once_with(
                 "doc-001", chunks, embeddings, kb_id=None, doc=None
             )

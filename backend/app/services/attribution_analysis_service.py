@@ -33,7 +33,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Iterable, Sequence
+from collections.abc import Iterable, Sequence
+from typing import Any
 
 from app.services.outcome_attribution import (
     aa_negative_control,
@@ -160,9 +161,7 @@ class AttributionAnalysisService:
         # 事实锚点：只暴露真正 join 上结果事件的 decision_id，
         # 保证结论的每条证据都能点回原始记录。
         evidence_ids = [
-            str(d.get("decision_id"))
-            for d in dec_list
-            if d.get("decision_id")
+            str(d.get("decision_id")) for d in dec_list if d.get("decision_id")
         ]
         # 用 matched 数量收敛锚点规模（避免把 unmatched 的决策也当证据）。
         matched_n = int(diagnostics.get("matched") or 0)
@@ -259,7 +258,9 @@ class AttributionAnalysisService:
         if evidence:
             shown = ", ".join(str(x) for x in evidence[:5])
             suffix = " 等" if len(evidence) > 5 else ""
-            parts.append(f"事实锚点（decision_id）：{shown}{suffix}，共 {len(evidence)} 条。")
+            parts.append(
+                f"事实锚点（decision_id）：{shown}{suffix}，共 {len(evidence)} 条。"
+            )
         for w in result.get("warnings") or []:
             parts.append(f"注意：{w}")
         return "\n".join(parts)

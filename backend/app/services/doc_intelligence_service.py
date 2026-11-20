@@ -34,7 +34,13 @@ logger = get_logger(__name__)
 
 #: 文档分类选项
 DOC_CATEGORIES = [
-    "政策", "SOP", "技术文档", "会议纪要", "培训资料", "产品文档", "合同模板",
+    "政策",
+    "SOP",
+    "技术文档",
+    "会议纪要",
+    "培训资料",
+    "产品文档",
+    "合同模板",
 ]
 
 # --- P2 约束打标 · Stage A 正则预筛（设计 §5.1）---
@@ -94,7 +100,9 @@ def _clean_normalized(value: Any, rule_text: str) -> dict[str, Any]:
 class DocIntelligenceService:
     """文档智能处理服务 — LLM 自动摘要/标签/分类/行动项/FAQ。"""
 
-    def __init__(self, llm: LLMProvider, db: AsyncSession, tenant_id: UUID | None = None) -> None:
+    def __init__(
+        self, llm: LLMProvider, db: AsyncSession, tenant_id: UUID | None = None
+    ) -> None:
         self.llm = llm
         self.db = db
         self._tenant_id = tenant_id
@@ -258,12 +266,14 @@ class DocIntelligenceService:
                 status="pending",
             )
             self.db.add(action)
-            saved.append({
-                "assignee": action.assignee,
-                "deadline": str(action.deadline) if action.deadline else None,
-                "content": action.content,
-                "priority": action.priority,
-            })
+            saved.append(
+                {
+                    "assignee": action.assignee,
+                    "deadline": str(action.deadline) if action.deadline else None,
+                    "content": action.content,
+                    "priority": action.priority,
+                }
+            )
         await self.db.flush()
         logger.info(
             "doc_intelligence.actions",
@@ -402,7 +412,7 @@ class DocIntelligenceService:
     def _resolve_constraint_llm() -> LLMProvider:
         """轻量抽取模型解析链 — CONSTRAINT_MODEL → MEMORY_SIDECAR_MODEL → 主模型。"""
         from app.config import get_settings
-        from app.llm.factory import get_llm_provider_by_model
+        from app.llm.factory import get_llm_provider, get_llm_provider_by_model
 
         settings = get_settings()
         for model_id in (settings.CONSTRAINT_MODEL, settings.MEMORY_SIDECAR_MODEL):
@@ -440,7 +450,7 @@ class DocIntelligenceService:
             '"amount_limits": [{"op": "gt", "value": 5000, "on_violation": "block"}]}}\n\n'
             "severity 判定标准：block=违反即红线（法律/资金/安全风险）；"
             "confirm=须人工确认的操作要求；warn=提醒性规范。\n"
-            "普通描述、背景说明、非强制建议（\"建议\"\"可以\"）不是约束条款。\n"
+            '普通描述、背景说明、非强制建议（"建议""可以"）不是约束条款。\n'
             "只输出 JSON，不要解释。"
         )
         response = await self._llm_generate(prompt, max_tokens=1200, llm=llm)

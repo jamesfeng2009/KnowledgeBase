@@ -37,17 +37,14 @@ def load_locale(locale: str) -> dict[str, Any]:
     path = _LOCALES_DIR / f"{locale}.json"
     if not path.exists():
         return {}
-    with open(path, "r", encoding="utf-8") as fh:
+    with open(path, encoding="utf-8") as fh:
         return json.load(fh)
 
 
 def get_supported_locales() -> list[dict[str, str]]:
     """返回支持的语言列表（含本地名称）。"""
     names = {"zh": "简体中文", "en": "English", "ja": "日本語", "ko": "한국어"}
-    return [
-        {"locale": loc, "name": names.get(loc, loc)}
-        for loc in SUPPORTED_LOCALES
-    ]
+    return [{"locale": loc, "name": names.get(loc, loc)} for loc in SUPPORTED_LOCALES]
 
 
 def parse_accept_language(header: str | None) -> str:

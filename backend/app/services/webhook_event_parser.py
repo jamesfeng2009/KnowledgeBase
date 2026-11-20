@@ -11,6 +11,7 @@
 
 遵循单一职责：仅做事件解析与字段提取，不涉及签名验证或 DB 访问。
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -44,23 +45,28 @@ class ParsedWebhookEvent:
 
 
 # 飞书关注的事件类型 — 仅文档内容变更/创建触发同步
-_FEISHU_RELEVANT_EVENTS: frozenset[str] = frozenset({
-    "drive.file.updated_v1",
-    "drive.file.created_v1",
-    "drive.file.title_updated_v1",
-})
+_FEISHU_RELEVANT_EVENTS: frozenset[str] = frozenset(
+    {
+        "drive.file.updated_v1",
+        "drive.file.created_v1",
+        "drive.file.title_updated_v1",
+    }
+)
 
 # Confluence 关注的事件类型
-_CONFLUENCE_RELEVANT_EVENTS: frozenset[str] = frozenset({
-    "page_updated",
-    "page_created",
-    "page_restored",
-})
+_CONFLUENCE_RELEVANT_EVENTS: frozenset[str] = frozenset(
+    {
+        "page_updated",
+        "page_created",
+        "page_restored",
+    }
+)
 
 
 # ==================================================================
 # 飞书事件解析
 # ==================================================================
+
 
 def parse_feishu_event(body: dict[str, Any]) -> ParsedWebhookEvent | None:
     """解析飞书 event v2 事件。
@@ -139,6 +145,7 @@ def is_feishu_challenge(body: dict[str, Any]) -> str | None:
 # Confluence 事件解析
 # ==================================================================
 
+
 def parse_confluence_event(body: dict[str, Any]) -> ParsedWebhookEvent | None:
     """解析 Confluence webhook 事件。
 
@@ -207,6 +214,7 @@ def _synthesize_confluence_event_id(
 # ==================================================================
 # 统一解析入口
 # ==================================================================
+
 
 def parse_webhook_event(
     adapter_id: str, body: dict[str, Any]

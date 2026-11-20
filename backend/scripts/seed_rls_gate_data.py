@@ -20,6 +20,7 @@ CI 用全新空库跑迁移后没有任何数据，脚本会因「少于 2 个�
 幂等：先按固定 UUID 删除再插入，重复执行不产生重复数据。
 仅用于 CI / 测试库，禁止在生产执行（会插入固定 ID 的假数据）。
 """
+
 from __future__ import annotations
 
 import argparse
@@ -152,7 +153,7 @@ async def seed(url: str) -> int:
 
         print(f"✓ RLS 门禁数据就绪：租户 {TENANT_A} / {TENANT_B} × 7 张关键表")
         return 0
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         print(f"✗ 写入失败：{type(exc).__name__}: {exc}", file=sys.stderr)
         return 2
     finally:
@@ -161,7 +162,9 @@ async def seed(url: str) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="为 RLS 门禁灌入两租户测试数据")
-    parser.add_argument("--url", default=os.environ.get("DATABASE_URL"), help="owner 连接串")
+    parser.add_argument(
+        "--url", default=os.environ.get("DATABASE_URL"), help="owner 连接串"
+    )
     args = parser.parse_args()
     if not args.url:
         print("ERROR: 未提供 --url 或 $DATABASE_URL", file=sys.stderr)

@@ -25,8 +25,9 @@ from __future__ import annotations
 import math
 import re
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
-from typing import Any, Sequence
+from typing import Any
 
 from app.utils.hash import (
     compute_chunk_hash_with_metadata,
@@ -52,7 +53,9 @@ _QA_MAX_TOKENS: int = 1200
 # 结构化分块 — chunk 软上限（字符数）
 _STRUCTURAL_MAX_CHARS: int = 2800  # ~800 tokens
 # HTML 表格片段 — 切分时保持原子性（捕获组保留表格本身）
-_TABLE_SEGMENT_RE = re.compile(r"(<table\b[^>]*>.*?</table>)", re.IGNORECASE | re.DOTALL)
+_TABLE_SEGMENT_RE = re.compile(
+    r"(<table\b[^>]*>.*?</table>)", re.IGNORECASE | re.DOTALL
+)
 # D6 图片资产 — base._format_section 的规范输出：<p><img/></p> 后紧跟单换行分隔的描述段
 # （section 之间是双换行，不会误吞下一段的 <p>）
 _IMG_BLOCK_RE = re.compile(
@@ -199,14 +202,24 @@ class SemanticChunker:
             chunks = self._qa_split(content, internal_doc_id)
             if chunks:
                 log.debug("chunker.qa", count=len(chunks))
-                return self._assign_deterministic_ids(chunks, internal_doc_id) if doc_id else chunks
+                return (
+                    self._assign_deterministic_ids(chunks, internal_doc_id)
+                    if doc_id
+                    else chunks
+                )
             # QA 分块未产出有效结果，降级到兜底链
 
         if ct in ("tutorial", "specification", "report"):
             chunks = self._structural_split(content, internal_doc_id, doc_type)
             if self._is_valid(chunks):
-                log.debug("chunker.structural_by_type", count=len(chunks), content_type=ct)
-                return self._assign_deterministic_ids(chunks, internal_doc_id) if doc_id else chunks
+                log.debug(
+                    "chunker.structural_by_type", count=len(chunks), content_type=ct
+                )
+                return (
+                    self._assign_deterministic_ids(chunks, internal_doc_id)
+                    if doc_id
+                    else chunks
+                )
             # 结构化分块无效，降级到语义分块
 
         if ct == "plain":
@@ -214,7 +227,11 @@ class SemanticChunker:
             if self._is_valid(chunks):
                 log.debug("chunker.semantic_by_type", count=len(chunks))
                 chunks = self._parent_child_index(content, chunks, internal_doc_id)
-                return self._assign_deterministic_ids(chunks, internal_doc_id) if doc_id else chunks
+                return (
+                    self._assign_deterministic_ids(chunks, internal_doc_id)
+                    if doc_id
+                    else chunks
+                )
             # 语义分块无效，降级到兜底
 
         # auto 模式 — 四级兜底链
@@ -223,20 +240,32 @@ class SemanticChunker:
         chunks = self._structural_split(content, internal_doc_id, doc_type)
         if self._is_valid(chunks):
             log.debug("chunker.structural", count=len(chunks), doc_type=doc_type)
-            return self._assign_deterministic_ids(chunks, internal_doc_id) if doc_id else chunks
+            return (
+                self._assign_deterministic_ids(chunks, internal_doc_id)
+                if doc_id
+                else chunks
+            )
 
         # 2. 语义分块：TextTiling 相似度
         chunks = self._semantic_split(content, internal_doc_id)
         if self._is_valid(chunks):
             log.debug("chunker.semantic", count=len(chunks))
             chunks = self._parent_child_index(content, chunks, internal_doc_id)
-            return self._assign_deterministic_ids(chunks, internal_doc_id) if doc_id else chunks
+            return (
+                self._assign_deterministic_ids(chunks, internal_doc_id)
+                if doc_id
+                else chunks
+            )
 
         # 3. 父子索引在语义分块后已构建，若仍无效则走兜底
         # 4. 固定长度兜底
         chunks = self._fixed_split(content, internal_doc_id)
         log.debug("chunker.fallback", count=len(chunks))
-        return self._assign_deterministic_ids(chunks, internal_doc_id) if doc_id else chunks
+        return (
+            self._assign_deterministic_ids(chunks, internal_doc_id)
+            if doc_id
+            else chunks
+        )
 
     @staticmethod
     def _assign_deterministic_ids(chunks: list[Chunk], doc_id: str) -> list[Chunk]:
@@ -414,7 +443,6 @@ class SemanticChunker:
 
         for seg in segments:
             seg_start = float(seg.get("start", 0))
-            seg_end = float(seg.get("end", 0))
             seg_text = str(seg.get("text", "")).strip()
             if not seg_text:
                 continue
@@ -442,7 +470,10 @@ class SemanticChunker:
                 chunks.append(chunk)
 
         # 如果合并后只有一个大块且文本很长，进一步用语义分块拆分
-        if len(chunks) == 1 and estimate_tokens(chunks[0].content) > self.fallback_tokens:
+        if (
+            len(chunks) == 1
+            and estimate_tokens(chunks[0].content) > self.fallback_tokens
+        ):
             sub_chunks = self._semantic_split(chunks[0].content, doc_id)
             if self._is_valid(sub_chunks):
                 # 保留原始时间戳在 title_path
@@ -532,7 +563,9 @@ class SemanticChunker:
     @staticmethod
     def _is_valid(chunks: Sequence[Chunk]) -> bool:
         """判断分块结果是否有效 — 块数 >= 2 且非空。"""
-        return len(chunks) >= _MIN_STRUCTURAL_CHUNKS and all(c.content.strip() for c in chunks)
+        return len(chunks) >= _MIN_STRUCTURAL_CHUNKS and all(
+            c.content.strip() for c in chunks
+        )
 
     # ------------------------------------------------------------------
     # 策略 0：Q&A 对分块（P0）
@@ -643,8 +676,12 @@ class SemanticChunker:
                     pairs.append(_QAPair(question, answer, start_pos, end_pos))
 
         # 模式 3: ## 问题：xxx / ## 回答：xxx（Markdown 标题格式）
-        md_q_pattern = re.compile(r"^#{1,3}\s*(?:问题|Question)[：:]\s*(.+)$", re.MULTILINE | re.IGNORECASE)
-        md_a_pattern = re.compile(r"^#{1,3}\s*(?:回答|答案|Answer)[：:]\s*(.+)$", re.MULTILINE | re.IGNORECASE)
+        md_q_pattern = re.compile(
+            r"^#{1,3}\s*(?:问题|Question)[：:]\s*(.+)$", re.MULTILINE | re.IGNORECASE
+        )
+        md_a_pattern = re.compile(
+            r"^#{1,3}\s*(?:回答|答案|Answer)[：:]\s*(.+)$", re.MULTILINE | re.IGNORECASE
+        )
 
         md_q_matches = list(md_q_pattern.finditer(content))
         md_a_matches = list(md_a_pattern.finditer(content))
@@ -665,7 +702,11 @@ class SemanticChunker:
                     )
                     answer_inline = a_match.group(1).strip()
                     answer_body = content[a_match.end() : next_q_start].strip()
-                    answer = f"{answer_inline}\n{answer_body}".strip() if answer_body else answer_inline
+                    answer = (
+                        f"{answer_inline}\n{answer_body}".strip()
+                        if answer_body
+                        else answer_inline
+                    )
                     end_pos = next_q_start
                     break
 
@@ -965,7 +1006,9 @@ class SemanticChunker:
             if text:
                 start_pos = unit_starts[prev] if prev < len(unit_starts) else offset
                 end_pos = (
-                    unit_starts[end_unit] if end_unit < len(unit_starts) else len(content)
+                    unit_starts[end_unit]
+                    if end_unit < len(unit_starts)
+                    else len(content)
                 )
                 chunks.append(
                     Chunk(
@@ -1005,7 +1048,11 @@ class SemanticChunker:
         # 优先按空行分段，无空行则按句号分段
         units = [u.strip() for u in re.split(r"\n\s*\n", content) if u.strip()]
         if len(units) <= 1:
-            units = [u.strip() for u in re.split(r"(?<=[。！？.!?])\s*", content) if u.strip()]
+            units = [
+                u.strip()
+                for u in re.split(r"(?<=[。！？.!?])\s*", content)
+                if u.strip()
+            ]
         return units
 
     @staticmethod
@@ -1130,7 +1177,9 @@ class SemanticChunker:
                 else:
                     # 取前一块末尾 _OVERLAP_CHARS 字符作为当前块开头
                     prev = texts[i - 1]
-                    prev_tail = prev[-_OVERLAP_CHARS:] if len(prev) > _OVERLAP_CHARS else prev
+                    prev_tail = (
+                        prev[-_OVERLAP_CHARS:] if len(prev) > _OVERLAP_CHARS else prev
+                    )
                     overlapped.append(prev_tail + text)
             texts = overlapped
 
@@ -1152,17 +1201,21 @@ class SemanticChunker:
                 )
             )
             offset += len(text)
-        return chunks if chunks else [
-            Chunk(
-                id=str(uuid.uuid4()),
-                doc_id=doc_id,
-                content=content.strip(),
-                start_pos=0,
-                end_pos=len(content),
-                token_count=estimate_tokens(content),
-                chunk_strategy="fallback",
-            )
-        ]
+        return (
+            chunks
+            if chunks
+            else [
+                Chunk(
+                    id=str(uuid.uuid4()),
+                    doc_id=doc_id,
+                    content=content.strip(),
+                    start_pos=0,
+                    end_pos=len(content),
+                    token_count=estimate_tokens(content),
+                    chunk_strategy="fallback",
+                )
+            ]
+        )
 
     @staticmethod
     def _split_by_tokens(text: str, max_tokens: int) -> list[str]:

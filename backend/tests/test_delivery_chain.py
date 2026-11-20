@@ -14,10 +14,10 @@
 mock 风格参照 test_recommendation_tasks.py（httpx ASGI + dependency_overrides），
 不依赖真实数据库。
 """
+
 from __future__ import annotations
 
 import sys
-import uuid
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -25,7 +25,6 @@ from uuid import uuid4
 
 import httpx
 import pytest
-import pytest_asyncio
 
 # ------------------------------------------------------------------
 # Mock celery before importing app modules（与 test_distillation_gate 一致）
@@ -186,8 +185,11 @@ async def _make_client(db_mock, role: str = "admin") -> httpx.AsyncClient:
         limiter.clear()
 
     user = SimpleNamespace(
-        id=uuid4(), role=role, is_active=True,
-        email="u@test.com", name="测试用户",
+        id=uuid4(),
+        role=role,
+        is_active=True,
+        email="u@test.com",
+        name="测试用户",
     )
 
     async def override_user():
@@ -377,8 +379,7 @@ class TestBuildEvalCase:
         from pathlib import Path
 
         script = (
-            Path(__file__).resolve().parent.parent
-            / "scripts" / "export_eval_cases.py"
+            Path(__file__).resolve().parent.parent / "scripts" / "export_eval_cases.py"
         )
         spec = importlib.util.spec_from_file_location("export_eval_cases", script)
         mod = importlib.util.module_from_spec(spec)
@@ -403,8 +404,7 @@ class TestBuildEvalCase:
         from pathlib import Path
 
         script = (
-            Path(__file__).resolve().parent.parent
-            / "scripts" / "export_eval_cases.py"
+            Path(__file__).resolve().parent.parent / "scripts" / "export_eval_cases.py"
         )
         spec = importlib.util.spec_from_file_location("export_eval_cases", script)
         mod = importlib.util.module_from_spec(spec)

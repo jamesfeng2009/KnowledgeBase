@@ -161,9 +161,9 @@ def test_frontend_api_dir_exists() -> None:
 
 def test_collector_actually_finds_paths(frontend_paths) -> None:
     """收集器自身不能退化成空集 —— 否则下面的断言会「全绿但什么都没测」。"""
-    assert len(frontend_paths) >= 50, (
-        f"只收集到 {len(frontend_paths)} 条前端路径，收集器可能已失效"
-    )
+    assert (
+        len(frontend_paths) >= 50
+    ), f"只收集到 {len(frontend_paths)} 条前端路径，收集器可能已失效"
     # 抽查几条本轮 P1 修过的路径，确认解析规则对得上
     paths = {p for _, _, p in frontend_paths}
     assert "/api/openapi/mcp/tools" in paths
@@ -239,7 +239,9 @@ def test_no_frontend_reference_to_v1_openapi() -> None:
         for i, line in enumerate(code.splitlines(), 1):
             if "/api/v1/openapi" in line:
                 offenders.append(f"{f.relative_to(REPO_ROOT)}:{i}")
-    assert not offenders, "仍有地方引用不存在的 /api/v1/openapi：\n" + "\n".join(offenders)
+    assert not offenders, "仍有地方引用不存在的 /api/v1/openapi：\n" + "\n".join(
+        offenders
+    )
 
 
 def test_testing_reviews_by_case_uses_real_endpoint() -> None:
@@ -272,9 +274,9 @@ def test_api_key_usage_phantom_endpoint_removed() -> None:
 
 def test_no_frontend_module_calls_unversioned_apikeys_usage(backend_paths) -> None:
     """反向兜底：除了上面删掉的，任何模块都不该再指向 ``/apikeys/{p}/usage``。"""
-    assert "/api/v1/apikeys/{p}/usage" not in backend_paths, (
-        "后端补上了 usage 端点 —— 请把 apikeys.ts 的调用与 settings/api.astro 面板改回来"
-    )
+    assert (
+        "/api/v1/apikeys/{p}/usage" not in backend_paths
+    ), "后端补上了 usage 端点 —— 请把 apikeys.ts 的调用与 settings/api.astro 面板改回来"
 
 
 # ---------------------------------------------------------------------------

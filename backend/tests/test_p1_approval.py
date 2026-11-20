@@ -10,9 +10,9 @@ P1 核心流程：
     引擎拦截危险工具 → 创建 ToolApproval（JSONB 快照）→ yield approval_required
     → 前端弹窗 → REST approve/reject → 会话级缓存生效
 """
+
 from __future__ import annotations
 
-import json
 import sys
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -32,9 +32,8 @@ if "celery_app" not in sys.modules:
     mock_celery_app.celery_app = MagicMock()
     sys.modules["celery_app"] = mock_celery_app
 
-from app.rag.tool_guard import DangerousToolGuard, GuardAction
+from app.rag.tool_guard import DangerousToolGuard
 from app.utils.sse import SSEEventType
-
 
 # ======================================================================
 # DangerousToolGuard 会话级控制测试
@@ -72,7 +71,10 @@ class TestSessionLevelGuard:
         # A 会话放行
         assert guard.check("document_create", session_id=session_a).allowed is True
         # B 会话仍需确认
-        assert guard.check("document_create", session_id=session_b).needs_confirmation is True
+        assert (
+            guard.check("document_create", session_id=session_b).needs_confirmation
+            is True
+        )
 
     def test_clear_session(self) -> None:
         """清理会话后确认失效。"""
@@ -85,7 +87,10 @@ class TestSessionLevelGuard:
         guard.clear_session(session_id)
         assert guard.is_session_confirmed(session_id, "document_create") is False
         # 清理后危险工具又被拦截
-        assert guard.check("document_create", session_id=session_id).needs_confirmation is True
+        assert (
+            guard.check("document_create", session_id=session_id).needs_confirmation
+            is True
+        )
 
     def test_global_confirm_applies_to_all_sessions(self) -> None:
         """向后兼容：全局确认（confirm）对所有会话生效。"""
@@ -189,7 +194,10 @@ class TestApprovalService:
 
         result = await service.approve(approval.id, user)
 
-        assert service.is_session_confirmed("test-approve-session", "document_create") is True
+        assert (
+            service.is_session_confirmed("test-approve-session", "document_create")
+            is True
+        )
 
     @pytest.mark.asyncio
     async def test_reject_does_not_confirm(self) -> None:
@@ -221,7 +229,10 @@ class TestApprovalService:
 
         await service.reject(approval.id, user)
 
-        assert service.is_session_confirmed("test-reject-session", "create_it_ticket") is False
+        assert (
+            service.is_session_confirmed("test-reject-session", "create_it_ticket")
+            is False
+        )
 
     @pytest.mark.asyncio
     async def test_get_pending_approvals(self) -> None:
@@ -426,7 +437,11 @@ class TestEngineApprovalEvent:
         engine.mcp.call_tool = AsyncMock(return_value='{"results": []}')
 
         state: dict[str, Any] = {"tool_results": [], "session_id": "safe-test"}
-        tool_use = {"name": "knowledge_search", "input": {"query": "test"}, "id": "tu-safe"}
+        tool_use = {
+            "name": "knowledge_search",
+            "input": {"query": "test"},
+            "id": "tu-safe",
+        }
 
         events = []
         async for event in engine._execute_tool_use(
@@ -452,7 +467,11 @@ class TestEngineApprovalEvent:
             "tool_results": [],
             "session_id": session_id,
         }
-        tool_use = {"name": "document_create", "input": {"title": "test"}, "id": "tu-confirmed"}
+        tool_use = {
+            "name": "document_create",
+            "input": {"title": "test"},
+            "id": "tu-confirmed",
+        }
 
         events = []
         async for event in engine._execute_tool_use(
@@ -488,16 +507,27 @@ class TestToolApprovalModel:
         # 检查关键列存在
         columns = {c.name for c in ToolApproval.__table__.columns}
         required = {
-            "id", "user_id", "session_id", "tenant_id",
-            "tool_name", "tool_use_id", "tool_arguments",
-            "reason", "irreversible", "agent_state_snapshot",
-            "status", "resolved_at", "resolved_by", "expire_at",
-            "created_at", "updated_at",
+            "id",
+            "user_id",
+            "session_id",
+            "tenant_id",
+            "tool_name",
+            "tool_use_id",
+            "tool_arguments",
+            "reason",
+            "irreversible",
+            "agent_state_snapshot",
+            "status",
+            "resolved_at",
+            "resolved_by",
+            "expire_at",
+            "created_at",
+            "updated_at",
         }
         assert required.issubset(columns), f"缺少字段: {required - columns}"
 
     def test_model_registered_in_metadata(self) -> None:
         """模型已注册到 Base.metadata。"""
-        from app.models import Base, ToolApproval
+        from app.models import Base
 
         assert "tool_approvals" in Base.metadata.tables

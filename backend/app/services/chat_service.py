@@ -26,11 +26,13 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.intent.router import IntentType
 from app.llm.base import LLMProvider
 from app.llm.factory import get_llm_provider
 from app.memory import MemoryContext, MemoryManager
 from app.memory.event_log import EventLogManager, event_log_scope
-from app.models.conversation import Conversation, Message as MessageModel
+from app.models.conversation import Conversation
+from app.models.conversation import Message as MessageModel
 from app.models.user import User
 from app.rag.factory import get_rag_engine, get_rag_engine_by_model
 from app.repositories.conversation_repository import (
@@ -39,7 +41,6 @@ from app.repositories.conversation_repository import (
 )
 from app.utils.logger import get_logger
 from app.utils.sse import SSEEvent, SSEEventType
-from app.intent.router import IntentType
 
 logger = get_logger(__name__)
 
@@ -74,6 +75,7 @@ class PreparedChat:
     # P0 wiki 层级：检索范围限定（来自 ChatRequest.scope），透传到
     # engine.answer(filters=scope) → retriever.search。None 表示不过滤。
     scope: dict[str, Any] | None = None
+
 
 # Agent 类型 → 系统提示词映射。
 # 开闭原则落点：新增 Agent 类型只需在此字典追加一项，chat 方法无需改动。
@@ -128,9 +130,7 @@ class ChatService:
         self.conv_repo: ConversationRepository = ConversationRepository(
             db, tenant_id=tenant_id
         )
-        self.msg_repo: MessageRepository = MessageRepository(
-            db, tenant_id=tenant_id
-        )
+        self.msg_repo: MessageRepository = MessageRepository(db, tenant_id=tenant_id)
         self.llm: LLMProvider = get_llm_provider()
         self.memory: MemoryManager = MemoryManager(db, tenant_id=self._tenant_id)
 
@@ -189,9 +189,7 @@ class ChatService:
                 raise PermissionError("无权访问该对话")
 
         # 2. 持久化用户消息
-        user_msg = await self.msg_repo.create_message(
-            conversation_id, "user", query
-        )
+        user_msg = await self.msg_repo.create_message(conversation_id, "user", query)
         # P0-1 记忆溯源：保存用户消息 ID，供记忆提取时绑定来源
         self._last_user_message_id = user_msg.id
 
@@ -226,14 +224,11 @@ class ChatService:
                     conversation_id, limit=_focus_window
                 )
                 history_dicts = [
-                    {"role": msg.role, "content": msg.content}
-                    for msg in focus_history
+                    {"role": msg.role, "content": msg.content} for msg in focus_history
                 ]
 
                 topic_tracker = self._get_topic_tracker()
                 if topic_tracker:
-                    from app.context.focus_tracker import ConversationFocus
-
                     focus = await topic_tracker.extract_focus(history_dicts)
                     if focus:
                         conversation_focus = focus.to_dict()
@@ -243,9 +238,14 @@ class ChatService:
                         drift_detector = self._get_drift_detector()
                         if drift_detector:
                             drift_result = await drift_detector.check(
-                                query, focus, history_dicts,
+                                query,
+                                focus,
+                                history_dicts,
                             )
-                            if drift_result.is_drift and drift_result.action == "reset_focus":
+                            if (
+                                drift_result.is_drift
+                                and drift_result.action == "reset_focus"
+                            ):
                                 # 漂移！重置焦点，重新提取
                                 topic_tracker.reset_focus()
                                 focus = await topic_tracker.extract_focus(history_dicts)
@@ -264,7 +264,8 @@ class ChatService:
                         if resolver:
                             focus_stack = topic_tracker.get_focus_history(n=3)
                             resolved_query = await resolver.resolve(
-                                query, focus,
+                                query,
+                                focus,
                                 history=history_dicts,
                                 focus_stack=focus_stack,
                             )
@@ -443,7 +444,9 @@ class ChatService:
 
             pref_result = PreferenceDriftResult(
                 has_preference_change=True,
-                preference_type=prepared.preference_overrides.get("preference_type", ""),
+                preference_type=prepared.preference_overrides.get(
+                    "preference_type", ""
+                ),
                 new_value=prepared.preference_overrides.get("new_value", ""),
             )
             modifier = pref_detector.get_system_prompt_modifier(pref_result)
@@ -534,10 +537,9 @@ class ChatService:
                 )
 
                 # 快捷路径 / 终态出口（拒识+澄清）— 均走快捷处理器
-                if (
-                    intent_result.use_shortcut
-                    or intent_result.intent
-                    in (IntentType.UNSUPPORTED, IntentType.UNCLEAR)
+                if intent_result.use_shortcut or intent_result.intent in (
+                    IntentType.UNSUPPORTED,
+                    IntentType.UNCLEAR,
                 ):
                     # 快捷路径 — 确定性检索 + 1 次 LLM 生成；
                     # 终态出口 — 拒识/澄清事件，直接返回
@@ -582,8 +584,11 @@ class ChatService:
                 from app.config import get_settings
 
                 contra_settings = get_settings()
-                if getattr(contra_settings, "CONTRADICTION_DETECTION_ENABLED", True) and \
-                   getattr(contra_settings, "CONTRADICTION_CHECK_USER_STATEMENTS", True):
+                if getattr(
+                    contra_settings, "CONTRADICTION_DETECTION_ENABLED", True
+                ) and getattr(
+                    contra_settings, "CONTRADICTION_CHECK_USER_STATEMENTS", True
+                ):
                     contra_detector = self._get_contradiction_detector()
                     if contra_detector:
                         # 加载历史用于矛盾检测
@@ -596,7 +601,8 @@ class ChatService:
                         ]
                         contra_task = asyncio.create_task(
                             contra_detector.check_user_contradiction(
-                                query, contra_history_dicts,
+                                query,
+                                contra_history_dicts,
                             )
                         )
             except Exception as exc:
@@ -612,7 +618,8 @@ class ChatService:
                     tenant_id=self._tenant_id,
                     null_tenant_reason=(
                         "chat_service.single_tenant_event_log"
-                        if self._tenant_id is None else None
+                        if self._tenant_id is None
+                        else None
                     ),
                 )
             ):
@@ -734,9 +741,7 @@ class ChatService:
             # 注意：asyncpg 不支持 SET LOCAL 的参数化绑定（$1 语法在 SET 中无效），
             # 与 database.py 同款写法 — tenant_id 强制 UUID 校验后可安全拼接。
             tenant_id = UUID(str(self._tenant_id))
-            await self.db.execute(
-                text(f"SET LOCAL app.tenant_id = '{tenant_id}'")
-            )
+            await self.db.execute(text(f"SET LOCAL app.tenant_id = '{tenant_id}'"))
 
         # 7. 持久化完整 AI 回复
         await self.msg_repo.create_message(
@@ -1014,31 +1019,46 @@ class ChatService:
 
     def _get_contradiction_detector(self):
         """懒初始化 ContradictionDetector — P4-B 矛盾检测。"""
-        if not hasattr(self, "_contradiction_detector") or self._contradiction_detector is None:
+        if (
+            not hasattr(self, "_contradiction_detector")
+            or self._contradiction_detector is None
+        ):
             self._contradiction_detector = None
             try:
                 from app.context.contradiction_detector import ContradictionDetector
 
                 self._contradiction_detector = ContradictionDetector(llm=self.llm)
             except Exception as exc:
-                logger.warning("chat.contradiction_detector_init_failed", error=str(exc))
+                logger.warning(
+                    "chat.contradiction_detector_init_failed", error=str(exc)
+                )
         return self._contradiction_detector
 
     def _get_preference_drift_detector(self):
         """懒初始化 PreferenceDriftDetector — P4-F 偏好偏移检测。"""
-        if not hasattr(self, "_preference_drift_detector") or self._preference_drift_detector is None:
+        if (
+            not hasattr(self, "_preference_drift_detector")
+            or self._preference_drift_detector is None
+        ):
             self._preference_drift_detector = None
             try:
-                from app.context.preference_drift_detector import PreferenceDriftDetector
+                from app.context.preference_drift_detector import (
+                    PreferenceDriftDetector,
+                )
 
                 self._preference_drift_detector = PreferenceDriftDetector()
             except Exception as exc:
-                logger.warning("chat.preference_drift_detector_init_failed", error=str(exc))
+                logger.warning(
+                    "chat.preference_drift_detector_init_failed", error=str(exc)
+                )
         return self._preference_drift_detector
 
     def _get_repetition_detector(self):
         """懒初始化 RepetitionDetector — P4-G 重复提问检测。"""
-        if not hasattr(self, "_repetition_detector") or self._repetition_detector is None:
+        if (
+            not hasattr(self, "_repetition_detector")
+            or self._repetition_detector is None
+        ):
             self._repetition_detector = None
             try:
                 from app.context.repetition_detector import RepetitionDetector
@@ -1110,13 +1130,9 @@ class ChatService:
                 # 回填热层（含当前用户消息，TTL 内后续轮次直读 Redis）
                 await short_term_cache.replace(
                     conversation_id,
-                    [
-                        {"role": msg.role, "content": msg.content}
-                        for msg in history
-                    ],
+                    [{"role": msg.role, "content": msg.content} for msg in history],
                 )
         if history_dicts:
-
             # P3-C: 滚动摘要压缩 — 旧历史超阈值时压缩为摘要 + 保留近期原文
             try:
                 from app.config import get_settings
@@ -1141,7 +1157,8 @@ class ChatService:
                         retained_tokens=_settings.CONVERSATION_SUMMARIZER_RETAINED_TOKENS,
                     )
                     summary, recent_msgs = await summarizer.summarize_if_needed(
-                        history_dicts, existing_summary=existing_summary,
+                        history_dicts,
+                        existing_summary=existing_summary,
                     )
                     # 摘要非空时注入，recent_msgs 替换 history_dicts
                     if summary and summary != existing_summary:
@@ -1199,7 +1216,9 @@ class ChatService:
                 history_lines: list[str] = []
                 for msg_dict in history_dicts:
                     role_label = "用户" if msg_dict.get("role") == "user" else "助手"
-                    history_lines.append(f"[{role_label}] {msg_dict.get('content', '')}")
+                    history_lines.append(
+                        f"[{role_label}] {msg_dict.get('content', '')}"
+                    )
                 if history_lines:
                     parts.append("对话历史：\n" + "\n".join(history_lines))
 
@@ -1246,7 +1265,9 @@ class ChatService:
             from app.context.detail_recall import DetailRecall
 
             recall = DetailRecall(mem0=self.memory.mem0, limit=limit)
-            recalled = await recall.recall(user_id=self.user.id, query=query, limit=limit)
+            recalled = await recall.recall(
+                user_id=self.user.id, query=query, limit=limit
+            )
         except Exception as exc:
             logger.warning("chat.detail_recall_failed", error=str(exc))
             return []

@@ -38,9 +38,7 @@ async def acquire_rebuild_lock(
 
     redis = aioredis.from_url(get_settings().REDIS_URL, decode_responses=True)
     try:
-        acquired = await redis.set(
-            rebuild_lock_key(scope), task_id, nx=True, ex=ttl
-        )
+        acquired = await redis.set(rebuild_lock_key(scope), task_id, nx=True, ex=ttl)
         if acquired:
             return True, None
         existing = await redis.get(rebuild_lock_key(scope))
@@ -54,9 +52,7 @@ async def release_rebuild_lock(scope: str) -> None:
     try:
         import redis.asyncio as aioredis
 
-        redis = aioredis.from_url(
-            get_settings().REDIS_URL, decode_responses=True
-        )
+        redis = aioredis.from_url(get_settings().REDIS_URL, decode_responses=True)
         try:
             await redis.delete(rebuild_lock_key(scope))
         finally:

@@ -12,8 +12,7 @@ P1-B 增量更新 + 幂等写入测试。
 from __future__ import annotations
 
 import asyncio
-import os
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -23,7 +22,6 @@ from app.utils.task_lock import (
     acquire_task_lock,
     release_task_lock,
 )
-
 
 # ======================================================================
 # TaskLock 数据类测试
@@ -151,8 +149,14 @@ class TestTaskLockContext:
     async def test_context_manager_exit_releases_lock(self):
         """退出时自动释放锁。"""
         lock = TaskLock(key="test", value="abc", acquired=True, ttl=30)
-        with patch("app.utils.task_lock.acquire_task_lock", new_callable=AsyncMock) as mock_acquire, \
-             patch("app.utils.task_lock.release_task_lock", new_callable=AsyncMock) as mock_release:
+        with (
+            patch(
+                "app.utils.task_lock.acquire_task_lock", new_callable=AsyncMock
+            ) as mock_acquire,
+            patch(
+                "app.utils.task_lock.release_task_lock", new_callable=AsyncMock
+            ) as mock_release,
+        ):
             mock_acquire.return_value = lock
             mock_release.return_value = True
             async with TaskLockContext("test_task", "doc-123"):
@@ -509,14 +513,13 @@ class TestProcessDocumentLockCoverage:
         assert result["status"] == "failed"
         assert body_entered["v"] is True
         # 主体确实执行（queued 进度已写入）
-        assert any(
-            k.get("stage") == "queued" for _a, k in mod._test_progress_calls
-        )
+        assert any(k.get("stage") == "queued" for _a, k in mod._test_progress_calls)
         # 任务结束后锁被释放（finally）
         assert fake_lock.instances[0].exited == 1
 
     def test_lock_released_on_retryable_exception(self, mod, fake_lock, monkeypatch):
         """主体抛异常走重试路径时，锁同样被释放（不泄漏）。"""
+
         async def _boom(doc_id):
             raise RuntimeError("parse exploded")
 
@@ -527,7 +530,9 @@ class TestProcessDocumentLockCoverage:
 
         assert fake_lock.instances[0].exited == 1
 
-    def test_lock_acquire_failure_degrades_to_lockless(self, mod, fake_lock, monkeypatch):
+    def test_lock_acquire_failure_degrades_to_lockless(
+        self, mod, fake_lock, monkeypatch
+    ):
         """Redis 不可用（获取锁异常）时降级为无锁模式，任务继续执行。"""
         fake_lock.acquire_error = ConnectionError("redis down")
 

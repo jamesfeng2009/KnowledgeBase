@@ -59,6 +59,7 @@ class TestConversationSummarizerCompress:
     @pytest.mark.asyncio
     async def test_llm_compress_success(self):
         """LLM 压缩成功。"""
+
         class MockLLM:
             async def chat(self, messages, stream=True, max_tokens=300):
                 yield "用户讨论了北京天气和限号政策。"
@@ -80,6 +81,7 @@ class TestConversationSummarizerCompress:
     @pytest.mark.asyncio
     async def test_llm_compress_with_existing_summary(self):
         """增量摘要合并。"""
+
         class MockLLM:
             async def chat(self, messages, stream=True, max_tokens=300):
                 # 检查 prompt 中包含旧摘要
@@ -94,10 +96,7 @@ class TestConversationSummarizerCompress:
             max_tokens=10,
             retained_tokens=5,
         )
-        history = [
-            {"role": "user", "content": f"消息{i}".ljust(50)}
-            for i in range(10)
-        ]
+        history = [{"role": "user", "content": f"消息{i}".ljust(50)} for i in range(10)]
         summary, recent = await summarizer.summarize_if_needed(
             history, existing_summary="旧摘要：天气"
         )
@@ -106,6 +105,7 @@ class TestConversationSummarizerCompress:
     @pytest.mark.asyncio
     async def test_llm_compress_exception(self):
         """LLM 异常 → 降级为截断。"""
+
         class MockLLM:
             async def chat(self, messages, stream=True, max_tokens=300):
                 raise RuntimeError("API error")
@@ -116,10 +116,7 @@ class TestConversationSummarizerCompress:
             max_tokens=10,
             retained_tokens=5,
         )
-        history = [
-            {"role": "user", "content": f"消息{i}".ljust(50)}
-            for i in range(10)
-        ]
+        history = [{"role": "user", "content": f"消息{i}".ljust(50)} for i in range(10)]
         summary, recent = await summarizer.summarize_if_needed(history)
         # 降级：旧摘要 + 第一条消息截断
         assert len(summary) > 0
@@ -133,10 +130,7 @@ class TestConversationSummarizerCompress:
             max_tokens=10,
             retained_tokens=5,
         )
-        history = [
-            {"role": "user", "content": f"消息{i}".ljust(50)}
-            for i in range(10)
-        ]
+        history = [{"role": "user", "content": f"消息{i}".ljust(50)} for i in range(10)]
         summary, recent = await summarizer.summarize_if_needed(
             history, existing_summary="旧摘要"
         )

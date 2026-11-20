@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import sys
 from datetime import datetime, timezone
@@ -42,8 +41,9 @@ from app.services.health_check import (
     HealthCheckService,
     ProviderHealth,
 )
-from app.utils.circuit_breaker import CircuitState, _breakers, reset_all_circuit_breakers
-
+from app.utils.circuit_breaker import (
+    reset_all_circuit_breakers,
+)
 
 # ======================================================================
 # ProviderHealth 模型测试
@@ -165,11 +165,12 @@ class TestHealthCheckService:
         service = HealthCheckService()
 
         # Mock get_all_provider_entries 返回空列表 — 结果为空字典
-        with patch(
-            "app.services.health_check.get_all_provider_entries",
-            return_value=[],
-        ), patch.object(
-            service, "_save_to_redis", new_callable=AsyncMock
+        with (
+            patch(
+                "app.services.health_check.get_all_provider_entries",
+                return_value=[],
+            ),
+            patch.object(service, "_save_to_redis", new_callable=AsyncMock),
         ):
             results = await service.check_all()
             assert isinstance(results, dict)
@@ -186,16 +187,18 @@ class TestHealthCheckService:
             factory=mock_factory,
         )
 
-        with patch(
-            "app.services.health_check.get_all_provider_entries",
-            return_value=[mock_entry],
-        ), patch.object(
-            service, "_save_to_redis", new_callable=AsyncMock
-        ), patch.object(
-            service,
-            "_do_lightweight_check",
-            new_callable=AsyncMock,
-            return_value=None,
+        with (
+            patch(
+                "app.services.health_check.get_all_provider_entries",
+                return_value=[mock_entry],
+            ),
+            patch.object(service, "_save_to_redis", new_callable=AsyncMock),
+            patch.object(
+                service,
+                "_do_lightweight_check",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
         ):
             results = await service.check_all()
             assert "embedder_openai" in results
@@ -215,16 +218,18 @@ class TestHealthCheckService:
             factory=mock_factory,
         )
 
-        with patch(
-            "app.services.health_check.get_all_provider_entries",
-            return_value=[mock_entry],
-        ), patch.object(
-            service, "_save_to_redis", new_callable=AsyncMock
-        ), patch.object(
-            service,
-            "_do_lightweight_check",
-            new_callable=AsyncMock,
-            side_effect=ConnectionError("API unreachable"),
+        with (
+            patch(
+                "app.services.health_check.get_all_provider_entries",
+                return_value=[mock_entry],
+            ),
+            patch.object(service, "_save_to_redis", new_callable=AsyncMock),
+            patch.object(
+                service,
+                "_do_lightweight_check",
+                new_callable=AsyncMock,
+                side_effect=ConnectionError("API unreachable"),
+            ),
         ):
             results = await service.check_all()
             assert results["embedder_openai"].healthy is False
@@ -234,12 +239,15 @@ class TestHealthCheckService:
         """check_all 结束后调用 _save_to_redis。"""
         service = HealthCheckService()
 
-        with patch(
-            "app.services.health_check.get_all_provider_entries",
-            return_value=[],
-        ), patch.object(
-            service, "_save_to_redis", new_callable=AsyncMock
-        ) as mock_save:
+        with (
+            patch(
+                "app.services.health_check.get_all_provider_entries",
+                return_value=[],
+            ),
+            patch.object(
+                service, "_save_to_redis", new_callable=AsyncMock
+            ) as mock_save,
+        ):
             await service.check_all()
             mock_save.assert_called_once()
 
@@ -301,7 +309,9 @@ class TestLightweightCheck:
         mock_provider = MagicMock()
         mock_provider.embed = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
 
-        entry = ProviderMeta("openai", "embedder", "embedder_openai", lambda: mock_provider)
+        entry = ProviderMeta(
+            "openai", "embedder", "embedder_openai", lambda: mock_provider
+        )
         await service._do_lightweight_check(entry, mock_provider)
         mock_provider.embed.assert_called_once_with(["health_check"])
 
@@ -311,7 +321,9 @@ class TestLightweightCheck:
         mock_provider = MagicMock()
         mock_provider.embed = AsyncMock(return_value=[])
 
-        entry = ProviderMeta("openai", "embedder", "embedder_openai", lambda: mock_provider)
+        entry = ProviderMeta(
+            "openai", "embedder", "embedder_openai", lambda: mock_provider
+        )
         with pytest.raises(ValueError, match="empty embedding"):
             await service._do_lightweight_check(entry, mock_provider)
 
@@ -321,7 +333,9 @@ class TestLightweightCheck:
         mock_provider = MagicMock()
         mock_provider.embed = AsyncMock(return_value=[[]])
 
-        entry = ProviderMeta("openai", "embedder", "embedder_openai", lambda: mock_provider)
+        entry = ProviderMeta(
+            "openai", "embedder", "embedder_openai", lambda: mock_provider
+        )
         with pytest.raises(ValueError, match="empty embedding"):
             await service._do_lightweight_check(entry, mock_provider)
 
@@ -331,7 +345,9 @@ class TestLightweightCheck:
         mock_provider = MagicMock()
         mock_provider.rerank = AsyncMock(return_value=[{"index": 0, "score": 0.9}])
 
-        entry = ProviderMeta("cohere", "reranker", "reranker_cohere", lambda: mock_provider)
+        entry = ProviderMeta(
+            "cohere", "reranker", "reranker_cohere", lambda: mock_provider
+        )
         await service._do_lightweight_check(entry, mock_provider)
         mock_provider.rerank.assert_called_once()
 
@@ -341,7 +357,9 @@ class TestLightweightCheck:
         mock_provider = MagicMock()
         mock_provider.health_check = AsyncMock(return_value=True)
 
-        entry = ProviderMeta("opensearch", "vectorstore", "vectorstore_opensearch", lambda: mock_provider)
+        entry = ProviderMeta(
+            "opensearch", "vectorstore", "vectorstore_opensearch", lambda: mock_provider
+        )
         await service._do_lightweight_check(entry, mock_provider)
         mock_provider.health_check.assert_called_once()
 
@@ -351,7 +369,9 @@ class TestLightweightCheck:
         mock_provider = MagicMock()
         mock_provider.health_check = AsyncMock(return_value=False)
 
-        entry = ProviderMeta("opensearch", "vectorstore", "vectorstore_opensearch", lambda: mock_provider)
+        entry = ProviderMeta(
+            "opensearch", "vectorstore", "vectorstore_opensearch", lambda: mock_provider
+        )
         with pytest.raises(ValueError, match="health_check returned False"):
             await service._do_lightweight_check(entry, mock_provider)
 
@@ -534,21 +554,25 @@ class TestHealthCheckTaskIdempotency:
 
     async def test_task_runs_when_lock_acquired(self):
         """锁获取成功时正常执行健康检查。"""
-        from app.utils.task_lock import TaskLock, TaskLockContext
+        from app.utils.task_lock import TaskLock
 
         lock = TaskLock(key="test", value="abc", acquired=True, ttl=60)
 
-        with patch(
-            "app.utils.task_lock.acquire_task_lock",
-            new_callable=AsyncMock,
-            return_value=lock,
-        ), patch(
-            "app.utils.task_lock.release_task_lock",
-            new_callable=AsyncMock,
-        ), patch(
-            "app.services.health_check.HealthCheckService.check_all",
-            new_callable=AsyncMock,
-            return_value={},
+        with (
+            patch(
+                "app.utils.task_lock.acquire_task_lock",
+                new_callable=AsyncMock,
+                return_value=lock,
+            ),
+            patch(
+                "app.utils.task_lock.release_task_lock",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "app.services.health_check.HealthCheckService.check_all",
+                new_callable=AsyncMock,
+                return_value={},
+            ),
         ):
             from tasks.health_tasks import _run_health_check
 
@@ -561,17 +585,21 @@ class TestHealthCheckTaskIdempotency:
 
         lock = TaskLock(key="test", value="abc", acquired=False, ttl=60)
 
-        with patch(
-            "app.utils.task_lock.acquire_task_lock",
-            new_callable=AsyncMock,
-            return_value=lock,
-        ), patch(
-            "app.utils.task_lock.release_task_lock",
-            new_callable=AsyncMock,
-        ), patch(
-            "app.services.health_check.HealthCheckService.check_all",
-            new_callable=AsyncMock,
-        ) as mock_check:
+        with (
+            patch(
+                "app.utils.task_lock.acquire_task_lock",
+                new_callable=AsyncMock,
+                return_value=lock,
+            ),
+            patch(
+                "app.utils.task_lock.release_task_lock",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "app.services.health_check.HealthCheckService.check_all",
+                new_callable=AsyncMock,
+            ) as mock_check,
+        ):
             from tasks.health_tasks import _run_health_check
 
             result = await _run_health_check()
@@ -585,7 +613,12 @@ class TestHealthCheckTaskIdempotency:
 
         # Mock asyncio.run 和内部逻辑
         with patch("tasks.health_tasks.asyncio.run") as mock_run:
-            mock_run.return_value = {"status": "completed", "total": 0, "healthy": 0, "unhealthy": 0}
+            mock_run.return_value = {
+                "status": "completed",
+                "total": 0,
+                "healthy": 0,
+                "unhealthy": 0,
+            }
             result = health_check_all_providers()
             assert isinstance(result, dict)
             assert "status" in result
@@ -594,7 +627,9 @@ class TestHealthCheckTaskIdempotency:
         """Celery 入口函数捕获异常返回 error 状态。"""
         from tasks.health_tasks import health_check_all_providers
 
-        with patch("tasks.health_tasks.asyncio.run", side_effect=RuntimeError("unexpected")):
+        with patch(
+            "tasks.health_tasks.asyncio.run", side_effect=RuntimeError("unexpected")
+        ):
             result = health_check_all_providers()
             assert result["status"] == "error"
             assert "unexpected" in result["error"]
@@ -613,8 +648,9 @@ class TestHealthProvidersAPI:
 
     async def test_api_returns_cache_hit(self):
         """缓存命中时返回 source=cache。"""
-        from app.main import app
         from httpx import ASGITransport, AsyncClient
+
+        from app.main import app
 
         cached = {
             "embedder_openai": ProviderHealth(
@@ -633,7 +669,9 @@ class TestHealthProvidersAPI:
             return_value=cached,
         ):
             transport = ASGITransport(app=app)
-            async with AsyncClient(transport=transport, base_url="http://test") as client:
+            async with AsyncClient(
+                transport=transport, base_url="http://test"
+            ) as client:
                 resp = await client.get("/health/providers")
                 assert resp.status_code == 200
                 data = resp.json()
@@ -644,8 +682,9 @@ class TestHealthProvidersAPI:
 
     async def test_api_returns_fresh_on_cache_miss(self):
         """缓存未命中时返回 source=fresh。"""
-        from app.main import app
         from httpx import ASGITransport, AsyncClient
+
+        from app.main import app
 
         fresh = {
             "vllm": ProviderHealth(
@@ -658,17 +697,22 @@ class TestHealthProvidersAPI:
             )
         }
 
-        with patch(
-            "app.services.health_check.HealthCheckService.load_from_redis",
-            new_callable=AsyncMock,
-            return_value=None,
-        ), patch(
-            "app.services.health_check.HealthCheckService.check_all",
-            new_callable=AsyncMock,
-            return_value=fresh,
+        with (
+            patch(
+                "app.services.health_check.HealthCheckService.load_from_redis",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "app.services.health_check.HealthCheckService.check_all",
+                new_callable=AsyncMock,
+                return_value=fresh,
+            ),
         ):
             transport = ASGITransport(app=app)
-            async with AsyncClient(transport=transport, base_url="http://test") as client:
+            async with AsyncClient(
+                transport=transport, base_url="http://test"
+            ) as client:
                 resp = await client.get("/health/providers")
                 assert resp.status_code == 200
                 data = resp.json()
@@ -677,8 +721,9 @@ class TestHealthProvidersAPI:
 
     async def test_api_is_idempotent(self):
         """连续两次调用返回一致结果（幂等性）。"""
-        from app.main import app
         from httpx import ASGITransport, AsyncClient
+
+        from app.main import app
 
         cached = {
             "vllm": ProviderHealth(
@@ -696,7 +741,9 @@ class TestHealthProvidersAPI:
             return_value=cached,
         ):
             transport = ASGITransport(app=app)
-            async with AsyncClient(transport=transport, base_url="http://test") as client:
+            async with AsyncClient(
+                transport=transport, base_url="http://test"
+            ) as client:
                 resp1 = await client.get("/health/providers")
                 resp2 = await client.get("/health/providers")
                 assert resp1.json() == resp2.json()

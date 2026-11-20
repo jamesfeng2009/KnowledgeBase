@@ -5,6 +5,7 @@
 - QAAgent / WorkflowAgent / ActionAgent 初始化属性正确；
 - BaseAgent.run 流式输出 SSE 事件（agent_start → token → done）。
 """
+
 from __future__ import annotations
 
 import json
@@ -15,12 +16,11 @@ from uuid import uuid4
 
 import pytest
 
-from app.agents.base import AgentState, BaseAgent
-from app.agents.registry import AgentRegistry
 from app.agents.action_agent import ActionAgent
+from app.agents.base import AgentState, BaseAgent
 from app.agents.qa_agent import QAAgent
+from app.agents.registry import AgentRegistry
 from app.agents.workflow_agent import WorkflowAgent
-
 
 # ======================================================================
 # Mock 实现

@@ -31,13 +31,10 @@ class DocumentCommentRepository(BaseRepository[DocumentComment]):
         只返回 parent_id IS NULL 的评论（即直接评论，非回复）。
         子回复通过 get_replies(comment_id) 单独获取，支持懒加载。
         """
-        stmt = (
-            select(DocumentComment)
-            .where(
-                DocumentComment.doc_id == doc_id,
-                DocumentComment.parent_id.is_(None),
-                DocumentComment.deleted_at.is_(None),
-            )
+        stmt = select(DocumentComment).where(
+            DocumentComment.doc_id == doc_id,
+            DocumentComment.parent_id.is_(None),
+            DocumentComment.deleted_at.is_(None),
         )
         stmt = self._apply_all_filters(stmt)
         stmt = stmt.order_by(DocumentComment.created_at.asc())
@@ -50,12 +47,9 @@ class DocumentCommentRepository(BaseRepository[DocumentComment]):
         返回 parent_id = comment_id 的评论列表，按时间正序排列。
         若需获取多层嵌套回复，调用方可递归调用此方法。
         """
-        stmt = (
-            select(DocumentComment)
-            .where(
-                DocumentComment.parent_id == comment_id,
-                DocumentComment.deleted_at.is_(None),
-            )
+        stmt = select(DocumentComment).where(
+            DocumentComment.parent_id == comment_id,
+            DocumentComment.deleted_at.is_(None),
         )
         stmt = self._apply_all_filters(stmt)
         stmt = stmt.order_by(DocumentComment.created_at.asc())

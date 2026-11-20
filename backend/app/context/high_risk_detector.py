@@ -144,9 +144,24 @@ class HighRiskDetector:
 
     #: 法律条款关键词
     _LEGAL_TERMS: set[str] = {
-        "合同", "协议", "条款", "法律", "法规", "权利", "义务",
-        "违约", "赔偿", "解除", "终止", "生效", "失效",
-        "甲方", "乙方", "知识产权", "保密", "竞业",
+        "合同",
+        "协议",
+        "条款",
+        "法律",
+        "法规",
+        "权利",
+        "义务",
+        "违约",
+        "赔偿",
+        "解除",
+        "终止",
+        "生效",
+        "失效",
+        "甲方",
+        "乙方",
+        "知识产权",
+        "保密",
+        "竞业",
     }
 
     #: P1-8 三档分级阈值（金额偏差幅度，相对来源值的比例）
@@ -174,21 +189,25 @@ class HighRiskDetector:
 
         # 检测金额
         for match in self._AMOUNT_PATTERN.finditer(text):
-            items.append(HighRiskItem(
-                type="amount",
-                value=match.group(0),
-                start=match.start(),
-                end=match.end(),
-            ))
+            items.append(
+                HighRiskItem(
+                    type="amount",
+                    value=match.group(0),
+                    start=match.start(),
+                    end=match.end(),
+                )
+            )
 
         # 检测日期
         for match in self._DATE_PATTERN.finditer(text):
-            items.append(HighRiskItem(
-                type="date",
-                value=match.group(0),
-                start=match.start(),
-                end=match.end(),
-            ))
+            items.append(
+                HighRiskItem(
+                    type="date",
+                    value=match.group(0),
+                    start=match.start(),
+                    end=match.end(),
+                )
+            )
 
         # 检测法律条款关键词
         for term in self._LEGAL_TERMS:
@@ -197,12 +216,14 @@ class HighRiskDetector:
                 idx = text.find(term, start)
                 if idx == -1:
                     break
-                items.append(HighRiskItem(
-                    type="legal_term",
-                    value=term,
-                    start=idx,
-                    end=idx + len(term),
-                ))
+                items.append(
+                    HighRiskItem(
+                        type="legal_term",
+                        value=term,
+                        start=idx,
+                        end=idx + len(term),
+                    )
+                )
                 start = idx + len(term)
 
         log.debug(
@@ -300,7 +321,9 @@ class HighRiskDetector:
             ratio=round(unverified_ratio, 2),
             action=action,
             unverified_types=list({item.type for item in unverified}),
-            risk_levels={lv: sum(1 for i in unverified if i.risk_level == lv) for lv in levels},
+            risk_levels={
+                lv: sum(1 for i in unverified if i.risk_level == lv) for lv in levels
+            },
         )
 
         return HighRiskResult(
@@ -336,9 +359,7 @@ class HighRiskDetector:
                         for match in HighRiskDetector._AMOUNT_PATTERN.finditer(
                             source_text
                         ):
-                            src_amount = HighRiskDetector._parse_amount(
-                                match.group(0)
-                            )
+                            src_amount = HighRiskDetector._parse_amount(match.group(0))
                             if (
                                 src_amount is not None
                                 and src_amount[1] == item_amount[1]
@@ -389,9 +410,11 @@ class HighRiskDetector:
             return "high", None
 
         # 取相对偏差最小的来源值（偏差 = |答案值 - 来源值| / 来源值）
-        deviation = min(
-            abs(answer_value - src) / src for src in source_values if src > 0
-        ) if any(src > 0 for src in source_values) else 1.0
+        deviation = (
+            min(abs(answer_value - src) / src for src in source_values if src > 0)
+            if any(src > 0 for src in source_values)
+            else 1.0
+        )
 
         if deviation < cls._DEVIATION_LOW:
             return "low", deviation

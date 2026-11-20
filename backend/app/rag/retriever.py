@@ -221,10 +221,16 @@ class HybridRetriever:
         若未来某路子方法重构后逃逸异常，单路降级为空列表而非拖垮整体检索。
         """
         if isinstance(result, BaseException):
-            log.warning("retriever.gather_path_failed", source=source, error=str(result))
+            log.warning(
+                "retriever.gather_path_failed", source=source, error=str(result)
+            )
             return []
         if not isinstance(result, list):
-            log.warning("retriever.gather_path_bad_type", source=source, type=type(result).__name__)
+            log.warning(
+                "retriever.gather_path_bad_type",
+                source=source,
+                type=type(result).__name__,
+            )
             return []
         return result
 
@@ -378,7 +384,17 @@ class HybridRetriever:
         payload: dict[str, Any] = {
             "size": top_k,
             "query": query_clause,
-            "_source": ["doc_id", "chunk_id", "content", "title_path", "kb_id", "content_type", "parent_id", "chunk_type", "asset_ref"],
+            "_source": [
+                "doc_id",
+                "chunk_id",
+                "content",
+                "title_path",
+                "kb_id",
+                "content_type",
+                "parent_id",
+                "chunk_type",
+                "asset_ref",
+            ],
         }
 
         try:
@@ -413,8 +429,12 @@ class HybridRetriever:
             results.append(
                 {
                     "doc_id": str(source.get("doc_id") or hit.get("_id") or ""),
-                    "chunk_id": str(source.get("chunk_id") or hit.get("_id") or uuid.uuid4()),
-                    "content": str(source.get("content") or source.get("chunk_text") or ""),
+                    "chunk_id": str(
+                        source.get("chunk_id") or hit.get("_id") or uuid.uuid4()
+                    ),
+                    "content": str(
+                        source.get("content") or source.get("chunk_text") or ""
+                    ),
                     "score": score,
                     "source": "fulltext",
                     "kb_id": str(source.get("kb_id") or "") or None,
@@ -496,22 +516,24 @@ class HybridRetriever:
             if kb_id_set is not None and doc.get("kb_id") not in kb_id_set:
                 continue
 
-            results.append({
-                "doc_id": doc_id,
-                "chunk_id": doc.get("chunk_id") or f"graph_{doc_id}",
-                "content": doc.get("chunk_text") or doc.get("title", ""),
-                # 按跳数衰减评分（图检索标准做法）：直接提及（0 跳）置信度最高，
-                # 随跳数递减，下限为 GRAPH_SEARCH_SCORE。原固定 0.5 使实体直连
-                # 文档在混合排序中被向量路归一化分数系统性压出 Top5。
-                "score": max(
-                    settings.GRAPH_SEARCH_SCORE,
-                    0.9 - 0.2 * int(doc.get("hops", 2)),
-                ),
-                "source": "graph",
-                "kb_id": doc.get("kb_id"),
-                "title": doc.get("title", ""),
-                "title_path": doc.get("title_path") or "",
-            })
+            results.append(
+                {
+                    "doc_id": doc_id,
+                    "chunk_id": doc.get("chunk_id") or f"graph_{doc_id}",
+                    "content": doc.get("chunk_text") or doc.get("title", ""),
+                    # 按跳数衰减评分（图检索标准做法）：直接提及（0 跳）置信度最高，
+                    # 随跳数递减，下限为 GRAPH_SEARCH_SCORE。原固定 0.5 使实体直连
+                    # 文档在混合排序中被向量路归一化分数系统性压出 Top5。
+                    "score": max(
+                        settings.GRAPH_SEARCH_SCORE,
+                        0.9 - 0.2 * int(doc.get("hops", 2)),
+                    ),
+                    "source": "graph",
+                    "kb_id": doc.get("kb_id"),
+                    "title": doc.get("title", ""),
+                    "title_path": doc.get("title_path") or "",
+                }
+            )
             if len(results) >= top_k:
                 break
 
@@ -610,8 +632,7 @@ class HybridRetriever:
         parent_ids: set[str] = {
             doc["parent_id"]
             for doc in results
-            if doc.get("parent_id")
-            and doc.get("chunk_type") not in ("image", "table")
+            if doc.get("parent_id") and doc.get("chunk_type") not in ("image", "table")
         }
 
         if not parent_ids:

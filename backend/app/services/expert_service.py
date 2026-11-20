@@ -79,17 +79,14 @@ class ExpertService:
         kw = f"%{keyword.strip()}%"
 
         # 1. 文档作者统计（权重 40%）
-        doc_stmt = (
-            select(
-                Document.owner_id,
-                func.count(Document.id).label("doc_count"),
-            )
-            .where(
-                and_(
-                    Document.deleted_at.is_(None),
-                    Document.owner_id.isnot(None),
-                    Document.title.ilike(kw),
-                )
+        doc_stmt = select(
+            Document.owner_id,
+            func.count(Document.id).label("doc_count"),
+        ).where(
+            and_(
+                Document.deleted_at.is_(None),
+                Document.owner_id.isnot(None),
+                Document.title.ilike(kw),
             )
         )
         doc_stmt = apply_tenant_filter(doc_stmt, Document, self._tenant_id)
@@ -101,17 +98,14 @@ class ExpertService:
                 doc_scores[str(r.owner_id)] = r.doc_count * WEIGHT_DOC
 
         # 2. 问答回答统计（权重 30%，采纳回答额外加权）
-        answer_stmt = (
-            select(
-                QaAnswer.user_id,
-                func.count(QaAnswer.id).label("answer_count"),
-                func.sum(cast(QaAnswer.is_accepted, Integer)).label("accepted_count"),
-            )
-            .where(
-                and_(
-                    QaAnswer.deleted_at.is_(None),
-                    QaAnswer.content.ilike(kw),
-                )
+        answer_stmt = select(
+            QaAnswer.user_id,
+            func.count(QaAnswer.id).label("answer_count"),
+            func.sum(cast(QaAnswer.is_accepted, Integer)).label("accepted_count"),
+        ).where(
+            and_(
+                QaAnswer.deleted_at.is_(None),
+                QaAnswer.content.ilike(kw),
             )
         )
         answer_stmt = apply_tenant_filter(answer_stmt, QaAnswer, self._tenant_id)
@@ -124,19 +118,18 @@ class ExpertService:
                 answer_scores[str(r.user_id)] = score * WEIGHT_ANSWER / 0.3
 
         # 3. 评论统计（权重 15%）
-        comment_stmt = (
-            select(
-                DocumentComment.user_id,
-                func.count(DocumentComment.id).label("comment_count"),
-            )
-            .where(
-                and_(
-                    DocumentComment.deleted_at.is_(None),
-                    DocumentComment.content.ilike(kw),
-                )
+        comment_stmt = select(
+            DocumentComment.user_id,
+            func.count(DocumentComment.id).label("comment_count"),
+        ).where(
+            and_(
+                DocumentComment.deleted_at.is_(None),
+                DocumentComment.content.ilike(kw),
             )
         )
-        comment_stmt = apply_tenant_filter(comment_stmt, DocumentComment, self._tenant_id)
+        comment_stmt = apply_tenant_filter(
+            comment_stmt, DocumentComment, self._tenant_id
+        )
         comment_stmt = comment_stmt.group_by(DocumentComment.user_id)
         comment_result = await self.db.execute(comment_stmt)
         comment_scores: dict[str, float] = {}
@@ -167,13 +160,15 @@ class ExpertService:
                 continue
             user = await self._get_user_info(user_uid)
             if user:
-                experts.append({
-                    "user_id": item["user_id"],
-                    "name": user.name,
-                    "email": user.email,
-                    "department": user.dept_id,
-                    "score": item["score"],
-                })
+                experts.append(
+                    {
+                        "user_id": item["user_id"],
+                        "name": user.name,
+                        "email": user.email,
+                        "department": user.dept_id,
+                        "score": item["score"],
+                    }
+                )
             if len(experts) >= top_k:
                 break
 
@@ -200,13 +195,10 @@ class ExpertService:
         except (ValueError, TypeError):
             return []
 
-        stmt = (
-            select(Document.title, Document.category)
-            .where(
-                and_(
-                    Document.owner_id == user_uid,
-                    Document.deleted_at.is_(None),
-                )
+        stmt = select(Document.title, Document.category).where(
+            and_(
+                Document.owner_id == user_uid,
+                Document.deleted_at.is_(None),
             )
         )
         stmt = apply_tenant_filter(stmt, Document, self._tenant_id)
@@ -254,15 +246,12 @@ class ExpertService:
         since = datetime.utcnow() - timedelta(days=days)
 
         # 1. 文档作者统计
-        doc_stmt = (
-            select(
-                Document.owner_id,
-                func.count(Document.id).label("doc_count"),
-            )
-            .where(
-                Document.deleted_at.is_(None),
-                Document.created_at >= since,
-            )
+        doc_stmt = select(
+            Document.owner_id,
+            func.count(Document.id).label("doc_count"),
+        ).where(
+            Document.deleted_at.is_(None),
+            Document.created_at >= since,
         )
         doc_stmt = apply_tenant_filter(doc_stmt, Document, self._tenant_id)
         doc_stmt = doc_stmt.group_by(Document.owner_id)
@@ -273,16 +262,13 @@ class ExpertService:
                 doc_counts[str(r.owner_id)] = r.doc_count
 
         # 2. 问答回答统计（含采纳数）
-        answer_stmt = (
-            select(
-                QaAnswer.user_id,
-                func.count(QaAnswer.id).label("answer_count"),
-                func.sum(cast(QaAnswer.is_accepted, Integer)).label("accepted_count"),
-            )
-            .where(
-                QaAnswer.deleted_at.is_(None),
-                QaAnswer.created_at >= since,
-            )
+        answer_stmt = select(
+            QaAnswer.user_id,
+            func.count(QaAnswer.id).label("answer_count"),
+            func.sum(cast(QaAnswer.is_accepted, Integer)).label("accepted_count"),
+        ).where(
+            QaAnswer.deleted_at.is_(None),
+            QaAnswer.created_at >= since,
         )
         answer_stmt = apply_tenant_filter(answer_stmt, QaAnswer, self._tenant_id)
         answer_stmt = answer_stmt.group_by(QaAnswer.user_id)
@@ -296,17 +282,16 @@ class ExpertService:
                 }
 
         # 3. 评论统计
-        comment_stmt = (
-            select(
-                DocumentComment.user_id,
-                func.count(DocumentComment.id).label("comment_count"),
-            )
-            .where(
-                DocumentComment.deleted_at.is_(None),
-                DocumentComment.created_at >= since,
-            )
+        comment_stmt = select(
+            DocumentComment.user_id,
+            func.count(DocumentComment.id).label("comment_count"),
+        ).where(
+            DocumentComment.deleted_at.is_(None),
+            DocumentComment.created_at >= since,
         )
-        comment_stmt = apply_tenant_filter(comment_stmt, DocumentComment, self._tenant_id)
+        comment_stmt = apply_tenant_filter(
+            comment_stmt, DocumentComment, self._tenant_id
+        )
         comment_stmt = comment_stmt.group_by(DocumentComment.user_id)
         comment_result = await self.db.execute(comment_stmt)
         comment_counts: dict[str, int] = {}

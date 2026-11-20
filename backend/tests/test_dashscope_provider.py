@@ -7,10 +7,10 @@
 - config：DASHSCOPE_* 配置项默认值
 - is_saas：saas_dashscope 识别为 SaaS 模式
 """
+
 from __future__ import annotations
 
 import sys
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -71,8 +71,9 @@ class TestDashScopeConfig:
 
     def test_deploy_mode_includes_saas_dashscope(self) -> None:
         """DEPLOY_MODE Literal 包含 saas_dashscope。"""
-        from app.config import Settings
         from typing import get_type_hints
+
+        from app.config import Settings
 
         hints = get_type_hints(Settings)
         deploy_mode_type = str(hints["DEPLOY_MODE"])
@@ -111,7 +112,9 @@ class TestDashScopeProvider:
     def test_init_with_default_model(self) -> None:
         """初始化使用默认模型（DASHSCOPE_LLM_MODEL）。"""
         with patch("app.llm.dashscope_provider.settings") as mock_settings:
-            mock_settings.DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            mock_settings.DASHSCOPE_BASE_URL = (
+                "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            )
             mock_settings.DASHSCOPE_API_KEY = "sk-test-key"
             mock_settings.DASHSCOPE_LLM_MODEL = "qwen-turbo"
 
@@ -123,7 +126,9 @@ class TestDashScopeProvider:
     def test_init_with_custom_model(self) -> None:
         """初始化支持自定义模型。"""
         with patch("app.llm.dashscope_provider.settings") as mock_settings:
-            mock_settings.DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            mock_settings.DASHSCOPE_BASE_URL = (
+                "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            )
             mock_settings.DASHSCOPE_API_KEY = "sk-test-key"
             mock_settings.DASHSCOPE_LLM_MODEL = "qwen-turbo"
 
@@ -135,7 +140,9 @@ class TestDashScopeProvider:
     def test_client_uses_dashscope_endpoint(self) -> None:
         """客户端使用 DashScope base_url。"""
         with patch("app.llm.dashscope_provider.settings") as mock_settings:
-            mock_settings.DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            mock_settings.DASHSCOPE_BASE_URL = (
+                "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            )
             mock_settings.DASHSCOPE_API_KEY = "sk-test-key"
             mock_settings.DASHSCOPE_LLM_MODEL = "qwen-turbo"
 
@@ -148,7 +155,9 @@ class TestDashScopeProvider:
     def test_client_uses_dashscope_api_key(self) -> None:
         """客户端使用 DashScope API Key。"""
         with patch("app.llm.dashscope_provider.settings") as mock_settings:
-            mock_settings.DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            mock_settings.DASHSCOPE_BASE_URL = (
+                "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            )
             mock_settings.DASHSCOPE_API_KEY = "sk-my-secret-key"
             mock_settings.DASHSCOPE_LLM_MODEL = "qwen-turbo"
 
@@ -161,7 +170,9 @@ class TestDashScopeProvider:
     async def test_chat_non_stream(self) -> None:
         """非流式 chat 返回文本。"""
         with patch("app.llm.dashscope_provider.settings") as mock_settings:
-            mock_settings.DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            mock_settings.DASHSCOPE_BASE_URL = (
+                "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            )
             mock_settings.DASHSCOPE_API_KEY = "sk-test"
             mock_settings.DASHSCOPE_LLM_MODEL = "qwen-turbo"
 
@@ -188,7 +199,9 @@ class TestDashScopeProvider:
     async def test_chat_with_tool_use(self) -> None:
         """chat 支持 function calling（tool_use）。"""
         with patch("app.llm.dashscope_provider.settings") as mock_settings:
-            mock_settings.DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            mock_settings.DASHSCOPE_BASE_URL = (
+                "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            )
             mock_settings.DASHSCOPE_API_KEY = "sk-test"
             mock_settings.DASHSCOPE_LLM_MODEL = "qwen-turbo"
 
@@ -209,11 +222,13 @@ class TestDashScopeProvider:
 
             provider.client.chat.completions.create = AsyncMock(return_value=mock_resp)
 
-            tools = [{
-                "name": "knowledge_search",
-                "description": "搜索知识库",
-                "parameters": {"type": "object", "properties": {}},
-            }]
+            tools = [
+                {
+                    "name": "knowledge_search",
+                    "description": "搜索知识库",
+                    "parameters": {"type": "object", "properties": {}},
+                }
+            ]
             messages = [{"role": "user", "content": "搜索 Python"}]
 
             results = []
@@ -221,14 +236,20 @@ class TestDashScopeProvider:
                 results.append(chunk)
 
             # 应该 yield 一个 ToolUse dict（usage dict 不计入）
-            tool_use = [r for r in results if isinstance(r, dict) and r.get("type") == "tool_use"]
+            tool_use = [
+                r
+                for r in results
+                if isinstance(r, dict) and r.get("type") == "tool_use"
+            ]
             assert len(tool_use) == 1
             assert tool_use[0]["type"] == "tool_use"
             assert tool_use[0]["name"] == "knowledge_search"
             assert tool_use[0]["input"]["query"] == "Python"
 
             # P0-Stage2: 非流式模式也应 yield usage dict
-            usage = [r for r in results if isinstance(r, dict) and r.get("type") == "usage"]
+            usage = [
+                r for r in results if isinstance(r, dict) and r.get("type") == "usage"
+            ]
             assert len(usage) == 1
 
 
@@ -243,7 +264,9 @@ class TestDashScopeEmbedder:
     def test_dim_default_1024(self) -> None:
         """默认维度 1024（text-embedding-v3）。"""
         with patch("app.llm.embedder.settings") as mock_settings:
-            mock_settings.DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            mock_settings.DASHSCOPE_BASE_URL = (
+                "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            )
             mock_settings.DASHSCOPE_API_KEY = "sk-test"
             mock_settings.DASHSCOPE_EMBED_MODEL = "text-embedding-v3"
             mock_settings.DASHSCOPE_EMBED_DIM = 1024
@@ -256,7 +279,9 @@ class TestDashScopeEmbedder:
     def test_model_default_v3(self) -> None:
         """默认模型 text-embedding-v3。"""
         with patch("app.llm.embedder.settings") as mock_settings:
-            mock_settings.DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            mock_settings.DASHSCOPE_BASE_URL = (
+                "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            )
             mock_settings.DASHSCOPE_API_KEY = "sk-test"
             mock_settings.DASHSCOPE_EMBED_MODEL = "text-embedding-v3"
             mock_settings.DASHSCOPE_EMBED_DIM = 1024
@@ -270,7 +295,9 @@ class TestDashScopeEmbedder:
     async def test_embed_returns_vectors(self) -> None:
         """embed 返回向量列表。"""
         with patch("app.llm.embedder.settings") as mock_settings:
-            mock_settings.DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            mock_settings.DASHSCOPE_BASE_URL = (
+                "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            )
             mock_settings.DASHSCOPE_API_KEY = "sk-test"
             mock_settings.DASHSCOPE_EMBED_MODEL = "text-embedding-v3"
             mock_settings.DASHSCOPE_EMBED_DIM = 1024
@@ -295,7 +322,9 @@ class TestDashScopeEmbedder:
     async def test_embed_empty_input(self) -> None:
         """空输入返回空列表。"""
         with patch("app.llm.embedder.settings") as mock_settings:
-            mock_settings.DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            mock_settings.DASHSCOPE_BASE_URL = (
+                "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            )
             mock_settings.DASHSCOPE_API_KEY = "sk-test"
             mock_settings.DASHSCOPE_EMBED_MODEL = "text-embedding-v3"
             mock_settings.DASHSCOPE_EMBED_DIM = 1024
@@ -339,7 +368,9 @@ class TestFactoryDashScope:
         with patch("app.llm.factory.settings") as mock_settings:
             mock_settings.DEPLOY_MODE = "saas_dashscope"
             with patch("app.llm.dashscope_provider.settings") as mock_ds_settings:
-                mock_ds_settings.DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+                mock_ds_settings.DASHSCOPE_BASE_URL = (
+                    "https://dashscope.aliyuncs.com/compatible-mode/v1"
+                )
                 mock_ds_settings.DASHSCOPE_API_KEY = "sk-test"
                 mock_ds_settings.DASHSCOPE_LLM_MODEL = "qwen-turbo"
 
@@ -356,7 +387,9 @@ class TestFactoryDashScope:
         """get_embedder 在 saas_dashscope 模式返回 DashScopeEmbedder。"""
         with patch("app.llm.embedder.settings") as mock_settings:
             mock_settings.DEPLOY_MODE = "saas_dashscope"
-            mock_settings.DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            mock_settings.DASHSCOPE_BASE_URL = (
+                "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            )
             mock_settings.DASHSCOPE_API_KEY = "sk-test"
             mock_settings.DASHSCOPE_EMBED_MODEL = "text-embedding-v3"
             mock_settings.DASHSCOPE_EMBED_DIM = 1024
@@ -403,6 +436,9 @@ class TestBackwardCompatibility:
 
         assert len(_llm_provider_registry) == 5
         assert set(_llm_provider_registry.keys()) == {
-            "saas", "saas_dashscope", "private_overseas", "private_domestic",
+            "saas",
+            "saas_dashscope",
+            "private_overseas",
+            "private_domestic",
             "private_finetuned",
         }

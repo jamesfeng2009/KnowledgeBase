@@ -10,6 +10,7 @@ memory_embedding_dim 的 TEI 兜底随之从"暂按"变为正式契约。
 
 红基线（修复前）：get_embedder() 抛 ValueError "不支持的 DEPLOY_MODE"。
 """
+
 from __future__ import annotations
 
 import pytest

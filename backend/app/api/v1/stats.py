@@ -39,12 +39,16 @@ async def get_stats_overview(
 
     # 知识库数（未软删除）
     kb_count = await db.scalar(
-        select(func.count()).select_from(KnowledgeBase).where(KnowledgeBase.deleted_at.is_(None))
+        select(func.count())
+        .select_from(KnowledgeBase)
+        .where(KnowledgeBase.deleted_at.is_(None))
     )
 
     # 对话次数（未软删除）
     conv_count = await db.scalar(
-        select(func.count()).select_from(Conversation).where(Conversation.deleted_at.is_(None))
+        select(func.count())
+        .select_from(Conversation)
+        .where(Conversation.deleted_at.is_(None))
     )
 
     # 活跃用户数：最近 30 天有消息记录的用户数

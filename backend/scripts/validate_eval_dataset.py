@@ -111,9 +111,7 @@ def validate_jsonl_file(file_path: str) -> list[str]:
             # 检查必填字段
             for field in REQUIRED_FIELDS:
                 if field not in data:
-                    errors.append(
-                        f"{file_path}:{line_no} 缺少必填字段: {field}"
-                    )
+                    errors.append(f"{file_path}:{line_no} 缺少必填字段: {field}")
                 elif field == "expected_doc_ids":
                     if not isinstance(data[field], list):
                         errors.append(
@@ -143,9 +141,7 @@ def validate_jsonl_file(file_path: str) -> list[str]:
             context_expect = data.get("context_expect")
             if context_expect is not None:
                 if not isinstance(context_expect, dict):
-                    errors.append(
-                        f"{file_path}:{line_no} context_expect 必须为对象"
-                    )
+                    errors.append(f"{file_path}:{line_no} context_expect 必须为对象")
                 else:
                     unknown_keys = set(context_expect.keys()) - CONTEXT_EXPECT_KEYS
                     if unknown_keys:
@@ -158,24 +154,20 @@ def validate_jsonl_file(file_path: str) -> list[str]:
             for tool_field in ("expected_tools", "forbidden_tools"):
                 tool_val = data.get(tool_field)
                 if tool_val is not None and not isinstance(tool_val, list):
-                    errors.append(
-                        f"{file_path}:{line_no} {tool_field} 必须为列表"
-                    )
+                    errors.append(f"{file_path}:{line_no} {tool_field} 必须为列表")
 
             # 检查 query 非空
-            if "query" in data and not isinstance(data["query"], str) or (
-                "query" in data and not data["query"].strip()
+            if (
+                "query" in data
+                and not isinstance(data["query"], str)
+                or ("query" in data and not data["query"].strip())
             ):
                 errors.append(f"{file_path}:{line_no} query 不能为空")
 
             # P3-12: 记录无 case_id 的 query 行号（用于循环后检测重复）
             query_val = data.get("query")
             case_id_val = data.get("case_id")
-            if (
-                isinstance(query_val, str)
-                and query_val.strip()
-                and not case_id_val
-            ):
+            if isinstance(query_val, str) and query_val.strip() and not case_id_val:
                 query_to_lines.setdefault(query_val, []).append(line_no)
 
             # 检查 tags 包含至少一个标准维度
@@ -196,16 +188,13 @@ def validate_jsonl_file(file_path: str) -> list[str]:
     for q, lines in query_to_lines.items():
         if len(lines) > 1:
             errors.append(
-                f"{file_path}: 重复 query（无 case_id 消歧，行 {lines}）:"
-                f" {q[:50]}"
+                f"{file_path}: 重复 query（无 case_id 消歧，行 {lines}）:" f" {q[:50]}"
             )
 
     # 检查用例数量
     expected_min = MIN_CASES.get(file_name, 0)
     if expected_min > 0 and case_count < expected_min:
-        errors.append(
-            f"{file_path}: 用例数量 {case_count} 少于期望下限 {expected_min}"
-        )
+        errors.append(f"{file_path}: 用例数量 {case_count} 少于期望下限 {expected_min}")
 
     # 检查维度覆盖（仅对非 sample 文件）
     if file_name != "sample" and case_count > 0:

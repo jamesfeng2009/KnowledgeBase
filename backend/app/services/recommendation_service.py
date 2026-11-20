@@ -20,8 +20,9 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -135,7 +136,8 @@ class RecommendationService:
         self,
         user_id: uuid.UUID,
         top_k: int = 10,
-        permission_filter: Callable[[list[Document]], Awaitable[list[Document]]] | None = None,
+        permission_filter: Callable[[list[Document]], Awaitable[list[Document]]]
+        | None = None,
     ) -> list[dict[str, Any]]:
         """个性化推荐（猜你想看）— 三路召回 + RRF 融合 + 权限过滤。
 
@@ -166,8 +168,12 @@ class RecommendationService:
 
         # 无任何行为 → 热门兜底（最冷启动）
         if not behaviors:
-            result = await self._hot_fallback(user_id=user_id, exclude=set(), top_k=top_k)
-            result = await self._finalize(result, user_doc_ids, permission_filter, top_k)
+            result = await self._hot_fallback(
+                user_id=user_id, exclude=set(), top_k=top_k
+            )
+            result = await self._finalize(
+                result, user_doc_ids, permission_filter, top_k
+            )
             await self._cache_set(cache_key, result)
             return result
 
@@ -178,8 +184,6 @@ class RecommendationService:
         )
         vector_enabled = settings.RECOMMEND_ENABLE_VECTOR
         graph_enabled = settings.RECOMMEND_ENABLE_GRAPH
-
-        import asyncio
 
         paths: list[list[dict[str, Any]]] = []
         if cf_enabled:
@@ -192,7 +196,9 @@ class RecommendationService:
         non_empty = [p for p in paths if p]
         fell_back_to_hot = False
         if not non_empty:
-            non_empty = [await self._hot_fallback(user_id=user_id, exclude=set(), top_k=top_k)]
+            non_empty = [
+                await self._hot_fallback(user_id=user_id, exclude=set(), top_k=top_k)
+            ]
             fell_back_to_hot = True
 
         fused = self._rrf_fuse(non_empty, k=settings.RECOMMEND_RRF_K)
@@ -201,9 +207,7 @@ class RecommendationService:
         # 已删 / 越权的 doc_id（向量库与 documents 表本就异步），这些候选会在
         # _finalize 里被整批丢掉，若只看召回是否有产出就会返回空首页。
         if not result and not fell_back_to_hot:
-            hot = await self._hot_fallback(
-                user_id=user_id, exclude=set(), top_k=top_k
-            )
+            hot = await self._hot_fallback(user_id=user_id, exclude=set(), top_k=top_k)
             result = await self._finalize(hot, user_doc_ids, permission_filter, top_k)
         await self._cache_set(cache_key, result)
         return result
@@ -213,7 +217,8 @@ class RecommendationService:
         doc_id: uuid.UUID,
         user_id: uuid.UUID,
         top_k: int = 5,
-        permission_filter: Callable[[list[Document]], Awaitable[list[Document]]] | None = None,
+        permission_filter: Callable[[list[Document]], Awaitable[list[Document]]]
+        | None = None,
     ) -> list[dict[str, Any]]:
         """相关阅读 — 复用 GraphService.get_related_recommendations（L1 Redis → L2 Neo4j → L3 PG）。
 
@@ -226,7 +231,9 @@ class RecommendationService:
         Returns:
             推荐文档列表，每项含 doc_id / title / reason="related" / score。
         """
-        cached = await self._cache_get(self._cache_key("related", f"{doc_id}:{user_id}", top_k))
+        cached = await self._cache_get(
+            self._cache_key("related", f"{doc_id}:{user_id}", top_k)
+        )
         if cached is not None:
             return cached
 
@@ -244,7 +251,12 @@ class RecommendationService:
             logger.warning("recommend.related.graph_error", error=str(exc))
 
         result = [
-            {"doc_id": r.get("id", r.get("doc_id")), "title": r.get("title"), "reason": "related", "score": r.get("score", 0)}
+            {
+                "doc_id": r.get("id", r.get("doc_id")),
+                "title": r.get("title"),
+                "reason": "related",
+                "score": r.get("score", 0),
+            }
             for r in raw
             if r.get("id") or r.get("doc_id")
         ]
@@ -261,12 +273,13 @@ class RecommendationService:
             if r["doc_id"] in docs
         ]
         if permission_filter is not None:
-            doc_map = {str(d.id): d for d in docs.values()}
             allowed = await permission_filter(list(docs.values()))
             allowed_ids = {str(d.id) for d in allowed}
             result = [r for r in result if r["doc_id"] in allowed_ids]
 
-        await self._cache_set(self._cache_key("related", f"{doc_id}:{user_id}", top_k), result)
+        await self._cache_set(
+            self._cache_key("related", f"{doc_id}:{user_id}", top_k), result
+        )
         return result
 
     # ------------------------------------------------------------------
@@ -279,8 +292,7 @@ class RecommendationService:
         behaviors: list[UserBehavior],
         top_k: int,
     ) -> list[dict[str, Any]]:
-        """协同过滤召回 — UserCF + ItemCF 合并。
-        """
+        """协同过滤召回 — UserCF + ItemCF 合并。"""
         import asyncio
 
         user_cf, item_cf = await asyncio.gather(
@@ -290,9 +302,7 @@ class RecommendationService:
         )
         user_cf = user_cf if isinstance(user_cf, list) else []
         item_cf = item_cf if isinstance(item_cf, list) else []
-        return self._rrf_fuse(
-            [user_cf, item_cf], k=settings.RECOMMEND_RRF_K
-        )[:top_k]
+        return self._rrf_fuse([user_cf, item_cf], k=settings.RECOMMEND_RRF_K)[:top_k]
 
     async def _user_cf_recall(
         self,
@@ -394,9 +404,9 @@ class RecommendationService:
 
         if vec is None:
             # 回退现算：取用户近期浏览的前 N 篇文档标题
-            recent = sorted(
-                behaviors, key=lambda b: b.acted_at, reverse=True
-            )[:_PREFERENCE_MAX_DOCS]
+            recent = sorted(behaviors, key=lambda b: b.acted_at, reverse=True)[
+                :_PREFERENCE_MAX_DOCS
+            ]
             doc_ids = [b.doc_id for b in recent]
             docs = await self._fetch_docs({str(d) for d in doc_ids})
             titles = [d.title for d in docs.values() if d.title]
@@ -441,9 +451,9 @@ class RecommendationService:
         复用 GraphService.get_related_recommendations；Neo4j 不可用时返回空。
         """
         graph = self._graph_service or self._get_graph_service()
-        recent = sorted(
-            behaviors, key=lambda b: b.acted_at, reverse=True
-        )[:_GRAPH_SEED_DOCS]
+        recent = sorted(behaviors, key=lambda b: b.acted_at, reverse=True)[
+            :_GRAPH_SEED_DOCS
+        ]
         collected: dict[str, dict[str, Any]] = {}
         for b in recent:
             try:
@@ -650,7 +660,9 @@ class RecommendationService:
             return
         try:
             await self._cache.set(
-                key, json.dumps(value, ensure_ascii=False), ttl=settings.RECOMMEND_CACHE_TTL
+                key,
+                json.dumps(value, ensure_ascii=False),
+                ttl=settings.RECOMMEND_CACHE_TTL,
             )
         except Exception as exc:
             logger.debug("recommend.cache_set_error", error=str(exc))

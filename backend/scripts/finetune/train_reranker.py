@@ -25,13 +25,17 @@ import json
 import logging
 import random
 import sys
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 logger = logging.getLogger("train_reranker")
 
 # 分组切分工具（评审 #2：同一基问题的 query 变体不得跨 train/eval）
-from finetune_utils import grouped_split_indices, question_group_key
+from finetune_utils import (  # noqa: E402  — 有意延迟导入（依赖上方初始化）
+    grouped_split_indices,
+    question_group_key,
+)
 
 
 def iter_jsonl(path: str | Path) -> Iterator[tuple[int, dict]]:
@@ -63,7 +67,9 @@ def load_triplets(path: str | Path) -> list[dict]:
     for lineno, obj in iter_jsonl(path):
         query, pos, neg = obj.get("query"), obj.get("pos"), obj.get("neg")
         if not all(isinstance(x, str) and x.strip() for x in (query, pos, neg)):
-            logger.warning("跳过样本 %s:%d — query/pos/neg 必须为非空字符串", path, lineno)
+            logger.warning(
+                "跳过样本 %s:%d — query/pos/neg 必须为非空字符串", path, lineno
+            )
             continue
         meta = obj.get("meta") if isinstance(obj.get("meta"), dict) else {}
         records.append({"query": query, "pos": pos, "neg": neg, "meta": meta})
@@ -83,8 +89,13 @@ def build_pairs(records: list[dict]) -> tuple[list[list[str]], list[float]]:
     return pairs, labels
 
 
-def evaluate_accuracy(model: Any, pairs: list[list[str]], labels: list[float],
-                      batch_size: int = 64, threshold: float = 0.5) -> float:
+def evaluate_accuracy(
+    model: Any,
+    pairs: list[list[str]],
+    labels: list[float],
+    batch_size: int = 64,
+    threshold: float = 0.5,
+) -> float:
     """二分类准确率。num_labels=1 时 predict 默认经 Sigmoid，故阈值取 0.5。
 
     重依赖 numpy 在此函数内延迟导入。
@@ -103,13 +114,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         description="Cross-encoder 精排微调（sentence-transformers CrossEncoder）",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--data", required=True, help="embedding.jsonl 路径（复用三元组数据）")
-    parser.add_argument("--base_model", default="BAAI/bge-reranker-base", help="基座精排模型")
-    parser.add_argument("--output_dir", default="outputs/reranker-ft", help="微调模型输出目录")
+    parser.add_argument(
+        "--data", required=True, help="embedding.jsonl 路径（复用三元组数据）"
+    )
+    parser.add_argument(
+        "--base_model", default="BAAI/bge-reranker-base", help="基座精排模型"
+    )
+    parser.add_argument(
+        "--output_dir", default="outputs/reranker-ft", help="微调模型输出目录"
+    )
     parser.add_argument("--epochs", type=int, default=2, help="训练轮数")
     parser.add_argument("--batch_size", type=int, default=16, help="batch size")
     parser.add_argument("--lr", type=float, default=1e-5, help="学习率")
-    parser.add_argument("--max_len", type=int, default=512, help="query+passage 最大 token 长度")
+    parser.add_argument(
+        "--max_len", type=int, default=512, help="query+passage 最大 token 长度"
+    )
     parser.add_argument("--eval_ratio", type=float, default=0.1, help="留出评估比例")
     parser.add_argument("--seed", type=int, default=42, help="随机种子")
     return parser.parse_args(argv)
@@ -117,7 +136,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
 
     # ---- 重依赖延迟导入：保证无 GPU 环境（或无 sentence-transformers）下 import 本模块不报错 ----
     import torch
@@ -137,19 +158,30 @@ def main(argv: list[str] | None = None) -> int:
     eval_records = [records[i] for i in eval_idx]
     train_records = [records[i] for i in train_idx]
     eval_pairs, eval_labels = build_pairs(eval_records)
-    logger.info("训练三元组 %d 条 / 评估三元组 %d 条（评估对 %d 个）",
-                len(train_records), len(eval_records), len(eval_pairs))
+    logger.info(
+        "训练三元组 %d 条 / 评估三元组 %d 条（评估对 %d 个）",
+        len(train_records),
+        len(eval_records),
+        len(eval_pairs),
+    )
 
     model = CrossEncoder(args.base_model, num_labels=1, max_length=args.max_len)
 
     # ---- 训练前评估（基线准确率）----
-    acc_before = evaluate_accuracy(model, eval_pairs, eval_labels, batch_size=args.batch_size)
+    acc_before = evaluate_accuracy(
+        model, eval_pairs, eval_labels, batch_size=args.batch_size
+    )
     logger.info("[训练前] 二分类准确率 = %.4f", acc_before)
 
     # ---- 训练 ----
     train_pairs, train_labels = build_pairs(train_records)
-    train_examples = [InputExample(texts=p, label=l) for p, l in zip(train_pairs, train_labels)]
-    train_dataloader = DataLoader(train_examples, shuffle=True, batch_size=args.batch_size)
+    train_examples = [
+        InputExample(texts=p, label=label)
+        for p, label in zip(train_pairs, train_labels)
+    ]
+    train_dataloader = DataLoader(
+        train_examples, shuffle=True, batch_size=args.batch_size
+    )
     warmup_steps = max(1, int(len(train_dataloader) * args.epochs * 0.1))
 
     repro_info = {
@@ -177,9 +209,16 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     # ---- 训练后评估 ----
-    acc_after = evaluate_accuracy(model, eval_pairs, eval_labels, batch_size=args.batch_size)
+    acc_after = evaluate_accuracy(
+        model, eval_pairs, eval_labels, batch_size=args.batch_size
+    )
     logger.info("[训练后] 二分类准确率 = %.4f", acc_after)
-    logger.info("微调收益: 准确率 %+.4f（%.4f -> %.4f）", acc_after - acc_before, acc_before, acc_after)
+    logger.info(
+        "微调收益: 准确率 %+.4f（%.4f -> %.4f）",
+        acc_after - acc_before,
+        acc_before,
+        acc_after,
+    )
     logger.info("微调模型已保存至 %s", args.output_dir)
     return 0
 

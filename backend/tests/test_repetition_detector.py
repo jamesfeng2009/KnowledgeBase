@@ -67,10 +67,13 @@ class TestRepetitionDetectorCheck:
         embedder = MockEmbedder({"q1": vec_a, "q2": vec_b})
         detector = RepetitionDetector(embedder)
 
-        result = await detector.check("q1", [
-            {"role": "user", "content": "q2"},
-            {"role": "assistant", "content": "回复"},
-        ])
+        result = await detector.check(
+            "q1",
+            [
+                {"role": "user", "content": "q2"},
+                {"role": "assistant", "content": "回复"},
+            ],
+        )
 
         assert result.is_repetition is True
         assert result.similarity_score > 0.85
@@ -84,10 +87,13 @@ class TestRepetitionDetectorCheck:
         embedder = MockEmbedder({"q1": vec_a, "q2": vec_b})
         detector = RepetitionDetector(embedder)
 
-        result = await detector.check("q1", [
-            {"role": "user", "content": "q2"},
-            {"role": "assistant", "content": "回复"},
-        ])
+        result = await detector.check(
+            "q1",
+            [
+                {"role": "user", "content": "q2"},
+                {"role": "assistant", "content": "回复"},
+            ],
+        )
 
         assert result.is_repetition is False
         assert result.similarity_score < 0.85
@@ -97,19 +103,24 @@ class TestRepetitionDetectorCheck:
         """连续重复 2 次以上 → expand_retrieval。"""
         vec_a, vec_b = _make_vecs(0.95)
         # q1, q2, q3 都高度相似
-        embedder = MockEmbedder({
-            "current": vec_a,
-            "prev1": vec_b,
-            "prev2": vec_b,
-        })
+        embedder = MockEmbedder(
+            {
+                "current": vec_a,
+                "prev1": vec_b,
+                "prev2": vec_b,
+            }
+        )
         detector = RepetitionDetector(embedder)
 
-        result = await detector.check("current", [
-            {"role": "user", "content": "prev2"},
-            {"role": "assistant", "content": "回复1"},
-            {"role": "user", "content": "prev1"},
-            {"role": "assistant", "content": "回复2"},
-        ])
+        result = await detector.check(
+            "current",
+            [
+                {"role": "user", "content": "prev2"},
+                {"role": "assistant", "content": "回复1"},
+                {"role": "user", "content": "prev1"},
+                {"role": "assistant", "content": "回复2"},
+            ],
+        )
 
         assert result.is_repetition is True
         assert result.repetition_count >= 2
@@ -122,15 +133,18 @@ class TestRepetitionDetectorCheck:
         embedder = MockEmbedder({"current": vec_a, "prev": vec_b})
         detector = RepetitionDetector(embedder)
 
-        result = await detector.check("current", [
-            {"role": "user", "content": "prev"},
-            {"role": "assistant", "content": "回复"},
-            # prev2 不相似，打断连续
-            {"role": "user", "content": "完全不同的话题"},
-            {"role": "assistant", "content": "回复2"},
-            {"role": "user", "content": "prev"},
-            {"role": "assistant", "content": "回复3"},
-        ])
+        result = await detector.check(
+            "current",
+            [
+                {"role": "user", "content": "prev"},
+                {"role": "assistant", "content": "回复"},
+                # prev2 不相似，打断连续
+                {"role": "user", "content": "完全不同的话题"},
+                {"role": "assistant", "content": "回复2"},
+                {"role": "user", "content": "prev"},
+                {"role": "assistant", "content": "回复3"},
+            ],
+        )
 
         # prev 与 current 相似，但 prev 前面的消息不相似 → count=1
         assert result.is_repetition is True
@@ -147,29 +161,38 @@ class TestRepetitionDetectorCheck:
     async def test_no_user_messages(self):
         """历史中无 user 消息 → 非重复。"""
         detector = RepetitionDetector(MockEmbedder({}))
-        result = await detector.check("查询", [
-            {"role": "assistant", "content": "回复"},
-        ])
+        result = await detector.check(
+            "查询",
+            [
+                {"role": "assistant", "content": "回复"},
+            ],
+        )
         assert result.is_repetition is False
 
     @pytest.mark.asyncio
     async def test_embedder_exception_degrade(self):
         """Embedder 异常 → 优雅降级（非重复）。"""
         detector = RepetitionDetector(FailingEmbedder())
-        result = await detector.check("查询", [
-            {"role": "user", "content": "查询"},
-            {"role": "assistant", "content": "回复"},
-        ])
+        result = await detector.check(
+            "查询",
+            [
+                {"role": "user", "content": "查询"},
+                {"role": "assistant", "content": "回复"},
+            ],
+        )
         assert result.is_repetition is False
 
     @pytest.mark.asyncio
     async def test_no_embedder_degrade(self):
         """无 Embedder → 优雅降级（非重复）。"""
         detector = RepetitionDetector(embedder=None)
-        result = await detector.check("查询", [
-            {"role": "user", "content": "查询"},
-            {"role": "assistant", "content": "回复"},
-        ])
+        result = await detector.check(
+            "查询",
+            [
+                {"role": "user", "content": "查询"},
+                {"role": "assistant", "content": "回复"},
+            ],
+        )
         assert result.is_repetition is False
 
     @pytest.mark.asyncio
@@ -179,11 +202,14 @@ class TestRepetitionDetectorCheck:
         embedder = MockEmbedder({"current": vec_a, "prev": vec_b})
         detector = RepetitionDetector(embedder)
 
-        result = await detector.check("current", [
-            {"role": "user", "content": "prev"},
-            {"role": "assistant", "content": "回复"},
-            {"role": "user", "content": "current"},  # 当前查询已在历史中
-        ])
+        result = await detector.check(
+            "current",
+            [
+                {"role": "user", "content": "prev"},
+                {"role": "assistant", "content": "回复"},
+                {"role": "user", "content": "current"},  # 当前查询已在历史中
+            ],
+        )
 
         # 应与 "prev" 比较，而非与 "current" 自身比较
         assert result.previous_query == "prev"
@@ -197,7 +223,10 @@ class TestRepetitionDetectorCheck:
 
         result = await detector.check(
             "current",
-            [{"role": "user", "content": "prev"}, {"role": "assistant", "content": "回复"}],
+            [
+                {"role": "user", "content": "prev"},
+                {"role": "assistant", "content": "回复"},
+            ],
             current_embedding=vec_a,  # 复用预计算的 embedding
         )
 

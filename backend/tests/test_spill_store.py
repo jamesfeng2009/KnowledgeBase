@@ -10,7 +10,7 @@ P1-1 大工具结果写盘（Spill to Disk）测试。
 
 import pytest
 
-from app.rag.context_budget import SpillStore, _SPILL_TOOL_RESULT_THRESHOLD
+from app.rag.context_budget import SpillStore
 
 
 class TestSpillStore:
@@ -73,6 +73,7 @@ class TestEngineSpill:
 
     @pytest.mark.asyncio
     async def test_large_tool_result_spilled_to_placeholder(self):
+        from app.rag.engine import AgenticRAGEngine
         from tests.test_p2_token_optimization import (
             FakeGenerator,
             FakeMCPClient,
@@ -81,7 +82,6 @@ class TestEngineSpill:
             MessageRecordingLLM,
             _make_state,
         )
-        from app.rag.engine import AgenticRAGEngine
 
         llm = MessageRecordingLLM("tool_call")
         engine = AgenticRAGEngine(
@@ -97,6 +97,7 @@ class TestEngineSpill:
 
         # 用临时目录的 SpillStore 隔离测试写盘
         import tempfile
+
         store = SpillStore(base_dir=tempfile.mkdtemp())
         engine._spill_store = store
 
@@ -113,10 +114,12 @@ class TestEngineSpill:
 
         async def mock_tool_call(state, db=None, user_uuid=None):
             # 超大工具结果（> 2000 字符阈值）
-            state["tool_results"].append({
-                "tool": "search_erp",
-                "result": "数据" * 3000,
-            })
+            state["tool_results"].append(
+                {
+                    "tool": "search_erp",
+                    "result": "数据" * 3000,
+                }
+            )
             yield
 
         engine._tool_call_streaming = mock_tool_call
@@ -124,14 +127,13 @@ class TestEngineSpill:
         await engine._run_decision_loop(state)
 
         # 上下文中的工具结果消息应含写盘 placeholder
-        joined = "".join(
-            m.get("content", "") for m in state["messages"]
-        )
+        joined = "".join(m.get("content", "") for m in state["messages"])
         assert "已写盘" in joined
         assert "read_tool_result" in joined
 
     @pytest.mark.asyncio
     async def test_small_tool_result_not_spilled(self):
+        from app.rag.engine import AgenticRAGEngine
         from tests.test_p2_token_optimization import (
             FakeGenerator,
             FakeMCPClient,
@@ -140,7 +142,6 @@ class TestEngineSpill:
             MessageRecordingLLM,
             _make_state,
         )
-        from app.rag.engine import AgenticRAGEngine
 
         llm = MessageRecordingLLM("tool_call")
         engine = AgenticRAGEngine(
@@ -155,6 +156,7 @@ class TestEngineSpill:
         engine._planner = None
 
         import tempfile
+
         store = SpillStore(base_dir=tempfile.mkdtemp())
         engine._spill_store = store
 
@@ -171,17 +173,17 @@ class TestEngineSpill:
 
         async def mock_tool_call(state, db=None, user_uuid=None):
             # 小工具结果（低于阈值，不写盘）
-            state["tool_results"].append({
-                "tool": "search_erp",
-                "result": "小结果",
-            })
+            state["tool_results"].append(
+                {
+                    "tool": "search_erp",
+                    "result": "小结果",
+                }
+            )
             yield
 
         engine._tool_call_streaming = mock_tool_call
 
         await engine._run_decision_loop(state)
 
-        joined = "".join(
-            m.get("content", "") for m in state["messages"]
-        )
+        joined = "".join(m.get("content", "") for m in state["messages"])
         assert "已写盘" not in joined

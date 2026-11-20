@@ -36,11 +36,15 @@ class ToolApproval(UUIDMixin, TimestampMixin, Base):
 
     # --- 关联 ---
     user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False,
+        UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False,
         comment="发起审批的用户 ID",
     )
     session_id: Mapped[str] = mapped_column(
-        String(100), nullable=False, index=True,
+        String(100),
+        nullable=False,
+        index=True,
         comment="会话 ID（conversation_id 字符串形式）",
     )
     # 多租户预留 — 当前不实施隔离逻辑
@@ -56,21 +60,28 @@ class ToolApproval(UUIDMixin, TimestampMixin, Base):
         String(200), nullable=False, comment="LLM 返回的 tool_use ID"
     )
     tool_arguments: Mapped[dict] = mapped_column(
-        JSONB, nullable=False, default=dict,
+        JSONB,
+        nullable=False,
+        default=dict,
         comment="工具调用参数（JSONB）",
     )
     reason: Mapped[str] = mapped_column(
-        Text, nullable=False, default="",
+        Text,
+        nullable=False,
+        default="",
         comment="守卫拦截原因（展示给用户）",
     )
     irreversible: Mapped[bool] = mapped_column(
-        nullable=False, default=False,
+        nullable=False,
+        default=False,
         comment="是否为不可逆操作",
     )
 
     # --- Agent 状态快照（JSONB） ---
     agent_state_snapshot: Mapped[dict] = mapped_column(
-        JSONB, nullable=False, default=dict,
+        JSONB,
+        nullable=False,
+        default=dict,
         comment=(
             "AgentState 快照 — 审批通过后用于恢复 Agent Loop。"
             "包含 query/messages/retrieved_docs/tool_results/iteration 等。"
@@ -79,18 +90,24 @@ class ToolApproval(UUIDMixin, TimestampMixin, Base):
 
     # --- 审批状态 ---
     status: Mapped[str] = mapped_column(
-        String(20), nullable=False, default="pending", index=True,
+        String(20),
+        nullable=False,
+        default="pending",
+        index=True,
         comment="审批状态: pending/approved/rejected/expired",
     )
     resolved_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True,
+        DateTime(timezone=True),
+        nullable=True,
         comment="审批处理时间（approve/reject 时设置）",
     )
     resolved_by: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), nullable=True,
+        UUID(as_uuid=True),
+        nullable=True,
         comment="审批处理人 ID（通常等于 user_id）",
     )
     expire_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True,
+        DateTime(timezone=True),
+        nullable=True,
         comment="审批过期时间（默认 1 小时后过期）",
     )

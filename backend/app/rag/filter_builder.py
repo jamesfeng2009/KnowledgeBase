@@ -39,17 +39,19 @@ log = get_logger(__name__)
 DOC_PARENT_ID_FIELD: str = "doc_parent_id"
 
 #: 支持的标准 filters key 集合（用于校验和文档）
-SUPPORTED_FILTER_KEYS: frozenset[str] = frozenset({
-    "series_id",
-    "path_prefix",
-    "parent_id",
-    "depth",
-    "version_of",
-    "doc_status",  # P0-1: 文档状态过滤（published/draft/pending_review/archived）
-    "doc_role",    # P2: 文档角色粗标过滤（normal/constraint_source，运营用）
-    "classification",  # P0 密级下推：用户可见密级白名单（多值 list）
-    "chunk_type",  # D6: 资产类型过滤（text/image/table，单值或多值 list）
-})
+SUPPORTED_FILTER_KEYS: frozenset[str] = frozenset(
+    {
+        "series_id",
+        "path_prefix",
+        "parent_id",
+        "depth",
+        "version_of",
+        "doc_status",  # P0-1: 文档状态过滤（published/draft/pending_review/archived）
+        "doc_role",  # P2: 文档角色粗标过滤（normal/constraint_source，运营用）
+        "classification",  # P0 密级下推：用户可见密级白名单（多值 list）
+        "chunk_type",  # D6: 资产类型过滤（text/image/table，单值或多值 list）
+    }
+)
 
 
 # ======================================================================
@@ -156,7 +158,9 @@ def build_opensearch_filter_clauses(
         try:
             clauses.append(build_fn(value))
         except (ValueError, TypeError) as exc:
-            log.warning("filter_builder.os.build_error", key=key, value=value, error=str(exc))
+            log.warning(
+                "filter_builder.os.build_error", key=key, value=value, error=str(exc)
+            )
     return clauses
 
 
@@ -223,7 +227,10 @@ def _milvus_classification_expr(value: Any) -> str | None:
 _MILVUS_FILTER_BUILDERS: dict[str, tuple[str, Any]] = {
     "series_id": ("series_id", lambda v: f"series_id == {_milvus_str_literal(v)}"),
     "path_prefix": ("path", lambda v: f"path like {_milvus_str_literal(str(v) + '%')}"),
-    "parent_id": (DOC_PARENT_ID_FIELD, lambda v: f"{DOC_PARENT_ID_FIELD} == {_milvus_str_literal(v)}"),
+    "parent_id": (
+        DOC_PARENT_ID_FIELD,
+        lambda v: f"{DOC_PARENT_ID_FIELD} == {_milvus_str_literal(v)}",
+    ),
     "depth": ("depth", lambda v: f"depth == {int(v)}"),
     "version_of": ("version_of", lambda v: f"version_of == {_milvus_str_literal(v)}"),
     "doc_status": ("doc_status", lambda v: f"doc_status == {_milvus_str_literal(v)}"),
@@ -276,7 +283,12 @@ def build_milvus_expr(
             try:
                 expr = build_fn(value)
             except (ValueError, TypeError) as exc:
-                log.warning("filter_builder.milvus.build_error", key=key, value=value, error=str(exc))
+                log.warning(
+                    "filter_builder.milvus.build_error",
+                    key=key,
+                    value=value,
+                    error=str(exc),
+                )
                 continue
             # 构建器可返回 None 表示「该模式下不构建子句」（如容忍模式下
             # Milvus 路跳过密级下推，Final Gate 兜底）

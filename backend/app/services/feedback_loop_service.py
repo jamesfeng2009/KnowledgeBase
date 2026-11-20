@@ -188,27 +188,20 @@ class FeedbackLoopService:
             反馈统计字典。
         """
         # 按类型统计
-        type_stmt = (
-            select(Feedback.type, func.count())
-            .group_by(Feedback.type)
-        )
+        type_stmt = select(Feedback.type, func.count()).group_by(Feedback.type)
         type_stmt = apply_tenant_filter(type_stmt, Feedback, self._tenant_id)
         type_result = await self.db.execute(type_stmt)
         type_dist = {row[0]: row[1] for row in type_result.all()}
 
         # 按状态统计
-        status_stmt = (
-            select(Feedback.status, func.count())
-            .group_by(Feedback.status)
-        )
+        status_stmt = select(Feedback.status, func.count()).group_by(Feedback.status)
         status_stmt = apply_tenant_filter(status_stmt, Feedback, self._tenant_id)
         status_result = await self.db.execute(status_stmt)
         status_dist = {row[0]: row[1] for row in status_result.all()}
 
         # 按优先级统计
-        priority_stmt = (
-            select(Feedback.priority, func.count())
-            .group_by(Feedback.priority)
+        priority_stmt = select(Feedback.priority, func.count()).group_by(
+            Feedback.priority
         )
         priority_stmt = apply_tenant_filter(priority_stmt, Feedback, self._tenant_id)
         priority_result = await self.db.execute(priority_stmt)
@@ -254,50 +247,58 @@ class FeedbackLoopService:
         # 规则1：高频 bug
         bug_list = type_counts.get("bug", [])
         if len(bug_list) >= 3:
-            suggestions.append({
-                "type": "bug_cluster",
-                "priority": "high",
-                "title": "高频缺陷反馈预警",
-                "description": f"检测到 {len(bug_list)} 条 bug 反馈，建议优先排查相关模块缺陷。",
-                "affected_count": len(bug_list),
-                "action": "排查 bug 反馈中涉及的系统模块，优先修复高频问题。",
-            })
+            suggestions.append(
+                {
+                    "type": "bug_cluster",
+                    "priority": "high",
+                    "title": "高频缺陷反馈预警",
+                    "description": f"检测到 {len(bug_list)} 条 bug 反馈，建议优先排查相关模块缺陷。",
+                    "affected_count": len(bug_list),
+                    "action": "排查 bug 反馈中涉及的系统模块，优先修复高频问题。",
+                }
+            )
 
         # 规则2：高频 suggestion
         suggestion_list = type_counts.get("suggestion", [])
         if len(suggestion_list) >= 3:
-            suggestions.append({
-                "type": "suggestion_cluster",
-                "priority": "medium",
-                "title": "功能需求集中反馈",
-                "description": f"检测到 {len(suggestion_list)} 条功能建议，建议评估纳入产品路线图。",
-                "affected_count": len(suggestion_list),
-                "action": "评估用户建议的可行性与优先级，纳入下版本规划。",
-            })
+            suggestions.append(
+                {
+                    "type": "suggestion_cluster",
+                    "priority": "medium",
+                    "title": "功能需求集中反馈",
+                    "description": f"检测到 {len(suggestion_list)} 条功能建议，建议评估纳入产品路线图。",
+                    "affected_count": len(suggestion_list),
+                    "action": "评估用户建议的可行性与优先级，纳入下版本规划。",
+                }
+            )
 
         # 规则3：未处理的 open 状态反馈
         open_list = [fb for fb in all_feedbacks if fb.status == "open"]
         if len(open_list) >= 5:
-            suggestions.append({
-                "type": "backlog_warning",
-                "priority": "high",
-                "title": "反馈处理积压预警",
-                "description": f"当前有 {len(open_list)} 条未处理反馈，建议加快处理进度。",
-                "affected_count": len(open_list),
-                "action": "增加反馈处理人力，优先处理 high/urgent 优先级反馈。",
-            })
+            suggestions.append(
+                {
+                    "type": "backlog_warning",
+                    "priority": "high",
+                    "title": "反馈处理积压预警",
+                    "description": f"当前有 {len(open_list)} 条未处理反馈，建议加快处理进度。",
+                    "affected_count": len(open_list),
+                    "action": "增加反馈处理人力，优先处理 high/urgent 优先级反馈。",
+                }
+            )
 
         # 规则4：complaint 反馈
         complaint_list = type_counts.get("complaint", [])
         if len(complaint_list) >= 2:
-            suggestions.append({
-                "type": "complaint_alert",
-                "priority": "high",
-                "title": "用户投诉预警",
-                "description": f"检测到 {len(complaint_list)} 条投诉，建议关注用户满意度。",
-                "affected_count": len(complaint_list),
-                "action": "分析投诉根因，制定改善措施，必要时主动联系用户。",
-            })
+            suggestions.append(
+                {
+                    "type": "complaint_alert",
+                    "priority": "high",
+                    "title": "用户投诉预警",
+                    "description": f"检测到 {len(complaint_list)} 条投诉，建议关注用户满意度。",
+                    "affected_count": len(complaint_list),
+                    "action": "分析投诉根因，制定改善措施，必要时主动联系用户。",
+                }
+            )
 
         log.info(
             "feedback_loop.suggestions_generated",

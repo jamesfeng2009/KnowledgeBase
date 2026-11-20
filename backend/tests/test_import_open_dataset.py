@@ -17,8 +17,6 @@ import sys
 import types
 from pathlib import Path
 
-import pytest
-
 FINETUNE_DIR = Path(__file__).parent.parent / "scripts" / "finetune"
 SCRIPT_PATH = FINETUNE_DIR / "import_open_dataset.py"
 
@@ -38,6 +36,7 @@ def _load_module():
 # ---------------------------------------------------------------------------
 # 1. 语法有效性 + 模块 import（验证重依赖延迟导入）
 # ---------------------------------------------------------------------------
+
 
 class TestPyCompile:
     def test_py_compile(self):
@@ -72,10 +71,15 @@ class TestImportWithoutHeavyDeps:
 # 2. 转换函数纯函数测试（不依赖网络）
 # ---------------------------------------------------------------------------
 
+
 class TestConvertT2Ranking:
     def test_valid_single(self):
         mod = _load_module()
-        raw = {"query": "如何重置密码", "positive": ["点击忘记密码"], "negative": ["天气不错"]}
+        raw = {
+            "query": "如何重置密码",
+            "positive": ["点击忘记密码"],
+            "negative": ["天气不错"],
+        }
         rec = mod.convert_t2ranking_record(raw)
         assert rec is not None
         assert rec["query"] == "如何重置密码"
@@ -95,19 +99,36 @@ class TestConvertT2Ranking:
 
     def test_missing_query(self):
         mod = _load_module()
-        assert mod.convert_t2ranking_record({"positive": ["p"], "negative": ["n"]}) is None
+        assert (
+            mod.convert_t2ranking_record({"positive": ["p"], "negative": ["n"]}) is None
+        )
 
     def test_empty_query(self):
         mod = _load_module()
-        assert mod.convert_t2ranking_record({"query": "  ", "positive": ["p"], "negative": ["n"]}) is None
+        assert (
+            mod.convert_t2ranking_record(
+                {"query": "  ", "positive": ["p"], "negative": ["n"]}
+            )
+            is None
+        )
 
     def test_empty_positive_list(self):
         mod = _load_module()
-        assert mod.convert_t2ranking_record({"query": "q", "positive": [], "negative": ["n"]}) is None
+        assert (
+            mod.convert_t2ranking_record(
+                {"query": "q", "positive": [], "negative": ["n"]}
+            )
+            is None
+        )
 
     def test_empty_negative_list(self):
         mod = _load_module()
-        assert mod.convert_t2ranking_record({"query": "q", "positive": ["p"], "negative": []}) is None
+        assert (
+            mod.convert_t2ranking_record(
+                {"query": "q", "positive": ["p"], "negative": []}
+            )
+            is None
+        )
 
     def test_missing_positive(self):
         mod = _load_module()
@@ -118,7 +139,10 @@ class TestConvertDuReader:
     def test_valid_list_of_dict(self):
         """HongzheBi/DuReader2.0 格式：answers = list[{text, answer_start}]。"""
         mod = _load_module()
-        raw = {"question": "年假几天", "answers": [{"text": "15 天", "answer_start": 0}]}
+        raw = {
+            "question": "年假几天",
+            "answers": [{"text": "15 天", "answer_start": 0}],
+        }
         rec = mod.convert_dureader_record(raw)
         assert rec is not None
         assert rec["messages"][0]["role"] == "user"
@@ -130,7 +154,10 @@ class TestConvertDuReader:
     def test_answers_as_dict(self):
         """luozhouyang/dureader 格式：answers = {text: [str...], answer_start: [int...]}。"""
         mod = _load_module()
-        raw = {"question": "q", "answers": {"text": ["答案一", "答案二"], "answer_start": [0, 5]}}
+        raw = {
+            "question": "q",
+            "answers": {"text": ["答案一", "答案二"], "answer_start": [0, 5]},
+        }
         rec = mod.convert_dureader_record(raw)
         assert rec is not None
         assert rec["messages"][1]["content"] == "答案一"
@@ -149,7 +176,10 @@ class TestConvertDuReader:
 
     def test_empty_question(self):
         mod = _load_module()
-        assert mod.convert_dureader_record({"question": "", "answers": [{"text": "a"}]}) is None
+        assert (
+            mod.convert_dureader_record({"question": "", "answers": [{"text": "a"}]})
+            is None
+        )
 
     def test_empty_answers(self):
         mod = _load_module()
@@ -162,7 +192,10 @@ class TestConvertDuReader:
     def test_answers_with_empty_text(self):
         """answers 列表存在但所有 text 为空 → None。"""
         mod = _load_module()
-        raw = {"question": "q", "answers": [{"text": "", "answer_start": 0}, {"text": "  "}]}
+        raw = {
+            "question": "q",
+            "answers": [{"text": "", "answer_start": 0}, {"text": "  "}],
+        }
         assert mod.convert_dureader_record(raw) is None
 
 
@@ -182,7 +215,11 @@ class TestConvertCOIGCQIA:
     def test_valid_with_input(self):
         """input 非空时拼接到 instruction 后。"""
         mod = _load_module()
-        raw = {"instruction": "总结以下内容", "input": "一段待总结文本", "output": "总结结果"}
+        raw = {
+            "instruction": "总结以下内容",
+            "input": "一段待总结文本",
+            "output": "总结结果",
+        }
         rec = mod.convert_coig_cqia_record(raw)
         assert rec is not None
         content = rec["messages"][0]["content"]
@@ -196,7 +233,10 @@ class TestConvertCOIGCQIA:
 
     def test_empty_instruction(self):
         mod = _load_module()
-        assert mod.convert_coig_cqia_record({"instruction": "  ", "output": "答案"}) is None
+        assert (
+            mod.convert_coig_cqia_record({"instruction": "  ", "output": "答案"})
+            is None
+        )
 
     def test_missing_output(self):
         mod = _load_module()
@@ -204,13 +244,19 @@ class TestConvertCOIGCQIA:
 
     def test_empty_output(self):
         mod = _load_module()
-        assert mod.convert_coig_cqia_record({"instruction": "问题", "output": ""}) is None
+        assert (
+            mod.convert_coig_cqia_record({"instruction": "问题", "output": ""}) is None
+        )
 
 
 class TestConvertDPO:
     def test_valid(self):
         mod = _load_module()
-        raw = {"question": "写一首诗", "response_chosen": "好诗", "response_rejected": "差诗"}
+        raw = {
+            "question": "写一首诗",
+            "response_chosen": "好诗",
+            "response_rejected": "差诗",
+        }
         rec = mod.convert_dpo_record(raw)
         assert rec is not None
         assert rec["prompt"] == "写一首诗"
@@ -227,16 +273,25 @@ class TestConvertDPO:
     def test_chosen_equals_rejected_after_strip(self):
         """strip 后相同也算相同。"""
         mod = _load_module()
-        raw = {"question": "q", "response_chosen": "答案 ", "response_rejected": " 答案"}
+        raw = {
+            "question": "q",
+            "response_chosen": "答案 ",
+            "response_rejected": " 答案",
+        }
         assert mod.convert_dpo_record(raw) is None
 
     def test_missing_question(self):
         mod = _load_module()
-        assert mod.convert_dpo_record({"response_chosen": "c", "response_rejected": "r"}) is None
+        assert (
+            mod.convert_dpo_record({"response_chosen": "c", "response_rejected": "r"})
+            is None
+        )
 
     def test_missing_chosen(self):
         mod = _load_module()
-        assert mod.convert_dpo_record({"question": "q", "response_rejected": "r"}) is None
+        assert (
+            mod.convert_dpo_record({"question": "q", "response_rejected": "r"}) is None
+        )
 
     def test_missing_rejected(self):
         mod = _load_module()
@@ -252,11 +307,14 @@ class TestConvertDPO:
 # 3. write_jsonl 测试
 # ---------------------------------------------------------------------------
 
+
 class TestWriteJsonl:
     def test_write_and_ensure_ascii_false(self, tmp_path: Path):
         """ensure_ascii=False：中文原样落盘（非 \\uXXXX 转义）。"""
         mod = _load_module()
-        records = [{"query": "查询", "pos": "正例", "neg": "负例", "meta": {"source": "test"}}]
+        records = [
+            {"query": "查询", "pos": "正例", "neg": "负例", "meta": {"source": "test"}}
+        ]
         path = tmp_path / "sub" / "out.jsonl"
         n = mod.write_jsonl(records, path)
         assert n == 1
@@ -269,8 +327,13 @@ class TestWriteJsonl:
     def test_write_multiple(self, tmp_path: Path):
         mod = _load_module()
         records = [
-            {"messages": [{"role": "user", "content": f"q{i}"}, {"role": "assistant", "content": f"a{i}"}],
-             "meta": {}}
+            {
+                "messages": [
+                    {"role": "user", "content": f"q{i}"},
+                    {"role": "assistant", "content": f"a{i}"},
+                ],
+                "meta": {},
+            }
             for i in range(5)
         ]
         path = tmp_path / "out.jsonl"
@@ -283,6 +346,7 @@ class TestWriteJsonl:
 # ---------------------------------------------------------------------------
 # 4. 端到端测试（mock datasets.load_dataset）
 # ---------------------------------------------------------------------------
+
 
 class _FakeDataset:
     """模拟 datasets.Dataset 的可迭代对象。"""
@@ -309,12 +373,19 @@ def _make_fake_datasets(monkeypatch, samples: dict[str, list]):
 # 4 个数据集的 mock 样本（含合法 + 不合法记录以验证跳过逻辑）
 MOCK_SAMPLES = {
     "C-MTEB/T2Reranking": [
-        {"query": "如何重置密码", "positive": ["点击忘记密码"], "negative": ["今天天气不错"]},
+        {
+            "query": "如何重置密码",
+            "positive": ["点击忘记密码"],
+            "negative": ["今天天气不错"],
+        },
         {"query": "  ", "positive": ["p"], "negative": ["n"]},  # 空 query → 跳过
-        {"query": "q2", "positive": [], "negative": ["n2"]},     # 空 positive → 跳过
+        {"query": "q2", "positive": [], "negative": ["n2"]},  # 空 positive → 跳过
     ],
     "HongzheBi/DuReader2.0": [
-        {"question": "年假多少天", "answers": [{"text": "正式员工 15 天", "answer_start": 0}]},
+        {
+            "question": "年假多少天",
+            "answers": [{"text": "正式员工 15 天", "answer_start": 0}],
+        },
         {"question": "无答案", "answers": []},  # 空 answers → 跳过
     ],
     "m-a-p/COIG-CQIA": [
@@ -324,7 +395,11 @@ MOCK_SAMPLES = {
     ],
     "shibing624/DPO-En-Zh-20k-Preference": [
         {"question": "写诗", "response_chosen": "好诗", "response_rejected": "差诗"},
-        {"question": "q", "response_chosen": "相同", "response_rejected": "相同"},  # 相同 → 跳过
+        {
+            "question": "q",
+            "response_chosen": "相同",
+            "response_rejected": "相同",
+        },  # 相同 → 跳过
     ],
 }
 
@@ -335,13 +410,17 @@ class TestEndToEnd:
         _make_fake_datasets(monkeypatch, MOCK_SAMPLES)
         mod = _load_module()
         out_dir = tmp_path / "imported"
-        rc = mod.main(["--dataset", "all", "--output_dir", str(out_dir), "--limit", "10"])
+        rc = mod.main(
+            ["--dataset", "all", "--output_dir", str(out_dir), "--limit", "10"]
+        )
         assert rc == 0
 
         # ---- embedding.jsonl：1 条（2 条不合法被跳过）----
         emb_path = out_dir / "embedding.jsonl"
         assert emb_path.is_file()
-        emb_lines = [l for l in emb_path.read_text(encoding="utf-8").splitlines() if l.strip()]
+        emb_lines = [
+            l for l in emb_path.read_text(encoding="utf-8").splitlines() if l.strip()
+        ]
         assert len(emb_lines) == 1
         emb_obj = json.loads(emb_lines[0])
         assert emb_obj["query"] == "如何重置密码"
@@ -355,7 +434,9 @@ class TestEndToEnd:
         # ---- sft.jsonl：3 条（dureader 1 + coig 2；各 1 条不合法被跳过）----
         sft_path = out_dir / "sft.jsonl"
         assert sft_path.is_file()
-        sft_lines = [l for l in sft_path.read_text(encoding="utf-8").splitlines() if l.strip()]
+        sft_lines = [
+            l for l in sft_path.read_text(encoding="utf-8").splitlines() if l.strip()
+        ]
         assert len(sft_lines) == 3
         # 第 1 条来自 dureader
         sft_obj = json.loads(sft_lines[0])
@@ -374,7 +455,9 @@ class TestEndToEnd:
         # ---- dpo.jsonl：1 条（1 条 chosen==rejected 被跳过）----
         dpo_path = out_dir / "dpo.jsonl"
         assert dpo_path.is_file()
-        dpo_lines = [l for l in dpo_path.read_text(encoding="utf-8").splitlines() if l.strip()]
+        dpo_lines = [
+            l for l in dpo_path.read_text(encoding="utf-8").splitlines() if l.strip()
+        ]
         assert len(dpo_lines) == 1
         dpo_obj = json.loads(dpo_lines[0])
         assert dpo_obj["prompt"] == "写诗"
@@ -394,7 +477,9 @@ class TestEndToEnd:
         _make_fake_datasets(monkeypatch, samples)
         mod = _load_module()
         out_dir = tmp_path / "out"
-        rc = mod.main(["--dataset", "t2ranking", "--output_dir", str(out_dir), "--limit", "5"])
+        rc = mod.main(
+            ["--dataset", "t2ranking", "--output_dir", str(out_dir), "--limit", "5"]
+        )
         assert rc == 0
 
         emb = (out_dir / "embedding.jsonl").read_text(encoding="utf-8")
@@ -407,13 +492,24 @@ class TestEndToEnd:
 
     def test_main_limit_respected(self, monkeypatch, tmp_path: Path):
         """--limit 限制每类最大转换条数。"""
-        rows = [{"query": f"q{i}", "positive": [f"p{i}"], "negative": [f"n{i}"]} for i in range(20)]
+        rows = [
+            {"query": f"q{i}", "positive": [f"p{i}"], "negative": [f"n{i}"]}
+            for i in range(20)
+        ]
         _make_fake_datasets(monkeypatch, {"C-MTEB/T2Reranking": rows})
         mod = _load_module()
         out_dir = tmp_path / "out"
-        rc = mod.main(["--dataset", "t2ranking", "--output_dir", str(out_dir), "--limit", "3"])
+        rc = mod.main(
+            ["--dataset", "t2ranking", "--output_dir", str(out_dir), "--limit", "3"]
+        )
         assert rc == 0
-        lines = [l for l in (out_dir / "embedding.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
+        lines = [
+            l
+            for l in (out_dir / "embedding.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+            if l.strip()
+        ]
         assert len(lines) == 3
 
     def test_main_download_failure_returns_error(self, monkeypatch, tmp_path: Path):
@@ -438,23 +534,32 @@ class TestEndToEnd:
         def mixed_load_dataset(name, config=None, split=None, **kwargs):
             call_count["n"] += 1
             if name == "C-MTEB/T2Reranking":
-                return _FakeDataset([{"query": "q", "positive": ["p"], "negative": ["n"]}])
+                return _FakeDataset(
+                    [{"query": "q", "positive": ["p"], "negative": ["n"]}]
+                )
             raise ConnectionError("模拟下载失败")
 
         fake.load_dataset = mixed_load_dataset
         monkeypatch.setitem(sys.modules, "datasets", fake)
 
         mod = _load_module()
-        rc = mod.main(["--dataset", "all", "--output_dir", str(tmp_path / "out"), "--limit", "5"])
+        rc = mod.main(
+            ["--dataset", "all", "--output_dir", str(tmp_path / "out"), "--limit", "5"]
+        )
         assert rc == 0  # t2ranking 成功 → 非全部失败
         assert (tmp_path / "out" / "embedding.jsonl").is_file()
 
     def test_split_override(self, monkeypatch, tmp_path: Path):
         """--split 覆盖默认 split。"""
         received_splits = []
-        _make_fake_datasets(monkeypatch, {
-            "C-MTEB/T2Reranking": [{"query": "q", "positive": ["p"], "negative": ["n"]}],
-        })
+        _make_fake_datasets(
+            monkeypatch,
+            {
+                "C-MTEB/T2Reranking": [
+                    {"query": "q", "positive": ["p"], "negative": ["n"]}
+                ],
+            },
+        )
         # 包装 fake_load_dataset 以记录 split 参数
         fake = sys.modules["datasets"]
         original_load = fake.load_dataset
@@ -466,17 +571,30 @@ class TestEndToEnd:
         fake.load_dataset = tracking_load
 
         mod = _load_module()
-        rc = mod.main(["--dataset", "t2ranking", "--output_dir", str(tmp_path / "out"),
-                       "--split", "test"])
+        rc = mod.main(
+            [
+                "--dataset",
+                "t2ranking",
+                "--output_dir",
+                str(tmp_path / "out"),
+                "--split",
+                "test",
+            ]
+        )
         assert rc == 0
         assert received_splits == ["test"]  # 覆盖了默认的 "dev"
 
     def test_default_split_used_when_not_overridden(self, monkeypatch, tmp_path: Path):
         """未指定 --split 时使用 DATASET_CONFIGS 预设值。"""
         received_splits = []
-        _make_fake_datasets(monkeypatch, {
-            "C-MTEB/T2Reranking": [{"query": "q", "positive": ["p"], "negative": ["n"]}],
-        })
+        _make_fake_datasets(
+            monkeypatch,
+            {
+                "C-MTEB/T2Reranking": [
+                    {"query": "q", "positive": ["p"], "negative": ["n"]}
+                ],
+            },
+        )
         fake = sys.modules["datasets"]
         original_load = fake.load_dataset
 

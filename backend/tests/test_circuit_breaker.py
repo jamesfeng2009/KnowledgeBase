@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import asyncio
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -26,7 +25,6 @@ from app.utils.circuit_breaker import (
     get_circuit_breaker,
     reset_all_circuit_breakers,
 )
-
 
 # ======================================================================
 # CircuitBreaker 状态机测试
@@ -42,7 +40,9 @@ class TestCircuitBreakerStateMachine:
 
     def test_initial_state_is_closed(self):
         """新创建的熔断器初始状态为 CLOSED。"""
-        cb = CircuitBreaker(name="test_service", failure_threshold=3, recovery_timeout=1.0)
+        cb = CircuitBreaker(
+            name="test_service", failure_threshold=3, recovery_timeout=1.0
+        )
         assert cb.state == CircuitState.CLOSED
         assert cb.failure_count == 0
 
@@ -90,7 +90,9 @@ class TestCircuitBreakerStateMachine:
         """
         # failure_window=0.1s，快速过期
         cb = CircuitBreaker(
-            name="test_svc", failure_threshold=3, recovery_timeout=60.0,
+            name="test_svc",
+            failure_threshold=3,
+            recovery_timeout=60.0,
             failure_window=0.1,
         )
 
@@ -254,6 +256,7 @@ class TestCircuitCallDecorator:
 
     def test_circuit_call_success(self):
         """成功调用不触发熔断。"""
+
         @circuit_call("success_svc", failure_threshold=3)
         async def succeed():
             return "ok"
@@ -267,6 +270,7 @@ class TestCircuitCallDecorator:
 
     def test_circuit_call_failure_triggers_breaker(self):
         """连续失败触发熔断。"""
+
         @circuit_call("fail_svc", failure_threshold=2)
         async def always_fail():
             raise ConnectionError("down")

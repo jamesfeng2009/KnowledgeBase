@@ -10,6 +10,7 @@ SHORT_TERM_WINDOW_SIZE 死常量；真实历史靠 chat_service 的 Redis 兜底
 红基线 = 删除契约（参数/属性/常量仍在）；正向证人 = L2/L3/L4 组装与
 chat 历史注入行为不回归。
 """
+
 from __future__ import annotations
 
 import inspect
@@ -30,15 +31,17 @@ class TestB8DeadCodeRemoved:
         from app.memory import memory_manager as mm
         from app.memory.memory_manager import MemoryContext, MemoryManager
 
-        assert "recent_messages" not in inspect.signature(
-            MemoryManager.build_context
-        ).parameters, "build_context 的 recent_messages 从未被消费，必须删除"
-        assert not hasattr(MemoryContext(), "short_term"), (
-            "ctx.short_term 恒空且无填充方，属僵尸字段"
-        )
-        assert "render_short_term" not in inspect.signature(
-            MemoryContext.to_system_prompt
-        ).parameters, "render_short_term 渲染的 short_term 恒空，属死参数"
+        assert (
+            "recent_messages"
+            not in inspect.signature(MemoryManager.build_context).parameters
+        ), "build_context 的 recent_messages 从未被消费，必须删除"
+        assert not hasattr(
+            MemoryContext(), "short_term"
+        ), "ctx.short_term 恒空且无填充方，属僵尸字段"
+        assert (
+            "render_short_term"
+            not in inspect.signature(MemoryContext.to_system_prompt).parameters
+        ), "render_short_term 渲染的 short_term 恒空，属死参数"
         assert not hasattr(mm, "SHORT_TERM_WINDOW_SIZE"), "死常量必须删除"
 
 
@@ -90,21 +93,20 @@ def _stub_llm_boundaries(monkeypatch):
 class TestB8LivingLayersPreserved:
     async def test_build_context_still_assembles_l2_l3_l4(self, rls_db):
         """正向证人：删除死代码后 L2/L3/L4 组装与渲染不回归。"""
+        from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+        from sqlalchemy.orm import sessionmaker
+
         from app.core.tenant_context import tenant_scope
         from app.memory.checkpoint import CheckpointManager
         from app.memory.mem0_manager import Mem0Manager
         from app.memory.memory_manager import MemoryManager
         from app.models.conversation import Conversation
         from app.models.user import User
-        from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-        from sqlalchemy.orm import sessionmaker
 
         url = rls_db.owner_url.replace("postgresql://", "postgresql+asyncpg://", 1)
         engine = create_async_engine(url)
         try:
-            factory = sessionmaker(
-                engine, class_=AsyncSession, expire_on_commit=False
-            )
+            factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
             async with factory() as s:
                 user = User(
                     email=f"b8-{uuid.uuid4()}@ekb.local",
@@ -170,9 +172,7 @@ class TestB8LivingLayersPreserved:
         fake_settings.DETAIL_RECALL_ENABLED = False
 
         ctx = MemoryContext()
-        ctx.user_facts = [
-            {"category": "preference", "fact_text": "answer_style: 简洁"}
-        ]
+        ctx.user_facts = [{"category": "preference", "fact_text": "answer_style: 简洁"}]
         with (
             patch(
                 "app.memory.short_term_cache.short_term_cache.get_window",
@@ -187,8 +187,12 @@ class TestB8LivingLayersPreserved:
                 resolved_query="当前问题",
             )
 
-        assert "对话历史：" in text, "Redis miss 必须回填 PG 历史（L1 职责在 chat 热层）"
+        assert (
+            "对话历史：" in text
+        ), "Redis miss 必须回填 PG 历史（L1 职责在 chat 热层）"
         assert "[用户] 上一轮问题" in text
         assert "[助手] 上一轮回答" in text
-        assert "当前问题" not in text.split("对话历史：")[1], "刚保存的当前消息不得重复注入"
+        assert (
+            "当前问题" not in text.split("对话历史：")[1]
+        ), "刚保存的当前消息不得重复注入"
         assert "answer_style: 简洁" in text

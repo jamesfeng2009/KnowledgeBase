@@ -28,10 +28,10 @@ from app.core.budget import (
 )
 from app.core.exceptions import BudgetExceeded
 
-
 # ------------------------------------------------------------------
 # HardBudget 不可变性测试
 # ------------------------------------------------------------------
+
 
 class TestHardBudget:
     """HardBudget 值对象测试。"""
@@ -52,7 +52,9 @@ class TestHardBudget:
 
     def test_custom_values(self):
         """自定义值生效。"""
-        b = HardBudget(max_turns=20, max_seconds=600, max_tokens=500_000, max_cost_usd=5.0)
+        b = HardBudget(
+            max_turns=20, max_seconds=600, max_tokens=500_000, max_cost_usd=5.0
+        )
         assert b.max_turns == 20
         assert b.max_seconds == 600
         assert b.max_tokens == 500_000
@@ -62,6 +64,7 @@ class TestHardBudget:
 # ------------------------------------------------------------------
 # RunBudget 累积测试
 # ------------------------------------------------------------------
+
 
 class TestRunBudget:
     """RunBudget 累积行为测试。"""
@@ -102,7 +105,9 @@ class TestRunBudget:
     def test_billable_not_negative(self):
         """billable_tokens 不为负 —— 兜底 cache_read > total 的情况。"""
         run = RunBudget()
-        run.add_usage(input_tokens=100, output_tokens=50, cache_read_tokens=500)  # cache_read > total
+        run.add_usage(
+            input_tokens=100, output_tokens=50, cache_read_tokens=500
+        )  # cache_read > total
         assert run.billable_tokens == 0  # max(0, ...)
 
     def test_increment_turn(self):
@@ -135,6 +140,7 @@ class TestRunBudget:
 # check_budget 四轴检查测试
 # ------------------------------------------------------------------
 
+
 class TestCheckBudget:
     """check_budget 四轴硬检查测试。"""
 
@@ -143,7 +149,9 @@ class TestCheckBudget:
         run = RunBudget()
         run.increment_turn()
         run.add_usage(input_tokens=100, output_tokens=50, cost_usd=0.001)
-        budget = HardBudget(max_turns=5, max_seconds=300, max_tokens=200_000, max_cost_usd=1.0)
+        budget = HardBudget(
+            max_turns=5, max_seconds=300, max_tokens=200_000, max_cost_usd=1.0
+        )
         check_budget(run, budget)  # 不抛
 
     def test_turns_exceeded(self):
@@ -162,7 +170,9 @@ class TestCheckBudget:
     def test_tokens_exceeded(self):
         """tokens 超限抛 BudgetExceeded。"""
         run = RunBudget()
-        run.add_usage(input_tokens=150_000, output_tokens=60_000)  # billable=210000 > 200000
+        run.add_usage(
+            input_tokens=150_000, output_tokens=60_000
+        )  # billable=210000 > 200000
         budget = HardBudget(max_tokens=200_000)
         with pytest.raises(BudgetExceeded) as exc_info:
             check_budget(run, budget)
@@ -181,7 +191,9 @@ class TestCheckBudget:
         """cache-read token 减少 billable，可能避免触发 tokens 超限。"""
         run = RunBudget()
         # total = 250000，但 cache_read = 150000，billable = 100000 < 200000
-        run.add_usage(input_tokens=200_000, output_tokens=50_000, cache_read_tokens=150_000)
+        run.add_usage(
+            input_tokens=200_000, output_tokens=50_000, cache_read_tokens=150_000
+        )
         budget = HardBudget(max_tokens=200_000)
         check_budget(run, budget)  # 不抛 —— cache_read 救了它
 
@@ -199,6 +211,7 @@ class TestCheckBudget:
 # ------------------------------------------------------------------
 # 异常 context 测试
 # ------------------------------------------------------------------
+
 
 class TestBudgetExceededContext:
     """BudgetExceeded 异常携带结构化 context 测试。"""
@@ -232,6 +245,7 @@ class TestBudgetExceededContext:
 # get_budget_status 测试
 # ------------------------------------------------------------------
 
+
 class TestGetBudgetStatus:
     """get_budget_status 查询测试。"""
 
@@ -251,7 +265,9 @@ class TestGetBudgetStatus:
         """使用比例计算正确。"""
         run = RunBudget()
         run.increment_turn()  # 1/5 = 0.2
-        run.add_usage(input_tokens=40_000, output_tokens=10_000)  # billable=50000/200000=0.25
+        run.add_usage(
+            input_tokens=40_000, output_tokens=10_000
+        )  # billable=50000/200000=0.25
         budget = HardBudget(max_turns=5, max_tokens=200_000)
         status = get_budget_status(run, budget)
         assert status["turns"]["ratio"] == pytest.approx(0.2)
@@ -269,6 +285,7 @@ class TestGetBudgetStatus:
 # ------------------------------------------------------------------
 # 配置测试
 # ------------------------------------------------------------------
+
 
 class TestBudgetConfig:
     """Settings 配置项测试。"""

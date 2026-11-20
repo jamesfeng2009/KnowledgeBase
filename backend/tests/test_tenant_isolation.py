@@ -18,6 +18,7 @@
 - Repository 测试使用 PostgreSQL 数据库 + pytest fixture。
 - get_tenant_id 测试使用 SimpleNamespace 模拟 Request 对象 + FastAPI 集成。
 """
+
 from __future__ import annotations
 
 import os
@@ -27,7 +28,6 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import httpx
-import pytest
 import pytest_asyncio
 from fastapi import Depends, FastAPI, Request
 from fastapi.testclient import TestClient
@@ -53,7 +53,6 @@ from app.deps import get_current_user, get_tenant_id, require_module
 from app.models import Base, Department, QaAnswer, QaQuestion, Tenant, User
 from app.repositories.base import BaseRepository
 from app.utils.crypto import create_access_token, decode_access_token
-
 
 # ==================================================================
 # 辅助函数
@@ -150,11 +149,13 @@ class TestTenantContextMiddleware:
         client = TestClient(app)
 
         tenant_id = uuid.uuid4()
-        token = create_access_token({
-            "sub": "user-1",
-            "role": "admin",
-            "tenant_id": str(tenant_id),
-        })
+        token = create_access_token(
+            {
+                "sub": "user-1",
+                "role": "admin",
+                "tenant_id": str(tenant_id),
+            }
+        )
 
         response = client.get(
             "/api/test-tenant",
@@ -210,11 +211,13 @@ class TestJWTTenantId:
     def test_create_token_with_tenant_id(self) -> None:
         """create_access_token 传入 tenant_id 时，decode_access_token 能解析出 tenant_id。"""
         tenant_id = uuid.uuid4()
-        token = create_access_token({
-            "sub": "user-1",
-            "role": "admin",
-            "tenant_id": str(tenant_id),
-        })
+        token = create_access_token(
+            {
+                "sub": "user-1",
+                "role": "admin",
+                "tenant_id": str(tenant_id),
+            }
+        )
         payload = decode_access_token(token)
         assert "tenant_id" in payload
         assert payload["tenant_id"] == str(tenant_id)
@@ -446,7 +449,9 @@ class TestBaseRepositoryTenantFilter:
     async def test_create_auto_injects_tenant_id(self, db_session) -> None:
         """create 方法自动写入 tenant_id。"""
         # 创建真实 User 和 Tenant 以满足外键约束
-        user = User(email="fk-test1@test.com", hashed_password="x", name="U1", role="viewer")
+        user = User(
+            email="fk-test1@test.com", hashed_password="x", name="U1", role="viewer"
+        )
         db_session.add(user)
         tenant = Tenant(name="测试租户", plan="free", max_users=10, max_storage=1024)
         db_session.add(tenant)
@@ -467,10 +472,14 @@ class TestBaseRepositoryTenantFilter:
         self, db_session
     ) -> None:
         """create 方法不覆盖显式传入的 tenant_id。"""
-        user = User(email="fk-test2@test.com", hashed_password="x", name="U2", role="viewer")
+        user = User(
+            email="fk-test2@test.com", hashed_password="x", name="U2", role="viewer"
+        )
         db_session.add(user)
         tenant_repo = Tenant(name="租户A", plan="free", max_users=10, max_storage=1024)
-        tenant_explicit = Tenant(name="租户B", plan="pro", max_users=50, max_storage=2048)
+        tenant_explicit = Tenant(
+            name="租户B", plan="pro", max_users=50, max_storage=2048
+        )
         db_session.add_all([tenant_repo, tenant_explicit])
         await db_session.flush()
 
@@ -490,7 +499,9 @@ class TestBaseRepositoryTenantFilter:
     async def test_get_all_filters_by_tenant(self, db_session) -> None:
         """get_all 只返回当前租户的记录。"""
         # 创建真实 User 和 Tenant 以满足外键约束
-        user = User(email="fk-getall@test.com", hashed_password="x", name="U", role="viewer")
+        user = User(
+            email="fk-getall@test.com", hashed_password="x", name="U", role="viewer"
+        )
         db_session.add(user)
         tenant_a = Tenant(name="租户A", plan="free", max_users=10, max_storage=1024)
         tenant_b = Tenant(name="租户B", plan="pro", max_users=50, max_storage=2048)
@@ -502,26 +513,32 @@ class TestBaseRepositoryTenantFilter:
 
         # 直接创建记录（绕过 repo.create），设置不同的 tenant_id
         for i in range(3):
-            db_session.add(QaQuestion(
-                user_id=user.id,
-                title=f"Tenant A - Q{i}",
-                content="content",
-                tenant_id=tenant_a_id,
-            ))
+            db_session.add(
+                QaQuestion(
+                    user_id=user.id,
+                    title=f"Tenant A - Q{i}",
+                    content="content",
+                    tenant_id=tenant_a_id,
+                )
+            )
         for i in range(2):
-            db_session.add(QaQuestion(
-                user_id=user.id,
-                title=f"Tenant B - Q{i}",
-                content="content",
-                tenant_id=tenant_b_id,
-            ))
+            db_session.add(
+                QaQuestion(
+                    user_id=user.id,
+                    title=f"Tenant B - Q{i}",
+                    content="content",
+                    tenant_id=tenant_b_id,
+                )
+            )
         # 一条无 tenant_id 的记录（历史数据 / 单租户兜底）
-        db_session.add(QaQuestion(
-            user_id=user.id,
-            title="No tenant",
-            content="content",
-            tenant_id=None,
-        ))
+        db_session.add(
+            QaQuestion(
+                user_id=user.id,
+                title="No tenant",
+                content="content",
+                tenant_id=None,
+            )
+        )
         await db_session.flush()
 
         # Tenant A 的 repo 只能看到 A 的 3 条记录
@@ -545,7 +562,9 @@ class TestBaseRepositoryTenantFilter:
 
     async def test_count_filters_by_tenant(self, db_session) -> None:
         """count 方法按租户过滤统计。"""
-        user = User(email="fk-count@test.com", hashed_password="x", name="U", role="viewer")
+        user = User(
+            email="fk-count@test.com", hashed_password="x", name="U", role="viewer"
+        )
         db_session.add(user)
         tenant_a = Tenant(name="计数A", plan="free", max_users=10, max_storage=1024)
         tenant_b = Tenant(name="计数B", plan="pro", max_users=50, max_storage=2048)
@@ -556,19 +575,23 @@ class TestBaseRepositoryTenantFilter:
         tenant_b_id = tenant_b.id
 
         for _ in range(4):
-            db_session.add(QaQuestion(
-                user_id=user.id,
-                title="A",
-                content="c",
-                tenant_id=tenant_a_id,
-            ))
+            db_session.add(
+                QaQuestion(
+                    user_id=user.id,
+                    title="A",
+                    content="c",
+                    tenant_id=tenant_a_id,
+                )
+            )
         for _ in range(1):
-            db_session.add(QaQuestion(
-                user_id=user.id,
-                title="B",
-                content="c",
-                tenant_id=tenant_b_id,
-            ))
+            db_session.add(
+                QaQuestion(
+                    user_id=user.id,
+                    title="B",
+                    content="c",
+                    tenant_id=tenant_b_id,
+                )
+            )
         await db_session.flush()
 
         repo_a = BaseRepository(QaQuestion, db_session, tenant_id=tenant_a_id)

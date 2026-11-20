@@ -1,0 +1,35 @@
+# Ruff 配置 — 显式固化规则集，避免 CI `ruff>=x` 版本漂移导致规则集随版本乱跳。
+# 变更规则集须同步更新 CI（.github/workflows/ci.yml 使用 pip install ruff==0.8.0）。
+# 目标 Python 3.12（与 CI setup-python / Dockerfile 一致）。
+target-version = "py312"
+line-length = 88
+
+[lint]
+# 精选高价值规则：语法错误(E4/E7/E9)、Pyflakes(F)、import 排序(I)、
+# 过时语法(UP)、无用 noqa(RUF100)。均为可机械验证、不依赖语义判断的规则。
+select = [
+    "E4",     # import 相关 pycodestyle（E401/E402）
+    "E7",     # 语句相关（E712 等）
+    "E9",     # 语法错误
+    "F",      # Pyflakes：未用导入/变量、未定义名、重定义
+    "I",      # isort：import 排序
+    "UP",     # pyupgrade：过时语法
+    "RUF100", # 无用的 # noqa 指令
+]
+
+# UP017(utcnow→UTC)/UP038(isinstance X|Y)/UP006/007/040(注解 PEP604 改写)
+# 虽被标记 safe，但会改变时区语义或 isinstance 运行时行为 / 大范围注解风格，
+# 超出"机械清理"范围，显式排除，避免修 lint 引入行为变化。
+ignore = [
+    "UP006", "UP007", "UP017", "UP038", "UP040",
+    "E501",  # 行宽交给 formatter
+]
+
+# 中文项目：RUF001/002/003（unicode 歧义字符）会把中文误判为问题，显式排除。
+# 测试里对 pytest fixture 的动态重定义、未用变量较宽容，减少无意义噪音。
+[lint.per-file-ignores]
+"tests/**/*.py" = ["F811", "F841", "E741", "A001"]
+
+[lint.isort]
+# 与项目现有风格一致：from 导入优先，已知第三方库归组。
+known-first-party = ["app", "tasks", "shared"]

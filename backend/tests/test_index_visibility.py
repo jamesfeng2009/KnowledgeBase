@@ -9,6 +9,7 @@ T2 不新增 DB 字段，而是在 /progress 端点派生 searchable/index_state
 2. reindex 限流器独立配额（6/分钟，突发 3）；
 3. reindex 端点权限拒绝（非所有者/非 admin）与成功路径（mock service）。
 """
+
 from __future__ import annotations
 
 import sys
@@ -116,9 +117,11 @@ async def test_reindex_forbidden_for_non_owner():
     service.get_document = AsyncMock(return_value=doc)
     service._trigger_reindex = AsyncMock()
 
-    with patch("app.api.v1.documents.KnowledgeService", return_value=service), patch(
-        "app.middleware._get_client_id", return_value="forbidden-client"
-    ), patch("app.api.v1.documents._reindex_limiter") as limiter:
+    with (
+        patch("app.api.v1.documents.KnowledgeService", return_value=service),
+        patch("app.middleware._get_client_id", return_value="forbidden-client"),
+        patch("app.api.v1.documents._reindex_limiter") as limiter,
+    ):
         limiter.allow.return_value = True
         with pytest.raises(HTTPException) as exc:
             await reindex_document(_make_request(), doc.id, MagicMock(), user)
@@ -139,9 +142,11 @@ async def test_reindex_success_triggers_pipeline():
     db = MagicMock()
     db.commit = AsyncMock()
 
-    with patch("app.api.v1.documents.KnowledgeService", return_value=service), patch(
-        "app.middleware._get_client_id", return_value="success-client"
-    ), patch("app.api.v1.documents._reindex_limiter") as limiter:
+    with (
+        patch("app.api.v1.documents.KnowledgeService", return_value=service),
+        patch("app.middleware._get_client_id", return_value="success-client"),
+        patch("app.api.v1.documents._reindex_limiter") as limiter,
+    ):
         limiter.allow.return_value = True
         resp = await reindex_document(_make_request(), doc.id, db, user)
 
@@ -159,9 +164,11 @@ async def test_reindex_rate_limited():
 
     user = _make_user(role="admin")
     service = MagicMock()
-    with patch("app.api.v1.documents.KnowledgeService", return_value=service), patch(
-        "app.middleware._get_client_id", return_value="rl-client"
-    ), patch("app.api.v1.documents._reindex_limiter") as limiter:
+    with (
+        patch("app.api.v1.documents.KnowledgeService", return_value=service),
+        patch("app.middleware._get_client_id", return_value="rl-client"),
+        patch("app.api.v1.documents._reindex_limiter") as limiter,
+    ):
         limiter.allow.return_value = False
         with pytest.raises(HTTPException) as exc:
             await reindex_document(_make_request(), uuid.uuid4(), MagicMock(), user)

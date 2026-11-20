@@ -24,7 +24,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 from uuid import UUID
 
 from app.memory.mem0_manager import Mem0Manager
@@ -163,13 +162,19 @@ class DetailRecall:
             )
             results: list[RecalledDetail] = []
             for f in facts:
-                text = f.get("fact_text", "") if isinstance(f, dict) else getattr(f, "fact_text", "")
+                text = (
+                    f.get("fact_text", "")
+                    if isinstance(f, dict)
+                    else getattr(f, "fact_text", "")
+                )
                 if not text:
                     continue
                 results.append(
                     RecalledDetail(
                         content=text,
-                        similarity=float(f.get("similarity", 0.0)) if isinstance(f, dict) else 0.0,
+                        similarity=float(f.get("similarity", 0.0))
+                        if isinstance(f, dict)
+                        else 0.0,
                     )
                 )
 

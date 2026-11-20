@@ -12,10 +12,10 @@ from __future__ import annotations
 import re
 
 from app.intent.router import (
-    IntentResult,
-    IntentType,
     _SHORTCUT_INTENTS,
     _TERMINAL_INTENTS,
+    IntentResult,
+    IntentType,
 )
 
 
@@ -233,8 +233,14 @@ class RuleMatcher:
                         parameters["search_query"] = (
                             candidate if len(candidate) > 1 else query_stripped
                         )
-                    elif intent == IntentType.GET_DOCUMENT and match.lastindex and match.lastindex >= 2:
-                        parameters["document_ref"] = match.group(match.lastindex).strip()
+                    elif (
+                        intent == IntentType.GET_DOCUMENT
+                        and match.lastindex
+                        and match.lastindex >= 2
+                    ):
+                        parameters["document_ref"] = match.group(
+                            match.lastindex
+                        ).strip()
                     elif intent == IntentType.UNSUPPORTED:
                         if self._is_legal_query(query_stripped):
                             parameters["refusal_type"] = "legal"
@@ -244,8 +250,7 @@ class RuleMatcher:
                         confidence=confidence,
                         parameters=parameters,
                         use_shortcut=(
-                            intent in _SHORTCUT_INTENTS
-                            or intent in _TERMINAL_INTENTS
+                            intent in _SHORTCUT_INTENTS or intent in _TERMINAL_INTENTS
                         ),
                     )
         return None

@@ -10,6 +10,7 @@
 本模块仅做 HTTP 路由与序列化，业务查询直接走视图 SQL。
 权限：仅 admin。租户隔离：request.state.tenant_id 注入查询条件。
 """
+
 from __future__ import annotations
 
 import math
@@ -58,7 +59,9 @@ def _row_to_dict(row: Any) -> dict[str, Any]:
         "tool_names": list(row.tool_names or []),
         "node_runs": int(row.node_runs or 0),
         "max_iteration": int(row.max_iteration or 0),
-        "total_latency_ms": int(row.total_latency_ms) if row.total_latency_ms is not None else None,
+        "total_latency_ms": int(row.total_latency_ms)
+        if row.total_latency_ms is not None
+        else None,
         "total_tokens": int(row.total_tokens) if row.total_tokens is not None else None,
         "has_error": bool(row.has_error),
         "answer_excerpt": row.answer_excerpt,

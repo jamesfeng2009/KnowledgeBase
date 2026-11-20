@@ -131,16 +131,15 @@ class NotificationService:
             return 0
 
         # 找到评论过该文档的用户
-        comment_stmt = (
-            select(DocumentComment.user_id)
-            .where(
-                and_(
-                    DocumentComment.doc_id == doc_uid,
-                    DocumentComment.deleted_at.is_(None),
-                )
+        comment_stmt = select(DocumentComment.user_id).where(
+            and_(
+                DocumentComment.doc_id == doc_uid,
+                DocumentComment.deleted_at.is_(None),
             )
         )
-        comment_stmt = apply_tenant_filter(comment_stmt, DocumentComment, self._tenant_id)
+        comment_stmt = apply_tenant_filter(
+            comment_stmt, DocumentComment, self._tenant_id
+        )
         comment_stmt = comment_stmt.distinct()
         comment_result = await self.db.execute(comment_stmt)
         user_ids = {r.user_id for r in comment_result if r.user_id}
@@ -267,10 +266,7 @@ class NotificationService:
 
         # 收集命中的模式 ID（用于通知正文）
         try:
-            patterns_hit = sorted({
-                h.pattern_id
-                for h in scan_result.hits
-            })
+            patterns_hit = sorted({h.pattern_id for h in scan_result.hits})
         except Exception:
             patterns_hit = []
 
@@ -474,13 +470,10 @@ class NotificationService:
             return []
         # 取标题前 2 个字符作为关键词（中文短词匹配）
         keyword = f"%{title[:2]}%"
-        stmt = (
-            select(Document)
-            .where(
-                and_(
-                    Document.deleted_at.is_(None),
-                    Document.title.ilike(keyword),
-                )
+        stmt = select(Document).where(
+            and_(
+                Document.deleted_at.is_(None),
+                Document.title.ilike(keyword),
             )
         )
         stmt = apply_tenant_filter(stmt, Document, self._tenant_id)
@@ -490,12 +483,14 @@ class NotificationService:
         for doc in result.scalars().all():
             doc_id_str = str(doc.id)
             if doc_id_str not in exclude_ids:
-                docs.append({
-                    "id": doc_id_str,
-                    "title": doc.title,
-                    "summary": doc.summary or "",
-                    "category": doc.category or "",
-                })
+                docs.append(
+                    {
+                        "id": doc_id_str,
+                        "title": doc.title,
+                        "summary": doc.summary or "",
+                        "category": doc.category or "",
+                    }
+                )
         return docs
 
     async def _get_users_by_role(self, role: str) -> list[User]:

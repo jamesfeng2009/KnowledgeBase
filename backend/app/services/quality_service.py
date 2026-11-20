@@ -61,9 +61,7 @@ class QualityService:
         """
         self.db: AsyncSession = db
         self._tenant_id = tenant_id
-        self.doc_repo: DocumentRepository = DocumentRepository(
-            db, tenant_id=tenant_id
-        )
+        self.doc_repo: DocumentRepository = DocumentRepository(db, tenant_id=tenant_id)
         self.feedback_repo: FeedbackRepository = FeedbackRepository(
             db, tenant_id=tenant_id
         )
@@ -311,9 +309,7 @@ class QualityService:
 
         target = str(doc_id)
         legacy_matched = [
-            f
-            for f in legacy
-            if target in msg_doc_map.get(f.related_message_id, set())
+            f for f in legacy if target in msg_doc_map.get(f.related_message_id, set())
         ]
         return direct + legacy_matched
 
@@ -335,9 +331,7 @@ class QualityService:
             return 0.5  # 无反馈时中性评分
 
         positive = sum(1 for f in feedbacks if f.type == "praise")
-        negative = sum(
-            1 for f in feedbacks if f.type in ("bug", "complaint")
-        )
+        negative = sum(1 for f in feedbacks if f.type in ("bug", "complaint"))
         total = positive + negative
         if total == 0:
             return 0.5

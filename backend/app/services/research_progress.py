@@ -24,7 +24,8 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Any, AsyncGenerator
+from collections.abc import AsyncGenerator
+from typing import Any
 
 from app.utils.logger import get_logger
 from app.utils.sse import SSEEvent, SSEEventType
@@ -49,10 +50,10 @@ RESULT_PREFIX: str = "research_result"
 RESULT_TTL: int = 86400
 
 #: 进度事件类型（event 字段，前端据此分派渲染）
-EVENT_DECOMPOSED = "decomposed"      # data: {"type","topics":[...]}
-EVENT_SUBTOPIC = "subtopic"          # data: {"type","index","total","subtopic","status"}
-EVENT_OVERVIEW = "overview"          # data: {"type","summary","distributions"}
-EVENT_DONE = SSEEventType.DONE       # data: {"type":"done","task_id"}
+EVENT_DECOMPOSED = "decomposed"  # data: {"type","topics":[...]}
+EVENT_SUBTOPIC = "subtopic"  # data: {"type","index","total","subtopic","status"}
+EVENT_OVERVIEW = "overview"  # data: {"type","summary","distributions"}
+EVENT_DONE = SSEEventType.DONE  # data: {"type":"done","task_id"}
 
 
 # Redis 连接（延迟初始化）
@@ -94,6 +95,7 @@ def _result_key(task_id: str) -> str:
 # Worker 端发布
 # ----------------------------------------------------------------------
 
+
 async def publish_progress(task_id: str, event: dict[str, Any]) -> bool:
     """将研究进度事件写入快照缓冲并发布到频道。
 
@@ -118,6 +120,7 @@ async def publish_progress(task_id: str, event: dict[str, Any]) -> bool:
 # ----------------------------------------------------------------------
 # 最终结果持久化（Celery 结果后端 rpc:// 不持久化，改存 Redis）
 # ----------------------------------------------------------------------
+
 
 async def _set_result(task_id: str, payload: dict[str, Any]) -> bool:
     """将最终结果写入 Redis（带 TTL）；不可用时返回 False 不抛错。"""
@@ -168,6 +171,7 @@ async def load_result(task_id: str) -> dict[str, Any] | None:
 # ----------------------------------------------------------------------
 # Web 端 SSE 订阅（含快照回放 + 心跳）
 # ----------------------------------------------------------------------
+
 
 async def subscribe_stream(task_id: str) -> AsyncGenerator[str, None]:
     """订阅任务进度并生成 SSE 文本流（供 StreamingResponse 消费）。

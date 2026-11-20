@@ -60,7 +60,9 @@ class ChunkService:
 
     async def get_document(self, doc_id: uuid.UUID) -> Document | None:
         """按 ID 查询未删除文档。"""
-        stmt = select(Document).where(Document.id == doc_id, Document.deleted_at.is_(None))
+        stmt = select(Document).where(
+            Document.id == doc_id, Document.deleted_at.is_(None)
+        )
         stmt = apply_tenant_filter(stmt, Document, self._tenant_id)
         result = await self.db.execute(stmt)
         return result.scalars().first()
@@ -183,9 +185,7 @@ class ChunkService:
         chunk.token_count = estimate_tokens(content)
         await self.db.flush()
         await self._reindex_document(chunk.doc_id)
-        log.info(
-            "chunk.updated", chunk_id=str(chunk_id), doc_id=str(chunk.doc_id)
-        )
+        log.info("chunk.updated", chunk_id=str(chunk_id), doc_id=str(chunk.doc_id))
         return chunk
 
     async def rollback(
@@ -219,7 +219,9 @@ class ChunkService:
             raise ValueError("chunk_version_not_found")
 
         # 快照当前内容（新版本），再写回目标版本内容
-        await self._snapshot(chunk, author_id=author_id, summary=f"rollback to v{version.version_seq}")
+        await self._snapshot(
+            chunk, author_id=author_id, summary=f"rollback to v{version.version_seq}"
+        )
         chunk.content_text = version.content_text
         chunk.token_count = estimate_tokens(version.content_text)
         await self.db.flush()
@@ -312,8 +314,8 @@ class ChunkService:
         重索引失败抛错（编辑已提交，需由调用方决定补偿策略）。
         """
         from app.llm.embedder import get_embedder
-        from app.rag.vector_store.factory import get_vector_store
         from app.rag.chunker import Chunk
+        from app.rag.vector_store.factory import get_vector_store
 
         doc = await self.get_document(doc_id)
         if doc is None:

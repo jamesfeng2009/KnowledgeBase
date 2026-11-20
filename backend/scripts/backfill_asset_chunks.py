@@ -59,9 +59,23 @@ settings = get_settings()
 
 # 视频/音频重解析触发 ASR/VLM 管线，.doc/.ppt 旧格式不支持 — 均排除
 _EXCLUDED_DOC_TYPES: frozenset[str] = frozenset(
-    {"video", "mp4", "avi", "mov", "mkv",
-     "audio", "mp3", "wav", "m4a", "aac", "flac", "ogg", "wma",
-     "doc", "ppt"}
+    {
+        "video",
+        "mp4",
+        "avi",
+        "mov",
+        "mkv",
+        "audio",
+        "mp3",
+        "wav",
+        "m4a",
+        "aac",
+        "flac",
+        "ogg",
+        "wma",
+        "doc",
+        "ppt",
+    }
 )
 
 
@@ -83,7 +97,9 @@ async def load_targets(
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     engine = create_task_engine()
-    session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
     try:
         async with session_factory() as session:
             stmt = select(
@@ -153,7 +169,9 @@ async def backfill_one(
         doc_id, chunk_objects, [c.content for c in chunk_objects]
     )
     assets = sum(
-        1 for c in chunk_objects if getattr(c, "chunk_type", "text") in ("image", "table")
+        1
+        for c in chunk_objects
+        if getattr(c, "chunk_type", "text") in ("image", "table")
     )
     return {
         "doc_id": doc_id,

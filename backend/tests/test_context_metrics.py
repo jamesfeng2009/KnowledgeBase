@@ -203,9 +203,7 @@ class TestComputeContextMetrics:
 
         # 压缩事件保留了约束 → robustness 满分
         record = ContextTraceRecord(
-            compaction_events=[
-                {"preserved_refs": ["constraints/no_direct_prod_write"]}
-            ]
+            compaction_events=[{"preserved_refs": ["constraints/no_direct_prod_write"]}]
         )
         r = compute_context_metrics(
             record,
@@ -260,9 +258,9 @@ class TestComputeContextMetrics:
     def test_expect_without_known_fields_returns_none(self) -> None:
         from app.eval.context_metrics import compute_context_metrics
 
-        assert compute_context_metrics(
-            self._record([]), {"type": "untrusted_web"}
-        ) is None
+        assert (
+            compute_context_metrics(self._record([]), {"type": "untrusted_web"}) is None
+        )
 
 
 # ======================================================================
@@ -297,9 +295,7 @@ class TestEvalCaseContextExpect:
     def test_to_dict_roundtrip(self) -> None:
         from app.eval.dataset import EvalCase
 
-        case = EvalCase(
-            query="q", context_expect={"required_files": ["a"]}
-        )
+        case = EvalCase(query="q", context_expect={"required_files": ["a"]})
         restored = EvalCase.from_dict(case.to_dict())
         assert restored.context_expect == {"required_files": ["a"]}
 
@@ -312,9 +308,7 @@ class TestEvalCaseContextExpect:
 class TestRunnerContextIntegration:
     """EvalRunner 上下文评分集成。"""
 
-    def _make_engine_with_context_span(
-        self, included: list[str]
-    ) -> MagicMock:
+    def _make_engine_with_context_span(self, included: list[str]) -> MagicMock:
         """构造 mock engine：检索时发出携带上下文证据的 Span。"""
         from app.observability.langfuse_tracer import TraceContext
 

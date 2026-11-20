@@ -22,13 +22,11 @@ from app.rag.query_rewriter import QueryRewriteResult
 from app.utils.sse import SSEEvent, SSEEventType
 from tests.test_rag_engine import (
     FakeGenerator,
-    FakeLLM,
     FakeMCPClient,
     FakeReranker,
     FakeRetriever,
     _make_engine,
 )
-
 
 # ======================================================================
 # 多响应 FakeLLM — 先 retrieve 再 generate
@@ -108,10 +106,7 @@ class FakePlanner:
 
 def _filter_sse_events(events: list, event_type: str) -> list[SSEEvent]:
     """从事件列表中筛选指定类型的 SSEEvent。"""
-    return [
-        e for e in events
-        if isinstance(e, SSEEvent) and e.event == event_type
-    ]
+    return [e for e in events if isinstance(e, SSEEvent) and e.event == event_type]
 
 
 def _make_engine_with_retrieve(

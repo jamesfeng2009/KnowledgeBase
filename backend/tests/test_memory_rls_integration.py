@@ -7,6 +7,7 @@
 tenant_id=NULL → fail-closed WITH CHECK 拒绝 → 写入直接抛错；
 即便写进去（旧 fail-open），读取侧也按租户过滤恒空。
 """
+
 from __future__ import annotations
 
 import uuid
@@ -96,8 +97,14 @@ class TestB1FactTenantIsolation:
             mgr = Mem0Manager(s)
             assert await mgr.search_facts(user_id=user_id) == []
             count = (
-                await s.execute(select(MemoryFact).where(MemoryFact.user_id == user_id))
-            ).scalars().all()
+                (
+                    await s.execute(
+                        select(MemoryFact).where(MemoryFact.user_id == user_id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
             assert count == []
 
     async def test_write_without_guc_is_rejected_loudly(self, rls_db):
@@ -126,8 +133,14 @@ class TestB1FactTenantIsolation:
                 summary="讨论了记忆模块修复方案",
             )
             rows = (
-                await s.execute(select(MemoryFact).where(MemoryFact.user_id == user_id))
-            ).scalars().all()
+                (
+                    await s.execute(
+                        select(MemoryFact).where(MemoryFact.user_id == user_id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
             assert len(rows) == 1
             assert rows[0].tenant_id == uuid.UUID(TENANT_A)
 
@@ -142,8 +155,14 @@ class TestB1FactTenantIsolation:
             mm.mem0._embedder = _StubEmbedder(_stub_dim())
             await mm.update_working_memory(user_id, "报销单号", "BG2024001")
             rows = (
-                await s.execute(select(MemoryFact).where(MemoryFact.user_id == user_id))
-            ).scalars().all()
+                (
+                    await s.execute(
+                        select(MemoryFact).where(MemoryFact.user_id == user_id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
             assert len(rows) == 1
             assert rows[0].tenant_id == uuid.UUID(TENANT_A)
 
@@ -173,10 +192,14 @@ class TestB1GraphitiTenantIsolation:
             mgr = GraphitiManager(s)
             assert await mgr.get_entity_timeline(entity_id) == []
             rows = (
-                await s.execute(
-                    select(KnowledgeEntity).where(KnowledgeEntity.id == entity_id)
+                (
+                    await s.execute(
+                        select(KnowledgeEntity).where(KnowledgeEntity.id == entity_id)
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             assert rows == []
 
         async with _tenant_session(rls_db.factory, TENANT_A) as s:
@@ -197,16 +220,26 @@ class TestB1GraphitiTenantIsolation:
             await mm.set_preference(user_id, "answer_style", "concise")
 
             facts = (
-                await s.execute(select(MemoryFact).where(MemoryFact.user_id == user_id))
-            ).scalars().all()
-            assert facts and all(f.tenant_id == uuid.UUID(TENANT_A) for f in facts)
-            entities = (
-                await s.execute(
-                    select(KnowledgeEntity).where(
-                        KnowledgeEntity.entity_ref_id == user_id
+                (
+                    await s.execute(
+                        select(MemoryFact).where(MemoryFact.user_id == user_id)
                     )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
+            assert facts and all(f.tenant_id == uuid.UUID(TENANT_A) for f in facts)
+            entities = (
+                (
+                    await s.execute(
+                        select(KnowledgeEntity).where(
+                            KnowledgeEntity.entity_ref_id == user_id
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
             assert entities and all(
                 e.tenant_id == uuid.UUID(TENANT_A) for e in entities
             )

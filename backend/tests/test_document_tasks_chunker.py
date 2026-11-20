@@ -7,6 +7,7 @@
 - _process_document_async 集成：完整流程使用 SemanticChunker
 - 回归测试：确保流程不因重构而中断
 """
+
 from __future__ import annotations
 
 import json
@@ -232,14 +233,17 @@ class TestBuildIndexes:
         embeddings = [[0.1] * 128 for _ in chunk_objects]
 
         # Mock 内部函数避免实际连接外部服务
-        with patch(
-            "tasks.document_tasks._build_opensearch_index",
-            new_callable=AsyncMock,
-        ) as mock_os, patch(
-            "tasks.document_tasks._build_vector_index",
-            new_callable=AsyncMock,
-            return_value=len(embeddings),
-        ) as mock_vec:
+        with (
+            patch(
+                "tasks.document_tasks._build_opensearch_index",
+                new_callable=AsyncMock,
+            ) as mock_os,
+            patch(
+                "tasks.document_tasks._build_vector_index",
+                new_callable=AsyncMock,
+                return_value=len(embeddings),
+            ) as mock_vec,
+        ):
             await _build_indexes("doc-001", chunk_objects, chunks_text, embeddings)
             mock_os.assert_called_once_with(
                 "doc-001", chunk_objects, kb_id=None, doc=None
@@ -279,7 +283,9 @@ class TestBuildIndexes:
             assert source["chunk_strategy"] == "structural"
 
     @pytest.mark.asyncio
-    async def test_build_opensearch_index_creates_index_with_metadata_fields(self) -> None:
+    async def test_build_opensearch_index_creates_index_with_metadata_fields(
+        self,
+    ) -> None:
         """OpenSearch 索引创建时应包含元数据字段映射。"""
         chunk_objects = self._make_chunk_objects(1)
 
@@ -317,8 +323,13 @@ class TestBuildIndexes:
 
         # 验证 upsert 被调用且接收 Chunk 元数据
         mock_store.upsert.assert_called_once_with(
-            "doc-001", chunk_objects, embeddings, kb_id=None,
-            doc_updated_at=None, effective_from=None, effective_to=None,
+            "doc-001",
+            chunk_objects,
+            embeddings,
+            kb_id=None,
+            doc_updated_at=None,
+            effective_from=None,
+            effective_to=None,
             doc_meta=None,
         )
 
@@ -383,16 +394,21 @@ class TestProcessDocumentAsyncIntegration:
         mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session_cm.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("app.database.async_session_factory", return_value=mock_session_cm), \
-             patch(
-                 "app.repositories.knowledge_repository.DocumentRepository",
-                 return_value=mock_repo,
-             ), \
-             patch("tasks.document_tasks._generate_embeddings", new_callable=AsyncMock, return_value=[]), \
-             patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock), \
-             patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock), \
-             patch("tasks.intelligence_tasks.process_intelligence.delay"):
-
+        with (
+            patch("app.database.async_session_factory", return_value=mock_session_cm),
+            patch(
+                "app.repositories.knowledge_repository.DocumentRepository",
+                return_value=mock_repo,
+            ),
+            patch(
+                "tasks.document_tasks._generate_embeddings",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock),
+            patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock),
+            patch("tasks.intelligence_tasks.process_intelligence.delay"),
+        ):
             result = await _process_document_async(_TEST_UUID)
 
         assert result["status"] == "success"
@@ -428,16 +444,21 @@ class TestProcessDocumentAsyncIntegration:
         mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session_cm.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("app.database.async_session_factory", return_value=mock_session_cm), \
-             patch(
-                 "app.repositories.knowledge_repository.DocumentRepository",
-                 return_value=mock_repo,
-             ), \
-             patch("tasks.document_tasks._generate_embeddings", new_callable=AsyncMock, return_value=[]), \
-             patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock), \
-             patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock), \
-             patch("tasks.intelligence_tasks.process_intelligence.delay"):
-
+        with (
+            patch("app.database.async_session_factory", return_value=mock_session_cm),
+            patch(
+                "app.repositories.knowledge_repository.DocumentRepository",
+                return_value=mock_repo,
+            ),
+            patch(
+                "tasks.document_tasks._generate_embeddings",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock),
+            patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock),
+            patch("tasks.intelligence_tasks.process_intelligence.delay"),
+        ):
             result = await _process_document_async(_TEST_UUID)
 
         assert result["status"] == "failed"
@@ -457,12 +478,13 @@ class TestProcessDocumentAsyncIntegration:
         mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session_cm.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("app.database.async_session_factory", return_value=mock_session_cm), \
-             patch(
-                 "app.repositories.knowledge_repository.DocumentRepository",
-                 return_value=mock_repo,
-             ):
-
+        with (
+            patch("app.database.async_session_factory", return_value=mock_session_cm),
+            patch(
+                "app.repositories.knowledge_repository.DocumentRepository",
+                return_value=mock_repo,
+            ),
+        ):
             result = await _process_document_async(_TEST_UUID_NOT_FOUND)
 
         assert result["status"] == "failed"
@@ -570,17 +592,26 @@ class TestParallelPipelineAndGraphBuild:
         mock_doc = self._make_mock_doc()
         mock_session_cm, mock_repo = self._make_mock_session(mock_doc)
 
-        with patch("app.database.async_session_factory", return_value=mock_session_cm), \
-             patch(
-                 "app.repositories.knowledge_repository.DocumentRepository",
-                 return_value=mock_repo,
-             ), \
-             patch("tasks.document_tasks._generate_embeddings", new_callable=AsyncMock, return_value=[]), \
-             patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock) as mock_index, \
-             patch("tasks.document_tasks._build_knowledge_graph", new_callable=AsyncMock) as mock_graph, \
-             patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock), \
-             patch("tasks.intelligence_tasks.process_intelligence.delay"):
-
+        with (
+            patch("app.database.async_session_factory", return_value=mock_session_cm),
+            patch(
+                "app.repositories.knowledge_repository.DocumentRepository",
+                return_value=mock_repo,
+            ),
+            patch(
+                "tasks.document_tasks._generate_embeddings",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "tasks.document_tasks._build_indexes", new_callable=AsyncMock
+            ) as mock_index,
+            patch(
+                "tasks.document_tasks._build_knowledge_graph", new_callable=AsyncMock
+            ) as mock_graph,
+            patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock),
+            patch("tasks.intelligence_tasks.process_intelligence.delay"),
+        ):
             result = await _process_document_async(_TEST_UUID)
 
         assert result["status"] == "success"
@@ -602,21 +633,30 @@ class TestParallelPipelineAndGraphBuild:
         # E4 对齐：逐键合并要求 get_parse_config 返回 dict（AsyncMock 默认返回值不可解包）
         mock_tenant_svc.get_parse_config = AsyncMock(return_value={})
 
-        with patch("app.database.async_session_factory", return_value=mock_session_cm), \
-             patch(
-                 "app.repositories.knowledge_repository.DocumentRepository",
-                 return_value=mock_repo,
-             ), \
-             patch("tasks.document_tasks._generate_embeddings", new_callable=AsyncMock, return_value=[]), \
-             patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock) as mock_index, \
-             patch("tasks.document_tasks._build_knowledge_graph", new_callable=AsyncMock) as mock_graph, \
-             patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock), \
-             patch("tasks.intelligence_tasks.process_intelligence.delay"), \
-             patch(
-                 "app.services.tenant_service.TenantService",
-                 return_value=mock_tenant_svc,
-             ):
-
+        with (
+            patch("app.database.async_session_factory", return_value=mock_session_cm),
+            patch(
+                "app.repositories.knowledge_repository.DocumentRepository",
+                return_value=mock_repo,
+            ),
+            patch(
+                "tasks.document_tasks._generate_embeddings",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "tasks.document_tasks._build_indexes", new_callable=AsyncMock
+            ) as mock_index,
+            patch(
+                "tasks.document_tasks._build_knowledge_graph", new_callable=AsyncMock
+            ) as mock_graph,
+            patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock),
+            patch("tasks.intelligence_tasks.process_intelligence.delay"),
+            patch(
+                "app.services.tenant_service.TenantService",
+                return_value=mock_tenant_svc,
+            ),
+        ):
             result = await _process_document_async(_TEST_UUID)
 
         assert result["status"] == "success"
@@ -637,25 +677,32 @@ class TestParallelPipelineAndGraphBuild:
         # E4 对齐：逐键合并要求 get_parse_config 返回 dict（AsyncMock 默认返回值不可解包）
         mock_tenant_svc.get_parse_config = AsyncMock(return_value={})
 
-        with patch("app.database.async_session_factory", return_value=mock_session_cm), \
-             patch(
-                 "app.repositories.knowledge_repository.DocumentRepository",
-                 return_value=mock_repo,
-             ), \
-             patch("tasks.document_tasks._generate_embeddings", new_callable=AsyncMock, return_value=[]), \
-             patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock) as mock_index, \
-             patch(
-                 "tasks.document_tasks._build_knowledge_graph",
-                 new_callable=AsyncMock,
-                 side_effect=Exception("Neo4j 连接失败"),
-             ) as mock_graph, \
-             patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock), \
-             patch("tasks.intelligence_tasks.process_intelligence.delay"), \
-             patch(
-                 "app.services.tenant_service.TenantService",
-                 return_value=mock_tenant_svc,
-             ):
-
+        with (
+            patch("app.database.async_session_factory", return_value=mock_session_cm),
+            patch(
+                "app.repositories.knowledge_repository.DocumentRepository",
+                return_value=mock_repo,
+            ),
+            patch(
+                "tasks.document_tasks._generate_embeddings",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "tasks.document_tasks._build_indexes", new_callable=AsyncMock
+            ) as mock_index,
+            patch(
+                "tasks.document_tasks._build_knowledge_graph",
+                new_callable=AsyncMock,
+                side_effect=Exception("Neo4j 连接失败"),
+            ) as mock_graph,
+            patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock),
+            patch("tasks.intelligence_tasks.process_intelligence.delay"),
+            patch(
+                "app.services.tenant_service.TenantService",
+                return_value=mock_tenant_svc,
+            ),
+        ):
             result = await _process_document_async(_TEST_UUID)
 
         # 主流程仍应成功
@@ -688,21 +735,28 @@ class TestParallelPipelineAndGraphBuild:
         async def capture_graph(doc_id, chunk_objects, doc, **kwargs):
             graph_chunks.extend(chunk_objects)
 
-        with patch("app.database.async_session_factory", return_value=mock_session_cm), \
-             patch(
-                 "app.repositories.knowledge_repository.DocumentRepository",
-                 return_value=mock_repo,
-             ), \
-             patch("tasks.document_tasks._generate_embeddings", new_callable=AsyncMock, return_value=[]), \
-             patch("tasks.document_tasks._build_indexes", side_effect=capture_index), \
-             patch("tasks.document_tasks._build_knowledge_graph", side_effect=capture_graph), \
-             patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock), \
-             patch("tasks.intelligence_tasks.process_intelligence.delay"), \
-             patch(
-                 "app.services.tenant_service.TenantService",
-                 return_value=mock_tenant_svc,
-             ):
-
+        with (
+            patch("app.database.async_session_factory", return_value=mock_session_cm),
+            patch(
+                "app.repositories.knowledge_repository.DocumentRepository",
+                return_value=mock_repo,
+            ),
+            patch(
+                "tasks.document_tasks._generate_embeddings",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch("tasks.document_tasks._build_indexes", side_effect=capture_index),
+            patch(
+                "tasks.document_tasks._build_knowledge_graph", side_effect=capture_graph
+            ),
+            patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock),
+            patch("tasks.intelligence_tasks.process_intelligence.delay"),
+            patch(
+                "app.services.tenant_service.TenantService",
+                return_value=mock_tenant_svc,
+            ),
+        ):
             result = await _process_document_async(_TEST_UUID)
 
         assert result["status"] == "success"
@@ -733,11 +787,13 @@ class TestBuildKnowledgeGraphFunction:
         )
         mock_service.invalidate_recommend_cache = AsyncMock()
 
-        with patch(
-            "app.services.graph_service.get_graph_service", return_value=mock_service
-        ), \
-             patch("app.llm.factory.get_llm_provider", side_effect=Exception("no LLM")):
-
+        with (
+            patch(
+                "app.services.graph_service.get_graph_service",
+                return_value=mock_service,
+            ),
+            patch("app.llm.factory.get_llm_provider", side_effect=Exception("no LLM")),
+        ):
             count = await _build_knowledge_graph(_TEST_UUID, mock_chunks, mock_doc)
 
         assert count == 1
@@ -756,11 +812,13 @@ class TestBuildKnowledgeGraphFunction:
         mock_service.extract_triples_from_chunks = AsyncMock(return_value=[])
         mock_service.invalidate_recommend_cache = AsyncMock()
 
-        with patch(
-            "app.services.graph_service.get_graph_service", return_value=mock_service
-        ), \
-             patch("app.llm.factory.get_llm_provider", side_effect=Exception("no LLM")):
-
+        with (
+            patch(
+                "app.services.graph_service.get_graph_service",
+                return_value=mock_service,
+            ),
+            patch("app.llm.factory.get_llm_provider", side_effect=Exception("no LLM")),
+        ):
             count = await _build_knowledge_graph(_TEST_UUID, mock_chunks, mock_doc)
 
         assert count == 0
@@ -807,10 +865,17 @@ class TestChordPipelineSplit:
         mock_chunks = [MagicMock(content="测试内容", id="c1")]
         chunks_text = ["测试内容"]
 
-        with patch("tasks.document_tasks._update_parse_progress"), \
-             patch("tasks.document_tasks._generate_embeddings", new_callable=AsyncMock, return_value=[[0.1]]) as mock_emb, \
-             patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock) as mock_idx:
-
+        with (
+            patch("tasks.document_tasks._update_parse_progress"),
+            patch(
+                "tasks.document_tasks._generate_embeddings",
+                new_callable=AsyncMock,
+                return_value=[[0.1]],
+            ) as mock_emb,
+            patch(
+                "tasks.document_tasks._build_indexes", new_callable=AsyncMock
+            ) as mock_idx,
+        ):
             result = await _build_index_async(_TEST_UUID, mock_chunks, chunks_text)
 
         assert result["status"] == "done"
@@ -824,10 +889,15 @@ class TestChordPipelineSplit:
 
         mock_chunks = [MagicMock(content="内容", id="c1")]
 
-        with patch("tasks.document_tasks._update_parse_progress"), \
-             patch("tasks.document_tasks._generate_embeddings", new_callable=AsyncMock, side_effect=Exception("API 不可用")), \
-             patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock):
-
+        with (
+            patch("tasks.document_tasks._update_parse_progress"),
+            patch(
+                "tasks.document_tasks._generate_embeddings",
+                new_callable=AsyncMock,
+                side_effect=Exception("API 不可用"),
+            ),
+            patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock),
+        ):
             result = await _build_index_async(_TEST_UUID, mock_chunks, ["内容"])
 
         assert result["status"] == "done"
@@ -847,10 +917,16 @@ class TestChordPipelineSplit:
         mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session_cm.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("app.database.async_session_factory", return_value=mock_session_cm), \
-             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo), \
-             patch("tasks.document_tasks._build_knowledge_graph", new_callable=AsyncMock) as mock_graph:
-
+        with (
+            patch("app.database.async_session_factory", return_value=mock_session_cm),
+            patch(
+                "app.repositories.knowledge_repository.DocumentRepository",
+                return_value=mock_repo,
+            ),
+            patch(
+                "tasks.document_tasks._build_knowledge_graph", new_callable=AsyncMock
+            ) as mock_graph,
+        ):
             result = await _build_graph_async(_TEST_UUID, mock_chunks)
 
         assert result["status"] == "done"
@@ -869,10 +945,18 @@ class TestChordPipelineSplit:
         mock_session_cm.__aenter__ = AsyncMock(return_value=AsyncMock())
         mock_session_cm.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("app.database.async_session_factory", return_value=mock_session_cm), \
-             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo), \
-             patch("tasks.document_tasks._build_knowledge_graph", new_callable=AsyncMock, side_effect=Exception("Neo4j 断开")):
-
+        with (
+            patch("app.database.async_session_factory", return_value=mock_session_cm),
+            patch(
+                "app.repositories.knowledge_repository.DocumentRepository",
+                return_value=mock_repo,
+            ),
+            patch(
+                "tasks.document_tasks._build_knowledge_graph",
+                new_callable=AsyncMock,
+                side_effect=Exception("Neo4j 断开"),
+            ),
+        ):
             result = await _build_graph_async(_TEST_UUID, mock_chunks)
 
         assert result["status"] == "done"
@@ -902,11 +986,15 @@ class TestChordPipelineSplit:
         mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session_cm.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("app.database.async_session_factory", return_value=mock_session_cm), \
-             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo), \
-             patch("tasks.document_tasks._update_parse_progress"), \
-             patch("tasks.intelligence_tasks.process_intelligence.delay"):
-
+        with (
+            patch("app.database.async_session_factory", return_value=mock_session_cm),
+            patch(
+                "app.repositories.knowledge_repository.DocumentRepository",
+                return_value=mock_repo,
+            ),
+            patch("tasks.document_tasks._update_parse_progress"),
+            patch("tasks.intelligence_tasks.process_intelligence.delay"),
+        ):
             result = await _finalize_document_async(_TEST_UUID, results)
 
         assert result["status"] == "success"
@@ -932,12 +1020,18 @@ class TestChordPipelineSplit:
         mock_session_cm.__aenter__ = AsyncMock(return_value=AsyncMock())
         mock_session_cm.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("app.database.async_session_factory", return_value=mock_session_cm), \
-             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo), \
-             patch("tasks.document_tasks._update_parse_progress"), \
-             patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock) as mock_audit, \
-             patch("tasks.intelligence_tasks.process_intelligence.delay"):
-
+        with (
+            patch("app.database.async_session_factory", return_value=mock_session_cm),
+            patch(
+                "app.repositories.knowledge_repository.DocumentRepository",
+                return_value=mock_repo,
+            ),
+            patch("tasks.document_tasks._update_parse_progress"),
+            patch(
+                "tasks.document_tasks._submit_for_audit", new_callable=AsyncMock
+            ) as mock_audit,
+            patch("tasks.intelligence_tasks.process_intelligence.delay"),
+        ):
             result = await _finalize_document_async(_TEST_UUID, results)
 
         assert result["final_status"] == "pending_review"
@@ -965,11 +1059,15 @@ class TestChordPipelineSplit:
         mock_session_cm.__aenter__ = AsyncMock(return_value=AsyncMock())
         mock_session_cm.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("app.database.async_session_factory", return_value=mock_session_cm), \
-             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo), \
-             patch("tasks.document_tasks._update_parse_progress"), \
-             patch("tasks.intelligence_tasks.process_intelligence.delay"):
-
+        with (
+            patch("app.database.async_session_factory", return_value=mock_session_cm),
+            patch(
+                "app.repositories.knowledge_repository.DocumentRepository",
+                return_value=mock_repo,
+            ),
+            patch("tasks.document_tasks._update_parse_progress"),
+            patch("tasks.intelligence_tasks.process_intelligence.delay"),
+        ):
             result = await _finalize_document_async(_TEST_UUID, results)
 
         assert "解析警告" in result["warnings"]
@@ -990,29 +1088,40 @@ class TestChunkRedisPersistence:
             mock_redis_mod.from_url = MagicMock()
             sys.modules["redis"] = mock_redis_mod
 
-        from tasks.document_tasks import _save_chunks_to_redis, _load_chunks_from_redis
         from app.rag.chunker import Chunk
+        from tasks.document_tasks import _load_chunks_from_redis, _save_chunks_to_redis
 
         chunks = [
             Chunk(
-                id="c1", doc_id=_TEST_UUID, content="测试内容1",
-                parent_id=None, title_path="标题1",
-                content_type="plain", chunk_strategy="semantic",
+                id="c1",
+                doc_id=_TEST_UUID,
+                content="测试内容1",
+                parent_id=None,
+                title_path="标题1",
+                content_type="plain",
+                chunk_strategy="semantic",
             ),
             Chunk(
-                id="c2", doc_id=_TEST_UUID, content="测试内容2",
-                parent_id="c1", title_path="标题1 > 子标题",
-                content_type="plain", chunk_strategy="structural",
+                id="c2",
+                doc_id=_TEST_UUID,
+                content="测试内容2",
+                parent_id="c1",
+                title_path="标题1 > 子标题",
+                content_type="plain",
+                chunk_strategy="structural",
             ),
         ]
 
         saved_payload = []
 
         mock_client = MagicMock()
+
         def mock_setex(key, ttl, value):
             saved_payload.append(value)
+
         def mock_get(key):
             return saved_payload[0] if saved_payload else None
+
         mock_client.setex = mock_setex
         mock_client.get = mock_get
 
@@ -1038,8 +1147,8 @@ class TestChunkRedisPersistence:
             mock_redis_mod.from_url = MagicMock()
             sys.modules["redis"] = mock_redis_mod
 
-        from tasks.document_tasks import _save_chunks_to_redis
         from app.rag.chunker import Chunk
+        from tasks.document_tasks import _save_chunks_to_redis
 
         chunks = [Chunk(id="c1", doc_id=_TEST_UUID, content="内容")]
 
@@ -1092,14 +1201,28 @@ class TestChunkRedisRoundTripFields:
 
         chunks = [
             Chunk(
-                id="c1", doc_id=_TEST_UUID, content="第一段内容",
-                parent_id=None, start_pos=0, end_pos=120, token_count=42,
-                title_path="标题", content_type="plain", chunk_strategy="structural",
+                id="c1",
+                doc_id=_TEST_UUID,
+                content="第一段内容",
+                parent_id=None,
+                start_pos=0,
+                end_pos=120,
+                token_count=42,
+                title_path="标题",
+                content_type="plain",
+                chunk_strategy="structural",
             ),
             Chunk(
-                id="c2", doc_id=_TEST_UUID, content="第二段内容",
-                parent_id="c1", start_pos=120, end_pos=260, token_count=57,
-                title_path="标题 > 子标题", content_type="plain", chunk_strategy="semantic",
+                id="c2",
+                doc_id=_TEST_UUID,
+                content="第二段内容",
+                parent_id="c1",
+                start_pos=120,
+                end_pos=260,
+                token_count=57,
+                title_path="标题 > 子标题",
+                content_type="plain",
+                chunk_strategy="semantic",
             ),
         ]
 
@@ -1202,13 +1325,19 @@ class TestFinalizeFailedShortCircuit:
         mock_doc = self._make_doc(content_text="")
         mock_task_db_session, mock_repo, mock_session = self._make_db_mocks(mock_doc)
 
-        with patch("app.database.task_db_session", mock_task_db_session), \
-             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo), \
-             patch("tasks.document_tasks._update_parse_progress") as mock_progress, \
-             patch("tasks.document_tasks._cleanup_chunks_redis"), \
-             patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock) as mock_audit, \
-             patch("tasks.intelligence_tasks.process_intelligence.delay") as mock_intel:
-
+        with (
+            patch("app.database.task_db_session", mock_task_db_session),
+            patch(
+                "app.repositories.knowledge_repository.DocumentRepository",
+                return_value=mock_repo,
+            ),
+            patch("tasks.document_tasks._update_parse_progress") as mock_progress,
+            patch("tasks.document_tasks._cleanup_chunks_redis"),
+            patch(
+                "tasks.document_tasks._submit_for_audit", new_callable=AsyncMock
+            ) as mock_audit,
+            patch("tasks.intelligence_tasks.process_intelligence.delay") as mock_intel,
+        ):
             result = await _finalize_document_async(_TEST_UUID, [])
 
         assert result["status"] == "failed"
@@ -1221,7 +1350,8 @@ class TestFinalizeFailedShortCircuit:
         mock_intel.assert_not_called()
         # 进度标记为 failed 而非 done
         assert any(
-            call.kwargs.get("stage") == "failed" for call in mock_progress.call_args_list
+            call.kwargs.get("stage") == "failed"
+            for call in mock_progress.call_args_list
         )
 
     @pytest.mark.asyncio
@@ -1232,13 +1362,19 @@ class TestFinalizeFailedShortCircuit:
         mock_doc = self._make_doc(content_text="")
         mock_task_db_session, mock_repo, mock_session = self._make_db_mocks(mock_doc)
 
-        with patch("app.database.task_db_session", mock_task_db_session), \
-             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo), \
-             patch("tasks.document_tasks._update_parse_progress"), \
-             patch("tasks.document_tasks._cleanup_chunks_redis"), \
-             patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock) as mock_audit, \
-             patch("tasks.intelligence_tasks.process_intelligence.delay") as mock_intel:
-
+        with (
+            patch("app.database.task_db_session", mock_task_db_session),
+            patch(
+                "app.repositories.knowledge_repository.DocumentRepository",
+                return_value=mock_repo,
+            ),
+            patch("tasks.document_tasks._update_parse_progress"),
+            patch("tasks.document_tasks._cleanup_chunks_redis"),
+            patch(
+                "tasks.document_tasks._submit_for_audit", new_callable=AsyncMock
+            ) as mock_audit,
+            patch("tasks.intelligence_tasks.process_intelligence.delay") as mock_intel,
+        ):
             first = await _finalize_document_async(_TEST_UUID, [])
             # 模拟 chord 重放：第二次 finalize（doc.status 已是 failed）
             second = await _finalize_document_async(_TEST_UUID, [])
@@ -1258,13 +1394,19 @@ class TestFinalizeFailedShortCircuit:
         mock_doc = self._make_doc(content_text="正文内容", status="published")
         mock_task_db_session, mock_repo, mock_session = self._make_db_mocks(mock_doc)
 
-        with patch("app.database.task_db_session", mock_task_db_session), \
-             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo), \
-             patch("tasks.document_tasks._update_parse_progress"), \
-             patch("tasks.document_tasks._cleanup_chunks_redis"), \
-             patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock) as mock_audit, \
-             patch("tasks.intelligence_tasks.process_intelligence.delay") as mock_intel:
-
+        with (
+            patch("app.database.task_db_session", mock_task_db_session),
+            patch(
+                "app.repositories.knowledge_repository.DocumentRepository",
+                return_value=mock_repo,
+            ),
+            patch("tasks.document_tasks._update_parse_progress"),
+            patch("tasks.document_tasks._cleanup_chunks_redis"),
+            patch(
+                "tasks.document_tasks._submit_for_audit", new_callable=AsyncMock
+            ) as mock_audit,
+            patch("tasks.intelligence_tasks.process_intelligence.delay") as mock_intel,
+        ):
             result = await _finalize_document_async(_TEST_UUID, [])
 
         assert result["status"] == "success"
@@ -1281,17 +1423,25 @@ class TestFinalizeFailedShortCircuit:
         from tasks.document_tasks import _finalize_document_async
 
         mock_doc = self._make_doc(
-            content_text="机密内容", status="pending_review", classification="confidential"
+            content_text="机密内容",
+            status="pending_review",
+            classification="confidential",
         )
         mock_task_db_session, mock_repo, mock_session = self._make_db_mocks(mock_doc)
 
-        with patch("app.database.task_db_session", mock_task_db_session), \
-             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo), \
-             patch("tasks.document_tasks._update_parse_progress"), \
-             patch("tasks.document_tasks._cleanup_chunks_redis"), \
-             patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock) as mock_audit, \
-             patch("tasks.intelligence_tasks.process_intelligence.delay") as mock_intel:
-
+        with (
+            patch("app.database.task_db_session", mock_task_db_session),
+            patch(
+                "app.repositories.knowledge_repository.DocumentRepository",
+                return_value=mock_repo,
+            ),
+            patch("tasks.document_tasks._update_parse_progress"),
+            patch("tasks.document_tasks._cleanup_chunks_redis"),
+            patch(
+                "tasks.document_tasks._submit_for_audit", new_callable=AsyncMock
+            ) as mock_audit,
+            patch("tasks.intelligence_tasks.process_intelligence.delay") as mock_intel,
+        ):
             result = await _finalize_document_async(_TEST_UUID, [])
 
         assert result["status"] == "success"
@@ -1308,13 +1458,17 @@ class TestFinalizeFailedShortCircuit:
         mock_doc = self._make_doc(content_text="正文内容", status="draft")
         mock_task_db_session, mock_repo, mock_session = self._make_db_mocks(mock_doc)
 
-        with patch("app.database.task_db_session", mock_task_db_session), \
-             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo), \
-             patch("tasks.document_tasks._update_parse_progress"), \
-             patch("tasks.document_tasks._cleanup_chunks_redis"), \
-             patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock), \
-             patch("tasks.intelligence_tasks.process_intelligence.delay") as mock_intel:
-
+        with (
+            patch("app.database.task_db_session", mock_task_db_session),
+            patch(
+                "app.repositories.knowledge_repository.DocumentRepository",
+                return_value=mock_repo,
+            ),
+            patch("tasks.document_tasks._update_parse_progress"),
+            patch("tasks.document_tasks._cleanup_chunks_redis"),
+            patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock),
+            patch("tasks.intelligence_tasks.process_intelligence.delay") as mock_intel,
+        ):
             result = await _finalize_document_async(_TEST_UUID, [])
 
         assert result["status"] == "success"

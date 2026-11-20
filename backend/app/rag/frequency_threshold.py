@@ -91,7 +91,7 @@ class FrequencyBasedThreshold:
         self._retry_at: float = 0.0
         self._time = time.monotonic
         # 进程内 LRU 计数器（降级存储）：{query_hash: count}
-        self._mem_store: "OrderedDict[str, int]" = OrderedDict()
+        self._mem_store: OrderedDict[str, int] = OrderedDict()
 
     # ------------------------------------------------------------------
     # 内部：Redis 懒初始化（与 TokenCache 保持一致的降级策略）
@@ -178,9 +178,7 @@ class FrequencyBasedThreshold:
                     await redis.expire(key, ttl)
                 return int(count)
             except Exception as exc:
-                log.warning(
-                    "frequency_threshold.redis.incr_error", error=str(exc)
-                )
+                log.warning("frequency_threshold.redis.incr_error", error=str(exc))
                 # 标记不可用，后续走内存路径
                 self._redis_available = False
                 self._retry_at = self._time() + _RETRY_INTERVAL
@@ -249,9 +247,7 @@ class FrequencyBasedThreshold:
                 raw = await redis.get(key)
                 return int(raw) if raw else 0
             except Exception as exc:
-                log.warning(
-                    "frequency_threshold.redis.get_error", error=str(exc)
-                )
+                log.warning("frequency_threshold.redis.get_error", error=str(exc))
                 self._redis_available = False
                 self._retry_at = self._time() + _RETRY_INTERVAL
 

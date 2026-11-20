@@ -16,6 +16,7 @@ Obsidian vault 就是一个包含 .md 文件的目录，适配器只需：
     - YAML frontmatter（MarkdownParser 会提取 title）
     - 嵌套目录结构（list_documents 递归列举）
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -247,10 +248,11 @@ class ObsidianAdapter(DocumentSourceAdapter):
 
         if not target.is_file():
             raise AdapterError(
-                self.adapter_id, f"文件不存在: {file_rel}", status_code=404,
+                self.adapter_id,
+                f"文件不存在: {file_rel}",
+                status_code=404,
             )
 
-        import os
         from datetime import datetime, timezone
 
         stat = target.stat()

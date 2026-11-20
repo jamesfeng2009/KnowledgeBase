@@ -80,7 +80,11 @@ def split_dataset(
     """
     if not records:
         return [], []
-    from finetune_utils import grouped_split_indices, last_user_content, question_group_key
+    from finetune_utils import (
+        grouped_split_indices,
+        last_user_content,
+        question_group_key,
+    )
 
     keys = [question_group_key(last_user_content(r["messages"])) for r in records]
     valid_count = max(min_valid, int(len(records) * valid_ratio))
@@ -103,20 +107,26 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="将 sft.jsonl 转为 mlx-lm 训练目录（train.jsonl + valid.jsonl）"
     )
-    parser.add_argument("--data", required=True, help="输入 sft.jsonl 路径（后端导出 pipeline 产物）")
+    parser.add_argument(
+        "--data", required=True, help="输入 sft.jsonl 路径（后端导出 pipeline 产物）"
+    )
     parser.add_argument(
         "--output_dir",
         required=True,
         help="输出目录（train.jsonl / valid.jsonl 将写入此目录）",
     )
-    parser.add_argument("--valid_ratio", type=float, default=0.1, help="验证集比例（默认 0.1）")
+    parser.add_argument(
+        "--valid_ratio", type=float, default=0.1, help="验证集比例（默认 0.1）"
+    )
     parser.add_argument("--seed", type=int, default=42, help="随机种子（默认 42）")
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
 
     train_lora = _import_loader()
     records = train_lora.load_sft_jsonl(args.data)
@@ -126,7 +136,11 @@ def main(argv: list[str] | None = None) -> int:
 
     train, valid = split_dataset(records, valid_ratio=args.valid_ratio, seed=args.seed)
     if not train:
-        logger.error("拆分后训练集为空（总样本 %d / valid_ratio %.2f），降低 valid_ratio 重试", len(records), args.valid_ratio)
+        logger.error(
+            "拆分后训练集为空（总样本 %d / valid_ratio %.2f），降低 valid_ratio 重试",
+            len(records),
+            args.valid_ratio,
+        )
         return 1
 
     out_dir = Path(args.output_dir)
@@ -137,10 +151,23 @@ def main(argv: list[str] | None = None) -> int:
 
     logger.info("MLX 数据准备完成：")
     logger.info("  源文件:        %s（校验通过 %d 条）", args.data, len(records))
-    logger.info("  训练集:        %s（%d 条，占 %.1f%%）", train_path, n_train, 100.0 * n_train / len(records))
-    logger.info("  验证集:        %s（%d 条，占 %.1f%%）", valid_path, n_valid, 100.0 * n_valid / len(records))
+    logger.info(
+        "  训练集:        %s（%d 条，占 %.1f%%）",
+        train_path,
+        n_train,
+        100.0 * n_train / len(records),
+    )
+    logger.info(
+        "  验证集:        %s（%d 条，占 %.1f%%）",
+        valid_path,
+        n_valid,
+        100.0 * n_valid / len(records),
+    )
     logger.info("  valid_ratio=%.2f  seed=%d", args.valid_ratio, args.seed)
-    logger.info("下一步：mlx_lm.lora --model Qwen/Qwen2.5-7B-Instruct-4bit --train --data %s ...", out_dir)
+    logger.info(
+        "下一步：mlx_lm.lora --model Qwen/Qwen2.5-7B-Instruct-4bit --train --data %s ...",
+        out_dir,
+    )
     return 0
 
 

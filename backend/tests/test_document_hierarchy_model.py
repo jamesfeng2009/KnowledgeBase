@@ -15,6 +15,7 @@
 测试方式：SQLAlchemy 模型 introspection（无需真实 DB 连接），
 通过 Document.__table__.columns 和 Document.__mapper__.relationships 检查。
 """
+
 from __future__ import annotations
 
 import uuid
@@ -23,7 +24,6 @@ import pytest
 from sqlalchemy import Integer, String
 
 from app.models.knowledge import Document
-
 
 # ======================================================================
 # 字段存在性
@@ -39,9 +39,7 @@ class TestHierarchyFieldsExist:
     )
     def test_field_exists(self, field: str) -> None:
         """每个层级元数据字段都应在表列中定义。"""
-        assert field in Document.__table__.columns, (
-            f"Document 应有 {field} 字段"
-        )
+        assert field in Document.__table__.columns, f"Document 应有 {field} 字段"
 
 
 # ======================================================================
@@ -81,9 +79,7 @@ class TestHierarchyFieldsDefault:
         """字段应有默认值且默认值为 0。"""
         col = Document.__table__.columns[field]
         assert col.default is not None, f"{field} 应有默认值"
-        assert col.default.arg == 0, (
-            f"{field} 默认值应为 0，实际: {col.default.arg}"
-        )
+        assert col.default.arg == 0, f"{field} 默认值应为 0，实际: {col.default.arg}"
 
 
 # ======================================================================
@@ -118,9 +114,9 @@ class TestHierarchyFieldsIndex:
         """parent_id/version_of 的 FK 应指向 documents.id（自引用）。"""
         col = Document.__table__.columns[field]
         fk_targets = {fk.target_fullname for fk in col.foreign_keys}
-        assert "documents.id" in fk_targets, (
-            f"{field} 的 FK 应指向 documents.id，实际: {fk_targets}"
-        )
+        assert (
+            "documents.id" in fk_targets
+        ), f"{field} 的 FK 应指向 documents.id，实际: {fk_targets}"
 
 
 # ======================================================================
@@ -168,9 +164,7 @@ class TestHierarchyRelationships:
     )
     def test_relationship_exists(self, rel: str) -> None:
         """四个层级反向关系都应存在于 Document mapper 中。"""
-        assert rel in Document.__mapper__.relationships, (
-            f"Document 应有 {rel} 关系"
-        )
+        assert rel in Document.__mapper__.relationships, f"Document 应有 {rel} 关系"
 
     def test_children_relationship_target(self) -> None:
         """children 关系应指向 Document 自身。"""

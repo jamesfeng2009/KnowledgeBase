@@ -28,7 +28,9 @@ router = APIRouter(prefix="/im", tags=["IM 集成"])
 class MarkdownPushBody(BaseModel):
     """群机器人 markdown 推送请求体。"""
 
-    content: str = Field(..., min_length=1, max_length=4096, description="Markdown 内容")
+    content: str = Field(
+        ..., min_length=1, max_length=4096, description="Markdown 内容"
+    )
 
 
 class WeComCallbackQuery(BaseModel):
@@ -136,5 +138,7 @@ async def send_markdown(
     service = WeComBotService()
     ok = await service.send_markdown(body.content)
     if not ok:
-        raise HTTPException(status_code=502, detail="推送失败（检查 WECOM_BOT_WEBHOOK）")
+        raise HTTPException(
+            status_code=502, detail="推送失败（检查 WECOM_BOT_WEBHOOK）"
+        )
     return ApiResponse(code=0, data=True, message="success")

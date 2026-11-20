@@ -21,6 +21,7 @@
     - 强制：force=True 忽略缓存
     - 工具：_is_cache_fresh / is_strong_freshness_category / filter_docs_to_verify
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -38,14 +39,14 @@ from app.document.source_adapters.base import (
     FetchedDocument,
     RevisionInfo,
 )
-from app.services.external_sync_service import ExternalSyncService, RefreshResult
+from app.services.external_sync_service import ExternalSyncService
 from app.utils.crypto import encrypt_secret
 from app.utils.hash import compute_content_hash
-
 
 # ==================================================================
 # 测试夹具 / 辅助
 # ==================================================================
+
 
 def _make_doc(
     *,
@@ -91,7 +92,9 @@ class _FakeAdapter:
 @pytest.fixture
 def service() -> ExternalSyncService:
     """默认 service 实例 — 短 TTL 便于触发真实校验。"""
-    return ExternalSyncService(check_cache_ttl=300, probe_timeout=3.0, fetch_timeout=5.0)
+    return ExternalSyncService(
+        check_cache_ttl=300, probe_timeout=3.0, fetch_timeout=5.0
+    )
 
 
 @pytest.fixture
@@ -116,16 +119,16 @@ def _wire_service(
     # patch registry
     if adapter is not None:
         # registry.get 在模块内被调用，patch 模块级引用
-        patch(
-            "app.services.external_sync_service.adapter_registry"
-        ).start()
+        patch("app.services.external_sync_service.adapter_registry").start()
         from app.services.external_sync_service import adapter_registry
+
         adapter_registry.get = MagicMock(return_value=adapter)
 
 
 # ==================================================================
 # 纯函数：_is_cache_fresh / is_strong_freshness_category
 # ==================================================================
+
 
 class TestCacheFreshness:
     """_is_cache_fresh — 短窗口缓存判定。"""
@@ -144,7 +147,9 @@ class TestCacheFreshness:
     def test_naive_datetime_handled(self, service: ExternalSyncService) -> None:
         """DB 可能返回 naive datetime — 应按 UTC 处理。"""
         # 模拟 DB 返回的 naive datetime（无 tzinfo），按 UTC 解释
-        recent_naive = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=10)
+        recent_naive = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
+            seconds=10
+        )
         assert service._is_cache_fresh(recent_naive) is True
 
     def test_custom_ttl(self) -> None:
@@ -179,6 +184,7 @@ class TestStrongFreshnessCategory:
 # _verify_and_refresh 主路径
 # ==================================================================
 
+
 class TestVerifySkipped:
     """跳过路径 — 返回 status=skipped。"""
 
@@ -186,9 +192,7 @@ class TestVerifySkipped:
         _wire_service(service, doc=None, adapter=_FakeAdapter())
         session = MagicMock()
 
-        result = await service._verify_and_refresh(
-            session, uuid.uuid4(), force=False
-        )
+        result = await service._verify_and_refresh(session, uuid.uuid4(), force=False)
 
         assert result.status == "skipped"
         assert result.reason == "doc_not_found"
@@ -199,9 +203,7 @@ class TestVerifySkipped:
         _wire_service(service, doc=doc, adapter=_FakeAdapter())
         session = MagicMock()
 
-        result = await service._verify_and_refresh(
-            session, doc.id, force=False
-        )
+        result = await service._verify_and_refresh(session, doc.id, force=False)
 
         assert result.status == "skipped"
         assert result.reason == "not_external"
@@ -209,13 +211,13 @@ class TestVerifySkipped:
 
     async def test_cache_hit_skips(self, service: ExternalSyncService) -> None:
         """last_checked_at 在缓存窗口内 → 信任本地。"""
-        doc = _make_doc(last_checked_at=datetime.now(timezone.utc) - timedelta(seconds=5))
+        doc = _make_doc(
+            last_checked_at=datetime.now(timezone.utc) - timedelta(seconds=5)
+        )
         _wire_service(service, doc=doc, adapter=_FakeAdapter())
         session = MagicMock()
 
-        result = await service._verify_and_refresh(
-            session, doc.id, force=False
-        )
+        result = await service._verify_and_refresh(session, doc.id, force=False)
 
         assert result.status == "skipped"
         assert result.reason == "cache_hit"
@@ -228,9 +230,7 @@ class TestVerifySkipped:
         _wire_service(service, doc=doc, credentials=None, adapter=_FakeAdapter())
         session = MagicMock()
 
-        result = await service._verify_and_refresh(
-            session, doc.id, force=False
-        )
+        result = await service._verify_and_refresh(session, doc.id, force=False)
 
         assert result.status == "skipped"
         assert result.reason == "no_credentials"
@@ -245,15 +245,11 @@ class TestVerifySkipped:
         service._update_last_checked = AsyncMock()
         service._update_after_sync = AsyncMock()
         service._trigger_reindex_async = AsyncMock()
-        with patch(
-            "app.services.external_sync_service.adapter_registry"
-        ) as reg_mock:
+        with patch("app.services.external_sync_service.adapter_registry") as reg_mock:
             reg_mock.get = MagicMock(return_value=None)
             session = MagicMock()
 
-            result = await service._verify_and_refresh(
-                session, doc.id, force=False
-            )
+            result = await service._verify_and_refresh(session, doc.id, force=False)
 
         assert result.status == "skipped"
         assert result.reason == "adapter_not_found"
@@ -270,9 +266,7 @@ class TestVerifyFreshViaPhaseA:
         _wire_service(service, doc=doc, credentials={"k": "v"}, adapter=fake_adapter)
         session = MagicMock()
 
-        result = await service._verify_and_refresh(
-            session, doc.id, force=False
-        )
+        result = await service._verify_and_refresh(session, doc.id, force=False)
 
         assert result.status == "fresh"
         assert result.sync_status == "verified_fresh"
@@ -293,14 +287,16 @@ class TestVerifyUpdatedViaPhaseB:
         fake_adapter.get_revision.return_value = RevisionInfo(fingerprint="99")
         # fetch 返回新内容（hash 与 doc.content_hash 不同）
         fake_adapter.fetch.return_value = FetchedDocument(
-            source="feishu", title="t", content="brand new content",
-            format="markdown", source_url=doc.source_url, doc_id="doccnABC",
+            source="feishu",
+            title="t",
+            content="brand new content",
+            format="markdown",
+            source_url=doc.source_url,
+            doc_id="doccnABC",
         )
         _wire_service(service, doc=doc, credentials={"k": "v"}, adapter=fake_adapter)
         session = MagicMock()
-        result = await service._verify_and_refresh(
-            session, doc.id, force=False
-        )
+        result = await service._verify_and_refresh(session, doc.id, force=False)
         # 让 create_task 调度的 _trigger_reindex_async 任务跑完，避免 pending 警告
         await asyncio.sleep(0)
 
@@ -321,14 +317,16 @@ class TestVerifyUpdatedViaPhaseB:
         fake_adapter.get_revision.return_value = RevisionInfo(fingerprint="99")
         # fetch 内容与 doc.content_hash 对应的原文相同
         fake_adapter.fetch.return_value = FetchedDocument(
-            source="feishu", title="t", content="old content",
-            format="markdown", source_url=doc.source_url, doc_id="doccnABC",
+            source="feishu",
+            title="t",
+            content="old content",
+            format="markdown",
+            source_url=doc.source_url,
+            doc_id="doccnABC",
         )
         _wire_service(service, doc=doc, credentials={"k": "v"}, adapter=fake_adapter)
         session = MagicMock()
-        result = await service._verify_and_refresh(
-            session, doc.id, force=False
-        )
+        result = await service._verify_and_refresh(session, doc.id, force=False)
         await asyncio.sleep(0)
 
         assert result.status == "fresh"
@@ -347,15 +345,17 @@ class TestVerifyDegradedPaths:
         doc = _make_doc(source_revision="42", last_checked_at=None)
         fake_adapter.get_revision.return_value = None
         fake_adapter.fetch.return_value = FetchedDocument(
-            source="feishu", title="t", content="old content",
-            format="markdown", source_url=doc.source_url, doc_id="doccnABC",
+            source="feishu",
+            title="t",
+            content="old content",
+            format="markdown",
+            source_url=doc.source_url,
+            doc_id="doccnABC",
         )
         _wire_service(service, doc=doc, credentials={"k": "v"}, adapter=fake_adapter)
         session = MagicMock()
 
-        result = await service._verify_and_refresh(
-            session, doc.id, force=False
-        )
+        result = await service._verify_and_refresh(session, doc.id, force=False)
 
         # fetch 被调用（降级路径）
         fake_adapter.fetch.assert_awaited_once()
@@ -371,14 +371,18 @@ class TestVerifyDegradedPaths:
         svc = ExternalSyncService(probe_timeout=0.01, fetch_timeout=5.0)
         doc = _make_doc(source_revision="42", last_checked_at=None)
 
-        async def slow_probe(doc_id, credentials):  # noqa: ANN001
+        async def slow_probe(doc_id, credentials):
             await asyncio.sleep(1.0)
             return RevisionInfo(fingerprint="42")
 
         fake_adapter.get_revision = AsyncMock(side_effect=slow_probe)  # type: ignore[assignment]
         fake_adapter.fetch.return_value = FetchedDocument(
-            source="feishu", title="t", content="old content",
-            format="markdown", source_url=doc.source_url, doc_id="doccnABC",
+            source="feishu",
+            title="t",
+            content="old content",
+            format="markdown",
+            source_url=doc.source_url,
+            doc_id="doccnABC",
         )
         _wire_service(svc, doc=doc, credentials={"k": "v"}, adapter=fake_adapter)
         session = MagicMock()
@@ -396,8 +400,12 @@ class TestVerifyDegradedPaths:
         doc = _make_doc(source_revision="42", last_checked_at=None)
         fake_adapter.get_revision.side_effect = AdapterError("feishu", "网络错误")
         fake_adapter.fetch.return_value = FetchedDocument(
-            source="feishu", title="t", content="old content",
-            format="markdown", source_url=doc.source_url, doc_id="doccnABC",
+            source="feishu",
+            title="t",
+            content="old content",
+            format="markdown",
+            source_url=doc.source_url,
+            doc_id="doccnABC",
         )
         _wire_service(service, doc=doc, credentials={"k": "v"}, adapter=fake_adapter)
         session = MagicMock()
@@ -416,11 +424,15 @@ class TestVerifyDegradedPaths:
         # get_revision 返回变化指纹 → 触发 fetch
         fake_adapter.get_revision.return_value = RevisionInfo(fingerprint="99")
 
-        async def slow_fetch(doc_id, credentials):  # noqa: ANN001
+        async def slow_fetch(doc_id, credentials):
             await asyncio.sleep(1.0)
             return FetchedDocument(
-                source="feishu", title="t", content="x",
-                format="markdown", source_url="", doc_id="",
+                source="feishu",
+                title="t",
+                content="x",
+                format="markdown",
+                source_url="",
+                doc_id="",
             )
 
         fake_adapter.fetch = AsyncMock(side_effect=slow_fetch)  # type: ignore[assignment]
@@ -454,6 +466,7 @@ class TestVerifyDegradedPaths:
 # force=True 强制校验
 # ==================================================================
 
+
 class TestForceRefresh:
     """force=True 忽略短窗口缓存。"""
 
@@ -469,9 +482,7 @@ class TestForceRefresh:
         _wire_service(service, doc=doc, credentials={"k": "v"}, adapter=fake_adapter)
         session = MagicMock()
 
-        result = await service._verify_and_refresh(
-            session, doc.id, force=True
-        )
+        result = await service._verify_and_refresh(session, doc.id, force=True)
 
         # 强制校验 → 不走 cache_hit 跳过路径
         assert result.status == "fresh"
@@ -484,10 +495,13 @@ class TestForceRefresh:
 # filter_docs_to_verify — 批量过滤
 # ==================================================================
 
+
 class TestFilterDocsToVerify:
     """filter_docs_to_verify — 按 source/category/cache 过滤。"""
 
-    async def test_empty_input_returns_empty(self, service: ExternalSyncService) -> None:
+    async def test_empty_input_returns_empty(
+        self, service: ExternalSyncService
+    ) -> None:
         assert await service.filter_docs_to_verify([]) == []
 
     async def test_filters_correctly(self, service: ExternalSyncService) -> None:
@@ -503,20 +517,32 @@ class TestFilterDocsToVerify:
         # D：非外部（source_doc_id=None） → 跳过
         rows = [
             SimpleNamespace(
-                id=uuid.uuid4(), source="feishu", source_doc_id="A",
-                category="政策", last_checked_at=old,
+                id=uuid.uuid4(),
+                source="feishu",
+                source_doc_id="A",
+                category="政策",
+                last_checked_at=old,
             ),
             SimpleNamespace(
-                id=uuid.uuid4(), source="feishu", source_doc_id="B",
-                category="SOP", last_checked_at=recent,
+                id=uuid.uuid4(),
+                source="feishu",
+                source_doc_id="B",
+                category="SOP",
+                last_checked_at=recent,
             ),
             SimpleNamespace(
-                id=uuid.uuid4(), source="feishu", source_doc_id="C",
-                category="技术笔记", last_checked_at=old,
+                id=uuid.uuid4(),
+                source="feishu",
+                source_doc_id="C",
+                category="技术笔记",
+                last_checked_at=old,
             ),
             SimpleNamespace(
-                id=uuid.uuid4(), source="feishu", source_doc_id=None,
-                category="政策", last_checked_at=old,
+                id=uuid.uuid4(),
+                source="feishu",
+                source_doc_id=None,
+                category="政策",
+                last_checked_at=old,
             ),
         ]
 
@@ -532,9 +558,7 @@ class TestFilterDocsToVerify:
         async def fake_factory():
             yield mock_session
 
-        with patch(
-            "app.database.async_session_factory", fake_factory
-        ):
+        with patch("app.database.async_session_factory", fake_factory):
             to_verify = await service.filter_docs_to_verify([r.id for r in rows])
 
         # 仅 A 通过过滤
@@ -545,6 +569,7 @@ class TestFilterDocsToVerify:
 # ==================================================================
 # 凭证解密集成 — 确认 _get_credentials 端到端可用
 # ==================================================================
+
 
 class TestCredentialDecryption:
     """_get_credentials — 从 external_credentials 表解密凭证。"""

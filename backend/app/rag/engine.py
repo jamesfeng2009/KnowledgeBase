@@ -40,43 +40,47 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.agents.state import AgentState, PermissionFilter
+from app.core.ab_context import effective_max_iterations, peek_ab_metadata
+from app.core.budget import HardBudget, RunBudget, check_budget
+from app.core.exceptions import BudgetExceeded
 from app.eval.span_types import SpanType
-from app.llm.base import LLMProvider, Message, ToolUse
+from app.llm.base import LLMProvider, Message, Tool, ToolUse
 from app.mcp.client import MCPClient
 from app.observability.langfuse_tracer import (
     TraceContext,
     map_span_type,
     trace_node,
 )
+from app.observability.trail_aggregator import get_trail_aggregator
 from app.rag.asset_sources import build_sources_payload, enrich_asset_docs
 from app.rag.cache import TokenCache
-from app.core.ab_context import effective_max_iterations, peek_ab_metadata
 from app.rag.constitution import get_constraint_reminder, get_system_prompt
 from app.rag.constraint_verifier import (
-    ConstraintViolation,
     ConstraintVerifier,
+    ConstraintViolation,
     ToolGate,
     ToolGateDecision,
 )
-from app.rag.context_budget import ContextBudgetManager, SpillStore, _SPILL_TOOL_RESULT_THRESHOLD
+from app.rag.context_budget import (
+    _SPILL_TOOL_RESULT_THRESHOLD,
+    ContextBudgetManager,
+    SpillStore,
+)
 from app.rag.context_dedup import CrossTurnDeduplicator
 from app.rag.generator import Generator
-from app.rag.tool_guard import DangerousToolGuard, GuardAction, GuardResult
-from app.core.budget import HardBudget, RunBudget, check_budget, get_budget_status
-from app.core.exceptions import BudgetExceeded
-from app.observability.trail_aggregator import get_trail_aggregator
-from app.utils.request_context import get_request_id
 from app.rag.reranker import RerankerBase
 from app.rag.retriever import HybridRetriever
+from app.rag.tool_guard import DangerousToolGuard, GuardAction, GuardResult
 from app.utils.logger import get_logger
+from app.utils.request_context import get_request_id
 from app.utils.sse import SSEEvent, SSEEventType
 
 # 延迟导入 LangGraph（可能未安装）— 安装时可通过 build_graph() / answer_with_graph()
 # 使用声明式状态图驱动 Agent Loop，并支持 PostgresSaver 断点恢复；
 # 未安装时回退到默认的纯 Python answer() 路径，无任何功能损失。
 try:
-    from langgraph.graph import StateGraph, END
     from langgraph.checkpoint.postgres import PostgresSaver
+    from langgraph.graph import END, StateGraph
 
     LANGGRAPH_AVAILABLE: bool = True
 except ImportError:
@@ -289,6 +293,7 @@ class AgenticRAGEngine:
         if self._faq_matcher is None:
             try:
                 from app.rag.faq_matcher import FAQMatcher
+
                 self._faq_matcher = FAQMatcher()
             except Exception as exc:
                 log.warning("engine.faq_matcher_init_failed", error=str(exc))
@@ -312,6 +317,7 @@ class AgenticRAGEngine:
         else:
             try:
                 from app.rag.quality_guard import QualityGuard
+
                 self._quality_guard = QualityGuard()
             except Exception:
                 self._quality_guard = None
@@ -319,6 +325,7 @@ class AgenticRAGEngine:
         self._contradiction_detector: Any = None
         try:
             from app.context.contradiction_detector import ContradictionDetector
+
             self._contradiction_detector = ContradictionDetector(llm=llm)
         except Exception as exc:
             log.debug("engine.contradiction_detector_init_failed", error=str(exc))
@@ -326,6 +333,7 @@ class AgenticRAGEngine:
         self._high_risk_detector: Any = None
         try:
             from app.context.high_risk_detector import HighRiskDetector
+
             self._high_risk_detector = HighRiskDetector()
         except Exception as exc:
             log.debug("engine.high_risk_detector_init_failed", error=str(exc))
@@ -335,6 +343,7 @@ class AgenticRAGEngine:
         if self._query_rewriter is None:
             try:
                 from app.rag.query_rewriter import get_query_rewriter
+
                 self._query_rewriter = get_query_rewriter()
             except Exception as exc:
                 log.warning("engine.query_rewriter_init_failed", error=str(exc))
@@ -378,6 +387,7 @@ class AgenticRAGEngine:
         # P1-7: Agent Loop 超时分级 — 单步骤超时 / 总任务超时（读取配置，兜底默认值）
         try:
             from app.config import get_settings as _get_settings
+
             _s = _get_settings()
             self._step_timeout_s: float = float(
                 getattr(_s, "AGENT_STEP_TIMEOUT_SECONDS", 60.0)
@@ -398,6 +408,7 @@ class AgenticRAGEngine:
         if self._injection_guard is None:
             try:
                 from app.rag.injection_guard import get_injection_guard
+
                 self._injection_guard = get_injection_guard()
             except Exception as exc:
                 log.warning("engine.injection_guard_init_failed", error=str(exc))
@@ -409,6 +420,7 @@ class AgenticRAGEngine:
         self._constraint_channel: Any = None
         try:
             from app.rag.constraint_channel import get_constraint_channel
+
             self._constraint_channel = get_constraint_channel()
         except Exception as exc:
             log.warning("engine.constraint_channel_init_failed", error=str(exc))
@@ -488,6 +500,7 @@ class AgenticRAGEngine:
         inst = _hard_budget_ctx.get()
         if inst is None:
             from app.config import get_settings as _get_settings
+
             _s = _get_settings()
             inst = HardBudget(
                 max_turns=_s.AGENT_BUDGET_MAX_TURNS,
@@ -798,7 +811,10 @@ class AgenticRAGEngine:
                 # 判定结果随 rewriter LRU 缓存复用，同一查询只双跑一次）。
                 # 用 `is True` 判型且仅在启用时传参：测试注入的 Mock/Fake rewriter
                 # 无此属性，保持其 rewrite(query, context) 签名兼容。
-                if getattr(self._query_rewriter, "enable_online_fallback", False) is True:
+                if (
+                    getattr(self._query_rewriter, "enable_online_fallback", False)
+                    is True
+                ):
                     rewrite_result = await self._query_rewriter.rewrite(
                         query=query,
                         context=memory_context,
@@ -897,7 +913,10 @@ class AgenticRAGEngine:
             self._trace_ctx.span(
                 name=f"generate_iter{state['iteration']}",
                 span_type=SpanType.STATE_UPDATE.value,
-                input_data={"query": state["query"][:200], "doc_count": len(state["retrieved_docs"])},
+                input_data={
+                    "query": state["query"][:200],
+                    "doc_count": len(state["retrieved_docs"]),
+                },
                 output_data={"answer_preview": "".join(answer_parts)[:200]},
                 metadata={
                     "latency_ms": round((time.perf_counter() - _gen_t0) * 1000, 2),
@@ -916,17 +935,22 @@ class AgenticRAGEngine:
         _gen_usage = getattr(self.generator, "last_usage", None)
         if _gen_usage and _exit_kind is None:
             self._accumulated_usage["input_tokens"] += _gen_usage.get("input_tokens", 0)
-            self._accumulated_usage["output_tokens"] += _gen_usage.get("output_tokens", 0)
+            self._accumulated_usage["output_tokens"] += _gen_usage.get(
+                "output_tokens", 0
+            )
             if _gen_usage.get("model"):
                 self._accumulated_usage["model"] = _gen_usage["model"]
             # P0-3: 同步到四轴硬预算累积器（tokens + cost 轴）
             _gen_in = _gen_usage.get("input_tokens", 0)
             _gen_out = _gen_usage.get("output_tokens", 0)
-            _gen_cost_usd = self._estimate_cost_cents(
-                _gen_usage.get("model", ""),
-                _gen_in,
-                _gen_out,
-            ) / 100.0  # 分 → 美元
+            _gen_cost_usd = (
+                self._estimate_cost_cents(
+                    _gen_usage.get("model", ""),
+                    _gen_in,
+                    _gen_out,
+                )
+                / 100.0
+            )  # 分 → 美元
             self._run_budget.add_usage(
                 input_tokens=_gen_in,
                 output_tokens=_gen_out,
@@ -1018,22 +1042,35 @@ class AgenticRAGEngine:
         # 防止低质量答案被后续请求直接复用。
         # 无可访问知识库（no_kb_access）时同样不写缓存：短路产生的
         # "无内容"答案不应被缓存复用（与缓存读取的短路策略一致）。
-        _cacheable = answer and not no_kb_access and not (
-            state.get("low_confidence")
-            or state.get("contradiction_blocked")
-            or state.get("high_risk_blocked")
-            or state.get("constraint_blocked")
-            or _exit_kind is not None
+        _cacheable = (
+            answer
+            and not no_kb_access
+            and not (
+                state.get("low_confidence")
+                or state.get("contradiction_blocked")
+                or state.get("high_risk_blocked")
+                or state.get("constraint_blocked")
+                or _exit_kind is not None
+            )
         )
         if self.cache is not None and _cacheable:
             try:
                 # P1: 提取引用文档 ID，用于文档更新时主动失效缓存
-                doc_ids = list({
-                    str(d.get("doc_id")) for d in state.get("retrieved_docs", [])
-                    if d.get("doc_id")
-                }) or None
+                doc_ids = (
+                    list(
+                        {
+                            str(d.get("doc_id"))
+                            for d in state.get("retrieved_docs", [])
+                            if d.get("doc_id")
+                        }
+                    )
+                    or None
+                )
                 await self.cache.set(
-                    query, answer, tenant_id=tenant_id, doc_ids=doc_ids,
+                    query,
+                    answer,
+                    tenant_id=tenant_id,
+                    doc_ids=doc_ids,
                     scope=cache_scope,
                 )
             except Exception as exc:
@@ -1057,7 +1094,9 @@ class AgenticRAGEngine:
             )
             trace_metadata = {
                 "iterations": state["iteration"],
-                "total_tokens": _real_total_tokens if _real_total_tokens > 0 else len(answer) // 4,
+                "total_tokens": _real_total_tokens
+                if _real_total_tokens > 0
+                else len(answer) // 4,
                 "retrieved_docs": len(state["retrieved_docs"]),
                 "tool_results": len(state["tool_results"]),
                 "budget_compress_count": budget_stats["compress_count"],
@@ -1112,7 +1151,9 @@ class AgenticRAGEngine:
         yield SSEEvent(
             data={
                 "message_id": session_id,
-                "token_count": _done_total_tokens if _done_total_tokens > 0 else len(answer) // 4,
+                "token_count": _done_total_tokens
+                if _done_total_tokens > 0
+                else len(answer) // 4,
                 "iterations": state["iteration"],
                 "retrieved_docs": len(state["retrieved_docs"]),
                 "tool_calls": len(state["tool_results"]),
@@ -1129,8 +1170,8 @@ class AgenticRAGEngine:
         "claude-sonnet": (3.0, 15.0),
         "claude-opus": (15.0, 75.0),
         "claude-haiku": (0.25, 1.25),
-        "qwen": (0.0, 0.0),       # 免费额度或自托管
-        "llama": (0.0, 0.0),       # 自托管
+        "qwen": (0.0, 0.0),  # 免费额度或自托管
+        "llama": (0.0, 0.0),  # 自托管
         "gpt-4o": (2.5, 10.0),
         "text-embedding": (0.02, 0.0),
     }
@@ -1430,21 +1471,33 @@ class AgenticRAGEngine:
         # （矛盾 block / 高风险 block）的答案不写缓存，防止低质量答案被复用。
         # 无可访问知识库（no_kb_access）时同样不写缓存。
         # 标记位由 reflect 节点写入图最终状态。
-        _cacheable = answer and not no_kb_access and not (
-            final_values.get("low_confidence")
-            or final_values.get("contradiction_blocked")
-            or final_values.get("high_risk_blocked")
-            or final_values.get("constraint_blocked")
+        _cacheable = (
+            answer
+            and not no_kb_access
+            and not (
+                final_values.get("low_confidence")
+                or final_values.get("contradiction_blocked")
+                or final_values.get("high_risk_blocked")
+                or final_values.get("constraint_blocked")
+            )
         )
         if self.cache is not None and _cacheable:
             try:
-                doc_ids = list({
-                    str(d.get("doc_id"))
-                    for d in graph_retrieved_docs
-                    if d.get("doc_id")
-                }) or None
+                doc_ids = (
+                    list(
+                        {
+                            str(d.get("doc_id"))
+                            for d in graph_retrieved_docs
+                            if d.get("doc_id")
+                        }
+                    )
+                    or None
+                )
                 await self.cache.set(
-                    query, answer, tenant_id=tenant_id, doc_ids=doc_ids,
+                    query,
+                    answer,
+                    tenant_id=tenant_id,
+                    doc_ids=doc_ids,
                     scope=cache_scope,
                 )
             except Exception as exc:
@@ -1596,9 +1649,7 @@ class AgenticRAGEngine:
         # P1: 同时产出成功标准（Goal State），供 _reflect 对照判定 Finish
         if self._planner is not None and "plan_steps" not in state:
             try:
-                plan_result = await self._planner.build_initial_plan(
-                    state["query"]
-                )
+                plan_result = await self._planner.build_initial_plan(state["query"])
                 state["plan_steps"] = plan_result.steps
                 state["success_criteria"] = plan_result.criteria
                 state["replan_count"] = 0
@@ -1774,7 +1825,10 @@ class AgenticRAGEngine:
                 )
                 # P3-E: Scratchpad 追加推理笔记
                 _sp = state.get("scratchpad", "")
-                state["scratchpad"] = _sp + f"\n[轮{state['iteration']}] retrieve: 检索到 {len(state['retrieved_docs'])} 篇文档"
+                state["scratchpad"] = (
+                    _sp
+                    + f"\n[轮{state['iteration']}] retrieve: 检索到 {len(state['retrieved_docs'])} 篇文档"
+                )
 
                 # P1-9: 推进计划状态 + 偏离检测（触发器：检索为空 / 决策重复）
                 if state.get("plan_steps"):
@@ -1782,8 +1836,7 @@ class AgenticRAGEngine:
 
                     PlanManager.mark_action_done(state["plan_steps"], "retrieve")
                     _trigger = (
-                        len(state["retrieved_docs"]) == 0
-                        or _same_decision_count >= 2
+                        len(state["retrieved_docs"]) == 0 or _same_decision_count >= 2
                     )
                     _observation = (
                         f"第{state['iteration']}轮检索到 "
@@ -1839,7 +1892,11 @@ class AgenticRAGEngine:
                 if state["tool_results"]:
                     latest = state["tool_results"][-1]
                     raw_summary = self._summarize(latest)
-                    tool_name = latest.get("tool", "unknown") if isinstance(latest, dict) else "unknown"
+                    tool_name = (
+                        latest.get("tool", "unknown")
+                        if isinstance(latest, dict)
+                        else "unknown"
+                    )
 
                     # P1-1: 大工具结果写盘 — 原始结果超阈值时写盘，上下文只留 placeholder。
                     # 显著降低 L3（历史/工具日志）体量；Agent 需要全文时用
@@ -1918,7 +1975,10 @@ class AgenticRAGEngine:
                     # P3-E: Scratchpad 追加工具调用笔记
                     _sp = state.get("scratchpad", "")
                     _note = deduped[:80] if isinstance(deduped, str) else ""
-                    state["scratchpad"] = _sp + f"\n[轮{state['iteration']}] tool_call: {tool_name} → {_note}"
+                    state["scratchpad"] = (
+                        _sp
+                        + f"\n[轮{state['iteration']}] tool_call: {tool_name} → {_note}"
+                    )
 
                     # P1-9: 推进计划状态 + 偏离检测
                     # （触发器：工具结果重复指针命中 / 决策重复）
@@ -2113,7 +2173,7 @@ class AgenticRAGEngine:
                 self._think(state),
                 timeout=self._step_timeout_s,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             state["_step_timeouts"] = state.get("_step_timeouts", 0) + 1
             log.warning(
                 "engine.step_timeout",
@@ -2165,7 +2225,9 @@ class AgenticRAGEngine:
         scratchpad = state.get("scratchpad", "")
         if scratchpad:
             # 截断到最近 300 字，避免 Scratchpad 自身膨胀
-            recent_scratchpad = scratchpad[-300:] if len(scratchpad) > 300 else scratchpad
+            recent_scratchpad = (
+                scratchpad[-300:] if len(scratchpad) > 300 else scratchpad
+            )
             dynamic_parts.append(f"\n推理笔记：\n{recent_scratchpad}")
 
         # P1-9: 注入计划状态视图 — LLM 决策时感知全局进度（已完成 / 剩余步骤）
@@ -2198,8 +2260,7 @@ class AgenticRAGEngine:
         if observations:
             recent_obs = observations[-_OBSERVATIONS_IN_THINK:]
             obs_brief = "；".join(
-                f"轮{o['iteration']} {o['kind']}({o['detail']})"
-                for o in recent_obs
+                f"轮{o['iteration']} {o['kind']}({o['detail']})" for o in recent_obs
             )
             dynamic_parts.append(f"最近观察：{obs_brief}")
 
@@ -2214,27 +2275,32 @@ class AgenticRAGEngine:
         # 无论中间历史/工具结果如何膨胀，模型生成下一个决策前注意力必扫过尾部，
         # 保证"仅检索已发布文档/禁止越权/不虚构"等核心约束始终被看见。
         if _CONSTRAINT_REMINDER:
-            messages = messages + [
-                {"role": "user", "content": _CONSTRAINT_REMINDER}
-            ]
+            messages = messages + [{"role": "user", "content": _CONSTRAINT_REMINDER}]
 
         try:
             text = ""
             async for chunk in self.llm.chat(messages, stream=False):
                 # P0-Stage2: 捕获 usage dict 累加到引擎用量记录
                 if isinstance(chunk, dict) and chunk.get("type") == "usage":
-                    self._accumulated_usage["input_tokens"] += chunk.get("input_tokens", 0)
-                    self._accumulated_usage["output_tokens"] += chunk.get("output_tokens", 0)
+                    self._accumulated_usage["input_tokens"] += chunk.get(
+                        "input_tokens", 0
+                    )
+                    self._accumulated_usage["output_tokens"] += chunk.get(
+                        "output_tokens", 0
+                    )
                     if chunk.get("model"):
                         self._accumulated_usage["model"] = chunk["model"]
                     # P0-3: 同步到四轴硬预算累积器（think 调用的 tokens + cost）
                     _think_in = chunk.get("input_tokens", 0)
                     _think_out = chunk.get("output_tokens", 0)
-                    _think_cost_usd = self._estimate_cost_cents(
-                        chunk.get("model", ""),
-                        _think_in,
-                        _think_out,
-                    ) / 100.0  # 分 → 美元
+                    _think_cost_usd = (
+                        self._estimate_cost_cents(
+                            chunk.get("model", ""),
+                            _think_in,
+                            _think_out,
+                        )
+                        / 100.0
+                    )  # 分 → 美元
                     self._run_budget.add_usage(
                         input_tokens=_think_in,
                         output_tokens=_think_out,
@@ -2295,18 +2361,20 @@ class AgenticRAGEngine:
             iteration: 迭代轮次（默认取 state["iteration"]）。
         """
         obs = state.get("observations") or []
-        obs.append({
-            "iteration": (
-                state.get("iteration", 0) if iteration is None else iteration
-            ),
-            "kind": kind,
-            "detail": detail,
-        })
+        obs.append(
+            {
+                "iteration": (
+                    state.get("iteration", 0) if iteration is None else iteration
+                ),
+                "kind": kind,
+                "detail": detail,
+            }
+        )
         state["observations"] = obs
 
     def _build_recall_evaluator(
         self, kb_ids: list[str] | None
-    ) -> "Callable[[str], Awaitable[float]]":
+    ) -> Callable[[str], Awaitable[float]]:
         """构建召回质量评估器 — P1-10 在线回退双跑用。
 
         以小 top_k 检索召回，返回候选分数均值（空召回为 0.0）。
@@ -2377,9 +2445,7 @@ class AgenticRAGEngine:
             )
             state["retrieved_docs"] = []
             # P2: 结构化观察 — 无可用知识库（异常）
-            self._record_observation(
-                state, "anomaly", "无可用知识库，检索短路返回空"
-            )
+            self._record_observation(state, "anomaly", "无可用知识库，检索短路返回空")
             # P0-2: 短路路径同样产出选择证据（空纳入），避免上下文评分误判
             # P1-4: 记录 kb_ids + 版本快照时间戳，支持回放追溯
             state["_span_evidence"] = {
@@ -2409,7 +2475,9 @@ class AgenticRAGEngine:
             )
         try:
             candidates = await self.retriever.search(
-                query, kb_ids=kb_ids, top_k=_RETRIEVE_TOP_K,
+                query,
+                kb_ids=kb_ids,
+                top_k=_RETRIEVE_TOP_K,
                 filters=hierarchy_filters,
                 # P0 密级下推：用户可见密级白名单（请求级）随 filters
                 # 注入三路召回；None 时不下推（Final Gate DB 复检兜底）
@@ -2666,11 +2734,7 @@ class AgenticRAGEngine:
             if rid
         ]
         filtered_id_set = {
-            rid
-            for d in filtered
-            if isinstance(d, dict)
-            for rid in [_ref_id(d)]
-            if rid
+            rid for d in filtered if isinstance(d, dict) for rid in [_ref_id(d)] if rid
         }
         excluded_ids = [
             rid
@@ -2711,13 +2775,15 @@ class AgenticRAGEngine:
                 for rid in [_ref_id(d)]
                 if rid
             ],
-            "injection_hit_patterns": sorted({
-                h.get("pattern_id")
-                for d in (state.get("quarantined_docs") or [])
-                if isinstance(d, dict)
-                for h in (d.get("injection_hits") or [])
-                if h.get("pattern_id")
-            }),
+            "injection_hit_patterns": sorted(
+                {
+                    h.get("pattern_id")
+                    for d in (state.get("quarantined_docs") or [])
+                    if isinstance(d, dict)
+                    for h in (d.get("injection_hits") or [])
+                    if h.get("pattern_id")
+                }
+            ),
             # P2: 结构化观察列表 — 检索阶段写入的观察（Clarify/Interrupt 提前
             # 退出时 reflect 不执行，此处保证观察仍随 retrieve span 落盘）。
             "observations": state.get("observations", []),
@@ -2875,7 +2941,8 @@ class AgenticRAGEngine:
 
         # 收集携带冲突键的文档
         keyed: list[tuple[int, dict[str, Any]]] = [
-            (i, d) for i, d in enumerate(docs)
+            (i, d)
+            for i, d in enumerate(docs)
             if (d.get("conflict_key") or d.get("authority_key"))
         ]
         if not keyed:
@@ -3039,7 +3106,10 @@ class AgenticRAGEngine:
                     elif latest_result and isinstance(latest_result, dict):
                         result_str = str(latest_result.get("result", ""))
                         result_summary = result_str[:500]
-                        if '"error"' in result_str or '"blocked_by_guard"' in result_str:
+                        if (
+                            '"error"' in result_str
+                            or '"blocked_by_guard"' in result_str
+                        ):
                             status = "error"
 
                     # yield tool_call_end 事件
@@ -3281,7 +3351,9 @@ class AgenticRAGEngine:
                         session_id=state["session_id"],
                         tool_name=tool_name,
                         tool_use_id=tool_use_id,
-                        tool_arguments=tool_input if isinstance(tool_input, dict) else {},
+                        tool_arguments=tool_input
+                        if isinstance(tool_input, dict)
+                        else {},
                         reason=guard_result.reason,
                         irreversible=guard_result.irreversible,
                         agent_state_snapshot=snapshot,
@@ -3337,9 +3409,7 @@ class AgenticRAGEngine:
             _audit["status"] = "blocked"
             _audit["output"] = blocked_msg
             # P2: 结构化观察 — 工具需要用户确认（异常）
-            self._record_observation(
-                state, "anomaly", f"工具 {tool_name} 需要用户确认"
-            )
+            self._record_observation(state, "anomaly", f"工具 {tool_name} 需要用户确认")
             self._end_tool_audit_span(_audit_span_id, tool_name, _audit)
             return
 
@@ -3401,9 +3471,7 @@ class AgenticRAGEngine:
             _audit["output"] = str(result)[:200]
             log.info("engine.tool_call.done", tool=tool_name, result_len=len(result))
             # P2: 结构化观察 — 工具执行成功
-            self._record_observation(
-                state, "success", f"工具 {tool_name} 执行成功"
-            )
+            self._record_observation(state, "success", f"工具 {tool_name} 执行成功")
         except Exception as exc:
             log.error("engine.tool_call.execute_error", tool=tool_name, error=str(exc))
             error_result = json.dumps(
@@ -3530,9 +3598,7 @@ class AgenticRAGEngine:
 
         retrieved_docs = state.get("retrieved_docs", [])
         contexts = [
-            doc.get("content", "")
-            for doc in retrieved_docs
-            if doc.get("content")
+            doc.get("content", "") for doc in retrieved_docs if doc.get("content")
         ]
 
         # 优先：调用 LLMJudgeService 结构化评测 + 忠实度拦截
@@ -3569,10 +3635,8 @@ class AgenticRAGEngine:
         # 实际包含答案中声称的关键实体（金额/日期/百分比等）。
         if self._quality_guard is not None and retrieved_docs:
             try:
-                claim_result = (
-                    self._quality_guard.verify_claims_against_chunks(
-                        answer, retrieved_docs
-                    )
+                claim_result = self._quality_guard.verify_claims_against_chunks(
+                    answer, retrieved_docs
                 )
                 if claim_result["should_flag"]:
                     state["claim_unverified"] = True
@@ -3654,7 +3718,6 @@ class AgenticRAGEngine:
             return  # 无检索文档时跳过（非 RAG 场景）
 
         try:
-            from app.rag.citation import CitationExtractor
             extractor = self._get_citation_extractor()
             result = extractor.validate_citations(answer, retrieved_docs)
             state["citation_validation"] = result.to_dict()
@@ -3672,6 +3735,7 @@ class AgenticRAGEngine:
         """获取或创建 CitationExtractor 实例（懒初始化）。"""
         if not hasattr(self, "_citation_extractor") or self._citation_extractor is None:
             from app.rag.citation import CitationExtractor
+
             self._citation_extractor = CitationExtractor()
         return self._citation_extractor
 
@@ -3887,9 +3951,7 @@ class AgenticRAGEngine:
             return
 
         if any(v.severity == "block" for v in violations):
-            final = await self._regenerate_with_constraints(
-                state, answer, violations
-            )
+            final = await self._regenerate_with_constraints(state, answer, violations)
             if ConstraintVerifier.still_violates(final, violations):
                 log.warning(
                     "engine.constraint.blocked",
@@ -4034,9 +4096,7 @@ class AgenticRAGEngine:
         try:
             task = asyncio.create_task(_write())
         except RuntimeError:
-            log.debug(
-                "engine.constraint.audit_skipped", reason="no running event loop"
-            )
+            log.debug("engine.constraint.audit_skipped", reason="no running event loop")
             return
         task.add_done_callback(_on_done)
         _background_tasks.add(task)
@@ -4137,7 +4197,10 @@ class AgenticRAGEngine:
         )
         messages: list[Message] = [
             {"role": "system", "content": prompt},
-            {"role": "user", "content": f"问题: {state['query']}\n\n答案摘要: {answer_summary}"},
+            {
+                "role": "user",
+                "content": f"问题: {state['query']}\n\n答案摘要: {answer_summary}",
+            },
         ]
         try:
             text = ""
@@ -4175,9 +4238,13 @@ class AgenticRAGEngine:
         key_points = [
             line.strip()
             for line in lines
-            if line.strip() and line.strip()[0] in ("-•*#") or
-               (len(line.strip()) > 1 and line.strip()[0].isdigit() and
-                line.strip()[1] in ".、)")
+            if line.strip()
+            and line.strip()[0] in ("-•*#")
+            or (
+                len(line.strip()) > 1
+                and line.strip()[0].isdigit()
+                and line.strip()[1] in ".、)"
+            )
         ]
         intro = lines[0].strip() if lines else ""
         if key_points:

@@ -22,7 +22,11 @@ def _doc(
     effective_from: str | None = None,
     effective_to: str | None = None,
 ) -> dict:
-    d: dict = {"chunk_id": chunk_id, "score": score, "content": f"content of {chunk_id}"}
+    d: dict = {
+        "chunk_id": chunk_id,
+        "score": score,
+        "content": f"content of {chunk_id}",
+    }
     if updated_at is not None:
         d["updated_at"] = updated_at
     if effective_from is not None:
@@ -39,6 +43,7 @@ def _iso(dt: datetime) -> str:
 # ============================================================
 # filter_by_validity_window
 # ============================================================
+
 
 class TestFilterByValidityWindow:
     """生效窗口硬过滤。"""
@@ -112,6 +117,7 @@ class TestFilterByValidityWindow:
 # ============================================================
 # apply_recency_boost
 # ============================================================
+
 
 class TestApplyRecencyBoost:
     """平局裁决 — tie band 内按 updated_at 新鲜度排序。"""

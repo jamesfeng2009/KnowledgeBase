@@ -21,17 +21,25 @@ from typing import Any, Literal
 
 # 支持的图片类型 — prompt 路由键
 ImageType = Literal[
-    "general",        # 通用图片
-    "drawing",        # 图纸（工程图/设计图）
-    "handwriting",    # 手写批注
-    "chart",          # 数据图表
-    "table",          # 表格
-    "scanned_text",   # 扫描文字
-    "whiteboard",     # 白板
+    "general",  # 通用图片
+    "drawing",  # 图纸（工程图/设计图）
+    "handwriting",  # 手写批注
+    "chart",  # 数据图表
+    "table",  # 表格
+    "scanned_text",  # 扫描文字
+    "whiteboard",  # 白板
 ]
 
 SUPPORTED_IMAGE_TYPES: frozenset[str] = frozenset(
-    {"general", "drawing", "handwriting", "chart", "table", "scanned_text", "whiteboard"}
+    {
+        "general",
+        "drawing",
+        "handwriting",
+        "chart",
+        "table",
+        "scanned_text",
+        "whiteboard",
+    }
 )
 
 # 状态枚举 — 结构化输出的判定字段，非法值视为低置信度

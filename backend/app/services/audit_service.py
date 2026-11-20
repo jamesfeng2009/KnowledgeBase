@@ -137,19 +137,19 @@ class AuditService:
     ) -> AuditFlow:
         """通过审核。
 
-        将审核状态从 pending 变更为 approved，记录审核者和审核意见。
-        对于 document 类型的审核，审核通过后自动触发文档发布
-       （状态从 pending_review → published）。
+         将审核状态从 pending 变更为 approved，记录审核者和审核意见。
+         对于 document 类型的审核，审核通过后自动触发文档发布
+        （状态从 pending_review → published）。
 
-        Args:
-            audit_id: 审核流程 ID。
-            comment: 审核意见（可选）。
+         Args:
+             audit_id: 审核流程 ID。
+             comment: 审核意见（可选）。
 
-        Returns:
-            更新后的 ``AuditFlow`` 对象（status 为 approved）。
+         Returns:
+             更新后的 ``AuditFlow`` 对象（status 为 approved）。
 
-        Raises:
-            ValueError: 审核流程不存在或已处理（非 pending 状态）。
+         Raises:
+             ValueError: 审核流程不存在或已处理（非 pending 状态）。
         """
         audit = await self._repo.get_by_id(audit_id)
         if audit is None:
@@ -173,9 +173,7 @@ class AuditService:
         # 文档类型审核通过后触发发布
         if audit.resource_type == "document":
             try:
-                await self._publish_document_after_approval(
-                    str(audit.resource_id)
-                )
+                await self._publish_document_after_approval(str(audit.resource_id))
             except Exception as exc:
                 log.warning(
                     "audit.publish_failed",

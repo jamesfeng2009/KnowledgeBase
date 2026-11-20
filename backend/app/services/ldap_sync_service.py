@@ -106,9 +106,7 @@ class LDAPSyncService:
                             "department": (
                                 str(entry.department) if entry.department else ""
                             ),
-                            "manager": (
-                                str(entry.manager) if entry.manager else ""
-                            ),
+                            "manager": (str(entry.manager) if entry.manager else ""),
                         }
                     )
         except Exception:

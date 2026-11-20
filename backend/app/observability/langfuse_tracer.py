@@ -102,7 +102,9 @@ async def _append_event_log(
             output_data = {"error": error}
         else:
             # 非 dict 返回值 — 仅审计用，不参与重放
-            output_data = {"result_preview": str(result)[:200]} if result is not None else None
+            output_data = (
+                {"result_preview": str(result)[:200]} if result is not None else None
+            )
 
         # metadata — 节点执行的额外证据
         meta = {
@@ -129,6 +131,7 @@ async def _append_event_log(
             node_name=node_name,
             error=str(exc),
         )
+
 
 #: Agent Loop 节点名 → 标准 SpanType 映射（P0-1：消灭 SpanType 死枚举，
 #: 使 persist_tool_spans 的过滤集合能匹配到 tool.call 等标准类型）。
@@ -286,8 +289,11 @@ class TraceContext:
                 metadata={
                     "session_id": self.session_id,
                     "user_id": self.user_id,
-                    **{k: v for k, v in self.metadata.items()
-                       if isinstance(v, (str, int, float, bool))},
+                    **{
+                        k: v
+                        for k, v in self.metadata.items()
+                        if isinstance(v, (str, int, float, bool))
+                    },
                 },
             )
         except Exception as exc:  # pragma: no cover - 防御性降级
@@ -370,15 +376,21 @@ class TraceContext:
         if self.recorder is not None and span_id is not None:
             try:
                 cost = {
-                    k: scrub_meta[k] for k in ("latency_ms", "token_count") if k in scrub_meta
+                    k: scrub_meta[k]
+                    for k in ("latency_ms", "token_count")
+                    if k in scrub_meta
                 }
                 self.recorder.end_span(
                     span_id,
                     status="error" if error else "ok",
-                    output_ref=str(scrub_output)[:500] if scrub_output is not None else None,
+                    output_ref=str(scrub_output)[:500]
+                    if scrub_output is not None
+                    else None,
                     error=str(error) if error else None,
                     cost=cost,
-                    evidence_ref=str(evidence_ref)[:500] if evidence_ref is not None else None,
+                    evidence_ref=str(evidence_ref)[:500]
+                    if evidence_ref is not None
+                    else None,
                     metadata=scrub_meta,
                 )
             except Exception as exc:  # pragma: no cover - 防御性降级
@@ -389,7 +401,9 @@ class TraceContext:
             # P2-9: span 采样 — 仅作用于 LangFuse 侧，本地 SpanRecord 不采样
             # error span 强制上报（故障证据），正常 span 按采样率随机
             error_flag = bool(scrub_meta.get("error"))
-            if _get_span_sampler().should_sample(metadata=scrub_meta, is_error=error_flag):
+            if _get_span_sampler().should_sample(
+                metadata=scrub_meta, is_error=error_flag
+            ):
                 try:
                     span = self._trace.span(
                         name=name,
@@ -434,16 +448,24 @@ class TraceContext:
             try:
                 error = scrub_meta.get("error")
                 cost = {
-                    k: scrub_meta[k] for k in ("latency_ms", "token_count") if k in scrub_meta
+                    k: scrub_meta[k]
+                    for k in ("latency_ms", "token_count")
+                    if k in scrub_meta
                 }
                 self.recorder.record_closed(
                     name=name,
                     span_type=span_type or name,
-                    input_ref=str(scrub_input)[:500] if scrub_input is not None else None,
-                    output_ref=str(scrub_output)[:500] if scrub_output is not None else None,
+                    input_ref=str(scrub_input)[:500]
+                    if scrub_input is not None
+                    else None,
+                    output_ref=str(scrub_output)[:500]
+                    if scrub_output is not None
+                    else None,
                     error=str(error) if error else None,
                     cost=cost,
-                    evidence_ref=str(evidence_ref)[:500] if evidence_ref is not None else None,
+                    evidence_ref=str(evidence_ref)[:500]
+                    if evidence_ref is not None
+                    else None,
                     metadata=scrub_meta,
                 )
             except Exception as exc:  # pragma: no cover - 防御性降级
@@ -455,7 +477,9 @@ class TraceContext:
 
         # P2-9: span 采样 — error span 强制上报，正常 span 按采样率随机
         error_flag = bool(scrub_meta.get("error"))
-        if not _get_span_sampler().should_sample(metadata=scrub_meta, is_error=error_flag):
+        if not _get_span_sampler().should_sample(
+            metadata=scrub_meta, is_error=error_flag
+        ):
             return
 
         try:
@@ -486,7 +510,9 @@ class TraceContext:
                 self.recorder.end_span(
                     self._root_span_id,
                     status="ok",
-                    output_ref=str(scrub_output)[:500] if scrub_output is not None else None,
+                    output_ref=str(scrub_output)[:500]
+                    if scrub_output is not None
+                    else None,
                     metadata=scrub_meta,
                 )
             except Exception as exc:  # pragma: no cover - 防御性降级
@@ -515,7 +541,9 @@ class TraceContext:
             logger.warning("langfuse.finalize_error", error=str(exc))
 
 
-def trace_node(node_name: str) -> Callable[[Callable[..., Awaitable[T]]], Callable[..., Awaitable[T]]]:
+def trace_node(
+    node_name: str,
+) -> Callable[[Callable[..., Awaitable[T]]], Callable[..., Awaitable[T]]]:
     """装饰器：追踪 Agent Loop 节点的执行。
 
     用法：
@@ -560,9 +588,7 @@ def trace_node(node_name: str) -> Callable[[Callable[..., Awaitable[T]]], Callab
             iteration = state.get("iteration", 0) if state else 0
 
             # 压栈开启节点 Span（recorder 不可用时 span_id=None，零开销）
-            trace_ctx: TraceContext | None = getattr(
-                self, "_trace_ctx", None
-            )
+            trace_ctx: TraceContext | None = getattr(self, "_trace_ctx", None)
             span_name = f"{node_name}_iter{iteration}"
             span_id: str | None = None
             if trace_ctx is not None:
@@ -597,20 +623,26 @@ def trace_node(node_name: str) -> Callable[[Callable[..., Awaitable[T]]], Callab
                         span_id,
                         name=span_name,
                         output_data=(
-                            {"error": error} if error else
-                            {"result_preview": str(result)[:200]}
+                            {"error": error}
+                            if error
+                            else {"result_preview": str(result)[:200]}
                         ),
                         metadata={
                             "latency_ms": latency_ms,
                             "error": error,
-                            "retrieved_docs": len(state.get("retrieved_docs", [])) if state else 0,
-                            "tool_results": len(state.get("tool_results", [])) if state else 0,
+                            "retrieved_docs": len(state.get("retrieved_docs", []))
+                            if state
+                            else 0,
+                            "tool_results": len(state.get("tool_results", []))
+                            if state
+                            else 0,
                             **{
-                                k: v for k, v in evidence.items()
-                                if k != "evidence_ref"
+                                k: v for k, v in evidence.items() if k != "evidence_ref"
                             },
                         },
-                        evidence_ref=str(node_evidence_ref)[:500] if node_evidence_ref is not None else None,
+                        evidence_ref=str(node_evidence_ref)[:500]
+                        if node_evidence_ref is not None
+                        else None,
                         langfuse_input={
                             "iteration": iteration,
                             "session_id": session_id,

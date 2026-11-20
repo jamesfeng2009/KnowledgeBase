@@ -12,7 +12,6 @@ import pytest
 
 from evals.parse_ablation import _route_recommendation, _run_variant
 from evals.parse_eval.smoke_corpus import generate as generate_corpus
-from evals.parse_eval.schema import load_manifest
 
 
 @pytest.fixture(scope="module")
@@ -25,9 +24,7 @@ def corpus(tmp_path_factory) -> tuple[str, object]:
 @pytest.mark.asyncio
 async def test_selfcheck_pipeline_covers_all_four_metrics(corpus) -> None:
     dir_, truths = corpus
-    agg, _, _ = await _run_variant(
-        "docling", truths, dir_, force_selfcheck=True
-    )
+    agg, _, _ = await _run_variant("docling", truths, dir_, force_selfcheck=True)
     # 理想还原的正样板：四维指标都应注册并接近饱和
     assert agg["text_extraction"]["n"] == 3
     assert agg["table_restoration"]["n"] == 2
@@ -40,7 +37,9 @@ async def test_selfcheck_pipeline_covers_all_four_metrics(corpus) -> None:
 async def test_both_variants_produce_identical_dict_in_selfcheck(corpus) -> None:
     dir_, truths = corpus
     a, _av_a, docs_a = await _run_variant("docling", truths, dir_, force_selfcheck=True)
-    b, _av_b, docs_b = await _run_variant("docling+mineru", truths, dir_, force_selfcheck=True)
+    b, _av_b, docs_b = await _run_variant(
+        "docling+mineru", truths, dir_, force_selfcheck=True
+    )
     assert a["formula"]["block_hit_rate"] == b["formula"]["block_hit_rate"]
     assert a["ocr"]["avg_cer"] == b["ocr"]["avg_cer"]
     # 自检下双变体输出一致 → route 建议应维持默认，且 per-doc 命中数一致
@@ -51,10 +50,20 @@ async def test_both_variants_produce_identical_dict_in_selfcheck(corpus) -> None
 def test_route_recommendation_keeps_default_when_no_gain() -> None:
     # Docling 与 MinerU 输出完全一致（自检场景）→ 无质量增益 → 维持默认路由
     shared = [
-        {"doc_id": "d1", "complexity": 0.9, "table": {"f1": 0.6},
-         "formula": {"block_hit_rate": 0.5}, "scan": True},
-        {"doc_id": "d2", "complexity": 0.9, "table": {"f1": 0.6},
-         "formula": {"block_hit_rate": 0.5}, "scan": True},
+        {
+            "doc_id": "d1",
+            "complexity": 0.9,
+            "table": {"f1": 0.6},
+            "formula": {"block_hit_rate": 0.5},
+            "scan": True,
+        },
+        {
+            "doc_id": "d2",
+            "complexity": 0.9,
+            "table": {"f1": 0.6},
+            "formula": {"block_hit_rate": 0.5},
+            "scan": True,
+        },
     ]
     rec = _route_recommendation(shared, shared)
     assert rec["recommended_route"] == "docling_default_conditional_mineru"
@@ -64,16 +73,36 @@ def test_route_recommendation_keeps_default_when_no_gain() -> None:
 
 def test_route_recommendation_escalates_when_mineru_gains_on_complex_docs() -> None:
     docling = [
-        {"doc_id": "d1", "complexity": 0.9, "table": {"f1": 0.4},
-         "formula": {"block_hit_rate": 0.3}, "scan": True},
-        {"doc_id": "d2", "complexity": 0.55, "table": {"f1": 0.5},
-         "formula": {"block_hit_rate": 0.5}, "scan": False},
+        {
+            "doc_id": "d1",
+            "complexity": 0.9,
+            "table": {"f1": 0.4},
+            "formula": {"block_hit_rate": 0.3},
+            "scan": True,
+        },
+        {
+            "doc_id": "d2",
+            "complexity": 0.55,
+            "table": {"f1": 0.5},
+            "formula": {"block_hit_rate": 0.5},
+            "scan": False,
+        },
     ]
     mineru = [
-        {"doc_id": "d1", "complexity": 0.9, "table": {"f1": 0.9},
-         "formula": {"block_hit_rate": 0.9}, "scan": True},
-        {"doc_id": "d2", "complexity": 0.55, "table": {"f1": 0.5},
-         "formula": {"block_hit_rate": 0.5}, "scan": False},
+        {
+            "doc_id": "d1",
+            "complexity": 0.9,
+            "table": {"f1": 0.9},
+            "formula": {"block_hit_rate": 0.9},
+            "scan": True,
+        },
+        {
+            "doc_id": "d2",
+            "complexity": 0.55,
+            "table": {"f1": 0.5},
+            "formula": {"block_hit_rate": 0.5},
+            "scan": False,
+        },
     ]
     rec = _route_recommendation(docling, mineru)
     assert rec["recommended_route"] == "mineru_by_doc_complexity"

@@ -5,8 +5,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from app.document.parse_router import (
     ParseSignals,
     choose_engine,
@@ -47,41 +45,77 @@ class TestChooseEngineDefault:
     # docling_default_conditional_mineru
     def test_image_goes_mineru(self) -> None:
         s = ParseSignals(doc_type="png")
-        assert choose_engine("docling_default_conditional_mineru", s, mineru_available=True) == "mineru"
+        assert (
+            choose_engine(
+                "docling_default_conditional_mineru", s, mineru_available=True
+            )
+            == "mineru"
+        )
 
     def test_scanned_pdf_goes_mineru(self) -> None:
         s = ParseSignals(doc_type="pdf", text_layer_ratio=0.0)
-        assert choose_engine("docling_default_conditional_mineru", s, mineru_available=True) == "mineru"
+        assert (
+            choose_engine(
+                "docling_default_conditional_mineru", s, mineru_available=True
+            )
+            == "mineru"
+        )
 
     def test_digital_pdf_stays_docling(self) -> None:
         s = ParseSignals(doc_type="pdf", text_layer_ratio=1.0)
-        assert choose_engine("docling_default_conditional_mineru", s, mineru_available=True) == "docling"
+        assert (
+            choose_engine(
+                "docling_default_conditional_mineru", s, mineru_available=True
+            )
+            == "docling"
+        )
 
     def test_office_stays_docling(self) -> None:
         for t in ("docx", "pptx", "xlsx"):
             s = ParseSignals(doc_type=t)
-            assert choose_engine("docling_default_conditional_mineru", s, mineru_available=True) == "docling"
+            assert (
+                choose_engine(
+                    "docling_default_conditional_mineru", s, mineru_available=True
+                )
+                == "docling"
+            )
 
 
 class TestChooseEngineComplexity:
     # mineru_by_doc_complexity
     def test_complex_doc_escalates_mineru(self) -> None:
         s = ParseSignals(doc_type="pdf", text_layer_ratio=0.0, n_images=10)
-        assert choose_engine("mineru_by_doc_complexity", s, mineru_available=True, threshold=0.6) == "mineru"
+        assert (
+            choose_engine(
+                "mineru_by_doc_complexity", s, mineru_available=True, threshold=0.6
+            )
+            == "mineru"
+        )
 
     def test_low_complexity_stays_docling(self) -> None:
         s = ParseSignals(doc_type="pdf", text_layer_ratio=1.0, n_images=1)
-        assert choose_engine("mineru_by_doc_complexity", s, mineru_available=True, threshold=0.9) == "docling"
+        assert (
+            choose_engine(
+                "mineru_by_doc_complexity", s, mineru_available=True, threshold=0.9
+            )
+            == "docling"
+        )
 
     def test_image_unconditional_mineru(self) -> None:
         s = ParseSignals(doc_type="jpg")
-        assert choose_engine("mineru_by_doc_complexity", s, mineru_available=True) == "mineru"
+        assert (
+            choose_engine("mineru_by_doc_complexity", s, mineru_available=True)
+            == "mineru"
+        )
 
 
 class TestChooseEngineGuards:
     def test_mineru_unavailable_always_docling(self) -> None:
         s = ParseSignals(doc_type="png", text_layer_ratio=0.0)
-        assert choose_engine("mineru_by_doc_complexity", s, mineru_available=False) == "docling"
+        assert (
+            choose_engine("mineru_by_doc_complexity", s, mineru_available=False)
+            == "docling"
+        )
 
     def test_unknown_route_falls_back_to_default(self) -> None:
         s = ParseSignals(doc_type="pdf", text_layer_ratio=0.0)

@@ -6,6 +6,7 @@
 - engine 埋点：answer() 结束后轨迹上报到全局聚合器
 - P1-7 卡死防护：_think_with_timeout 步骤超时、总任务超时、max_iterations 告警标记
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -19,8 +20,7 @@ from app.observability.trail_aggregator import (
     get_trail_aggregator,
     reset_trail_aggregator,
 )
-from app.rag.engine import AgentState, AgenticRAGEngine
-
+from app.rag.engine import AgenticRAGEngine, AgentState
 
 # ======================================================================
 # TrailAggregator 单元测试
@@ -231,7 +231,10 @@ class _FakeRetriever:
         self.candidates = candidates if candidates is not None else []
 
     async def search(
-        self, query: str, kb_ids: list[str] | None = None, top_k: int = 20,
+        self,
+        query: str,
+        kb_ids: list[str] | None = None,
+        top_k: int = 20,
         filters: dict[str, Any] | None = None,
         classifications: list[str] | None = None,
     ) -> list[dict[str, Any]]:
@@ -240,7 +243,10 @@ class _FakeRetriever:
 
 class _FakeReranker:
     async def rerank(
-        self, query: str, documents: list[dict[str, Any]], top_k: int = 5,
+        self,
+        query: str,
+        documents: list[dict[str, Any]],
+        top_k: int = 5,
     ) -> list[dict[str, Any]]:
         # 回显 index+score（对齐 HybridReranker 契约）— 返回空会让
         # _apply_rerank_scores 清空 retrieved_docs，进而触发 P0 Clarify

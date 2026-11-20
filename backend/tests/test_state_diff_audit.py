@@ -38,10 +38,25 @@ class TestStateFingerprint:
         from app.rag.engine import _state_fingerprint
 
         fp = _state_fingerprint(
-            {"iteration": 2, "answer": "hi there", "retrieved_docs": [1, 2], "tool_results": [{}]}
+            {
+                "iteration": 2,
+                "answer": "hi there",
+                "retrieved_docs": [1, 2],
+                "tool_results": [{}],
+            }
         )
-        assert fp == {"iteration": 2, "answer_len": 8, "retrieved_docs": 2, "tool_results": 1}
-        assert list(fp.keys()) == ["iteration", "answer_len", "retrieved_docs", "tool_results"]
+        assert fp == {
+            "iteration": 2,
+            "answer_len": 8,
+            "retrieved_docs": 2,
+            "tool_results": 1,
+        }
+        assert list(fp.keys()) == [
+            "iteration",
+            "answer_len",
+            "retrieved_docs",
+            "tool_results",
+        ]
 
     def test_key_order_fixed_for_diff(self) -> None:
         from app.rag.engine import _state_fingerprint
@@ -55,12 +70,19 @@ class TestStateFingerprint:
         from app.rag.engine import _state_fingerprint
 
         fp = _state_fingerprint({})  # 空状态 → 全 0/None，不抛异常
-        assert fp == {"iteration": None, "answer_len": 0, "retrieved_docs": 0, "tool_results": 0}
+        assert fp == {
+            "iteration": None,
+            "answer_len": 0,
+            "retrieved_docs": 0,
+            "tool_results": 0,
+        }
 
     def test_none_fields_safe(self) -> None:
         from app.rag.engine import _state_fingerprint
 
-        fp = _state_fingerprint({"answer": None, "retrieved_docs": None, "tool_results": None})
+        fp = _state_fingerprint(
+            {"answer": None, "retrieved_docs": None, "tool_results": None}
+        )
         assert fp["answer_len"] == 0
         assert fp["retrieved_docs"] == 0
         assert fp["tool_results"] == 0
@@ -79,7 +101,9 @@ class TestGenerateSpanDiffContract:
     )
 
     def _text(self) -> str:
-        with open(__import__("os").path.normpath(self._ENGINE_SRC), encoding="utf-8") as f:
+        with open(
+            __import__("os").path.normpath(self._ENGINE_SRC), encoding="utf-8"
+        ) as f:
             return f.read()
 
     def test_generate_span_captures_state_before(self) -> None:

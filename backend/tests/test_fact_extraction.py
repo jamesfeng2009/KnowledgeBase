@@ -37,16 +37,25 @@ class TestLLMFactExtraction:
     @pytest.mark.asyncio
     async def test_llm_extract_success(self, memory_manager):
         """LLM 成功提取偏好。"""
+
         class MockLLM:
             async def chat(self, messages, stream=True, max_tokens=200):
                 yield "preference|用户偏好中文回复\nfact|用户所在部门是技术部"
 
-        with patch("app.memory.memory_manager.get_llm_provider", return_value=MockLLM()):
+        with patch(
+            "app.memory.memory_manager.get_llm_provider", return_value=MockLLM()
+        ):
             with patch("app.config.get_settings") as mock_settings:
                 mock_settings.return_value.LLM_FACT_EXTRACTION_ENABLED = True
                 messages = [
-                    {"role": "user", "content": "我喜欢用中文回复，我是技术部的，平时主要做后端开发工作"},
-                    {"role": "assistant", "content": "好的，我会用中文回复您。请问有什么可以帮您的？"},
+                    {
+                        "role": "user",
+                        "content": "我喜欢用中文回复，我是技术部的，平时主要做后端开发工作",
+                    },
+                    {
+                        "role": "assistant",
+                        "content": "好的，我会用中文回复您。请问有什么可以帮您的？",
+                    },
                 ]
                 result = await memory_manager.extract_and_save_facts(
                     uuid.uuid4(), messages
@@ -61,16 +70,25 @@ class TestLLMFactExtraction:
     @pytest.mark.asyncio
     async def test_llm_extract_none(self, memory_manager):
         """LLM 返回 NONE → 无事实提取。"""
+
         class MockLLM:
             async def chat(self, messages, stream=True, max_tokens=200):
                 yield "NONE"
 
-        with patch("app.memory.memory_manager.get_llm_provider", return_value=MockLLM()):
+        with patch(
+            "app.memory.memory_manager.get_llm_provider", return_value=MockLLM()
+        ):
             with patch("app.config.get_settings") as mock_settings:
                 mock_settings.return_value.LLM_FACT_EXTRACTION_ENABLED = True
                 messages = [
-                    {"role": "user", "content": "你好，我想了解一下公司的报销流程具体是怎样的"},
-                    {"role": "assistant", "content": "您好，公司的报销流程主要包括提交申请、审批和打款三个步骤"},
+                    {
+                        "role": "user",
+                        "content": "你好，我想了解一下公司的报销流程具体是怎样的",
+                    },
+                    {
+                        "role": "assistant",
+                        "content": "您好，公司的报销流程主要包括提交申请、审批和打款三个步骤",
+                    },
                 ]
                 result = await memory_manager.extract_and_save_facts(
                     uuid.uuid4(), messages
@@ -82,17 +100,26 @@ class TestLLMFactExtraction:
     @pytest.mark.asyncio
     async def test_llm_exception_fallback(self, memory_manager):
         """LLM 异常 → 降级为关键词启发式。"""
+
         class MockLLM:
             async def chat(self, messages, stream=True, max_tokens=200):
                 raise RuntimeError("API error")
                 yield  # make it an async generator
 
-        with patch("app.memory.memory_manager.get_llm_provider", return_value=MockLLM()):
+        with patch(
+            "app.memory.memory_manager.get_llm_provider", return_value=MockLLM()
+        ):
             with patch("app.config.get_settings") as mock_settings:
                 mock_settings.return_value.LLM_FACT_EXTRACTION_ENABLED = True
                 messages = [
-                    {"role": "user", "content": "我喜欢简洁的回复，不要太长，直接说重点就行"},
-                    {"role": "assistant", "content": "好的，我明白了，以后会尽量简洁地回复您。"},
+                    {
+                        "role": "user",
+                        "content": "我喜欢简洁的回复，不要太长，直接说重点就行",
+                    },
+                    {
+                        "role": "assistant",
+                        "content": "好的，我明白了，以后会尽量简洁地回复您。",
+                    },
                 ]
                 result = await memory_manager.extract_and_save_facts(
                     uuid.uuid4(), messages
@@ -105,11 +132,14 @@ class TestLLMFactExtraction:
     @pytest.mark.asyncio
     async def test_short_conversation_no_extraction(self, memory_manager):
         """对话太短不提取。"""
+
         class MockLLM:
             async def chat(self, messages, stream=True, max_tokens=200):
                 yield "preference|test"
 
-        with patch("app.memory.memory_manager.get_llm_provider", return_value=MockLLM()):
+        with patch(
+            "app.memory.memory_manager.get_llm_provider", return_value=MockLLM()
+        ):
             with patch("app.config.get_settings") as mock_settings:
                 mock_settings.return_value.LLM_FACT_EXTRACTION_ENABLED = True
                 messages = [
@@ -131,9 +161,7 @@ class TestLLMFactExtraction:
                 {"role": "user", "content": "我喜欢详细的回复"},
                 {"role": "assistant", "content": "好的"},
             ]
-            result = await memory_manager.extract_and_save_facts(
-                uuid.uuid4(), messages
-            )
+            result = await memory_manager.extract_and_save_facts(uuid.uuid4(), messages)
 
         # 直接走关键词提取
         assert len(result) == 1
@@ -151,9 +179,7 @@ class TestKeywordFactExtraction:
             messages = [
                 {"role": "user", "content": "请使用中文回复"},
             ]
-            result = await memory_manager.extract_and_save_facts(
-                uuid.uuid4(), messages
-            )
+            result = await memory_manager.extract_and_save_facts(uuid.uuid4(), messages)
 
         assert len(result) == 1
         assert "中文" in result[0]
@@ -166,9 +192,7 @@ class TestKeywordFactExtraction:
             messages = [
                 {"role": "user", "content": "今天天气怎么样"},
             ]
-            result = await memory_manager.extract_and_save_facts(
-                uuid.uuid4(), messages
-            )
+            result = await memory_manager.extract_and_save_facts(uuid.uuid4(), messages)
 
         assert result == []
 
@@ -180,9 +204,7 @@ class TestKeywordFactExtraction:
             messages = [
                 {"role": "user", "content": "我喜欢简洁回复，我偏好列表格式"},
             ]
-            result = await memory_manager.extract_and_save_facts(
-                uuid.uuid4(), messages
-            )
+            result = await memory_manager.extract_and_save_facts(uuid.uuid4(), messages)
 
         # 每条消息只匹配第一个关键词（"我喜欢"）
         assert len(result) == 1
@@ -195,16 +217,25 @@ class TestImportanceScoring:
     @pytest.mark.asyncio
     async def test_low_importance_filtered(self, memory_manager):
         """低重要性事实被过滤，不入库。"""
+
         class MockLLM:
             async def chat(self, messages, stream=True, max_tokens=300):
                 yield "preference|1|用户随便提了一下天气\nfact|2|不太重要的细节"
 
-        with patch("app.memory.memory_manager.get_llm_provider", return_value=MockLLM()):
+        with patch(
+            "app.memory.memory_manager.get_llm_provider", return_value=MockLLM()
+        ):
             with patch("app.config.get_settings") as mock_settings:
                 mock_settings.return_value.LLM_FACT_EXTRACTION_ENABLED = True
                 messages = [
-                    {"role": "user", "content": "今天天气不错，随便聊聊，另外我对后端开发比较感兴趣"},
-                    {"role": "assistant", "content": "是的，天气很好。您对后端开发感兴趣可以了解一下微服务架构。"},
+                    {
+                        "role": "user",
+                        "content": "今天天气不错，随便聊聊，另外我对后端开发比较感兴趣",
+                    },
+                    {
+                        "role": "assistant",
+                        "content": "是的，天气很好。您对后端开发感兴趣可以了解一下微服务架构。",
+                    },
                 ]
                 result = await memory_manager.extract_and_save_facts(
                     uuid.uuid4(), messages
@@ -217,16 +248,25 @@ class TestImportanceScoring:
     @pytest.mark.asyncio
     async def test_high_importance_kept(self, memory_manager):
         """高重要性事实保留。"""
+
         class MockLLM:
             async def chat(self, messages, stream=True, max_tokens=300):
                 yield "preference|4|用户偏好简洁回答\nfact|5|项目截止日期是下周五"
 
-        with patch("app.memory.memory_manager.get_llm_provider", return_value=MockLLM()):
+        with patch(
+            "app.memory.memory_manager.get_llm_provider", return_value=MockLLM()
+        ):
             with patch("app.config.get_settings") as mock_settings:
                 mock_settings.return_value.LLM_FACT_EXTRACTION_ENABLED = True
                 messages = [
-                    {"role": "user", "content": "请记住我们的项目截止日期是下周五，另外以后回答简洁一点"},
-                    {"role": "assistant", "content": "好的，已记住项目截止日期是下周五，以后回答会简洁一些。"},
+                    {
+                        "role": "user",
+                        "content": "请记住我们的项目截止日期是下周五，另外以后回答简洁一点",
+                    },
+                    {
+                        "role": "assistant",
+                        "content": "好的，已记住项目截止日期是下周五，以后回答会简洁一些。",
+                    },
                 ]
                 result = await memory_manager.extract_and_save_facts(
                     uuid.uuid4(), messages
@@ -238,16 +278,25 @@ class TestImportanceScoring:
     @pytest.mark.asyncio
     async def test_mixed_importance(self, memory_manager):
         """混合重要性：仅保留 >= 3 的事实。"""
+
         class MockLLM:
             async def chat(self, messages, stream=True, max_tokens=300):
                 yield "preference|1|不太重要的偏好\nfact|4|重要的事实信息\npreference|2|低价值偏好"
 
-        with patch("app.memory.memory_manager.get_llm_provider", return_value=MockLLM()):
+        with patch(
+            "app.memory.memory_manager.get_llm_provider", return_value=MockLLM()
+        ):
             with patch("app.config.get_settings") as mock_settings:
                 mock_settings.return_value.LLM_FACT_EXTRACTION_ENABLED = True
                 messages = [
-                    {"role": "user", "content": "我想了解一下公司的报销流程和年假政策具体规定是什么"},
-                    {"role": "assistant", "content": "报销流程是先提交申请然后审批，年假是每年15天。"},
+                    {
+                        "role": "user",
+                        "content": "我想了解一下公司的报销流程和年假政策具体规定是什么",
+                    },
+                    {
+                        "role": "assistant",
+                        "content": "报销流程是先提交申请然后审批，年假是每年15天。",
+                    },
                 ]
                 result = await memory_manager.extract_and_save_facts(
                     uuid.uuid4(), messages
@@ -260,16 +309,25 @@ class TestImportanceScoring:
     @pytest.mark.asyncio
     async def test_backward_compatible_no_importance(self, memory_manager):
         """旧格式 category|content 无 importance 字段，默认 importance=3 保留。"""
+
         class MockLLM:
             async def chat(self, messages, stream=True, max_tokens=300):
                 yield "preference|用户偏好中文回复"
 
-        with patch("app.memory.memory_manager.get_llm_provider", return_value=MockLLM()):
+        with patch(
+            "app.memory.memory_manager.get_llm_provider", return_value=MockLLM()
+        ):
             with patch("app.config.get_settings") as mock_settings:
                 mock_settings.return_value.LLM_FACT_EXTRACTION_ENABLED = True
                 messages = [
-                    {"role": "user", "content": "我喜欢用中文回复，这样看起来更自然更舒服一些"},
-                    {"role": "assistant", "content": "好的，我会用中文回复您。请问有什么可以帮您的？"},
+                    {
+                        "role": "user",
+                        "content": "我喜欢用中文回复，这样看起来更自然更舒服一些",
+                    },
+                    {
+                        "role": "assistant",
+                        "content": "好的，我会用中文回复您。请问有什么可以帮您的？",
+                    },
                 ]
                 result = await memory_manager.extract_and_save_facts(
                     uuid.uuid4(), messages
@@ -295,12 +353,17 @@ class TestDeduplication:
             async def chat(self, messages, stream=True, max_tokens=300):
                 yield "preference|4|用户喜欢简洁的回复方式"
 
-        with patch("app.memory.memory_manager.get_llm_provider", return_value=MockLLM()):
+        with patch(
+            "app.memory.memory_manager.get_llm_provider", return_value=MockLLM()
+        ):
             with patch("app.config.get_settings") as mock_settings:
                 mock_settings.return_value.LLM_FACT_EXTRACTION_ENABLED = True
                 messages = [
                     {"role": "user", "content": "请记住以后回答简洁一点，不要太啰嗦了"},
-                    {"role": "assistant", "content": "好的，我会尽量简洁地回答您的问题。"},
+                    {
+                        "role": "assistant",
+                        "content": "好的，我会尽量简洁地回答您的问题。",
+                    },
                 ]
                 result = await memory_manager.extract_and_save_facts(
                     uuid.uuid4(), messages
@@ -320,12 +383,20 @@ class TestDeduplication:
             async def chat(self, messages, stream=True, max_tokens=300):
                 yield "preference|4|用户偏好详细回答"
 
-        with patch("app.memory.memory_manager.get_llm_provider", return_value=MockLLM()):
+        with patch(
+            "app.memory.memory_manager.get_llm_provider", return_value=MockLLM()
+        ):
             with patch("app.config.get_settings") as mock_settings:
                 mock_settings.return_value.LLM_FACT_EXTRACTION_ENABLED = True
                 messages = [
-                    {"role": "user", "content": "以后请详细展开回答，我想了解更多的背景信息和细节"},
-                    {"role": "assistant", "content": "好的，我会详细展开回答您的问题。"},
+                    {
+                        "role": "user",
+                        "content": "以后请详细展开回答，我想了解更多的背景信息和细节",
+                    },
+                    {
+                        "role": "assistant",
+                        "content": "好的，我会详细展开回答您的问题。",
+                    },
                 ]
                 result = await memory_manager.extract_and_save_facts(
                     uuid.uuid4(), messages
@@ -343,11 +414,16 @@ class TestDeduplication:
             async def chat(self, messages, stream=True, max_tokens=300):
                 yield "preference|4|用户偏好中文"
 
-        with patch("app.memory.memory_manager.get_llm_provider", return_value=MockLLM()):
+        with patch(
+            "app.memory.memory_manager.get_llm_provider", return_value=MockLLM()
+        ):
             with patch("app.config.get_settings") as mock_settings:
                 mock_settings.return_value.LLM_FACT_EXTRACTION_ENABLED = True
                 messages = [
-                    {"role": "user", "content": "我喜欢中文回复，这样看起来更亲切更自然一些"},
+                    {
+                        "role": "user",
+                        "content": "我喜欢中文回复，这样看起来更亲切更自然一些",
+                    },
                     {"role": "assistant", "content": "好的，我会用中文回复您的问题。"},
                 ]
                 result = await memory_manager.extract_and_save_facts(

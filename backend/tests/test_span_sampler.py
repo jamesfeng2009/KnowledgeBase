@@ -20,9 +20,13 @@ from __future__ import annotations
 
 import random
 import sys
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+if TYPE_CHECKING:
+    from app.observability.langfuse_tracer import TraceContext
 
 # Mock celery（测试环境未安装，参考 test_pii_scrubber.py / test_span_record.py）
 if "celery" not in sys.modules:
@@ -517,7 +521,7 @@ class TestEndSpanSampling:
         self,
         trace_mock: MagicMock | None = None,
         recorder: MagicMock | None = None,
-    ) -> "TraceContext":
+    ) -> TraceContext:
         from app.observability.langfuse_tracer import TraceContext
 
         ctx = TraceContext(recorder=recorder)
@@ -625,7 +629,7 @@ class TestSpanMethodSampling:
         self,
         trace_mock: MagicMock | None = None,
         recorder: MagicMock | None = None,
-    ) -> "TraceContext":
+    ) -> TraceContext:
         from app.observability.langfuse_tracer import TraceContext
 
         ctx = TraceContext(recorder=recorder)
@@ -770,7 +774,9 @@ class TestEndToEndSampling:
         ctx = TraceContext()
         ctx._trace = trace_mock
 
-        sampler = SpanSampler(sampling_enabled=True, sampling_rate=0.0, force_error=True)
+        sampler = SpanSampler(
+            sampling_enabled=True, sampling_rate=0.0, force_error=True
+        )
         with patch(
             "app.observability.langfuse_tracer._get_span_sampler",
             return_value=sampler,

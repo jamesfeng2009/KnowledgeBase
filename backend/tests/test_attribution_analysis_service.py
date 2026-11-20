@@ -106,14 +106,18 @@ class TestNegativeControlGate:
     def test_insufficient_sample_is_untrustworthy(self):
         # 每臂 10 条 < A/A 所需 40 条 → 负对照无法执行
         decisions, outcomes = _clean_events(n_per_arm=10)
-        result = AttributionAnalysisService().analyze(decisions, outcomes, min_samples=5)
+        result = AttributionAnalysisService().analyze(
+            decisions, outcomes, min_samples=5
+        )
         assert result["negative_control"]["passed"] is False
         assert "样本不足" in result["negative_control"]["reason"]
         assert result["trustworthy"] is False
 
     def test_bad_negative_control_warning_present(self):
         decisions, outcomes = _clean_events(n_per_arm=10)
-        result = AttributionAnalysisService().analyze(decisions, outcomes, min_samples=5)
+        result = AttributionAnalysisService().analyze(
+            decisions, outcomes, min_samples=5
+        )
         assert any("A/A 负对照未通过" in w for w in result["warnings"])
 
 
@@ -173,7 +177,9 @@ class TestPromotionGate:
     @pytest.mark.asyncio
     async def test_untrustworthy_result_never_promotes(self):
         decisions, outcomes = _clean_events(n_per_arm=10)
-        result = AttributionAnalysisService().analyze(decisions, outcomes, min_samples=5)
+        result = AttributionAnalysisService().analyze(
+            decisions, outcomes, min_samples=5
+        )
         pool = AsyncMock()
         out = await AttributionAnalysisService().promote_to_candidate(pool, result)
         assert out["reason"] == "untrustworthy"
@@ -224,9 +230,7 @@ class TestMCPTool:
         from app.mcp.server import KnowledgeBaseMCPServer
 
         server = KnowledgeBaseMCPServer(db_factory=MagicMock())
-        raw = asyncio.run(
-            server.call_tool("analyze_outcome_attribution", {})
-        )
+        raw = asyncio.run(server.call_tool("analyze_outcome_attribution", {}))
         payload = json.loads(raw)
         assert payload["status"] == "no_data"
         assert payload["evidence_decision_ids"] == []

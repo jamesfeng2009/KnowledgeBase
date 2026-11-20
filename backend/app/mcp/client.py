@@ -27,7 +27,6 @@ from app.mcp.protocol import (
     make_success_response,
     make_tools_call_params,
     make_tools_list_params,
-    parse_request,
 )
 from app.mcp.server import KnowledgeBaseMCPServer
 from app.mcp.streamable_http import StreamableHTTPTransport
@@ -168,7 +167,9 @@ class MCPClient:
             JSON 字符串，包含 task_id / status / poll_interval_ms / ttl_ms。
         """
         return await self._server.call_tool_async(
-            tool_name, arguments, tenant_id=tenant_id,
+            tool_name,
+            arguments,
+            tenant_id=tenant_id,
         )
 
     def is_long_running(self, tool_name: str) -> bool:
@@ -208,7 +209,8 @@ class MCPClient:
             ensure_ascii=False,
         )
         result = await self._transport.handle_request(
-            raw_body, tenant_id=tenant_id,
+            raw_body,
+            tenant_id=tenant_id,
         )
 
         # 如果是 AsyncIterator（SSE 流式），迭代到最后一个响应

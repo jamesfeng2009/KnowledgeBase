@@ -6,6 +6,7 @@ P3 修复了 Service 层原生 SQL 查询绕过租户过滤的问题。
 
 测试链路：Service.list_xxx（原生 SQL + apply_tenant_filter）→ PostgreSQL DB
 """
+
 from __future__ import annotations
 
 import os
@@ -13,7 +14,6 @@ import sys
 import uuid
 from unittest.mock import MagicMock
 
-import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -27,11 +27,10 @@ if "celery_app" not in sys.modules:
     mock_celery_app.celery_app = MagicMock()
     sys.modules["celery_app"] = mock_celery_app
 
-from app.models import Base, KnowledgeBase, QaAnswer, QaQuestion, Tenant, User
+from app.models import Base, Tenant, User
 from app.services.feedback_service import FeedbackService
 from app.services.knowledge_service import KnowledgeService
 from app.services.qa_service import QaService
-
 
 # ==================================================================
 # 数据库 fixture

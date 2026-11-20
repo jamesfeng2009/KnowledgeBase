@@ -12,6 +12,7 @@
 
 权限：approve/reject 需 admin/kb_admin 角色（审批状态流转不可逆）。
 """
+
 from __future__ import annotations
 
 import math
@@ -65,7 +66,9 @@ def _approval_to_dict(approval: KnowledgeApproval) -> dict[str, Any]:
         "conflict_count": approval.conflict_count,
         "auto_detected_risks": approval.auto_detected_risks,
         "expire_at": approval.expire_at.isoformat() if approval.expire_at else None,
-        "reviewed_at": approval.reviewed_at.isoformat() if approval.reviewed_at else None,
+        "reviewed_at": approval.reviewed_at.isoformat()
+        if approval.reviewed_at
+        else None,
         "review_note": approval.review_note,
         "auto_approved": approval.auto_approved,
         "created_at": approval.created_at.isoformat() if approval.created_at else None,

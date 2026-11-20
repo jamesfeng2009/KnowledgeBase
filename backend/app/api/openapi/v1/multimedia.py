@@ -9,8 +9,8 @@
 - 需要 scope: ``multimedia:parse`` / ``multimedia:vision``；
 - 认证方式为 API Key（X-API-Key header）。
 """
-from __future__ import annotations
 
+from __future__ import annotations
 
 from fastapi import APIRouter, Depends, File, Response, UploadFile
 from pydantic import BaseModel, Field

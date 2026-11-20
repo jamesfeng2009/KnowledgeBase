@@ -26,7 +26,6 @@ from app.eval.compression_metrics import (
 )
 from app.rag.context_budget import ContextBudgetManager
 
-
 # ======================================================================
 # Mock LLM
 # ======================================================================
@@ -56,7 +55,7 @@ class ErrorLLM:
 
     async def chat(self, *args: Any, **kwargs: Any) -> AsyncIterator[str]:
         raise RuntimeError("LLM unavailable")
-        yield  # noqa: E701 — 使其为 async generator
+        yield
 
 
 # ======================================================================
@@ -70,7 +69,11 @@ class TestExtractKeyEntities:
     def test_extract_amounts_and_percentages(self) -> None:
         text = "单次报销上限 5000 元，超出部分需额外审批，审批通过率约 85%。"
         entities = extract_key_entities(text)
-        assert "5000 元" in entities or "5000元" in {e.replace(" ", "") for e in entities} or any("5000" in e for e in entities)
+        assert (
+            "5000 元" in entities
+            or "5000元" in {e.replace(" ", "") for e in entities}
+            or any("5000" in e for e in entities)
+        )
         assert any("85%" in e or "85％" in e for e in entities)
 
     def test_extract_dates(self) -> None:
@@ -127,7 +130,10 @@ class TestComputeEntityRetention:
 
     def test_partial_loss(self) -> None:
         before = [
-            {"role": "user", "content": "报销上限 5000 元，审批需 3 个工作日，见《差旅费管理制度》"},
+            {
+                "role": "user",
+                "content": "报销上限 5000 元，审批需 3 个工作日，见《差旅费管理制度》",
+            },
         ]
         after = [
             {"role": "user", "content": "报销相关制度说明"},  # 实体全部丢失
@@ -179,10 +185,12 @@ class TestContextBudgetIntegration:
         ]
         # 中间塞入多条超长工具结果，使总 token 超过默认预算
         for i in range(6):
-            msgs.append({
-                "role": "user",
-                "content": f"[系统] 工具结果：{'查询结果内容' * 200} 第{i}轮",
-            })
+            msgs.append(
+                {
+                    "role": "user",
+                    "content": f"[系统] 工具结果：{'查询结果内容' * 200} 第{i}轮",
+                }
+            )
         msgs.append({"role": "assistant", "content": "继续分析"})
         msgs.append({"role": "user", "content": "请给出结论"})
         return msgs
@@ -237,9 +245,9 @@ class TestCompressionJudgeConsistency:
 
     @pytest.mark.asyncio
     async def test_consistent_verdict(self) -> None:
-        llm = QueueLLM([
-            '{"consistency_score": 5, "key_diffs": [], "reasoning": "结论完全一致"}'
-        ])
+        llm = QueueLLM(
+            ['{"consistency_score": 5, "key_diffs": [], "reasoning": "结论完全一致"}']
+        )
         judge = CompressionJudge(judge_llm=llm)
 
         result = await judge.evaluate_consistency(
@@ -255,12 +263,16 @@ class TestCompressionJudgeConsistency:
 
     @pytest.mark.asyncio
     async def test_minor_loss_verdict(self) -> None:
-        llm = QueueLLM([
-            '{"consistency_score": 3, "key_diffs": ["缺少金额上限"], "reasoning": "次要遗漏"}'
-        ])
+        llm = QueueLLM(
+            [
+                '{"consistency_score": 3, "key_diffs": ["缺少金额上限"], "reasoning": "次要遗漏"}'
+            ]
+        )
         judge = CompressionJudge(judge_llm=llm)
 
-        result = await judge.evaluate_consistency("q", "answer full", "answer compressed")
+        result = await judge.evaluate_consistency(
+            "q", "answer full", "answer compressed"
+        )
 
         assert result.verdict == "minor_loss"
         assert not result.passed
@@ -268,9 +280,11 @@ class TestCompressionJudgeConsistency:
 
     @pytest.mark.asyncio
     async def test_major_loss_verdict(self) -> None:
-        llm = QueueLLM([
-            '```json\n{"consistency_score": 1, "key_diffs": ["结论矛盾"], "reasoning": "严重不一致"}\n```'
-        ])
+        llm = QueueLLM(
+            [
+                '```json\n{"consistency_score": 1, "key_diffs": ["结论矛盾"], "reasoning": "严重不一致"}\n```'
+            ]
+        )
         judge = CompressionJudge(judge_llm=llm)
 
         result = await judge.evaluate_consistency("q", "a", "b")
@@ -318,8 +332,11 @@ class TestDualFaithfulness:
         judge = CompressionJudge(judge_llm=llm)
 
         report = await judge.evaluate_dual_faithfulness(
-            "q", "answer full", ["ctx full"],
-            "answer compressed", ["ctx compressed"],
+            "q",
+            "answer full",
+            ["ctx full"],
+            "answer compressed",
+            ["ctx compressed"],
         )
 
         assert report.error is None
@@ -334,7 +351,11 @@ class TestDualFaithfulness:
         judge = CompressionJudge(judge_llm=llm)
 
         report = await judge.evaluate_dual_faithfulness(
-            "q", "a", ["c"], "b", ["c2"],
+            "q",
+            "a",
+            ["c"],
+            "b",
+            ["c2"],
         )
 
         assert report.degradation == 2.5
@@ -345,7 +366,11 @@ class TestDualFaithfulness:
         judge = CompressionJudge(judge_llm=ErrorLLM())
 
         report = await judge.evaluate_dual_faithfulness(
-            "q", "a", ["c"], "b", ["c2"],
+            "q",
+            "a",
+            ["c"],
+            "b",
+            ["c2"],
         )
 
         assert report.error is not None

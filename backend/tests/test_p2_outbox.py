@@ -7,6 +7,7 @@
     - flush_task_outbox：pending 补投 → sent / 失败 attempts+1 / 达上限 dead；
     - beat_schedule 注册存在性。
 """
+
 from __future__ import annotations
 
 import uuid
@@ -14,10 +15,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
 # ==================================================================
 # 辅助 — 构造 mock outbox 条目 / DB 会话
 # ==================================================================
+
 
 def _make_entry(
     attempts: int = 0,
@@ -64,6 +65,7 @@ def _make_task_db_session(entries: list[MagicMock]) -> MagicMock:
 # dispatch_with_outbox
 # ==================================================================
 
+
 class TestDispatchWithOutbox:
     """异步派发助手。"""
 
@@ -109,6 +111,7 @@ class TestDispatchWithOutbox:
 # record_failed_dispatch
 # ==================================================================
 
+
 class TestRecordFailedDispatch:
     """独立短事务落箱。"""
 
@@ -124,9 +127,7 @@ class TestRecordFailedDispatch:
 
         mock_factory = MagicMock(return_value=ctx)
 
-        with patch(
-            "app.database.async_session_factory", new=mock_factory
-        ):
+        with patch("app.database.async_session_factory", new=mock_factory):
             result = await task_outbox.record_failed_dispatch(
                 "tasks.demo.task", {"doc_id": "d1"}, Exception("broker down")
             )
@@ -158,6 +159,7 @@ class TestRecordFailedDispatch:
 # ==================================================================
 # dispatch_with_outbox_sync
 # ==================================================================
+
 
 class TestDispatchWithOutboxSync:
     """同步版本（视频 finalize 等同步 Celery 任务使用）。"""
@@ -198,6 +200,7 @@ class TestDispatchWithOutboxSync:
 # ==================================================================
 # flush_task_outbox — 定时补投
 # ==================================================================
+
 
 class TestFlushTaskOutbox:
     """Celery 定时任务 flush_task_outbox。"""
@@ -255,7 +258,9 @@ class TestFlushTaskOutbox:
             patch("app.database.task_db_session", new=factory),
             patch("tasks.scheduled_tasks.celery_app") as mock_celery,
         ):
-            mock_celery.send_task = MagicMock(side_effect=Exception("broker still down"))
+            mock_celery.send_task = MagicMock(
+                side_effect=Exception("broker still down")
+            )
             result = await scheduled_tasks._flush_task_outbox_async()
 
         assert result["dispatched"] == 0
@@ -274,7 +279,9 @@ class TestFlushTaskOutbox:
             patch("app.database.task_db_session", new=factory),
             patch("tasks.scheduled_tasks.celery_app") as mock_celery,
         ):
-            mock_celery.send_task = MagicMock(side_effect=Exception("broker down forever"))
+            mock_celery.send_task = MagicMock(
+                side_effect=Exception("broker down forever")
+            )
             result = await scheduled_tasks._flush_task_outbox_async()
 
         assert result["failed"] == 1
@@ -303,6 +310,7 @@ class TestFlushTaskOutbox:
 # beat_schedule 注册
 # ==================================================================
 
+
 class TestBeatScheduleRegistration:
     """flush_task_outbox 已注册到 beat，每 5 分钟。"""
 
@@ -321,6 +329,7 @@ class TestBeatScheduleRegistration:
 # ==================================================================
 # 调用点接入 — 5 处一次性触发链路均已换用 Outbox 助手
 # ==================================================================
+
 
 class TestCallSiteIntegration:
     """源码级检查：原 try/delay/except-log 模式已被 dispatch_with_outbox 替换。"""

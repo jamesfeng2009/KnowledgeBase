@@ -5,13 +5,12 @@
 遵循开闭原则：新增数据源只需添加新的 engine 和 session 工厂。
 """
 
-import uuid
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager, suppress
 from typing import Any
 
 from fastapi import Request
-from sqlalchemy import event, text
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -71,7 +70,7 @@ def _reset_tenant_guc_on_checkin(dbapi_connection, connection_record) -> None:
             cursor.execute(f"RESET {TENANT_GUC}")
         finally:
             cursor.close()
-    except Exception:  # noqa: BLE001 - 任何失败都不该阻断请求收尾
+    except Exception:
         log.warning("db.tenant_guc_reset_failed", exc_info=True)
         with suppress(Exception):
             connection_record.invalidate()
@@ -207,7 +206,7 @@ async def get_db_session(request: Request) -> AsyncGenerator[AsyncSession, None]
             try:
                 await clear_tenant(session)
                 await session.commit()
-            except Exception:  # noqa: BLE001 - 收尾失败不应盖住业务异常
+            except Exception:
                 with suppress(Exception):
                     await session.rollback()
             await session.close()
@@ -245,7 +244,7 @@ async def get_system_db_session(
             try:
                 await clear_tenant(session)
                 await session.commit()
-            except Exception:  # noqa: BLE001 - 收尾失败不应盖住业务异常
+            except Exception:
                 with suppress(Exception):
                     await session.rollback()
             await session.close()

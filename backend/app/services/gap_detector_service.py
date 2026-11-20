@@ -91,9 +91,7 @@ class GapDetectorService:
             高频缺口详情列表。
         """
         gaps = await self.gap_repo.get_all(status="open")
-        high_freq_gaps = [
-            g for g in gaps if g.search_count >= HIGH_FREQUENCY_THRESHOLD
-        ]
+        high_freq_gaps = [g for g in gaps if g.search_count >= HIGH_FREQUENCY_THRESHOLD]
 
         result = [
             {

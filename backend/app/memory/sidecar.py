@@ -139,7 +139,9 @@ class SidecarMemoryRetriever:
                 )
             ]
         except Exception as exc:
-            logger.warning("sidecar.mem0_search_failed", user_id=str(user_id), error=str(exc))
+            logger.warning(
+                "sidecar.mem0_search_failed", user_id=str(user_id), error=str(exc)
+            )
 
         try:
             working_memory = [
@@ -152,7 +154,9 @@ class SidecarMemoryRetriever:
                 )
             ]
         except Exception as exc:
-            logger.warning("sidecar.working_memory_failed", user_id=str(user_id), error=str(exc))
+            logger.warning(
+                "sidecar.working_memory_failed", user_id=str(user_id), error=str(exc)
+            )
 
         logger.info(
             "sidecar.memory_retrieved",

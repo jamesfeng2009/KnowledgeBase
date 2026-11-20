@@ -90,7 +90,7 @@ async def run(url: str, emit_sql: bool) -> int:
                 n = await conn.fetchval(
                     f'SELECT count(*) FROM public."{t}" WHERE tenant_id IS NULL'
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 print(f"  ! {t}: 查询失败 {type(exc).__name__}: {exc}", file=sys.stderr)
                 continue
             if n:
@@ -115,7 +115,7 @@ async def run(url: str, emit_sql: bool) -> int:
             print("\n--- 回填模板（把 <TENANT_UUID> 换成实际租户）---")
             for t, _ in sorted(offenders, key=lambda x: -x[1]):
                 print(
-                    f'UPDATE public."{t}" SET tenant_id = \'<TENANT_UUID>\' '
+                    f"UPDATE public.\"{t}\" SET tenant_id = '<TENANT_UUID>' "
                     f"WHERE tenant_id IS NULL;"
                 )
         return 1
@@ -124,7 +124,9 @@ async def run(url: str, emit_sql: bool) -> int:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="统计 tenant_id 为 NULL 的行（上线前检查）")
+    ap = argparse.ArgumentParser(
+        description="统计 tenant_id 为 NULL 的行（上线前检查）"
+    )
     ap.add_argument("--url", default=None)
     ap.add_argument("--emit-sql", action="store_true", help="输出回填 SQL 模板")
     args = ap.parse_args()

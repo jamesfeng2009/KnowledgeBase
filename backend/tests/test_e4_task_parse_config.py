@@ -26,7 +26,6 @@ import pytest
 import sqlalchemy as sa
 
 from app.config import get_settings
-
 from tests.test_d7_tenant_parse_config import _seed_tenant
 from tests.test_pdf_pipeline_hardening import _seed_document
 from tests.test_upload_summary import _make_mock_doc, auth_client  # noqa: F401
@@ -119,13 +118,16 @@ class TestE4Merge:
         assert captured["is_global"] is True
         assert captured["values"][_KEY] == getattr(get_settings(), _KEY)
 
-    async def test_invalid_task_cfg_fail_closed(self, db_session, tmp_path, monkeypatch):
+    async def test_invalid_task_cfg_fail_closed(
+        self, db_session, tmp_path, monkeypatch
+    ):
         import tasks.document_tasks as dt
 
         captured = _capture_parse(monkeypatch)
         _, doc = await _seed(db_session, tmp_path, None)
         result = await dt._parse_and_chunk_async(
-            str(doc.id), tenant_id=str(doc.tenant_id),
+            str(doc.id),
+            tenant_id=str(doc.tenant_id),
             parse_config={"DOCLING_ENABLED": False},
         )
         assert result["status"] == "failed"

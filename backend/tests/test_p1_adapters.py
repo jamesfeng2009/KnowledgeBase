@@ -5,10 +5,10 @@
 - Notion Adapter：page ID 提取、标题提取、rich_text 解析、blocks → Markdown 转换、fetch（mocked）
 - 注册表：飞书和 Notion 适配器自动注册
 """
+
 from __future__ import annotations
 
 import sys
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -74,34 +74,32 @@ class TestFeishuAdapter:
 
         adapter = FeishuAdapter()
         blocks = [
-            {"block_id": "page1", "block_type": 1, "children": ["b1", "b2", "b3", "b4"]},
+            {
+                "block_id": "page1",
+                "block_type": 1,
+                "children": ["b1", "b2", "b3", "b4"],
+            },
             {
                 "block_id": "b1",
                 "block_type": 3,  # heading1
-                "heading1": {
-                    "elements": [{"text_run": {"content": "架构设计"}}]
-                },
+                "heading1": {"elements": [{"text_run": {"content": "架构设计"}}]},
             },
             {
                 "block_id": "b2",
                 "block_type": 2,  # text
-                "text": {
-                    "elements": [{"text_run": {"content": "这是一段正文。"}}]
-                },
+                "text": {"elements": [{"text_run": {"content": "这是一段正文。"}}]},
             },
             {
                 "block_id": "b3",
                 "block_type": 12,  # bullet
-                "bullet": {
-                    "elements": [{"text_run": {"content": "列表项1"}}]
-                },
+                "bullet": {"elements": [{"text_run": {"content": "列表项1"}}]},
             },
             {
                 "block_id": "b4",
                 "block_type": 14,  # code
                 "code": {
                     "style": {"language": "python"},
-                    "elements": [{"text_run": {"content": "print('hello')"}}]
+                    "elements": [{"text_run": {"content": "print('hello')"}}],
                 },
             },
         ]
@@ -121,15 +119,21 @@ class TestFeishuAdapter:
 
         adapter = FeishuAdapter()
         blocks = [
-            {"block_id": "page1", "block_type": 1, "children": [f"h{i}" for i in range(1, 7)]},
+            {
+                "block_id": "page1",
+                "block_type": 1,
+                "children": [f"h{i}" for i in range(1, 7)],
+            },
         ]
         for i in range(1, 7):
             field = f"heading{i}"
-            blocks.append({
-                "block_id": f"h{i}",
-                "block_type": 2 + i,  # heading1=3, heading2=4, ...
-                field: {"elements": [{"text_run": {"content": f"标题{i}"}}]},
-            })
+            blocks.append(
+                {
+                    "block_id": f"h{i}",
+                    "block_type": 2 + i,  # heading1=3, heading2=4, ...
+                    field: {"elements": [{"text_run": {"content": f"标题{i}"}}]},
+                }
+            )
 
         result = adapter._blocks_to_markdown(blocks, "测试")
 
@@ -216,7 +220,10 @@ class TestFeishuAdapter:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=token_resp)
         mock_client.get = AsyncMock(
-            side_effect=[doc_resp, blocks_resp]  # 第一次 GET 文档信息，第二次 GET 块列表
+            side_effect=[
+                doc_resp,
+                blocks_resp,
+            ]  # 第一次 GET 文档信息，第二次 GET 块列表
         )
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
@@ -251,10 +258,15 @@ class TestFeishuAdapter:
 
         with patch("httpx.AsyncClient", return_value=mock_client):
             adapter = FeishuAdapter()
-            assert await adapter.test_connection({
-                "app_id": "cli_xxx",
-                "app_secret": "secret",
-            }) is True
+            assert (
+                await adapter.test_connection(
+                    {
+                        "app_id": "cli_xxx",
+                        "app_secret": "secret",
+                    }
+                )
+                is True
+            )
 
     @pytest.mark.asyncio
     async def test_test_connection_missing_creds(self) -> None:
@@ -277,7 +289,10 @@ class TestNotionAdapter:
         """纯 32 位十六进制 ID。"""
         from app.document.source_adapters.notion_adapter import NotionAdapter
 
-        assert NotionAdapter._extract_page_id("1234567890abcdef1234567890abcdef") == "1234567890abcdef1234567890abcdef"
+        assert (
+            NotionAdapter._extract_page_id("1234567890abcdef1234567890abcdef")
+            == "1234567890abcdef1234567890abcdef"
+        )
 
     def test_extract_page_id_with_hyphens(self) -> None:
         """带连字符的 UUID 格式。"""
@@ -529,11 +544,7 @@ class TestNotionAdapter:
         page_resp.json.return_value = {
             "id": "1234567890abcdef1234567890abcdef",
             "url": "https://www.notion.so/Workspace/Test-1234567890abcdef1234567890abcdef",
-            "properties": {
-                "title": {
-                    "title": [{"plain_text": "架构设计文档"}]
-                }
-            },
+            "properties": {"title": {"title": [{"plain_text": "架构设计文档"}]}},
         }
         page_resp.raise_for_status = MagicMock()
 
@@ -588,9 +599,14 @@ class TestNotionAdapter:
 
         with patch("httpx.AsyncClient", return_value=mock_client):
             adapter = NotionAdapter()
-            assert await adapter.test_connection({
-                "integration_token": "secret_xxx",
-            }) is True
+            assert (
+                await adapter.test_connection(
+                    {
+                        "integration_token": "secret_xxx",
+                    }
+                )
+                is True
+            )
 
     @pytest.mark.asyncio
     async def test_test_connection_missing_token(self) -> None:

@@ -10,16 +10,17 @@ P4-A 漂移检测器单元测试。
     - reset() 状态重置
 """
 
-import pytest
 from unittest.mock import patch
+
+import pytest
 
 from app.context.drift_detector import DriftDetector, DriftResult
 from app.context.focus_tracker import ConversationFocus
 
-
 # ============================================================
 # DriftResult
 # ============================================================
+
 
 class TestDriftResult:
     """DriftResult 数据结构测试。"""
@@ -35,9 +36,11 @@ class TestDriftResult:
     def test_to_dict_with_focus(self):
         focus = ConversationFocus(topic="限号政策", entity="北京")
         result = DriftResult(
-            is_drift=True, drift_score=0.9,
+            is_drift=True,
+            drift_score=0.9,
             previous_focus=focus,
-            detection_method="embedding", action="reset_focus",
+            detection_method="embedding",
+            action="reset_focus",
         )
         d = result.to_dict()
         assert d["is_drift"] is True
@@ -48,6 +51,7 @@ class TestDriftResult:
 # ============================================================
 # DriftDetector — 规则检测
 # ============================================================
+
 
 class TestDriftDetectorRule:
     """DriftDetector 规则检测测试。"""
@@ -102,6 +106,7 @@ class TestDriftDetectorRule:
 # DriftDetector — Embedding 检测
 # ============================================================
 
+
 class MockEmbedder:
     """Mock Embedder — 返回预设向量。"""
 
@@ -129,6 +134,7 @@ class MockEmbedder:
             # 解 x 使得 cosine = similarity
             # 2x / (1+x^2) = s → s*x^2 - 2x + s = 0 → x = (2 ± sqrt(4-4s^2)) / (2s)
             import math
+
             s = self._similarity
             if s < 0.01:
                 return [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
@@ -178,6 +184,7 @@ class TestDriftDetectorEmbedding:
 # DriftDetector — 置信度衰减
 # ============================================================
 
+
 class TestDriftDetectorConfidence:
     """DriftDetector 置信度衰减测试。"""
 
@@ -191,7 +198,9 @@ class TestDriftDetectorConfidence:
         """
         detector = DriftDetector(embedder=None)
         focus_low = ConversationFocus(
-            topic="某话题", entity="某实体", confidence=0.2,
+            topic="某话题",
+            entity="某实体",
+            confidence=0.2,
         )
         # 模拟 3 轮低置信度
         # 规则无法判断 + 无 embedder → 更新 confidence streak
@@ -213,10 +222,14 @@ class TestDriftDetectorConfidence:
         """高置信度重置计数。"""
         detector = DriftDetector(embedder=None)
         focus_low = ConversationFocus(
-            topic="某话题", entity="某实体", confidence=0.2,
+            topic="某话题",
+            entity="某实体",
+            confidence=0.2,
         )
         focus_high = ConversationFocus(
-            topic="某话题", entity="某实体", confidence=0.8,
+            topic="某话题",
+            entity="某实体",
+            confidence=0.8,
         )
         # 2 轮低置信度
         for _ in range(2):
@@ -231,6 +244,7 @@ class TestDriftDetectorConfidence:
 # ============================================================
 # DriftDetector — 降级 & 重置
 # ============================================================
+
 
 class TestDriftDetectorDegradation:
     """DriftDetector 降级和重置测试。"""

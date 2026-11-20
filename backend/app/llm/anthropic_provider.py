@@ -154,14 +154,20 @@ class AnthropicProvider(LLMProvider):
         half_open_probe = self._cb.state == CircuitState.HALF_OPEN
 
         import time
+
         t0 = time.monotonic()
         # 调用结果是否已记录到熔断器（成功/失败均置 True）
         outcome_recorded = False
 
         try:
             api_kwargs = self._build_api_kwargs(messages, tools, kwargs)
-            log.info("llm.anthropic.chat.start", model=api_kwargs.get("model"),
-                     msg_count=len(messages), stream=stream, has_tools=bool(tools))
+            log.info(
+                "llm.anthropic.chat.start",
+                model=api_kwargs.get("model"),
+                msg_count=len(messages),
+                stream=stream,
+                has_tools=bool(tools),
+            )
 
             if stream:
                 async with self.client.messages.stream(**api_kwargs) as stream_resp:
@@ -220,7 +226,9 @@ class AnthropicProvider(LLMProvider):
         except Exception as exc:
             # 调用失败 — 记录到熔断器
             elapsed_ms = round((time.monotonic() - t0) * 1000, 2)
-            log.warning("llm.anthropic.chat.error", error=str(exc), latency_ms=elapsed_ms)
+            log.warning(
+                "llm.anthropic.chat.error", error=str(exc), latency_ms=elapsed_ms
+            )
             self._cb._record_failure()
             outcome_recorded = True
             raise

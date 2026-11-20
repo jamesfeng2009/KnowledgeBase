@@ -38,9 +38,7 @@ class ReportFilter(BaseModel):
     start_date: date = Field(..., description="起始日期（包含）")
     end_date: date = Field(..., description="结束日期（包含）")
     group_by: GroupBy = Field(default=GroupBy.day, description="分组维度")
-    metric_type: MetricType = Field(
-        default=MetricType.queries, description="指标类型"
-    )
+    metric_type: MetricType = Field(default=MetricType.queries, description="指标类型")
 
 
 class UsageReport(BaseModel):
@@ -83,9 +81,7 @@ class KnowledgeReport(BaseModel):
         default=0.0, ge=0.0, le=100.0, description="平均质量分（0-100）"
     )
     gap_count: int = Field(default=0, ge=0, description="知识缺口数量")
-    expiring_count: int = Field(
-        default=0, ge=0, description="即将过期文档数量"
-    )
+    expiring_count: int = Field(default=0, ge=0, description="即将过期文档数量")
 
 
 class CostReport(BaseModel):

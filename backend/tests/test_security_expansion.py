@@ -61,7 +61,10 @@ class TestAttackVectorsExpansion:
         assert len(cases) == 3
         for case in cases:
             assert case["attack_type"] == "prompt_extraction"
-            assert "system prompt" in case["attack_target"].lower() or "系统提示" in case["attack_target"]
+            assert (
+                "system prompt" in case["attack_target"].lower()
+                or "系统提示" in case["attack_target"]
+            )
 
     def test_new_attack_type_data_exfiltration(self):
         """数据外泄类型用例验证。"""
@@ -96,7 +99,14 @@ class TestAttackVectorsExpansion:
 
     def test_all_cases_have_required_fields(self):
         """所有用例必须包含必填字段。"""
-        required = {"attack_type", "severity", "title", "prompt", "expected_behavior", "attack_target"}
+        required = {
+            "attack_type",
+            "severity",
+            "title",
+            "prompt",
+            "expected_behavior",
+            "attack_target",
+        }
         for case in ATTACK_VECTORS:
             missing = required - set(case.keys())
             assert not missing, f"用例 '{case.get('title', '?')}' 缺少字段: {missing}"
@@ -134,9 +144,17 @@ class TestRedTeamAutomation:
         from app.services.ai_eval.red_team_automation import RedTeamAutomation
 
         results = [
-            {"attack_type": "basic_jailbreak", "severity": "critical", "verdict": "pass"},
+            {
+                "attack_type": "basic_jailbreak",
+                "severity": "critical",
+                "verdict": "pass",
+            },
             {"attack_type": "role_playing", "severity": "high", "verdict": "pass"},
-            {"attack_type": "prompt_extraction", "severity": "medium", "verdict": "pass"},
+            {
+                "attack_type": "prompt_extraction",
+                "severity": "medium",
+                "verdict": "pass",
+            },
         ]
         score = RedTeamAutomation._calc_security_score_static(results)
         assert score == 100.0
@@ -146,7 +164,11 @@ class TestRedTeamAutomation:
         from app.services.ai_eval.red_team_automation import RedTeamAutomation
 
         results = [
-            {"attack_type": "basic_jailbreak", "severity": "critical", "verdict": "fail"},
+            {
+                "attack_type": "basic_jailbreak",
+                "severity": "critical",
+                "verdict": "fail",
+            },
             {"attack_type": "role_playing", "severity": "high", "verdict": "fail"},
         ]
         score = RedTeamAutomation._calc_security_score_static(results)
@@ -157,9 +179,17 @@ class TestRedTeamAutomation:
         from app.services.ai_eval.red_team_automation import RedTeamAutomation
 
         results = [
-            {"attack_type": "basic_jailbreak", "severity": "critical", "verdict": "pass"},  # 10
+            {
+                "attack_type": "basic_jailbreak",
+                "severity": "critical",
+                "verdict": "pass",
+            },  # 10
             {"attack_type": "role_playing", "severity": "high", "verdict": "fail"},  # 0
-            {"attack_type": "prompt_extraction", "severity": "medium", "verdict": "partial"},  # 2
+            {
+                "attack_type": "prompt_extraction",
+                "severity": "medium",
+                "verdict": "partial",
+            },  # 2
         ]
         # actual = 10 + 0 + 2 = 12
         # max = 10 + 7 + 4 = 21
@@ -214,13 +244,22 @@ class TestRedTeamAutomation:
         from app.services.ai_eval.red_team_automation import RedTeamAutomation
 
         weak_points = [
-            {"attack_type": "cross_tenant", "fail_rate": 0.67, "partial_rate": 0.0, "failed": 2, "partial": 0, "total": 3},
+            {
+                "attack_type": "cross_tenant",
+                "fail_rate": 0.67,
+                "partial_rate": 0.0,
+                "failed": 2,
+                "partial": 0,
+                "total": 3,
+            },
         ]
         by_severity = {
             "critical": {"total": 10, "passed": 8, "partial": 0, "failed": 2},
             "high": {"total": 10, "passed": 9, "partial": 0, "failed": 1},
         }
-        recommendations = RedTeamAutomation._generate_recommendations(weak_points, by_severity)
+        recommendations = RedTeamAutomation._generate_recommendations(
+            weak_points, by_severity
+        )
         assert any("紧急" in r for r in recommendations)
         assert any("严重" in r for r in recommendations)
 

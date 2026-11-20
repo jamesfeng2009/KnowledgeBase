@@ -6,8 +6,9 @@ P2-A Task 2: 为 HealthCheckService 提供 Provider 发现能力。
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 from app.utils.logger import get_logger
 
@@ -39,9 +40,7 @@ def get_embedder_entries() -> list[ProviderMeta]:
     try:
         from app.llm.embedder import TEIEmbedder
 
-        entries.append(
-            ProviderMeta("tei", "embedder", "embedder_tei", TEIEmbedder)
-        )
+        entries.append(ProviderMeta("tei", "embedder", "embedder_tei", TEIEmbedder))
     except Exception as exc:
         log.debug("registry.embedder.skip", name="tei", error=str(exc))
 
@@ -74,9 +73,7 @@ def get_reranker_entries() -> list[ProviderMeta]:
     try:
         from app.rag.reranker import TEIReranker
 
-        entries.append(
-            ProviderMeta("tei", "reranker", "reranker_tei", TEIReranker)
-        )
+        entries.append(ProviderMeta("tei", "reranker", "reranker_tei", TEIReranker))
     except Exception as exc:
         log.debug("registry.reranker.skip", name="tei", error=str(exc))
 
@@ -132,27 +129,21 @@ def get_llm_provider_entries() -> list[ProviderMeta]:
     try:
         from app.llm.vllm_provider import VLLMProvider
 
-        entries.append(
-            ProviderMeta("vllm", "llm", "vllm", VLLMProvider)
-        )
+        entries.append(ProviderMeta("vllm", "llm", "vllm", VLLMProvider))
     except Exception as exc:
         log.debug("registry.llm.skip", name="vllm", error=str(exc))
 
     try:
         from app.llm.anthropic_provider import AnthropicProvider
 
-        entries.append(
-            ProviderMeta("anthropic", "llm", "anthropic", AnthropicProvider)
-        )
+        entries.append(ProviderMeta("anthropic", "llm", "anthropic", AnthropicProvider))
     except Exception as exc:
         log.debug("registry.llm.skip", name="anthropic", error=str(exc))
 
     try:
         from app.llm.dashscope_provider import DashScopeProvider
 
-        entries.append(
-            ProviderMeta("dashscope", "llm", "dashscope", DashScopeProvider)
-        )
+        entries.append(ProviderMeta("dashscope", "llm", "dashscope", DashScopeProvider))
     except Exception as exc:
         log.debug("registry.llm.skip", name="dashscope", error=str(exc))
 
@@ -160,9 +151,7 @@ def get_llm_provider_entries() -> list[ProviderMeta]:
     try:
         from app.llm.openai_provider import OpenAIProvider
 
-        entries.append(
-            ProviderMeta("openai", "llm", "openai", OpenAIProvider)
-        )
+        entries.append(ProviderMeta("openai", "llm", "openai", OpenAIProvider))
     except Exception as exc:
         log.debug("registry.llm.skip", name="openai", error=str(exc))
 

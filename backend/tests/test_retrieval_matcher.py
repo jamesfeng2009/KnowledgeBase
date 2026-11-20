@@ -56,7 +56,9 @@ class TestRetrievalMatchResult:
         assert d["action"] == "none"
 
     def test_to_dict_mismatch(self):
-        result = RetrievalMatchResult(is_match=False, match_score=0.15, action="expand_retrieval")
+        result = RetrievalMatchResult(
+            is_match=False, match_score=0.15, action="expand_retrieval"
+        )
         d = result.to_dict()
         assert d["is_match"] is False
         assert d["action"] == "expand_retrieval"
@@ -72,9 +74,12 @@ class TestRetrievalMatcherCheck:
         embedder = MockEmbedder(query_vec, [doc_vec])
         matcher = RetrievalMatcher(embedder)
 
-        result = await matcher.check("北京限号政策", [
-            {"title": "限号政策", "content": "北京今天限行尾号3和7"},
-        ])
+        result = await matcher.check(
+            "北京限号政策",
+            [
+                {"title": "限号政策", "content": "北京今天限行尾号3和7"},
+            ],
+        )
 
         assert result.is_match is True
         assert result.match_score > 0.3
@@ -87,9 +92,12 @@ class TestRetrievalMatcherCheck:
         embedder = MockEmbedder(query_vec, [doc_vec])
         matcher = RetrievalMatcher(embedder)
 
-        result = await matcher.check("北京限号政策", [
-            {"title": "天气预报", "content": "今天晴天25度"},
-        ])
+        result = await matcher.check(
+            "北京限号政策",
+            [
+                {"title": "天气预报", "content": "今天晴天25度"},
+            ],
+        )
 
         assert result.is_match is False
         assert result.match_score < 0.3
@@ -135,10 +143,13 @@ class TestRetrievalMatcherCheck:
         embedder = MockEmbedder(query_vec, doc_vecs)
         matcher = RetrievalMatcher(embedder)
 
-        result = await matcher.check("查询", [
-            {"title": "doc1", "content": "内容1"},
-            {"title": "doc2", "content": "内容2"},
-        ])
+        result = await matcher.check(
+            "查询",
+            [
+                {"title": "doc1", "content": "内容1"},
+                {"title": "doc2", "content": "内容2"},
+            ],
+        )
 
         assert result.is_match is True
         assert result.match_score > 0.3
@@ -154,10 +165,13 @@ class TestRetrievalMatcherCheck:
         embedder = MockEmbedder(query_vec, doc_vecs)
         matcher = RetrievalMatcher(embedder)
 
-        result = await matcher.check("查询", [
-            {"title": "doc1", "content": "内容1"},
-            {"title": "doc2", "content": "内容2"},
-        ])
+        result = await matcher.check(
+            "查询",
+            [
+                {"title": "doc1", "content": "内容1"},
+                {"title": "doc2", "content": "内容2"},
+            ],
+        )
 
         assert result.is_match is False
         assert result.action == "expand_retrieval"
@@ -169,8 +183,11 @@ class TestRetrievalMatcherCheck:
         embedder = MockEmbedder(query_vec, [doc_vec])
         matcher = RetrievalMatcher(embedder)
 
-        result = await matcher.check("查询", [
-            {"title": "doc", "text": "内容内容内容"},
-        ])
+        result = await matcher.check(
+            "查询",
+            [
+                {"title": "doc", "text": "内容内容内容"},
+            ],
+        )
 
         assert result.is_match is True

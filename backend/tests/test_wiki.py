@@ -7,21 +7,22 @@
     - update / rollback：patch 数据访问与快照/链接重建，聚焦主流程；
     - graph：mock list_pages 与 execute，验证节点/边结构。
 """
+
 from __future__ import annotations
 
 import uuid
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
 from app.models.wiki import WikiPage, WikiPageLink, WikiPageVersion
 from app.services.wiki_service import WikiService
 
-
 # ==================================================================
 # 测试夹具
 # ==================================================================
+
 
 class _FakeDB:
     """最小 AsyncSession 替身 — add(同步)/flush(异步) 收集写入。"""
@@ -30,7 +31,7 @@ class _FakeDB:
         self.added: list = []
         self.flushed: int = 0
 
-    def add(self, obj) -> None:  # noqa: ANN001
+    def add(self, obj) -> None:
         self.added.append(obj)
 
     async def flush(self) -> None:
@@ -39,8 +40,11 @@ class _FakeDB:
 
 def _make_doc(**kw) -> SimpleNamespace:
     defaults = dict(
-        id=uuid.uuid4(), kb_id=uuid.uuid4(), title="产品手册",
-        content_text="# 产品手册\n这是产品介绍", doc_type="md",
+        id=uuid.uuid4(),
+        kb_id=uuid.uuid4(),
+        title="产品手册",
+        content_text="# 产品手册\n这是产品介绍",
+        doc_type="md",
     )
     defaults.update(kw)
     return SimpleNamespace(**defaults)
@@ -48,9 +52,15 @@ def _make_doc(**kw) -> SimpleNamespace:
 
 def _make_page(**kw) -> WikiPage:
     defaults = dict(
-        id=uuid.uuid4(), kb_id=uuid.uuid4(), source_doc_id=None,
-        title="产品手册", content_md="# 产品手册\n正文", status="draft",
-        author_id=uuid.uuid4(), tenant_id=None, deleted_at=None,
+        id=uuid.uuid4(),
+        kb_id=uuid.uuid4(),
+        source_doc_id=None,
+        title="产品手册",
+        content_md="# 产品手册\n正文",
+        status="draft",
+        author_id=uuid.uuid4(),
+        tenant_id=None,
+        deleted_at=None,
     )
     defaults.update(kw)
     return WikiPage(**defaults)
@@ -58,8 +68,13 @@ def _make_page(**kw) -> WikiPage:
 
 def _make_version(**kw) -> WikiPageVersion:
     defaults = dict(
-        id=uuid.uuid4(), page_id=uuid.uuid4(), version_seq=1,
-        title="旧标题", content_md="旧正文", author_id=uuid.uuid4(), summary=None,
+        id=uuid.uuid4(),
+        page_id=uuid.uuid4(),
+        version_seq=1,
+        title="旧标题",
+        content_md="旧正文",
+        author_id=uuid.uuid4(),
+        summary=None,
     )
     defaults.update(kw)
     return WikiPageVersion(**defaults)
@@ -71,7 +86,7 @@ class _FakeLLM:
     def __init__(self, output: str) -> None:
         self._output = output
 
-    async def chat(self, messages, **kwargs):  # noqa: ANN001
+    async def chat(self, messages, **kwargs):
         del messages, kwargs
         yield self._output
 
@@ -79,6 +94,7 @@ class _FakeLLM:
 # ==================================================================
 # 纯函数
 # ==================================================================
+
 
 class TestWikiPure:
     def test_extract_links(self) -> None:
@@ -101,6 +117,7 @@ class TestWikiPure:
 # generate
 # ==================================================================
 
+
 @pytest.mark.asyncio
 async def test_generate_creates_pages_and_versions() -> None:
     db = _FakeDB()
@@ -115,7 +132,7 @@ async def test_generate_creates_pages_and_versions() -> None:
     md1 = "# 产品手册\n\n介绍。相关：[[API 参考]]"
     md2 = "# API 参考\n\n接口列表。相关：[[产品手册]]"
 
-    async def _side_effect(doc, linkable_titles):  # noqa: ANN001
+    async def _side_effect(doc, linkable_titles):
         return md1 if doc.title == "产品手册" else md2
 
     service._generate_page_md = AsyncMock(side_effect=_side_effect)
@@ -139,9 +156,7 @@ async def test_generate_updates_existing_page_and_snapshots() -> None:
     service._list_docs = AsyncMock(return_value=[doc])
     service._list_pages = AsyncMock(return_value=[existing])
     service._rebuild_links = AsyncMock()
-    service._generate_page_md = AsyncMock(
-        return_value="# 产品手册\n\n更新后的正文"
-    )
+    service._generate_page_md = AsyncMock(return_value="# 产品手册\n\n更新后的正文")
     service._snapshot = AsyncMock(
         return_value=_make_version(page_id=existing.id, version_seq=1)
     )
@@ -165,7 +180,7 @@ async def test_generate_failed_page_skipped() -> None:
     service._list_pages = AsyncMock(return_value=[])
     service._rebuild_links = AsyncMock()
 
-    async def _side(doc, linkable):  # noqa: ANN001
+    async def _side(doc, linkable):
         if doc.title == "坏文档":
             raise RuntimeError("llm down")
         return "# 正常文档\n\nok"
@@ -190,6 +205,7 @@ async def test_generate_no_docs_raises() -> None:
 # ==================================================================
 # 编辑 / 回滚
 # ==================================================================
+
 
 @pytest.mark.asyncio
 async def test_update_page_snapshots_and_rebuilds_links() -> None:
@@ -225,7 +241,9 @@ async def test_rollback_restores_version() -> None:
     page = _make_page(title="当前标题", content_md="当前正文")
     service.get_page = AsyncMock(return_value=page)
     version = _make_version(page_id=page.id, title="旧标题", content_md="旧正文")
-    service._snapshot = AsyncMock(return_value=_make_version(page_id=page.id, version_seq=2))
+    service._snapshot = AsyncMock(
+        return_value=_make_version(page_id=page.id, version_seq=2)
+    )
     service._rebuild_page_links = AsyncMock()
 
     async def fake_execute(stmt):
@@ -254,7 +272,9 @@ async def test_list_versions_desc() -> None:
     async def fake_execute(stmt):
         return SimpleNamespace(
             scalars=lambda: SimpleNamespace(
-                first=lambda: None, all=lambda: [v1, v2], __iter__=lambda self: iter([v1, v2])
+                first=lambda: None,
+                all=lambda: [v1, v2],
+                __iter__=lambda self: iter([v1, v2]),
             )
         )
 
@@ -266,6 +286,7 @@ async def test_list_versions_desc() -> None:
 # ==================================================================
 # 图谱
 # ==================================================================
+
 
 @pytest.mark.asyncio
 async def test_graph_returns_nodes_and_edges() -> None:
@@ -281,7 +302,9 @@ async def test_graph_returns_nodes_and_edges() -> None:
     async def fake_execute(stmt):
         return SimpleNamespace(
             scalars=lambda: SimpleNamespace(
-                first=lambda: None, all=lambda: [link], __iter__=lambda self: iter([link])
+                first=lambda: None,
+                all=lambda: [link],
+                __iter__=lambda self: iter([link]),
             )
         )
 
@@ -296,6 +319,7 @@ async def test_graph_returns_nodes_and_edges() -> None:
 # ==================================================================
 # 快照版本号
 # ==================================================================
+
 
 @pytest.mark.asyncio
 async def test_snapshot_version_seq_increments() -> None:

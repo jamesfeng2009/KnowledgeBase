@@ -83,7 +83,11 @@ def _make_handler(candidates, *, rerank_fail=False, gen_spy=None):
             if rerank_fail:
                 raise RuntimeError("reranker down")
             return [
-                {"index": i, "score": d.get("score", 0.0), "content": d.get("content", "")}
+                {
+                    "index": i,
+                    "score": d.get("score", 0.0),
+                    "content": d.get("content", ""),
+                }
                 for i, d in enumerate(documents)
             ]
 
@@ -111,7 +115,9 @@ async def _run_search(handler, permission_filter=None) -> list[dict]:
         permission_filter=permission_filter,
     ):
         events.append(ev)
-    sources_events = [e for e in events if getattr(e, "event", None) == SSEEventType.SOURCES]
+    sources_events = [
+        e for e in events if getattr(e, "event", None) == SSEEventType.SOURCES
+    ]
     assert len(sources_events) == 1
     return sources_events[0].data["sources"]
 

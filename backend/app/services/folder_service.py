@@ -160,7 +160,9 @@ class FolderService:
         )
         self.db.add(folder)
         await self.db.flush()
-        log.info("folder.created", folder_id=str(folder.id), path=path, kb_id=str(kb_id))
+        log.info(
+            "folder.created", folder_id=str(folder.id), path=path, kb_id=str(kb_id)
+        )
         return folder
 
     async def rename(self, folder_id: uuid.UUID, new_name: str) -> KbFolder:
@@ -196,7 +198,6 @@ class FolderService:
         if conflict is not None and conflict.id != folder.id:
             raise ValueError("folder_path_exists")
 
-        prefix = old_path + _PATH_SEP
         # 1) 自身
         folder.name = new_name
         folder.path = new_path
@@ -217,7 +218,12 @@ class FolderService:
             doc.depth = depth_of(doc.path)
         if sub_folders or affected:
             await self.db.flush()
-        log.info("folder.renamed", folder_id=str(folder.id), old_path=old_path, new_path=new_path)
+        log.info(
+            "folder.renamed",
+            folder_id=str(folder.id),
+            old_path=old_path,
+            new_path=new_path,
+        )
         return folder
 
     async def delete(self, folder_id: uuid.UUID) -> None:

@@ -12,8 +12,6 @@ from __future__ import annotations
 import sys
 from unittest.mock import MagicMock
 
-import pytest
-
 if "celery" not in sys.modules:
     mock_celery = MagicMock()
     mock_celery.Celery = MagicMock
@@ -101,10 +99,17 @@ class TestRunAggregatesCost:
 
         # 构造 3 个 case 的 latency：100, 200, 300 → avg=200, p99=300
         cases = [
-            MagicMock(query=f"q{i}", case_id=f"c{i}", expected_doc_ids=[],
-                      expected_answer=None, kb_ids=None, context_expect=None,
-                      case_type="normal", must_have_points=None,
-                      forbidden_content=None)
+            MagicMock(
+                query=f"q{i}",
+                case_id=f"c{i}",
+                expected_doc_ids=[],
+                expected_answer=None,
+                kb_ids=None,
+                context_expect=None,
+                case_type="normal",
+                must_have_points=None,
+                forbidden_content=None,
+            )
             for i in range(3)
         ]
         # 桩 _eval_case：直接返回带 latency/token 的 EvalCaseResult
@@ -113,7 +118,8 @@ class TestRunAggregatesCost:
         async def stub_eval_case(case, kb_ids, with_generation):
             idx = int(case.case_id[1:])
             return EvalCaseResult(
-                query=case.query, case_id=case.case_id,
+                query=case.query,
+                case_id=case.case_id,
                 latency_ms=latencies[idx],
                 token_usage={"total_tokens": 100 * (idx + 1)},
             )
@@ -154,10 +160,12 @@ class TestCompareBaselineCostRegression:
         from app.eval.repository import EvalRepository
         from app.eval.runner import EvalRunResult
 
-        cur = EvalRunResult(p99_latency_ms=1000.0, avg_latency_ms=500.0,
-                            total_tokens=100, total=1)
-        base = EvalRunResult(p99_latency_ms=1000.0, avg_latency_ms=500.0,
-                             total_tokens=100, total=1)
+        cur = EvalRunResult(
+            p99_latency_ms=1000.0, avg_latency_ms=500.0, total_tokens=100, total=1
+        )
+        base = EvalRunResult(
+            p99_latency_ms=1000.0, avg_latency_ms=500.0, total_tokens=100, total=1
+        )
         comparison = EvalRepository.compare_with_baseline(cur, base)
         assert comparison["metrics"]["p99_latency_ms"]["regressed"] is False
         assert comparison["metrics"]["total_tokens"]["regressed"] is False

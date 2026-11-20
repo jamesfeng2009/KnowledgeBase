@@ -8,11 +8,12 @@ Deep Research 服务测试 — P2-11。
     - 汇总摘要（LLM 摘要/全 gap/失败回退）
     - research 全流程（无 checkpoint + 断点恢复）
 """
+
 from __future__ import annotations
 
 import sys
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -116,10 +117,20 @@ class TestGatherEvidence:
 
     @pytest.mark.asyncio
     async def test_confirmed_with_docs(self) -> None:
-        llm = _FakeLLM({"研究分析专家": '{"conclusion": "流程A → 审批 → 报销", "confidence": 0.85}'})
-        retriever = _FakeRetriever([
-            {"content": "流程A ...", "metadata": {"title": "报销流程"}, "score": 0.9},
-        ])
+        llm = _FakeLLM(
+            {
+                "研究分析专家": '{"conclusion": "流程A → 审批 → 报销", "confidence": 0.85}'
+            }
+        )
+        retriever = _FakeRetriever(
+            [
+                {
+                    "content": "流程A ...",
+                    "metadata": {"title": "报销流程"},
+                    "score": 0.9,
+                },
+            ]
+        )
         service = DeepResearchService(llm, retriever)
         card = await service._gather_evidence("报销流程", None)
         assert card.status == "confirmed"
@@ -140,9 +151,11 @@ class TestGatherEvidence:
     @pytest.mark.asyncio
     async def test_uncertain_with_low_confidence(self) -> None:
         llm = _FakeLLM({"研究分析专家": '{"conclusion": "可能B", "confidence": 0.5}'})
-        retriever = _FakeRetriever([
-            {"content": "模糊信息", "metadata": {}, "score": 0.4},
-        ])
+        retriever = _FakeRetriever(
+            [
+                {"content": "模糊信息", "metadata": {}, "score": 0.4},
+            ]
+        )
         service = DeepResearchService(llm, retriever)
         card = await service._gather_evidence("报销流程", None)
         assert card.status == "uncertain"
@@ -251,14 +264,18 @@ class TestResearch:
 
     @pytest.mark.asyncio
     async def test_research_without_checkpoint(self) -> None:
-        llm = _FakeLLM({
-            "研究课题规划专家": "流程\n审批\n合规",
-            "研究分析专家": '{"conclusion": "结论A", "confidence": 0.9}',
-            "研究报告撰写专家": "摘要",
-        })
-        retriever = _FakeRetriever([
-            {"content": "doc1", "metadata": {"title": "T1"}, "score": 0.8},
-        ])
+        llm = _FakeLLM(
+            {
+                "研究课题规划专家": "流程\n审批\n合规",
+                "研究分析专家": '{"conclusion": "结论A", "confidence": 0.9}',
+                "研究报告撰写专家": "摘要",
+            }
+        )
+        retriever = _FakeRetriever(
+            [
+                {"content": "doc1", "metadata": {"title": "T1"}, "score": 0.8},
+            ]
+        )
         service = DeepResearchService(llm, retriever, _FakeDetector(False))
         report = await service.research("公司报销合规调研")
         assert isinstance(report, ResearchReport)
@@ -270,14 +287,18 @@ class TestResearch:
     @pytest.mark.asyncio
     async def test_research_with_checkpoint_resume(self) -> None:
         """里程碑断点恢复：已有 done 里程碑跳过已完成子课题。"""
-        llm = _FakeLLM({
-            "研究课题规划专家": "流程\n审批",
-            "研究分析专家": '{"conclusion": "结论", "confidence": 0.9}',
-            "研究报告撰写专家": "摘要",
-        })
-        retriever = _FakeRetriever([
-            {"content": "doc", "metadata": {}, "score": 0.8},
-        ])
+        llm = _FakeLLM(
+            {
+                "研究课题规划专家": "流程\n审批",
+                "研究分析专家": '{"conclusion": "结论", "confidence": 0.9}',
+                "研究报告撰写专家": "摘要",
+            }
+        )
+        retriever = _FakeRetriever(
+            [
+                {"content": "doc", "metadata": {}, "score": 0.8},
+            ]
+        )
         service = DeepResearchService(llm, retriever, _FakeDetector(False))
 
         class FakeMgr:

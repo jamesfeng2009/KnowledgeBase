@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Generic, TypeVar
+from typing import Generic, TypeVar
 
 from app.utils.logger import get_logger
 
@@ -27,9 +27,9 @@ log = get_logger(__name__)
 
 # 权威等级（从高到低）— 系统规则 > 用户输入 > 工具事实 > 已确认摘要 > 模型推测
 AUTHORITY_ORDER: tuple[str, ...] = (
-    "system_rule",      # 系统规则（公司制度、硬约束）
-    "user_input",       # 用户输入（当前用户明确陈述）
-    "tool_fact",        # 工具事实（ERP/CRM 等系统返回）
+    "system_rule",  # 系统规则（公司制度、硬约束）
+    "user_input",  # 用户输入（当前用户明确陈述）
+    "tool_fact",  # 工具事实（ERP/CRM 等系统返回）
     "confirmed_summary",  # 已确认摘要（历史达成的确认）
     "model_inference",  # 模型推测（低置信推理）
 )
@@ -197,7 +197,8 @@ class ConflictResolver:
     # ------------------------------------------------------------------
 
     def _last_win(
-        self, claims: list[ConflictClaim[T]],
+        self,
+        claims: list[ConflictClaim[T]],
     ) -> ConflictClaim[T]:
         """同 key 多值取最新时间戳（last win）。"""
         # 有有效时间戳的按时间排序取最新；无时间戳的按权威>输入顺序兜底
@@ -208,12 +209,15 @@ class ConflictResolver:
         return max(claims, key=lambda c: self.authority_score(c.authority))
 
     def _authority_first(
-        self, claims: list[ConflictClaim[T]],
+        self,
+        claims: list[ConflictClaim[T]],
     ) -> ConflictClaim[T]:
         """多源冲突取权威最高者。权威相同则取最新时间戳。"""
         highest = max(claims, key=lambda c: self.authority_score(c.authority))
         top_authority = self.authority_score(highest.authority)
-        candidates = [c for c in claims if self.authority_score(c.authority) == top_authority]
+        candidates = [
+            c for c in claims if self.authority_score(c.authority) == top_authority
+        ]
         if len(candidates) == 1:
             return candidates[0]
         # 权威并列 → last win
@@ -228,7 +232,12 @@ class ConflictResolver:
         others = [c for c in claims if c is not winner]
         if not others:
             return None
-        return max(others, key=lambda c: AUTHORITY_ORDER.index(c.authority) if c.authority in AUTHORITY_ORDER else 99).authority
+        return max(
+            others,
+            key=lambda c: AUTHORITY_ORDER.index(c.authority)
+            if c.authority in AUTHORITY_ORDER
+            else 99,
+        ).authority
 
     @staticmethod
     def _to_timestamp(claim: ConflictClaim[T]) -> float | None:

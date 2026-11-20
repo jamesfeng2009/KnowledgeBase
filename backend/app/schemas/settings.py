@@ -27,9 +27,7 @@ class LLMConfig(BaseModel):
         default=None,
         description="API 密钥（响应中掩码显示，如 sk-****1234）",
     )
-    temperature: float = Field(
-        default=0.7, ge=0.0, le=2.0, description="温度参数"
-    )
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0, description="温度参数")
     max_tokens: int = Field(
         default=2048, ge=1, le=32768, description="最大生成 token 数"
     )
@@ -56,9 +54,13 @@ class SystemConfig(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    site_name: str = Field(default="Enterprise Knowledge Brain", max_length=255, description="站点名称")
+    site_name: str = Field(
+        default="Enterprise Knowledge Brain", max_length=255, description="站点名称"
+    )
     logo_url: str | None = Field(default=None, max_length=500, description="Logo URL")
-    default_language: str = Field(default="zh-CN", max_length=10, description="默认语言")
+    default_language: str = Field(
+        default="zh-CN", max_length=10, description="默认语言"
+    )
     features: dict[str, Any] | None = Field(
         default=None, description="功能开关（JSONB，如 {chat: true, search: true}）"
     )
@@ -105,9 +107,7 @@ class ApiKeyResponse(BaseModel):
         default=None, description="租户 ID（多租户隔离）"
     )
     created_at: datetime = Field(..., description="创建时间")
-    last_used_at: datetime | None = Field(
-        default=None, description="最后使用时间"
-    )
+    last_used_at: datetime | None = Field(default=None, description="最后使用时间")
     is_active: bool = Field(default=True, description="是否启用")
 
 
@@ -141,9 +141,7 @@ class TenantConfig(BaseModel):
     plan: str = Field(default="free", description="套餐: free/pro/enterprise")
     max_users: int = Field(default=10, description="最大用户数")
     max_storage: int = Field(default=0, description="最大存储（字节）")
-    settings: dict[str, Any] | None = Field(
-        default=None, description="租户配置"
-    )
+    settings: dict[str, Any] | None = Field(default=None, description="租户配置")
     expired_at: datetime | None = Field(default=None, description="到期时间")
     created_at: datetime = Field(..., description="创建时间")
 

@@ -7,12 +7,12 @@ OA 连接器 — 对接钉钉/企微/飞书 OA API。
 
 from __future__ import annotations
 
+from app.config import get_settings
 from app.connectors.base import (
     BaseConnector,
     ConnectorNotImplementedError,
     ExternalSearchResult,
 )
-from app.config import get_settings
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -48,7 +48,9 @@ class OAConnector(BaseConnector):
             )
             return []
         except Exception as exc:
-            logger.warning("connector.oa.search_failed", keyword=keyword, error=str(exc))
+            logger.warning(
+                "connector.oa.search_failed", keyword=keyword, error=str(exc)
+            )
             return []
 
     async def test_connection(self) -> bool:
@@ -60,7 +62,9 @@ class OAConnector(BaseConnector):
         except Exception:
             return False
 
-    async def _call_oa_api(self, keyword: str, top_k: int) -> list[ExternalSearchResult]:
+    async def _call_oa_api(
+        self, keyword: str, top_k: int
+    ) -> list[ExternalSearchResult]:
         """调用 OA API — 子类可覆盖以对接不同 OA 系统。
 
         **默认实现抛 ConnectorNotImplementedError**：宁可显式报「没对接」，

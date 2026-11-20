@@ -83,8 +83,8 @@ from app.schemas.search import (
     ReindexRequest,
     ReindexResponse,
     SearchRequest,
-    SearchResult,
     SearchResponse,
+    SearchResult,
     SearchSuggestion,
     SearchType,
 )

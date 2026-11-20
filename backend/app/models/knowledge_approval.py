@@ -6,6 +6,7 @@ P2 回流审批工作流：防止低质/敏感内容污染知识库。
 
 复用 ApprovalService 模式（pending → approved/rejected + 过期机制）。
 """
+
 from __future__ import annotations
 
 import uuid

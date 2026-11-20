@@ -28,9 +28,9 @@ from app.api.v1.external_credentials import router as external_credentials_route
 from app.api.v1.external_webhooks import router as external_webhooks_router
 from app.api.v1.feedback import router as feedback_router
 from app.api.v1.finetune import router as finetune_router
-from app.api.v1.i18n import router as i18n_router
 from app.api.v1.folders import router as folders_router
 from app.api.v1.graph import router as graph_router
+from app.api.v1.i18n import router as i18n_router
 from app.api.v1.im import router as im_router
 from app.api.v1.intelligence import router as intelligence_router
 from app.api.v1.knowledge import router as knowledge_router
@@ -42,8 +42,8 @@ from app.api.v1.memory import router as memory_router
 from app.api.v1.models import router as models_router
 from app.api.v1.multimodal import router as multimodal_router
 from app.api.v1.notifications import router as notifications_router
-from app.api.v1.oidc import router as oidc_router
 from app.api.v1.observability import router as observability_router
+from app.api.v1.oidc import router as oidc_router
 from app.api.v1.qa import router as qa_router
 from app.api.v1.queue_monitor import router as queue_monitor_router
 from app.api.v1.recommendations import router as recommendations_router

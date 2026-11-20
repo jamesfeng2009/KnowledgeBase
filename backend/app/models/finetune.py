@@ -28,9 +28,7 @@ class DatasetExport(UUIDMixin, TimestampMixin, Base):
             "created_by",
             "idempotency_key",
             unique=True,
-            postgresql_where=text(
-                "idempotency_key IS NOT NULL AND status <> 'failed'"
-            ),
+            postgresql_where=text("idempotency_key IS NOT NULL AND status <> 'failed'"),
         ),
     )
 
@@ -46,11 +44,11 @@ class DatasetExport(UUIDMixin, TimestampMixin, Base):
     status: Mapped[str] = mapped_column(
         String(20), default="pending", comment="状态: pending/building/completed/failed"
     )
-    sample_count: Mapped[int] = mapped_column(
-        Integer, default=0, comment="导出样本数"
-    )
+    sample_count: Mapped[int] = mapped_column(Integer, default=0, comment="导出样本数")
     filtered_stats: Mapped[dict] = mapped_column(
-        JSONB, default=dict, comment="过滤统计（按原因分类: classification/duplicate/...）"
+        JSONB,
+        default=dict,
+        comment="过滤统计（按原因分类: classification/duplicate/...）",
     )
     file_path: Mapped[str | None] = mapped_column(
         String(500), nullable=True, comment="JSONL 文件路径"
@@ -68,7 +66,9 @@ class DatasetExport(UUIDMixin, TimestampMixin, Base):
         DateTime(timezone=True), nullable=True, comment="完成时间"
     )
     params: Mapped[dict] = mapped_column(
-        JSONB, default=dict, comment="构建参数（max_classification/days/min_rating/limit）"
+        JSONB,
+        default=dict,
+        comment="构建参数（max_classification/days/min_rating/limit）",
     )
     idempotency_key: Mapped[str | None] = mapped_column(
         String(128),

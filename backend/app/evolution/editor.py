@@ -85,9 +85,7 @@ def apply_edits(
             reject = "budget_exhausted"
 
         if reject is not None:
-            outcome.skipped.append(
-                {"edit": _edit_dict(edit), "reason": reject}
-            )
+            outcome.skipped.append({"edit": _edit_dict(edit), "reason": reject})
             continue
 
         # 应用编辑（此时 reject is None，op/text 已校验合法）

@@ -112,7 +112,10 @@ class PreferenceDriftDetector:
                     pref_type = self._PREFERENCE_TYPE_MAP.get(new_value, new_value)
 
                     # 如果已有相同偏好，不算变化
-                    if current_preferences and current_preferences.get(pref_type) == new_value:
+                    if (
+                        current_preferences
+                        and current_preferences.get(pref_type) == new_value
+                    ):
                         continue
 
                     log.info(

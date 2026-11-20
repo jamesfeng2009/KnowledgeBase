@@ -23,10 +23,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 from app.config import get_settings
 from app.utils.logger import get_logger
@@ -42,9 +44,9 @@ log = get_logger(__name__)
 class InjectionSeverity(str, Enum):
     """注入命中严重级别 — 用于决定是否隔离。"""
 
-    HIGH = "high"      # 明确的越狱/指令劫持 → 必隔离
+    HIGH = "high"  # 明确的越狱/指令劫持 → 必隔离
     MEDIUM = "medium"  # 可疑的角色覆盖/工具滥用 → 按阈值隔离
-    LOW = "low"        # 弱信号（分隔符出现） → 仅告警不隔离
+    LOW = "low"  # 弱信号（分隔符出现） → 仅告警不隔离
 
 
 @dataclass
@@ -53,10 +55,10 @@ class InjectionHit:
 
     doc_id: str
     chunk_id: str
-    pattern_id: str        # 命中的模式 ID（如 "instruction_hijack"）
+    pattern_id: str  # 命中的模式 ID（如 "instruction_hijack"）
     severity: InjectionSeverity
-    matched_text: str      # 命中的文本片段（已截断至 200 字符）
-    start_offset: int      # 命中在原文中的起始偏移
+    matched_text: str  # 命中的文本片段（已截断至 200 字符）
+    start_offset: int  # 命中在原文中的起始偏移
     pattern_desc: str = ""  # 模式的人类可读描述
 
 
@@ -110,8 +112,14 @@ _PATTERN_INSTRUCTION_HIJACK = _InjectionPattern(
     severity=InjectionSeverity.HIGH,
     description="指令劫持 — 试图覆盖系统指令、重置 AI 行为",
     regexes=(
-        re.compile(r"ignore\s+(?:all\s+)?(?:previous|prior|above)\s+(?:instructions?|prompts?|rules?)", re.IGNORECASE),
-        re.compile(r"disregard\s+(?:all\s+)?(?:prior|previous|above)\s+(?:instructions?|prompts?|rules?)", re.IGNORECASE),
+        re.compile(
+            r"ignore\s+(?:all\s+)?(?:previous|prior|above)\s+(?:instructions?|prompts?|rules?)",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"disregard\s+(?:all\s+)?(?:prior|previous|above)\s+(?:instructions?|prompts?|rules?)",
+            re.IGNORECASE,
+        ),
         re.compile(r"forget\s+(?:everything|all\s+(?:previous|prior))", re.IGNORECASE),
         # 中文：允许 "的" 与 "所有" 任意组合出现（如 "之前的所有指令"）
         re.compile(r"忽略(?:之前|前面|上面|先前)(?:所有|的)*(?:指令|提示|规则|内容)"),
@@ -144,12 +152,25 @@ _PATTERN_DATA_EXFILTRATION = _InjectionPattern(
     severity=InjectionSeverity.HIGH,
     description="数据外泄 — 试图诱导 AI 泄露系统提示/配置/可见文档",
     regexes=(
-        re.compile(r"(?:print|show|reveal|display)\s+(?:your|the)\s+(?:system\s+)?prompt", re.IGNORECASE),
-        re.compile(r"what\s+(?:is|are)\s+your\s+(?:system|initial)\s+(?:prompt|instructions?)", re.IGNORECASE),
-        re.compile(r"(?:输出|显示|打印|泄露)(?:你的)?(?:系统|初始)?(?:提示词?|指令|配置|prompt)"),
+        re.compile(
+            r"(?:print|show|reveal|display)\s+(?:your|the)\s+(?:system\s+)?prompt",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"what\s+(?:is|are)\s+your\s+(?:system|initial)\s+(?:prompt|instructions?)",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"(?:输出|显示|打印|泄露)(?:你的)?(?:系统|初始)?(?:提示词?|指令|配置|prompt)"
+        ),
         re.compile(r"列出(?:所有|全部)?(?:可见|能访问|能看到的)?文档"),
-        re.compile(r"(?:列出|show\s+me)\s+(?:all\s+)?(?:documents?|files?|knowledge)", re.IGNORECASE),
-        re.compile(r"(?:泄露|exfiltrate|export)\s+(?:all\s+)?(?:data|content)", re.IGNORECASE),
+        re.compile(
+            r"(?:列出|show\s+me)\s+(?:all\s+)?(?:documents?|files?|knowledge)",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"(?:泄露|exfiltrate|export)\s+(?:all\s+)?(?:data|content)", re.IGNORECASE
+        ),
     ),
 )
 
@@ -158,12 +179,22 @@ _PATTERN_TOOL_ABUSE = _InjectionPattern(
     severity=InjectionSeverity.MEDIUM,
     description="工具滥用 — 试图通过文档诱导 AI 调用写操作/危险工具",
     regexes=(
-        re.compile(r"(?:call|invoke|execute|run)\s+(?:tool\s+)?(?:document_create|create_it_ticket|delete_)", re.IGNORECASE),
-        re.compile(r"(?:调用|执行|使用)(?:工具|函数)?[:：]?\s*(?:document_create|create_it_ticket|delete_)"),
+        re.compile(
+            r"(?:call|invoke|execute|run)\s+(?:tool\s+)?(?:document_create|create_it_ticket|delete_)",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"(?:调用|执行|使用)(?:工具|函数)?[:：]?\s*(?:document_create|create_it_ticket|delete_)"
+        ),
         re.compile(r"execute\s+(?:command|shell|bash)\s*[:：]", re.IGNORECASE),
         re.compile(r"(?:执行|运行)(?:命令|shell|脚本)\s*[:：]"),
-        re.compile(r"please\s+(?:create|delete|update)\s+(?:a\s+)?(?:document|ticket|expense)", re.IGNORECASE),
-        re.compile(r"(?:请|现在)(?:帮我|直接)?(?:创建|删除|修改|提交)(?:文档|工单|报销单)"),
+        re.compile(
+            r"please\s+(?:create|delete|update)\s+(?:a\s+)?(?:document|ticket|expense)",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"(?:请|现在)(?:帮我|直接)?(?:创建|删除|修改|提交)(?:文档|工单|报销单)"
+        ),
     ),
 )
 
@@ -190,7 +221,10 @@ _PATTERN_DELIMITER_INJECTION = _InjectionPattern(
         # 紧凑形式：```system``` 单行
         re.compile(r"```\s*(?:system|assistant|user)\s*```", re.IGNORECASE),
         # 代码块开头形式：```system\n 后跟任意内容（最常见的伪 system 消息模式）
-        re.compile(r"```\s*(?:system|assistant|user)\s*(?:```|\n|$)", re.IGNORECASE | re.MULTILINE),
+        re.compile(
+            r"```\s*(?:system|assistant|user)\s*(?:```|\n|$)",
+            re.IGNORECASE | re.MULTILINE,
+        ),
         re.compile(r"---\s*(?:system|assistant)\s*---", re.IGNORECASE),
         re.compile(r"<<\s*(?:SYSTEM|ASSISTANT)\s*>>", re.IGNORECASE),
         re.compile(r"===+\s*(?:system|assistant)\s*===+", re.IGNORECASE),
@@ -269,7 +303,9 @@ class InjectionGuard:
         if self._threshold is None:
             try:
                 settings = get_settings()
-                raw = getattr(settings, "RAG_INJECTION_GUARD_QUARANTINE_THRESHOLD", "medium")
+                raw = getattr(
+                    settings, "RAG_INJECTION_GUARD_QUARANTINE_THRESHOLD", "medium"
+                )
                 self._threshold = _threshold_severity(raw)
             except Exception:
                 self._threshold = InjectionSeverity.MEDIUM

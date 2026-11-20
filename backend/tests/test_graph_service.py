@@ -3,8 +3,9 @@
 不依赖 Neo4j / Redis 外部服务，仅测试纯 Python 逻辑。
 """
 
-import pytest
 from unittest.mock import AsyncMock
+
+import pytest
 
 from app.services.graph_service import GraphService
 
@@ -17,46 +18,32 @@ class TestRuleExtraction:
 
     def test_extract_belong_to(self):
         """属于关系。"""
-        triples = self.service._extract_triples_by_rules(
-            "微服务属于架构模式"
-        )
+        triples = self.service._extract_triples_by_rules("微服务属于架构模式")
         assert ("微服务", "属于", "架构模式") in triples
 
     def test_extract_contains(self):
         """包含关系。"""
-        triples = self.service._extract_triples_by_rules(
-            "系统包含用户管理模块"
-        )
+        triples = self.service._extract_triples_by_rules("系统包含用户管理模块")
         assert ("系统", "包含", "用户管理模块") in triples
 
     def test_extract_references(self):
         """引用关系。"""
-        triples = self.service._extract_triples_by_rules(
-            "文档A引用文档B"
-        )
+        triples = self.service._extract_triples_by_rules("文档A引用文档B")
         assert ("文档A", "引用", "文档B") in triples
 
     def test_extract_based_on(self):
         """基于关系。"""
-        triples = self.service._extract_triples_by_rules(
-            "容器化基于虚拟化技术"
-        )
+        triples = self.service._extract_triples_by_rules("容器化基于虚拟化技术")
         assert ("容器化", "基于", "虚拟化技术") in triples
 
     def test_extract_uses(self):
         """使用关系（采用）。"""
-        triples = self.service._extract_triples_by_rules(
-            "FastAPI采用异步框架"
-        )
+        triples = self.service._extract_triples_by_rules("FastAPI采用异步框架")
         assert ("FastAPI", "使用", "异步框架") in triples
 
     def test_extract_multiple_triples(self):
         """多三元组混合文本。"""
-        text = (
-            "微服务属于架构模式。"
-            "系统包含用户管理模块。"
-            "容器化基于虚拟化技术。"
-        )
+        text = "微服务属于架构模式。" "系统包含用户管理模块。" "容器化基于虚拟化技术。"
         triples = self.service._extract_triples_by_rules(text)
         assert len(triples) >= 3
 
@@ -122,40 +109,50 @@ class TestBatchImportStructure:
         relationships = []
 
         for subject, predicate, obj in triples:
-            nodes.append({
-                "label": "Concept",
-                "id": subject,
-                "name": subject,
-                "entity_type": "concept",
-            })
-            nodes.append({
-                "label": "Concept",
-                "id": obj,
-                "name": obj,
-                "entity_type": "concept",
-            })
+            nodes.append(
+                {
+                    "label": "Concept",
+                    "id": subject,
+                    "name": subject,
+                    "entity_type": "concept",
+                }
+            )
+            nodes.append(
+                {
+                    "label": "Concept",
+                    "id": obj,
+                    "name": obj,
+                    "entity_type": "concept",
+                }
+            )
             rel_type = predicate.upper().replace(" ", "_")
-            relationships.append({
-                "from_label": "Concept",
-                "from_id": subject,
-                "to_label": "Concept",
-                "to_id": obj,
-                "type": rel_type,
-            })
-            relationships.append({
-                "from_label": "Document",
-                "from_id": doc_id,
-                "to_label": "Concept",
-                "to_id": subject,
-                "type": "MENTIONS",
-            })
-            relationships.append({
-                "from_label": "Document",
-                "from_id": doc_id,
-                "to_label": "Concept",
-                "to_id": obj,
-                "type": "MENTIONS",
-            })
+            relationships.append(
+                {
+                    "from_label": "Concept",
+                    "from_id": subject,
+                    "to_label": "Concept",
+                    "to_id": obj,
+                    "type": rel_type,
+                }
+            )
+            relationships.append(
+                {
+                    "from_label": "Document",
+                    "from_id": doc_id,
+                    "to_label": "Concept",
+                    "to_id": subject,
+                    "type": "MENTIONS",
+                }
+            )
+            relationships.append(
+                {
+                    "from_label": "Document",
+                    "from_id": doc_id,
+                    "to_label": "Concept",
+                    "to_id": obj,
+                    "type": "MENTIONS",
+                }
+            )
 
         # 1 个 Document + 2 个 Concept = 3 个节点
         assert len(nodes) == 3
@@ -176,7 +173,9 @@ class TestBatchImportStructure:
     async def test_batch_import_document_with_chunks(self):
         """batch_import_document 传入 chunks 时，创建 DocumentChunk 节点 + HAS_CHUNK 边。"""
         service = GraphService()
-        service.batch_import_graph = AsyncMock(return_value={"nodes": 0, "relationships": 0})
+        service.batch_import_graph = AsyncMock(
+            return_value={"nodes": 0, "relationships": 0}
+        )
 
         doc_id = "doc-chunks-test"
         chunks = [
@@ -185,27 +184,39 @@ class TestBatchImportStructure:
         ]
 
         # 手动构建 nodes（模拟 batch_import_document chunks 逻辑）
-        nodes = [{"label": "Document", "id": doc_id, "title": "测试", "kb_id": None, "doc_type": "md"}]
+        nodes = [
+            {
+                "label": "Document",
+                "id": doc_id,
+                "title": "测试",
+                "kb_id": None,
+                "doc_type": "md",
+            }
+        ]
         relationships = []
 
         chunk_ids = []
         for chunk in chunks:
             cid = chunk["id"]
             chunk_ids.append(cid)
-            nodes.append({
-                "label": "DocumentChunk",
-                "id": cid,
-                "doc_id": doc_id,
-                "text": chunk["content"][:500],
-                "title_path": chunk["title_path"],
-            })
-            relationships.append({
-                "from_label": "Document",
-                "from_id": doc_id,
-                "to_label": "DocumentChunk",
-                "to_id": cid,
-                "type": "HAS_CHUNK",
-            })
+            nodes.append(
+                {
+                    "label": "DocumentChunk",
+                    "id": cid,
+                    "doc_id": doc_id,
+                    "text": chunk["content"][:500],
+                    "title_path": chunk["title_path"],
+                }
+            )
+            relationships.append(
+                {
+                    "from_label": "Document",
+                    "from_id": doc_id,
+                    "to_label": "DocumentChunk",
+                    "to_id": cid,
+                    "type": "HAS_CHUNK",
+                }
+            )
 
         # 验证 DocumentChunk 节点
         chunk_nodes = [n for n in nodes if n["label"] == "DocumentChunk"]
@@ -257,10 +268,12 @@ class TestExtractTriplesFromChunks:
     def setup_method(self):
         self.service = GraphService()
 
-    def _make_chunk(self, content: str, title_path: str = "", chunk_id: str = "") -> object:
+    def _make_chunk(
+        self, content: str, title_path: str = "", chunk_id: str = ""
+    ) -> object:
         """构造模拟 Chunk 对象（含 id 用于溯源）。"""
-        from types import SimpleNamespace
         import uuid
+        from types import SimpleNamespace
 
         return SimpleNamespace(
             id=chunk_id or f"chunk-{uuid.uuid4().hex[:8]}",
@@ -276,7 +289,9 @@ class TestExtractTriplesFromChunks:
             self._make_chunk("系统包含用户管理模块"),
         ]
         # mock batch_import_graph 避免依赖 Neo4j
-        self.service.batch_import_graph = AsyncMock(return_value={"nodes": 4, "relationships": 6})
+        self.service.batch_import_graph = AsyncMock(
+            return_value={"nodes": 4, "relationships": 6}
+        )
 
         triples = await self.service.extract_triples_from_chunks(
             chunks=chunks,
@@ -296,7 +311,9 @@ class TestExtractTriplesFromChunks:
             self._make_chunk("微服务属于架构模式"),
             self._make_chunk("微服务属于架构模式"),  # 完全重复
         ]
-        self.service.batch_import_graph = AsyncMock(return_value={"nodes": 2, "relationships": 3})
+        self.service.batch_import_graph = AsyncMock(
+            return_value={"nodes": 2, "relationships": 3}
+        )
 
         triples = await self.service.extract_triples_from_chunks(
             chunks=chunks,
@@ -317,7 +334,9 @@ class TestExtractTriplesFromChunks:
             self._make_chunk("   "),
             self._make_chunk("微服务属于架构模式"),
         ]
-        self.service.batch_import_graph = AsyncMock(return_value={"nodes": 2, "relationships": 3})
+        self.service.batch_import_graph = AsyncMock(
+            return_value={"nodes": 2, "relationships": 3}
+        )
 
         triples = await self.service.extract_triples_from_chunks(
             chunks=chunks,
@@ -349,9 +368,13 @@ class TestExtractTriplesFromChunks:
         """规则提取达到阈值时跳过 LLM，节省成本。"""
         # 第一个 chunk 就产生 3 条三元组，达到 llm_fallback_threshold
         chunks = [
-            self._make_chunk("微服务属于架构模式。系统包含用户管理。Redis基于内存存储。"),
+            self._make_chunk(
+                "微服务属于架构模式。系统包含用户管理。Redis基于内存存储。"
+            ),
         ]
-        self.service.batch_import_graph = AsyncMock(return_value={"nodes": 6, "relationships": 9})
+        self.service.batch_import_graph = AsyncMock(
+            return_value={"nodes": 6, "relationships": 9}
+        )
         self.service._extract_triples_by_llm = AsyncMock(return_value=[])
 
         triples = await self.service.extract_triples_from_chunks(

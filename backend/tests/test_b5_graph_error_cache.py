@@ -13,6 +13,7 @@
 注：测试环境未安装 langgraph，通过 patch LANGGRAPH_AVAILABLE=True
 并注入假 compiled graph（astream / aget_state）驱动 answer_with_graph。
 """
+
 from __future__ import annotations
 
 import sys
@@ -113,7 +114,12 @@ class FakeCache:
         scope: str | None = None,
     ) -> None:
         self.set_calls.append(
-            {"query": query, "answer": answer, "tenant_id": tenant_id, "doc_ids": doc_ids}
+            {
+                "query": query,
+                "answer": answer,
+                "tenant_id": tenant_id,
+                "doc_ids": doc_ids,
+            }
         )
 
 
@@ -272,10 +278,12 @@ class TestGraphCacheQualityGate:
     @pytest.mark.asyncio
     async def test_low_confidence_not_cached(self) -> None:
         """图最终状态 low_confidence=True → 不写缓存。"""
-        graph = self._graph_with_answer({
-            "answer": "完整答案",
-            "low_confidence": True,
-        })
+        graph = self._graph_with_answer(
+            {
+                "answer": "完整答案",
+                "low_confidence": True,
+            }
+        )
         cache = FakeCache()
         engine = _make_engine(cache, graph)
 
@@ -288,10 +296,12 @@ class TestGraphCacheQualityGate:
     @pytest.mark.asyncio
     async def test_contradiction_blocked_not_cached(self) -> None:
         """图最终状态 contradiction_blocked=True → 不写缓存。"""
-        graph = self._graph_with_answer({
-            "answer": "完整答案",
-            "contradiction_blocked": True,
-        })
+        graph = self._graph_with_answer(
+            {
+                "answer": "完整答案",
+                "contradiction_blocked": True,
+            }
+        )
         cache = FakeCache()
         engine = _make_engine(cache, graph)
 
@@ -303,10 +313,12 @@ class TestGraphCacheQualityGate:
     @pytest.mark.asyncio
     async def test_high_risk_blocked_not_cached(self) -> None:
         """图最终状态 high_risk_blocked=True → 不写缓存。"""
-        graph = self._graph_with_answer({
-            "answer": "完整答案",
-            "high_risk_blocked": True,
-        })
+        graph = self._graph_with_answer(
+            {
+                "answer": "完整答案",
+                "high_risk_blocked": True,
+            }
+        )
         cache = FakeCache()
         engine = _make_engine(cache, graph)
 

@@ -13,6 +13,7 @@ Bug 背景：原实现用 ``asyncio.wait_for(generator.__anext__(), timeout=30)`
 - 流被提前关闭时 pending 的 anext 任务被清理（不泄漏）；
 - format_sse_event 基本格式（Optional 标注修正后的行为保持）。
 """
+
 from __future__ import annotations
 
 import asyncio

@@ -24,8 +24,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.knowledge import Document, KnowledgeBase
 from app.models.user import KbMember, User
-from app.services.permission_service import PermissionService
 from app.schemas.search import SearchType
+from app.services.permission_service import PermissionService
 from app.utils.tenant import apply_tenant_filter
 
 logger = logging.getLogger(__name__)
@@ -70,7 +70,9 @@ class SearchService:
             HybridRetriever 实例或 None。
         """
         try:
-            from app.rag.retriever import HybridRetriever  # type: ignore[import-not-found]
+            from app.rag.retriever import (
+                HybridRetriever,  # type: ignore[import-not-found]
+            )
 
             return HybridRetriever()
         except ImportError:
@@ -137,19 +139,14 @@ class SearchService:
                 results = self._format_rag_results(raw_results)
             except Exception:
                 logger.exception("RAG 检索引擎执行失败，降级为数据库全文检索")
-                results = await self._db_fulltext_search(
-                    query, accessible_kb_ids
-                )
+                results = await self._db_fulltext_search(query, accessible_kb_ids)
         else:
             # 降级：数据库全文检索
             results = await self._db_fulltext_search(query, accessible_kb_ids)
 
         # 密级过滤
         allowed = self.permission.allowed_classifications()
-        filtered = [
-            r for r in results
-            if r.get("classification", "public") in allowed
-        ]
+        filtered = [r for r in results if r.get("classification", "public") in allowed]
 
         # 分页
         total = len(filtered)
@@ -183,17 +180,14 @@ class SearchService:
 
         allowed = self.permission.allowed_classifications()
         pattern = f"{query}%"
-        stmt = (
-            select(Document.title)
-            .where(
-                Document.deleted_at.is_(None),
-                Document.kb_id.in_(accessible_kb_ids),
-                Document.classification.in_(allowed),
-                or_(
-                    Document.title.ilike(pattern),
-                    Document.title.ilike(f"%{query}%"),
-                ),
-            )
+        stmt = select(Document.title).where(
+            Document.deleted_at.is_(None),
+            Document.kb_id.in_(accessible_kb_ids),
+            Document.classification.in_(allowed),
+            or_(
+                Document.title.ilike(pattern),
+                Document.title.ilike(f"%{query}%"),
+            ),
         )
         stmt = apply_tenant_filter(stmt, Document, self._tenant_id)
         stmt = stmt.distinct().limit(limit)
@@ -201,11 +195,16 @@ class SearchService:
         titles = result.scalars().all()
 
         return [
-            {"text": title, "score": 1.0 if title.lower().startswith(query.lower()) else 0.5}
+            {
+                "text": title,
+                "score": 1.0 if title.lower().startswith(query.lower()) else 0.5,
+            }
             for title in titles
         ]
 
-    async def reindex(self, kb_ids: list[UUID] | None = None, force: bool = False) -> str:
+    async def reindex(
+        self, kb_ids: list[UUID] | None = None, force: bool = False
+    ) -> str:
         """触发索引重建（异步任务）。
 
         当 RAG 检索引擎可用时，调用其 reindex 方法；
@@ -227,16 +226,16 @@ class SearchService:
                 logger.exception("RAG 索引重建失败")
                 raise
 
-        logger.info("RAG 引擎未就绪，索引重建任务跳过（kb_ids=%s, force=%s）", kb_ids, force)
+        logger.info(
+            "RAG 引擎未就绪，索引重建任务跳过（kb_ids=%s, force=%s）", kb_ids, force
+        )
         return "no-op-rag-not-available"
 
     # ------------------------------------------------------------------
     # 内部方法
     # ------------------------------------------------------------------
 
-    async def _get_accessible_kb_ids(
-        self, kb_ids: list[UUID] | None
-    ) -> list[UUID]:
+    async def _get_accessible_kb_ids(self, kb_ids: list[UUID] | None) -> list[UUID]:
         """获取当前用户可搜索的知识库 ID 列表。
 
         当 kb_ids 参数指定时，取其与可访问范围的交集；
@@ -252,27 +251,20 @@ class SearchService:
             # admin 可搜索全部知识库
             if kb_ids:
                 return kb_ids
-            stmt = select(KnowledgeBase.id).where(
-                KnowledgeBase.deleted_at.is_(None)
-            )
+            stmt = select(KnowledgeBase.id).where(KnowledgeBase.deleted_at.is_(None))
             stmt = apply_tenant_filter(stmt, KnowledgeBase, self._tenant_id)
             result = await self.db.execute(stmt)
             return [row[0] for row in result.all()]
 
         # 普通用户：所有者或成员
-        member_subq = select(KbMember.kb_id).where(
-            KbMember.user_id == self.user.id
-        )
+        member_subq = select(KbMember.kb_id).where(KbMember.user_id == self.user.id)
         member_subq = apply_tenant_filter(member_subq, KbMember, self._tenant_id)
-        stmt = (
-            select(KnowledgeBase.id)
-            .where(
-                KnowledgeBase.deleted_at.is_(None),
-                or_(
-                    KnowledgeBase.owner_id == self.user.id,
-                    KnowledgeBase.id.in_(member_subq),
-                ),
-            )
+        stmt = select(KnowledgeBase.id).where(
+            KnowledgeBase.deleted_at.is_(None),
+            or_(
+                KnowledgeBase.owner_id == self.user.id,
+                KnowledgeBase.id.in_(member_subq),
+            ),
         )
         stmt = apply_tenant_filter(stmt, KnowledgeBase, self._tenant_id)
         result = await self.db.execute(stmt)
@@ -282,9 +274,7 @@ class SearchService:
             return [kid for kid in kb_ids if kid in accessible]
         return list(accessible)
 
-    async def _db_fulltext_search(
-        self, query: str, kb_ids: list[UUID]
-    ) -> list[dict]:
+    async def _db_fulltext_search(self, query: str, kb_ids: list[UUID]) -> list[dict]:
         """数据库全文检索降级方案。
 
         在 title 和 content_text 字段上执行 ILIKE 匹配，
@@ -434,7 +424,9 @@ class SearchService:
             active_connector_ids.append(connector.connector_id)
 
         if connector_tasks:
-            connector_results = await asyncio.gather(*connector_tasks, return_exceptions=True)
+            connector_results = await asyncio.gather(
+                *connector_tasks, return_exceptions=True
+            )
             for connector_id, result in zip(active_connector_ids, connector_results):
                 if isinstance(result, Exception):
                     logger.warning(
@@ -477,8 +469,7 @@ class SearchService:
         permitted_ids = await connector.get_permissions(user_id)
         if permitted_ids:
             raw_results = [
-                r for r in raw_results
-                if r.metadata.get("id", "") in permitted_ids
+                r for r in raw_results if r.metadata.get("id", "") in permitted_ids
             ]
 
         # 转为 dict 格式

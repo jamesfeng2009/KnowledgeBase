@@ -29,9 +29,7 @@ class HighRiskAuditRecord(UUIDMixin, TimestampMixin, Base):
     )
 
     # ---- 决策上下文 ----
-    query: Mapped[str] = mapped_column(
-        Text, nullable=False, comment="用户问题"
-    )
+    query: Mapped[str] = mapped_column(Text, nullable=False, comment="用户问题")
     answer_snippet: Mapped[str] = mapped_column(
         Text, nullable=False, comment="被阻断答案（截断至 2000 字）"
     )
@@ -56,13 +54,17 @@ class HighRiskAuditRecord(UUIDMixin, TimestampMixin, Base):
         String(16), nullable=False, comment="最高风险等级: low/medium/high"
     )
     items: Mapped[list] = mapped_column(
-        JSONB, nullable=False, default=list,
+        JSONB,
+        nullable=False,
+        default=list,
         comment="核验明细（含 risk_level 与 deviation）",
     )
 
     # ---- 复查（反哺阈值） ----
     review_status: Mapped[str] = mapped_column(
-        String(20), nullable=False, default="pending",
+        String(20),
+        nullable=False,
+        default="pending",
         comment="复查状态: pending/confirmed/misjudged",
     )
     reviewed_by: Mapped[uuid.UUID | None] = mapped_column(

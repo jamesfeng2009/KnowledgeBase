@@ -13,7 +13,6 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -261,9 +260,7 @@ async def test_loop_budget_exhausted_graceful_stop(tmp_path: Path) -> None:
     summary = await loop.run()
 
     assert "成本护栏触发" in summary["stop_reason"]
-    assert any(
-        r.get("decision") == "budget_exhausted" for r in summary["rounds"]
-    )
+    assert any(r.get("decision") == "budget_exhausted" for r in summary["rounds"])
     # 审计链仍完整落盘
     assert (loop.run_dir / "summary.json").exists()
     assert (loop.run_dir / "best_guidance.md").exists()
@@ -275,8 +272,8 @@ async def test_loop_invalid_dataset_fails_fast(tmp_path: Path) -> None:
     target, _, _ = _make_files(tmp_path)
     bad_dataset = tmp_path / "bad.jsonl"
     bad_dataset.write_text(
-        json.dumps({"case_id": "c1", "query": "只有问题没有上下文"},
-                   ensure_ascii=False) + "\n",
+        json.dumps({"case_id": "c1", "query": "只有问题没有上下文"}, ensure_ascii=False)
+        + "\n",
         encoding="utf-8",
     )
     with pytest.raises(ValueError, match="缺少 case_id/query/非空 contexts"):
@@ -476,7 +473,13 @@ def test_loop_module_imports_without_syntax_warning() -> None:
     过该模块，警告不会重放。
     """
     result = subprocess.run(
-        [sys.executable, "-W", "error::SyntaxWarning", "-c", "import app.evolution.loop"],
+        [
+            sys.executable,
+            "-W",
+            "error::SyntaxWarning",
+            "-c",
+            "import app.evolution.loop",
+        ],
         cwd=str(Path(__file__).resolve().parents[1]),
         capture_output=True,
         text=True,
@@ -519,7 +522,9 @@ def test_quote_style_only_difference_is_duplicate() -> None:
         f'"{plain}"',
         f"'{plain}'",
     ]
-    normalized = {_normalize_edit_text(v) for v in variants} | {_normalize_edit_text(plain)}
+    normalized = {_normalize_edit_text(v) for v in variants} | {
+        _normalize_edit_text(plain)
+    }
     assert len(normalized) == 1, f"引号风格导致归一化结果不一致：{normalized}"
 
 

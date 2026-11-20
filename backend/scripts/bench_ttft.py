@@ -116,7 +116,7 @@ async def _measure_one(
                         break
                 if ttft_ms is None and error is None:
                     error = "stream ended without data"
-    except Exception as exc:  # noqa: BLE001 — 压测需要吞掉单次失败继续
+    except Exception as exc:
         error = str(exc)[:200]
 
     total_ms = (time.monotonic() - t0) * 1000
@@ -186,9 +186,7 @@ def _summarize(results: list[dict], concurrency: int) -> dict:
             }
         )
     if len(results) > len(ok_results):
-        summary["errors"] = [
-            r["error"] for r in results if not r["ok"]
-        ][:10]
+        summary["errors"] = [r["error"] for r in results if not r["ok"]][:10]
     return summary
 
 
@@ -199,11 +197,14 @@ def main() -> int:
     parser.add_argument("--login", default="", help="登录邮箱（配合 -p）")
     parser.add_argument("-p", "--password", default="")
     parser.add_argument("--concurrency", type=int, default=20)
-    parser.add_argument("--requests", type=int, default=40,
-                        help="总请求数（默认 40 = 20 并发 × 2 轮）")
-    parser.add_argument("--output",
-                        default="evals/results/ttft_benchmark.json",
-                        help="结果 JSON 输出路径")
+    parser.add_argument(
+        "--requests", type=int, default=40, help="总请求数（默认 40 = 20 并发 × 2 轮）"
+    )
+    parser.add_argument(
+        "--output",
+        default="evals/results/ttft_benchmark.json",
+        help="结果 JSON 输出路径",
+    )
     args = parser.parse_args()
 
     base_url = args.base_url.rstrip("/")
@@ -218,13 +219,17 @@ def main() -> int:
 
         print(f"\n{'=' * 70}")
         print(f"SSE TTFT 压测 — {base_url}")
-        print(f"    并发 {args.concurrency} × 请求 {args.requests}，"
-              f"目标 TTFT < {TTFT_TARGET_MS:.0f}ms")
+        print(
+            f"    并发 {args.concurrency} × 请求 {args.requests}，"
+            f"目标 TTFT < {TTFT_TARGET_MS:.0f}ms"
+        )
         print(f"{'=' * 70}\n", flush=True)
 
         results: list[dict] = []
-        limits = httpx.Limits(max_connections=args.concurrency + 10,
-                              max_keepalive_connections=args.concurrency)
+        limits = httpx.Limits(
+            max_connections=args.concurrency + 10,
+            max_keepalive_connections=args.concurrency,
+        )
         timeout = httpx.Timeout(connect=10.0, read=120.0, write=10.0, pool=30.0)
         async with httpx.AsyncClient(limits=limits, timeout=timeout) as client:
             # 请求编号轮转分配给 worker（i % concurrency）
@@ -232,20 +237,25 @@ def main() -> int:
             for i in range(args.requests):
                 buckets[i % args.concurrency].append(i)
             t0 = time.monotonic()
-            await asyncio.gather(*[
-                _worker(w, client, base_url, token, DEFAULT_QUERIES,
-                        bucket, results)
-                for w, bucket in enumerate(buckets)
-            ])
+            await asyncio.gather(
+                *[
+                    _worker(
+                        w, client, base_url, token, DEFAULT_QUERIES, bucket, results
+                    )
+                    for w, bucket in enumerate(buckets)
+                ]
+            )
             wall_ms = (time.monotonic() - t0) * 1000
         return results, f"{wall_ms:.0f}"
 
     results, wall_ms = asyncio.run(run())
     summary = _summarize(results, args.concurrency)
     summary["wall_time_ms"] = float(wall_ms)
-    summary["throughput_rps"] = round(
-        args.requests / (float(wall_ms) / 1000.0), 2
-    ) if float(wall_ms) > 0 else 0.0
+    summary["throughput_rps"] = (
+        round(args.requests / (float(wall_ms) / 1000.0), 2)
+        if float(wall_ms) > 0
+        else 0.0
+    )
 
     print("--- 结果 ---")
     for key, value in summary.items():
@@ -269,8 +279,7 @@ def main() -> int:
     # 退出码：有失败请求或未达标的请求占比 > 10% 时返回 1（CI 可用）
     if summary.get("failed_requests", 0) > 0:
         return 1
-    if ttfts := [r["ttft_ms"] for r in results
-                 if r["ok"] and r["ttft_ms"] is not None]:
+    if ttfts := [r["ttft_ms"] for r in results if r["ok"] and r["ttft_ms"] is not None]:
         met_rate = sum(1 for t in ttfts if t < TTFT_TARGET_MS) / len(ttfts)
         return 0 if met_rate >= 0.9 else 1
     return 1

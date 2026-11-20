@@ -5,7 +5,6 @@
 """
 
 import os
-import uuid
 
 import pytest
 import pytest_asyncio
@@ -214,15 +213,11 @@ class TestExpertService:
         contributors = await service.get_top_contributors(days=365, top_k=10)
 
         # 找到 user1 (专家用户)
-        user1_contrib = next(
-            c for c in contributors if c["name"] == "专家用户"
-        )
+        user1_contrib = next(c for c in contributors if c["name"] == "专家用户")
         # user1: 2 文档 * 0.4 + 1 回答 * 0.2 + 1 采纳 * 0.1 = 0.8 + 0.2 + 0.1 = 1.1
         assert user1_contrib["score"] == round(2 * 0.4 + 1 * 0.2 + 1 * 0.1, 2)
 
         # 找到 user2 (评论用户)
-        user2_contrib = next(
-            c for c in contributors if c["name"] == "评论用户"
-        )
+        user2_contrib = next(c for c in contributors if c["name"] == "评论用户")
         # user2: 1 文档 * 0.4 + 1 评论 * 0.3 = 0.4 + 0.3 = 0.7
         assert user2_contrib["score"] == round(1 * 0.4 + 1 * 0.3, 2)

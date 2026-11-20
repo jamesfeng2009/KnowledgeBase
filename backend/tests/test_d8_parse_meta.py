@@ -186,7 +186,9 @@ class TestD8ParseMeta:
         path = _make_pdf(tmp_path)
         digest = hashlib.sha256(Path(path).read_bytes()).hexdigest()
         old_meta = {"engine": "old", "chain": []}
-        doc = _make_doc(path, content_text="旧文本", file_hash=digest, parse_meta=old_meta)
+        doc = _make_doc(
+            path, content_text="旧文本", file_hash=digest, parse_meta=old_meta
+        )
         text, _ = await _parse_document(doc)
         assert text == "旧文本"
         assert doc.parse_meta is old_meta

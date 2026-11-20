@@ -42,9 +42,7 @@ _OPTIMIZER_SYSTEM_PROMPT = """你是「技能文档优化器」。你的任务�
 
 
 def _format_guidance(guidance_lines: list[str]) -> str:
-    return "\n".join(
-        f"{i}. {line}" for i, line in enumerate(guidance_lines, start=1)
-    )
+    return "\n".join(f"{i}. {line}" for i, line in enumerate(guidance_lines, start=1))
 
 
 def _format_diagnoses(diagnoses: list[dict[str, Any]]) -> str:

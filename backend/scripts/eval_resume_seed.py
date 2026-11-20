@@ -18,7 +18,6 @@ import argparse
 import asyncio
 import os
 import sys
-import uuid
 from pathlib import Path
 
 _BACKEND_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -82,7 +81,10 @@ async def ensure_kb(session, owner_id, tenant_id, name: str) -> KnowledgeBase:
     kb = result.scalar_one_or_none()
     if kb is None:
         kb = KnowledgeBase(
-            name=name, owner_id=owner_id, tenant_id=tenant_id, description="简历指标评测种子库"
+            name=name,
+            owner_id=owner_id,
+            tenant_id=tenant_id,
+            description="简历指标评测种子库",
         )
         session.add(kb)
         await session.flush()
@@ -90,7 +92,9 @@ async def ensure_kb(session, owner_id, tenant_id, name: str) -> KnowledgeBase:
     return kb
 
 
-async def create_document(session, kb_id, owner_id, tenant_id, md_path: Path) -> tuple[Document, bool]:
+async def create_document(
+    session, kb_id, owner_id, tenant_id, md_path: Path
+) -> tuple[Document, bool]:
     """获取或创建 Document（幂等：同名复用，重跑管线可重建索引/图谱）。"""
     from sqlalchemy import select
 
@@ -138,7 +142,9 @@ async def neo4j_stats() -> dict:
 
 async def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--limit", type=int, default=0, help="只处理前 N 个文档（0=全部）")
+    parser.add_argument(
+        "--limit", type=int, default=0, help="只处理前 N 个文档（0=全部）"
+    )
     parser.add_argument("--kb-name", default="简历指标评测库", help="种子知识库名称")
     args = parser.parse_args()
 
@@ -160,7 +166,9 @@ async def main() -> int:
             doc, created = await create_document(session, kb.id, user.id, tenant.id, md)
             doc_ids.append((str(doc.id), doc.title))
         await session.commit()
-        print(f"[SEED] tenant={tenant.name}({tenant.plan}) KB={kb.name} id={kb.id} docs={len(doc_ids)}")
+        print(
+            f"[SEED] tenant={tenant.name}({tenant.plan}) KB={kb.name} id={kb.id} docs={len(doc_ids)}"
+        )
 
     # 2. 逐文档跑完整处理流水线（分块→向量化→索引→图谱→发布）
     from tasks.document_tasks import _process_document_async
@@ -176,7 +184,9 @@ async def main() -> int:
             total_chunks += chunks
             ok += 1
             warn_str = f" warnings={warnings}" if warnings else ""
-            print(f"  [{ok:>2}] {title[:36]:<38} chunks={chunks:>3} status={status}{warn_str}")
+            print(
+                f"  [{ok:>2}] {title[:36]:<38} chunks={chunks:>3} status={status}{warn_str}"
+            )
         except Exception as exc:
             fail += 1
             print(f"  [FAIL] {title[:36]:<38} error={str(exc)[:120]}")

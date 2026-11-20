@@ -48,9 +48,7 @@ _TITLE_EMBED_CACHE_MAX = 2000
 
 def _normalize(text_value: str) -> str:
     """文本归一化 — 小写、去空白与中英文标点，供词汇相似度比对。"""
-    return "".join(
-        ch for ch in text_value.lower() if ch.isalnum()
-    )
+    return "".join(ch for ch in text_value.lower() if ch.isalnum())
 
 
 def lexical_similarity(a: str, b: str) -> float:
@@ -173,9 +171,7 @@ class DistillationGate:
                 ).fetchall()
             )
         except Exception as exc:
-            log.warning(
-                "distillation_gate.precheck_query_failed", error=str(exc)[:200]
-            )
+            log.warning("distillation_gate.precheck_query_failed", error=str(exc)[:200])
             return {"action": "proceed", "reason": None, "support": support}
         for asset_id, title in rows:
             if lexical_similarity(question_hint, title or "") >= (
@@ -235,9 +231,7 @@ class DistillationGate:
                 ).fetchall()
             )
         except Exception as exc:
-            log.warning(
-                "distillation_gate.dedup_query_failed", error=str(exc)[:200]
-            )
+            log.warning("distillation_gate.dedup_query_failed", error=str(exc)[:200])
             return {"action": "proceed", "reason": None}
         if not rows:
             return {"action": "proceed", "reason": None}
@@ -389,9 +383,7 @@ class DistillationGate:
         try:
             embedder = get_embedder()
         except Exception as exc:
-            log.warning(
-                "distillation_gate.embedder_init_failed", error=str(exc)[:200]
-            )
+            log.warning("distillation_gate.embedder_init_failed", error=str(exc)[:200])
             return None, [None] * (len(texts) - 1)
 
         now = time.monotonic()

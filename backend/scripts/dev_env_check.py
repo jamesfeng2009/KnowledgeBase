@@ -21,6 +21,7 @@
     0 — 配置的库可达
     2 — 不可达（会列出哪些端口是活的，并给出可直接粘贴的修正命令）
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -58,7 +59,15 @@ def _with_port(url: str, port: int) -> str:
     parts = urlsplit(url)
     userinfo, sep, hostport = parts.netloc.rpartition("@")
     host = hostport.rsplit(":", 1)[0] if ":" in hostport else hostport
-    return urlunsplit((parts.scheme, f"{userinfo}{sep}{host}:{port}", parts.path, parts.query, parts.fragment))
+    return urlunsplit(
+        (
+            parts.scheme,
+            f"{userinfo}{sep}{host}:{port}",
+            parts.path,
+            parts.query,
+            parts.fragment,
+        )
+    )
 
 
 def _tcp_alive(host: str, port: int, timeout: float = 0.5) -> bool:
@@ -94,7 +103,7 @@ async def _probe(url: str) -> tuple[bool, str]:
 
     try:
         conn = await asyncpg.connect(dsn=_to_asyncpg_dsn(url), timeout=3.0)
-    except Exception as exc:  # noqa: BLE001 - 自检脚本要展示原始原因
+    except Exception as exc:
         return False, f"{type(exc).__name__}: {exc}"
     try:
         row = await conn.fetchrow(PROBE_SQL)
@@ -131,7 +140,9 @@ async def main() -> int:
     parts = urlsplit(env_url)
     host = parts.hostname or "localhost"
     port = parts.port or 5432
-    print(f"配置来源      : {'环境变量 DATABASE_URL' if 'DATABASE_URL' in os.environ else 'backend/.env'}")
+    print(
+        f"配置来源      : {'环境变量 DATABASE_URL' if 'DATABASE_URL' in os.environ else 'backend/.env'}"
+    )
     print(f"目标地址      : {_mask(env_url)}")
 
     if not _tcp_alive(host, port):
@@ -139,7 +150,9 @@ async def main() -> int:
         alive = [p for p in KNOWN_PORTS if p != port and _tcp_alive(host, p)]
         if not alive:
             print("  （没有探测到任何存活的 PostgreSQL，先启动一个：）")
-            print("   docker compose -f docker-compose.yml -f docker-compose.override.yml up -d postgres")
+            print(
+                "   docker compose -f docker-compose.yml -f docker-compose.override.yml up -d postgres"
+            )
             return 2
         best: int | None = None
         for candidate_port in alive:

@@ -34,6 +34,7 @@ ORPOTrainer 数据要求 prompt/chosen/rejected 为 **str**（非 conversational
         --output_dir outputs/orpo-v1-7b \\
         --beta 0.1 --lr 1e-5 --epochs 1
 """
+
 from __future__ import annotations
 
 import argparse
@@ -42,8 +43,6 @@ import logging
 import random
 import sys
 
-# 复用 train_dpo 的数据加载 / bf16 检测（避免重复代码）
-from train_dpo import DEFAULT_TARGET_MODULES, _detect_bf16, load_dpo_jsonl
 # 分组切分与 MPS 缓存清理回调（评审 #2/#10）
 from finetune_utils import (
     grouped_split_indices,
@@ -51,6 +50,9 @@ from finetune_utils import (
     make_mps_cache_cleanup_callback,
     question_group_key,
 )
+
+# 复用 train_dpo 的数据加载 / bf16 检测（避免重复代码）
+from train_dpo import DEFAULT_TARGET_MODULES, _detect_bf16, load_dpo_jsonl
 
 logger = logging.getLogger("train_orpo")
 
@@ -67,10 +69,13 @@ def convert_to_orpo_format(records: list[dict], tokenizer) -> list[dict]:
     rows: list[dict] = []
     for r in records:
         prompt_str = tokenizer.apply_chat_template(
-            r["prompt"], add_generation_prompt=True, tokenize=False)
+            r["prompt"], add_generation_prompt=True, tokenize=False
+        )
         chosen_str = r["chosen"][-1]["content"]
         rejected_str = r["rejected"][-1]["content"]
-        rows.append({"prompt": prompt_str, "chosen": chosen_str, "rejected": rejected_str})
+        rows.append(
+            {"prompt": prompt_str, "chosen": chosen_str, "rejected": rejected_str}
+        )
     logger.info("转换 conversational → ORPO str 格式：%d 条", len(rows))
     return rows
 
@@ -96,39 +101,68 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         description="ORPO 单阶段对齐训练（SFT+DPO 合一，trl experimental.orpo）",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--data", required=True, help="dpo.jsonl 路径（conversational 格式，自动转 str）")
-    parser.add_argument("--base_model", default="Qwen/Qwen2.5-7B-Instruct", help="基座模型")
-    parser.add_argument("--sft_adapter", default=None,
-                        help="可选：SFT adapter（ORPO 通常从基座开始，无需 SFT 前置；"
-                             "提供时先 merge 进基座再做 ORPO）")
-    parser.add_argument("--output_dir", default="outputs/lora-orpo", help="ORPO adapter 输出目录")
+    parser.add_argument(
+        "--data",
+        required=True,
+        help="dpo.jsonl 路径（conversational 格式，自动转 str）",
+    )
+    parser.add_argument(
+        "--base_model", default="Qwen/Qwen2.5-7B-Instruct", help="基座模型"
+    )
+    parser.add_argument(
+        "--sft_adapter",
+        default=None,
+        help="可选：SFT adapter（ORPO 通常从基座开始，无需 SFT 前置；"
+        "提供时先 merge 进基座再做 ORPO）",
+    )
+    parser.add_argument(
+        "--output_dir", default="outputs/lora-orpo", help="ORPO adapter 输出目录"
+    )
     # ORPO 特有参数
-    parser.add_argument("--beta", type=float, default=0.1,
-                        help="ORPO λ：odds ratio loss 权重（论文默认 0.1，过大易过拟合偏好）")
-    parser.add_argument("--max_len", type=int, default=2048, help="prompt+completion 最大总长")
+    parser.add_argument(
+        "--beta",
+        type=float,
+        default=0.1,
+        help="ORPO λ：odds ratio loss 权重（论文默认 0.1，过大易过拟合偏好）",
+    )
+    parser.add_argument(
+        "--max_len", type=int, default=2048, help="prompt+completion 最大总长"
+    )
     # LoRA / 训练参数（与 train_dpo 对齐）
     parser.add_argument("--lora_rank", type=int, default=16, help="LoRA rank")
     parser.add_argument("--lora_alpha", type=int, default=32, help="LoRA alpha")
     parser.add_argument("--lora_dropout", type=float, default=0.05, help="LoRA dropout")
-    parser.add_argument("--lr", type=float, default=1e-5,
-                        help="学习率（ORPO 含 SFT loss 较稳，LoRA 用 1e-5；"
-                             "ORPOConfig 默认 1e-6 适合全参数，LoRA 需放大）")
+    parser.add_argument(
+        "--lr",
+        type=float,
+        default=1e-5,
+        help="学习率（ORPO 含 SFT loss 较稳，LoRA 用 1e-5；"
+        "ORPOConfig 默认 1e-6 适合全参数，LoRA 需放大）",
+    )
     parser.add_argument("--epochs", type=float, default=1, help="训练轮数")
-    parser.add_argument("--batch_size", type=int, default=2, help="单卡 micro batch size")
+    parser.add_argument(
+        "--batch_size", type=int, default=2, help="单卡 micro batch size"
+    )
     parser.add_argument("--grad_accum", type=int, default=16, help="梯度累积步数")
     parser.add_argument("--eval_ratio", type=float, default=0.05, help="验证集比例")
     parser.add_argument("--seed", type=int, default=42, help="随机种子")
-    parser.add_argument("--no_gradient_checkpointing", action="store_true",
-                        help="关闭梯度检查点（1.5B 推荐；7B 勿用会 OOM）")
+    parser.add_argument(
+        "--no_gradient_checkpointing",
+        action="store_true",
+        help="关闭梯度检查点（1.5B 推荐；7B 勿用会 OOM）",
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
 
     # 静默 trl experimental 警告
     import os
+
     os.environ.setdefault("TRL_EXPERIMENTAL_SILENCE", "1")
 
     import torch
@@ -150,7 +184,9 @@ def main(argv: list[str] | None = None) -> int:
 
     group_keys = [question_group_key(last_user_content(r["prompt"])) for r in records]
     orpo_rows = convert_to_orpo_format(records, tokenizer)
-    split = build_orpo_dataset(orpo_rows, group_keys, eval_ratio=args.eval_ratio, seed=args.seed)
+    split = build_orpo_dataset(
+        orpo_rows, group_keys, eval_ratio=args.eval_ratio, seed=args.seed
+    )
     train_ds, eval_ds = split["train"], split["test"]
     logger.info("训练集 %d 条 / 验证集 %d 条", len(train_ds), len(eval_ds))
 
@@ -183,9 +219,9 @@ def main(argv: list[str] | None = None) -> int:
     # 注：ORPOConfig 默认 gradient_checkpointing=True、disable_dropout=True、lr=1e-6
     train_args = ORPOConfig(
         output_dir=args.output_dir,
-        beta=args.beta,                    # λ：odds ratio loss 权重
+        beta=args.beta,  # λ：odds ratio loss 权重
         max_length=args.max_len,
-        disable_dropout=True,              # ORPO 论文建议禁用 dropout 稳定训练
+        disable_dropout=True,  # ORPO 论文建议禁用 dropout 稳定训练
         num_train_epochs=args.epochs,
         per_device_train_batch_size=args.batch_size,
         per_device_eval_batch_size=args.batch_size,
@@ -207,7 +243,10 @@ def main(argv: list[str] | None = None) -> int:
 
     # ---- MPS 缓存清理回调（评审 #10：ORPO 此前缺失，与 DPO/SimPO 对齐）----
     mps_callbacks = []
-    if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+    if (
+        getattr(torch.backends, "mps", None) is not None
+        and torch.backends.mps.is_available()
+    ):
         mps_callbacks.append(make_mps_cache_cleanup_callback(every_n_steps=5))
         logger.info("已添加 MPS 缓存清理回调（每 5 步 torch.mps.empty_cache()）")
 
@@ -227,7 +266,11 @@ def main(argv: list[str] | None = None) -> int:
         "base_model": args.base_model,
         "sft_adapter": args.sft_adapter,
         "beta_lambda": args.beta,
-        "lora": {"rank": args.lora_rank, "alpha": args.lora_alpha, "dropout": args.lora_dropout},
+        "lora": {
+            "rank": args.lora_rank,
+            "alpha": args.lora_alpha,
+            "dropout": args.lora_dropout,
+        },
         "lr": args.lr,
         "epochs": args.epochs,
         "effective_batch_size": args.batch_size * args.grad_accum,
@@ -249,7 +292,9 @@ def main(argv: list[str] | None = None) -> int:
 
     eval_metrics = trainer.evaluate()
     logger.info("最终验证集指标: %s", eval_metrics)
-    logger.info("下一步: 用 eval_boundary_200.py 评测拒答率，对比 SFT+DPO 两阶段（见微调.md P3-18）")
+    logger.info(
+        "下一步: 用 eval_boundary_200.py 评测拒答率，对比 SFT+DPO 两阶段（见微调.md P3-18）"
+    )
     return 0
 
 

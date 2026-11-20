@@ -33,11 +33,29 @@ log = get_logger(__name__)
 
 #: Docling 支持的文档类型（视频不在列 — 视频保留 ffmpeg→ASR 管线）
 _DOCLING_SUPPORTED_TYPES: set[str] = {
-    "pdf", "docx", "pptx", "xlsx", "xls",
-    "html", "htm",
-    "png", "jpg", "jpeg", "gif", "webp", "tiff", "bmp",
-    "audio", "mp3", "wav", "m4a", "aac", "flac", "ogg",
-    "md", "txt",
+    "pdf",
+    "docx",
+    "pptx",
+    "xlsx",
+    "xls",
+    "html",
+    "htm",
+    "png",
+    "jpg",
+    "jpeg",
+    "gif",
+    "webp",
+    "tiff",
+    "bmp",
+    "audio",
+    "mp3",
+    "wav",
+    "m4a",
+    "aac",
+    "flac",
+    "ogg",
+    "md",
+    "txt",
 }
 
 
@@ -103,9 +121,7 @@ class DoclingParser(DocumentParser):
             )
             self._converter = DocumentConverter(
                 format_options={
-                    InputFormat.PDF: PdfFormatOption(
-                        pipeline_options=pipeline_options
-                    )
+                    InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
                 }
             )
             self._init_checked = True
@@ -282,6 +298,7 @@ class DoclingParser(DocumentParser):
                 uri = getattr(getattr(pic, "image", None), "uri", None)
                 if uri:
                     import os
+
                     if os.path.exists(str(uri)):
                         with open(str(uri), "rb") as f:
                             image_data = f.read()
@@ -392,10 +409,17 @@ class DoclingParser(DocumentParser):
         timeout = int(getattr(settings, "MINERU_TIMEOUT", 600) or 600)
 
         cmd = [
-            python, "-c",
+            python,
+            "-c",
             "from mineru.cli.client import main; import sys; sys.exit(main())",
-            "-p", file_path, "-o", "{out_dir}",
-            "-b", backend, "-l", lang,
+            "-p",
+            file_path,
+            "-o",
+            "{out_dir}",
+            "-b",
+            backend,
+            "-l",
+            lang,
         ]
 
         try:
@@ -407,8 +431,10 @@ class DoclingParser(DocumentParser):
                     stderr=asyncio.subprocess.PIPE,
                 )
                 try:
-                    _, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-                except asyncio.TimeoutError:
+                    _, stderr = await asyncio.wait_for(
+                        proc.communicate(), timeout=timeout
+                    )
+                except TimeoutError:
                     proc.kill()
                     log.warning("mineru.timeout", file_path=file_path)
                     return ""
@@ -429,7 +455,7 @@ class DoclingParser(DocumentParser):
                     log.warning("mineru.no_md_output", file_path=file_path)
                     return ""
 
-                with open(md_files[0], "r", encoding="utf-8") as f:
+                with open(md_files[0], encoding="utf-8") as f:
                     md = f.read()
                 if not md or not md.strip():
                     return ""
@@ -496,6 +522,7 @@ class DoclingParser(DocumentParser):
         """
         try:
             import docling  # noqa: F401
+
             return True
         except ImportError:
             return False

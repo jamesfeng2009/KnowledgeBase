@@ -16,11 +16,11 @@ from typing import TypedDict
 class MergedSource(TypedDict):
     """合并排序后的统一条目（internal / web 对齐格式）。"""
 
-    source_type: str          # "internal" | "web"
+    source_type: str  # "internal" | "web"
     title: str
-    url_or_doc_path: str      # internal=库内文档路径，web=URL
+    url_or_doc_path: str  # internal=库内文档路径，web=URL
     snippet: str
-    score: float              # 归一化（internal 已乘 boost）后的统一分数
+    score: float  # 归一化（internal 已乘 boost）后的统一分数
 
 
 def _min_max_normalize(scores: list[float]) -> list[float]:
@@ -79,10 +79,7 @@ def merge_and_rank(
     ranked = [
         _uniform_entry(h, "internal", s * boost)
         for h, s in zip(internal_hits, internal_norm)
-    ] + [
-        _uniform_entry(h, "web", s)
-        for h, s in zip(web_hits, web_norm)
-    ]
+    ] + [_uniform_entry(h, "web", s) for h, s in zip(web_hits, web_norm)]
     ranked.sort(key=lambda x: x["score"], reverse=True)
 
     internal_sorted = [r for r in ranked if r["source_type"] == "internal"]

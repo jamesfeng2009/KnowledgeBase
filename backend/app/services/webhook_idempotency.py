@@ -7,6 +7,7 @@
 遵循单一职责：仅做幂等判定，不涉及事件解析或同步逻辑。
 遵循优雅降级：Redis 不可用时返回 False（放行），单机场景可接受。
 """
+
 from __future__ import annotations
 
 from app.config import get_settings
@@ -21,9 +22,7 @@ _DEFAULT_TTL_SECONDS: int = 3600
 _KEY_PREFIX: str = "ekb:webhook:event:"
 
 
-async def is_duplicate_event(
-    event_id: str, ttl: int = _DEFAULT_TTL_SECONDS
-) -> bool:
+async def is_duplicate_event(event_id: str, ttl: int = _DEFAULT_TTL_SECONDS) -> bool:
     """检查事件是否已处理过（幂等去重）。
 
     用 SETNX 原子化标记：首次调用返回 False（未重复）并写入标记；

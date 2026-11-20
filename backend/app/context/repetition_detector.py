@@ -101,8 +101,7 @@ class RepetitionDetector:
         """
         # 提取历史中的 user 消息
         recent_user_msgs = [
-            m for m in history[-self._HISTORY_WINDOW :]
-            if m.get("role") == "user"
+            m for m in history[-self._HISTORY_WINDOW :] if m.get("role") == "user"
         ]
         if not recent_user_msgs:
             return RepetitionResult(is_repetition=False)
@@ -121,7 +120,9 @@ class RepetitionDetector:
 
         # 计算相似度
         similarity = await self._compute_similarity(
-            current_query, last_query, current_embedding,
+            current_query,
+            last_query,
+            current_embedding,
         )
 
         if similarity < self._REPETITION_THRESHOLD:

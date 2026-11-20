@@ -32,12 +32,9 @@ class QaQuestionRepository(BaseRepository[QaQuestion]):
 
         排除 status = closed 的问题，返回待处理的问题列表。
         """
-        stmt = (
-            select(QaQuestion)
-            .where(
-                QaQuestion.status != "closed",
-                QaQuestion.deleted_at.is_(None),
-            )
+        stmt = select(QaQuestion).where(
+            QaQuestion.status != "closed",
+            QaQuestion.deleted_at.is_(None),
         )
         stmt = self._apply_all_filters(stmt)
         stmt = stmt.order_by(QaQuestion.created_at.desc())
@@ -46,12 +43,9 @@ class QaQuestionRepository(BaseRepository[QaQuestion]):
 
     async def get_by_kb(self, kb_id: UUID) -> list[QaQuestion]:
         """查询关联到指定知识库的所有问题（排除已软删除）。"""
-        stmt = (
-            select(QaQuestion)
-            .where(
-                QaQuestion.kb_id == kb_id,
-                QaQuestion.deleted_at.is_(None),
-            )
+        stmt = select(QaQuestion).where(
+            QaQuestion.kb_id == kb_id,
+            QaQuestion.deleted_at.is_(None),
         )
         stmt = self._apply_all_filters(stmt)
         stmt = stmt.order_by(QaQuestion.created_at.desc())
@@ -67,12 +61,9 @@ class QaQuestionRepository(BaseRepository[QaQuestion]):
         Returns:
             True 表示成功递增（记录存在且未删除），False 表示未找到记录。
         """
-        stmt = (
-            update(QaQuestion)
-            .where(
-                QaQuestion.id == question_id,
-                QaQuestion.deleted_at.is_(None),
-            )
+        stmt = update(QaQuestion).where(
+            QaQuestion.id == question_id,
+            QaQuestion.deleted_at.is_(None),
         )
         if self._tenant_id is not None:
             stmt = stmt.where(QaQuestion.tenant_id == self._tenant_id)
@@ -89,12 +80,9 @@ class QaQuestionRepository(BaseRepository[QaQuestion]):
         Returns:
             True 表示成功递增（记录存在且未删除），False 表示未找到记录。
         """
-        stmt = (
-            update(QaQuestion)
-            .where(
-                QaQuestion.id == question_id,
-                QaQuestion.deleted_at.is_(None),
-            )
+        stmt = update(QaQuestion).where(
+            QaQuestion.id == question_id,
+            QaQuestion.deleted_at.is_(None),
         )
         if self._tenant_id is not None:
             stmt = stmt.where(QaQuestion.tenant_id == self._tenant_id)
@@ -114,12 +102,9 @@ class QaAnswerRepository(BaseRepository[QaAnswer]):
 
         已采纳的回答排在最前，其余按投票数降序排列。
         """
-        stmt = (
-            select(QaAnswer)
-            .where(
-                QaAnswer.question_id == question_id,
-                QaAnswer.deleted_at.is_(None),
-            )
+        stmt = select(QaAnswer).where(
+            QaAnswer.question_id == question_id,
+            QaAnswer.deleted_at.is_(None),
         )
         stmt = self._apply_all_filters(stmt)
         stmt = stmt.order_by(
@@ -147,13 +132,10 @@ class QaAnswerRepository(BaseRepository[QaAnswer]):
             return None
 
         # 先取消该问题下其他回答的采纳状态
-        unaccept_stmt = (
-            update(QaAnswer)
-            .where(
-                QaAnswer.question_id == answer.question_id,
-                QaAnswer.id != answer_id,
-                QaAnswer.deleted_at.is_(None),
-            )
+        unaccept_stmt = update(QaAnswer).where(
+            QaAnswer.question_id == answer.question_id,
+            QaAnswer.id != answer_id,
+            QaAnswer.deleted_at.is_(None),
         )
         if self._tenant_id is not None:
             unaccept_stmt = unaccept_stmt.where(QaAnswer.tenant_id == self._tenant_id)

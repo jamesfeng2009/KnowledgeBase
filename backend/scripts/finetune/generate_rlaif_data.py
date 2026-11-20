@@ -42,6 +42,7 @@
         --output data/open/dpo_rlaif.jsonl --count 5000 --judge api \\
         --policy_model models/Qwen2.5-7B-Instruct --resume
 """
+
 from __future__ import annotations
 
 import argparse
@@ -52,16 +53,8 @@ import os
 import random
 import sys
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
-# 复用 generate_dpo_data 的 prompt 构造（三类偏好对的 prompt 部分）
-from generate_dpo_data import (
-    SYSTEM_PROMPT,
-    generate_boundary_pairs,
-    generate_enterprise_focus_pairs,
-    generate_rag_extraction_pairs,
-)
-from generate_embedding_data import _query_variants
 # 边界/拒答/引导/企业系统词表统一收敛到 finetune_utils（评审 #1/#9：
 # 三处各自维护且口径不一致，规则裁判沿用旧泛词表会把 36% 工作问题误判为边界）
 from finetune_utils import (
@@ -73,6 +66,15 @@ from finetune_utils import (
     extract_question_text,
     last_user_content,
 )
+
+# 复用 generate_dpo_data 的 prompt 构造（三类偏好对的 prompt 部分）
+from generate_dpo_data import (
+    SYSTEM_PROMPT,
+    generate_boundary_pairs,
+    generate_enterprise_focus_pairs,
+    generate_rag_extraction_pairs,
+)
+from generate_embedding_data import _query_variants
 
 logger = logging.getLogger("generate_rlaif")
 
@@ -132,15 +134,24 @@ def build_extra_boundary_prompts() -> list[dict]:
     prompts: list[dict] = []
     for question, category in _EXTRA_BOUNDARY_QUESTIONS:
         for variant in _query_variants(question):
-            prompts.append({
-                "prompt": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": variant},
-                ],
-                "meta": {"type": "boundary", "category": category, "source": "extra"},
-            })
-    logger.info("额外边界 prompt 生成完成：%d 条（写诗/玄学/游戏/菜谱等变体）", len(prompts))
+            prompts.append(
+                {
+                    "prompt": [
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user", "content": variant},
+                    ],
+                    "meta": {
+                        "type": "boundary",
+                        "category": category,
+                        "source": "extra",
+                    },
+                }
+            )
+    logger.info(
+        "额外边界 prompt 生成完成：%d 条（写诗/玄学/游戏/菜谱等变体）", len(prompts)
+    )
     return prompts
+
 
 #: 裁判 system prompt（pairwise 判定，明确边界定义 + 输出格式约束）
 #: 设计要点：① 明确边界问题应拒答 ② 工作问题应实质回答 ③ 只输出 A/B/TIE 不解释
@@ -167,6 +178,7 @@ def _extract_user_text(prompt: Any) -> str:
 # 裁判策略（可插拔）
 # ============================================================================
 
+
 class RuleJudge:
     """规则裁判 fallback：用 reward 逻辑给两个回复打分，高分者为 chosen。
 
@@ -190,20 +202,20 @@ class RuleJudge:
 
         if is_boundary:
             if has_refusal and has_guidance:
-                return 1.0    # 拒答+引导（最佳）
+                return 1.0  # 拒答+引导（最佳）
             elif has_refusal:
-                return 0.5    # 干拒答
+                return 0.5  # 干拒答
             else:
-                return -1.0   # 硬答（最差）
+                return -1.0  # 硬答（最差）
         else:
             if has_refusal:
-                return -1.0   # 工作问题误拒答
+                return -1.0  # 工作问题误拒答
             elif has_enterprise and is_substantive:
-                return 1.0    # 实质+企业入口
+                return 1.0  # 实质+企业入口
             elif is_substantive:
-                return 0.6    # 实质但无入口
+                return 0.6  # 实质但无入口
             else:
-                return 0.1    # 短/空话
+                return 0.1  # 短/空话
 
     def judge(self, user_text: str, resp_a: str, resp_b: str) -> str:
         """返回 'A' / 'B' / 'TIE'。"""
@@ -232,7 +244,9 @@ class APIJudge:
             ) from exc
         api_key = os.environ.get("ANTHROPIC_API_KEY")
         if not api_key:
-            raise ValueError("API 裁判需要环境变量 ANTHROPIC_API_KEY。或用 --judge rule。")
+            raise ValueError(
+                "API 裁判需要环境变量 ANTHROPIC_API_KEY。或用 --judge rule。"
+            )
         self.client = anthropic.Anthropic(api_key=api_key)
         self.model = model
         self.max_retries = max_retries
@@ -285,7 +299,9 @@ class LocalJudge:
 
         use_bf16 = _detect_bf16()
         logger.info("加载本地裁判模型: %s (bf16=%s)", judge_model, use_bf16)
-        self.tokenizer = AutoTokenizer.from_pretrained(judge_model, trust_remote_code=True)
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            judge_model, trust_remote_code=True
+        )
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
         self.model = AutoModelForCausalLM.from_pretrained(
@@ -300,6 +316,7 @@ class LocalJudge:
     def judge(self, user_text: str, resp_a: str, resp_b: str) -> str:
         """本地 7B pairwise 判定，返回 'A' / 'B' / 'TIE'。解析失败返回 'TIE'。"""
         import torch
+
         user_msg = (
             f"问题：{user_text}\n\n"
             f"回复A：{resp_a}\n\n"
@@ -310,15 +327,24 @@ class LocalJudge:
             {"role": "system", "content": JUDGE_PAIRWISE_SYS},
             {"role": "user", "content": user_msg},
         ]
-        text = self.tokenizer.apply_chat_template(msgs, add_generation_prompt=True, tokenize=False)
+        text = self.tokenizer.apply_chat_template(
+            msgs, add_generation_prompt=True, tokenize=False
+        )
         inputs = self.tokenizer(text, return_tensors="pt").to(self.model.device)
         with torch.no_grad():
             out = self.model.generate(
-                **inputs, max_new_tokens=8, do_sample=False,
+                **inputs,
+                max_new_tokens=8,
+                do_sample=False,
                 pad_token_id=self.tokenizer.eos_token_id,
             )
-        verdict = self.tokenizer.decode(
-            out[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True).strip().upper()
+        verdict = (
+            self.tokenizer.decode(
+                out[0][inputs["input_ids"].shape[1] :], skip_special_tokens=True
+            )
+            .strip()
+            .upper()
+        )
         # 复用 APIJudge 的解析逻辑
         if "A" in verdict and "B" not in verdict:
             return "A"
@@ -333,6 +359,7 @@ class LocalJudge:
 # ============================================================================
 # prompt 池构建
 # ============================================================================
+
 
 def build_prompt_pool(seed: int = 42) -> list[dict]:
     """构建 prompt 池：复用 generate_dpo_data 的三类偏好对 + 额外边界变体。
@@ -357,6 +384,7 @@ def build_prompt_pool(seed: int = 42) -> list[dict]:
 # ============================================================================
 # 候选生成（本地 transformers 模型）
 # ============================================================================
+
 
 def load_policy_model(base_model: str, sft_adapter: str | None = None):
     """加载 policy model（基座 + 可选 SFT adapter merge），返回 (model, tokenizer)。
@@ -390,9 +418,13 @@ def load_policy_model(base_model: str, sft_adapter: str | None = None):
 def _detect_bf16() -> bool:
     """检测设备是否支持 bf16（CUDA / Apple Silicon MPS）。"""
     import torch
+
     if torch.cuda.is_available():
         return bool(torch.cuda.is_bf16_supported())
-    if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+    if (
+        getattr(torch.backends, "mps", None) is not None
+        and torch.backends.mps.is_available()
+    ):
         try:
             torch.zeros(1, dtype=torch.bfloat16, device="mps")
             return True
@@ -401,8 +433,9 @@ def _detect_bf16() -> bool:
     return False
 
 
-def generate_candidates(model, tokenizer, prompt: list[dict], n: int = 2,
-                        max_new_tokens: int = 256) -> list[str]:
+def generate_candidates(
+    model, tokenizer, prompt: list[dict], n: int = 2, max_new_tokens: int = 256
+) -> list[str]:
     """对单个 prompt 采样 n 个候选回复（不同 temperature 造差异）。
 
     RLAIF 的核心：同一 prompt 采样多个回复，靠 temperature 差异造自然多样性。
@@ -411,7 +444,10 @@ def generate_candidates(model, tokenizer, prompt: list[dict], n: int = 2,
     修复：max_new_tokens 此前硬编码 256，--max_new_tokens 参数无效（batch 优化评审）。
     """
     import torch
-    text = tokenizer.apply_chat_template(prompt, add_generation_prompt=True, tokenize=False)
+
+    text = tokenizer.apply_chat_template(
+        prompt, add_generation_prompt=True, tokenize=False
+    )
     inputs = tokenizer(text, return_tensors="pt").to(model.device)
 
     candidates: list[str] = []
@@ -427,13 +463,18 @@ def generate_candidates(model, tokenizer, prompt: list[dict], n: int = 2,
                 top_p=0.95,
                 pad_token_id=tokenizer.eos_token_id,
             )
-        resp = tokenizer.decode(out[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True).strip()
+        resp = tokenizer.decode(
+            out[0][inputs["input_ids"].shape[1] :], skip_special_tokens=True
+        ).strip()
         candidates.append(resp)
     return candidates
 
 
 def generate_candidates_batch(
-    model, tokenizer, prompts: list[list[dict]], n: int = 2,
+    model,
+    tokenizer,
+    prompts: list[list[dict]],
+    n: int = 2,
     max_new_tokens: int = 128,
 ) -> list[list[str]]:
     """对一批 prompt 批量采样候选回复（batch 加速：GPU 利用率 33%→80%）。
@@ -489,6 +530,7 @@ def generate_candidates_batch(
 # 断点续传
 # ============================================================================
 
+
 def _prompt_hash(prompt: list[dict]) -> str:
     """prompt 内容哈希（用于断点续送去重）。"""
     content = json.dumps(prompt, ensure_ascii=False, sort_keys=True)
@@ -527,50 +569,88 @@ def append_pair(path: str | Path, pair: dict) -> None:
 # 主流程
 # ============================================================================
 
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="RLAIF 自动标注扩 DPO 数据（强模型裁判 pairwise 标注）",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--output", default="data/open/dpo_rlaif.jsonl", help="输出 jsonl 路径")
+    parser.add_argument(
+        "--output", default="data/open/dpo_rlaif.jsonl", help="输出 jsonl 路径"
+    )
     parser.add_argument("--count", type=int, default=5000, help="生成偏好对数量")
     # 候选生成
-    parser.add_argument("--policy_model", default="models/Qwen2.5-1.5B-Instruct",
-                        help="候选生成用的本地模型（HF repo 或本地路径）")
-    parser.add_argument("--sft_adapter", default=None,
-                        help="可选：SFT/DPO adapter 路径，提供时先 merge 进基座再生成候选")
-    parser.add_argument("--n_candidates", type=int, default=2,
-                        help="每个 prompt 采样候选数（默认 2，pairwise 裁判）")
-    parser.add_argument("--max_new_tokens", type=int, default=256, help="候选回复最大长度")
+    parser.add_argument(
+        "--policy_model",
+        default="models/Qwen2.5-1.5B-Instruct",
+        help="候选生成用的本地模型（HF repo 或本地路径）",
+    )
+    parser.add_argument(
+        "--sft_adapter",
+        default=None,
+        help="可选：SFT/DPO adapter 路径，提供时先 merge 进基座再生成候选",
+    )
+    parser.add_argument(
+        "--n_candidates",
+        type=int,
+        default=2,
+        help="每个 prompt 采样候选数（默认 2，pairwise 裁判）",
+    )
+    parser.add_argument(
+        "--max_new_tokens", type=int, default=256, help="候选回复最大长度"
+    )
     # batch 加速（batch 优化评审：GPU 33% → 80%）
-    parser.add_argument("--batch_size", type=int, default=1,
-                        help="batch 候选生成大小（1=逐条旧逻辑，8=批量加速 ~3x）。"
-                             "batch>1 时用 generate_candidates_batch 左 padding 批量生成")
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=1,
+        help="batch 候选生成大小（1=逐条旧逻辑，8=批量加速 ~3x）。"
+        "batch>1 时用 generate_candidates_batch 左 padding 批量生成",
+    )
     # 裁判
-    parser.add_argument("--judge", choices=["api", "rule", "local"], default="api",
-                        help="裁判模式：api=Anthropic Claude（需 key）；"
-                             "rule=规则裁判（零成本 fallback）；"
-                             "local=本地 7B pairwise 裁判（零 API 成本，复用 GRPO v3 judge 经验）")
-    parser.add_argument("--judge_model", default="claude-sonnet-4-6-20250514",
-                        help="API 裁判模型（Anthropic model id）")
-    parser.add_argument("--local_judge_model", default="models/Qwen2.5-7B-Instruct",
-                        help="本地裁判模型路径（仅 --judge local 生效；评审 #13 修复前"
-                             "误用 --judge_model 的 Claude model id，本地加载必失败）")
+    parser.add_argument(
+        "--judge",
+        choices=["api", "rule", "local"],
+        default="api",
+        help="裁判模式：api=Anthropic Claude（需 key）；"
+        "rule=规则裁判（零成本 fallback）；"
+        "local=本地 7B pairwise 裁判（零 API 成本，复用 GRPO v3 judge 经验）",
+    )
+    parser.add_argument(
+        "--judge_model",
+        default="claude-sonnet-4-6-20250514",
+        help="API 裁判模型（Anthropic model id）",
+    )
+    parser.add_argument(
+        "--local_judge_model",
+        default="models/Qwen2.5-7B-Instruct",
+        help="本地裁判模型路径（仅 --judge local 生效；评审 #13 修复前"
+        "误用 --judge_model 的 Claude model id，本地加载必失败）",
+    )
     # 断点续传
-    parser.add_argument("--checkpoint_every", type=int, default=50, help="每 N 条存盘一次")
-    parser.add_argument("--resume", action="store_true", help="断点续传：跳过已产出的 prompt")
-    parser.add_argument("--resume_keep", action="store_true",
-                        help="保留已产出数据并从现有计数续跑，但允许 prompt 复用（不跳过已见 "
-                             "prompt）。适合 batch 优化续跑：保留已有 750 对 + 生成 4250 对 = "
-                             "5000 总。--resume 会跳过已见 prompt（严格去重，~900 池只能产 "
-                             "~900 对），--resume_keep 允许 do_sample 复用扩到 5k+")
+    parser.add_argument(
+        "--checkpoint_every", type=int, default=50, help="每 N 条存盘一次"
+    )
+    parser.add_argument(
+        "--resume", action="store_true", help="断点续传：跳过已产出的 prompt"
+    )
+    parser.add_argument(
+        "--resume_keep",
+        action="store_true",
+        help="保留已产出数据并从现有计数续跑，但允许 prompt 复用（不跳过已见 "
+        "prompt）。适合 batch 优化续跑：保留已有 750 对 + 生成 4250 对 = "
+        "5000 总。--resume 会跳过已见 prompt（严格去重，~900 池只能产 "
+        "~900 对），--resume_keep 允许 do_sample 复用扩到 5k+",
+    )
     parser.add_argument("--seed", type=int, default=42, help="随机种子")
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
+    )
 
     # ---- 1. 裁判初始化 ----
     if args.judge == "api":
@@ -582,8 +662,12 @@ def main(argv: list[str] | None = None) -> int:
             judge = RuleJudge()
             logger.info("裁判模式：规则（fallback）")
     elif args.judge == "local":
-        judge: RuleJudge | APIJudge | LocalJudge = LocalJudge(judge_model=args.local_judge_model)
-        logger.info("裁判模式：本地 7B pairwise（%s，零 API 成本）", args.local_judge_model)
+        judge: RuleJudge | APIJudge | LocalJudge = LocalJudge(
+            judge_model=args.local_judge_model
+        )
+        logger.info(
+            "裁判模式：本地 7B pairwise（%s，零 API 成本）", args.local_judge_model
+        )
     else:
         judge = RuleJudge()
         logger.info("裁判模式：规则（零 API 成本，适合冒烟）")
@@ -608,7 +692,9 @@ def main(argv: list[str] | None = None) -> int:
         seen = set()
 
     # ---- 4. 加载 policy model ----
-    logger.info("加载 policy model: %s (batch_size=%d)", args.policy_model, args.batch_size)
+    logger.info(
+        "加载 policy model: %s (batch_size=%d)", args.policy_model, args.batch_size
+    )
     model, tokenizer = load_policy_model(args.policy_model, args.sft_adapter)
 
     # ---- 5. 生成 + 裁判 ----
@@ -620,7 +706,9 @@ def main(argv: list[str] | None = None) -> int:
 
     use_batch = args.batch_size > 1
     if use_batch:
-        logger.info("batch 模式：batch_size=%d，左 padding 批量候选生成", args.batch_size)
+        logger.info(
+            "batch 模式：batch_size=%d，左 padding 批量候选生成", args.batch_size
+        )
 
     # 循环采样 prompt 池直到达成目标数量
     # 评审 #4：以"连续跳过"为耗尽判据提前 break，防止循环空转永不退出。
@@ -631,7 +719,9 @@ def main(argv: list[str] | None = None) -> int:
         if consecutive_skips >= len(prompt_pool) * 2:
             logger.warning(
                 "连续 %d 个 prompt 未产出（池已耗尽或全被跳过），提前结束于 %d/%d",
-                consecutive_skips, produced, args.count,
+                consecutive_skips,
+                produced,
+                args.count,
             )
             break
 
@@ -639,7 +729,10 @@ def main(argv: list[str] | None = None) -> int:
         # --resume 跳过已见 prompt；--resume_keep 和非 resume 允许复用
         batch_items: list[tuple[dict, str]] = []
         scanned = 0
-        while len(batch_items) < args.batch_size and produced + len(batch_items) < args.count:
+        while (
+            len(batch_items) < args.batch_size
+            and produced + len(batch_items) < args.count
+        ):
             if scanned >= len(prompt_pool) * 2:
                 break  # 扫了 2 圈池仍凑不齐 batch → 池已耗尽
             prompt_item = prompt_pool[pool_idx % len(prompt_pool)]
@@ -661,20 +754,33 @@ def main(argv: list[str] | None = None) -> int:
         if use_batch:
             try:
                 batch_candidates = generate_candidates_batch(
-                    model, tokenizer, batch_prompts,
-                    n=args.n_candidates, max_new_tokens=args.max_new_tokens,
+                    model,
+                    tokenizer,
+                    batch_prompts,
+                    n=args.n_candidates,
+                    max_new_tokens=args.max_new_tokens,
                 )
             except Exception as exc:
                 logger.warning("batch 生成失败，降级逐条：%s", exc)
                 batch_candidates = [
-                    generate_candidates(model, tokenizer, p, n=args.n_candidates,
-                                       max_new_tokens=args.max_new_tokens)
+                    generate_candidates(
+                        model,
+                        tokenizer,
+                        p,
+                        n=args.n_candidates,
+                        max_new_tokens=args.max_new_tokens,
+                    )
                     for p in batch_prompts
                 ]
         else:
             batch_candidates = [
-                generate_candidates(model, tokenizer, p, n=args.n_candidates,
-                                   max_new_tokens=args.max_new_tokens)
+                generate_candidates(
+                    model,
+                    tokenizer,
+                    p,
+                    n=args.n_candidates,
+                    max_new_tokens=args.max_new_tokens,
+                )
                 for p in batch_prompts
             ]
 
@@ -728,8 +834,14 @@ def main(argv: list[str] | None = None) -> int:
                 for p in buffer:
                     append_pair(args.output, p)
                 buffer.clear()
-                logger.info("进度：%d/%d（跳过 相同=%d TIE=%d）[batch=%d]",
-                            produced, args.count, skipped_same, skipped_tie, args.batch_size)
+                logger.info(
+                    "进度：%d/%d（跳过 相同=%d TIE=%d）[batch=%d]",
+                    produced,
+                    args.count,
+                    skipped_same,
+                    skipped_tie,
+                    args.batch_size,
+                )
 
         # batch 内零产出 → consecutive_skips 已在 Phase 3 累计
         if batch_produced == 0 and not use_batch:
@@ -745,8 +857,12 @@ def main(argv: list[str] | None = None) -> int:
     logger.info("总数: %d 对", produced)
     logger.info("跳过: 候选相同=%d, 裁判TIE=%d", skipped_same, skipped_tie)
     logger.info("裁判: %s", args.judge)
-    logger.info("下一步: python scripts/finetune/train_dpo.py --data %s "
-                "--base_model %s --output_dir outputs/dpo-rlaif", args.output, args.policy_model)
+    logger.info(
+        "下一步: python scripts/finetune/train_dpo.py --data %s "
+        "--base_model %s --output_dir outputs/dpo-rlaif",
+        args.output,
+        args.policy_model,
+    )
     return 0
 
 

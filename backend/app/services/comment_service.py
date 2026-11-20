@@ -44,9 +44,7 @@ class CommentService:
         self.comment_repo: DocumentCommentRepository = DocumentCommentRepository(
             db, tenant_id=tenant_id
         )
-        self.doc_repo: DocumentRepository = DocumentRepository(
-            db, tenant_id=tenant_id
-        )
+        self.doc_repo: DocumentRepository = DocumentRepository(db, tenant_id=tenant_id)
         self.permission: PermissionService = PermissionService(
             db, user, tenant_id=tenant_id
         )

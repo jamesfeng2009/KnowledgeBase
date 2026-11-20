@@ -30,28 +30,32 @@ class IntentType(str, Enum):
     - Agent Loop：COMPLEX_QUERY / CREATE_DOCUMENT。
     """
 
-    RAG_SEARCH = "rag_search"            # 文档检索问答 → 快捷路径
-    LIST_DOCUMENTS = "list_documents"    # 列出文档/知识库 → 快捷路径
-    GET_DOCUMENT = "get_document"        # 查看文档详情 → 快捷路径
+    RAG_SEARCH = "rag_search"  # 文档检索问答 → 快捷路径
+    LIST_DOCUMENTS = "list_documents"  # 列出文档/知识库 → 快捷路径
+    GET_DOCUMENT = "get_document"  # 查看文档详情 → 快捷路径
     CREATE_DOCUMENT = "create_document"  # 创建/上传文档 → Agent Loop（需 HITL）
-    COMPLEX_QUERY = "complex_query"      # 复杂查询 → Agent Loop
-    UNSUPPORTED = "unsupported"          # 超出知识库服务范围 → 终态拒识
-    UNCLEAR = "unclear"                  # 参数缺失/歧义 → 终态澄清
+    COMPLEX_QUERY = "complex_query"  # 复杂查询 → Agent Loop
+    UNSUPPORTED = "unsupported"  # 超出知识库服务范围 → 终态拒识
+    UNCLEAR = "unclear"  # 参数缺失/歧义 → 终态澄清
 
 
 # 可走快捷路径的意图集合（确定性检索 + 1 次 LLM 生成）
-_SHORTCUT_INTENTS: frozenset[IntentType] = frozenset({
-    IntentType.RAG_SEARCH,
-    IntentType.LIST_DOCUMENTS,
-    IntentType.GET_DOCUMENT,
-})
+_SHORTCUT_INTENTS: frozenset[IntentType] = frozenset(
+    {
+        IntentType.RAG_SEARCH,
+        IntentType.LIST_DOCUMENTS,
+        IntentType.GET_DOCUMENT,
+    }
+)
 
 # 终态出口意图集合（拒识 + 澄清）— 不进入检索与 Agent Loop，
 # 由快捷处理器直接返回 SSE 事件，防止越权/瞎猜回答。
-_TERMINAL_INTENTS: frozenset[IntentType] = frozenset({
-    IntentType.UNSUPPORTED,
-    IntentType.UNCLEAR,
-})
+_TERMINAL_INTENTS: frozenset[IntentType] = frozenset(
+    {
+        IntentType.UNSUPPORTED,
+        IntentType.UNCLEAR,
+    }
+)
 
 
 class SlotName:
@@ -60,12 +64,12 @@ class SlotName:
     命名对齐 RAG 检索参数，便于前端按槽位渲染补全表单。
     """
 
-    SEARCH_QUERY = "search_query"      # 检索主题（必填核心槽）
-    TIME_RANGE = "time_range"          # 时间范围（软约束/可选槽）
+    SEARCH_QUERY = "search_query"  # 检索主题（必填核心槽）
+    TIME_RANGE = "time_range"  # 时间范围（软约束/可选槽）
     CLASSIFICATION = "classification"  # 密级上限（硬约束/可选槽）
-    DOC_TYPE = "doc_type"              # 文档类型（软约束/可选槽）
-    SOURCE = "source"                  # 来源/系统（软约束/可选槽）
-    KB = "kb"                          # 限定知识库（硬约束/可选槽）
+    DOC_TYPE = "doc_type"  # 文档类型（软约束/可选槽）
+    SOURCE = "source"  # 来源/系统（软约束/可选槽）
+    KB = "kb"  # 限定知识库（硬约束/可选槽）
 
 
 @dataclass
@@ -184,7 +188,11 @@ class IntentRouter:
                 settings = get_settings()
                 if settings.INTENT_ROUTER_LLM_FALLBACK:
                     result = await self._llm_parser.parse(query, memory_context)
-                    if result and result.confidence >= settings.INTENT_ROUTER_CONFIDENCE_THRESHOLD:
+                    if (
+                        result
+                        and result.confidence
+                        >= settings.INTENT_ROUTER_CONFIDENCE_THRESHOLD
+                    ):
                         log.debug(
                             "intent_router.llm_match",
                             intent=result.intent.value,

@@ -7,7 +7,6 @@
 - 预置实体和谓词映射
 - 优雅降级
 """
-import pytest
 
 from app.ontology.entity_registry import (
     EntityDefinition,
@@ -26,12 +25,14 @@ class TestEntityRegistryBasic:
 
     def test_register_and_resolve(self):
         """注册实体后可通过同义词解析。"""
-        EntityRegistry.register(EntityDefinition(
-            canonical_name="contract",
-            display_name="合同",
-            entity_type=EntityType.CONCEPT,
-            synonyms=["合约", "协议", "contract"],
-        ))
+        EntityRegistry.register(
+            EntityDefinition(
+                canonical_name="contract",
+                display_name="合同",
+                entity_type=EntityType.CONCEPT,
+                synonyms=["合约", "协议", "contract"],
+            )
+        )
 
         # 通过规范名解析
         entity = EntityRegistry.resolve_entity("contract")
@@ -67,12 +68,14 @@ class TestEntityRegistryBasic:
 
     def test_case_insensitive(self):
         """同义词匹配不区分大小写。"""
-        EntityRegistry.register(EntityDefinition(
-            canonical_name="product",
-            display_name="产品",
-            entity_type=EntityType.PRODUCT,
-            synonyms=["Product", "ITEM"],
-        ))
+        EntityRegistry.register(
+            EntityDefinition(
+                canonical_name="product",
+                display_name="产品",
+                entity_type=EntityType.PRODUCT,
+                synonyms=["Product", "ITEM"],
+            )
+        )
 
         assert EntityRegistry.resolve_entity("product") is not None
         assert EntityRegistry.resolve_entity("PRODUCT") is not None
@@ -86,18 +89,22 @@ class TestNormalizeTriple:
 
     def setup_method(self):
         EntityRegistry._reset()
-        EntityRegistry.register(EntityDefinition(
-            canonical_name="contract",
-            display_name="合同",
-            entity_type=EntityType.CONCEPT,
-            synonyms=["合约", "协议"],
-        ))
-        EntityRegistry.register(EntityDefinition(
-            canonical_name="customer",
-            display_name="客户",
-            entity_type=EntityType.PERSON,
-            synonyms=["甲方"],
-        ))
+        EntityRegistry.register(
+            EntityDefinition(
+                canonical_name="contract",
+                display_name="合同",
+                entity_type=EntityType.CONCEPT,
+                synonyms=["合约", "协议"],
+            )
+        )
+        EntityRegistry.register(
+            EntityDefinition(
+                canonical_name="customer",
+                display_name="客户",
+                entity_type=EntityType.PERSON,
+                synonyms=["甲方"],
+            )
+        )
         EntityRegistry.register_predicate("属于", RelationType.BELONGS_TO)
         EntityRegistry.register_predicate("引用", RelationType.REFERENCES)
 
@@ -135,18 +142,22 @@ class TestExpandQuery:
 
     def setup_method(self):
         EntityRegistry._reset()
-        EntityRegistry.register(EntityDefinition(
-            canonical_name="contract",
-            display_name="合同",
-            entity_type=EntityType.CONCEPT,
-            synonyms=["合约", "协议", "contract"],
-        ))
-        EntityRegistry.register(EntityDefinition(
-            canonical_name="payment",
-            display_name="回款",
-            entity_type=EntityType.CONCEPT,
-            synonyms=["收款", "payment"],
-        ))
+        EntityRegistry.register(
+            EntityDefinition(
+                canonical_name="contract",
+                display_name="合同",
+                entity_type=EntityType.CONCEPT,
+                synonyms=["合约", "协议", "contract"],
+            )
+        )
+        EntityRegistry.register(
+            EntityDefinition(
+                canonical_name="payment",
+                display_name="回款",
+                entity_type=EntityType.CONCEPT,
+                synonyms=["收款", "payment"],
+            )
+        )
 
     def test_expand_with_known_entity(self):
         """查询包含已知实体时返回扩展词。"""
@@ -234,7 +245,9 @@ class TestPresetEntities:
         # Policy
         assert EntityRegistry.resolve_entity("政策").entity_type == EntityType.POLICY
         # Department
-        assert EntityRegistry.resolve_entity("部门").entity_type == EntityType.DEPARTMENT
+        assert (
+            EntityRegistry.resolve_entity("部门").entity_type == EntityType.DEPARTMENT
+        )
 
 
 class TestEntityTypeAndRelation:

@@ -7,6 +7,7 @@
 - ShortcutHandler: 拒识/澄清 SSE 事件出口
 - ShortcutHandler: 硬约束过滤（密级上限/排除密级/必含关键词）
 """
+
 from __future__ import annotations
 
 import uuid
@@ -16,17 +17,16 @@ import pytest
 
 from app.intent.llm_parser import LLMIntentParser
 from app.intent.router import (
+    _SHORTCUT_INTENTS,
+    _TERMINAL_INTENTS,
     IntentConstraints,
     IntentResult,
     IntentRouter,
     IntentType,
-    _SHORTCUT_INTENTS,
-    _TERMINAL_INTENTS,
 )
 from app.intent.rule_matcher import RuleMatcher
 from app.intent.shortcut_handler import ShortcutHandler
 from app.utils.sse import SSEEvent, SSEEventType
-
 
 # ------------------------------------------------------------------
 # 测试双打
@@ -58,9 +58,7 @@ class FakeDB:
         self._cls = cls_map
 
     async def execute(self, stmt: Any) -> FakeResult:
-        return FakeResult(
-            [(uuid.UUID(k), v) for k, v in self._cls.items()]
-        )
+        return FakeResult([(uuid.UUID(k), v) for k, v in self._cls.items()])
 
 
 # ------------------------------------------------------------------
@@ -72,24 +70,30 @@ class TestRuleMatcherRejection:
     def setup_method(self):
         self.matcher = RuleMatcher()
 
-    @pytest.mark.parametrize("query", [
-        "帮我订一张机票",
-        "明天北京的天气怎么样",
-        "推荐一下买哪只股票",
-        "讲个笑话听听",
-        "订个外卖",
-    ])
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "帮我订一张机票",
+            "明天北京的天气怎么样",
+            "推荐一下买哪只股票",
+            "讲个笑话听听",
+            "订个外卖",
+        ],
+    )
     def test_unsupported_match(self, query):
         result = self.matcher.match(query)
         assert result is not None
         assert result.intent == IntentType.UNSUPPORTED
         assert result.use_shortcut is True  # 走终态出口
 
-    @pytest.mark.parametrize("query", [
-        "搜索报销流程",
-        "列出所有文档",
-        "查一下微服务架构规范",
-    ])
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "搜索报销流程",
+            "列出所有文档",
+            "查一下微服务架构规范",
+        ],
+    )
     def test_kb_scope_not_rejected(self, query):
         """企业知识库范围内的查询不应被误拒识。"""
         result = self.matcher.match(query)
@@ -221,7 +225,8 @@ class TestShortcutHandlerExits:
         )
         events = [e async for e in handler.handle(intent, "查一下文档", None, None)]
         clarify = [
-            e for e in events
+            e
+            for e in events
             if isinstance(e, SSEEvent)
             and e.event == SSEEventType.CLARIFICATION_REQUIRED
         ]
@@ -262,9 +267,7 @@ class TestHardConstraints:
             self._candidate(c, "", "内容", "kb-1"),
         ]
         db = FakeDB({a: "public", b: "confidential", c: "secret"})
-        constraints = IntentConstraints(
-            hard={"classification_max": "public"}
-        )
+        constraints = IntentConstraints(hard={"classification_max": "public"})
         filtered = await handler._apply_hard_constraints(
             candidates, constraints, db, None
         )
@@ -279,9 +282,7 @@ class TestHardConstraints:
             self._candidate(b, "", "内容", "kb-1"),
         ]
         db = FakeDB({a: "public", b: "secret"})
-        constraints = IntentConstraints(
-            hard={"exclude_classifications": ["secret"]}
-        )
+        constraints = IntentConstraints(hard={"exclude_classifications": ["secret"]})
         filtered = await handler._apply_hard_constraints(
             candidates, constraints, db, None
         )
@@ -295,9 +296,7 @@ class TestHardConstraints:
             self._candidate(a, "", "报销流程说明", "kb-1"),
             self._candidate(b, "", "请假管理规定", "kb-1"),
         ]
-        constraints = IntentConstraints(
-            hard={"mandatory_keywords": ["报销"]}
-        )
+        constraints = IntentConstraints(hard={"mandatory_keywords": ["报销"]})
         filtered = await handler._apply_hard_constraints(
             candidates, constraints, FakeDB({a: "public", b: "public"}), None
         )
@@ -311,9 +310,7 @@ class TestHardConstraints:
             self._candidate(a, "", "内容", "kb-1"),
             self._candidate(b, "", "内容", "kb-2"),
         ]
-        constraints = IntentConstraints(
-            hard={"kb_ids": ["kb-1"]}
-        )
+        constraints = IntentConstraints(hard={"kb_ids": ["kb-1"]})
         filtered = await handler._apply_hard_constraints(
             candidates, constraints, FakeDB({a: "public", b: "public"}), None
         )
@@ -330,9 +327,7 @@ class TestHardConstraints:
         ]
         # 仅 b 有密级记录，a 视为已删/非法
         db = FakeDB({b: "public"})
-        constraints = IntentConstraints(
-            hard={"classification_max": "public"}
-        )
+        constraints = IntentConstraints(hard={"classification_max": "public"})
         filtered = await handler._apply_hard_constraints(
             candidates, constraints, db, None
         )

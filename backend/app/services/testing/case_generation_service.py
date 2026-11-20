@@ -177,9 +177,7 @@ class TestCaseGenerationService:
             created.append(self._to_dict(test_case))
 
         # 7. 更新需求状态为 cases_ready
-        stmt = update(TestRequirement).where(
-            TestRequirement.id == requirement.id
-        )
+        stmt = update(TestRequirement).where(TestRequirement.id == requirement.id)
         stmt = apply_tenant_filter(stmt, TestRequirement, self._tenant_id)
         await self.db.execute(stmt.values(status="cases_ready"))
         await self.db.flush()
@@ -267,9 +265,7 @@ class TestCaseGenerationService:
             log.warning("test_case.llm_error", error=str(exc))
             raise
 
-    async def _get_requirement(
-        self, req_uuid: uuid.UUID
-    ) -> TestRequirement | None:
+    async def _get_requirement(self, req_uuid: uuid.UUID) -> TestRequirement | None:
         """获取需求点 ORM 实例（含软删除过滤）。"""
         stmt = select(TestRequirement).where(
             TestRequirement.id == req_uuid,
@@ -279,9 +275,7 @@ class TestCaseGenerationService:
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def _get_context_docs(
-        self, doc_ids: list[str]
-    ) -> list[Document]:
+    async def _get_context_docs(self, doc_ids: list[str]) -> list[Document]:
         """获取上下文文档列表（含软删除过滤）。
 
         Args:
@@ -325,9 +319,7 @@ class TestCaseGenerationService:
         return "\n\n".join(parts)
 
     @staticmethod
-    def _build_generate_prompt(
-        test_type: str | None, max_cases: int
-    ) -> str:
+    def _build_generate_prompt(test_type: str | None, max_cases: int) -> str:
         """构建用例生成的系统提示词。
 
         Args:
@@ -366,9 +358,7 @@ class TestCaseGenerationService:
         )
 
     @staticmethod
-    def _build_user_content(
-        requirement: TestRequirement, tech_content: str
-    ) -> str:
+    def _build_user_content(requirement: TestRequirement, tech_content: str) -> str:
         """构建用户消息内容 — 需求点详情 + 上下文文档。
 
         Args:

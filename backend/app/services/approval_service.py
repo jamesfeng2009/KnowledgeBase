@@ -85,7 +85,8 @@ class ApprovalService:
             irreversible=irreversible,
             agent_state_snapshot=agent_state_snapshot,
             status="pending",
-            expire_at=datetime.now(timezone.utc) + timedelta(seconds=_APPROVAL_TTL_SECONDS),
+            expire_at=datetime.now(timezone.utc)
+            + timedelta(seconds=_APPROVAL_TTL_SECONDS),
             tenant_id=effective_tenant_id,
         )
         self.db.add(approval)
@@ -126,12 +127,9 @@ class ApprovalService:
         # 状态护栏下沉到 UPDATE WHERE 子句 —— validate→update 非原子，
         # 双击/重试/并发标签页下两个请求可同时通过校验，护栏确保只有
         # 一个请求真正落库（防 TOCTOU 竞态导致重复批准）。
-        stmt = (
-            update(ToolApproval)
-            .where(
-                ToolApproval.id == approval_id,
-                ToolApproval.status == "pending",
-            )
+        stmt = update(ToolApproval).where(
+            ToolApproval.id == approval_id,
+            ToolApproval.status == "pending",
         )
         stmt = apply_tenant_filter(stmt, ToolApproval, self._tenant_id)
         stmt = stmt.values(
@@ -178,12 +176,9 @@ class ApprovalService:
         approval = await self._get_and_validate(approval_id, user)
 
         # 同 approve：UPDATE 带 pending 护栏，防并发重复处理
-        stmt = (
-            update(ToolApproval)
-            .where(
-                ToolApproval.id == approval_id,
-                ToolApproval.status == "pending",
-            )
+        stmt = update(ToolApproval).where(
+            ToolApproval.id == approval_id,
+            ToolApproval.status == "pending",
         )
         stmt = apply_tenant_filter(stmt, ToolApproval, self._tenant_id)
         stmt = stmt.values(
@@ -222,12 +217,9 @@ class ApprovalService:
         Returns:
             pending 状态的审批列表（按创建时间倒序）。
         """
-        stmt = (
-            select(ToolApproval)
-            .where(
-                ToolApproval.user_id == user.id,
-                ToolApproval.status == "pending",
-            )
+        stmt = select(ToolApproval).where(
+            ToolApproval.user_id == user.id,
+            ToolApproval.status == "pending",
         )
         stmt = apply_tenant_filter(stmt, ToolApproval, self._tenant_id)
         stmt = stmt.order_by(ToolApproval.created_at.desc())
@@ -236,9 +228,7 @@ class ApprovalService:
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
 
-    async def get_approval_by_id(
-        self, approval_id: uuid.UUID
-    ) -> ToolApproval | None:
+    async def get_approval_by_id(self, approval_id: uuid.UUID) -> ToolApproval | None:
         """按 ID 查询审批记录。"""
         stmt = select(ToolApproval).where(ToolApproval.id == approval_id)
         stmt = apply_tenant_filter(stmt, ToolApproval, self._tenant_id)
@@ -290,12 +280,9 @@ class ApprovalService:
         now = datetime.now(timezone.utc)
 
         # 1. 标记已过期的 pending 审批为 expired
-        expire_stmt = (
-            update(ToolApproval)
-            .where(
-                ToolApproval.status == "pending",
-                ToolApproval.expire_at < now,
-            )
+        expire_stmt = update(ToolApproval).where(
+            ToolApproval.status == "pending",
+            ToolApproval.expire_at < now,
         )
         expire_stmt = apply_tenant_filter(expire_stmt, ToolApproval, self._tenant_id)
         expire_stmt = expire_stmt.values(status="expired")

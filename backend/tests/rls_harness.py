@@ -19,6 +19,7 @@ conftest 的 ``db_session`` 用 ``Base.metadata.create_all`` 建表：没有策�
 
 数据库不可达 / 当前连接无建角色权限时整组跳过（与 test_rls_role_split 一致）。
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -33,7 +34,9 @@ import pytest_asyncio
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 RLS_MIGRATION_FILE = (
-    BACKEND_DIR / "alembic" / "versions"
+    BACKEND_DIR
+    / "alembic"
+    / "versions"
     / "2026_11_10_1800-e8f9a0b1c2d3_rls_fail_closed.py"
 )
 PROVISION_SCRIPT = BACKEND_DIR / "scripts" / "provision_app_role.py"
@@ -53,7 +56,9 @@ def _load_module(name: str, path: Path):
 
 def owner_dsn() -> str:
     """owner 连接串（asyncpg 直连格式）。"""
-    return os.environ["DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql://", 1)
+    return os.environ["DATABASE_URL"].replace(
+        "postgresql+asyncpg://", "postgresql://", 1
+    )
 
 
 def _with_credentials(dsn: str, role: str, password: str) -> str:
@@ -89,7 +94,7 @@ async def rls_db():
             async with owner_engine.begin() as conn:
                 await conn.run_sync(Base.metadata.drop_all)
                 await conn.run_sync(Base.metadata.create_all)
-        except Exception as exc:  # noqa: BLE001 — 数据库不可用时跳过而不是误报
+        except Exception as exc:
             pytest.skip(f"无法准备测试库：{type(exc).__name__}: {exc}")
 
         # 策略来自生产迁移本体（fail-closed），不是手写的近似副本
@@ -105,7 +110,7 @@ async def rls_db():
             await prov.provision(owner_dsn(), RLS_TEST_ROLE, password)
         except PermissionError as exc:
             pytest.skip(f"当前连接角色无建角色权限：{exc}")
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             pytest.skip(f"无法准备运行角色：{type(exc).__name__}: {exc}")
         role_ready = True
 
@@ -114,9 +119,7 @@ async def rls_db():
         # NullPool：每会话一条新连接，GUC 不会串到下一个用例
         app_engine = create_async_engine(app_url, poolclass=NullPool)
         factory = sessionmaker(app_engine, class_=AsyncSession, expire_on_commit=False)
-        yield SimpleNamespace(
-            factory=factory, owner_url=owner_dsn(), app_url=app_url
-        )
+        yield SimpleNamespace(factory=factory, owner_url=owner_dsn(), app_url=app_url)
     finally:
         if app_engine is not None:
             await app_engine.dispose()
@@ -129,5 +132,5 @@ async def rls_db():
                     await conn.execute(f'DROP ROLE IF EXISTS "{RLS_TEST_ROLE}"')
                 finally:
                     await conn.close()
-            except Exception:  # noqa: BLE001 — 清理是 best-effort
+            except Exception:
                 pass

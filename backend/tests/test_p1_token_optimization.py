@@ -5,17 +5,17 @@
 - P1-Opt4: _reflect 传答案摘要而非全文，_summarize_for_reflect 提取要点
 - P1-Opt5: ChatService 历史窗口化 + MemoryContext.to_system_prompt 渲染 L1
 """
+
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
 from app.rag.context_dedup import CrossTurnDeduplicator, ToolResultRef
-from app.rag.engine import AgenticRAGEngine, _THINK_SYSTEM_STABLE
-
+from app.rag.engine import AgenticRAGEngine
 
 # ======================================================================
 # Mock 实现（复用 test_token_optimization.py 的 Mock）
@@ -130,7 +130,8 @@ class TestCrossTurnDeduplicator:
         """首次注册的工具结果应返回完整摘要。"""
         dedup = CrossTurnDeduplicator()
         result = dedup.register(
-            turn=1, tool_name="search_erp",
+            turn=1,
+            tool_name="search_erp",
             result_content="订单 BG2024001 金额 5000 元 状态已审批",
         )
         assert "订单 BG2024001" in result
@@ -154,12 +155,14 @@ class TestCrossTurnDeduplicator:
         """高度相似的内容应返回指针引用。"""
         dedup = CrossTurnDeduplicator()
         dedup.register(
-            turn=1, tool_name="search_erp",
+            turn=1,
+            tool_name="search_erp",
             result_content="订单 BG2024001 金额 5000 元 状态已审批 时间 2024-03-15 备注 无",
         )
         # 大部分词相同，仅末尾日期不同
         result = dedup.register(
-            turn=2, tool_name="search_erp",
+            turn=2,
+            tool_name="search_erp",
             result_content="订单 BG2024001 金额 5000 元 状态已审批 时间 2024-03-16 备注 无",
         )
         assert "见第1轮" in result
@@ -167,10 +170,12 @@ class TestCrossTurnDeduplicator:
     def test_different_content_returns_full_summary(self) -> None:
         """完全不同的内容应返回完整摘要。"""
         dedup = CrossTurnDeduplicator()
-        dedup.register(turn=1, tool_name="search_erp",
-                       result_content="订单 BG2024001 金额 5000 元")
+        dedup.register(
+            turn=1, tool_name="search_erp", result_content="订单 BG2024001 金额 5000 元"
+        )
         result = dedup.register(
-            turn=2, tool_name="search_oa",
+            turn=2,
+            tool_name="search_oa",
             result_content="审批流程 报销单 审批人 张三 部门 销售部",
         )
         assert "见第" not in result
@@ -207,11 +212,11 @@ class TestCrossTurnDeduplicator:
     def test_different_threshold(self) -> None:
         """自定义相似度阈值应生效。"""
         dedup = CrossTurnDeduplicator(similarity_threshold=0.99)
-        dedup.register(turn=1, tool_name="search",
-                       result_content="A B C D E")
+        dedup.register(turn=1, tool_name="search", result_content="A B C D E")
         # 5 个词中 4 个相同，Jaccard = 4/6 = 0.67 < 0.99
         result = dedup.register(
-            turn=2, tool_name="search",
+            turn=2,
+            tool_name="search",
             result_content="A B C D F",
         )
         # 阈值很高，不应被去重
@@ -270,10 +275,12 @@ class TestEngineDedupIntegration:
         # Mock _tool_call_streaming 返回相同结果（异步生成器）
         # P1-4: 接受 db / user_uuid 参数（签名需与实际方法一致）
         async def mock_tool_call_streaming(state, db=None, user_uuid=None):
-            state["tool_results"].append({
-                "tool": "search_erp",
-                "result": "订单 BG2024001 金额 5000 元 状态已审批",
-            })
+            state["tool_results"].append(
+                {
+                    "tool": "search_erp",
+                    "result": "订单 BG2024001 金额 5000 元 状态已审批",
+                }
+            )
             yield  # 异步生成器需要 yield
 
         engine._tool_call_streaming = mock_tool_call_streaming
@@ -282,7 +289,8 @@ class TestEngineDedupIntegration:
 
         # 两次 tool_call 结果相同，第二次应被去重
         tool_messages = [
-            m for m in state["messages"]
+            m
+            for m in state["messages"]
             if m["role"] == "user" and "[系统] 工具结果" in m.get("content", "")
         ]
         assert len(tool_messages) == 2
@@ -374,10 +382,11 @@ class TestReflectSummary:
     @pytest.mark.asyncio
     async def test_reflect_error_handled(self) -> None:
         """_reflect LLM 异常应被捕获，不中断主流程。"""
+
         class ErrorLLM:
             async def chat(self, *args, **kwargs):
                 raise RuntimeError("LLM unavailable")
-                yield  # noqa
+                yield
 
         engine = AgenticRAGEngine(
             llm=ErrorLLM(),
@@ -407,8 +416,7 @@ class TestMemoryContextL1Injection:
 
         ctx = MemoryContext()
         ctx.user_facts = [
-            {"fact_text": f"偏好{i}", "category": "preference"}
-            for i in range(10)
+            {"fact_text": f"偏好{i}", "category": "preference"} for i in range(10)
         ]
         prompt = ctx.to_system_prompt()
         assert "偏好0" in prompt
@@ -422,8 +430,7 @@ class TestMemoryContextL1Injection:
 
         ctx = MemoryContext()
         ctx.user_facts = [
-            {"fact_text": f"摘要{i}", "category": "summary"}
-            for i in range(10)
+            {"fact_text": f"摘要{i}", "category": "summary"} for i in range(10)
         ]
         prompt = ctx.to_system_prompt()
         assert "摘要0" in prompt
@@ -470,9 +477,7 @@ class TestChatServiceWindowing:
             ),
             patch("app.config.get_settings", return_value=fake_settings),
         ):
-            result = await service._build_engine_memory_context(
-                "conv-1", "qa", None
-            )
+            result = await service._build_engine_memory_context("conv-1", "qa", None)
 
         assert "历史问题1" in result
         assert "历史回答1" in result

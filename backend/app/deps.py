@@ -156,7 +156,7 @@ def require_module(module_name: str):
 # ------------------------------------------------------------------
 
 
-def get_tenant_id(request: Request) -> "object | None":
+def get_tenant_id(request: Request) -> object | None:
     """从 request.state 获取当前请求的租户 ID。
 
     由 TenantContextMiddleware 注入，无 JWT 或无 tenant_id 时返回 None

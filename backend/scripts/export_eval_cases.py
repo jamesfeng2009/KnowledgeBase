@@ -94,9 +94,7 @@ async def export_cases(
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w", encoding="utf-8") as f:
         for row in rows:
-            f.write(
-                json.dumps(build_eval_case(row), ensure_ascii=False) + "\n"
-            )
+            f.write(json.dumps(build_eval_case(row), ensure_ascii=False) + "\n")
 
     logger.info(
         "export_eval_cases.done", extra={"count": len(rows), "out": str(out_path)}
@@ -106,16 +104,15 @@ async def export_cases(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="导出交付链 badcase 评测语料")
-    parser.add_argument(
-        "--days", type=int, default=30, help="回溯天数（默认 30）"
-    )
+    parser.add_argument("--days", type=int, default=30, help="回溯天数（默认 30）")
     parser.add_argument(
         "--limit", type=int, default=500, help="最多导出条数（默认 500）"
     )
     parser.add_argument(
         "--out",
         type=Path,
-        default=Path("eval_cases") / f"delivery_badcases_{datetime.now(timezone.utc).strftime('%Y%m%d')}.jsonl",
+        default=Path("eval_cases")
+        / f"delivery_badcases_{datetime.now(timezone.utc).strftime('%Y%m%d')}.jsonl",
         help="输出 JSONL 路径",
     )
     parser.add_argument(

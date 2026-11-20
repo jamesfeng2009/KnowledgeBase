@@ -57,7 +57,8 @@ from __future__ import annotations
 import asyncio
 import functools
 import random
-from typing import Any, AsyncIterator, Callable, TypeVar
+from collections.abc import AsyncIterator, Callable
+from typing import Any, TypeVar
 
 from app.config import get_settings
 from app.core.error_classifier import classify_error
@@ -95,8 +96,12 @@ def with_llm_retry(
         - 不可重试错误（AUTH_INVALID / QUOTA_EXHAUSTED 等）立即抛
     """
     settings = get_settings()
-    _max_attempts = max_attempts if max_attempts is not None else settings.LLM_RETRY_MAX_ATTEMPTS
-    _base_delay = base_delay if base_delay is not None else settings.LLM_RETRY_BACKOFF_BASE
+    _max_attempts = (
+        max_attempts if max_attempts is not None else settings.LLM_RETRY_MAX_ATTEMPTS
+    )
+    _base_delay = (
+        base_delay if base_delay is not None else settings.LLM_RETRY_BACKOFF_BASE
+    )
     _max_delay = max_delay if max_delay is not None else settings.LLM_RETRY_BACKOFF_MAX
 
     def decorator(fn: F) -> F:

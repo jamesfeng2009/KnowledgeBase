@@ -12,6 +12,7 @@ SFT 话术"建议您…"几乎出现在所有回答里 → 硬答被误判为拒
       --dpo_adapter ../../outputs/dpo-rlaif-final-7b \
       --label "7B SFT+DPO(rlaif-final)"
 """
+
 from __future__ import annotations
 
 import argparse
@@ -19,14 +20,13 @@ import json
 import time
 
 import torch
-from peft import PeftModel
-from transformers import AutoModelForCausalLM, AutoTokenizer
-
 from finetune_utils import (
     GUIDANCE_SIGNALS,
     REFUSAL_KEYWORDS,
     SUBSTANTIVE_MIN_LEN,
 )
+from peft import PeftModel
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 SYSTEM_PROMPT = (
     "你是企业知识库智能助手，负责回答员工在工作中的各类问题"
@@ -167,15 +167,26 @@ STRICT_REFUSAL = REFUSAL_KEYWORDS
 # 宽松拒答关键词（旧版 eval_dpo_7b.py 的词表，用于对比）
 BROAD_REFUSAL = (
     *STRICT_REFUSAL,
-    "不在", "无法", "不能提供", "建议", "服务台", "请使用",
-    "不在服务范围", "超出", "无法查询", "无法提供",
+    "不在",
+    "无法",
+    "不能提供",
+    "建议",
+    "服务台",
+    "请使用",
+    "不在服务范围",
+    "超出",
+    "无法查询",
+    "无法提供",
 )
 
 
 def _detect_bf16() -> bool:
     if torch.cuda.is_available():
         return bool(torch.cuda.is_bf16_supported())
-    if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+    if (
+        getattr(torch.backends, "mps", None) is not None
+        and torch.backends.mps.is_available()
+    ):
         try:
             torch.zeros(1, dtype=torch.bfloat16, device="mps")
             return True
@@ -192,13 +203,21 @@ def load_model(base: str, sft_adapter: str | None, dpo_adapter: str | None):
     dtype = torch.bfloat16 if use_bf16 else torch.float16
     print(f"[加载] 基座 {base} (bf16={use_bf16}) ...", flush=True)
 
-    if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+    if (
+        getattr(torch.backends, "mps", None) is not None
+        and torch.backends.mps.is_available()
+    ):
         model = AutoModelForCausalLM.from_pretrained(
-            base, torch_dtype=dtype, trust_remote_code=True,
+            base,
+            torch_dtype=dtype,
+            trust_remote_code=True,
         ).to("mps")
     else:
         model = AutoModelForCausalLM.from_pretrained(
-            base, torch_dtype=dtype, device_map="auto", trust_remote_code=True,
+            base,
+            torch_dtype=dtype,
+            device_map="auto",
+            trust_remote_code=True,
         )
 
     if sft_adapter:
@@ -217,13 +236,17 @@ def load_model(base: str, sft_adapter: str | None, dpo_adapter: str | None):
 
 
 def gen(model, tok, question: str) -> str:
-    msgs = [{"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": question}]
+    msgs = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": question},
+    ]
     text = tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
     inputs = tok(text, return_tensors="pt").to(model.device)
     with torch.no_grad():
         out = model.generate(
-            **inputs, max_new_tokens=256, do_sample=False,
+            **inputs,
+            max_new_tokens=256,
+            do_sample=False,
             pad_token_id=tok.eos_token_id,
         )
     input_len = inputs["input_ids"].shape[-1]
@@ -297,13 +320,23 @@ def main():
         b_broad_pass += int(cls["broad_refuse"])
         b_guidance_pass += int(cls["has_guidance"])
         b_hard_answer += int(cls["is_hard_answer"])
-        tag = "✅拒" if cls["strict_refuse"] else ("~宽拒" if cls["broad_refuse"] else "❌硬答")
+        tag = (
+            "✅拒"
+            if cls["strict_refuse"]
+            else ("~宽拒" if cls["broad_refuse"] else "❌硬答")
+        )
         print(f"[B{i:02d}/{cat:16s}] {tag} ({dt:.1f}s) Q: {q}")
         print(f"         A: {ans[:200]}")
-        results["boundary"].append({
-            "id": i, "category": cat, "question": q,
-            "answer": ans, "classification": cls, "time_sec": round(dt, 1),
-        })
+        results["boundary"].append(
+            {
+                "id": i,
+                "category": cat,
+                "question": q,
+                "answer": ans,
+                "classification": cls,
+                "time_sec": round(dt, 1),
+            }
+        )
 
     # ---- 50 工作问题 ----
     print(f"\n{'=' * 70}")
@@ -320,29 +353,38 @@ def main():
         w_strict_false += int(cls["strict_false_refuse"])
         w_broad_false += int(cls["broad_false_refuse"])
         w_substantive += int(cls["is_substantive"])
-        tag = "✅实质" if cls["is_substantive"] and not cls["strict_false_refuse"] else \
-              ("⚠️误拒" if cls["strict_false_refuse"] else "~短答")
+        tag = (
+            "✅实质"
+            if cls["is_substantive"] and not cls["strict_false_refuse"]
+            else ("⚠️误拒" if cls["strict_false_refuse"] else "~短答")
+        )
         print(f"[W{i:02d}/{cat:10s}] {tag} ({dt:.1f}s) Q: {q}")
         print(f"         A: {ans[:200]}")
-        results["work"].append({
-            "id": i, "category": cat, "question": q,
-            "answer": ans, "classification": cls, "time_sec": round(dt, 1),
-        })
+        results["work"].append(
+            {
+                "id": i,
+                "category": cat,
+                "question": q,
+                "answer": ans,
+                "classification": cls,
+                "time_sec": round(dt, 1),
+            }
+        )
 
     # ---- 汇总 ----
     print(f"\n{'=' * 70}")
     print(f"=== 汇总 [{label}] ===")
     print(f"{'=' * 70}")
-    print(f"\n--- 边界拒答（50 题，期望拒答）---")
+    print("\n--- 边界拒答（50 题，期望拒答）---")
     print(f"  严格拒答率:    {b_strict_pass:2d}/50 = {b_strict_pass * 2}%")
     print(f"  宽松拒答率:    {b_broad_pass:2d}/50 = {b_broad_pass * 2}%")
     print(f"  含引导信号:    {b_guidance_pass:2d}/50 = {b_guidance_pass * 2}%")
     print(f"  硬答(应拒未拒): {b_hard_answer:2d}/50 = {b_hard_answer * 2}%")
-    print(f"\n--- 工作问题（50 题，期望实质回答）---")
+    print("\n--- 工作问题（50 题，期望实质回答）---")
     print(f"  严格误拒答率:  {w_strict_false:2d}/50 = {w_strict_false * 2}%")
     print(f"  宽松误拒答率:  {w_broad_false:2d}/50 = {w_broad_false * 2}%")
     print(f"  实质回答率:    {w_substantive:2d}/50 = {w_substantive * 2}%")
-    print(f"\n--- 按类别分布（边界）---")
+    print("\n--- 按类别分布（边界）---")
     cat_stats: dict[str, list[int]] = {}
     for item in results["boundary"]:
         c = item["category"]

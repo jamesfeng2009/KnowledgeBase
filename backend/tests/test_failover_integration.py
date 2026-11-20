@@ -12,8 +12,6 @@
 
 from __future__ import annotations
 
-import asyncio
-import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -23,11 +21,8 @@ from app.services.health_check import HealthCheckService, ProviderHealth
 from app.utils.circuit_breaker import (
     CircuitBreakerOpenError,
     CircuitState,
-    _breakers,
-    get_circuit_breaker,
     reset_all_circuit_breakers,
 )
-
 
 # ======================================================================
 # 辅助函数
@@ -118,7 +113,7 @@ class TestEndToEndFailoverIntegration:
 
         async def _fail_chat(messages, tools=None, stream=False, **kwargs):
             raise CircuitBreakerOpenError("b1", CircuitState.OPEN)
-            yield  # noqa
+            yield
 
         p1.chat = _fail_chat
         p2 = _make_healthy_provider("p2")
@@ -208,8 +203,9 @@ class TestHealthCheckAPIIntegration:
 
     async def test_api_returns_health_check_results(self):
         """API 端点返回 HealthCheckService 的检查结果。"""
-        from app.main import app
         from httpx import ASGITransport, AsyncClient
+
+        from app.main import app
 
         cached = {
             "embedder_openai": ProviderHealth(
@@ -236,7 +232,9 @@ class TestHealthCheckAPIIntegration:
             return_value=cached,
         ):
             transport = ASGITransport(app=app)
-            async with AsyncClient(transport=transport, base_url="http://test") as client:
+            async with AsyncClient(
+                transport=transport, base_url="http://test"
+            ) as client:
                 resp = await client.get("/health/providers")
                 assert resp.status_code == 200
 
@@ -251,8 +249,9 @@ class TestHealthCheckAPIIntegration:
 
     async def test_api_fresh_check_on_cache_miss(self):
         """缓存未命中时 API 执行同步检查。"""
-        from app.main import app
         from httpx import ASGITransport, AsyncClient
+
+        from app.main import app
 
         fresh = {
             "anthropic": ProviderHealth(
@@ -265,17 +264,22 @@ class TestHealthCheckAPIIntegration:
             )
         }
 
-        with patch(
-            "app.services.health_check.HealthCheckService.load_from_redis",
-            new_callable=AsyncMock,
-            return_value=None,
-        ), patch(
-            "app.services.health_check.HealthCheckService.check_all",
-            new_callable=AsyncMock,
-            return_value=fresh,
+        with (
+            patch(
+                "app.services.health_check.HealthCheckService.load_from_redis",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "app.services.health_check.HealthCheckService.check_all",
+                new_callable=AsyncMock,
+                return_value=fresh,
+            ),
         ):
             transport = ASGITransport(app=app)
-            async with AsyncClient(transport=transport, base_url="http://test") as client:
+            async with AsyncClient(
+                transport=transport, base_url="http://test"
+            ) as client:
                 resp = await client.get("/health/providers")
                 data = resp.json()["data"]
                 assert data["source"] == "fresh"
@@ -295,11 +299,12 @@ class TestHealthCheckAPIIntegration:
         mock_entry.breaker_name = "embedder_openai"
         mock_entry.factory = MagicMock(return_value=mock_provider)
 
-        with patch(
-            "app.services.health_check.get_all_provider_entries",
-            return_value=[mock_entry],
-        ), patch.object(
-            service, "_save_to_redis", new_callable=AsyncMock
+        with (
+            patch(
+                "app.services.health_check.get_all_provider_entries",
+                return_value=[mock_entry],
+            ),
+            patch.object(service, "_save_to_redis", new_callable=AsyncMock),
         ):
             results = await service.check_all()
             assert "embedder_openai" in results
@@ -319,8 +324,9 @@ class TestIdempotencyVerification:
 
     async def test_health_providers_api_idempotent(self):
         """/health/providers 连续 GET 返回一致结果。"""
-        from app.main import app
         from httpx import ASGITransport, AsyncClient
+
+        from app.main import app
 
         cached = {
             "vllm": ProviderHealth(
@@ -338,7 +344,9 @@ class TestIdempotencyVerification:
             return_value=cached,
         ):
             transport = ASGITransport(app=app)
-            async with AsyncClient(transport=transport, base_url="http://test") as client:
+            async with AsyncClient(
+                transport=transport, base_url="http://test"
+            ) as client:
                 resp1 = await client.get("/health/providers")
                 resp2 = await client.get("/health/providers")
                 resp3 = await client.get("/health/providers")
@@ -347,8 +355,9 @@ class TestIdempotencyVerification:
 
     async def test_circuit_breakers_api_idempotent(self):
         """/health/circuit-breakers 连续 GET 返回一致结果。"""
-        from app.main import app
         from httpx import ASGITransport, AsyncClient
+
+        from app.main import app
 
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -358,8 +367,9 @@ class TestIdempotencyVerification:
 
     async def test_health_api_idempotent(self):
         """/health 连续 GET 返回一致结果。"""
-        from app.main import app
         from httpx import ASGITransport, AsyncClient
+
+        from app.main import app
 
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -374,17 +384,21 @@ class TestIdempotencyVerification:
         # 第一次 — 锁获取成功
         lock1 = TaskLock(key="test", value="abc", acquired=True, ttl=60)
 
-        with patch(
-            "app.utils.task_lock.acquire_task_lock",
-            new_callable=AsyncMock,
-            return_value=lock1,
-        ), patch(
-            "app.utils.task_lock.release_task_lock",
-            new_callable=AsyncMock,
-        ), patch(
-            "app.services.health_check.HealthCheckService.check_all",
-            new_callable=AsyncMock,
-            return_value={},
+        with (
+            patch(
+                "app.utils.task_lock.acquire_task_lock",
+                new_callable=AsyncMock,
+                return_value=lock1,
+            ),
+            patch(
+                "app.utils.task_lock.release_task_lock",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "app.services.health_check.HealthCheckService.check_all",
+                new_callable=AsyncMock,
+                return_value={},
+            ),
         ):
             from tasks.health_tasks import _run_health_check
 
@@ -394,17 +408,21 @@ class TestIdempotencyVerification:
         # 第二次 — 锁被持有（另一个实例正在运行）
         lock2 = TaskLock(key="test", value="xyz", acquired=False, ttl=60)
 
-        with patch(
-            "app.utils.task_lock.acquire_task_lock",
-            new_callable=AsyncMock,
-            return_value=lock2,
-        ), patch(
-            "app.utils.task_lock.release_task_lock",
-            new_callable=AsyncMock,
-        ), patch(
-            "app.services.health_check.HealthCheckService.check_all",
-            new_callable=AsyncMock,
-        ) as mock_check:
+        with (
+            patch(
+                "app.utils.task_lock.acquire_task_lock",
+                new_callable=AsyncMock,
+                return_value=lock2,
+            ),
+            patch(
+                "app.utils.task_lock.release_task_lock",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "app.services.health_check.HealthCheckService.check_all",
+                new_callable=AsyncMock,
+            ) as mock_check,
+        ):
             result2 = await _run_health_check()
             assert result2["status"] == "skipped"
             mock_check.assert_not_called()
@@ -434,14 +452,14 @@ class TestLoggingVerification:
         """HealthCheckService.check_all 记录 start 和 complete 日志。"""
         service = HealthCheckService()
 
-        with patch(
-            "app.services.health_check.get_all_provider_entries",
-            return_value=[],
-        ), patch.object(
-            service, "_save_to_redis", new_callable=AsyncMock
-        ), patch(
-            "app.services.health_check.log"
-        ) as mock_log:
+        with (
+            patch(
+                "app.services.health_check.get_all_provider_entries",
+                return_value=[],
+            ),
+            patch.object(service, "_save_to_redis", new_callable=AsyncMock),
+            patch("app.services.health_check.log") as mock_log,
+        ):
             await service.check_all()
 
             # 验证 start 和 complete 日志
@@ -511,14 +529,14 @@ class TestLoggingVerification:
         mock_entry.breaker_name = "embedder_openai"
         mock_entry.factory = MagicMock(return_value=mock_provider)
 
-        with patch(
-            "app.services.health_check.get_all_provider_entries",
-            return_value=[mock_entry],
-        ), patch.object(
-            service, "_save_to_redis", new_callable=AsyncMock
-        ), patch(
-            "app.services.health_check.log"
-        ) as mock_log:
+        with (
+            patch(
+                "app.services.health_check.get_all_provider_entries",
+                return_value=[mock_entry],
+            ),
+            patch.object(service, "_save_to_redis", new_callable=AsyncMock),
+            patch("app.services.health_check.log") as mock_log,
+        ):
             await service.check_all()
 
             log_calls = [str(c) for c in mock_log.info.call_args_list]
@@ -567,12 +585,15 @@ class TestConfigDrivenFailover:
             entry.factory = MagicMock(return_value=_make_healthy_provider(name))
             mock_entries.append(entry)
 
-        with patch(
-            "app.llm.provider_pool.get_all_provider_entries",
-            return_value=mock_entries,
-        ), patch(
-            "app.llm.provider_pool._get_or_create_provider",
-            side_effect=lambda name, ptype: _make_healthy_provider(name),
+        with (
+            patch(
+                "app.llm.provider_pool.get_all_provider_entries",
+                return_value=mock_entries,
+            ),
+            patch(
+                "app.llm.provider_pool._get_or_create_provider",
+                side_effect=lambda name, ptype: _make_healthy_provider(name),
+            ),
         ):
             pool = _build_pool(
                 pool_type="embedder",
@@ -632,8 +653,9 @@ class TestDegradationScenarios:
 
     async def test_redis_unavailable_api_falls_back_to_fresh(self):
         """Redis 不可用时 API 降级为同步检查。"""
-        from app.main import app
         from httpx import ASGITransport, AsyncClient
+
+        from app.main import app
 
         fresh = {
             "vllm": ProviderHealth(
@@ -645,17 +667,22 @@ class TestDegradationScenarios:
             )
         }
 
-        with patch(
-            "app.services.health_check.HealthCheckService.load_from_redis",
-            new_callable=AsyncMock,
-            return_value=None,  # Redis 不可用 → None
-        ), patch(
-            "app.services.health_check.HealthCheckService.check_all",
-            new_callable=AsyncMock,
-            return_value=fresh,
+        with (
+            patch(
+                "app.services.health_check.HealthCheckService.load_from_redis",
+                new_callable=AsyncMock,
+                return_value=None,  # Redis 不可用 → None
+            ),
+            patch(
+                "app.services.health_check.HealthCheckService.check_all",
+                new_callable=AsyncMock,
+                return_value=fresh,
+            ),
         ):
             transport = ASGITransport(app=app)
-            async with AsyncClient(transport=transport, base_url="http://test") as client:
+            async with AsyncClient(
+                transport=transport, base_url="http://test"
+            ) as client:
                 resp = await client.get("/health/providers")
                 data = resp.json()["data"]
                 assert data["source"] == "fresh"

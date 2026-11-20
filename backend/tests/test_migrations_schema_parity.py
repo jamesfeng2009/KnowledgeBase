@@ -129,9 +129,9 @@ def test_migration_chain_has_single_head() -> None:
     assert not dangling, f"以下 down_revision 指向不存在的迁移: {dangling}"
 
     heads = sorted(r for r in revisions if r not in parents)
-    assert len(heads) == 1, (
-        f"迁移链存在多个 head（alembic upgrade head 会失败）: {heads}"
-    )
+    assert (
+        len(heads) == 1
+    ), f"迁移链存在多个 head（alembic upgrade head 会失败）: {heads}"
 
 
 @pytest.mark.parametrize("table", ["ai_eval_injection_suites"])

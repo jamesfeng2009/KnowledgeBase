@@ -6,6 +6,7 @@
    （该列已在 2026_07_24 中创建）。
 3. 2026_07_27 迁移仍需给 doc_parse_cases 与 judge_cases 添加 deleted_at。
 """
+
 from __future__ import annotations
 
 import ast
@@ -62,9 +63,13 @@ class TestAiEvalRagMigration:
         return migration_path.read_text()
 
     def test_rag_datasets_created(self, migration_2026_07_24: str) -> None:
-        assert 'op.create_table(\n        "ai_eval_rag_datasets"' in migration_2026_07_24
+        assert (
+            'op.create_table(\n        "ai_eval_rag_datasets"' in migration_2026_07_24
+        )
 
-    def test_rag_queries_created_with_deleted_at(self, migration_2026_07_24: str) -> None:
+    def test_rag_queries_created_with_deleted_at(
+        self, migration_2026_07_24: str
+    ) -> None:
         assert 'op.create_table(\n        "ai_eval_rag_queries"' in migration_2026_07_24
         # 软删除列应在建表时就存在
         rag_section = migration_2026_07_24.split(

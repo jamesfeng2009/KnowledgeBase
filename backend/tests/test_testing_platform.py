@@ -15,6 +15,7 @@
     → 用例评审(TestReview) → 用例管理(TestCase CRUD)
     → AI编排(TestPlan) → 执行记录(TestExecution)
 """
+
 from __future__ import annotations
 
 import json
@@ -22,7 +23,7 @@ import sys
 import uuid
 from datetime import datetime, timezone
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -250,9 +251,18 @@ class TestModels:
         # 验证关键列存在
         columns = {c.name for c in TestProject.__table__.columns}
         required = {
-            "id", "name", "description", "owner_id",
-            "prd_doc_ids", "tech_doc_ids", "api_doc_ids",
-            "status", "tenant_id", "created_at", "updated_at", "deleted_at",
+            "id",
+            "name",
+            "description",
+            "owner_id",
+            "prd_doc_ids",
+            "tech_doc_ids",
+            "api_doc_ids",
+            "status",
+            "tenant_id",
+            "created_at",
+            "updated_at",
+            "deleted_at",
         }
         assert required.issubset(columns), f"缺少字段: {required - columns}"
 
@@ -270,9 +280,19 @@ class TestModels:
 
         columns = {c.name for c in TestRequirement.__table__.columns}
         required = {
-            "id", "project_id", "source_doc_id", "title", "description",
-            "category", "priority", "acceptance_criteria", "source_text",
-            "source", "status", "tenant_id", "deleted_at",
+            "id",
+            "project_id",
+            "source_doc_id",
+            "title",
+            "description",
+            "category",
+            "priority",
+            "acceptance_criteria",
+            "source_text",
+            "source",
+            "status",
+            "tenant_id",
+            "deleted_at",
         }
         assert required.issubset(columns), f"缺少字段: {required - columns}"
 
@@ -296,10 +316,23 @@ class TestModels:
         # 验证关键列存在
         columns = {c.name for c in TestCase.__table__.columns}
         required = {
-            "id", "project_id", "requirement_id", "title", "description",
-            "preconditions", "test_steps", "expected_result",
-            "test_type", "priority", "status", "tags",
-            "created_by", "context_doc_ids", "case_no", "tenant_id", "deleted_at",
+            "id",
+            "project_id",
+            "requirement_id",
+            "title",
+            "description",
+            "preconditions",
+            "test_steps",
+            "expected_result",
+            "test_type",
+            "priority",
+            "status",
+            "tags",
+            "created_by",
+            "context_doc_ids",
+            "case_no",
+            "tenant_id",
+            "deleted_at",
         }
         assert required.issubset(columns), f"缺少字段: {required - columns}"
 
@@ -314,9 +347,17 @@ class TestModels:
         columns = {c.name for c in TestReview.__table__.columns}
         assert "deleted_at" not in columns
         required = {
-            "id", "case_id", "submitter_id", "reviewer_id",
-            "status", "comment", "suggestions", "review_summary",
-            "resolved_at", "created_at", "updated_at",
+            "id",
+            "case_id",
+            "submitter_id",
+            "reviewer_id",
+            "status",
+            "comment",
+            "suggestions",
+            "review_summary",
+            "resolved_at",
+            "created_at",
+            "updated_at",
         }
         assert required.issubset(columns), f"缺少字段: {required - columns}"
 
@@ -330,9 +371,17 @@ class TestModels:
 
         columns = {c.name for c in TestPlan.__table__.columns}
         required = {
-            "id", "project_id", "name", "description", "case_ids",
-            "execution_strategy", "ai_orchestration", "status",
-            "created_by", "tenant_id", "deleted_at",
+            "id",
+            "project_id",
+            "name",
+            "description",
+            "case_ids",
+            "execution_strategy",
+            "ai_orchestration",
+            "status",
+            "created_by",
+            "tenant_id",
+            "deleted_at",
         }
         assert required.issubset(columns), f"缺少字段: {required - columns}"
 
@@ -347,10 +396,20 @@ class TestModels:
 
         columns = {c.name for c in TestExecution.__table__.columns}
         required = {
-            "id", "plan_id", "case_id", "executor_id", "executor",
-            "status", "result", "execution_log", "failure_reason",
-            "duration_seconds", "started_at", "completed_at",
-            "created_at", "updated_at",
+            "id",
+            "plan_id",
+            "case_id",
+            "executor_id",
+            "executor",
+            "status",
+            "result",
+            "execution_log",
+            "failure_reason",
+            "duration_seconds",
+            "started_at",
+            "completed_at",
+            "created_at",
+            "updated_at",
         }
         assert required.issubset(columns), f"缺少字段: {required - columns}"
 
@@ -529,24 +588,26 @@ class TestRequirementAnalysisService:
         """成功提取需求 — LLM 返回 JSON 数组，验证 DB add 被调用。"""
         from app.services.testing.requirement_service import RequirementAnalysisService
 
-        llm_response = json.dumps([
-            {
-                "title": "用户登录功能",
-                "description": "用户可通过邮箱密码登录",
-                "category": "functional",
-                "priority": "high",
-                "acceptance_criteria": ["输入正确密码可登录", "密码错误提示"],
-                "source_text": "系统应支持用户登录功能",
-            },
-            {
-                "title": "界面响应式设计",
-                "description": "页面需适配移动端",
-                "category": "ui",
-                "priority": "normal",
-                "acceptance_criteria": ["移动端布局正常"],
-                "source_text": "UI 稿要求响应式",
-            },
-        ])
+        llm_response = json.dumps(
+            [
+                {
+                    "title": "用户登录功能",
+                    "description": "用户可通过邮箱密码登录",
+                    "category": "functional",
+                    "priority": "high",
+                    "acceptance_criteria": ["输入正确密码可登录", "密码错误提示"],
+                    "source_text": "系统应支持用户登录功能",
+                },
+                {
+                    "title": "界面响应式设计",
+                    "description": "页面需适配移动端",
+                    "category": "ui",
+                    "priority": "normal",
+                    "acceptance_criteria": ["移动端布局正常"],
+                    "source_text": "UI 稿要求响应式",
+                },
+            ]
+        )
         llm = _make_mock_llm(llm_response)
         db = _make_mock_db()
         service = RequirementAnalysisService(llm, db)
@@ -653,7 +714,9 @@ class TestRequirementAnalysisService:
         service = RequirementAnalysisService(llm, db)
 
         requirement = _make_mock_requirement(title="查询需求")
-        db.execute = AsyncMock(return_value=_make_scalar_one_or_none_result(requirement))
+        db.execute = AsyncMock(
+            return_value=_make_scalar_one_or_none_result(requirement)
+        )
 
         result = await service.get_requirement(requirement.id)
 
@@ -684,7 +747,9 @@ class TestRequirementAnalysisService:
         service = RequirementAnalysisService(llm, db)
 
         requirement = _make_mock_requirement(title="原始标题")
-        db.execute = AsyncMock(return_value=_make_scalar_one_or_none_result(requirement))
+        db.execute = AsyncMock(
+            return_value=_make_scalar_one_or_none_result(requirement)
+        )
 
         result = await service.update_requirement(
             requirement.id,
@@ -724,24 +789,40 @@ class TestTestCaseGenerationService:
     @pytest.mark.asyncio
     async def test_generate_cases_success(self) -> None:
         """成功生成测试用例 — LLM 返回 JSON 数组，验证 DB add 与需求状态更新。"""
-        from app.services.testing.case_generation_service import TestCaseGenerationService
+        from app.services.testing.case_generation_service import (
+            TestCaseGenerationService,
+        )
 
-        llm_response = json.dumps([
-            {
-                "title": "登录成功测试",
-                "description": "输入正确账号密码，验证登录成功",
-                "preconditions": "用户已注册",
-                "test_steps": [
-                    {"step_no": 1, "action": "输入正确邮箱", "expected": "邮箱显示正常"},
-                    {"step_no": 2, "action": "输入正确密码", "expected": "密码显示掩码"},
-                    {"step_no": 3, "action": "点击登录按钮", "expected": "跳转到首页"},
-                ],
-                "expected_result": "用户成功登录并跳转首页",
-                "test_type": "functional",
-                "priority": "high",
-                "tags": ["登录", "P0"],
-            },
-        ])
+        llm_response = json.dumps(
+            [
+                {
+                    "title": "登录成功测试",
+                    "description": "输入正确账号密码，验证登录成功",
+                    "preconditions": "用户已注册",
+                    "test_steps": [
+                        {
+                            "step_no": 1,
+                            "action": "输入正确邮箱",
+                            "expected": "邮箱显示正常",
+                        },
+                        {
+                            "step_no": 2,
+                            "action": "输入正确密码",
+                            "expected": "密码显示掩码",
+                        },
+                        {
+                            "step_no": 3,
+                            "action": "点击登录按钮",
+                            "expected": "跳转到首页",
+                        },
+                    ],
+                    "expected_result": "用户成功登录并跳转首页",
+                    "test_type": "functional",
+                    "priority": "high",
+                    "tags": ["登录", "P0"],
+                },
+            ]
+        )
         llm = _make_mock_llm(llm_response)
         db = _make_mock_db()
         service = TestCaseGenerationService(llm, db)
@@ -752,11 +833,13 @@ class TestTestCaseGenerationService:
         # 1. _get_requirement → scalar_one_or_none → requirement
         # 2. _generate_case_no → scalars().all() → [] (无已有编号)
         # 3. update(TestRequirement status) → 结果不使用
-        db.execute = AsyncMock(side_effect=[
-            _make_scalar_one_or_none_result(requirement),
-            _make_scalars_all_result([]),
-            MagicMock(),  # update 语句结果
-        ])
+        db.execute = AsyncMock(
+            side_effect=[
+                _make_scalar_one_or_none_result(requirement),
+                _make_scalars_all_result([]),
+                MagicMock(),  # update 语句结果
+            ]
+        )
 
         result = await service.generate_cases(str(requirement.id))
 
@@ -772,14 +855,18 @@ class TestTestCaseGenerationService:
     @pytest.mark.asyncio
     async def test_generate_case_no(self) -> None:
         """用例编号生成 — 从已有最大编号 +1。"""
-        from app.services.testing.case_generation_service import TestCaseGenerationService
+        from app.services.testing.case_generation_service import (
+            TestCaseGenerationService,
+        )
 
         llm = _make_mock_llm()
         db = _make_mock_db()
         service = TestCaseGenerationService(llm, db)
 
         # 已有编号 TC-0001, TC-0003 → 下一个应为 TC-0004
-        db.execute = AsyncMock(return_value=_make_scalars_all_result(["TC-0001", "TC-0003"]))
+        db.execute = AsyncMock(
+            return_value=_make_scalars_all_result(["TC-0001", "TC-0003"])
+        )
 
         case_no = await service._generate_case_no(uuid.uuid4())
         assert case_no == "TC-0004"
@@ -787,7 +874,9 @@ class TestTestCaseGenerationService:
     @pytest.mark.asyncio
     async def test_generate_case_no_empty(self) -> None:
         """用例编号生成 — 项目无用例时从 TC-0001 开始。"""
-        from app.services.testing.case_generation_service import TestCaseGenerationService
+        from app.services.testing.case_generation_service import (
+            TestCaseGenerationService,
+        )
 
         llm = _make_mock_llm()
         db = _make_mock_db()
@@ -801,25 +890,33 @@ class TestTestCaseGenerationService:
     @pytest.mark.asyncio
     async def test_generate_cases_with_context_docs(self) -> None:
         """带上下文文档生成用例 — 验证上下文文档查询被调用。"""
-        from app.services.testing.case_generation_service import TestCaseGenerationService
+        from app.services.testing.case_generation_service import (
+            TestCaseGenerationService,
+        )
 
-        llm_response = json.dumps([
-            {
-                "title": "API 接口测试",
-                "description": "测试登录接口返回值",
-                "test_steps": [{"step_no": 1, "action": "发送POST请求", "expected": "返回200"}],
-                "expected_result": "接口返回 token",
-                "test_type": "api",
-                "priority": "high",
-                "tags": ["API"],
-            },
-        ])
+        llm_response = json.dumps(
+            [
+                {
+                    "title": "API 接口测试",
+                    "description": "测试登录接口返回值",
+                    "test_steps": [
+                        {"step_no": 1, "action": "发送POST请求", "expected": "返回200"}
+                    ],
+                    "expected_result": "接口返回 token",
+                    "test_type": "api",
+                    "priority": "high",
+                    "tags": ["API"],
+                },
+            ]
+        )
         llm = _make_mock_llm(llm_response)
         db = _make_mock_db()
         service = TestCaseGenerationService(llm, db)
 
         requirement = _make_mock_requirement(title="API需求")
-        context_doc = _make_mock_doc(title="接口文档", content_text="POST /api/login 接口定义")
+        context_doc = _make_mock_doc(
+            title="接口文档", content_text="POST /api/login 接口定义"
+        )
 
         context_doc_ids = [str(uuid.uuid4())]
 
@@ -828,12 +925,14 @@ class TestTestCaseGenerationService:
         # 2. _get_context_docs → [context_doc]
         # 3. _generate_case_no → [] (无已有编号)
         # 4. update(TestRequirement status) → 结果不使用
-        db.execute = AsyncMock(side_effect=[
-            _make_scalar_one_or_none_result(requirement),
-            _make_scalars_all_result([context_doc]),
-            _make_scalars_all_result([]),
-            MagicMock(),  # update 语句结果
-        ])
+        db.execute = AsyncMock(
+            side_effect=[
+                _make_scalar_one_or_none_result(requirement),
+                _make_scalars_all_result([context_doc]),
+                _make_scalars_all_result([]),
+                MagicMock(),  # update 语句结果
+            ]
+        )
 
         result = await service.generate_cases(
             str(requirement.id),
@@ -850,7 +949,9 @@ class TestTestCaseGenerationService:
     @pytest.mark.asyncio
     async def test_generate_cases_requirement_not_found(self) -> None:
         """需求点不存在应抛出 ValueError。"""
-        from app.services.testing.case_generation_service import TestCaseGenerationService
+        from app.services.testing.case_generation_service import (
+            TestCaseGenerationService,
+        )
 
         llm = _make_mock_llm()
         db = _make_mock_db()
@@ -884,10 +985,12 @@ class TestTestReviewService:
         # db.execute 调用顺序：
         # 1. _get_case → case (status=draft)
         # 2. update(TestCase status=pending_review) → 结果不使用
-        db.execute = AsyncMock(side_effect=[
-            _make_scalar_one_or_none_result(case),
-            MagicMock(),  # update 语句结果
-        ])
+        db.execute = AsyncMock(
+            side_effect=[
+                _make_scalar_one_or_none_result(case),
+                MagicMock(),  # update 语句结果
+            ]
+        )
 
         review = await service.submit_for_review(case.id, comment="请尽快评审")
 
@@ -942,11 +1045,13 @@ class TestTestReviewService:
         # 1. get_review → review (status=pending)
         # 2. update(TestReview status=approved) → 结果不使用
         # 3. update(TestCase status=approved) → 结果不使用
-        db.execute = AsyncMock(side_effect=[
-            _make_scalar_one_or_none_result(review),
-            MagicMock(),  # update TestReview
-            MagicMock(),  # update TestCase
-        ])
+        db.execute = AsyncMock(
+            side_effect=[
+                _make_scalar_one_or_none_result(review),
+                MagicMock(),  # update TestReview
+                MagicMock(),  # update TestCase
+            ]
+        )
 
         result = await service.approve(
             review.id,
@@ -970,11 +1075,13 @@ class TestTestReviewService:
 
         review = _make_mock_review(status="pending")
 
-        db.execute = AsyncMock(side_effect=[
-            _make_scalar_one_or_none_result(review),
-            MagicMock(),  # update TestReview
-            MagicMock(),  # update TestCase
-        ])
+        db.execute = AsyncMock(
+            side_effect=[
+                _make_scalar_one_or_none_result(review),
+                MagicMock(),  # update TestReview
+                MagicMock(),  # update TestCase
+            ]
+        )
 
         result = await service.reject(
             review.id,
@@ -1016,10 +1123,12 @@ class TestTestReviewService:
         # db.execute 调用顺序：
         # 1. count → scalar_one() → 2
         # 2. select → scalars().all() → [review1, review2]
-        db.execute = AsyncMock(side_effect=[
-            _make_scalar_result(2),
-            _make_scalars_all_result([review1, review2]),
-        ])
+        db.execute = AsyncMock(
+            side_effect=[
+                _make_scalar_result(2),
+                _make_scalars_all_result([review1, review2]),
+            ]
+        )
 
         reviews, total = await service.get_pending_reviews(page=1, size=20)
 
@@ -1038,7 +1147,9 @@ class TestTestReviewService:
         review1 = _make_mock_review(status="approved")
         review2 = _make_mock_review(status="rejected")
 
-        db.execute = AsyncMock(return_value=_make_scalars_all_result([review1, review2]))
+        db.execute = AsyncMock(
+            return_value=_make_scalars_all_result([review1, review2])
+        )
 
         case_id = uuid.uuid4()
         reviews = await service.get_reviews_by_case(case_id)
@@ -1084,21 +1195,29 @@ class TestTestCaseManagementService:
     @pytest.mark.asyncio
     async def test_list_cases_with_filters(self) -> None:
         """分页查询用例列表 — 支持多维度筛选。"""
-        from app.services.testing.case_management_service import TestCaseManagementService
+        from app.services.testing.case_management_service import (
+            TestCaseManagementService,
+        )
 
         db = _make_mock_db()
         service = TestCaseManagementService(db)
 
-        case1 = _make_mock_test_case(title="用例1", status="active", test_type="functional")
-        case2 = _make_mock_test_case(title="用例2", status="active", test_type="functional")
+        case1 = _make_mock_test_case(
+            title="用例1", status="active", test_type="functional"
+        )
+        case2 = _make_mock_test_case(
+            title="用例2", status="active", test_type="functional"
+        )
 
         # db.execute 调用顺序：
         # 1. count → scalar_one() → 2
         # 2. select → scalars().all() → [case1, case2]
-        db.execute = AsyncMock(side_effect=[
-            _make_scalar_result(2),
-            _make_scalars_all_result([case1, case2]),
-        ])
+        db.execute = AsyncMock(
+            side_effect=[
+                _make_scalar_result(2),
+                _make_scalars_all_result([case1, case2]),
+            ]
+        )
 
         cases, total = await service.list_cases(
             uuid.uuid4(),
@@ -1116,7 +1235,9 @@ class TestTestCaseManagementService:
     @pytest.mark.asyncio
     async def test_create_case_manual(self) -> None:
         """手动创建用例 — created_by 固定为 manual。"""
-        from app.services.testing.case_management_service import TestCaseManagementService
+        from app.services.testing.case_management_service import (
+            TestCaseManagementService,
+        )
 
         db = _make_mock_db()
         service = TestCaseManagementService(db)
@@ -1142,7 +1263,9 @@ class TestTestCaseManagementService:
     @pytest.mark.asyncio
     async def test_create_case_no_title(self) -> None:
         """缺少 title 字段应抛出 ValueError。"""
-        from app.services.testing.case_management_service import TestCaseManagementService
+        from app.services.testing.case_management_service import (
+            TestCaseManagementService,
+        )
 
         db = _make_mock_db()
         service = TestCaseManagementService(db)
@@ -1153,7 +1276,9 @@ class TestTestCaseManagementService:
     @pytest.mark.asyncio
     async def test_update_case(self) -> None:
         """更新用例字段。"""
-        from app.services.testing.case_management_service import TestCaseManagementService
+        from app.services.testing.case_management_service import (
+            TestCaseManagementService,
+        )
 
         db = _make_mock_db()
         service = TestCaseManagementService(db)
@@ -1163,10 +1288,12 @@ class TestTestCaseManagementService:
         # db.execute 调用顺序：
         # 1. get_case → case
         # 2. update(TestCase) → 结果不使用
-        db.execute = AsyncMock(side_effect=[
-            _make_scalar_one_or_none_result(case),
-            MagicMock(),  # update 语句结果
-        ])
+        db.execute = AsyncMock(
+            side_effect=[
+                _make_scalar_one_or_none_result(case),
+                MagicMock(),  # update 语句结果
+            ]
+        )
 
         result = await service.update_case(case.id, title="更新标题", status="active")
 
@@ -1176,7 +1303,9 @@ class TestTestCaseManagementService:
     @pytest.mark.asyncio
     async def test_delete_case_soft_delete(self) -> None:
         """软删除用例 — 设置 deleted_at，不物理删除。"""
-        from app.services.testing.case_management_service import TestCaseManagementService
+        from app.services.testing.case_management_service import (
+            TestCaseManagementService,
+        )
 
         db = _make_mock_db()
         service = TestCaseManagementService(db)
@@ -1186,10 +1315,12 @@ class TestTestCaseManagementService:
         # db.execute 调用顺序：
         # 1. get_case → case
         # 2. update(TestCase deleted_at=...) → 结果不使用
-        db.execute = AsyncMock(side_effect=[
-            _make_scalar_one_or_none_result(case),
-            MagicMock(),  # update 语句结果
-        ])
+        db.execute = AsyncMock(
+            side_effect=[
+                _make_scalar_one_or_none_result(case),
+                MagicMock(),  # update 语句结果
+            ]
+        )
 
         await service.delete_case(case.id)
 
@@ -1201,7 +1332,9 @@ class TestTestCaseManagementService:
     @pytest.mark.asyncio
     async def test_delete_case_not_found(self) -> None:
         """删除不存在的用例应抛出 ValueError。"""
-        from app.services.testing.case_management_service import TestCaseManagementService
+        from app.services.testing.case_management_service import (
+            TestCaseManagementService,
+        )
 
         db = _make_mock_db()
         service = TestCaseManagementService(db)
@@ -1214,7 +1347,9 @@ class TestTestCaseManagementService:
     @pytest.mark.asyncio
     async def test_batch_update_status(self) -> None:
         """批量更新用例状态 — 返回更新数量。"""
-        from app.services.testing.case_management_service import TestCaseManagementService
+        from app.services.testing.case_management_service import (
+            TestCaseManagementService,
+        )
 
         db = _make_mock_db()
         service = TestCaseManagementService(db)
@@ -1232,7 +1367,9 @@ class TestTestCaseManagementService:
     @pytest.mark.asyncio
     async def test_batch_update_status_empty_ids(self) -> None:
         """空 ID 列表返回 0，不调用 DB。"""
-        from app.services.testing.case_management_service import TestCaseManagementService
+        from app.services.testing.case_management_service import (
+            TestCaseManagementService,
+        )
 
         db = _make_mock_db()
         service = TestCaseManagementService(db)
@@ -1244,7 +1381,9 @@ class TestTestCaseManagementService:
     @pytest.mark.asyncio
     async def test_get_stats(self) -> None:
         """获取测试平台统计数据 — 多维度聚合。"""
-        from app.services.testing.case_management_service import TestCaseManagementService
+        from app.services.testing.case_management_service import (
+            TestCaseManagementService,
+        )
 
         db = _make_mock_db()
         service = TestCaseManagementService(db)
@@ -1258,16 +1397,20 @@ class TestTestCaseManagementService:
         # 6. total_plans → scalar_one → 3
         # 7. total_executions → scalar_one → 20
         # 8. execution_stats → 可迭代 → [("passed", 15), ("failed", 5)]
-        db.execute = AsyncMock(side_effect=[
-            _make_scalar_result(2),                                        # total_projects
-            _make_scalar_result(5),                                        # total_requirements
-            _make_scalar_result(10),                                       # total_cases
-            _make_iterable_result([("draft", 3), ("active", 7)]),          # cases_by_status
-            _make_iterable_result([("functional", 8), ("api", 2)]),        # cases_by_type
-            _make_scalar_result(3),                                        # total_plans
-            _make_scalar_result(20),                                       # total_executions
-            _make_iterable_result([("passed", 15), ("failed", 5)]),        # execution_stats
-        ])
+        db.execute = AsyncMock(
+            side_effect=[
+                _make_scalar_result(2),  # total_projects
+                _make_scalar_result(5),  # total_requirements
+                _make_scalar_result(10),  # total_cases
+                _make_iterable_result([("draft", 3), ("active", 7)]),  # cases_by_status
+                _make_iterable_result([("functional", 8), ("api", 2)]),  # cases_by_type
+                _make_scalar_result(3),  # total_plans
+                _make_scalar_result(20),  # total_executions
+                _make_iterable_result(
+                    [("passed", 15), ("failed", 5)]
+                ),  # execution_stats
+            ]
+        )
 
         stats = await service.get_stats()
 
@@ -1329,20 +1472,26 @@ class TestTestOrchestrationService:
         """AI 编排成功 — LLM 返回编排 JSON，验证计划状态更新为 active。"""
         from app.services.testing.orchestration_service import TestOrchestrationService
 
-        case1 = _make_mock_test_case(title="用例1", test_type="api", priority="high", status="approved")
-        case2 = _make_mock_test_case(title="用例2", test_type="ui", priority="normal", status="approved")
+        case1 = _make_mock_test_case(
+            title="用例1", test_type="api", priority="high", status="approved"
+        )
+        case2 = _make_mock_test_case(
+            title="用例2", test_type="ui", priority="normal", status="approved"
+        )
 
-        orchestration_json = json.dumps({
-            "execution_order": [str(case1.id), str(case2.id)],
-            "node_assignments": {
-                "node_1": [str(case1.id)],
-                "node_2": [str(case2.id)],
-            },
-            "dependencies": [
-                {"case_id": str(case2.id), "depends_on": str(case1.id)},
-            ],
-            "rationale": "API 测试优先于 UI 测试",
-        })
+        orchestration_json = json.dumps(
+            {
+                "execution_order": [str(case1.id), str(case2.id)],
+                "node_assignments": {
+                    "node_1": [str(case1.id)],
+                    "node_2": [str(case2.id)],
+                },
+                "dependencies": [
+                    {"case_id": str(case2.id), "depends_on": str(case1.id)},
+                ],
+                "rationale": "API 测试优先于 UI 测试",
+            }
+        )
         llm = _make_mock_llm(orchestration_json)
         db = _make_mock_db()
         service = TestOrchestrationService(llm, db)
@@ -1356,11 +1505,13 @@ class TestTestOrchestrationService:
         # 1. get_plan → plan
         # 2. _get_plan_cases → [case1, case2]
         # 3. update(TestPlan ai_orchestration + status=active) → 结果不使用
-        db.execute = AsyncMock(side_effect=[
-            _make_scalar_one_or_none_result(plan),
-            _make_scalars_all_result([case1, case2]),
-            MagicMock(),  # update 语句结果
-        ])
+        db.execute = AsyncMock(
+            side_effect=[
+                _make_scalar_one_or_none_result(plan),
+                _make_scalars_all_result([case1, case2]),
+                MagicMock(),  # update 语句结果
+            ]
+        )
 
         result = await service.orchestrate(plan.id, node_count=2)
 
@@ -1392,10 +1543,12 @@ class TestTestOrchestrationService:
         service = TestOrchestrationService(llm, db)
 
         plan = _make_mock_plan(name="空计划", case_ids=[])
-        db.execute = AsyncMock(side_effect=[
-            _make_scalar_one_or_none_result(plan),
-            _make_scalars_all_result([]),
-        ])
+        db.execute = AsyncMock(
+            side_effect=[
+                _make_scalar_one_or_none_result(plan),
+                _make_scalars_all_result([]),
+            ]
+        )
 
         with pytest.raises(ValueError, match="无可用用例"):
             await service.orchestrate(plan.id)
@@ -1466,10 +1619,12 @@ class TestTestOrchestrationService:
         # db.execute 调用顺序：
         # 1. count → scalar_one → 2
         # 2. select → scalars().all() → [exec1, exec2]
-        db.execute = AsyncMock(side_effect=[
-            _make_scalar_result(2),
-            _make_scalars_all_result([exec1, exec2]),
-        ])
+        db.execute = AsyncMock(
+            side_effect=[
+                _make_scalar_result(2),
+                _make_scalars_all_result([exec1, exec2]),
+            ]
+        )
 
         executions, total = await service.list_executions(
             plan_id=uuid.uuid4(),
@@ -1492,10 +1647,12 @@ class TestTestOrchestrationService:
         plan1 = _make_mock_plan(name="计划1")
         plan2 = _make_mock_plan(name="计划2")
 
-        db.execute = AsyncMock(side_effect=[
-            _make_scalar_result(2),
-            _make_scalars_all_result([plan1, plan2]),
-        ])
+        db.execute = AsyncMock(
+            side_effect=[
+                _make_scalar_result(2),
+                _make_scalars_all_result([plan1, plan2]),
+            ]
+        )
 
         plans, total = await service.list_plans(uuid.uuid4(), page=1, size=20)
 
@@ -1507,9 +1664,11 @@ class TestTestOrchestrationService:
         """编排方案规范化 — dict 输入补全缺失字段。"""
         from app.services.testing.orchestration_service import TestOrchestrationService
 
-        result = TestOrchestrationService._normalize_orchestration({
-            "execution_order": ["case-1", "case-2"],
-        })
+        result = TestOrchestrationService._normalize_orchestration(
+            {
+                "execution_order": ["case-1", "case-2"],
+            }
+        )
         assert result["execution_order"] == ["case-1", "case-2"]
         assert result["node_assignments"] == {}
         assert result["dependencies"] == []
@@ -1603,7 +1762,9 @@ class TestExtractJson:
 
     def test_extract_json_from_case_generation_service(self) -> None:
         """验证 case_generation_service 中的 _extract_json 行为一致。"""
-        from app.services.testing.case_generation_service import _extract_json as _extract_json_cg
+        from app.services.testing.case_generation_service import (
+            _extract_json as _extract_json_cg,
+        )
 
         text = '```json\n{"test_cases": [{"title": "用例"}]}\n```'
         result = _extract_json_cg(text)
@@ -1611,7 +1772,9 @@ class TestExtractJson:
 
     def test_extract_json_from_orchestration_service(self) -> None:
         """验证 orchestration_service 中的 _extract_json 行为一致。"""
-        from app.services.testing.orchestration_service import _extract_json as _extract_json_orch
+        from app.services.testing.orchestration_service import (
+            _extract_json as _extract_json_orch,
+        )
 
         text = '{"execution_order": ["c1", "c2"], "rationale": "test"}'
         result = _extract_json_orch(text)

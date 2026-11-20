@@ -80,9 +80,7 @@ async def _extract_knowledge(
             }
 
 
-async def _detect_conflicts(
-    asset_id: str, tenant_id: str | None = None
-) -> dict:
+async def _detect_conflicts(asset_id: str, tenant_id: str | None = None) -> dict:
     """异步执行冲突检测 — 调用 KnowledgeCompoundingService。"""
     from app.database import task_db_session
     from app.llm.factory import get_llm_provider
@@ -368,9 +366,7 @@ try:
             }
 
     @celery_app.task(name="tasks.compounding_tasks.detect_conflicts_task")
-    def detect_conflicts_task(
-        asset_id: str, tenant_id: str | None = None
-    ) -> dict:
+    def detect_conflicts_task(asset_id: str, tenant_id: str | None = None) -> dict:
         """异步检测知识资产冲突。
 
         Args:

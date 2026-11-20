@@ -13,19 +13,16 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 from app.rag.query_rewriter import (
-    QueryRewriteResult,
     QueryRewriter,
+    QueryRewriteResult,
     QueryType,
     classify_query_type,
     get_query_rewriter,
     reset_query_rewriter,
 )
-
 
 # ======================================================================
 # 辅助函数
@@ -61,7 +58,7 @@ def _make_failing_llm():
 
     async def _chat(messages, tools=None, stream=False, **kwargs):
         raise RuntimeError("LLM unavailable")
-        yield  # noqa — 使其成为 async generator
+        yield
 
     llm.chat = _chat
     return llm
@@ -175,15 +172,19 @@ class TestQueryRewriterStrategies:
     async def test_rewrite_strips_quotes(self):
         """重写结果去除引号。"""
         llm = _make_mock_llm({"重写查询": '"公司休假政策"'})
-        rewriter = QueryRewriter(llm, enable_rewrite=True, enable_expansion=False, enable_decomposition=False, enable_hyde=False)
+        rewriter = QueryRewriter(
+            llm,
+            enable_rewrite=True,
+            enable_expansion=False,
+            enable_decomposition=False,
+            enable_hyde=False,
+        )
         result = await rewriter.rewrite("休假")
         assert result.rewritten == "公司休假政策"
 
     async def test_expansion_strategy(self):
         """查询扩展策略。"""
-        llm = _make_mock_llm({
-            "扩展词": "年假\n调休\n带薪休假\n事假\n病假"
-        })
+        llm = _make_mock_llm({"扩展词": "年假\n调休\n带薪休假\n事假\n病假"})
         rewriter = QueryRewriter(
             llm,
             enable_rewrite=False,
@@ -198,9 +199,7 @@ class TestQueryRewriterStrategies:
 
     async def test_expansion_deduplicates(self):
         """扩展词去重。"""
-        llm = _make_mock_llm({
-            "扩展词": "年假\n年假\n调休\n调休\n年假"
-        })
+        llm = _make_mock_llm({"扩展词": "年假\n年假\n调休\n调休\n年假"})
         rewriter = QueryRewriter(
             llm,
             enable_rewrite=False,
@@ -215,9 +214,7 @@ class TestQueryRewriterStrategies:
     async def test_decomposition_strategy(self):
         """查询分解策略。"""
         # 使用异步方式测试分解逻辑
-        llm = _make_mock_llm({
-            "子查询": "公司年假天数\n年假申请流程\n年假结转规则"
-        })
+        llm = _make_mock_llm({"子查询": "公司年假天数\n年假申请流程\n年假结转规则"})
         rewriter = QueryRewriter(
             llm,
             enable_rewrite=False,
@@ -231,9 +228,7 @@ class TestQueryRewriterStrategies:
 
     async def test_decomposition_filters_original(self):
         """分解结果过滤掉与原查询相同的。"""
-        llm = _make_mock_llm({
-            "子查询": "原查询\n子查询1\n子查询2"
-        })
+        llm = _make_mock_llm({"子查询": "原查询\n子查询1\n子查询2"})
         rewriter = QueryRewriter(
             llm,
             enable_rewrite=False,
@@ -262,12 +257,14 @@ class TestQueryRewriterStrategies:
 
     async def test_all_strategies_combined(self):
         """所有策略同时启用。"""
-        llm = _make_mock_llm({
-            "重写查询": "重写后的查询",
-            "扩展词": "扩展词1\n扩展词2",
-            "子查询": "子查询1\n子查询2",
-            "假设文档": "假设文档内容",
-        })
+        llm = _make_mock_llm(
+            {
+                "重写查询": "重写后的查询",
+                "扩展词": "扩展词1\n扩展词2",
+                "子查询": "子查询1\n子查询2",
+                "假设文档": "假设文档内容",
+            }
+        )
         rewriter = QueryRewriter(
             llm,
             enable_rewrite=True,
@@ -425,7 +422,7 @@ class TestQueryRewriterFailure:
             else:
                 # expansion 失败
                 raise RuntimeError("expansion failed")
-                yield  # noqa
+                yield
 
         llm.chat = _chat
         rewriter = QueryRewriter(
@@ -467,9 +464,10 @@ class TestQueryRewriterFactory:
 
     def test_returns_rewriter_when_enabled(self):
         """启用策略时返回 QueryRewriter。"""
-        with patch("app.config.get_settings") as mock_settings, patch(
-            "app.llm.factory.get_llm_provider"
-        ) as mock_llm:
+        with (
+            patch("app.config.get_settings") as mock_settings,
+            patch("app.llm.factory.get_llm_provider") as mock_llm,
+        ):
             mock_settings.return_value = MagicMock(
                 QUERY_REWRITE_ENABLED=True,
                 QUERY_EXPANSION_ENABLED=True,
@@ -483,9 +481,10 @@ class TestQueryRewriterFactory:
 
     def test_singleton(self):
         """工厂函数返回单例。"""
-        with patch("app.config.get_settings") as mock_settings, patch(
-            "app.llm.factory.get_llm_provider"
-        ) as mock_llm:
+        with (
+            patch("app.config.get_settings") as mock_settings,
+            patch("app.llm.factory.get_llm_provider") as mock_llm,
+        ):
             mock_settings.return_value = MagicMock(
                 QUERY_REWRITE_ENABLED=True,
                 QUERY_EXPANSION_ENABLED=False,
@@ -499,9 +498,10 @@ class TestQueryRewriterFactory:
 
     def test_reset_creates_new_instance(self):
         """reset 后创建新实例。"""
-        with patch("app.config.get_settings") as mock_settings, patch(
-            "app.llm.factory.get_llm_provider"
-        ) as mock_llm:
+        with (
+            patch("app.config.get_settings") as mock_settings,
+            patch("app.llm.factory.get_llm_provider") as mock_llm,
+        ):
             mock_settings.return_value = MagicMock(
                 QUERY_REWRITE_ENABLED=True,
                 QUERY_EXPANSION_ENABLED=False,
@@ -598,7 +598,9 @@ class TestClassifyQueryType:
 
     def test_multi_weak_marker_with_length(self):
         """弱标记 + 长度阈值 → MULTI。"""
-        assert classify_query_type("查报销单 BG001 状态并创建新报销单") is QueryType.MULTI
+        assert (
+            classify_query_type("查报销单 BG001 状态并创建新报销单") is QueryType.MULTI
+        )
         assert classify_query_type("报销流程和审批时效分别是多少") is QueryType.MULTI
 
     def test_multi_two_weak_markers(self):
@@ -636,12 +638,14 @@ class TestStrategyAutoRoute:
             "auto_route": True,
         }
         kwargs.update(overrides)
-        llm = _make_mock_llm({
-            "重写查询": "重写后的查询",
-            "扩展词": "扩展词1\n扩展词2",
-            "子查询": "子查询1\n子查询2",
-            "假设文档": "假设文档内容",
-        })
+        llm = _make_mock_llm(
+            {
+                "重写查询": "重写后的查询",
+                "扩展词": "扩展词1\n扩展词2",
+                "子查询": "子查询1\n子查询2",
+                "假设文档": "假设文档内容",
+            }
+        )
         return QueryRewriter(llm, **kwargs)
 
     async def test_single_routes_to_rewrite_and_expansion(self):
@@ -691,10 +695,12 @@ class TestStrategyAutoRoute:
 
     async def test_auto_route_disabled_preserves_original_behavior(self):
         """auto_route=False 时执行全部配置启用策略，query_type 为 None。"""
-        llm = _make_mock_llm({
-            "重写查询": "重写后的查询",
-            "扩展词": "扩展词1\n扩展词2",
-        })
+        llm = _make_mock_llm(
+            {
+                "重写查询": "重写后的查询",
+                "扩展词": "扩展词1\n扩展词2",
+            }
+        )
         rewriter = QueryRewriter(
             llm,
             enable_rewrite=True,
@@ -806,8 +812,11 @@ class TestOnlineFallback:
         """改写结果与原查询相同时不触发双跑。"""
         llm = _make_mock_llm({"重写查询": "原始查询"})  # 改写结果 == 原查询
         rewriter = QueryRewriter(
-            llm, enable_rewrite=True, enable_expansion=False,
-            enable_decomposition=False, enable_hyde=False,
+            llm,
+            enable_rewrite=True,
+            enable_expansion=False,
+            enable_decomposition=False,
+            enable_hyde=False,
         )
         evaluator = self._make_evaluator({})
         result = await rewriter.rewrite("原始查询", recall_evaluator=evaluator)
@@ -818,8 +827,11 @@ class TestOnlineFallback:
         """HyDE 文档召回更差时同样回退原 query。"""
         llm = _make_mock_llm({"假设文档": "语义不相关的假设文档"})
         rewriter = QueryRewriter(
-            llm, enable_rewrite=False, enable_expansion=False,
-            enable_decomposition=False, enable_hyde=True,
+            llm,
+            enable_rewrite=False,
+            enable_expansion=False,
+            enable_decomposition=False,
+            enable_hyde=True,
         )
         evaluator = self._make_evaluator({"语义不相关的假设文档": 0.05})
         result = await rewriter.rewrite("这个怎么办", recall_evaluator=evaluator)
@@ -862,9 +874,10 @@ class TestAutoRouteConfig:
     def test_factory_wires_new_settings(self):
         """工厂函数透传新配置项。"""
         reset_query_rewriter()
-        with patch("app.config.get_settings") as mock_settings, patch(
-            "app.llm.factory.get_llm_provider"
-        ) as mock_llm:
+        with (
+            patch("app.config.get_settings") as mock_settings,
+            patch("app.llm.factory.get_llm_provider") as mock_llm,
+        ):
             mock_settings.return_value = MagicMock(
                 QUERY_REWRITE_ENABLED=True,
                 QUERY_EXPANSION_ENABLED=False,
@@ -896,12 +909,14 @@ class TestDegradeMode:
 
     async def test_degrade_removes_hyde_and_decomposition(self):
         """降级开启时 hyde / decomposition 被移除。"""
-        llm = _make_mock_llm({
-            "重写查询": "重写后的查询",
-            "扩展词": "扩展词1",
-            "子查询": "子查询1",
-            "假设文档": "假设文档内容",
-        })
+        llm = _make_mock_llm(
+            {
+                "重写查询": "重写后的查询",
+                "扩展词": "扩展词1",
+                "子查询": "子查询1",
+                "假设文档": "假设文档内容",
+            }
+        )
         rewriter = QueryRewriter(
             llm,
             enable_rewrite=True,
@@ -910,9 +925,7 @@ class TestDegradeMode:
             enable_hyde=True,
             auto_route=False,
         )
-        with patch(
-            "app.config.get_settings", return_value=self._make_settings(True)
-        ):
+        with patch("app.config.get_settings", return_value=self._make_settings(True)):
             result = await rewriter.rewrite("测试查询")
         assert set(result.strategy) == {"rewrite", "expansion"}
         assert result.hyde_document is None
@@ -920,12 +933,14 @@ class TestDegradeMode:
 
     async def test_degrade_off_keeps_all_strategies(self):
         """降级关闭时全部配置策略正常执行。"""
-        llm = _make_mock_llm({
-            "重写查询": "重写后的查询",
-            "扩展词": "扩展词1",
-            "子查询": "子查询1",
-            "假设文档": "假设文档内容",
-        })
+        llm = _make_mock_llm(
+            {
+                "重写查询": "重写后的查询",
+                "扩展词": "扩展词1",
+                "子查询": "子查询1",
+                "假设文档": "假设文档内容",
+            }
+        )
         rewriter = QueryRewriter(
             llm,
             enable_rewrite=True,
@@ -934,18 +949,18 @@ class TestDegradeMode:
             enable_hyde=True,
             auto_route=False,
         )
-        with patch(
-            "app.config.get_settings", return_value=self._make_settings(False)
-        ):
+        with patch("app.config.get_settings", return_value=self._make_settings(False)):
             result = await rewriter.rewrite("测试查询")
         assert set(result.strategy) == {"rewrite", "expansion", "decomposition", "hyde"}
 
     async def test_degrade_applies_with_auto_route(self):
         """降级与自动路由叠加：路由到 hyde 但被降级移除时回退配置集。"""
-        llm = _make_mock_llm({
-            "重写查询": "重写后的查询",
-            "扩展词": "扩展词1",
-        })
+        llm = _make_mock_llm(
+            {
+                "重写查询": "重写后的查询",
+                "扩展词": "扩展词1",
+            }
+        )
         rewriter = QueryRewriter(
             llm,
             enable_rewrite=True,
@@ -954,9 +969,7 @@ class TestDegradeMode:
             enable_hyde=True,
             auto_route=True,
         )
-        with patch(
-            "app.config.get_settings", return_value=self._make_settings(True)
-        ):
+        with patch("app.config.get_settings", return_value=self._make_settings(True)):
             # 模糊查询路由 [rewrite, hyde]，hyde 被降级移除 → 只剩 rewrite
             result = await rewriter.rewrite("这个怎么办？")
         assert result.query_type == "vague"

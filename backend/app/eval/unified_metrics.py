@@ -29,7 +29,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from app.utils.logger import get_logger
@@ -94,12 +94,14 @@ class UnifiedMetrics:
     def generation_score(self) -> float | None:
         """生成层综合分（RAGAS 四项均值），无数据时返回 None。"""
         values = [
-            v for v in (
+            v
+            for v in (
                 self.faithfulness,
                 self.answer_relevancy,
                 self.context_precision,
                 self.context_recall,
-            ) if v is not None
+            )
+            if v is not None
         ]
         return sum(values) / len(values) if values else None
 
@@ -153,9 +155,7 @@ class MetricsAdapter:
         citation_accuracy = _scale_to_judge(context_precision)
         hallucination_inverse = _scale_to_judge(faithfulness)
         # completeness = context_recall * 0.7 + answer_relevancy * 0.3
-        completeness = _scale_to_judge(
-            context_recall * 0.7 + answer_relevancy * 0.3
-        )
+        completeness = _scale_to_judge(context_recall * 0.7 + answer_relevancy * 0.3)
         total_score = (citation_accuracy + completeness + hallucination_inverse) / 3.0
         return {
             "citation_accuracy": citation_accuracy,
@@ -196,7 +196,9 @@ class MetricsAdapter:
         if ragas_scores:
             result.faithfulness = _safe_float(ragas_scores.get("faithfulness"))
             result.answer_relevancy = _safe_float(ragas_scores.get("answer_relevancy"))
-            result.context_precision = _safe_float(ragas_scores.get("context_precision"))
+            result.context_precision = _safe_float(
+                ragas_scores.get("context_precision")
+            )
             result.context_recall = _safe_float(ragas_scores.get("context_recall"))
         elif judge_scores:
             mapped = MetricsAdapter.judge_to_ragas(
@@ -224,8 +226,7 @@ class MetricsAdapter:
         agg: dict[str, float] = {}
         for key in UNIFIED_KEYS:
             values = [
-                getattr(m, key) for m in metrics_list
-                if getattr(m, key) is not None
+                getattr(m, key) for m in metrics_list if getattr(m, key) is not None
             ]
             if values:
                 agg[key] = round(sum(values) / len(values), 4)

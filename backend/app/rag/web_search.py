@@ -17,7 +17,7 @@ import asyncio
 import time
 from collections import defaultdict
 from datetime import datetime, timezone
-from typing import Any, Protocol
+from typing import Protocol
 
 import httpx
 
@@ -75,6 +75,7 @@ def dedup_web_by_url(hits: list[dict]) -> list[dict]:
 # 限速 / 配额
 # ----------------------------------------------------------------------
 
+
 class TokenBucket:
     """内存令牌桶（快速路径），asyncio 友好。
 
@@ -95,9 +96,7 @@ class TokenBucket:
             while True:
                 now = time.monotonic()
                 elapsed = now - self._updated
-                self._tokens = min(
-                    self._capacity, self._tokens + elapsed * self._rate
-                )
+                self._tokens = min(self._capacity, self._tokens + elapsed * self._rate)
                 self._updated = now
                 if self._tokens >= 1.0:
                     self._tokens -= 1.0
@@ -165,14 +164,16 @@ class DailyQuota:
     def _ttl_redis() -> int:
         """距离当日 UTC 结束的秒数（约 TTL）。"""
         now = datetime.now(timezone.utc)
-        end_of_day = (now.replace(hour=0, minute=0, second=0, microsecond=0)
-                      ).replace(day=now.day + 1)
+        end_of_day = (now.replace(hour=0, minute=0, second=0, microsecond=0)).replace(
+            day=now.day + 1
+        )
         return max(int((end_of_day - now).total_seconds()), 3600)
 
 
 # ----------------------------------------------------------------------
 # Tavily 真实实现
 # ----------------------------------------------------------------------
+
 
 class TavilyProvider:
     """Tavily 搜索实现。snippet 直用返回的 content 字段。
@@ -238,12 +239,14 @@ class TavilyProvider:
         for item in data.get("results", []):
             if not item.get("url"):
                 continue
-            hits.append({
-                "title": item.get("title", ""),
-                "url": item["url"],
-                "snippet": item.get("content") or "",
-                "score": float(item.get("score", 0.0) or 0.0),
-            })
+            hits.append(
+                {
+                    "title": item.get("title", ""),
+                    "url": item["url"],
+                    "snippet": item.get("content") or "",
+                    "score": float(item.get("score", 0.0) or 0.0),
+                }
+            )
         return hits
 
 

@@ -5,17 +5,17 @@
 - engine.py _run_decision_loop 集成 — 每轮 think 前检查并压缩
 - 回归测试 — 确保短对话不触发压缩，已有功能不受影响
 """
+
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
 from app.rag.context_budget import ContextBudgetManager
-from app.rag.engine import AgenticRAGEngine, _THINK_SYSTEM_STABLE
-
+from app.rag.engine import _THINK_SYSTEM_STABLE, AgenticRAGEngine
 
 # ======================================================================
 # Mock 实现（复用 test_p1_token_optimization.py 的 Mock）
@@ -118,7 +118,9 @@ def _make_state(**overrides: Any) -> dict:
     return state
 
 
-def _make_long_messages(count: int = 10, content_size: int = 500) -> list[dict[str, Any]]:
+def _make_long_messages(
+    count: int = 10, content_size: int = 500
+) -> list[dict[str, Any]]:
     """生成足够长的消息列表以触发预算压缩。
 
     每条消息 content_size 字符，总 token ≈ count * content_size / 3.5
@@ -128,10 +130,13 @@ def _make_long_messages(count: int = 10, content_size: int = 500) -> list[dict[s
         {"role": "user", "content": "用户原始问题" * 10},
     ]
     for i in range(count):
-        messages.append({
-            "role": "user",
-            "content": f"[系统] 工具结果：这是第{i+1}轮工具调用的结果，" + "x" * content_size,
-        })
+        messages.append(
+            {
+                "role": "user",
+                "content": f"[系统] 工具结果：这是第{i+1}轮工具调用的结果，"
+                + "x" * content_size,
+            }
+        )
     return messages
 
 
@@ -473,10 +478,12 @@ class TestEngineBudgetIntegration:
         # P1-4: 接受 db / user_uuid 参数（签名需与实际方法一致）
         async def mock_tool_call(state, db=None, user_uuid=None):
             i = state["iteration"]
-            state["tool_results"].append({
-                "tool": f"search_erp_{i}",
-                "result": f"第{i}轮不同结果 " + "数据" * 200,  # ~400 chars each
-            })
+            state["tool_results"].append(
+                {
+                    "tool": f"search_erp_{i}",
+                    "result": f"第{i}轮不同结果 " + "数据" * 200,  # ~400 chars each
+                }
+            )
             yield  # 异步生成器需要 yield
 
         engine._tool_call_streaming = mock_tool_call
@@ -506,10 +513,12 @@ class TestEngineBudgetIntegration:
         llm.chat = mock_chat
 
         async def mock_tool_call(state, db=None, user_uuid=None):
-            state["tool_results"].append({
-                "tool": "search_erp",
-                "result": "大量数据 " * 200,
-            })
+            state["tool_results"].append(
+                {
+                    "tool": "search_erp",
+                    "result": "大量数据 " * 200,
+                }
+            )
             yield  # 异步生成器需要 yield
 
         engine._tool_call_streaming = mock_tool_call
@@ -543,10 +552,12 @@ class TestEngineBudgetIntegration:
 
         async def mock_tool_call(state, db=None, user_uuid=None):
             i = state["iteration"]
-            state["tool_results"].append({
-                "tool": f"search_erp_{i}",
-                "result": f"第{i}轮不同结果 " + "数据" * 200,
-            })
+            state["tool_results"].append(
+                {
+                    "tool": f"search_erp_{i}",
+                    "result": f"第{i}轮不同结果 " + "数据" * 200,
+                }
+            )
             yield  # 异步生成器需要 yield
 
         engine._tool_call_streaming = mock_tool_call
@@ -555,8 +566,7 @@ class TestEngineBudgetIntegration:
 
         # 应存在摘要消息
         summary_msgs = [
-            m for m in state["messages"]
-            if "早期上下文摘要" in m.get("content", "")
+            m for m in state["messages"] if "早期上下文摘要" in m.get("content", "")
         ]
         assert len(summary_msgs) >= 1
 

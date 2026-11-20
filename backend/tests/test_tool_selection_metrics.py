@@ -101,9 +101,7 @@ class TestComputeToolSelectionMetrics:
         """应调未调 → recall 不足。"""
         from app.eval.tool_selection_metrics import compute_tool_selection_metrics
 
-        r = compute_tool_selection_metrics(
-            [], ["knowledge_search"], None
-        )
+        r = compute_tool_selection_metrics([], ["knowledge_search"], None)
         assert r is not None
         assert r["recall"] == 0.0
         assert r["precision"] == 0.0
@@ -232,8 +230,12 @@ class TestEvalCaseToolFields:
         """expected_tools 变更应改变数据集指纹。"""
         from app.eval.dataset import EvalCase, EvalDataset
 
-        ds1 = EvalDataset([EvalCase(query="q", expected_doc_ids=[], expected_tools=["a"])])
-        ds2 = EvalDataset([EvalCase(query="q", expected_doc_ids=[], expected_tools=["b"])])
+        ds1 = EvalDataset(
+            [EvalCase(query="q", expected_doc_ids=[], expected_tools=["a"])]
+        )
+        ds2 = EvalDataset(
+            [EvalCase(query="q", expected_doc_ids=[], expected_tools=["b"])]
+        )
         assert ds1.fingerprint() != ds2.fingerprint()
 
 
@@ -324,9 +326,7 @@ class TestRunnerToolSelectionIntegration:
         from app.eval.dataset import EvalCase
         from app.eval.runner import EvalRunner
 
-        engine = _make_engine_with_tool_spans(
-            ["knowledge_search", "document_create"]
-        )
+        engine = _make_engine_with_tool_spans(["knowledge_search", "document_create"])
         runner = EvalRunner(engine=engine)
         case = EvalCase(
             query="查记录",

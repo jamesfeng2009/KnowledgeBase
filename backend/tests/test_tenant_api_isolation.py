@@ -21,7 +21,6 @@ import os
 import uuid
 
 import httpx
-import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 from httpx import ASGITransport
@@ -37,7 +36,6 @@ from app.models.billing import Tenant
 from app.models.user import User
 from app.services.tenant_service import TenantService
 
-
 # ==================================================================
 # Fixtures
 # ==================================================================
@@ -50,9 +48,7 @@ async def db_session():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
-    async_session = sessionmaker(
-        engine, class_=AsyncSession, expire_on_commit=False
-    )
+    async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     session = async_session()
     try:
         yield session
@@ -128,9 +124,7 @@ def _make_user(tenant_id, role: str = "admin") -> User:
 class TestGetTenantModulesIsolation:
     """GET /tenants/modules 必须返回当前租户的配置。"""
 
-    async def test_returns_current_tenant_config(
-        self, db_session, tenant_b, tenant_a
-    ):
+    async def test_returns_current_tenant_config(self, db_session, tenant_b, tenant_a):
         """租户 B 先创建（成为"第一条活跃租户"），用户属于租户 A。
 
         修复前：tenant_id=None 命中租户 B，用户看到 B 的配置。
@@ -209,9 +203,7 @@ class TestUpdateTenantModulesIsolation:
 
         assert resp.status_code == 403
 
-    async def test_invalid_module_id_returns_400(
-        self, db_session, tenant_a
-    ):
+    async def test_invalid_module_id_returns_400(self, db_session, tenant_a):
         """传入未注册模块 ID 返回 400。"""
         user = _make_user(tenant_a.id, role="admin")
         app = _build_app(db_session, user)
@@ -264,9 +256,7 @@ class TestToggleTenantModuleIsolation:
             "multimodal",
         ]
 
-    async def test_disable_module_for_current_tenant(
-        self, db_session, tenant_b
-    ):
+    async def test_disable_module_for_current_tenant(self, db_session, tenant_b):
         """租户 B 用户关闭 multimodal，只影响租户 B 自身。"""
         user = _make_user(tenant_b.id, role="admin")
         app = _build_app(db_session, user)
@@ -285,9 +275,7 @@ class TestToggleTenantModuleIsolation:
         await db_session.refresh(tenant_b)
         assert "multimodal" not in tenant_b.settings["enabled_modules"]
 
-    async def test_toggle_basic_module_ignored(
-        self, db_session, tenant_a
-    ):
+    async def test_toggle_basic_module_ignored(self, db_session, tenant_a):
         """基础模块不可关闭（静默忽略）。"""
         user = _make_user(tenant_a.id, role="admin")
         app = _build_app(db_session, user)
@@ -313,25 +301,17 @@ class TestToggleTenantModuleIsolation:
 class TestServiceTenantPropagation:
     """验证 API 修复后 Service 层确实收到了正确的 tenant_id。"""
 
-    async def test_service_reads_correct_tenant(
-        self, db_session, tenant_b, tenant_a
-    ):
+    async def test_service_reads_correct_tenant(self, db_session, tenant_b, tenant_a):
         """直接以 tenant_a.id 调用 Service，读取结果属于租户 A。"""
         service = TenantService(db_session)
-        modules = await service.list_modules_with_status(
-            tenant_id=tenant_a.id
-        )
+        modules = await service.list_modules_with_status(tenant_id=tenant_a.id)
         multimodal = next(m for m in modules if m["id"] == "multimodal")
         # 租户 A 是 pro 套餐，不含 multimodal
         assert multimodal["enabled"] is False
 
         # 对照：租户 B（settings 显式含 multimodal）
-        modules_b = await service.list_modules_with_status(
-            tenant_id=tenant_b.id
-        )
-        multimodal_b = next(
-            m for m in modules_b if m["id"] == "multimodal"
-        )
+        modules_b = await service.list_modules_with_status(tenant_id=tenant_b.id)
+        multimodal_b = next(m for m in modules_b if m["id"] == "multimodal")
         assert multimodal_b["enabled"] is True
 
 
@@ -348,23 +328,17 @@ class TestServiceTenantPropagation:
 class TestJsonbWritePersistence:
     """对已有 settings 的租户执行写操作，必须真实持久化到 DB。"""
 
-    async def test_toggle_module_persists_to_db(
-        self, db_session, tenant_b
-    ):
+    async def test_toggle_module_persists_to_db(self, db_session, tenant_b):
         """关闭模块后 refresh 读到的必须是新值（Service 层修复验证）。"""
         service = TenantService(db_session)
-        result = await service.toggle_module(
-            "multimodal", False, tenant_id=tenant_b.id
-        )
+        result = await service.toggle_module("multimodal", False, tenant_id=tenant_b.id)
         assert "multimodal" not in result
         await db_session.commit()
 
         await db_session.refresh(tenant_b)
         assert "multimodal" not in tenant_b.settings["enabled_modules"]
 
-    async def test_update_llm_config_persists_to_db(
-        self, db_session, tenant_b
-    ):
+    async def test_update_llm_config_persists_to_db(self, db_session, tenant_b):
         """PUT /settings/llm 修改 model 后必须落库。"""
         user = _make_user(tenant_b.id, role="admin")
         app = _build_app(db_session, user)
@@ -382,16 +356,11 @@ class TestJsonbWritePersistence:
 
         await db_session.commit()
         await db_session.refresh(tenant_b)
-        assert (
-            tenant_b.settings["llm_config"]["model"]
-            == "Qwen/Qwen3-72B-Instruct"
-        )
+        assert tenant_b.settings["llm_config"]["model"] == "Qwen/Qwen3-72B-Instruct"
         # 原 enabled_modules 键必须保留（不破坏其他配置）
         assert "enabled_modules" in tenant_b.settings
 
-    async def test_update_system_config_persists_to_db(
-        self, db_session, tenant_b
-    ):
+    async def test_update_system_config_persists_to_db(self, db_session, tenant_b):
         """PUT /settings/system 修改 site_name 后必须落库。"""
         user = _make_user(tenant_b.id, role="admin")
         app = _build_app(db_session, user)
@@ -409,10 +378,7 @@ class TestJsonbWritePersistence:
 
         await db_session.commit()
         await db_session.refresh(tenant_b)
-        assert (
-            tenant_b.settings["system_config"]["site_name"]
-            == "企业知识大脑-测试"
-        )
+        assert tenant_b.settings["system_config"]["site_name"] == "企业知识大脑-测试"
         # 原 enabled_modules 键必须保留
         assert tenant_b.settings["enabled_modules"] == [
             "knowledge_base",

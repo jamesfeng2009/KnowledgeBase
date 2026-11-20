@@ -29,7 +29,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, SoftDeleteMixin, TimestampMixin, UUIDMixin
 
-
 # ======================================================================
 # 知识资产 — 4 类知识资产的统一存储
 # ======================================================================
@@ -64,11 +63,12 @@ class KnowledgeAsset(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     )
     # 关联测试项目
     project_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("test_projects.id"), nullable=True, comment="测试项目 ID"
+        UUID(as_uuid=True),
+        ForeignKey("test_projects.id"),
+        nullable=True,
+        comment="测试项目 ID",
     )
-    title: Mapped[str] = mapped_column(
-        String(500), nullable=False, comment="资产标题"
-    )
+    title: Mapped[str] = mapped_column(String(500), nullable=False, comment="资产标题")
     content: Mapped[str] = mapped_column(
         Text, nullable=False, comment="知识内容（自然语言描述）"
     )
@@ -77,9 +77,7 @@ class KnowledgeAsset(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
         Text, nullable=True, comment="AI 生成的摘要"
     )
     # AI 提取的标签
-    tags: Mapped[list | None] = mapped_column(
-        JSONB, nullable=True, comment="标签列表"
-    )
+    tags: Mapped[list | None] = mapped_column(JSONB, nullable=True, comment="标签列表")
     # 沉淀为知识库文档时的 Document ID（defect_experience / regression_sop 类型）
     doc_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), nullable=True, comment="沉淀的文档 ID（知识库 Document）"
@@ -93,7 +91,9 @@ class KnowledgeAsset(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     )
     # Graphiti 实体 ID（verification_baseline 类型）
     graphiti_entity_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), nullable=True, comment="Graphiti 实体 ID（verification_baseline 类型）"
+        UUID(as_uuid=True),
+        nullable=True,
+        comment="Graphiti 实体 ID（verification_baseline 类型）",
     )
     # AI 置信度（0.0 ~ 1.0）
     confidence_score: Mapped[float | None] = mapped_column(
@@ -101,7 +101,10 @@ class KnowledgeAsset(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     )
     # 资产状态: draft / active / deprecated / conflict
     status: Mapped[str] = mapped_column(
-        String(20), default="draft", index=True, comment="状态: draft/active/deprecated/conflict"
+        String(20),
+        default="draft",
+        index=True,
+        comment="状态: draft/active/deprecated/conflict",
     )
     # 冲突关联的资产 ID 列表
     conflict_with: Mapped[list | None] = mapped_column(
@@ -109,7 +112,10 @@ class KnowledgeAsset(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     )
     # 关联的回流任务 ID
     compounding_task_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("compounding_tasks.id"), nullable=True, comment="回流任务 ID"
+        UUID(as_uuid=True),
+        ForeignKey("compounding_tasks.id"),
+        nullable=True,
+        comment="回流任务 ID",
     )
     # 多租户隔离
     tenant_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -117,8 +123,10 @@ class KnowledgeAsset(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     )
 
     # 关系
-    compounding_task: Mapped["CompoundingTask | None"] = relationship(back_populates="assets")
-    conflicts: Mapped[list["KnowledgeConflict"]] = relationship(
+    compounding_task: Mapped[CompoundingTask | None] = relationship(
+        back_populates="assets"
+    )
+    conflicts: Mapped[list[KnowledgeConflict]] = relationship(
         back_populates="new_asset",
         foreign_keys="KnowledgeConflict.new_asset_id",
         cascade="all, delete-orphan",
@@ -148,11 +156,17 @@ class CompoundingTask(UUIDMixin, TimestampMixin, Base):
 
     # 关联的执行记录（extraction 类型任务）
     execution_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("test_executions.id"), nullable=True, comment="执行记录 ID"
+        UUID(as_uuid=True),
+        ForeignKey("test_executions.id"),
+        nullable=True,
+        comment="执行记录 ID",
     )
     # 关联测试项目
     project_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("test_projects.id"), nullable=True, comment="测试项目 ID"
+        UUID(as_uuid=True),
+        ForeignKey("test_projects.id"),
+        nullable=True,
+        comment="测试项目 ID",
     )
     # 任务类型: extraction / conflict_detection / reuse_injection
     task_type: Mapped[str] = mapped_column(
@@ -160,7 +174,10 @@ class CompoundingTask(UUIDMixin, TimestampMixin, Base):
     )
     # 状态: pending / running / completed / failed / skipped
     status: Mapped[str] = mapped_column(
-        String(20), default="pending", index=True, comment="状态: pending/running/completed/failed/skipped"
+        String(20),
+        default="pending",
+        index=True,
+        comment="状态: pending/running/completed/failed/skipped",
     )
     # 触发来源: execution_completed / manual / scheduled
     trigger_source: Mapped[str] = mapped_column(
@@ -194,7 +211,7 @@ class CompoundingTask(UUIDMixin, TimestampMixin, Base):
     )
 
     # 关系
-    assets: Mapped[list["KnowledgeAsset"]] = relationship(
+    assets: Mapped[list[KnowledgeAsset]] = relationship(
         back_populates="compounding_task", cascade="all, delete-orphan"
     )
 
@@ -223,7 +240,10 @@ class KnowledgeConflict(UUIDMixin, TimestampMixin, Base):
 
     # 新资产 ID
     new_asset_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("knowledge_assets.id"), nullable=False, comment="新资产 ID"
+        UUID(as_uuid=True),
+        ForeignKey("knowledge_assets.id"),
+        nullable=False,
+        comment="新资产 ID",
     )
     # 已有资产 ID（不设外键，因为可能引用已软删除的资产）
     existing_asset_id: Mapped[uuid.UUID] = mapped_column(
@@ -258,6 +278,6 @@ class KnowledgeConflict(UUIDMixin, TimestampMixin, Base):
     )
 
     # 关系
-    new_asset: Mapped["KnowledgeAsset"] = relationship(
+    new_asset: Mapped[KnowledgeAsset] = relationship(
         back_populates="conflicts", foreign_keys=[new_asset_id]
     )

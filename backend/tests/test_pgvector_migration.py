@@ -5,6 +5,7 @@
 2. JSONB → vector 回填保留方括号，并按维度筛选，避免整条 UPDATE 中断。
 3. 迁移包含创建 vector 列、回填数据、创建索引等必要步骤。
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -43,7 +44,7 @@ class TestPgvectorMigration:
         assert Settings.model_fields["DASHSCOPE_EMBED_DIM"].default == 1024
 
     def test_vector_dim_used_in_add_column(self, migration_content: str) -> None:
-        assert 'vector({VECTOR_DIM})' in migration_content
+        assert "vector({VECTOR_DIM})" in migration_content
 
     def test_jsonb_backfill_keeps_vector_brackets(self, migration_content: str) -> None:
         """回填必须保留方括号。

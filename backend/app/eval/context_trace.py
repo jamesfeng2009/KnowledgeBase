@@ -102,12 +102,8 @@ class ContextTraceRecord:
                 _merge_list(record.context_sources, [source])
             _merge_list(record.context_sources, metadata.get("context_sources"))
 
-            _merge_list(
-                record.context_included_refs, metadata.get("included_refs")
-            )
-            _merge_list(
-                record.context_excluded_refs, metadata.get("excluded_refs")
-            )
+            _merge_list(record.context_included_refs, metadata.get("included_refs"))
+            _merge_list(record.context_excluded_refs, metadata.get("excluded_refs"))
 
             trust = metadata.get("trust_levels")
             if isinstance(trust, dict):
@@ -126,9 +122,9 @@ class ContextTraceRecord:
             if isinstance(token_cost, dict):
                 for k, v in token_cost.items():
                     try:
-                        record.token_cost[str(k)] = (
-                            record.token_cost.get(str(k), 0) + int(v)
-                        )
+                        record.token_cost[str(k)] = record.token_cost.get(
+                            str(k), 0
+                        ) + int(v)
                     except (TypeError, ValueError):
                         continue
 

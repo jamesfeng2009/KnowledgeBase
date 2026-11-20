@@ -27,7 +27,6 @@ from app.agents.planner import (
     map_task_type_to_action,
 )
 
-
 # ======================================================================
 # Mock LLM
 # ======================================================================
@@ -59,14 +58,29 @@ class ErrorLLM:
 
     async def chat(self, *args: Any, **kwargs: Any) -> AsyncIterator[str]:
         raise RuntimeError("LLM unavailable")
-        yield  # noqa: E701
+        yield
 
 
 def _sample_plan() -> list[dict[str, Any]]:
     return [
-        {"step_id": 1, "action": "retrieve", "description": "检索文档", "status": STEP_PENDING},
-        {"step_id": 2, "action": "tool_call", "description": "查询工单", "status": STEP_PENDING},
-        {"step_id": 3, "action": "generate", "description": "生成答案", "status": STEP_PENDING},
+        {
+            "step_id": 1,
+            "action": "retrieve",
+            "description": "检索文档",
+            "status": STEP_PENDING,
+        },
+        {
+            "step_id": 2,
+            "action": "tool_call",
+            "description": "查询工单",
+            "status": STEP_PENDING,
+        },
+        {
+            "step_id": 3,
+            "action": "generate",
+            "description": "生成答案",
+            "status": STEP_PENDING,
+        },
     ]
 
 
@@ -80,11 +94,13 @@ class TestBuildInitialPlan:
 
     @pytest.mark.asyncio
     async def test_parse_llm_plan(self) -> None:
-        llm = QueueLLM([
-            '{"steps": [{"action": "retrieve", "description": "检索政策"},'
-            ' {"action": "generate", "description": "生成答案"}],'
-            ' "criteria": ["答案应明确报销流程", "答案应基于政策文档"]}'
-        ])
+        llm = QueueLLM(
+            [
+                '{"steps": [{"action": "retrieve", "description": "检索政策"},'
+                ' {"action": "generate", "description": "生成答案"}],'
+                ' "criteria": ["答案应明确报销流程", "答案应基于政策文档"]}'
+            ]
+        )
         planner = PlanManager(llm)
 
         result = await planner.build_initial_plan("报销政策是什么")
@@ -99,11 +115,13 @@ class TestBuildInitialPlan:
 
     @pytest.mark.asyncio
     async def test_criteria_parsed(self) -> None:
-        llm = QueueLLM([
-            '{"steps": [{"action": "retrieve", "description": "检索"},'
-            ' {"action": "generate", "description": "生成"}],'
-            ' "criteria": ["答案应明确报销流程", "答案应基于政策文档"]}'
-        ])
+        llm = QueueLLM(
+            [
+                '{"steps": [{"action": "retrieve", "description": "检索"},'
+                ' {"action": "generate", "description": "生成"}],'
+                ' "criteria": ["答案应明确报销流程", "答案应基于政策文档"]}'
+            ]
+        )
         planner = PlanManager(llm)
 
         result = await planner.build_initial_plan("q")
@@ -113,10 +131,12 @@ class TestBuildInitialPlan:
     @pytest.mark.asyncio
     async def test_criteria_empty_when_missing(self) -> None:
         """LLM 未产出 criteria 时返回空列表（不阻断计划）。"""
-        llm = QueueLLM([
-            '{"steps": [{"action": "retrieve", "description": "检索"},'
-            ' {"action": "generate", "description": "生成"}]}'
-        ])
+        llm = QueueLLM(
+            [
+                '{"steps": [{"action": "retrieve", "description": "检索"},'
+                ' {"action": "generate", "description": "生成"}]}'
+            ]
+        )
         planner = PlanManager(llm)
 
         result = await planner.build_initial_plan("q")
@@ -125,12 +145,14 @@ class TestBuildInitialPlan:
 
     @pytest.mark.asyncio
     async def test_invalid_actions_filtered(self) -> None:
-        llm = QueueLLM([
-            '{"steps": [{"action": "retrieve", "description": "检索"},'
-            ' {"action": "hack", "description": "非法动作"},'
-            ' {"action": "generate", "description": "生成"}],'
-            ' "criteria": ["标准1"]}'
-        ])
+        llm = QueueLLM(
+            [
+                '{"steps": [{"action": "retrieve", "description": "检索"},'
+                ' {"action": "hack", "description": "非法动作"},'
+                ' {"action": "generate", "description": "生成"}],'
+                ' "criteria": ["标准1"]}'
+            ]
+        )
         planner = PlanManager(llm)
 
         result = await planner.build_initial_plan("q")
@@ -139,11 +161,13 @@ class TestBuildInitialPlan:
 
     @pytest.mark.asyncio
     async def test_markdown_wrapped_json(self) -> None:
-        llm = QueueLLM([
-            '```json\n{"steps": [{"action": "retrieve", "description": "检索"},'
-            ' {"action": "generate", "description": "生成"}],'
-            ' "criteria": ["标准1"]}\n```'
-        ])
+        llm = QueueLLM(
+            [
+                '```json\n{"steps": [{"action": "retrieve", "description": "检索"},'
+                ' {"action": "generate", "description": "生成"}],'
+                ' "criteria": ["标准1"]}\n```'
+            ]
+        )
         planner = PlanManager(llm)
 
         result = await planner.build_initial_plan("q")
@@ -271,10 +295,12 @@ class TestReplanRemaining:
         plan = _sample_plan()
         PlanManager.mark_action_done(plan, "retrieve")
 
-        llm = QueueLLM([
-            '[{"action": "tool_call", "description": "改查实时系统"},'
-            ' {"action": "generate", "description": "生成答案"}]'
-        ])
+        llm = QueueLLM(
+            [
+                '[{"action": "tool_call", "description": "改查实时系统"},'
+                ' {"action": "generate", "description": "生成答案"}]'
+            ]
+        )
         planner = PlanManager(llm)
 
         new_plan = await planner.replan_remaining("q", plan, "检索为空")
@@ -441,8 +467,18 @@ class TestEnginePlanWiring:
         plan = _sample_plan()
         PlanManager.mark_action_done(plan, "retrieve")
         new_plan = plan[:1] + [
-            {"step_id": 2, "action": "tool_call", "description": "改查系统", "status": STEP_PENDING},
-            {"step_id": 3, "action": "generate", "description": "生成", "status": STEP_PENDING},
+            {
+                "step_id": 2,
+                "action": "tool_call",
+                "description": "改查系统",
+                "status": STEP_PENDING,
+            },
+            {
+                "step_id": 3,
+                "action": "generate",
+                "description": "生成",
+                "status": STEP_PENDING,
+            },
         ]
         planner = AsyncMock()
         planner.max_replans = 2

@@ -25,9 +25,7 @@ def _run_async(coro):
         loop.close()
 
 
-async def _process_intelligence(
-    doc_id: str, tenant_id: str | None = None
-) -> dict:
+async def _process_intelligence(doc_id: str, tenant_id: str | None = None) -> dict:
     """异步执行文档智能处理。"""
     from app.database import task_db_session
     from app.llm.factory import get_llm_provider
@@ -114,16 +112,14 @@ async def _backfill_constraints(
 
 # 延迟导入 celery_app，避免循环依赖
 try:
-    from celery_app import celery_app
     from app.utils.retry import make_celery_retry_kwargs
+    from celery_app import celery_app
 
     @celery_app.task(
         name="tasks.intelligence_tasks.process_intelligence",
         **make_celery_retry_kwargs(),
     )
-    def process_intelligence(
-        doc_id: str, tenant_id: str | None = None
-    ) -> dict:
+    def process_intelligence(doc_id: str, tenant_id: str | None = None) -> dict:
         """文档入库后自动执行智能处理。
 
         执行五项自动化：

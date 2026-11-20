@@ -8,6 +8,7 @@
 遵循单一职责：本模块仅做 HTTP 路由与请求转发，
 具体企业系统对接逻辑由各自适配器实现（此处为预留接口）。
 """
+
 from __future__ import annotations
 
 from typing import Any

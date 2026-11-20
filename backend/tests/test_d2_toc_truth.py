@@ -97,7 +97,11 @@ class TestPdfTocTruth:
 
         path = _make_pdf(
             tmp_path,
-            [f"第一章 概述\n{_P1_BODY}", f"1.1 背景\n{_P2_BODY}", f"第二章 设计\n{_P3_BODY}"],
+            [
+                f"第一章 概述\n{_P1_BODY}",
+                f"1.1 背景\n{_P2_BODY}",
+                f"第二章 设计\n{_P3_BODY}",
+            ],
             toc=[[1, "第一章 概述", 1], [2, "1.1 背景", 2], [1, "第二章 设计", 3]],
         )
         out = await PDFParser().parse(path)

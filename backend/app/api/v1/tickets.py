@@ -45,7 +45,9 @@ def _service(request: Request, db: AsyncSession) -> TicketService:
 @router.get("", response_model=ApiResponse[PageResponse[TicketResponse]])
 async def list_tickets(
     request: Request,
-    status_filter: str | None = Query(default=None, alias="status", description="状态过滤"),
+    status_filter: str | None = Query(
+        default=None, alias="status", description="状态过滤"
+    ),
     category: str | None = Query(default=None, description="分类过滤"),
     mine: bool = Query(default=False, description="只看我提交的工单"),
     page: int = Query(default=1, ge=1),
@@ -140,7 +142,9 @@ async def update_ticket(
             ticket_id, **body.model_dump(exclude_unset=True)
         )
     except InvalidTransitionError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
     except ValueError as exc:
         # Service 用 ValueError 表示"不存在"；显式映射成 404，
         # 不依赖 app.main 的全局处理器（子路由单独挂载时也要正确）
@@ -167,7 +171,9 @@ async def resolve_ticket_by_ai(
     try:
         ticket = await service.resolve_by_ai(ticket_id, ai_answer, ai_solution)
     except InvalidTransitionError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     await db.commit()

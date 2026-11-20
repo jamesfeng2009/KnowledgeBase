@@ -118,9 +118,7 @@ try:
             "evolution.task.start",
             extra={"dataset": dataset, "weak_pool": weak_pool, "target": target},
         )
-        return _run_async(
-            _evolve_generate_base(dataset, weak_pool, target, run_dir)
-        )
+        return _run_async(_evolve_generate_base(dataset, weak_pool, target, run_dir))
 
 except ImportError:  # pragma: no cover - 开发环境无 celery_app
     logger.warning("evolution.celery_unavailable")

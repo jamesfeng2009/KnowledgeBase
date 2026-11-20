@@ -8,6 +8,7 @@
 - test_search — 混合搜索（覆盖 SearchService mock）；
 - test_documents_crud — 文档详情查询（覆盖 KnowledgeService mock）。
 """
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -20,7 +21,6 @@ import pytest
 import pytest_asyncio
 
 from app.utils.pagination import PageResult
-
 
 # ======================================================================
 # Fixtures
@@ -147,14 +147,10 @@ class TestKnowledgeList:
     """知识库列表测试。"""
 
     @pytest.mark.asyncio
-    async def test_knowledge_list(
-        self, auth_client: httpx.AsyncClient
-    ) -> None:
+    async def test_knowledge_list(self, auth_client: httpx.AsyncClient) -> None:
         """GET /api/v1/knowledge 应返回知识库分页列表。"""
         mock_kb = _make_mock_kb()
-        mock_result = PageResult(
-            items=[mock_kb], total=1, page=1, size=20, pages=1
-        )
+        mock_result = PageResult(items=[mock_kb], total=1, page=1, size=20, pages=1)
 
         with patch("app.api.v1.knowledge.KnowledgeService") as mock_cls:
             mock_service = mock_cls.return_value
@@ -173,9 +169,7 @@ class TestKnowledgeList:
         self, auth_client: httpx.AsyncClient
     ) -> None:
         """分页参数应正确传递给 service。"""
-        mock_result = PageResult(
-            items=[], total=0, page=2, size=10, pages=0
-        )
+        mock_result = PageResult(items=[], total=0, page=2, size=10, pages=0)
 
         with patch("app.api.v1.knowledge.KnowledgeService") as mock_cls:
             mock_service = mock_cls.return_value
@@ -194,9 +188,7 @@ class TestChatStream:
     """SSE 流式对话测试。"""
 
     @pytest.mark.asyncio
-    async def test_chat_stream(
-        self, auth_client: httpx.AsyncClient
-    ) -> None:
+    async def test_chat_stream(self, auth_client: httpx.AsyncClient) -> None:
         """POST /api/v1/chat/stream 应返回 SSE 流。"""
 
         class _FakeChatService:
@@ -218,6 +210,7 @@ class TestChatStream:
             async def stream_chat(self, prepared, db=None):
                 yield "你好"
                 from app.utils.sse import SSEEvent, SSEEventType
+
                 yield SSEEvent(data={}, event=SSEEventType.DONE)
 
         with patch("app.api.v1.chat.ChatService", return_value=_FakeChatService()):
@@ -237,9 +230,7 @@ class TestSearch:
     """搜索端点测试。"""
 
     @pytest.mark.asyncio
-    async def test_search(
-        self, auth_client: httpx.AsyncClient
-    ) -> None:
+    async def test_search(self, auth_client: httpx.AsyncClient) -> None:
         """GET /api/v1/search?q=... 应返回搜索结果。"""
         doc_id = uuid4()
         mock_result = {
@@ -271,9 +262,7 @@ class TestSearch:
         assert data["data"]["results"][0]["title"] == "报销流程指南"
 
     @pytest.mark.asyncio
-    async def test_search_empty_results(
-        self, auth_client: httpx.AsyncClient
-    ) -> None:
+    async def test_search_empty_results(self, auth_client: httpx.AsyncClient) -> None:
         """无匹配结果时返回空列表。"""
         mock_result = {"results": [], "total": 0, "query": "不存在的词"}
 
@@ -295,9 +284,7 @@ class TestDocumentsCrud:
     """文档 CRUD 测试。"""
 
     @pytest.mark.asyncio
-    async def test_documents_crud(
-        self, auth_client: httpx.AsyncClient
-    ) -> None:
+    async def test_documents_crud(self, auth_client: httpx.AsyncClient) -> None:
         """GET /api/v1/documents/{doc_id} 应返回文档详情。"""
         mock_doc = _make_mock_doc()
 
@@ -316,9 +303,7 @@ class TestDocumentsCrud:
         assert data["data"]["doc_type"] == "md"
 
     @pytest.mark.asyncio
-    async def test_document_not_found(
-        self, auth_client: httpx.AsyncClient
-    ) -> None:
+    async def test_document_not_found(self, auth_client: httpx.AsyncClient) -> None:
         """文档不存在时返回 404。"""
         doc_id = uuid4()
 

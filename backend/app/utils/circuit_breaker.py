@@ -60,9 +60,10 @@ import functools
 import threading
 import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, TypeVar
+from typing import Any, TypeVar
 
 from app.config import get_settings
 from app.utils.logger import get_logger
@@ -75,8 +76,8 @@ F = TypeVar("F", bound=Callable[..., Any])
 class CircuitState(str, Enum):
     """熔断器三态。"""
 
-    CLOSED = "closed"      # 正常放行
-    OPEN = "open"          # 熔断中，快速失败
+    CLOSED = "closed"  # 正常放行
+    OPEN = "open"  # 熔断中，快速失败
     HALF_OPEN = "half_open"  # 半开，允许探测
 
 
@@ -366,6 +367,7 @@ def reset_all_circuit_breakers() -> None:
 # 装饰器 — 声明式熔断保护
 # ------------------------------------------------------------------
 
+
 def circuit_call(
     name: str,
     failure_threshold: int | None = None,
@@ -398,6 +400,7 @@ def circuit_call(
 
     def decorator(fn: F) -> F:
         if asyncio.iscoroutinefunction(fn):
+
             @functools.wraps(fn)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
                 cb = get_circuit_breaker(name)
@@ -406,6 +409,7 @@ def circuit_call(
 
             return async_wrapper  # type: ignore[return-value]
         else:
+
             @functools.wraps(fn)
             def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
                 cb = get_circuit_breaker(name)

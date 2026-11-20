@@ -128,9 +128,7 @@ async def update_feedback_status(
     """更新反馈状态。"""
     tenant_id = getattr(request.state, "tenant_id", None)
     service = FeedbackService(db, user, tenant_id=tenant_id)
-    feedback = await service.update_feedback_status(
-        feedback_id, body.status.value
-    )
+    feedback = await service.update_feedback_status(feedback_id, body.status.value)
     return ApiResponse(
         code=0,
         data=FeedbackResponse.model_validate(feedback),

@@ -16,6 +16,7 @@ P1 工具分层设计（常驻工具 vs 长尾工具）：
       仅 Action Agent 可用，QA Agent 只读不写。
     - 随工具增长，可进一步按 category 做细粒度分组。
 """
+
 from __future__ import annotations
 
 import json
@@ -29,6 +30,7 @@ logger = get_logger(__name__)
 # CrewAI BaseTool 延迟导入
 try:
     from crewai.tools import BaseTool as CrewBaseTool
+
     CREWAI_AVAILABLE = True
 except ImportError:
     CrewBaseTool = object  # 降级为 object 基类

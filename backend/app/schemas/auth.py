@@ -39,9 +39,7 @@ class UserCreate(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    email: str = Field(
-        ..., pattern=_EMAIL_PATTERN, max_length=255, description="邮箱"
-    )
+    email: str = Field(..., pattern=_EMAIL_PATTERN, max_length=255, description="邮箱")
     password: str = Field(
         ...,
         min_length=8,

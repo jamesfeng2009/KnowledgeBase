@@ -21,8 +21,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.modules import (
     BASIC_MODULE_IDS,
     MODULE_IDS,
-    PLAN_DEFAULTS,
     MODULE_REGISTRY,
+    PLAN_DEFAULTS,
     merge_with_basics,
 )
 from app.models.billing import Tenant
@@ -38,9 +38,7 @@ class TenantService:
     # 租户查询
     # ------------------------------------------------------------------
 
-    async def get_tenant(
-        self, tenant_id: uuid.UUID | None = None
-    ) -> Tenant | None:
+    async def get_tenant(self, tenant_id: uuid.UUID | None = None) -> Tenant | None:
         """获取租户实体。
 
         Args:
@@ -56,11 +54,7 @@ class TenantService:
                 Tenant.deleted_at.is_(None),
             )
         else:
-            stmt = (
-                select(Tenant)
-                .where(Tenant.deleted_at.is_(None))
-                .limit(1)
-            )
+            stmt = select(Tenant).where(Tenant.deleted_at.is_(None)).limit(1)
         result = await self._db.execute(stmt)
         return result.scalars().first()
 
@@ -214,13 +208,9 @@ class TenantService:
             else:
                 current_set.discard(module_id)
 
-        return await self.update_enabled_modules(
-            sorted(current_set), tenant_id
-        )
+        return await self.update_enabled_modules(sorted(current_set), tenant_id)
 
-    async def get_parse_config(
-        self, tenant_id: uuid.UUID | None = None
-    ) -> dict:
+    async def get_parse_config(self, tenant_id: uuid.UUID | None = None) -> dict:
         """D7: 读取租户解析成本开关覆盖（settings.parse_config JSONB）。
 
         未配置/租户不存在返回空 dict — 调用方回落全局 env 缺省值。

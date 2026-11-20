@@ -6,6 +6,7 @@
     - 翻译查询：命中 / 缺失回退 en / 双缺失返回原始 key；
     - API 路由：/i18n/locales 与 /i18n/{locale}/messages 注册。
 """
+
 from __future__ import annotations
 
 import json
@@ -29,7 +30,10 @@ class TestLocaleResources:
     def test_resource_exists_and_valid(self, locale: str) -> None:
         path = (
             Path(__file__).resolve().parent.parent
-            / "app" / "i18n" / "locales" / f"{locale}.json"
+            / "app"
+            / "i18n"
+            / "locales"
+            / f"{locale}.json"
         )
         assert path.exists(), f"{locale}.json 缺失"
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -38,8 +42,7 @@ class TestLocaleResources:
 
     def test_all_locales_have_parallel_keys(self) -> None:
         keysets = {
-            loc: set(_flatten(load_locale(loc)).keys())
-            for loc in SUPPORTED_LOCALES
+            loc: set(_flatten(load_locale(loc)).keys()) for loc in SUPPORTED_LOCALES
         }
         reference = keysets["zh"]
         for loc, keys in keysets.items():

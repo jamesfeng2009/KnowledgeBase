@@ -8,6 +8,7 @@ app/core/prompt_files.py（P0 prompt 外置重构）。
 - Agent 类属性确实走 loader
 - 分节解析 / 组装 / 渲染 roundtrip（P1 进化目标文件的结构约定）
 """
+
 from __future__ import annotations
 
 import re
@@ -28,7 +29,7 @@ if "celery_app" not in sys.modules:
     mock_celery_app.celery_app = MagicMock()
     sys.modules["celery_app"] = mock_celery_app
 
-from app.agents.prompt_loader import PROMPTS_DIR, _DEFAULTS, load_agent_prompt
+from app.agents.prompt_loader import _DEFAULTS, PROMPTS_DIR, load_agent_prompt
 from app.core.prompt_files import (
     compose_guidance_prompt,
     load_prompt_file,

@@ -11,6 +11,7 @@
 使用 mock 隔离外部依赖（TenantService / RecommendationService / PermissionService），
 不依赖外部服务。
 """
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -20,7 +21,6 @@ from uuid import uuid4
 import httpx
 import pytest
 import pytest_asyncio
-
 
 # ======================================================================
 # 工具与 Fixtures
@@ -187,17 +187,22 @@ class TestUserRecommendations:
         """正常返回推荐列表。"""
         items = [_make_recommend_item(), _make_recommend_item()]
         mock_result = [
-            {"doc_id": i["doc_id"], "title": i["title"], "reason": i["reason"], "score": i["score"]}
+            {
+                "doc_id": i["doc_id"],
+                "title": i["title"],
+                "reason": i["reason"],
+                "score": i["score"],
+            }
             for i in items
         ]
 
         with patch("app.api.v1.recommendations.RecommendationService") as svc_cls:
-            svc_cls.return_value.recommend_for_user = AsyncMock(return_value=mock_result)
+            svc_cls.return_value.recommend_for_user = AsyncMock(
+                return_value=mock_result
+            )
             svc_cls.return_value.tenant_id = None
             with patch("app.api.v1.recommendations.PermissionService") as perm_cls:
-                perm_cls.return_value.filter_documents = AsyncMock(
-                    return_value=[]
-                )
+                perm_cls.return_value.filter_documents = AsyncMock(return_value=[])
                 response = await auth_client.get(
                     "/api/v1/recommendations/user", params={"top_k": 5}
                 )
@@ -351,16 +356,16 @@ class TestRebuild:
         # 端点以显式 task_id 提交真实 Celery 任务 — mock 避免依赖 broker；
         # mock 重建互斥锁（SETNX）避免依赖真实 Redis
         mock_task = MagicMock()
-        mock_task.apply_async = MagicMock(
-            return_value=SimpleNamespace(id="unused")
-        )
+        mock_task.apply_async = MagicMock(return_value=SimpleNamespace(id="unused"))
 
-        with patch("app.api.v1.recommendations.RecommendationService"), \
-             patch("tasks.recommendation_tasks.rebuild_recommendation_model", mock_task), \
-             patch(
-                 "app.api.v1.recommendations.acquire_rebuild_lock",
-                 AsyncMock(return_value=(True, None)),
-             ):
+        with (
+            patch("app.api.v1.recommendations.RecommendationService"),
+            patch("tasks.recommendation_tasks.rebuild_recommendation_model", mock_task),
+            patch(
+                "app.api.v1.recommendations.acquire_rebuild_lock",
+                AsyncMock(return_value=(True, None)),
+            ),
+        ):
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=app),
                 base_url="http://test",

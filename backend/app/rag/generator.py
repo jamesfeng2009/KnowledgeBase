@@ -27,8 +27,8 @@ from app.core.prompt_files import (
     split_guidance_sections,
 )
 from app.llm.base import LLMProvider, Message
-from app.rag.citation import CitationExtractor
 from app.rag.chunker import estimate_tokens
+from app.rag.citation import CitationExtractor
 from app.rag.context_item import BudgetAllocator, ContextItemBuilder
 from app.rag.prompt_variants import variant_guidance
 from app.utils.logger import get_logger

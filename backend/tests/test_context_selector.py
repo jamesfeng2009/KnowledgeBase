@@ -10,8 +10,9 @@ P3-B 语义上下文选择器单元测试。
     - cosine_similarity_batch 数学正确性
 """
 
-import pytest
 from unittest.mock import patch
+
+import pytest
 
 from app.context.context_selector import ContextSelector
 
@@ -92,9 +93,7 @@ class TestContextSelectorFallback:
         可被构造，走向量路径而非降级路径）。
         """
         selector = ContextSelector(embedder=None, always_keep_recent=2)
-        history = [
-            {"role": "user", "content": f"msg {i}"} for i in range(10)
-        ]
+        history = [{"role": "user", "content": f"msg {i}"} for i in range(10)]
         with patch(
             "app.llm.embedder.get_embedder",
             side_effect=RuntimeError("embedder unavailable"),
@@ -107,6 +106,7 @@ class TestContextSelectorFallback:
     @pytest.mark.asyncio
     async def test_fallback_embedder_exception(self):
         """Embedder 异常 → 降级为固定窗口。"""
+
         class FailingEmbedder:
             async def embed(self, texts):
                 raise RuntimeError("API error")
@@ -115,9 +115,7 @@ class TestContextSelectorFallback:
             embedder=FailingEmbedder(),
             always_keep_recent=2,
         )
-        history = [
-            {"role": "user", "content": f"msg {i}"} for i in range(10)
-        ]
+        history = [{"role": "user", "content": f"msg {i}"} for i in range(10)]
         result = await selector.select("query", history)
         assert len(result) == 4  # always_keep_recent * 2
 
@@ -170,14 +168,10 @@ class TestCosineSimilarity:
 
     def test_zero_query_vector(self):
         """零向量查询 → 返回 0.0。"""
-        result = ContextSelector._cosine_similarity_batch(
-            [0.0, 0.0], [[1.0, 0.0]]
-        )
+        result = ContextSelector._cosine_similarity_batch([0.0, 0.0], [[1.0, 0.0]])
         assert result[0] == 0.0
 
     def test_zero_history_vector(self):
         """零向量历史 → 返回 0.0。"""
-        result = ContextSelector._cosine_similarity_batch(
-            [1.0, 0.0], [[0.0, 0.0]]
-        )
+        result = ContextSelector._cosine_similarity_batch([1.0, 0.0], [[0.0, 0.0]])
         assert result[0] == 0.0

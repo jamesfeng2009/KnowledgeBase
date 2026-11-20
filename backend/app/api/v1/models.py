@@ -7,8 +7,8 @@ P2 核心：前端通过这些端点查询可用模型列表、设置会话级�
     GET  /api/v1/models/session/{sess_id}  — 获取会话当前使用的模型
     PUT  /api/v1/models/session/{sess_id}  — 设置会话级模型选择
 """
-from __future__ import annotations
 
+from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -143,9 +143,7 @@ async def set_session_model(
     except Exception as exc:
         await db.rollback()
         log.error("models.set_session_model.error", error=str(exc))
-        raise HTTPException(
-            status_code=500, detail="设置模型失败，请稍后重试"
-        ) from exc
+        raise HTTPException(status_code=500, detail="设置模型失败，请稍后重试") from exc
 
     # 返回完整模型信息
     from app.llm.model_config import get_model_by_id

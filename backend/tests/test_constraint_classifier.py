@@ -34,18 +34,21 @@ from app.models.constraint import ConstraintRule
 from app.models.knowledge import Document
 from app.services.constraint_review_service import ConstraintReviewService
 from app.services.doc_intelligence_service import (
-    DocIntelligenceService,
     _CONSTRAINT_BATCH_SIZE,
     _PARA_MAX_CHARS,
-    _PARA_MIN_CHARS,
+    DocIntelligenceService,
 )
 
 KB_ID = uuid4()
 DOC_ID = uuid4()
 
 # 测试条款样本（含 Stage A 命中模式 + 达到最小段长）
-_CONSTRAINT_PARA = "所有单笔金额超过5000元的报销必须经过部门总监与财务双签审批，严禁拆单规避。"
-_NORMAL_PARA = "公司成立于2015年，总部位于上海，主要业务为企业知识管理平台的研发与销售。"
+_CONSTRAINT_PARA = (
+    "所有单笔金额超过5000元的报销必须经过部门总监与财务双签审批，严禁拆单规避。"
+)
+_NORMAL_PARA = (
+    "公司成立于2015年，总部位于上海，主要业务为企业知识管理平台的研发与销售。"
+)
 
 
 # ======================================================================
@@ -88,7 +91,7 @@ class _FakeSession:
     async def commit(self) -> None:
         pass
 
-    async def __aenter__(self) -> "_FakeSession":
+    async def __aenter__(self) -> _FakeSession:
         return self
 
     async def __aexit__(self, *args: Any) -> bool:
@@ -99,14 +102,12 @@ class _FakeSessionFactory:
     def __init__(self, queue: list[_FakeResult] | None = None) -> None:
         self.queue = queue or []
 
-    def __call__(self) -> "_FakeSession":
+    def __call__(self) -> _FakeSession:
         return _FakeSession(self.queue)
 
 
 def _make_doc(content: str = _CONSTRAINT_PARA) -> Document:
-    return Document(
-        id=DOC_ID, kb_id=KB_ID, content_text=content, doc_role="normal"
-    )
+    return Document(id=DOC_ID, kb_id=KB_ID, content_text=content, doc_role="normal")
 
 
 def _make_service(session: _FakeSession | None = None) -> DocIntelligenceService:
@@ -148,9 +149,7 @@ class TestPrefilterParagraphs:
         assert "双签" in result[0]
 
     def test_normal_paragraph_skipped(self) -> None:
-        result = DocIntelligenceService._prefilter_paragraphs(
-            _NORMAL_PARA, limit=10
-        )
+        result = DocIntelligenceService._prefilter_paragraphs(_NORMAL_PARA, limit=10)
         assert result == []
 
     def test_short_paragraph_skipped(self) -> None:
@@ -265,7 +264,9 @@ class TestSaveRules:
         session = _FakeSession()
         service = _make_service(session)
         saved = await service._save_rules(
-            _make_doc(), [_extract_item(confidence=settings.CONSTRAINT_AUTO_CONFIDENCE)], []
+            _make_doc(),
+            [_extract_item(confidence=settings.CONSTRAINT_AUTO_CONFIDENCE)],
+            [],
         )
         assert len(saved) == 1
         assert saved[0]["rule"].status == "active"
@@ -276,8 +277,12 @@ class TestSaveRules:
         """[REVIEW, AUTO) 进人审队列 — pending_review 照常注入，安全优先。"""
         settings = get_settings()
         service = _make_service()
-        mid = (settings.CONSTRAINT_REVIEW_CONFIDENCE + settings.CONSTRAINT_AUTO_CONFIDENCE) / 2
-        saved = await service._save_rules(_make_doc(), [_extract_item(confidence=mid)], [])
+        mid = (
+            settings.CONSTRAINT_REVIEW_CONFIDENCE + settings.CONSTRAINT_AUTO_CONFIDENCE
+        ) / 2
+        saved = await service._save_rules(
+            _make_doc(), [_extract_item(confidence=mid)], []
+        )
         assert saved[0]["rule"].status == "pending_review"
 
     @pytest.mark.asyncio
@@ -371,11 +376,10 @@ class TestExtractConstraintsPipeline:
     async def test_disabled_switch_returns_empty(self) -> None:
         """CONSTRAINT_CLASSIFIER_ENABLED=False 时回退到无自动打标现状。"""
         settings = get_settings()
-        with patch.object(
-            settings, "CONSTRAINT_CLASSIFIER_ENABLED", False
-        ), patch.object(
-            DocIntelligenceService, "_retire_doc_rules"
-        ) as retire:
+        with (
+            patch.object(settings, "CONSTRAINT_CLASSIFIER_ENABLED", False),
+            patch.object(DocIntelligenceService, "_retire_doc_rules") as retire,
+        ):
             service = _make_service()
             result = await service.extract_constraints(_make_doc())
         assert result == []
@@ -393,11 +397,14 @@ class TestExtractConstraintsPipeline:
         )
         session = _FakeSession()
         service = _make_service(session)
-        with patch.object(
-            DocIntelligenceService, "_resolve_constraint_llm"
-        ) as resolve_llm, patch.object(
-            service, "_llm_generate", new=AsyncMock(return_value=llm_json)
-        ) as gen:
+        with (
+            patch.object(
+                DocIntelligenceService, "_resolve_constraint_llm"
+            ) as resolve_llm,
+            patch.object(
+                service, "_llm_generate", new=AsyncMock(return_value=llm_json)
+            ) as gen,
+        ):
             result = await service.extract_constraints(_make_doc())
         resolve_llm.assert_called_once()
         gen.assert_called_once()
@@ -500,10 +507,10 @@ class TestReviewStats:
                 # （第 5 次 version_retired 由 execute 弹出下一项）
                 self._scalar_queue = [
                     [("active", 8), ("pending_review", 2), ("retired", 3)],
-                    10,   # reviewed
-                    3,    # misjudged
-                    1,    # auto_high_confidence_rejected
-                    2,    # version_chain_retired
+                    10,  # reviewed
+                    3,  # misjudged
+                    1,  # auto_high_confidence_rejected
+                    2,  # version_chain_retired
                 ]
 
             async def execute(self, stmt: Any) -> Any:

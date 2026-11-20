@@ -8,6 +8,7 @@
 
 不涉及真实网络请求，全部通过 mock / 本地文件隔离。
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -15,16 +16,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.document.source_adapters.base import AdapterError, RevisionInfo
+from app.document.source_adapters.base import AdapterError
 from app.document.source_adapters.confluence_adapter import ConfluenceAdapter
 from app.document.source_adapters.feishu_adapter import FeishuAdapter
 from app.document.source_adapters.notion_adapter import NotionAdapter
 from app.document.source_adapters.obsidian_adapter import ObsidianAdapter
 
-
 # ------------------------------------------------------------------
 # 通用 httpx mock 工具
 # ------------------------------------------------------------------
+
 
 def _build_httpx_mock(json_data: Any, status_code: int = 200) -> MagicMock:
     """构造 httpx.AsyncClient 的 mock — 支持异步上下文管理器。
@@ -53,6 +54,7 @@ def _build_httpx_mock(json_data: Any, status_code: int = 200) -> MagicMock:
 # 飞书适配器
 # ==================================================================
 
+
 class TestFeishuGetRevision:
     """飞书 get_revision — 复用 _get_tenant_token + _get_document_info。"""
 
@@ -64,7 +66,9 @@ class TestFeishuGetRevision:
         """API 返回 revision_id=42 → RevisionInfo.fingerprint == "42"。"""
         with (
             patch.object(
-                adapter, "_get_tenant_token", new=AsyncMock(return_value="tenant-token-xxx")
+                adapter,
+                "_get_tenant_token",
+                new=AsyncMock(return_value="tenant-token-xxx"),
             ),
             patch.object(
                 adapter,
@@ -81,9 +85,7 @@ class TestFeishuGetRevision:
     async def test_missing_revision_returns_none(self, adapter: FeishuAdapter) -> None:
         """API 未返回 revision_id → None（降级 fetch 全文）。"""
         with (
-            patch.object(
-                adapter, "_get_tenant_token", new=AsyncMock(return_value="t")
-            ),
+            patch.object(adapter, "_get_tenant_token", new=AsyncMock(return_value="t")),
             patch.object(
                 adapter,
                 "_get_document_info",
@@ -125,6 +127,7 @@ class TestFeishuGetRevision:
 # Confluence 适配器
 # ==================================================================
 
+
 class TestConfluenceGetRevision:
     """Confluence get_revision — expand=version 轻量查询。"""
 
@@ -148,7 +151,9 @@ class TestConfluenceGetRevision:
         assert rev.fingerprint == "5"
         assert rev.last_modified == "2026-08-12T10:00:00.000Z"
 
-    async def test_missing_version_returns_none(self, adapter: ConfluenceAdapter) -> None:
+    async def test_missing_version_returns_none(
+        self, adapter: ConfluenceAdapter
+    ) -> None:
         """API 返回无 version.number → None。"""
         api_data = {"version": {"when": "2026-08-12"}}
         with patch("httpx.AsyncClient", return_value=_build_httpx_mock(api_data)):
@@ -165,11 +170,15 @@ class TestConfluenceGetRevision:
     async def test_missing_base_url_raises(self, adapter: ConfluenceAdapter) -> None:
         """缺 base_url → AdapterError。"""
         with pytest.raises(AdapterError, match="base_url"):
-            await adapter.get_revision("123", credentials={"username": "u", "api_token": "t"})
+            await adapter.get_revision(
+                "123", credentials={"username": "u", "api_token": "t"}
+            )
 
     async def test_404_raises_adapter_error(self, adapter: ConfluenceAdapter) -> None:
         """页面不存在（404）→ AdapterError with status_code=404。"""
-        with patch("httpx.AsyncClient", return_value=_build_httpx_mock({}, status_code=404)):
+        with patch(
+            "httpx.AsyncClient", return_value=_build_httpx_mock({}, status_code=404)
+        ):
             with pytest.raises(AdapterError) as exc_info:
                 await adapter.get_revision(
                     "999",
@@ -186,6 +195,7 @@ class TestConfluenceGetRevision:
 # Notion 适配器
 # ==================================================================
 
+
 class TestNotionGetRevision:
     """Notion get_revision — 复用 _get_page_info 拿 last_edited_time。"""
 
@@ -196,7 +206,9 @@ class TestNotionGetRevision:
     async def test_returns_last_edited_time(self, adapter: NotionAdapter) -> None:
         """API 返回 last_edited_time → RevisionInfo.fingerprint == 该时间字符串。"""
         page_info = {"last_edited_time": "2026-08-12T10:00:00.000Z"}
-        with patch.object(adapter, "_get_page_info", new=AsyncMock(return_value=page_info)):
+        with patch.object(
+            adapter, "_get_page_info", new=AsyncMock(return_value=page_info)
+        ):
             rev = await adapter.get_revision(
                 "1234567890abcdef1234567890abcdef",
                 credentials={"integration_token": "secret_xxx"},
@@ -205,7 +217,9 @@ class TestNotionGetRevision:
         assert rev.fingerprint == "2026-08-12T10:00:00.000Z"
         assert rev.last_modified == "2026-08-12T10:00:00.000Z"
 
-    async def test_missing_last_edited_returns_none(self, adapter: NotionAdapter) -> None:
+    async def test_missing_last_edited_returns_none(
+        self, adapter: NotionAdapter
+    ) -> None:
         """API 未返回 last_edited_time → None。"""
         with patch.object(adapter, "_get_page_info", new=AsyncMock(return_value={})):
             rev = await adapter.get_revision(
@@ -224,7 +238,9 @@ class TestNotionGetRevision:
     async def test_access_token_alias_accepted(self, adapter: NotionAdapter) -> None:
         """access_token 字段作为 integration_token 的别名。"""
         page_info = {"last_edited_time": "2026-01-01T00:00:00.000Z"}
-        with patch.object(adapter, "_get_page_info", new=AsyncMock(return_value=page_info)):
+        with patch.object(
+            adapter, "_get_page_info", new=AsyncMock(return_value=page_info)
+        ):
             rev = await adapter.get_revision(
                 "1234567890abcdef1234567890abcdef",
                 credentials={"access_token": "alt-token"},
@@ -236,6 +252,7 @@ class TestNotionGetRevision:
 # ==================================================================
 # Obsidian 适配器（本地文件系统）
 # ==================================================================
+
 
 class TestObsidianGetRevision:
     """Obsidian get_revision — os.stat mtime_ns，零网络成本。"""
@@ -260,7 +277,9 @@ class TestObsidianGetRevision:
         assert rev.fingerprint.isdigit()
         assert int(rev.fingerprint) > 0
 
-    async def test_fingerprint_changes_on_edit(self, adapter: ObsidianAdapter, tmp_path) -> None:
+    async def test_fingerprint_changes_on_edit(
+        self, adapter: ObsidianAdapter, tmp_path
+    ) -> None:
         """文件修改后 mtime_ns 变化 → fingerprint 变化。"""
         vault = tmp_path / "vault"
         vault.mkdir()
@@ -272,7 +291,9 @@ class TestObsidianGetRevision:
         )
         # 修改文件 + 显式调整 mtime（确保纳秒级变化）
         md_file.write_text("v2 content longer", encoding="utf-8")
-        import os, time
+        import os
+        import time
+
         new_ts = time.time() + 10
         os.utime(md_file, (new_ts, new_ts))
 
@@ -287,7 +308,9 @@ class TestObsidianGetRevision:
         with pytest.raises(AdapterError, match="vault_path"):
             await adapter.get_revision("Note.md", credentials={})
 
-    async def test_nonexistent_vault_raises(self, adapter: ObsidianAdapter, tmp_path) -> None:
+    async def test_nonexistent_vault_raises(
+        self, adapter: ObsidianAdapter, tmp_path
+    ) -> None:
         """vault 目录不存在 → AdapterError。"""
         with pytest.raises(AdapterError, match="vault 目录不存在"):
             await adapter.get_revision(
@@ -295,7 +318,9 @@ class TestObsidianGetRevision:
                 credentials={"vault_path": str(tmp_path / "no-such-vault")},
             )
 
-    async def test_nonexistent_file_raises(self, adapter: ObsidianAdapter, tmp_path) -> None:
+    async def test_nonexistent_file_raises(
+        self, adapter: ObsidianAdapter, tmp_path
+    ) -> None:
         """文件不存在 → AdapterError with status_code=404。"""
         vault = tmp_path / "vault"
         vault.mkdir()
@@ -306,7 +331,9 @@ class TestObsidianGetRevision:
             )
         assert exc_info.value.status_code == 404
 
-    async def test_path_traversal_blocked(self, adapter: ObsidianAdapter, tmp_path) -> None:
+    async def test_path_traversal_blocked(
+        self, adapter: ObsidianAdapter, tmp_path
+    ) -> None:
         """路径穿越（../../etc/passwd）→ AdapterError。"""
         vault = tmp_path / "vault"
         vault.mkdir()
@@ -325,6 +352,7 @@ class TestObsidianGetRevision:
 # 基类默认实现
 # ==================================================================
 
+
 class TestBaseAdapterDefaultRevision:
     """DocumentSourceAdapter 基类 get_revision 默认返回 None（不支持轻量探测）。"""
 
@@ -335,11 +363,9 @@ class TestBaseAdapterDefaultRevision:
         class _Stub(DocumentSourceAdapter):
             adapter_id = "stub"
 
-            async def fetch(self, doc_url_or_id, credentials):
-                ...
+            async def fetch(self, doc_url_or_id, credentials): ...
 
-            async def list_documents(self, space_or_root, credentials):
-                ...
+            async def list_documents(self, space_or_root, credentials): ...
 
             async def test_connection(self, credentials) -> bool:
                 return True

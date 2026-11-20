@@ -16,7 +16,7 @@ SaaS 计费 + 配额闭环测试（P0-1 ~ P0-4）。
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -25,11 +25,11 @@ from app.models.billing import Subscription, Tenant
 from app.models.user import User
 from app.services.auth_service import AuthService
 from app.services.billing_service import (
-    BillingService,
-    QuotaExceededError,
     SUB_ACTIVE,
     SUB_CANCELLED,
     SUB_EXPIRED,
+    BillingService,
+    QuotaExceededError,
 )
 from app.services.plans import (
     DEFAULT_PLAN,
@@ -37,7 +37,6 @@ from app.services.plans import (
     get_plan,
     is_valid_plan,
 )
-
 
 # ==================================================================
 # 工具：FakeSession — 记录 add/flush，execute/scalar 返回空
@@ -132,9 +131,7 @@ class TestPlans:
     def test_pro_limits_gt_free(self):
         """pro 配额高于 free。"""
         assert PLANS["pro"]["max_users"] > PLANS["free"]["max_users"]
-        assert (
-            PLANS["pro"]["max_storage_bytes"] > PLANS["free"]["max_storage_bytes"]
-        )
+        assert PLANS["pro"]["max_storage_bytes"] > PLANS["free"]["max_storage_bytes"]
         assert (
             PLANS["pro"]["max_llm_tokens_per_month"]
             > PLANS["free"]["max_llm_tokens_per_month"]
@@ -144,8 +141,7 @@ class TestPlans:
         """enterprise 配额高于 pro。"""
         assert PLANS["enterprise"]["max_users"] > PLANS["pro"]["max_users"]
         assert (
-            PLANS["enterprise"]["max_storage_bytes"]
-            > PLANS["pro"]["max_storage_bytes"]
+            PLANS["enterprise"]["max_storage_bytes"] > PLANS["pro"]["max_storage_bytes"]
         )
 
     def test_get_plan_unknown_falls_back_to_free(self):
@@ -290,11 +286,16 @@ class TestSubscriptionLifecycle:
         service = BillingService(session)
         tenant = _make_tenant("free")
         old_sub = Subscription(
-            tenant_id=tenant.id, plan="free", status=SUB_ACTIVE, started_at=datetime.now(timezone.utc)
+            tenant_id=tenant.id,
+            plan="free",
+            status=SUB_ACTIVE,
+            started_at=datetime.now(timezone.utc),
         )
         with patch.object(BillingService, "get_tenant", AsyncMock(return_value=tenant)):
             with patch.object(
-                BillingService, "_get_active_subscription", AsyncMock(return_value=old_sub)
+                BillingService,
+                "_get_active_subscription",
+                AsyncMock(return_value=old_sub),
             ):
                 sub = await service.switch_plan(tenant.id, "pro", manual=True)
 
@@ -315,7 +316,10 @@ class TestSubscriptionLifecycle:
         service = BillingService(session)
         tenant = _make_tenant("pro")
         sub = Subscription(
-            tenant_id=tenant.id, plan="pro", status=SUB_ACTIVE, started_at=datetime.now(timezone.utc)
+            tenant_id=tenant.id,
+            plan="pro",
+            status=SUB_ACTIVE,
+            started_at=datetime.now(timezone.utc),
         )
         with patch.object(BillingService, "get_tenant", AsyncMock(return_value=tenant)):
             with patch.object(
@@ -334,7 +338,10 @@ class TestSubscriptionLifecycle:
         service = BillingService(session)
         tenant = _make_tenant("pro")
         sub = Subscription(
-            tenant_id=tenant.id, plan="pro", status=SUB_ACTIVE, started_at=datetime.now(timezone.utc)
+            tenant_id=tenant.id,
+            plan="pro",
+            status=SUB_ACTIVE,
+            started_at=datetime.now(timezone.utc),
         )
         with patch.object(BillingService, "get_tenant", AsyncMock(return_value=tenant)):
             with patch.object(
@@ -350,7 +357,10 @@ class TestSubscriptionLifecycle:
         service = BillingService(session)
         tenant = _make_tenant("pro")
         sub = Subscription(
-            tenant_id=tenant.id, plan="pro", status=SUB_EXPIRED, started_at=datetime.now(timezone.utc)
+            tenant_id=tenant.id,
+            plan="pro",
+            status=SUB_EXPIRED,
+            started_at=datetime.now(timezone.utc),
         )
         with patch.object(BillingService, "get_tenant", AsyncMock(return_value=tenant)):
             with patch.object(
@@ -366,7 +376,10 @@ class TestSubscriptionLifecycle:
         service = BillingService(session)
         tenant = _make_tenant("free")
         sub = Subscription(
-            tenant_id=tenant.id, plan="free", status="past_due", started_at=datetime.now(timezone.utc)
+            tenant_id=tenant.id,
+            plan="free",
+            status="past_due",
+            started_at=datetime.now(timezone.utc),
         )
         with patch.object(BillingService, "get_tenant", AsyncMock(return_value=tenant)):
             with patch.object(
@@ -486,13 +499,13 @@ class TestRegisterAutoProvision:
         with patch.object(
             service.user_repo, "get_by_email", AsyncMock(return_value=None)
         ):
-            with patch.object(
-                service.user_repo, "create", side_effect=fake_create
-            ):
+            with patch.object(service.user_repo, "create", side_effect=fake_create):
                 with patch.object(
-                    BillingService, "provision_tenant", AsyncMock(
+                    BillingService,
+                    "provision_tenant",
+                    AsyncMock(
                         return_value=Tenant(id=created_user.tenant_id, name="新用户")
-                    )
+                    ),
                 ) as mock_provision:
                     user = await service.register("new@example.com", "pw", "新用户")
 
@@ -522,9 +535,7 @@ class TestRegisterAutoProvision:
         with patch.object(
             service.user_repo, "get_by_email", AsyncMock(return_value=None)
         ):
-            with patch.object(
-                service.user_repo, "create", side_effect=fake_create
-            ):
+            with patch.object(service.user_repo, "create", side_effect=fake_create):
                 with patch.object(
                     BillingService, "check_user_quota", AsyncMock(return_value=True)
                 ) as mock_quota:

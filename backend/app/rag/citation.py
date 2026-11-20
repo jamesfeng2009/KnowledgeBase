@@ -103,7 +103,9 @@ class CitationExtractor:
             # 引用编号从 1 开始，映射到 sources 列表索引（0-based）
             source = self._map_to_source(cid, sources)
             if source is None:
-                log.debug("citation.unmapped", citation_id=cid, sources_count=len(sources))
+                log.debug(
+                    "citation.unmapped", citation_id=cid, sources_count=len(sources)
+                )
                 continue
             snippet = self._make_snippet(source)
             citations.append(

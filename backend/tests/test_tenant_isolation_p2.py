@@ -14,6 +14,7 @@
 - 端到端隔离：PostgreSQL DB + 真实 Service → Repository → DB 链路。
 - API 注入：TestClient + 自定义中间件注入 request.state.tenant_id + 依赖覆盖。
 """
+
 from __future__ import annotations
 
 import os
@@ -24,8 +25,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 import pytest_asyncio
-from fastapi import Depends, FastAPI, Request
-from fastapi.testclient import TestClient
+from fastapi import FastAPI, Request
 from httpx import ASGITransport
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -43,7 +43,7 @@ if "celery_app" not in sys.modules:
 
 from app.database import get_db_session
 from app.deps import get_current_active_user, get_current_user
-from app.models import Base, KnowledgeBase, QaAnswer, QaQuestion, Tenant, User
+from app.models import Base, QaAnswer, QaQuestion, Tenant, User
 from app.repositories.audit_repository import AuditRepository
 from app.repositories.comment_repository import DocumentCommentRepository
 from app.repositories.conversation_repository import (
@@ -60,7 +60,6 @@ from app.repositories.qa_repository import QaAnswerRepository, QaQuestionReposit
 from app.repositories.user_repository import UserRepository
 from app.services.knowledge_service import KnowledgeService
 from app.services.qa_service import QaService
-
 
 # ==================================================================
 # 数据库 fixture
@@ -104,6 +103,7 @@ async def tenant_b(db_session):
 def _make_mock_user(tenant_id=None, db_session=None) -> User:
     """创建 mock 用户 — 可选持久化到数据库以满足外键约束。"""
     import uuid as _uuid
+
     _uid = _uuid.uuid4()
     user = User(
         email=f"test-{_uid}@test.com",
@@ -505,9 +505,7 @@ class TestAPITenantInjection:
 
         return app
 
-    async def test_knowledge_api_receives_tenant_id(
-        self, db_session, tenant_a
-    ) -> None:
+    async def test_knowledge_api_receives_tenant_id(self, db_session, tenant_a) -> None:
         """GET /knowledge 端点正确接收 tenant_id。"""
         captured_tenant_ids: list = []
 
@@ -540,9 +538,7 @@ class TestAPITenantInjection:
         assert len(captured_tenant_ids) > 0
         assert captured_tenant_ids[0] == tenant_a.id
 
-    async def test_qa_api_receives_tenant_id(
-        self, db_session, tenant_a
-    ) -> None:
+    async def test_qa_api_receives_tenant_id(self, db_session, tenant_a) -> None:
         """GET /qa/questions 端点正确接收 tenant_id。"""
         captured_tenant_ids: list = []
 
@@ -567,9 +563,7 @@ class TestAPITenantInjection:
         assert len(captured_tenant_ids) > 0
         assert captured_tenant_ids[0] == tenant_a.id
 
-    async def test_analytics_api_receives_tenant_id(
-        self, db_session, tenant_a
-    ) -> None:
+    async def test_analytics_api_receives_tenant_id(self, db_session, tenant_a) -> None:
         """GET /analytics/dashboard 端点正确接收 tenant_id。"""
         from app.services.analytics_service import AnalyticsService
 
@@ -596,9 +590,7 @@ class TestAPITenantInjection:
         assert len(captured_tenant_ids) > 0
         assert captured_tenant_ids[0] == tenant_a.id
 
-    async def test_api_tenant_none_when_no_middleware(
-        self, db_session
-    ) -> None:
+    async def test_api_tenant_none_when_no_middleware(self, db_session) -> None:
         """无中间件注入时 API 端点 tenant_id 为 None。"""
         captured_tenant_ids: list = []
 
@@ -663,30 +655,31 @@ class TestMigrationTenantColumns:
         ]
 
         for model in models:
-            assert "tenant_id" in model.__table__.columns, (
-                f"{model.__name__} 缺少 tenant_id 列"
-            )
+            assert (
+                "tenant_id" in model.__table__.columns
+            ), f"{model.__name__} 缺少 tenant_id 列"
 
     def test_tenant_id_nullable_for_all_models(self) -> None:
         """所有模型的 tenant_id 列允许 NULL（兼容单租户部署）。"""
-        from app.models.knowledge import Document, KnowledgeBase
         from app.models.conversation import Conversation
+        from app.models.knowledge import Document, KnowledgeBase
 
-        for model in [User, KnowledgeBase, Document, Conversation, QaQuestion, QaAnswer]:
+        for model in [
+            User,
+            KnowledgeBase,
+            Document,
+            Conversation,
+            QaQuestion,
+            QaAnswer,
+        ]:
             col = model.__table__.columns["tenant_id"]
-            assert col.nullable is True, (
-                f"{model.__name__}.tenant_id 应允许 NULL"
-            )
+            assert col.nullable is True, f"{model.__name__}.tenant_id 应允许 NULL"
 
     def test_migration_file_defines_tenant_id_indexes(self) -> None:
         """Alembic 迁移文件定义了 tenant_id 索引。"""
         from pathlib import Path
 
-        migration_dir = (
-            Path(__file__).resolve().parent.parent
-            / "alembic"
-            / "versions"
-        )
+        migration_dir = Path(__file__).resolve().parent.parent / "alembic" / "versions"
         # 查找 tenant_id 迁移文件
         migration_files = list(migration_dir.glob("*tenant_id*.py"))
         assert len(migration_files) >= 1, "应有 tenant_id 迁移文件"

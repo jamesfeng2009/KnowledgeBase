@@ -6,6 +6,20 @@
 
 from app.models.action import DocumentAction
 from app.models.agent import AgentConfig
+from app.models.ai_eval import (
+    DocParseCase,
+    DocParseDataset,
+    DocParseResult,
+    InjectionTestCase,
+    InjectionTestResult,
+    InjectionTestSuite,
+    JudgeCase,
+    JudgeDataset,
+    JudgeResult,
+    RagEvalDataset,
+    RagEvalQuery,
+    RagEvalResult,
+)
 from app.models.analytics import SearchLog
 from app.models.apikey import ApiKey
 from app.models.approval import ToolApproval
@@ -25,45 +39,31 @@ from app.models.folder import KbFolder
 from app.models.gap import KnowledgeGap
 from app.models.high_risk import HighRiskAuditRecord
 from app.models.knowledge import Document, DocumentVersion, KnowledgeBase
+from app.models.knowledge_approval import KnowledgeApproval
+from app.models.knowledge_candidate import KnowledgeCandidate
 from app.models.knowledge_compounding import (
     CompoundingTask,
     KnowledgeAsset,
     KnowledgeConflict,
 )
-from app.models.knowledge_approval import KnowledgeApproval
-from app.models.knowledge_candidate import KnowledgeCandidate
 from app.models.memory import EntityEvent, KnowledgeEntity, MemoryFact
 from app.models.notification import Notification
 from app.models.qa import QaAnswer, QaQuestion
 from app.models.research import ResearchJob
 from app.models.task_outbox import TaskOutbox
-from app.models.ticket import Ticket
-from app.models.tool_audit import ToolAuditLog
-from app.models.user import Department, KbMember, User
-from app.models.user_model_preference import UserModelPreference
-from app.models.wiki import WikiPage, WikiPageLink, WikiPageVersion
 from app.models.testing import (
+    TestCase,
     TestExecution,
     TestPlan,
     TestProject,
     TestRequirement,
     TestReview,
-    TestCase,
 )
-from app.models.ai_eval import (
-    DocParseCase,
-    DocParseDataset,
-    DocParseResult,
-    InjectionTestCase,
-    InjectionTestResult,
-    InjectionTestSuite,
-    JudgeCase,
-    JudgeDataset,
-    JudgeResult,
-    RagEvalDataset,
-    RagEvalQuery,
-    RagEvalResult,
-)
+from app.models.ticket import Ticket
+from app.models.tool_audit import ToolAuditLog
+from app.models.user import Department, KbMember, User
+from app.models.user_model_preference import UserModelPreference
+from app.models.wiki import WikiPage, WikiPageLink, WikiPageVersion
 
 __all__ = [
     "Base",

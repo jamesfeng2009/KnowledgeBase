@@ -8,10 +8,10 @@ MCP Resources 原语测试 — resources/list + resources/read + Resource Metada
 - streamable_http.py：resources/list + resources/read 路由与错误响应
 - client.py：list_resources / read_resource / jsonrpc_resources_*
 """
+
 from __future__ import annotations
 
 import json
-from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -36,7 +36,6 @@ from app.mcp.resources import (
 )
 from app.mcp.server import KnowledgeBaseMCPServer
 from app.mcp.streamable_http import StreamableHTTPTransport
-
 
 # ======================================================================
 # protocol.py 测试
@@ -193,8 +192,13 @@ class TestServerResources:
         assert res["mimeType"] == "application/json"
         meta = res["metadata"]
         for field in (
-            "domain", "tags", "when_to_use", "when_not_to_use",
-            "output_interpretation", "version", "review_status",
+            "domain",
+            "tags",
+            "when_to_use",
+            "when_not_to_use",
+            "output_interpretation",
+            "version",
+            "review_status",
         ):
             assert field in meta
         assert meta["domain"] == "search"
@@ -246,12 +250,14 @@ class TestStreamableHTTPResources:
     async def test_resources_list_route(self) -> None:
         server = _make_server()
         transport = StreamableHTTPTransport(server)
-        body = json.dumps({
-            "jsonrpc": "2.0",
-            "method": "resources/list",
-            "params": {},
-            "id": "1",
-        })
+        body = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "method": "resources/list",
+                "params": {},
+                "id": "1",
+            }
+        )
         response = await transport.handle_request(body)
         assert not hasattr(response, "__aiter__")
         assert response.error is None
@@ -265,12 +271,14 @@ class TestStreamableHTTPResources:
     async def test_resources_read_route(self) -> None:
         server = _make_server()
         transport = StreamableHTTPTransport(server)
-        body = json.dumps({
-            "jsonrpc": "2.0",
-            "method": "resources/read",
-            "params": {"uri": "resource://skill/knowledge_search"},
-            "id": "2",
-        })
+        body = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "method": "resources/read",
+                "params": {"uri": "resource://skill/knowledge_search"},
+                "id": "2",
+            }
+        )
         response = await transport.handle_request(body)
         assert response.error is None
         contents = response.result["contents"]
@@ -282,12 +290,14 @@ class TestStreamableHTTPResources:
     async def test_resources_read_not_found(self) -> None:
         server = _make_server()
         transport = StreamableHTTPTransport(server)
-        body = json.dumps({
-            "jsonrpc": "2.0",
-            "method": "resources/read",
-            "params": {"uri": "resource://skill/ghost"},
-            "id": "3",
-        })
+        body = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "method": "resources/read",
+                "params": {"uri": "resource://skill/ghost"},
+                "id": "3",
+            }
+        )
         response = await transport.handle_request(body)
         assert response.error is not None
         assert response.error.code == RESOURCE_NOT_FOUND
@@ -296,12 +306,14 @@ class TestStreamableHTTPResources:
     async def test_resources_read_missing_uri(self) -> None:
         server = _make_server()
         transport = StreamableHTTPTransport(server)
-        body = json.dumps({
-            "jsonrpc": "2.0",
-            "method": "resources/read",
-            "params": {},
-            "id": "4",
-        })
+        body = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "method": "resources/read",
+                "params": {},
+                "id": "4",
+            }
+        )
         response = await transport.handle_request(body)
         assert response.error is not None
         assert response.error.code == INVALID_PARAMS
@@ -348,7 +360,8 @@ class TestClientResources:
     async def test_jsonrpc_resources_read(self) -> None:
         client = MCPClient(_make_server())
         response = await client.jsonrpc_resources_read(
-            "resource://skill/knowledge_search", request_id="11",
+            "resource://skill/knowledge_search",
+            request_id="11",
         )
         assert response.error is None
         contents = response.result["contents"]
@@ -358,7 +371,8 @@ class TestClientResources:
     async def test_jsonrpc_resources_read_not_found(self) -> None:
         client = MCPClient(_make_server())
         response = await client.jsonrpc_resources_read(
-            "resource://skill/ghost", request_id="12",
+            "resource://skill/ghost",
+            request_id="12",
         )
         assert response.error is not None
         assert response.error.code == RESOURCE_NOT_FOUND

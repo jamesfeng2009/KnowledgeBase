@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import sys
 import uuid
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -234,7 +234,9 @@ class TestVerdictDiscard:
     @pytest.mark.asyncio
     async def test_k6_discard_returns_none_no_write(self, memory_manager):
         memory_manager.arbiter.consolidate = AsyncMock(
-            return_value=ConsolidateVerdict(ACTION_DISCARD, reason="equivalent_shortcircuit")
+            return_value=ConsolidateVerdict(
+                ACTION_DISCARD, reason="equivalent_shortcircuit"
+            )
         )
         result = await memory_manager._consolidated_add(
             uuid.uuid4(), "重复事实", "working"
@@ -287,7 +289,6 @@ class TestMigrationChain:
     def test_migration_chain_is_linear(self) -> None:
         """a4b5c6d7e8f9 接 1c2d3e4f5a6b，且为唯一 head。"""
         import os
-        import sys as _sys
 
         base = os.path.normpath(
             os.path.join(os.path.dirname(__file__), "..", "alembic", "versions")
@@ -300,5 +301,5 @@ class TestMigrationChain:
         files = os.listdir(base)
         m3 = next(f for f in files if "a4b5c6d7e8f9" in f)
         m2 = next(f for f in files if "1c2d3e4f5a6b" in f)
-        assert f'down_revision = "1c2d3e4f5a6b"' in content_for(m3)
-        assert f'down_revision = "0a1b2c3d4e5f"' in content_for(m2)
+        assert 'down_revision = "1c2d3e4f5a6b"' in content_for(m3)
+        assert 'down_revision = "0a1b2c3d4e5f"' in content_for(m2)

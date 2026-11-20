@@ -36,9 +36,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["租户管理"])
 
 
-async def _get_current_tenant(
-    db: AsyncSession, user: User
-) -> Tenant:
+async def _get_current_tenant(db: AsyncSession, user: User) -> Tenant:
     """获取当前用户所属租户。
 
     C6 fix: SaaS 模式按 user.tenant_id 过滤，避免跨租户数据泄漏；
@@ -211,9 +209,7 @@ async def get_tenant_modules(
 
 @router.put("/tenants/modules", response_model=ApiResponse)
 async def update_tenant_modules(
-    module_ids: list[str] = Body(
-        ..., embed=True, description="要启用的模块 ID 列表"
-    ),
+    module_ids: list[str] = Body(..., embed=True, description="要启用的模块 ID 列表"),
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse:

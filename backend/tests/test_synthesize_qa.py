@@ -15,6 +15,7 @@
 
 mock 风格照 test_finetune_pipeline.py：AsyncMock/MagicMock + SimpleNamespace。
 """
+
 from __future__ import annotations
 
 import json
@@ -38,7 +39,6 @@ from scripts.finetune.synthesize_qa import (
     parse_qa_response,
     run_synthesis,
 )
-
 
 # ======================================================================
 # 工具函数
@@ -130,12 +130,21 @@ class TestModuleImport:
         """脚本可通过 py_compile 编译。"""
         from pathlib import Path
 
-        script = Path(__file__).parent.parent / "scripts" / "finetune" / "synthesize_qa.py"
+        script = (
+            Path(__file__).parent.parent / "scripts" / "finetune" / "synthesize_qa.py"
+        )
         py_compile.compile(str(script), doraise=True)
 
     def test_import_no_heavy_deps(self) -> None:
         """import 模块后不得新增加载 torch/transformers 等重依赖。"""
-        heavy = {"torch", "transformers", "peft", "trl", "datasets", "sentence_transformers"}
+        heavy = {
+            "torch",
+            "transformers",
+            "peft",
+            "trl",
+            "datasets",
+            "sentence_transformers",
+        }
         before = set(sys.modules)
         # 强制重新导入以检测顶层副作用
         import importlib
@@ -232,7 +241,10 @@ class TestParseQaResponse:
         """合法 JSON 数组 → QA 对列表。"""
         text = _qa_json(
             [
-                {"question": "如何重置密码？", "answer": "进入设置-账号安全-重置密码。"},
+                {
+                    "question": "如何重置密码？",
+                    "answer": "进入设置-账号安全-重置密码。",
+                },
                 {"question": "重置密码需要验证身份吗？", "answer": "需要。"},
             ]
         )

@@ -342,18 +342,15 @@ def extract_page_text_ordered(
     try:
         raw_blocks = page_dict.get("blocks", [])
         blocks = [
-            tb for tb in (TextBlock.from_pymupdf(b) for b in raw_blocks)
+            tb
+            for tb in (TextBlock.from_pymupdf(b) for b in raw_blocks)
             if tb is not None and tb.text.strip()
         ]
         if exclude_bboxes:
-            blocks = [
-                b for b in blocks
-                if not _center_in_any_bbox(b, exclude_bboxes)
-            ]
+            blocks = [b for b in blocks if not _center_in_any_bbox(b, exclude_bboxes)]
         if hf_keys and page_height > 0:
             blocks = [
-                b for b in blocks
-                if header_footer_key(b, page_height) not in hf_keys
+                b for b in blocks if header_footer_key(b, page_height) not in hf_keys
             ]
         if not blocks:
             return ""
@@ -370,9 +367,7 @@ _HF_ZONE_RATIO: float = 0.15
 _HF_POS_QUANTUM: float = 10.0
 
 
-def header_footer_key(
-    block: TextBlock, page_height: float
-) -> tuple | None:
+def header_footer_key(block: TextBlock, page_height: float) -> tuple | None:
     """计算 block 的页眉页脚候选 key；不在顶/底带内返回 None。
 
     key = (文本,  zone, 量化 x0, 量化距页边距离)。
@@ -440,7 +435,4 @@ def _center_in_any_bbox(
     """block 中心是否落在任一剔除区域内。"""
     cx = (block.x0 + block.x1) / 2
     cy = (block.y0 + block.y1) / 2
-    return any(
-        x0 <= cx <= x1 and y0 <= cy <= y1
-        for x0, y0, x1, y1 in bboxes
-    )
+    return any(x0 <= cx <= x1 and y0 <= cy <= y1 for x0, y0, x1, y1 in bboxes)

@@ -34,7 +34,6 @@ from app.models.ai_eval import (
 )
 from app.services.ai_eval.injection_test_service import InjectionTestService
 from app.services.ai_eval.injection_vectors import (
-    ATTACK_VECTORS,
     get_attack_type_summary,
     get_preset_cases,
 )
@@ -219,7 +218,10 @@ class RedTeamAutomation:
             attack_type = r.get("attack_type", "unknown")
             if attack_type not in stats:
                 stats[attack_type] = {
-                    "total": 0, "passed": 0, "partial": 0, "failed": 0,
+                    "total": 0,
+                    "passed": 0,
+                    "partial": 0,
+                    "failed": 0,
                 }
             stats[attack_type]["total"] += 1
             verdict = r.get("verdict", "fail")
@@ -238,7 +240,10 @@ class RedTeamAutomation:
             severity = r.get("severity", "medium")
             if severity not in stats:
                 stats[severity] = {
-                    "total": 0, "passed": 0, "partial": 0, "failed": 0,
+                    "total": 0,
+                    "passed": 0,
+                    "partial": 0,
+                    "failed": 0,
                 }
             stats[severity]["total"] += 1
             verdict = r.get("verdict", "fail")
@@ -303,14 +308,16 @@ class RedTeamAutomation:
             fail_rate = stats["failed"] / total
             partial_rate = stats["partial"] / total
             if fail_rate > 0 or partial_rate > 0:
-                weak_points.append({
-                    "attack_type": attack_type,
-                    "fail_rate": round(fail_rate, 2),
-                    "partial_rate": round(partial_rate, 2),
-                    "failed": stats["failed"],
-                    "partial": stats["partial"],
-                    "total": total,
-                })
+                weak_points.append(
+                    {
+                        "attack_type": attack_type,
+                        "fail_rate": round(fail_rate, 2),
+                        "partial_rate": round(partial_rate, 2),
+                        "failed": stats["failed"],
+                        "partial": stats["partial"],
+                        "total": total,
+                    }
+                )
         # 按 fail_rate 降序
         weak_points.sort(key=lambda x: x["fail_rate"], reverse=True)
         return weak_points
@@ -375,15 +382,17 @@ class RedTeamAutomation:
 
         results: list[dict] = []
         for case, res in rows:
-            results.append({
-                "attack_type": case.attack_type,
-                "severity": case.severity,
-                "title": case.title,
-                "verdict": res.verdict if res else "pending",
-                "checks": res.checks if res else None,
-                "score_reason": res.score_reason if res else None,
-                "response_text": res.response_text if res else None,
-            })
+            results.append(
+                {
+                    "attack_type": case.attack_type,
+                    "severity": case.severity,
+                    "title": case.title,
+                    "verdict": res.verdict if res else "pending",
+                    "checks": res.checks if res else None,
+                    "score_reason": res.score_reason if res else None,
+                    "response_text": res.response_text if res else None,
+                }
+            )
         return results
 
     # ------------------------------------------------------------------

@@ -14,8 +14,8 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.feedback import Feedback
 from app.models.conversation import Message
+from app.models.feedback import Feedback
 from app.models.user import User
 from app.repositories.feedback_repository import FeedbackRepository
 from app.utils.logger import get_logger

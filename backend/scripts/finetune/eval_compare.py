@@ -44,8 +44,9 @@ import math
 import re
 import sys
 from collections import Counter
+from collections.abc import Iterable, Iterator, Sequence
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Sequence
+from typing import Any
 
 logger = logging.getLogger("eval_compare")
 
@@ -88,12 +89,16 @@ def load_golden(path: str | Path) -> list[dict]:
             expected_doc_ids = []
         expected_answer = obj.get("expected_answer")
         meta = obj.get("meta") if isinstance(obj.get("meta"), dict) else {}
-        records.append({
-            "query": query,
-            "expected_answer": expected_answer if isinstance(expected_answer, str) else "",
-            "expected_doc_ids": [str(d) for d in expected_doc_ids],
-            "meta": meta,
-        })
+        records.append(
+            {
+                "query": query,
+                "expected_answer": expected_answer
+                if isinstance(expected_answer, str)
+                else "",
+                "expected_doc_ids": [str(d) for d in expected_doc_ids],
+                "meta": meta,
+            }
+        )
     logger.info("加载 golden 样本 %d 条 — %s", len(records), path)
     return records
 
@@ -124,7 +129,9 @@ def build_pseudo_corpus(golden: list[dict]) -> tuple[list[str], list[str]]:
     for i, rec in enumerate(golden):
         if not rec["expected_answer"]:
             continue
-        doc_id = rec["expected_doc_ids"][0] if rec["expected_doc_ids"] else f"golden_{i}"
+        doc_id = (
+            rec["expected_doc_ids"][0] if rec["expected_doc_ids"] else f"golden_{i}"
+        )
         if doc_id in seen:
             continue
         seen.add(doc_id)
@@ -137,7 +144,10 @@ def build_pseudo_corpus(golden: list[dict]) -> tuple[list[str], list[str]]:
 # 纯标准库指标函数（可独立导入测试）
 # ---------------------------------------------------------------------------
 
-def recall_at_k(ranked_ids: Sequence[str], expected_ids: Iterable[str], k: int) -> float:
+
+def recall_at_k(
+    ranked_ids: Sequence[str], expected_ids: Iterable[str], k: int
+) -> float:
     """Recall@k：top-k 命中任一期望文档即记 1。expected_ids 为空时返回 0。"""
     expected = set(expected_ids)
     if not expected:
@@ -181,8 +191,8 @@ def bleu_score(hypothesis: str, reference: str, max_n: int = 4) -> float:
     for n in range(1, max_n + 1):
         if len(hyp) < n or len(ref) < n:
             break
-        hyp_ngrams = Counter(tuple(hyp[i:i + n]) for i in range(len(hyp) - n + 1))
-        ref_ngrams = Counter(tuple(ref[i:i + n]) for i in range(len(ref) - n + 1))
+        hyp_ngrams = Counter(tuple(hyp[i : i + n]) for i in range(len(hyp) - n + 1))
+        ref_ngrams = Counter(tuple(ref[i : i + n]) for i in range(len(ref) - n + 1))
         overlap = sum((hyp_ngrams & ref_ngrams).values())
         total = sum(hyp_ngrams.values())
         # +1 平滑，避免短句零精度直接归零
@@ -250,18 +260,28 @@ def format_markdown_table(headers: Sequence[str], rows: Sequence[Sequence[Any]])
 # 检索模式（sentence-transformers，函数内延迟导入）
 # ---------------------------------------------------------------------------
 
-def eval_retrieval_model(model_name: str, golden: list[dict],
-                         corpus_ids: list[str], corpus_texts: list[str],
-                         ks: tuple[int, ...] = (5, 10)) -> dict[str, Any]:
+
+def eval_retrieval_model(
+    model_name: str,
+    golden: list[dict],
+    corpus_ids: list[str],
+    corpus_texts: list[str],
+    ks: tuple[int, ...] = (5, 10),
+) -> dict[str, Any]:
     """单个向量模型在 golden 上的检索指标：Recall@k / MRR。"""
     import numpy as np  # 延迟导入
     from sentence_transformers import SentenceTransformer  # 延迟导入
 
     model = SentenceTransformer(model_name)
-    q_emb = model.encode([r["query"] for r in golden],
-                         batch_size=64, normalize_embeddings=True, show_progress_bar=False)
-    c_emb = model.encode(corpus_texts,
-                         batch_size=64, normalize_embeddings=True, show_progress_bar=False)
+    q_emb = model.encode(
+        [r["query"] for r in golden],
+        batch_size=64,
+        normalize_embeddings=True,
+        show_progress_bar=False,
+    )
+    c_emb = model.encode(
+        corpus_texts, batch_size=64, normalize_embeddings=True, show_progress_bar=False
+    )
     sims = np.asarray(q_emb) @ np.asarray(c_emb).T
     max_k = max(min(k, len(corpus_ids)) for k in ks)
     order = np.argsort(-sims, axis=1)[:, :max_k]
@@ -275,7 +295,11 @@ def eval_retrieval_model(model_name: str, golden: list[dict],
         mrr_sum += mrr(ranked, rec["expected_doc_ids"])
 
     n = max(1, len(golden))
-    result: dict[str, Any] = {"model": model_name, "samples": len(golden), "mrr": mrr_sum / n}
+    result: dict[str, Any] = {
+        "model": model_name,
+        "samples": len(golden),
+        "mrr": mrr_sum / n,
+    }
     for k in ks:
         result[f"recall@{k}"] = recalls[k] / n
     return result
@@ -284,6 +308,7 @@ def eval_retrieval_model(model_name: str, golden: list[dict],
 # ---------------------------------------------------------------------------
 # 生成模式（transformers，函数内延迟导入）
 # ---------------------------------------------------------------------------
+
 
 def _detect_bf16() -> bool:
     """检测当前设备是否支持 bf16（CUDA 或 Apple Silicon MPS）。
@@ -294,7 +319,10 @@ def _detect_bf16() -> bool:
 
     if torch.cuda.is_available():
         return bool(torch.cuda.is_bf16_supported())
-    if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+    if (
+        getattr(torch.backends, "mps", None) is not None
+        and torch.backends.mps.is_available()
+    ):
         try:
             torch.zeros(1, dtype=torch.bfloat16, device="mps")
             return True
@@ -313,7 +341,8 @@ def _load_causal_lm(model_path: str, adapter_path: str | None = None):
         tokenizer.pad_token = tokenizer.eos_token
     use_bf16 = _detect_bf16()
     has_accelerator = torch.cuda.is_available() or (
-        getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available()
+        getattr(torch.backends, "mps", None) is not None
+        and torch.backends.mps.is_available()
     )
     model = AutoModelForCausalLM.from_pretrained(
         model_path,
@@ -323,13 +352,15 @@ def _load_causal_lm(model_path: str, adapter_path: str | None = None):
     )
     if adapter_path:
         from peft import PeftModel  # 延迟导入
+
         model = PeftModel.from_pretrained(model, adapter_path)
     model.eval()
     return model, tokenizer
 
 
-def _generate_answers(model_path: str, adapter_path: str | None, golden: list[dict],
-                      max_new_tokens: int) -> list[str]:
+def _generate_answers(
+    model_path: str, adapter_path: str | None, golden: list[dict], max_new_tokens: int
+) -> list[str]:
     """对 golden 中的 query 逐条贪心生成答案。
 
     离线 transformers 实现；如需复用后端 LLM 网关，替换本函数为网关调用即可，
@@ -342,7 +373,9 @@ def _generate_answers(model_path: str, adapter_path: str | None, golden: list[di
     for rec in golden:
         messages = [{"role": "user", "content": rec["query"]}]
         if getattr(tokenizer, "chat_template", None):
-            prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            prompt = tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
         else:
             prompt = f"<|user|>\n{rec['query']}\n<|assistant|>\n"
         inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
@@ -353,7 +386,7 @@ def _generate_answers(model_path: str, adapter_path: str | None, golden: list[di
                 do_sample=False,
                 pad_token_id=tokenizer.pad_token_id,
             )
-        new_tokens = output[0][inputs["input_ids"].shape[1]:]
+        new_tokens = output[0][inputs["input_ids"].shape[1] :]
         answers.append(tokenizer.decode(new_tokens, skip_special_tokens=True).strip())
     # 主动释放显存，便于同进程加载下一个模型
     del model
@@ -362,8 +395,12 @@ def _generate_answers(model_path: str, adapter_path: str | None, golden: list[di
     return answers
 
 
-def eval_generation_model(model_path: str, adapter_path: str | None, golden: list[dict],
-                          max_new_tokens: int = 512) -> dict[str, Any]:
+def eval_generation_model(
+    model_path: str,
+    adapter_path: str | None,
+    golden: list[dict],
+    max_new_tokens: int = 512,
+) -> dict[str, Any]:
     """单个生成模型在 golden 上的指标：avg BLEU / ROUGE-L / 关键词重叠率。"""
     answers = _generate_answers(model_path, adapter_path, golden, max_new_tokens)
     n = max(1, len(golden))
@@ -386,29 +423,50 @@ def eval_generation_model(model_path: str, adapter_path: str | None, golden: lis
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="基线 vs 微调模型对比评测（输出 Markdown 表格）",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--golden", required=True, help="golden.jsonl 路径")
-    parser.add_argument("--mode", choices=["retrieval", "generation"], required=True, help="评测模式")
-    parser.add_argument("--baseline_model", required=True,
-                        help="基线模型（retrieval: 向量模型；generation: 生成模型）")
-    parser.add_argument("--finetuned_model", required=True,
-                        help="微调模型（generation 模式下为基座路径，配合 --finetuned_adapter）")
-    parser.add_argument("--finetuned_adapter", default=None,
-                        help="generation 模式可选：叠加在 finetuned_model 上的 LoRA adapter 路径")
-    parser.add_argument("--corpus", default=None,
-                        help="retrieval 模式可选：语料 JSONL（{\"doc_id\",\"text\"}）；缺省用 golden 构建伪语料")
-    parser.add_argument("--limit", type=int, default=None, help="仅评测前 N 条（快速 smoke）")
-    parser.add_argument("--max_new_tokens", type=int, default=512, help="generation 模式最大生成长度")
+    parser.add_argument(
+        "--mode", choices=["retrieval", "generation"], required=True, help="评测模式"
+    )
+    parser.add_argument(
+        "--baseline_model",
+        required=True,
+        help="基线模型（retrieval: 向量模型；generation: 生成模型）",
+    )
+    parser.add_argument(
+        "--finetuned_model",
+        required=True,
+        help="微调模型（generation 模式下为基座路径，配合 --finetuned_adapter）",
+    )
+    parser.add_argument(
+        "--finetuned_adapter",
+        default=None,
+        help="generation 模式可选：叠加在 finetuned_model 上的 LoRA adapter 路径",
+    )
+    parser.add_argument(
+        "--corpus",
+        default=None,
+        help='retrieval 模式可选：语料 JSONL（{"doc_id","text"}）；缺省用 golden 构建伪语料',
+    )
+    parser.add_argument(
+        "--limit", type=int, default=None, help="仅评测前 N 条（快速 smoke）"
+    )
+    parser.add_argument(
+        "--max_new_tokens", type=int, default=512, help="generation 模式最大生成长度"
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
 
     golden = load_golden(args.golden)
     if args.limit:
@@ -421,27 +479,62 @@ def main(argv: list[str] | None = None) -> int:
         if args.corpus:
             corpus_ids, corpus_texts = load_corpus(args.corpus)
         else:
-            logger.warning("未指定 --corpus，使用 golden.expected_answer 构建伪语料（仅供演示）")
+            logger.warning(
+                "未指定 --corpus，使用 golden.expected_answer 构建伪语料（仅供演示）"
+            )
             corpus_ids, corpus_texts = build_pseudo_corpus(golden)
-        baseline = eval_retrieval_model(args.baseline_model, golden, corpus_ids, corpus_texts)
-        finetuned = eval_retrieval_model(args.finetuned_model, golden, corpus_ids, corpus_texts)
+        baseline = eval_retrieval_model(
+            args.baseline_model, golden, corpus_ids, corpus_texts
+        )
+        finetuned = eval_retrieval_model(
+            args.finetuned_model, golden, corpus_ids, corpus_texts
+        )
         headers = ["模型", "Recall@5", "Recall@10", "MRR", "样本数"]
         rows = [
-            [f"baseline: {baseline['model']}", f"{baseline['recall@5']:.4f}",
-             f"{baseline['recall@10']:.4f}", f"{baseline['mrr']:.4f}", baseline["samples"]],
-            [f"finetuned: {finetuned['model']}", f"{finetuned['recall@5']:.4f}",
-             f"{finetuned['recall@10']:.4f}", f"{finetuned['mrr']:.4f}", finetuned["samples"]],
+            [
+                f"baseline: {baseline['model']}",
+                f"{baseline['recall@5']:.4f}",
+                f"{baseline['recall@10']:.4f}",
+                f"{baseline['mrr']:.4f}",
+                baseline["samples"],
+            ],
+            [
+                f"finetuned: {finetuned['model']}",
+                f"{finetuned['recall@5']:.4f}",
+                f"{finetuned['recall@10']:.4f}",
+                f"{finetuned['mrr']:.4f}",
+                finetuned["samples"],
+            ],
         ]
     else:
-        baseline = eval_generation_model(args.baseline_model, None, golden, args.max_new_tokens)
-        finetuned = eval_generation_model(args.finetuned_model, args.finetuned_adapter,
-                                          golden, args.max_new_tokens)
-        headers = ["模型", "avg BLEU", "ROUGE-L", "关键词重叠率(faithfulness占位)", "样本数"]
+        baseline = eval_generation_model(
+            args.baseline_model, None, golden, args.max_new_tokens
+        )
+        finetuned = eval_generation_model(
+            args.finetuned_model, args.finetuned_adapter, golden, args.max_new_tokens
+        )
+        headers = [
+            "模型",
+            "avg BLEU",
+            "ROUGE-L",
+            "关键词重叠率(faithfulness占位)",
+            "样本数",
+        ]
         rows = [
-            [f"baseline: {baseline['model']}", f"{baseline['bleu']:.4f}",
-             f"{baseline['rouge_l']:.4f}", f"{baseline['keyword_overlap']:.4f}", baseline["samples"]],
-            [f"finetuned: {finetuned['model']}", f"{finetuned['bleu']:.4f}",
-             f"{finetuned['rouge_l']:.4f}", f"{finetuned['keyword_overlap']:.4f}", finetuned["samples"]],
+            [
+                f"baseline: {baseline['model']}",
+                f"{baseline['bleu']:.4f}",
+                f"{baseline['rouge_l']:.4f}",
+                f"{baseline['keyword_overlap']:.4f}",
+                baseline["samples"],
+            ],
+            [
+                f"finetuned: {finetuned['model']}",
+                f"{finetuned['bleu']:.4f}",
+                f"{finetuned['rouge_l']:.4f}",
+                f"{finetuned['keyword_overlap']:.4f}",
+                finetuned["samples"],
+            ],
         ]
 
     table = format_markdown_table(headers, rows)

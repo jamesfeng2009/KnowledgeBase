@@ -391,15 +391,17 @@ class RagEvalService:
                         error=str(exc),
                     )
                     # 记录错误结果
-                    self.db.add(RagEvalResult(
-                        query_id=q.id,
-                        dataset_id=dataset_id,
-                        retrieved=[],
-                        metrics={},
-                        retrieved_count=0,
-                        error_message=str(exc),
-                        executed_at=datetime.now(timezone.utc),
-                    ))
+                    self.db.add(
+                        RagEvalResult(
+                            query_id=q.id,
+                            dataset_id=dataset_id,
+                            retrieved=[],
+                            metrics={},
+                            retrieved_count=0,
+                            error_message=str(exc),
+                            executed_at=datetime.now(timezone.utc),
+                        )
+                    )
         finally:
             await retriever.close()
 
@@ -410,7 +412,9 @@ class RagEvalService:
             if executed > 0:
                 for key, total in metric_sums.items():
                     agg_metrics[key] = round(total / executed, 4)
-            agg_metrics["hit_rate"] = round(hit_count / executed, 4) if executed > 0 else 0.0
+            agg_metrics["hit_rate"] = (
+                round(hit_count / executed, 4) if executed > 0 else 0.0
+            )
 
             elapsed = int(time.time() - start_time)
             dataset.status = "completed"
@@ -475,14 +479,16 @@ class RagEvalService:
                 continue
             seen_doc_ids.add(doc_id)
             rank = len(retrieved) + 1
-            retrieved.append({
-                "doc_id": doc_id,
-                "chunk_id": str(r.get("chunk_id") or ""),
-                "score": float(r.get("score") or 0.0),
-                "rank": rank,
-                "source": r.get("source") or "",
-                "title": r.get("title") or "",
-            })
+            retrieved.append(
+                {
+                    "doc_id": doc_id,
+                    "chunk_id": str(r.get("chunk_id") or ""),
+                    "score": float(r.get("score") or 0.0),
+                    "rank": rank,
+                    "source": r.get("source") or "",
+                    "title": r.get("title") or "",
+                }
+            )
             ranked_doc_ids.append(doc_id)
 
         # 计算指标
@@ -549,19 +555,23 @@ class RagEvalService:
 
         results: list[dict] = []
         for q, res in rows:
-            results.append({
-                "query_id": str(q.id),
-                "query": q.query,
-                "query_type": q.query_type,
-                "difficulty": q.difficulty,
-                "ground_truth_doc_ids": q.ground_truth_doc_ids,
-                "retrieved": res.retrieved if res else None,
-                "metrics": res.metrics if res else None,
-                "retrieved_count": res.retrieved_count if res else 0,
-                "response_time_ms": res.response_time_ms if res else 0,
-                "error_message": res.error_message if res else None,
-                "executed_at": res.executed_at.isoformat() if res and res.executed_at else None,
-            })
+            results.append(
+                {
+                    "query_id": str(q.id),
+                    "query": q.query,
+                    "query_type": q.query_type,
+                    "difficulty": q.difficulty,
+                    "ground_truth_doc_ids": q.ground_truth_doc_ids,
+                    "retrieved": res.retrieved if res else None,
+                    "metrics": res.metrics if res else None,
+                    "retrieved_count": res.retrieved_count if res else 0,
+                    "response_time_ms": res.response_time_ms if res else 0,
+                    "error_message": res.error_message if res else None,
+                    "executed_at": res.executed_at.isoformat()
+                    if res and res.executed_at
+                    else None,
+                }
+            )
         return results
 
     # ------------------------------------------------------------------
@@ -571,38 +581,46 @@ class RagEvalService:
     async def get_stats(self) -> dict:
         """获取 RAG 评测全局统计。"""
         # 数据集总数
-        total_datasets = await self.db.scalar(
-            select(func.count())
-            .select_from(RagEvalDataset)
-            .where(RagEvalDataset.deleted_at.is_(None))
-        ) or 0
+        total_datasets = (
+            await self.db.scalar(
+                select(func.count())
+                .select_from(RagEvalDataset)
+                .where(RagEvalDataset.deleted_at.is_(None))
+            )
+            or 0
+        )
 
         # 查询总数
-        total_queries = await self.db.scalar(
-            select(func.count())
-            .select_from(RagEvalQuery)
-            .join(
-                RagEvalDataset,
-                RagEvalDataset.id == RagEvalQuery.dataset_id,
+        total_queries = (
+            await self.db.scalar(
+                select(func.count())
+                .select_from(RagEvalQuery)
+                .join(
+                    RagEvalDataset,
+                    RagEvalDataset.id == RagEvalQuery.dataset_id,
+                )
+                .where(RagEvalDataset.deleted_at.is_(None))
             )
-            .where(RagEvalDataset.deleted_at.is_(None))
-        ) or 0
+            or 0
+        )
 
         # 已执行结果数 — 排除软删除数据集，与 total_datasets/total_queries 口径一致
-        total_executed = await self.db.scalar(
-            select(func.count())
-            .select_from(RagEvalResult)
-            .join(
-                RagEvalDataset,
-                RagEvalDataset.id == RagEvalResult.dataset_id,
+        total_executed = (
+            await self.db.scalar(
+                select(func.count())
+                .select_from(RagEvalResult)
+                .join(
+                    RagEvalDataset,
+                    RagEvalDataset.id == RagEvalResult.dataset_id,
+                )
+                .where(RagEvalDataset.deleted_at.is_(None))
             )
-            .where(RagEvalDataset.deleted_at.is_(None))
-        ) or 0
+            or 0
+        )
 
         # 聚合各已执行数据集的指标（加权平均）
         ds_result = await self.db.execute(
-            select(RagEvalDataset)
-            .where(
+            select(RagEvalDataset).where(
                 RagEvalDataset.deleted_at.is_(None),
                 RagEvalDataset.status == "completed",
                 RagEvalDataset.metrics.isnot(None),
@@ -611,7 +629,10 @@ class RagEvalService:
         completed_datasets = list(ds_result.scalars().all())
 
         agg_keys = [
-            "recall_at_5", "mrr", f"ndcg_at_{_NDCG_K}", "map",
+            "recall_at_5",
+            "mrr",
+            f"ndcg_at_{_NDCG_K}",
+            "map",
         ]
         sums = {k: 0.0 for k in agg_keys}
         weight_total = 0
@@ -643,8 +664,11 @@ class RagEvalService:
             qt = q.query_type
             if qt not in type_stats:
                 type_stats[qt] = {
-                    "total": 0, "executed": 0, "hit": 0,
-                    "recall_at_5_sum": 0.0, "mrr_sum": 0.0,
+                    "total": 0,
+                    "executed": 0,
+                    "hit": 0,
+                    "recall_at_5_sum": 0.0,
+                    "mrr_sum": 0.0,
                 }
             type_stats[qt]["total"] += 1
             if res and res.metrics:
@@ -665,7 +689,9 @@ class RagEvalService:
                 "total": st["total"],
                 "executed": executed,
                 "hit_rate": round(st["hit"] / executed, 4) if executed else 0.0,
-                "avg_recall_at_5": round(st["recall_at_5_sum"] / executed, 4) if executed else 0.0,
+                "avg_recall_at_5": round(st["recall_at_5_sum"] / executed, 4)
+                if executed
+                else 0.0,
                 "avg_mrr": round(st["mrr_sum"] / executed, 4) if executed else 0.0,
             }
 
@@ -673,9 +699,13 @@ class RagEvalService:
             "total_datasets": total_datasets,
             "total_queries": total_queries,
             "total_executed": total_executed,
-            "avg_recall_at_5": round(sums["recall_at_5"] / weight_total, 4) if weight_total else 0.0,
+            "avg_recall_at_5": round(sums["recall_at_5"] / weight_total, 4)
+            if weight_total
+            else 0.0,
             "avg_mrr": round(sums["mrr"] / weight_total, 4) if weight_total else 0.0,
-            "avg_ndcg_at_5": round(sums[f"ndcg_at_{_NDCG_K}"] / weight_total, 4) if weight_total else 0.0,
+            "avg_ndcg_at_5": round(sums[f"ndcg_at_{_NDCG_K}"] / weight_total, 4)
+            if weight_total
+            else 0.0,
             "avg_map": round(sums["map"] / weight_total, 4) if weight_total else 0.0,
             "by_query_type": by_query_type,
             "preset_query_count": len(get_preset_queries()),

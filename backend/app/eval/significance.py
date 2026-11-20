@@ -444,9 +444,7 @@ def two_proportion_test(
     p_value = 2.0 * (1.0 - _normal_cdf(abs(z))) if se_pooled > 0 else 1.0
 
     # 差值区间用未合并方差（假设检验用合并、区间估计用未合并是标准做法）
-    se_unpooled = math.sqrt(
-        rate_a * (1 - rate_a) / n_a + rate_b * (1 - rate_b) / n_b
-    )
+    se_unpooled = math.sqrt(rate_a * (1 - rate_a) / n_a + rate_b * (1 - rate_b) / n_b)
     zc = _z_for_confidence(1 - alpha)
     delta = rate_b - rate_a
     return ProportionResult(
@@ -607,7 +605,9 @@ def judge_experiment(
         # 方向明确为负且显著 —— 这是「证据表明更差」，与「证据不足」必须分开措辞
         return SignificanceVerdict(
             decision="rollback",
-            reasons=[f"{metric} significantly worse: delta={delta:.4f} (p={p_value:.4f})"],
+            reasons=[
+                f"{metric} significantly worse: delta={delta:.4f} (p={p_value:.4f})"
+            ],
             metric=metric,
             delta=delta,
             p_value=p_value,
@@ -624,7 +624,9 @@ def judge_experiment(
     if not significant:
         reasons.append(f"not significant at alpha={alpha}: p={p_value:.4f}")
     if delta < min_effect:
-        reasons.append(f"effect too small: delta={delta:.4f} < min_effect={min_effect:.4f}")
+        reasons.append(
+            f"effect too small: delta={delta:.4f} < min_effect={min_effect:.4f}"
+        )
 
     decision = "hold" if reasons else "ship"
 

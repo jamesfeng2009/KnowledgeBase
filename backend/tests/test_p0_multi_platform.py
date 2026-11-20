@@ -10,12 +10,11 @@
 - ObsidianAdapter：文件读取、路径穿越防护、list_documents、obsidian:// URI 解析
 - 文档导入端点：适配器路由、错误处理、Document 创建
 """
+
 from __future__ import annotations
 
 import sys
-import tempfile
 from pathlib import Path
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -114,7 +113,9 @@ class TestWikiHtmlCleaner:
         """非白名单属性应被清除（class/id/style 等）。"""
         from app.document.wiki_cleaner import clean_wiki_html
 
-        html = '<p class="highlight" id="p1" style="color:red" data-track="123">文本</p>'
+        html = (
+            '<p class="highlight" id="p1" style="color:red" data-track="123">文本</p>'
+        )
 
         result = clean_wiki_html(html, source="generic")
 
@@ -148,10 +149,10 @@ class TestWikiHtmlCleaner:
         """auto 模式应自动检测 Confluence 来源。"""
         from app.document.wiki_cleaner import _detect_source
 
-        assert _detect_source('<ac:structured-macro>') == "confluence"
-        assert _detect_source('<ri:attachment>') == "confluence"
+        assert _detect_source("<ac:structured-macro>") == "confluence"
+        assert _detect_source("<ri:attachment>") == "confluence"
         assert _detect_source('<div data-record-type="text">') == "feishu"
-        assert _detect_source('<p>普通 HTML</p>') == "generic"
+        assert _detect_source("<p>普通 HTML</p>") == "generic"
 
     def test_fallback_clean_preserves_headings(self) -> None:
         """bs4 未安装时降级清洗应保留 h1-h6 标签。"""
@@ -375,7 +376,9 @@ h6 内容
         chunker = SemanticChunker()
         chunks = chunker.chunk(content, doc_type="md")
 
-        assert len(chunks) >= 4, f"Markdown h1-h6 应产生至少 4 个分块，实际: {len(chunks)}"
+        assert (
+            len(chunks) >= 4
+        ), f"Markdown h1-h6 应产生至少 4 个分块，实际: {len(chunks)}"
 
         all_content = " ".join(c.content for c in chunks)
         assert "h4 内容" in all_content
@@ -429,7 +432,11 @@ class TestSourceAdapterRegistry:
 
     def test_register_custom_adapter(self) -> None:
         """注册自定义适配器。"""
-        from app.document.source_adapters.base import DocumentSourceAdapter, FetchedDocument, SourceDocumentInfo
+        from app.document.source_adapters.base import (
+            DocumentSourceAdapter,
+            FetchedDocument,
+            SourceDocumentInfo,
+        )
         from app.document.source_adapters.registry import adapter_registry
 
         class MockAdapter(DocumentSourceAdapter):
@@ -437,7 +444,9 @@ class TestSourceAdapterRegistry:
             display_name = "Mock Test"
             supported_formats = ("html",)
 
-            async def fetch(self, doc_url_or_id: str, credentials: dict) -> FetchedDocument:
+            async def fetch(
+                self, doc_url_or_id: str, credentials: dict
+            ) -> FetchedDocument:
                 return FetchedDocument(
                     source="mock_test",
                     title="Mock",
@@ -445,7 +454,9 @@ class TestSourceAdapterRegistry:
                     format="html",
                 )
 
-            async def list_documents(self, space_or_root: str, credentials: dict) -> list[SourceDocumentInfo]:
+            async def list_documents(
+                self, space_or_root: str, credentials: dict
+            ) -> list[SourceDocumentInfo]:
                 return []
 
             async def test_connection(self, credentials: dict) -> bool:
@@ -459,7 +470,11 @@ class TestSourceAdapterRegistry:
 
     def test_unregister_adapter(self) -> None:
         """注销适配器。"""
-        from app.document.source_adapters.base import DocumentSourceAdapter, FetchedDocument, SourceDocumentInfo
+        from app.document.source_adapters.base import (
+            DocumentSourceAdapter,
+            FetchedDocument,
+            SourceDocumentInfo,
+        )
         from app.document.source_adapters.registry import adapter_registry
 
         class TempAdapter(DocumentSourceAdapter):
@@ -467,10 +482,16 @@ class TestSourceAdapterRegistry:
             display_name = "Temp"
             supported_formats = ("markdown",)
 
-            async def fetch(self, doc_url_or_id: str, credentials: dict) -> FetchedDocument:
-                return FetchedDocument(source="temp", title="t", content="", format="markdown")
+            async def fetch(
+                self, doc_url_or_id: str, credentials: dict
+            ) -> FetchedDocument:
+                return FetchedDocument(
+                    source="temp", title="t", content="", format="markdown"
+                )
 
-            async def list_documents(self, space_or_root: str, credentials: dict) -> list[SourceDocumentInfo]:
+            async def list_documents(
+                self, space_or_root: str, credentials: dict
+            ) -> list[SourceDocumentInfo]:
                 return []
 
             async def test_connection(self, credentials: dict) -> bool:
@@ -558,10 +579,12 @@ class TestConfluenceAdapter:
         """Cloud 模式 — Basic Auth（username:api_token）。"""
         from app.document.source_adapters.confluence_adapter import ConfluenceAdapter
 
-        headers = ConfluenceAdapter._build_auth_headers({
-            "username": "user@example.com",
-            "api_token": "ATATT3xF",
-        })
+        headers = ConfluenceAdapter._build_auth_headers(
+            {
+                "username": "user@example.com",
+                "api_token": "ATATT3xF",
+            }
+        )
 
         assert "Authorization" in headers
         assert headers["Authorization"].startswith("Basic ")
@@ -570,9 +593,11 @@ class TestConfluenceAdapter:
         """Server/DC 模式 — Bearer PAT。"""
         from app.document.source_adapters.confluence_adapter import ConfluenceAdapter
 
-        headers = ConfluenceAdapter._build_auth_headers({
-            "pat": "NzU4MjQ=",
-        })
+        headers = ConfluenceAdapter._build_auth_headers(
+            {
+                "pat": "NzU4MjQ=",
+            }
+        )
 
         assert headers["Authorization"] == "Bearer NzU4MjQ="
 
@@ -684,11 +709,13 @@ class TestConfluenceAdapter:
 
         with patch("httpx.AsyncClient", return_value=mock_client):
             adapter = ConfluenceAdapter()
-            result = await adapter.test_connection({
-                "base_url": "https://example.atlassian.net",
-                "username": "u",
-                "api_token": "t",
-            })
+            result = await adapter.test_connection(
+                {
+                    "base_url": "https://example.atlassian.net",
+                    "username": "u",
+                    "api_token": "t",
+                }
+            )
 
         assert result is True
 

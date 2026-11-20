@@ -155,9 +155,7 @@ class TestPairExtraction:
     def test_nested_metric_path(self):
         control = [{"case_id": "c1", "judge_scores": {"total": 8.0}}]
         treatment = [{"case_id": "c1", "judge_scores": {"total": 9.0}}]
-        a, b, dropped = extract_metric_pairs(
-            control, treatment, "judge_scores.total"
-        )
+        a, b, dropped = extract_metric_pairs(control, treatment, "judge_scores.total")
         assert (a, b, dropped) == ([8.0], [9.0], 0)
 
     def test_boolean_metric_reads_as_zero_one(self):
@@ -179,8 +177,14 @@ class TestPairExtraction:
         assert a == [] and b == [] and dropped == 1
 
     def test_passed_pairs_align(self):
-        control = [{"case_id": "c1", "passed": True}, {"case_id": "c2", "passed": False}]
-        treatment = [{"case_id": "c1", "passed": False}, {"case_id": "c2", "passed": False}]
+        control = [
+            {"case_id": "c1", "passed": True},
+            {"case_id": "c2", "passed": False},
+        ]
+        treatment = [
+            {"case_id": "c1", "passed": False},
+            {"case_id": "c2", "passed": False},
+        ]
         pa, pb = extract_passed_pairs(control, treatment)
         assert pa == [True, False]
         assert pb == [False, False]

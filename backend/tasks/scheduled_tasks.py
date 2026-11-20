@@ -26,8 +26,8 @@ import asyncio
 from datetime import datetime, timezone
 from typing import Any
 
-from celery_app import celery_app
 from app.utils.logger import get_logger
+from celery_app import celery_app
 
 logger = get_logger(__name__)
 
@@ -363,7 +363,9 @@ async def _flush_task_outbox_async() -> dict[str, Any]:
     failed = 0
     dead = 0
 
-    async with task_db_session(cross_tenant_reason="scheduled_tasks._flush_task_outbox_async") as session:
+    async with task_db_session(
+        cross_tenant_reason="scheduled_tasks._flush_task_outbox_async"
+    ) as session:
         stmt = (
             select(TaskOutbox)
             .where(
@@ -394,14 +396,14 @@ async def _flush_task_outbox_async() -> dict[str, Any]:
 
         # 独立短事务更新状态 — 单条失败不影响其余
         try:
-            async with task_db_session(cross_tenant_reason="scheduled_tasks._flush_task_outbox_async") as session:
+            async with task_db_session(
+                cross_tenant_reason="scheduled_tasks._flush_task_outbox_async"
+            ) as session:
                 if sent:
                     await session.execute(
                         update(TaskOutbox)
                         .where(TaskOutbox.id == entry.id)
-                        .values(
-                            status="sent", sent_at=now, last_error=None
-                        )
+                        .values(status="sent", sent_at=now, last_error=None)
                     )
                 else:
                     new_attempts = (entry.attempts or 0) + 1
@@ -413,7 +415,9 @@ async def _flush_task_outbox_async() -> dict[str, Any]:
                         values["status"] = "dead"
                         dead += 1
                     await session.execute(
-                        update(TaskOutbox).where(TaskOutbox.id == entry.id).values(**values)
+                        update(TaskOutbox)
+                        .where(TaskOutbox.id == entry.id)
+                        .values(**values)
                     )
                 await session.commit()
         except Exception as upd_exc:
@@ -449,6 +453,7 @@ async def _flush_task_outbox_async() -> dict[str, Any]:
 # 异步实现
 # ------------------------------------------------------------------
 
+
 async def _detect_gaps_async() -> dict[str, Any]:
     """异步检测知识缺口。"""
     from sqlalchemy import select
@@ -457,7 +462,9 @@ async def _detect_gaps_async() -> dict[str, Any]:
     from app.models.billing import Tenant
     from app.services.gap_detector_service import GapDetectorService
 
-    async with task_db_session(cross_tenant_reason="scheduled_tasks._detect_gaps_async") as session:
+    async with task_db_session(
+        cross_tenant_reason="scheduled_tasks._detect_gaps_async"
+    ) as session:
         # 按租户迭代：逐租户创建带 tenant_id 的 GapDetectorService，确保多租户隔离
         tenants_result = await session.execute(
             select(Tenant).where(Tenant.deleted_at.is_(None))
@@ -485,17 +492,21 @@ async def _detect_gaps_async() -> dict[str, Any]:
 
 async def _check_expiration_async() -> dict[str, Any]:
     """异步检查知识过期预警 — 调用 Graphiti 时间线。"""
+    from datetime import timedelta
+
+    from sqlalchemy import select
+
     from app.database import task_db_session
     from app.models.billing import Tenant
     from app.models.memory import KnowledgeEntity
     from app.utils.tenant import apply_tenant_filter
-    from sqlalchemy import select
-    from datetime import timedelta
 
     now = datetime.now(timezone.utc)
     threshold = now + timedelta(days=7)
 
-    async with task_db_session(cross_tenant_reason="scheduled_tasks._check_expiration_async") as session:
+    async with task_db_session(
+        cross_tenant_reason="scheduled_tasks._check_expiration_async"
+    ) as session:
         # 按租户迭代：逐租户查询即将过期的知识实体，确保多租户隔离
         tenants_result = await session.execute(
             select(Tenant).where(Tenant.deleted_at.is_(None))
@@ -505,24 +516,25 @@ async def _check_expiration_async() -> dict[str, Any]:
         expiring_list: list[dict[str, Any]] = []
         for tenant in tenants:
             # 查询即将过期（valid_to 在未来 7 天内且非 NULL）的知识实体
-            stmt = (
-                select(KnowledgeEntity)
-                .where(
-                    KnowledgeEntity.valid_to.isnot(None),
-                    KnowledgeEntity.valid_to <= threshold,
-                    KnowledgeEntity.valid_to >= now,
-                )
+            stmt = select(KnowledgeEntity).where(
+                KnowledgeEntity.valid_to.isnot(None),
+                KnowledgeEntity.valid_to <= threshold,
+                KnowledgeEntity.valid_to >= now,
             )
             stmt = apply_tenant_filter(stmt, KnowledgeEntity, tenant.id)
             result = await session.execute(stmt)
             for e in result.scalars().all():
-                expiring_list.append({
-                    "id": str(e.id),
-                    "name": e.name,
-                    "entity_type": e.entity_type,
-                    "valid_from": e.valid_from.isoformat() if e.valid_from else None,
-                    "valid_to": e.valid_to.isoformat() if e.valid_to else None,
-                })
+                expiring_list.append(
+                    {
+                        "id": str(e.id),
+                        "name": e.name,
+                        "entity_type": e.entity_type,
+                        "valid_from": e.valid_from.isoformat()
+                        if e.valid_from
+                        else None,
+                        "valid_to": e.valid_to.isoformat() if e.valid_to else None,
+                    }
+                )
 
         await session.commit()
 
@@ -548,7 +560,9 @@ async def _cleanup_expired_facts_async() -> dict[str, Any]:
 
     now = datetime.now(timezone.utc)
 
-    async with task_db_session(cross_tenant_reason="scheduled_tasks._cleanup_expired_facts_async") as session:
+    async with task_db_session(
+        cross_tenant_reason="scheduled_tasks._cleanup_expired_facts_async"
+    ) as session:
         cleaned_count = await Mem0Manager(session).cleanup_expired()
         await session.commit()
 
@@ -566,7 +580,9 @@ async def _cleanup_stale_checkpoints_async() -> dict[str, Any]:
     from app.database import task_db_session
 
     stale_days = 7
-    async with task_db_session(cross_tenant_reason="scheduled_tasks._cleanup_stale_checkpoints_async") as session:
+    async with task_db_session(
+        cross_tenant_reason="scheduled_tasks._cleanup_stale_checkpoints_async"
+    ) as session:
         result = await session.execute(
             sa_text(
                 "DELETE FROM agent_checkpoints "
@@ -593,7 +609,9 @@ async def _generate_quality_report_async() -> dict[str, Any]:
     from app.models.billing import Tenant
     from app.services.quality_service import QualityService
 
-    async with task_db_session(cross_tenant_reason="scheduled_tasks._generate_quality_report_async") as session:
+    async with task_db_session(
+        cross_tenant_reason="scheduled_tasks._generate_quality_report_async"
+    ) as session:
         # 按租户迭代：逐租户创建带 tenant_id 的 QualityService，确保多租户隔离
         tenants_result = await session.execute(
             select(Tenant).where(Tenant.deleted_at.is_(None))
@@ -639,8 +657,8 @@ async def _cleanup_orphan_multipart_uploads_async() -> dict[str, Any]:
 
     settings = get_settings()
     now = time.time()
-    redis_threshold = 12 * 3600   # 12h — Redis 停滞阈值
-    minio_threshold = 24 * 3600   # 24h — MinIO 孤儿阈值
+    redis_threshold = 12 * 3600  # 12h — Redis 停滞阈值
+    minio_threshold = 24 * 3600  # 24h — MinIO 孤儿阈值
 
     redis_cleaned = 0
     minio_cleaned = 0
@@ -704,7 +722,10 @@ async def _cleanup_orphan_multipart_uploads_async() -> dict[str, Any]:
     # 策略 2: 扫描 MinIO list_multipart_uploads（兜底孤儿）
     # ------------------------------------------------------------------
     try:
-        from app.utils.minio_client import list_multipart_uploads, abort_multipart_upload
+        from app.utils.minio_client import (
+            abort_multipart_upload,
+            list_multipart_uploads,
+        )
 
         uploads = await list_multipart_uploads(bucket="ekb-documents")
         for u in uploads:
@@ -774,6 +795,7 @@ async def _cleanup_stale_research_async() -> dict[str, Any]:
 
     try:
         import redis
+
         from app.services.research_progress import RESULT_PREFIX, SNAPSHOT_PREFIX
 
         client = redis.from_url(settings.REDIS_URL, decode_responses=True)
@@ -804,7 +826,9 @@ async def _cleanup_stale_research_async() -> dict[str, Any]:
                 )
         client.close()
     except ImportError:
-        logger.debug("scheduled.cleanup_stale_research_skipped", reason="redis_not_installed")
+        logger.debug(
+            "scheduled.cleanup_stale_research_skipped", reason="redis_not_installed"
+        )
     except Exception as exc:
         logger.warning("scheduled.cleanup_stale_research_failed", error=str(exc))
 
@@ -864,7 +888,9 @@ async def _rescan_stuck_documents_async(settings: Any) -> dict[str, Any]:
         logger.warning("scheduled.rescan_redis_connect_failed", error=str(exc)[:200])
 
     candidates = 0
-    async with task_db_session(cross_tenant_reason="scheduled_tasks._rescan_stuck_documents_async") as session:
+    async with task_db_session(
+        cross_tenant_reason="scheduled_tasks._rescan_stuck_documents_async"
+    ) as session:
         stmt = (
             select(Document)
             .where(
@@ -921,9 +947,7 @@ async def _rescan_stuck_documents_async(settings: Any) -> dict[str, Any]:
                 logger.info(
                     "scheduled.rescan_redispatched",
                     doc_id=doc_id,
-                    updated_at=(
-                        doc.updated_at.isoformat() if doc.updated_at else None
-                    ),
+                    updated_at=(doc.updated_at.isoformat() if doc.updated_at else None),
                 )
             except Exception as exc:
                 dispatch_failed += 1
@@ -1016,7 +1040,9 @@ async def _rescan_stuck_research_async() -> dict[str, Any]:
     cutoff = datetime.now(timezone.utc) - timedelta(hours=_RESEARCH_STUCK_HOURS)
     candidates = backfilled = marked_failed = 0
 
-    async with task_db_session(cross_tenant_reason="scheduled_tasks._rescan_stuck_research_async") as session:
+    async with task_db_session(
+        cross_tenant_reason="scheduled_tasks._rescan_stuck_research_async"
+    ) as session:
         stmt = (
             select(ResearchJob)
             .where(
@@ -1044,9 +1070,7 @@ async def _rescan_stuck_research_async() -> dict[str, Any]:
             # 守卫使回填落空，不覆盖真实终态
             if await backfill_result_from_redis(str(job.id), data):
                 backfilled += 1
-                logger.info(
-                    "scheduled.rescan_research_backfilled", job_id=str(job.id)
-                )
+                logger.info("scheduled.rescan_research_backfilled", job_id=str(job.id))
         else:
             await mark_research_job_status(
                 str(job.id),
@@ -1055,9 +1079,7 @@ async def _rescan_stuck_research_async() -> dict[str, Any]:
                 only_when_queued=True,
             )
             marked_failed += 1
-            logger.info(
-                "scheduled.rescan_research_marked_failed", job_id=str(job.id)
-            )
+            logger.info("scheduled.rescan_research_marked_failed", job_id=str(job.id))
 
     return {
         "status": "success",
@@ -1125,7 +1147,9 @@ async def _promote_knowledge_candidates_async(settings: Any) -> dict[str, Any]:
     kb_uuid = _uuid.UUID(settings.FAQ_KB_ID)
     expired = promoted = dedup_blocked = skipped = failed = 0
 
-    async with task_db_session(cross_tenant_reason="scheduled_tasks._promote_knowledge_candidates_async") as db:
+    async with task_db_session(
+        cross_tenant_reason="scheduled_tasks._promote_knowledge_candidates_async"
+    ) as db:
         # LLM 不可用降级（_llm_extract_faq 有 None 降级路径）
         try:
             llm = get_llm_provider()
@@ -1140,16 +1164,12 @@ async def _promote_knowledge_candidates_async(settings: Any) -> dict[str, Any]:
             await db.commit()
         except Exception as exc:
             await db.rollback()
-            logger.warning(
-                "scheduled.candidates_expire_failed", error=str(exc)[:200]
-            )
+            logger.warning("scheduled.candidates_expire_failed", error=str(exc)[:200])
 
         # 2. 达标簇逐个晋升（每簇独立事务）
         eligible = await pool.list_eligible(limit=settings.CHAT_FAQ_PROMOTE_BATCH_SIZE)
         for row in eligible:
-            svc = KnowledgeCompoundingService(
-                llm, db, tenant_id=row.tenant_id
-            )
+            svc = KnowledgeCompoundingService(llm, db, tenant_id=row.tenant_id)
             cand_pool = KnowledgeCandidatePool(
                 db, tenant_id=row.tenant_id, compounding=svc
             )

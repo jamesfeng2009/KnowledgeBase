@@ -6,14 +6,13 @@
       数据访问方法（_find_by_path / _get_by_id / _docs_with_path）聚焦逻辑；
     - 重命名/删除的级联更新只断言受影响对象的 path/depth 重算结果。
 """
+
 from __future__ import annotations
 
 import uuid
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 
 from app.models.folder import KbFolder
 from app.services.folder_service import (
@@ -23,10 +22,10 @@ from app.services.folder_service import (
     split_path,
 )
 
-
 # ==================================================================
 # 纯函数
 # ==================================================================
+
 
 class TestPathUtils:
     def test_split_path(self) -> None:
@@ -51,14 +50,22 @@ class TestBuildTree:
     def _folder(self, path: str, depth: int, sort_order: int = 0) -> SimpleNamespace:
         segs = split_path(path)
         return SimpleNamespace(
-            id=uuid.uuid4(), name=segs[-1], path=path,
-            parent_path=join_path(segs[:-1]), depth=depth, sort_order=sort_order,
+            id=uuid.uuid4(),
+            name=segs[-1],
+            path=path,
+            parent_path=join_path(segs[:-1]),
+            depth=depth,
+            sort_order=sort_order,
         )
 
     def _doc(self, path: str | None, sort_order: int = 0) -> SimpleNamespace:
         return SimpleNamespace(
-            id=uuid.uuid4(), title=f"doc-{path or 'root'}", path=path,
-            depth=depth_of(path), sort_order=sort_order, doc_type="md",
+            id=uuid.uuid4(),
+            title=f"doc-{path or 'root'}",
+            path=path,
+            depth=depth_of(path),
+            sort_order=sort_order,
+            doc_type="md",
         )
 
     def test_tree_with_folder_hierarchy(self) -> None:
@@ -106,6 +113,7 @@ class TestBuildTree:
 # Service 方法
 # ==================================================================
 
+
 class _FakeSession:
     """最小 AsyncSession 替身 — 只支持 add(同步)/flush(异步)/execute(返回空)。"""
 
@@ -113,22 +121,30 @@ class _FakeSession:
         self.added: list = []
         self.flushed: int = 0
 
-    def add(self, obj) -> None:  # noqa: ANN001
+    def add(self, obj) -> None:
         self.added.append(obj)
 
     async def flush(self) -> None:
         self.flushed += 1
 
-    async def execute(self, stmt):  # noqa: ANN001
-        return SimpleNamespace(scalars=lambda: SimpleNamespace(
-            first=lambda: None, all=lambda: [], __iter__=lambda self: iter([])
-        ))
+    async def execute(self, stmt):
+        return SimpleNamespace(
+            scalars=lambda: SimpleNamespace(
+                first=lambda: None, all=lambda: [], __iter__=lambda self: iter([])
+            )
+        )
 
 
 def _make_folder(**kw) -> KbFolder:
     defaults = dict(
-        id=uuid.uuid4(), kb_id=uuid.uuid4(), name="产品", path="产品",
-        parent_path=None, depth=1, sort_order=0, tenant_id=None,
+        id=uuid.uuid4(),
+        kb_id=uuid.uuid4(),
+        name="产品",
+        path="产品",
+        parent_path=None,
+        depth=1,
+        sort_order=0,
+        tenant_id=None,
     )
     defaults.update(kw)
     return KbFolder(**defaults)
@@ -136,8 +152,14 @@ def _make_folder(**kw) -> KbFolder:
 
 def _make_doc(**kw) -> SimpleNamespace:
     defaults = dict(
-        id=uuid.uuid4(), kb_id=uuid.uuid4(), title="文档", path=None,
-        depth=0, sort_order=0, deleted_at=None, doc_type="md",
+        id=uuid.uuid4(),
+        kb_id=uuid.uuid4(),
+        title="文档",
+        path=None,
+        depth=0,
+        sort_order=0,
+        deleted_at=None,
+        doc_type="md",
     )
     defaults.update(kw)
     return SimpleNamespace(**defaults)
@@ -251,6 +273,7 @@ async def test_move_document_to_folder() -> None:
 # ==================================================================
 # 辅助 mock
 # ==================================================================
+
 
 async def _async_none(*_a, **_kw):
     return None

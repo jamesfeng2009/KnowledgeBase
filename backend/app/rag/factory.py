@@ -77,7 +77,9 @@ def get_rag_engine() -> AgenticRAGEngine:
         # 请求级参数传入（见 chat_service）。
     )
 
-    log.info("rag_engine.initialized", deploy_mode=getattr(llm, "deploy_mode", "unknown"))
+    log.info(
+        "rag_engine.initialized", deploy_mode=getattr(llm, "deploy_mode", "unknown")
+    )
     return engine
 
 

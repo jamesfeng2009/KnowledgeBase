@@ -6,17 +6,17 @@
 - P2: Context Cliff 监控 — Generator 注入上下文超阈值时自动降级；
 - P3: 标题路径上下文锚点 — 结构化分块提取完整标题层级路径。
 """
+
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-from typing import Any
 from unittest.mock import MagicMock
 
-import pytest
-
-from app.rag.chunker import Chunk, SemanticChunker, estimate_tokens
-from app.rag.generator import Generator, _CONTEXT_CLIFF_THRESHOLD, _CONTEXT_CLIFF_FALLBACK_TOP_K
-
+from app.rag.chunker import SemanticChunker, estimate_tokens
+from app.rag.generator import (
+    _CONTEXT_CLIFF_FALLBACK_TOP_K,
+    _CONTEXT_CLIFF_THRESHOLD,
+    Generator,
+)
 
 # ======================================================================
 # 测试数据
@@ -433,10 +433,7 @@ class TestContextCliff:
         放不下的被淘汰（P0-1 预算分配式注入，替代旧的砍到 Top-3）。"""
         gen = self._make_generator()
         big_content = "D" * 2000
-        docs = [
-            {"content": big_content, "title": f"doc-{i}"}
-            for i in range(6)
-        ]
+        docs = [{"content": big_content, "title": f"doc-{i}"} for i in range(6)]
         prompt = gen._build_system_prompt(docs, [], "")
         # 每篇截断到 1500 字符 ≈ 429 token，预算 2500 可容纳 5 篇
         assert "[1]" in prompt
@@ -481,7 +478,13 @@ class TestBackwardCompatibility:
     def test_existing_rag_engine_still_works(self) -> None:
         """RAG 引擎的 Mock 测试仍应通过。"""
         from app.rag.engine import AgenticRAGEngine
-        from tests.test_rag_engine import FakeLLM, FakeMCPClient, FakeRetriever, FakeReranker, FakeGenerator
+        from tests.test_rag_engine import (
+            FakeGenerator,
+            FakeLLM,
+            FakeMCPClient,
+            FakeReranker,
+            FakeRetriever,
+        )
 
         engine = AgenticRAGEngine(
             llm=FakeLLM("generate"),
@@ -521,7 +524,12 @@ class TestFormatDetection:
     def test_is_markdown_html_content(self) -> None:
         """HTML 内容不被识别为 Markdown。"""
         assert SemanticChunker._is_markdown("<h1>标题</h1><p>正文</p>") is False
-        assert SemanticChunker._is_markdown("<h2>章节</h2><table><tr><td>数据</td></tr></table>") is False
+        assert (
+            SemanticChunker._is_markdown(
+                "<h2>章节</h2><table><tr><td>数据</td></tr></table>"
+            )
+            is False
+        )
 
     def test_is_markdown_plain_text(self) -> None:
         """纯文本不被识别为 Markdown。"""
@@ -705,7 +713,9 @@ class TestTitlePathPrefix:
         hash_slot = [c for c in chunks if "哈希槽分配" in c.title_path]
         assert len(hash_slot) > 0
         # content 应以 [Redis 深度解析 > 集群架构 > 哈希槽分配] 开头
-        assert hash_slot[0].content.startswith("[Redis 深度解析 > 集群架构 > 哈希槽分配]")
+        assert hash_slot[0].content.startswith(
+            "[Redis 深度解析 > 集群架构 > 哈希槽分配]"
+        )
 
     def test_html_nested_title_path_in_content(self) -> None:
         """HTML 嵌套标题的 content 前缀应包含完整层级路径。"""
@@ -753,7 +763,11 @@ class TestHtmlLongChunkSplit:
         chunks = chunker._split_html(html_content, "doc-long")
 
         # 第一个章节应被拆分为多个子块
-        h1_chunks = [c for c in chunks if "系统架构" in c.title_path and "服务层" not in c.title_path]
+        h1_chunks = [
+            c
+            for c in chunks
+            if "系统架构" in c.title_path and "服务层" not in c.title_path
+        ]
         assert len(h1_chunks) > 1, "超长 H1 章节应被拆分为多个子块"
 
         # 每个子块都应有 title_path 元数据
@@ -815,15 +829,20 @@ class TestFixedSplitOverlap:
 
             chunker = SemanticChunker()
             # 构造足够长的文本触发多块分块（> 512 tokens ≈ 1792 字符）
-            long_text = "这是第一段内容用于测试。" * 100 + "这是第二段内容用于测试。" * 100
+            long_text = (
+                "这是第一段内容用于测试。" * 100 + "这是第二段内容用于测试。" * 100
+            )
             chunks = chunker._fixed_split(long_text, "doc-overlap")
 
             assert len(chunks) >= 2
             # 第一个块之后的块应包含前一块末尾的内容（Overlap）
             for i in range(1, len(chunks)):
-                prev_tail = chunks[i - 1].content[-chunker_mod._OVERLAP_CHARS:]
+                prev_tail = chunks[i - 1].content[-chunker_mod._OVERLAP_CHARS :]
                 # 当前块开头应包含前一块末尾的部分内容
-                assert chunks[i].content[:10] in prev_tail or prev_tail[:10] in chunks[i].content
+                assert (
+                    chunks[i].content[:10] in prev_tail
+                    or prev_tail[:10] in chunks[i].content
+                )
         finally:
             chunker_mod._CHUNK_OVERLAP_ENABLED = original
 

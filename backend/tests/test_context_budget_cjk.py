@@ -19,12 +19,11 @@ from app.rag.context_budget import (
     _CJK_CHARS_PER_TOKEN,
     _CJK_RANGES,
     _NON_CJK_CHARS_PER_TOKEN,
+    ContextBudgetManager,
     _count_cjk_chars,
     _is_cjk_char,
     estimate_tokens_for_text,
-    ContextBudgetManager,
 )
-
 
 # ======================================================================
 # 1. CJK 字符识别
@@ -37,13 +36,13 @@ class TestCjkCharDetection:
     @pytest.mark.parametrize(
         "char,expected",
         [
-            ("中", True),       # CJK 基本汉字 U+4E2D
-            ("文", True),       # CJK 基本汉字 U+6587
-            ("世", True),       # CJK 基本汉字 U+4E16
-            ("界", True),       # CJK 基本汉字 U+754C
-            ("あ", True),       # 平假名 U+3042
-            ("カ", True),       # 片假名 U+30AB
-            ("韓", True),       # 韩文汉字
+            ("中", True),  # CJK 基本汉字 U+4E2D
+            ("文", True),  # CJK 基本汉字 U+6587
+            ("世", True),  # CJK 基本汉字 U+4E16
+            ("界", True),  # CJK 基本汉字 U+754C
+            ("あ", True),  # 平假名 U+3042
+            ("カ", True),  # 片假名 U+30AB
+            ("韓", True),  # 韩文汉字
         ],
     )
     def test_cjk_chars_detected(self, char: str, expected: bool):
@@ -52,14 +51,14 @@ class TestCjkCharDetection:
     @pytest.mark.parametrize(
         "char,expected",
         [
-            ("a", False),       # 半角英文
-            ("A", False),       # 半角大写
-            ("1", False),       # 半角数字
-            (" ", False),       # 半角空格
-            (".", False),       # 半角句号
-            (",", False),       # 半角逗号
-            (chr(0x0A), False), # 换行符 LF
-            (chr(0x09), False), # 制表符 TAB
+            ("a", False),  # 半角英文
+            ("A", False),  # 半角大写
+            ("1", False),  # 半角数字
+            (" ", False),  # 半角空格
+            (".", False),  # 半角句号
+            (",", False),  # 半角逗号
+            (chr(0x0A), False),  # 换行符 LF
+            (chr(0x09), False),  # 制表符 TAB
         ],
     )
     def test_non_cjk_chars_rejected(self, char: str, expected: bool):
@@ -143,9 +142,9 @@ class TestEstimateTokensForText:
         new_estimate = estimate_tokens_for_text(text)
         old_estimate = int(1000 / 3.5)  # 旧估算 ≈ 285
         # 新估算应明显大于旧估算（约 666 vs 285）
-        assert new_estimate > old_estimate * 2, (
-            f"中文应被高估: 新={new_estimate}, 旧={old_estimate}"
-        )
+        assert (
+            new_estimate > old_estimate * 2
+        ), f"中文应被高估: 新={new_estimate}, 旧={old_estimate}"
 
     def test_english_slightly_lower_vs_old_coefficient(self):
         """英文估算略低于旧版（4.0 vs 3.5，更接近真实）。"""
@@ -209,8 +208,8 @@ class TestEstimateTokensMessages:
     def test_multiple_messages_accumulate(self):
         msgs = [
             {"role": "system", "content": "你是助手"},  # 4 CJK → 2 token
-            {"role": "user", "content": "Hello"},      # 5 英文 → 1 token
-            {"role": "assistant", "content": "好的"},   # 2 CJK → 1 token
+            {"role": "user", "content": "Hello"},  # 5 英文 → 1 token
+            {"role": "assistant", "content": "好的"},  # 2 CJK → 1 token
         ]
         # 总计: 2 + 1 + 1 = 4
         assert ContextBudgetManager.estimate_tokens(msgs) == 4
@@ -274,9 +273,7 @@ class TestShouldCompressIntegration:
             {"role": "assistant", "content": "中" * 50},
             {"role": "assistant", "content": "中" * 50},
         ]
-        assert mgr.should_compress(msgs) is True, (
-            "新版 CJK 估算应触发压缩（中文高估）"
-        )
+        assert mgr.should_compress(msgs) is True, "新版 CJK 估算应触发压缩（中文高估）"
 
     def test_compress_still_works(self):
         """compress 方法在 CJK 估算下仍正常工作。
@@ -319,9 +316,9 @@ class TestEdgeCases:
         for i in range(len(_CJK_RANGES) - 1):
             lo_curr, hi_curr = _CJK_RANGES[i]
             lo_next, _ = _CJK_RANGES[i + 1]
-            assert hi_curr < lo_next, (
-                f"CJK 范围应无重叠且升序: {_CJK_RANGES[i]} vs {_CJK_RANGES[i+1]}"
-            )
+            assert (
+                hi_curr < lo_next
+            ), f"CJK 范围应无重叠且升序: {_CJK_RANGES[i]} vs {_CJK_RANGES[i+1]}"
 
     def test_long_text_no_overflow(self):
         """超长文本不溢出（性能测试）。"""
@@ -332,7 +329,7 @@ class TestEdgeCases:
     def test_only_punctuation(self):
         """纯标点文本（含 CJK 标点）正常估算。"""
         # 全角句号 × 3 = 3 个 CJK / 1.5 = 2 token
-        text = chr(0x3002) * 3  # 。。。 
+        text = chr(0x3002) * 3  # 。。。
         assert estimate_tokens_for_text(text) == 2
 
     def test_whitespace_only(self):

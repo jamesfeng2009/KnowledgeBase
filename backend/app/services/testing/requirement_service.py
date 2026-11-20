@@ -133,10 +133,7 @@ class RequirementAnalysisService:
 
         # 4. 构建 Prompt 并调用 LLM
         system_prompt = self._build_extract_prompt(target_categories)
-        user_content = (
-            f"文档标题: {doc.title}\n\n"
-            f"文档内容:\n{content[:4000]}"
-        )
+        user_content = f"文档标题: {doc.title}\n\n" f"文档内容:\n{content[:4000]}"
         messages = [
             Message(role="system", content=system_prompt),
             Message(role="user", content=user_content),
@@ -147,7 +144,9 @@ class RequirementAnalysisService:
         requirements_data = _extract_json(response)
         # 兼容 LLM 返回 {"requirements": [...]} 或单条 dict 的情况
         if isinstance(requirements_data, dict):
-            requirements_data = requirements_data.get("requirements", [requirements_data])
+            requirements_data = requirements_data.get(
+                "requirements", [requirements_data]
+            )
 
         # 6. 创建 TestRequirement 记录
         created: list[dict[str, Any]] = []
@@ -204,9 +203,7 @@ class RequirementAnalysisService:
                 TestRequirement.deleted_at.is_(None),
             )
         )
-        count_stmt = apply_tenant_filter(
-            count_stmt, TestRequirement, self._tenant_id
-        )
+        count_stmt = apply_tenant_filter(count_stmt, TestRequirement, self._tenant_id)
         total = await self.db.scalar(count_stmt) or 0
 
         # 分页查询
@@ -216,9 +213,7 @@ class RequirementAnalysisService:
         )
         stmt = apply_tenant_filter(stmt, TestRequirement, self._tenant_id)
         stmt = (
-            stmt.order_by(TestRequirement.created_at.desc())
-            .offset(offset)
-            .limit(size)
+            stmt.order_by(TestRequirement.created_at.desc()).offset(offset).limit(size)
         )
         result = await self.db.execute(stmt)
         items = [self._to_dict(r) for r in result.scalars().all()]

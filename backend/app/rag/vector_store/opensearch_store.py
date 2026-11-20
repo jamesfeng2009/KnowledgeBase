@@ -108,6 +108,7 @@ class OpenSearchVectorStore(VectorStoreBase):
             return []
 
         import time
+
         t0 = time.monotonic()
         settings = get_settings()
         url = f"{settings.OPENSEARCH_URL}/{self._index_name}/_search"
@@ -179,7 +180,9 @@ class OpenSearchVectorStore(VectorStoreBase):
         self._available = True
         results = self._parse_results(data, top_k)
         elapsed_ms = round((time.monotonic() - t0) * 1000, 2)
-        log.info("vector_store.os_knn.search_done", count=len(results), latency_ms=elapsed_ms)
+        log.info(
+            "vector_store.os_knn.search_done", count=len(results), latency_ms=elapsed_ms
+        )
         return results
 
     @staticmethod
@@ -463,9 +466,7 @@ class OpenSearchVectorStore(VectorStoreBase):
     # fetch_by_ids — 父子回溯基础
     # ------------------------------------------------------------------
 
-    async def fetch_by_ids(
-        self, chunk_ids: list[str]
-    ) -> dict[str, dict[str, Any]]:
+    async def fetch_by_ids(self, chunk_ids: list[str]) -> dict[str, dict[str, Any]]:
         """按 chunk_id 批量获取文档元数据（不含向量）。
 
         父子索引回溯核心：检索命中子块后，按 ``parent_id`` 批量获取

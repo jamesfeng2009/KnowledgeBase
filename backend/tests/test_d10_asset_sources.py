@@ -153,7 +153,9 @@ class TestD10Enrich:
         doc = _img_doc("minio://bkt/d10/a.png")
         out = await enrich_asset_docs([doc])
         assert out[0]["asset_url"] == "https://signed.example/x"
-        sign.assert_awaited_once_with("bkt", "d10/a.png", get_settings().MINIO_PRESIGNED_EXPIRES_SECONDS)
+        sign.assert_awaited_once_with(
+            "bkt", "d10/a.png", get_settings().MINIO_PRESIGNED_EXPIRES_SECONDS
+        )
         assert "asset_url" not in doc, "不得污染原 docs（快照/缓存不存签名 URL）"
 
     @pytest.mark.asyncio
@@ -302,7 +304,9 @@ class TestD10EngineEmit:
         assert [s["chunk_type"] for s in sources] == ["image", "table", "text"]
         assert sources[0]["asset_url"] == "https://signed.example/x"
         assert sources[1]["content"] == html
-        assert "asset_url" not in state["retrieved_docs"][0], "原 docs 不得被写入签名 URL"
+        assert (
+            "asset_url" not in state["retrieved_docs"][0]
+        ), "原 docs 不得被写入签名 URL"
 
     @pytest.mark.asyncio
     async def test_citations_event_carries_assets(self, monkeypatch):
@@ -420,9 +424,7 @@ class TestD10RetrieverAssets:
     @pytest.mark.asyncio
     async def test_asset_chunk_skips_parent_backtrack(self):
         """图片/表格块命中后必须原样保留（内容＋类型），不得回溯成父块正文。"""
-        parents = {
-            "chunk-parent": {"content": "父块整章原文", "title_path": "父章"}
-        }
+        parents = {"chunk-parent": {"content": "父块整章原文", "title_path": "父章"}}
         r = _retriever_with_parents(parents)
         img = _img_doc("minio://bkt/a.png", chunk_id="chunk-img")
         text_child = _text_doc(chunk_id="chunk-child", parent_id="chunk-parent")
@@ -449,9 +451,7 @@ class TestD10RetrieverAssets:
     @pytest.mark.asyncio
     async def test_text_child_backtrack_witness(self):
         """正向证人：普通子块回溯契约不回归。"""
-        parents = {
-            "chunk-parent": {"content": "父块整章原文", "title_path": "父章"}
-        }
+        parents = {"chunk-parent": {"content": "父块整章原文", "title_path": "父章"}}
         r = _retriever_with_parents(parents)
         child = _text_doc(chunk_id="chunk-child", parent_id="chunk-parent")
         out = await r._expand_to_parents([child])

@@ -68,9 +68,7 @@ def get_tenant_id_header() -> str:
     return TENANT_ID_HEADER
 
 
-def parse_tenant_subdomain(
-    host: str | None, root_domain: str | None
-) -> str | None:
+def parse_tenant_subdomain(host: str | None, root_domain: str | None) -> str | None:
     """从 Host 解析租户工作区子域（纯语法，不触 DB）。
 
     规则：host 形如 ``<workspace>.<root_domain>`` 时返回 workspace，
@@ -187,14 +185,12 @@ def resolve_tenant_id(
     # 1) JWT：唯一默认可信来源。解析失败立即 fail-closed，绝不降级到请求头。
     auth_header = request.headers.get("authorization", "")
     token = (
-        auth_header.replace("Bearer ", "")
-        if auth_header.startswith("Bearer ")
-        else ""
+        auth_header.replace("Bearer ", "") if auth_header.startswith("Bearer ") else ""
     )
     if token:
         try:
             payload = decode_access_token(token)
-        except Exception:  # noqa: BLE001 - 任何解码异常都等价于「无身份」
+        except Exception:
             return None, tenant_domain
         return _parse_uuid(payload.get("tenant_id")), tenant_domain
 

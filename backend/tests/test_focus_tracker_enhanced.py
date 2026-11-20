@@ -28,7 +28,9 @@ class TestFocusStack:
         # 手动压入超过限制数量的焦点
         for i in range(tracker._FOCUS_STACK_SIZE + 3):
             focus = ConversationFocus(
-                topic=f"topic_{i}", entity=f"entity_{i}", confidence=0.8,
+                topic=f"topic_{i}",
+                entity=f"entity_{i}",
+                confidence=0.8,
             )
             tracker._push_focus(focus)
 
@@ -36,16 +38,21 @@ class TestFocusStack:
         # 最旧的被丢弃
         assert tracker._focus_stack[0].topic == "topic_3"
         # 最新的保留
-        assert tracker._focus_stack[-1].topic == f"topic_{tracker._FOCUS_STACK_SIZE + 2}"
+        assert (
+            tracker._focus_stack[-1].topic == f"topic_{tracker._FOCUS_STACK_SIZE + 2}"
+        )
 
     @pytest.mark.asyncio
     async def test_get_focus_history(self):
         """get_focus_history 返回最近 N 个焦点。"""
         tracker = TopicTracker(llm=None)
         for i in range(5):
-            tracker._push_focus(ConversationFocus(
-                topic=f"topic_{i}", entity=f"entity_{i}",
-            ))
+            tracker._push_focus(
+                ConversationFocus(
+                    topic=f"topic_{i}",
+                    entity=f"entity_{i}",
+                )
+            )
 
         history = tracker.get_focus_history(n=3)
         assert len(history) == 3

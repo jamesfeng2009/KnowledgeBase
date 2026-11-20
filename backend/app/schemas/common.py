@@ -57,7 +57,9 @@ class RecommendationItem(BaseModel):
 
     doc_id: str = Field(..., description="文档 ID")
     title: str | None = Field(default=None, description="文档标题")
-    reason: str = Field(default="", description="召回来源（user_cf/item_cf/vector/graph/hot/related）")
+    reason: str = Field(
+        default="", description="召回来源（user_cf/item_cf/vector/graph/hot/related）"
+    )
     score: float = Field(default=0.0, ge=0, description="融合分数")
 
 

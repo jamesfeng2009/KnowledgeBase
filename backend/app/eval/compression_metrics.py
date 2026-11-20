@@ -64,13 +64,32 @@ _ENGLISH_PATTERN = re.compile(r"\b[A-Z][A-Z0-9_-]{1,15}\b|\b[A-Za-z]+-[A-Za-z0-9
 
 #: 中文专有名词后缀词典 — 以这些后缀结尾的 2-10 字词视为关键实体
 _CJK_SUFFIXES = (
-    "流程", "制度", "政策", "规定", "规范", "标准", "方案", "报告",
-    "部门", "系统", "平台", "项目", "预算", "费用", "发票", "合同",
-    "权限", "密码", "账号", "指标", "模型", "接口", "数据库", "服务器",
+    "流程",
+    "制度",
+    "政策",
+    "规定",
+    "规范",
+    "标准",
+    "方案",
+    "报告",
+    "部门",
+    "系统",
+    "平台",
+    "项目",
+    "预算",
+    "费用",
+    "发票",
+    "合同",
+    "权限",
+    "密码",
+    "账号",
+    "指标",
+    "模型",
+    "接口",
+    "数据库",
+    "服务器",
 )
-_CJK_PATTERN = re.compile(
-    r"[\u4e00-\u9fff]{2,10}?(?:" + "|".join(_CJK_SUFFIXES) + r")"
-)
+_CJK_PATTERN = re.compile(r"[\u4e00-\u9fff]{2,10}?(?:" + "|".join(_CJK_SUFFIXES) + r")")
 
 #: 实体最小长度（过滤过短的噪声匹配）
 _MIN_ENTITY_LEN = 2
@@ -397,9 +416,13 @@ class CompressionJudge:
                 question, answer_compressed, contexts_compressed
             )
             if result_full.error:
-                return DualFaithfulnessReport(error=f"完整上下文评测失败: {result_full.error}")
+                return DualFaithfulnessReport(
+                    error=f"完整上下文评测失败: {result_full.error}"
+                )
             if result_compressed.error:
-                return DualFaithfulnessReport(error=f"压缩上下文评测失败: {result_compressed.error}")
+                return DualFaithfulnessReport(
+                    error=f"压缩上下文评测失败: {result_compressed.error}"
+                )
 
             return DualFaithfulnessReport(
                 score_uncompressed=result_full.total_score,

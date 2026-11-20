@@ -4,8 +4,6 @@
 """
 
 import asyncio
-from dataclasses import dataclass
-from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -99,11 +97,12 @@ class TestP4IntegrationFlow:
         """漂移检测在指代消解前执行 — 漂移时重置焦点后再消解。"""
         from app.context.drift_detector import DriftDetector
         from app.context.focus_tracker import ConversationFocus, TopicTracker
-        from app.context.coreference_resolver import CoreferenceResolver
 
         # 模拟：焦点是"天气"（北京），用户突然问"报销流程"
         tracker = TopicTracker(llm=None)
-        tracker._push_focus(ConversationFocus(topic="天气", entity="北京", confidence=0.8))
+        tracker._push_focus(
+            ConversationFocus(topic="天气", entity="北京", confidence=0.8)
+        )
 
         drift_detector = DriftDetector(embedder=None)
         query = "如何申请报销？"
@@ -174,7 +173,8 @@ class TestP4IntegrationFlow:
         ]
 
         result = await resolver.resolve(
-            "那上海呢？", focus,
+            "那上海呢？",
+            focus,
             history=history,
             focus_stack=focus_stack,
         )
@@ -195,14 +195,18 @@ class TestP4IntegrationFlow:
 
             async def chat(self, messages, stream=False, **kwargs):
                 # P0-1: 尾部约束提醒占用 [-1]，动态上下文在 [-2]
-                self.captured_dynamic = messages[-2].get("content", "") if len(messages) >= 2 else ""
+                self.captured_dynamic = (
+                    messages[-2].get("content", "") if len(messages) >= 2 else ""
+                )
                 yield "generate"
 
         class MockComp:
             async def search(self, *a, **kw):
                 return []
+
             async def rerank(self, *a, **kw):
                 return []
+
             async def call_tool(self, *a, **kw):
                 return {}
 

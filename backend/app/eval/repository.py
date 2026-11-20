@@ -16,9 +16,10 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Any, AsyncIterator
+from typing import Any
 
 from sqlalchemy import Boolean, Float, Integer, String, update
 from sqlalchemy.dialects.postgresql import JSONB
@@ -141,21 +142,15 @@ class EvalResultRecord(UUIDMixin, TimestampMixin, Base):
     avg_recall_at_5: Mapped[float] = mapped_column(
         Float, default=0.0, comment="平均 Recall@5"
     )
-    avg_mrr: Mapped[float] = mapped_column(
-        Float, default=0.0, comment="平均 MRR"
-    )
+    avg_mrr: Mapped[float] = mapped_column(Float, default=0.0, comment="平均 MRR")
     avg_ndcg_at_5: Mapped[float] = mapped_column(
         Float, default=0.0, comment="平均 NDCG@5"
     )
     avg_judge_score: Mapped[float] = mapped_column(
         Float, default=0.0, comment="平均 Judge 总分"
     )
-    total: Mapped[int] = mapped_column(
-        Integer, default=0, comment="用例总数"
-    )
-    passed: Mapped[int] = mapped_column(
-        Integer, default=0, comment="通过用例数"
-    )
+    total: Mapped[int] = mapped_column(Integer, default=0, comment="用例总数")
+    passed: Mapped[int] = mapped_column(Integer, default=0, comment="通过用例数")
     result_json: Mapped[dict[str, Any] | None] = mapped_column(
         JSONB, nullable=True, comment="完整评测结果 JSON 快照"
     )
@@ -344,9 +339,7 @@ class EvalRepository:
                     return None
                 from sqlalchemy import select
 
-                stmt = select(EvalResultRecord).where(
-                    EvalResultRecord.run_id == run_id
-                )
+                stmt = select(EvalResultRecord).where(EvalResultRecord.run_id == run_id)
                 row = (await session.execute(stmt)).scalars().first()
                 if row is None:
                     return None
@@ -374,9 +367,7 @@ class EvalRepository:
                 from sqlalchemy import select
 
                 # 查找目标记录，确定 dataset_name
-                stmt = select(EvalResultRecord).where(
-                    EvalResultRecord.run_id == run_id
-                )
+                stmt = select(EvalResultRecord).where(EvalResultRecord.run_id == run_id)
                 target = (await session.execute(stmt)).scalars().first()
                 if target is None:
                     log.warning("eval_repo.set_baseline_not_found", run_id=run_id)
@@ -442,9 +433,7 @@ class EvalRepository:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def compare_with_baseline(
-        current: Any, baseline: Any
-    ) -> dict[str, Any]:
+    def compare_with_baseline(current: Any, baseline: Any) -> dict[str, Any]:
         """对比当前结果与基线，返回各指标 delta 与是否回归。
 
         回归判定：某指标相对基线下降比例超过 EVAL_REGRESSION_THRESHOLD 即视为回归。
@@ -496,7 +485,12 @@ class EvalRepository:
         # RAGAS 指标回归检测
         cur_ragas = getattr(current, "avg_ragas", {}) or {}
         base_ragas = getattr(baseline, "avg_ragas", {}) or {}
-        for ragas_key in ("faithfulness", "answer_relevancy", "context_precision", "context_recall"):
+        for ragas_key in (
+            "faithfulness",
+            "answer_relevancy",
+            "context_precision",
+            "context_recall",
+        ):
             cur_val = float(cur_ragas.get(ragas_key, 0.0))
             base_val = float(base_ragas.get(ragas_key, 0.0))
             delta = cur_val - base_val
@@ -618,7 +612,9 @@ class EvalRepository:
             except (TypeError, ValueError):
                 return None
 
-        def _relative_drop(base_val: float | None, cur_val: float | None) -> float | None:
+        def _relative_drop(
+            base_val: float | None, cur_val: float | None
+        ) -> float | None:
             """计算相对下降（higher is better）。
 
             - base>0 且 cur 为数值：返回 (base-cur)/base；
@@ -644,12 +640,10 @@ class EvalRepository:
         )
 
         cur_cases = {
-            _case_key(c): c
-            for c in (getattr(current, "case_results", None) or [])
+            _case_key(c): c for c in (getattr(current, "case_results", None) or [])
         }
         base_cases = {
-            _case_key(c): c
-            for c in (getattr(baseline, "case_results", None) or [])
+            _case_key(c): c for c in (getattr(baseline, "case_results", None) or [])
         }
 
         case_diffs: list[dict[str, Any]] = []
@@ -659,7 +653,11 @@ class EvalRepository:
             base = base_cases.get(key)
             if base is None:
                 case_diffs.append(
-                    {"query": getattr(cur, "query", key), "change": "new", "regressed": False}
+                    {
+                        "query": getattr(cur, "query", key),
+                        "change": "new",
+                        "regressed": False,
+                    }
                 )
                 continue
 
@@ -675,24 +673,32 @@ class EvalRepository:
             # P0-2: 汇总所有触发阈值的指标退化明细
             metric_drops: list[dict[str, Any]] = []
             if recall_drop > threshold:
-                metric_drops.append({
-                    "metric": "recall_at_5",
-                    "current": round(cur_r, 4),
-                    "baseline": round(base_r, 4),
-                    "relative_drop": round(recall_drop, 4),
-                })
+                metric_drops.append(
+                    {
+                        "metric": "recall_at_5",
+                        "current": round(cur_r, 4),
+                        "baseline": round(base_r, 4),
+                        "relative_drop": round(recall_drop, 4),
+                    }
+                )
 
             for metric_name, path in metrics_to_check:
                 base_val = _get_nested(base, *path)
                 cur_val = _get_nested(cur, *path)
                 drop = _relative_drop(base_val, cur_val)
                 if drop is not None and drop > threshold:
-                    metric_drops.append({
-                        "metric": metric_name,
-                        "current": round(cur_val, 4) if cur_val is not None else None,
-                        "baseline": round(base_val, 4) if base_val is not None else None,
-                        "relative_drop": round(drop, 4),
-                    })
+                    metric_drops.append(
+                        {
+                            "metric": metric_name,
+                            "current": round(cur_val, 4)
+                            if cur_val is not None
+                            else None,
+                            "baseline": round(base_val, 4)
+                            if base_val is not None
+                            else None,
+                            "relative_drop": round(drop, 4),
+                        }
+                    )
 
             metric_dropped = len(metric_drops) > 0
             regressed = pass_to_fail or metric_dropped

@@ -6,6 +6,7 @@
     - RedisRateLimiter：Redis 原子化限流、降级模式、Lua 脚本
     - FastAPI 集成：429 响应、健康检查豁免、限流关闭
 """
+
 from __future__ import annotations
 
 import sys
@@ -47,6 +48,7 @@ class TestTokenBucket:
     def test_refill_over_time(self) -> None:
         """令牌随时间补充。"""
         import time
+
         from app.middleware import TokenBucket
 
         bucket = TokenBucket(capacity=2, refill_per_second=100.0)  # 快速补充
@@ -61,6 +63,7 @@ class TestTokenBucket:
     def test_capacity_cap(self) -> None:
         """令牌数不超过容量上限。"""
         import time
+
         from app.middleware import TokenBucket
 
         bucket = TokenBucket(capacity=3, refill_per_second=1000.0)
@@ -537,7 +540,9 @@ class TestQueuedConsume:
         mw._rate_limiter = RateLimiter(per_minute=6, burst=1)  # 10s/token
         mw._rate_limiter.allow("c1")  # 清空 → 等待约 10s
         try:
-            allowed, _ = await _try_queued_consume("c1", max_wait_ms=2000, max_queued=20)
+            allowed, _ = await _try_queued_consume(
+                "c1", max_wait_ms=2000, max_queued=20
+            )
             assert allowed is False
         finally:
             mw._rate_limiter = old
@@ -554,7 +559,9 @@ class TestQueuedConsume:
         mw._rate_limiter.allow("c1")
         mw._queued_requests = 20  # 占满队列
         try:
-            allowed, _ = await _try_queued_consume("c1", max_wait_ms=2000, max_queued=20)
+            allowed, _ = await _try_queued_consume(
+                "c1", max_wait_ms=2000, max_queued=20
+            )
             assert allowed is False
         finally:
             mw._rate_limiter = old
@@ -564,13 +571,19 @@ class TestQueuedConsume:
     async def test_queue_admitted_after_wait(self) -> None:
         """排队等待令牌补充后放行，计数器归零。"""
         import app.middleware as mw
-        from app.middleware import RateLimiter, _try_queued_consume, get_queued_request_count
+        from app.middleware import (
+            RateLimiter,
+            _try_queued_consume,
+            get_queued_request_count,
+        )
 
         old = mw._rate_limiter
         mw._rate_limiter = RateLimiter(per_minute=600, burst=1)  # 10/s → 0.1s
         mw._rate_limiter.allow("c1")  # 清空
         try:
-            allowed, waited = await _try_queued_consume("c1", max_wait_ms=2000, max_queued=20)
+            allowed, waited = await _try_queued_consume(
+                "c1", max_wait_ms=2000, max_queued=20
+            )
             assert allowed is True
             assert waited >= 80  # 实际等待约 100ms
             assert get_queued_request_count() == 0

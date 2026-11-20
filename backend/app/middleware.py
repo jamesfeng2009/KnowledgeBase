@@ -27,7 +27,7 @@ from starlette.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.utils.logger import get_logger
-from app.utils.request_context import set_request_id, reset_request_id
+from app.utils.request_context import reset_request_id, set_request_id
 
 log = get_logger(__name__)
 
@@ -530,13 +530,17 @@ def setup_middleware(app: FastAPI) -> None:
             ):
                 tid_str = str(tenant_id)
                 if isinstance(_tenant_rate_limiter, RedisRateLimiter):
-                    tenant_allowed = await _tenant_rate_limiter.allow(f"tenant:{tid_str}")
+                    tenant_allowed = await _tenant_rate_limiter.allow(
+                        f"tenant:{tid_str}"
+                    )
                 else:
                     tenant_allowed = _tenant_rate_limiter.allow(f"tenant:{tid_str}")
                 if not tenant_allowed:
                     t_retry_after = max(
                         1,
-                        math.ceil(_tenant_rate_limiter.estimate_wait(f"tenant:{tid_str}")),
+                        math.ceil(
+                            _tenant_rate_limiter.estimate_wait(f"tenant:{tid_str}")
+                        ),
                     )
                     log.warning(
                         "ratelimit.tenant_exceeded",

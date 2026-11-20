@@ -273,7 +273,9 @@ class PermissionService:
             KnowledgeBase.deleted_at.is_(None),
             or_(*self._visibility_conditions()),
         )
-        accessible_stmt = apply_tenant_filter(accessible_stmt, KnowledgeBase, self._tenant_id)
+        accessible_stmt = apply_tenant_filter(
+            accessible_stmt, KnowledgeBase, self._tenant_id
+        )
         result = await self.db.execute(accessible_stmt)
         return {row[0] for row in result.all()}
 
@@ -312,7 +314,8 @@ class PermissionService:
 
         # I1 复检（全部角色）：非 published 一律剔除
         published_only = [
-            c for c in candidates
+            c
+            for c in candidates
             if doc_meta_map.get(str(c.get("doc_id")), {}).get("status") == "published"
         ]
         dropped_status = len(candidates) - len(published_only)
@@ -321,8 +324,10 @@ class PermissionService:
                 "permission.doc_status_blocked",
                 dropped=dropped_status,
                 examples=[
-                    str(c.get("doc_id")) for c in candidates
-                    if doc_meta_map.get(str(c.get("doc_id")), {}).get("status") != "published"
+                    str(c.get("doc_id"))
+                    for c in candidates
+                    if doc_meta_map.get(str(c.get("doc_id")), {}).get("status")
+                    != "published"
                 ][:5],
             )
 
@@ -344,7 +349,8 @@ class PermissionService:
 
         # I4 复检：知识库归属（kb_id 缺失的候选保守剔除 — 无法确认归属不放行）
         kb_allowed = [
-            c for c in published_only
+            c
+            for c in published_only
             if c.get("kb_id") and str(c["kb_id"]) in accessible_strs
         ]
         if not kb_allowed:
@@ -353,7 +359,9 @@ class PermissionService:
         # I3 复检：密级过滤 — 使用 _load_doc_meta 已查出的 classification
         filtered: list[dict] = []
         for c in kb_allowed:
-            classification = doc_meta_map.get(str(c.get("doc_id")), {}).get("classification")
+            classification = doc_meta_map.get(str(c.get("doc_id")), {}).get(
+                "classification"
+            )
             if classification is None:
                 log.warning(
                     "permission.classification_missing",
@@ -395,6 +403,5 @@ class PermissionService:
         stmt = apply_tenant_filter(stmt, Document, self._tenant_id)
         rows = (await self.db.execute(stmt)).all()
         return {
-            str(row[0]): {"status": row[2], "classification": row[1]}
-            for row in rows
+            str(row[0]): {"status": row[2], "classification": row[1]} for row in rows
         }

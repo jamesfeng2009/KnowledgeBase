@@ -18,9 +18,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.qa import QaAnswer, QaQuestion
 from app.models.user import User
 from app.repositories.qa_repository import QaAnswerRepository, QaQuestionRepository
+from app.utils.logger import get_logger
 from app.utils.pagination import PageResult, PaginationParams, paginate
 from app.utils.tenant import apply_tenant_filter
-from app.utils.logger import get_logger
 
 log = get_logger(__name__)
 

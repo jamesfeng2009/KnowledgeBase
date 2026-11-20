@@ -56,7 +56,11 @@ class TestTraceParsing:
 
     def test_query_and_docs_recovered_from_spans(self):
         spans = [
-            _span("task.run", "task.run", metadata={"query": "会议室怎么订", "iterations": 3}),
+            _span(
+                "task.run",
+                "task.run",
+                metadata={"query": "会议室怎么订", "iterations": 3},
+            ),
             _span(
                 "retrieve",
                 "retrieve_iter1",
@@ -149,13 +153,19 @@ class TestBadCaseDetection:
         )
         assert "empty_retrieval" in detect_bad_case(TraceSnapshot(query="q"))
         assert "max_iterations_reached" in detect_bad_case(
-            TraceSnapshot(query="q", retrieved_doc_ids=["d"], max_iterations_reached=True)
+            TraceSnapshot(
+                query="q", retrieved_doc_ids=["d"], max_iterations_reached=True
+            )
         )
         assert "refusal" in detect_bad_case(
-            TraceSnapshot(query="q", answer="抱歉，没有找到相关信息", retrieved_doc_ids=["d"])
+            TraceSnapshot(
+                query="q", answer="抱歉，没有找到相关信息", retrieved_doc_ids=["d"]
+            )
         )
         assert "low_judge_score" in detect_bad_case(
-            TraceSnapshot(query="q", answer="a", retrieved_doc_ids=["d"], judge_score=0.2)
+            TraceSnapshot(
+                query="q", answer="a", retrieved_doc_ids=["d"], judge_score=0.2
+            )
         )
 
     def test_judge_score_accepts_100_scale(self):
@@ -211,7 +221,9 @@ class TestCaseConstruction:
 
     def test_correlation_id_survives_to_candidate(self):
         """关联键要一路带到标注队列，否则无法回查这次决策的下游结果。"""
-        spans = [_span("task.run", "task.run", metadata={"ab_correlation_id": "conv-42"})]
+        spans = [
+            _span("task.run", "task.run", metadata={"ab_correlation_id": "conv-42"})
+        ]
         snap = TraceSnapshot.from_dict({"query": "q", "spans": spans})
         assert snap.correlation_id == "conv-42"
         case = case_from_trace(snap, reasons=["error"])
@@ -250,7 +262,11 @@ class TestExporter:
             tmp_path,
             [
                 {"query": "好问题", "answer": "好答案", "retrieved_doc_ids": ["d"]},
-                {"query": "坏问题", "feedback": "complaint", "retrieved_doc_ids": ["d"]},
+                {
+                    "query": "坏问题",
+                    "feedback": "complaint",
+                    "retrieved_doc_ids": ["d"],
+                },
             ],
         )
         out = str(tmp_path / "c.jsonl")
@@ -263,9 +279,7 @@ class TestExporter:
             tmp_path, [{"query": "好问题", "retrieved_doc_ids": ["d"]}]
         )
         out = str(tmp_path / "c.jsonl")
-        stats = ReplayExporter().export(
-            load_traces(traces), out, only_bad=False
-        )
+        stats = ReplayExporter().export(load_traces(traces), out, only_bad=False)
         assert stats["written"] == 1
 
     def test_same_query_different_trace_not_deduped_by_case_id(self, tmp_path):
@@ -310,9 +324,14 @@ class TestPromote:
 
     def _candidate(self, *, source="unlabeled", docs=None, query="报销上限"):
         snap = TraceSnapshot(
-            query=query, answer="8000", retrieved_doc_ids=["doc_a"], feedback="complaint"
+            query=query,
+            answer="8000",
+            retrieved_doc_ids=["doc_a"],
+            feedback="complaint",
         )
-        case = case_from_trace(snap, use_citations_as_expected=(source == "auto_citation"))
+        case = case_from_trace(
+            snap, use_citations_as_expected=(source == "auto_citation")
+        )
         case.context_expect["label_source"] = source
         if docs is not None:
             case.expected_doc_ids = docs
@@ -343,9 +362,7 @@ class TestPromote:
     def test_human_labeled_promoted_and_review_flag_cleared(self, tmp_path):
         cand = str(tmp_path / "c.jsonl")
         target = str(tmp_path / "p6.jsonl")
-        self._write(
-            cand, [self._candidate(source="human", docs=["doc_a", "doc_b"])]
-        )
+        self._write(cand, [self._candidate(source="human", docs=["doc_a", "doc_b"])])
         stats = ReplayExporter.promote(cand, target)
         assert stats["promoted"] == 1
         ds = EvalDataset.load(target)

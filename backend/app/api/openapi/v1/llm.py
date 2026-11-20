@@ -7,6 +7,7 @@
 - 需要 scope: ``llm:chat``（对话）/ ``llm:embed``（向量化）；
 - 认证方式为 API Key（X-API-Key header）。
 """
+
 from __future__ import annotations
 
 import json
@@ -47,7 +48,9 @@ class ChatRequest(BaseModel):
     """LLM 对话请求（非流式）。"""
 
     messages: list[ChatMessage] = Field(..., min_length=1, description="消息列表")
-    max_tokens: int = Field(default=4096, ge=1, le=8192, description="最大生成 token 数")
+    max_tokens: int = Field(
+        default=4096, ge=1, le=8192, description="最大生成 token 数"
+    )
     temperature: float = Field(default=0.7, ge=0.0, le=2.0, description="采样温度")
 
 
@@ -207,7 +210,9 @@ async def list_models(
         code=0,
         data={
             "deploy_mode": settings.DEPLOY_MODE,
-            "llm_model": settings.VLLM_MODEL if settings.is_private else "claude-sonnet",
+            "llm_model": settings.VLLM_MODEL
+            if settings.is_private
+            else "claude-sonnet",
             "embedding_dim": 1024 if settings.is_private else 3072,
             "available_providers": providers,
         },

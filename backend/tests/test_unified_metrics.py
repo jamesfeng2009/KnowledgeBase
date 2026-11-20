@@ -4,12 +4,10 @@
 
 from __future__ import annotations
 
-import pytest
-
 from app.eval.unified_metrics import (
+    UNIFIED_KEYS,
     MetricsAdapter,
     UnifiedMetrics,
-    UNIFIED_KEYS,
 )
 
 
@@ -110,8 +108,18 @@ class TestUnifyCaseResult:
         """RAGAS 优先于 Judge。"""
         result = MetricsAdapter.unify_case_result(
             retrieval_metrics={"recall_at_5": 1.0},
-            judge_scores={"citation_accuracy": 3, "completeness": 4, "hallucination_inverse": 5, "total_score": 4.0},
-            ragas_scores={"faithfulness": 0.9, "answer_relevancy": 0.8, "context_precision": 0.7, "context_recall": 0.6},
+            judge_scores={
+                "citation_accuracy": 3,
+                "completeness": 4,
+                "hallucination_inverse": 5,
+                "total_score": 4.0,
+            },
+            ragas_scores={
+                "faithfulness": 0.9,
+                "answer_relevancy": 0.8,
+                "context_precision": 0.7,
+                "context_recall": 0.6,
+            },
         )
         # RAGAS 值优先
         assert result.faithfulness == 0.9

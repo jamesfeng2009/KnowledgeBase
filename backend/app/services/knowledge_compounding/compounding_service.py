@@ -30,7 +30,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select, update, func
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -136,7 +136,9 @@ class KnowledgeCompoundingService:
         result = {
             "execution": self._execution_to_dict(execution),
             "test_case": self._case_to_dict(test_case) if test_case else None,
-            "requirement": self._requirement_to_dict(requirement) if requirement else None,
+            "requirement": self._requirement_to_dict(requirement)
+            if requirement
+            else None,
             "evidence": execution.evidence_ref or {},
         }
         log.info(
@@ -220,9 +222,7 @@ class KnowledgeCompoundingService:
             extracted = await self._llm_extract(context)
 
             # Step 3: 沉淀为 4 类知识资产
-            assets = await self._precipitate_assets(
-                extracted, context, task.id
-            )
+            assets = await self._precipitate_assets(extracted, context, task.id)
 
             # Step 4: 冲突检测
             conflicts = await self._detect_conflicts_for_assets(assets)
@@ -545,9 +545,7 @@ class KnowledgeCompoundingService:
 
             # LLM 检测冲突
             for existing in existing_assets:
-                conflict_type = await self._llm_detect_conflict(
-                    new_asset, existing
-                )
+                conflict_type = await self._llm_detect_conflict(new_asset, existing)
                 if conflict_type:
                     conflict = KnowledgeConflict(
                         new_asset_id=new_asset.id,
@@ -613,9 +611,7 @@ class KnowledgeCompoundingService:
 
         try:
             # 检索相关历史知识资产
-            assets = await self._retrieve_relevant_assets(
-                requirement, max_assets
-            )
+            assets = await self._retrieve_relevant_assets(requirement, max_assets)
 
             # 组装注入上下文
             injection_context = self._build_injection_context(assets, requirement)
@@ -679,11 +675,7 @@ class KnowledgeCompoundingService:
         if status:
             conditions.append(KnowledgeAsset.status == status)
 
-        count_stmt = (
-            select(func.count())
-            .select_from(KnowledgeAsset)
-            .where(*conditions)
-        )
+        count_stmt = select(func.count()).select_from(KnowledgeAsset).where(*conditions)
         count_stmt = apply_tenant_filter(count_stmt, KnowledgeAsset, self._tenant_id)
         total = await self.db.scalar(count_stmt) or 0
 
@@ -691,9 +683,7 @@ class KnowledgeCompoundingService:
         stmt = select(KnowledgeAsset).where(*conditions)
         stmt = apply_tenant_filter(stmt, KnowledgeAsset, self._tenant_id)
         stmt = (
-            stmt.order_by(KnowledgeAsset.created_at.desc())
-            .offset(offset)
-            .limit(size)
+            stmt.order_by(KnowledgeAsset.created_at.desc()).offset(offset).limit(size)
         )
         result = await self.db.execute(stmt)
         return list(result.scalars().all()), total
@@ -720,9 +710,7 @@ class KnowledgeCompoundingService:
             conditions.append(CompoundingTask.status == status)
 
         count_stmt = (
-            select(func.count())
-            .select_from(CompoundingTask)
-            .where(*conditions)
+            select(func.count()).select_from(CompoundingTask).where(*conditions)
         )
         count_stmt = apply_tenant_filter(count_stmt, CompoundingTask, self._tenant_id)
         total = await self.db.scalar(count_stmt) or 0
@@ -731,9 +719,7 @@ class KnowledgeCompoundingService:
         stmt = select(CompoundingTask).where(*conditions)
         stmt = apply_tenant_filter(stmt, CompoundingTask, self._tenant_id)
         stmt = (
-            stmt.order_by(CompoundingTask.created_at.desc())
-            .offset(offset)
-            .limit(size)
+            stmt.order_by(CompoundingTask.created_at.desc()).offset(offset).limit(size)
         )
         result = await self.db.execute(stmt)
         return list(result.scalars().all()), total
@@ -750,9 +736,7 @@ class KnowledgeCompoundingService:
             conditions.append(KnowledgeConflict.resolution == resolution)
 
         count_stmt = (
-            select(func.count())
-            .select_from(KnowledgeConflict)
-            .where(*conditions)
+            select(func.count()).select_from(KnowledgeConflict).where(*conditions)
         )
         count_stmt = apply_tenant_filter(count_stmt, KnowledgeConflict, self._tenant_id)
         total = await self.db.scalar(count_stmt) or 0
@@ -835,9 +819,7 @@ class KnowledgeCompoundingService:
 
         # 资产总数
         asset_count_stmt = (
-            select(func.count())
-            .select_from(KnowledgeAsset)
-            .where(*asset_conditions)
+            select(func.count()).select_from(KnowledgeAsset).where(*asset_conditions)
         )
         asset_count_stmt = apply_tenant_filter(
             asset_count_stmt, KnowledgeAsset, self._tenant_id
@@ -845,9 +827,8 @@ class KnowledgeCompoundingService:
         total_assets = await self.db.scalar(asset_count_stmt) or 0
 
         # 按类型统计
-        type_stmt = (
-            select(KnowledgeAsset.asset_type, func.count())
-            .where(*asset_conditions)
+        type_stmt = select(KnowledgeAsset.asset_type, func.count()).where(
+            *asset_conditions
         )
         type_stmt = apply_tenant_filter(type_stmt, KnowledgeAsset, self._tenant_id)
         type_stmt = type_stmt.group_by(KnowledgeAsset.asset_type)
@@ -855,9 +836,8 @@ class KnowledgeCompoundingService:
         assets_by_type = {row[0]: row[1] for row in type_result}
 
         # 按状态统计
-        status_stmt = (
-            select(KnowledgeAsset.status, func.count())
-            .where(*asset_conditions)
+        status_stmt = select(KnowledgeAsset.status, func.count()).where(
+            *asset_conditions
         )
         status_stmt = apply_tenant_filter(status_stmt, KnowledgeAsset, self._tenant_id)
         status_stmt = status_stmt.group_by(KnowledgeAsset.status)
@@ -869,17 +849,14 @@ class KnowledgeCompoundingService:
         if project_id:
             task_conditions.append(CompoundingTask.project_id == project_id)
         task_count_stmt = (
-            select(func.count())
-            .select_from(CompoundingTask)
-            .where(*task_conditions)
+            select(func.count()).select_from(CompoundingTask).where(*task_conditions)
         )
         task_count_stmt = apply_tenant_filter(
             task_count_stmt, CompoundingTask, self._tenant_id
         )
         total_tasks = await self.db.scalar(task_count_stmt) or 0
-        task_status_stmt = (
-            select(CompoundingTask.status, func.count())
-            .where(*task_conditions)
+        task_status_stmt = select(CompoundingTask.status, func.count()).where(
+            *task_conditions
         )
         task_status_stmt = apply_tenant_filter(
             task_status_stmt, CompoundingTask, self._tenant_id
@@ -910,9 +887,7 @@ class KnowledgeCompoundingService:
             .select_from(CompoundingTask)
             .where(CompoundingTask.task_type == "reuse_injection")
         )
-        reuse_stmt = apply_tenant_filter(
-            reuse_stmt, CompoundingTask, self._tenant_id
-        )
+        reuse_stmt = apply_tenant_filter(reuse_stmt, CompoundingTask, self._tenant_id)
         reuse_count = await self.db.scalar(reuse_stmt) or 0
 
         return {
@@ -950,18 +925,14 @@ class KnowledgeCompoundingService:
             log.warning("compounding.llm_error", error=str(exc))
             raise
 
-    async def _get_execution(
-        self, exec_uuid: uuid.UUID
-    ) -> TestExecution | None:
+    async def _get_execution(self, exec_uuid: uuid.UUID) -> TestExecution | None:
         """获取执行记录 ORM 实例。"""
         stmt = select(TestExecution).where(TestExecution.id == exec_uuid)
         stmt = apply_tenant_filter(stmt, TestExecution, self._tenant_id)
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def _get_test_case(
-        self, case_uuid: uuid.UUID
-    ) -> TestCase | None:
+    async def _get_test_case(self, case_uuid: uuid.UUID) -> TestCase | None:
         """获取测试用例 ORM 实例（含软删除过滤）。"""
         stmt = select(TestCase).where(
             TestCase.id == case_uuid,
@@ -971,9 +942,7 @@ class KnowledgeCompoundingService:
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def _get_requirement(
-        self, req_uuid: uuid.UUID
-    ) -> TestRequirement | None:
+    async def _get_requirement(self, req_uuid: uuid.UUID) -> TestRequirement | None:
         """获取需求点 ORM 实例（含软删除过滤）。"""
         stmt = select(TestRequirement).where(
             TestRequirement.id == req_uuid,
@@ -983,9 +952,7 @@ class KnowledgeCompoundingService:
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def _get_asset(
-        self, asset_uuid: uuid.UUID
-    ) -> KnowledgeAsset | None:
+    async def _get_asset(self, asset_uuid: uuid.UUID) -> KnowledgeAsset | None:
         """获取知识资产 ORM 实例（含软删除过滤）。"""
         stmt = select(KnowledgeAsset).where(
             KnowledgeAsset.id == asset_uuid,
@@ -1033,9 +1000,7 @@ class KnowledgeCompoundingService:
             KnowledgeAsset.status.in_(["active", "draft"]),
         ]
         if requirement.project_id:
-            conditions.append(
-                KnowledgeAsset.project_id == requirement.project_id
-            )
+            conditions.append(KnowledgeAsset.project_id == requirement.project_id)
 
         result = await self.db.execute(
             select(KnowledgeAsset)
@@ -1112,29 +1077,35 @@ class KnowledgeCompoundingService:
 
         # 添加测试实体节点
         if execution.get("id"):
-            nodes.append({
-                "label": "TestExecution",
-                "id": execution["id"],
-                "name": f"执行-{execution.get('status', 'unknown')}",
-                "entity_type": "execution",
-                "status": execution.get("status"),
-            })
+            nodes.append(
+                {
+                    "label": "TestExecution",
+                    "id": execution["id"],
+                    "name": f"执行-{execution.get('status', 'unknown')}",
+                    "entity_type": "execution",
+                    "status": execution.get("status"),
+                }
+            )
             seen_ids.add(execution["id"])
         if test_case.get("id"):
-            nodes.append({
-                "label": "TestCase",
-                "id": test_case["id"],
-                "name": test_case.get("title", "测试用例"),
-                "entity_type": "test_case",
-            })
+            nodes.append(
+                {
+                    "label": "TestCase",
+                    "id": test_case["id"],
+                    "name": test_case.get("title", "测试用例"),
+                    "entity_type": "test_case",
+                }
+            )
             seen_ids.add(test_case["id"])
         if requirement.get("id"):
-            nodes.append({
-                "label": "TestRequirement",
-                "id": requirement["id"],
-                "name": requirement.get("title", "需求点"),
-                "entity_type": "requirement",
-            })
+            nodes.append(
+                {
+                    "label": "TestRequirement",
+                    "id": requirement["id"],
+                    "name": requirement.get("title", "需求点"),
+                    "entity_type": "requirement",
+                }
+            )
             seen_ids.add(requirement["id"])
 
         # 添加三元组节点和关系
@@ -1147,30 +1118,36 @@ class KnowledgeCompoundingService:
             predicate = str(predicate)
 
             if subject not in seen_ids:
-                nodes.append({
-                    "label": "Concept",
-                    "id": subject,
-                    "name": subject,
-                    "entity_type": "concept",
-                })
+                nodes.append(
+                    {
+                        "label": "Concept",
+                        "id": subject,
+                        "name": subject,
+                        "entity_type": "concept",
+                    }
+                )
                 seen_ids.add(subject)
             if obj not in seen_ids:
-                nodes.append({
-                    "label": "Concept",
-                    "id": obj,
-                    "name": obj,
-                    "entity_type": "concept",
-                })
+                nodes.append(
+                    {
+                        "label": "Concept",
+                        "id": obj,
+                        "name": obj,
+                        "entity_type": "concept",
+                    }
+                )
                 seen_ids.add(obj)
 
             rel_type = predicate.upper().replace(" ", "_")
-            relationships.append({
-                "from_label": "Concept",
-                "from_id": subject,
-                "to_label": "Concept",
-                "to_id": obj,
-                "type": rel_type,
-            })
+            relationships.append(
+                {
+                    "from_label": "Concept",
+                    "from_id": subject,
+                    "to_label": "Concept",
+                    "to_id": obj,
+                    "type": rel_type,
+                }
+            )
 
         return nodes, relationships
 
@@ -1311,7 +1288,9 @@ class KnowledgeCompoundingService:
         if execution.get("result"):
             parts.append(f"- 执行结果: {execution['result']}")
         if execution.get("execution_log"):
-            parts.append(f"- 执行日志: {json.dumps(execution['execution_log'], ensure_ascii=False)[:500]}")
+            parts.append(
+                f"- 执行日志: {json.dumps(execution['execution_log'], ensure_ascii=False)[:500]}"
+            )
 
         if test_case:
             parts.append("\n## 测试用例")
@@ -1356,7 +1335,9 @@ class KnowledgeCompoundingService:
         return {
             "id": str(test_case.id),
             "project_id": str(test_case.project_id),
-            "requirement_id": str(test_case.requirement_id) if test_case.requirement_id else None,
+            "requirement_id": str(test_case.requirement_id)
+            if test_case.requirement_id
+            else None,
             "title": test_case.title,
             "description": test_case.description,
             "test_type": test_case.test_type,
@@ -1409,9 +1390,13 @@ class KnowledgeCompoundingService:
             "description": conflict.description,
             "resolution": conflict.resolution,
             "resolved_by": str(conflict.resolved_by) if conflict.resolved_by else None,
-            "resolved_at": conflict.resolved_at.isoformat() if conflict.resolved_at else None,
+            "resolved_at": conflict.resolved_at.isoformat()
+            if conflict.resolved_at
+            else None,
             "resolution_note": conflict.resolution_note,
-            "created_at": conflict.created_at.isoformat() if conflict.created_at else None,
+            "created_at": conflict.created_at.isoformat()
+            if conflict.created_at
+            else None,
         }
 
     # ==================================================================
@@ -1449,7 +1434,6 @@ class KnowledgeCompoundingService:
         Returns:
             提取结果摘要，含 task_id / asset_count / status。
         """
-        from app.models.feedback import Feedback
 
         # 幂等检查
         existing = await self._get_asset_by_source(
@@ -1948,8 +1932,7 @@ class KnowledgeCompoundingService:
         # 按时间正序排列（旧→新），构造 history dicts 供 rewriter 使用
         hist_msgs.reverse()
         history: list[dict[str, str]] = [
-            {"role": m.role, "content": m.content or ""}
-            for m in hist_msgs
+            {"role": m.role, "content": m.content or ""} for m in hist_msgs
         ]
 
         return {

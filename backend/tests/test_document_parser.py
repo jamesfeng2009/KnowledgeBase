@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
@@ -215,6 +216,7 @@ class TestPDFParserParse:
         mock_fitz.open.side_effect = Exception("file not found")
 
         import sys
+
         with patch.dict(sys.modules, {"fitz": mock_fitz}):
             parser = PDFParser()
             result = await parser.parse("/fake/path.pdf")
@@ -247,6 +249,7 @@ class TestPDFParserParse:
         mock_fitz.open.return_value = mock_doc
 
         import sys
+
         with patch.dict(sys.modules, {"fitz": mock_fitz}):
             parser = PDFParser()
             result = await parser.parse("/fake/doc.pdf")
@@ -274,8 +277,11 @@ class TestPDFParserParse:
         mock_fitz.open.return_value = mock_doc
 
         import sys
-        with patch.dict(sys.modules, {"fitz": mock_fitz}), \
-             patch("app.document.pdf_parser.get_parse_settings") as mock_settings:
+
+        with (
+            patch.dict(sys.modules, {"fitz": mock_fitz}),
+            patch("app.document.pdf_parser.get_parse_settings") as mock_settings,
+        ):
             # D7 对齐：消费点改读 get_parse_settings（断言意图不变）
             mock_settings.return_value.PDF_TABLE_EXTRACTION_ENABLED = False
             mock_settings.return_value.PDF_IMAGE_EXTRACTION_ENABLED = False
@@ -317,9 +323,12 @@ class TestPDFParserParse:
         mock_vlm.understand = AsyncMock(return_value="架构图显示三层结构")
 
         import sys
-        with patch.dict(sys.modules, {"fitz": mock_fitz}), \
-             patch("app.document.pdf_parser.get_parse_settings") as mock_settings, \
-             patch("app.vlm.provider.get_vision_provider", return_value=mock_vlm):
+
+        with (
+            patch.dict(sys.modules, {"fitz": mock_fitz}),
+            patch("app.document.pdf_parser.get_parse_settings") as mock_settings,
+            patch("app.vlm.provider.get_vision_provider", return_value=mock_vlm),
+        ):
             mock_settings.return_value.PDF_TABLE_EXTRACTION_ENABLED = True
             mock_settings.return_value.PDF_IMAGE_EXTRACTION_ENABLED = True
             mock_settings.return_value.PDF_IMAGE_MAX_PER_DOC = 50
@@ -363,9 +372,12 @@ class TestPDFParserParse:
         mock_vlm.understand = AsyncMock(return_value="描述")
 
         import sys
-        with patch.dict(sys.modules, {"fitz": mock_fitz}), \
-             patch("app.document.pdf_parser.get_parse_settings") as mock_settings, \
-             patch("app.vlm.provider.get_vision_provider", return_value=mock_vlm):
+
+        with (
+            patch.dict(sys.modules, {"fitz": mock_fitz}),
+            patch("app.document.pdf_parser.get_parse_settings") as mock_settings,
+            patch("app.vlm.provider.get_vision_provider", return_value=mock_vlm),
+        ):
             mock_settings.return_value.PDF_TABLE_EXTRACTION_ENABLED = False
             mock_settings.return_value.PDF_IMAGE_EXTRACTION_ENABLED = True
             mock_settings.return_value.PDF_IMAGE_MAX_PER_DOC = 3
@@ -398,9 +410,12 @@ class TestPDFParserParse:
         mock_fitz.open.return_value = mock_doc
 
         import sys
-        with patch.dict(sys.modules, {"fitz": mock_fitz}), \
-             patch("app.document.pdf_parser.get_settings") as mock_settings, \
-             patch.object(PDFParser, "_vlm_describe", AsyncMock(return_value="")):
+
+        with (
+            patch.dict(sys.modules, {"fitz": mock_fitz}),
+            patch("app.document.pdf_parser.get_settings") as mock_settings,
+            patch.object(PDFParser, "_vlm_describe", AsyncMock(return_value="")),
+        ):
             mock_settings.return_value.PDF_TABLE_EXTRACTION_ENABLED = False
             mock_settings.return_value.PDF_IMAGE_EXTRACTION_ENABLED = True
             mock_settings.return_value.PDF_IMAGE_MAX_PER_DOC = 50
@@ -488,11 +503,15 @@ class TestPPTXParserParse:
         mock_pptx_module.Presentation.return_value = mock_prs
 
         import sys
-        with patch.dict(sys.modules, {
-            "pptx": mock_pptx_module,
-            "pptx.enum": MagicMock(),
-            "pptx.enum.shapes": MagicMock(),
-        }):
+
+        with patch.dict(
+            sys.modules,
+            {
+                "pptx": mock_pptx_module,
+                "pptx.enum": MagicMock(),
+                "pptx.enum.shapes": MagicMock(),
+            },
+        ):
             parser = PPTXParser()
             with patch.object(parser, "_vlm_describe", AsyncMock(return_value="")):
                 result = await parser.parse("/fake/doc.pptx")
@@ -546,11 +565,15 @@ class TestPPTXParserParse:
         mock_pptx_module.Presentation.return_value = mock_prs
 
         import sys
-        with patch.dict(sys.modules, {
-            "pptx": mock_pptx_module,
-            "pptx.enum": MagicMock(),
-            "pptx.enum.shapes": MagicMock(),
-        }):
+
+        with patch.dict(
+            sys.modules,
+            {
+                "pptx": mock_pptx_module,
+                "pptx.enum": MagicMock(),
+                "pptx.enum.shapes": MagicMock(),
+            },
+        ):
             parser = PPTXParser()
             result = await parser.parse("/fake/doc.pptx")
 
@@ -626,7 +649,9 @@ class TestDocumentTasksParserIntegration:
         mock_doc.content_text = None
 
         mock_parser = MagicMock()
-        mock_parser.parse = AsyncMock(return_value="增强解析结果，包含<table>表格</table>")
+        mock_parser.parse = AsyncMock(
+            return_value="增强解析结果，包含<table>表格</table>"
+        )
 
         with patch("app.document.get_parser", return_value=mock_parser):
             result = await _parse_pdf(mock_doc)
@@ -645,8 +670,10 @@ class TestDocumentTasksParserIntegration:
         mock_parser = MagicMock()
         mock_parser.parse = AsyncMock(return_value="")  # 增强解析器返回空
 
-        with patch("app.document.get_parser", return_value=mock_parser), \
-             patch("tasks.document_tasks.fitz", create=True, side_effect=ImportError):
+        with (
+            patch("app.document.get_parser", return_value=mock_parser),
+            patch("tasks.document_tasks.fitz", create=True, side_effect=ImportError),
+        ):
             result = await _parse_pdf(mock_doc)
 
         # 降级到 content_text
@@ -813,10 +840,14 @@ class TestDOCXParserParse:
 
         # mock body 元素：段落 + 表格
         mock_p_element = MagicMock()
-        mock_p_element.tag = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}p"
+        mock_p_element.tag = (
+            "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}p"
+        )
 
         mock_tbl_element = MagicMock()
-        mock_tbl_element.tag = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}tbl"
+        mock_tbl_element.tag = (
+            "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}tbl"
+        )
 
         mock_doc = MagicMock()
         mock_doc.element.body = [mock_p_element, mock_tbl_element]
@@ -826,12 +857,21 @@ class TestDOCXParserParse:
         mock_docx_module.Document.return_value = mock_doc
 
         import sys
+
         with patch.dict(sys.modules, {"docx": mock_docx_module}):
             parser = DOCXParser()
             # 直接 mock 解析器方法，避免复杂的 docx 模块 mock
-            with patch.object(parser, "_format_paragraph", return_value="这是段落文本"), \
-                 patch.object(parser, "_extract_table_html", return_value="<table>\n<tr>\n<th>项目</th>\n</tr>\n<tr>\n<td>采购</td>\n</tr>\n</table>"), \
-                 patch.object(parser, "_extract_images", AsyncMock(return_value=([], 0))):
+            with (
+                patch.object(parser, "_format_paragraph", return_value="这是段落文本"),
+                patch.object(
+                    parser,
+                    "_extract_table_html",
+                    return_value="<table>\n<tr>\n<th>项目</th>\n</tr>\n<tr>\n<td>采购</td>\n</tr>\n</table>",
+                ),
+                patch.object(
+                    parser, "_extract_images", AsyncMock(return_value=([], 0))
+                ),
+            ):
                 result = await parser.parse("/fake/doc.docx")
 
         assert "这是段落文本" in result
@@ -845,7 +885,9 @@ class TestDOCXParserParse:
         from app.document.docx_parser import DOCXParser
 
         mock_p_element = MagicMock()
-        mock_p_element.tag = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}p"
+        mock_p_element.tag = (
+            "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}p"
+        )
 
         # mock image relationship
         mock_image_part = MagicMock()
@@ -853,7 +895,9 @@ class TestDOCXParserParse:
         mock_image_part.content_type = "image/png"
 
         mock_rel = MagicMock()
-        mock_rel.reltype = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+        mock_rel.reltype = (
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+        )
         mock_rel.target_part = mock_image_part
 
         mock_doc = MagicMock()
@@ -867,10 +911,13 @@ class TestDOCXParserParse:
         mock_docx_module.Document.return_value = mock_doc
 
         import sys
+
         with patch.dict(sys.modules, {"docx": mock_docx_module}):
             parser = DOCXParser()
-            with patch.object(parser, "_format_paragraph", return_value="文档内容"), \
-                 patch("app.vlm.provider.get_vision_provider", return_value=mock_vlm):
+            with (
+                patch.object(parser, "_format_paragraph", return_value="文档内容"),
+                patch("app.vlm.provider.get_vision_provider", return_value=mock_vlm),
+            ):
                 result = await parser.parse("/fake/doc.docx")
 
         assert "文档内容" in result
@@ -885,7 +932,9 @@ class TestDOCXParserParse:
         from app.document.docx_parser import DOCXParser
 
         mock_p_element = MagicMock()
-        mock_p_element.tag = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}p"
+        mock_p_element.tag = (
+            "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}p"
+        )
 
         # 创建 10 个 mock image
         mock_rels = {}
@@ -909,11 +958,14 @@ class TestDOCXParserParse:
         mock_docx_module.Document.return_value = mock_doc
 
         import sys
+
         with patch.dict(sys.modules, {"docx": mock_docx_module}):
             parser = DOCXParser()
-            with patch.object(parser, "_format_paragraph", return_value="文本"), \
-                 patch("app.vlm.provider.get_vision_provider", return_value=mock_vlm), \
-                 patch("app.document.docx_parser.get_parse_settings") as mock_settings:
+            with (
+                patch.object(parser, "_format_paragraph", return_value="文本"),
+                patch("app.vlm.provider.get_vision_provider", return_value=mock_vlm),
+                patch("app.document.docx_parser.get_parse_settings") as mock_settings,
+            ):
                 mock_settings.return_value.DOCX_TABLE_EXTRACTION_ENABLED = True
                 mock_settings.return_value.DOCX_IMAGE_EXTRACTION_ENABLED = True
                 mock_settings.return_value.DOCX_IMAGE_MAX_PER_DOC = 3
@@ -928,13 +980,17 @@ class TestDOCXParserParse:
         from app.document.docx_parser import DOCXParser
 
         mock_p_element = MagicMock()
-        mock_p_element.tag = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}p"
+        mock_p_element.tag = (
+            "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}p"
+        )
 
         mock_image_part = MagicMock()
         mock_image_part.blob = b"fake"
         mock_image_part.content_type = "image/png"
         mock_rel = MagicMock()
-        mock_rel.reltype = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+        mock_rel.reltype = (
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+        )
         mock_rel.target_part = mock_image_part
 
         mock_doc = MagicMock()
@@ -945,10 +1001,13 @@ class TestDOCXParserParse:
         mock_docx_module.Document.return_value = mock_doc
 
         import sys
+
         with patch.dict(sys.modules, {"docx": mock_docx_module}):
             parser = DOCXParser()
-            with patch.object(parser, "_format_paragraph", return_value="文本内容"), \
-                 patch.object(parser, "_vlm_describe", AsyncMock(return_value="")):
+            with (
+                patch.object(parser, "_format_paragraph", return_value="文本内容"),
+                patch.object(parser, "_vlm_describe", AsyncMock(return_value="")),
+            ):
                 result = await parser.parse("/fake/doc.docx")
 
         assert "文本内容" in result
@@ -960,8 +1019,8 @@ class TestFactoryDOCX:
     """factory 路由 DOCX 测试。"""
 
     def test_get_parser_docx(self) -> None:
-        from app.document.factory import get_parser
         from app.document.docx_parser import DOCXParser
+        from app.document.factory import get_parser
 
         with patch("app.document.factory._is_docling_enabled", return_value=False):
             parser = get_parser("docx")
@@ -981,7 +1040,9 @@ class TestDocumentTasksDOCXIntegration:
         mock_doc.content_text = None
 
         mock_parser = MagicMock()
-        mock_parser.parse = AsyncMock(return_value="增强解析结果，包含<table>表格</table>")
+        mock_parser.parse = AsyncMock(
+            return_value="增强解析结果，包含<table>表格</table>"
+        )
 
         with patch("app.document.get_parser", return_value=mock_parser):
             result = await _parse_docx(mock_doc)
@@ -1000,8 +1061,10 @@ class TestDocumentTasksDOCXIntegration:
         mock_parser = MagicMock()
         mock_parser.parse = AsyncMock(return_value="")
 
-        with patch("app.document.get_parser", return_value=mock_parser), \
-             patch.dict("sys.modules", {"docx": None}):
+        with (
+            patch("app.document.get_parser", return_value=mock_parser),
+            patch.dict("sys.modules", {"docx": None}),
+        ):
             result = await _parse_docx(mock_doc)
 
         assert result == "fallback text"
@@ -1125,6 +1188,7 @@ class TestXLSXParserParse:
         mock_openpyxl.load_workbook.side_effect = Exception("file not found")
 
         import sys
+
         with patch.dict(sys.modules, {"openpyxl": mock_openpyxl}):
             parser = XLSXParser()
             result = await parser.parse("/fake/path.xlsx")
@@ -1152,6 +1216,7 @@ class TestXLSXParserParse:
         mock_openpyxl.load_workbook.return_value = mock_workbook
 
         import sys
+
         with patch.dict(sys.modules, {"openpyxl": mock_openpyxl}):
             parser = XLSXParser()
             result = await parser.parse("/fake/data.xlsx")
@@ -1183,6 +1248,7 @@ class TestXLSXParserParse:
         mock_openpyxl.load_workbook.return_value = mock_workbook
 
         import sys
+
         with patch.dict(sys.modules, {"openpyxl": mock_openpyxl}):
             parser = XLSXParser()
             result = await parser.parse("/fake/multi.xlsx")
@@ -1209,8 +1275,11 @@ class TestXLSXParserParse:
         mock_openpyxl.load_workbook.return_value = mock_workbook
 
         import sys
-        with patch.dict(sys.modules, {"openpyxl": mock_openpyxl}), \
-             patch("app.document.xlsx_parser.get_settings") as mock_settings:
+
+        with (
+            patch.dict(sys.modules, {"openpyxl": mock_openpyxl}),
+            patch("app.document.xlsx_parser.get_settings") as mock_settings,
+        ):
             mock_settings.return_value.XLSX_TABLE_EXTRACTION_ENABLED = False
             mock_settings.return_value.XLSX_MAX_ROWS_PER_SHEET = 500
             mock_settings.return_value.XLSX_MAX_SHEETS = 20
@@ -1238,6 +1307,7 @@ class TestXLSXParserParse:
         mock_openpyxl.load_workbook.return_value = mock_workbook
 
         import sys
+
         with patch.dict(sys.modules, {"openpyxl": mock_openpyxl}):
             parser = XLSXParser()
             result = await parser.parse("/fake/empty.xlsx")
@@ -1266,6 +1336,7 @@ class TestXLSXParserParse:
         mock_openpyxl.load_workbook.return_value = mock_workbook
 
         import sys
+
         with patch.dict(sys.modules, {"openpyxl": mock_openpyxl}):
             parser = XLSXParser()
             result = await parser.parse("/fake/data.xlsx")
@@ -1291,8 +1362,11 @@ class TestXLSXParserParse:
         mock_openpyxl.load_workbook.return_value = mock_workbook
 
         import sys
-        with patch.dict(sys.modules, {"openpyxl": mock_openpyxl}), \
-             patch("app.document.xlsx_parser.get_settings") as mock_settings:
+
+        with (
+            patch.dict(sys.modules, {"openpyxl": mock_openpyxl}),
+            patch("app.document.xlsx_parser.get_settings") as mock_settings,
+        ):
             mock_settings.return_value.XLSX_TABLE_EXTRACTION_ENABLED = True
             mock_settings.return_value.XLSX_MAX_ROWS_PER_SHEET = 500
             mock_settings.return_value.XLSX_MAX_SHEETS = 3
@@ -1310,9 +1384,7 @@ class TestXLSXParserParse:
 
         # 生成 10 行数据
         mock_sheet = MagicMock()
-        mock_sheet.iter_rows.return_value = [
-            (f"row{i}", f"val{i}") for i in range(10)
-        ]
+        mock_sheet.iter_rows.return_value = [(f"row{i}", f"val{i}") for i in range(10)]
 
         mock_workbook = MagicMock()
         mock_workbook.sheetnames = ["Sheet1"]
@@ -1323,8 +1395,11 @@ class TestXLSXParserParse:
         mock_openpyxl.load_workbook.return_value = mock_workbook
 
         import sys
-        with patch.dict(sys.modules, {"openpyxl": mock_openpyxl}), \
-             patch("app.document.xlsx_parser.get_settings") as mock_settings:
+
+        with (
+            patch.dict(sys.modules, {"openpyxl": mock_openpyxl}),
+            patch("app.document.xlsx_parser.get_settings") as mock_settings,
+        ):
             mock_settings.return_value.XLSX_TABLE_EXTRACTION_ENABLED = True
             mock_settings.return_value.XLSX_MAX_ROWS_PER_SHEET = 5
             mock_settings.return_value.XLSX_MAX_SHEETS = 20
@@ -1352,6 +1427,7 @@ class TestXLSXParserParse:
         mock_openpyxl.load_workbook.return_value = mock_workbook
 
         import sys
+
         with patch.dict(sys.modules, {"openpyxl": mock_openpyxl}):
             parser = XLSXParser()
             result = await parser.parse("/fake/data.xlsx")
@@ -1449,7 +1525,9 @@ class TestDocumentTasksXLSXIntegration:
         mock_doc.doc_type = "xlsx"
 
         mock_parser = MagicMock()
-        mock_parser.parse = AsyncMock(return_value="<h2>Sheet1</h2>\n<table>data</table>")
+        mock_parser.parse = AsyncMock(
+            return_value="<h2>Sheet1</h2>\n<table>data</table>"
+        )
 
         with patch("app.document.get_parser", return_value=mock_parser):
             result, _ = await _parse_document(mock_doc)
@@ -1585,13 +1663,13 @@ class TestParseAudio:
         mock_asr = MagicMock()
         mock_asr.transcribe = AsyncMock(return_value=mock_segments)
 
-        import os
-
-        with patch("app.config.get_settings") as mock_settings, \
-             patch("app.video.get_video_processor", return_value=mock_processor), \
-             patch("app.asr.get_asr_provider", return_value=mock_asr), \
-             patch("os.path.exists", return_value=True), \
-             patch("os.remove") as mock_remove:
+        with (
+            patch("app.config.get_settings") as mock_settings,
+            patch("app.video.get_video_processor", return_value=mock_processor),
+            patch("app.asr.get_asr_provider", return_value=mock_asr),
+            patch("os.path.exists", return_value=True),
+            patch("os.remove") as mock_remove,
+        ):
             mock_settings.return_value.AUDIO_ASR_ENABLED = True
 
             result = await _parse_audio(mock_doc)
@@ -1617,11 +1695,13 @@ class TestParseAudio:
         mock_asr = MagicMock()
         mock_asr.transcribe = AsyncMock(side_effect=Exception("ASR error"))
 
-        with patch("app.config.get_settings") as mock_settings, \
-             patch("app.video.get_video_processor", return_value=mock_processor), \
-             patch("app.asr.get_asr_provider", return_value=mock_asr), \
-             patch("os.path.exists", return_value=True), \
-             patch("os.remove"):
+        with (
+            patch("app.config.get_settings") as mock_settings,
+            patch("app.video.get_video_processor", return_value=mock_processor),
+            patch("app.asr.get_asr_provider", return_value=mock_asr),
+            patch("os.path.exists", return_value=True),
+            patch("os.remove"),
+        ):
             mock_settings.return_value.AUDIO_ASR_ENABLED = True
 
             result = await _parse_audio(mock_doc)
@@ -1641,8 +1721,10 @@ class TestParseAudio:
         mock_processor = MagicMock()
         mock_processor.extract_audio = AsyncMock(return_value=None)  # 转换失败
 
-        with patch("app.config.get_settings") as mock_settings, \
-             patch("app.video.get_video_processor", return_value=mock_processor):
+        with (
+            patch("app.config.get_settings") as mock_settings,
+            patch("app.video.get_video_processor", return_value=mock_processor),
+        ):
             mock_settings.return_value.AUDIO_ASR_ENABLED = True
 
             result = await _parse_audio(mock_doc)
@@ -1665,11 +1747,13 @@ class TestParseAudio:
         mock_asr = MagicMock()
         mock_asr.transcribe = AsyncMock(return_value=[])  # 空转写
 
-        with patch("app.config.get_settings") as mock_settings, \
-             patch("app.video.get_video_processor", return_value=mock_processor), \
-             patch("app.asr.get_asr_provider", return_value=mock_asr), \
-             patch("os.path.exists", return_value=True), \
-             patch("os.remove"):
+        with (
+            patch("app.config.get_settings") as mock_settings,
+            patch("app.video.get_video_processor", return_value=mock_processor),
+            patch("app.asr.get_asr_provider", return_value=mock_asr),
+            patch("os.path.exists", return_value=True),
+            patch("os.remove"),
+        ):
             mock_settings.return_value.AUDIO_ASR_ENABLED = True
 
             result = await _parse_audio(mock_doc)
@@ -1691,8 +1775,12 @@ class TestDocumentTasksAudioIntegration:
         mock_doc.file_path = "/fake/audio.mp3"
         mock_doc.id = "test-id"
 
-        with patch("app.config.get_settings") as mock_settings, \
-             patch("tasks.document_tasks._parse_audio", new_callable=AsyncMock) as mock_parse_audio:
+        with (
+            patch("app.config.get_settings") as mock_settings,
+            patch(
+                "tasks.document_tasks._parse_audio", new_callable=AsyncMock
+            ) as mock_parse_audio,
+        ):
             mock_settings.return_value.AUDIO_ASR_ENABLED = True
             mock_parse_audio.return_value = "转写文本"
 
@@ -1712,8 +1800,12 @@ class TestDocumentTasksAudioIntegration:
         mock_doc.file_path = "/fake/audio.wav"
         mock_doc.id = "test-id"
 
-        with patch("app.config.get_settings") as mock_settings, \
-             patch("tasks.document_tasks._parse_audio", new_callable=AsyncMock) as mock_parse_audio:
+        with (
+            patch("app.config.get_settings") as mock_settings,
+            patch(
+                "tasks.document_tasks._parse_audio", new_callable=AsyncMock
+            ) as mock_parse_audio,
+        ):
             mock_settings.return_value.AUDIO_ASR_ENABLED = True
             mock_parse_audio.return_value = "WAV转写"
 
@@ -2054,11 +2146,14 @@ class TestPDFScanOCR:
         mock_vlm.understand = AsyncMock(return_value="这是OCR提取的文字")
 
         import sys
+
         mock_fit = MagicMock()
         mock_fit.Matrix.return_value = MagicMock()
 
-        with patch.dict(sys.modules, {"fitz": mock_fit}), \
-             patch("app.vlm.provider.get_vision_provider", return_value=mock_vlm):
+        with (
+            patch.dict(sys.modules, {"fitz": mock_fit}),
+            patch("app.vlm.provider.get_vision_provider", return_value=mock_vlm),
+        ):
             result = await parser._scan_page_ocr(mock_doc, mock_page, 0)
 
         assert result == "这是OCR提取的文字"
@@ -2090,9 +2185,12 @@ class TestPDFScanOCR:
         mock_vlm.understand = AsyncMock(return_value="OCR文本内容")
 
         import sys
-        with patch.dict(sys.modules, {"fitz": mock_fit}), \
-             patch("app.vlm.provider.get_vision_provider", return_value=mock_vlm), \
-             patch("app.document.pdf_parser.get_parse_settings") as mock_settings:
+
+        with (
+            patch.dict(sys.modules, {"fitz": mock_fit}),
+            patch("app.vlm.provider.get_vision_provider", return_value=mock_vlm),
+            patch("app.document.pdf_parser.get_parse_settings") as mock_settings,
+        ):
             mock_settings.return_value.PDF_TABLE_EXTRACTION_ENABLED = True
             mock_settings.return_value.PDF_IMAGE_EXTRACTION_ENABLED = True
             mock_settings.return_value.PDF_IMAGE_MAX_PER_DOC = 50
@@ -2125,8 +2223,11 @@ class TestPDFScanOCR:
         mock_fit.open.return_value = mock_doc
 
         import sys
-        with patch.dict(sys.modules, {"fitz": mock_fit}), \
-             patch("app.document.pdf_parser.get_parse_settings") as mock_settings:
+
+        with (
+            patch.dict(sys.modules, {"fitz": mock_fit}),
+            patch("app.document.pdf_parser.get_parse_settings") as mock_settings,
+        ):
             mock_settings.return_value.PDF_TABLE_EXTRACTION_ENABLED = False
             mock_settings.return_value.PDF_IMAGE_EXTRACTION_ENABLED = False
             mock_settings.return_value.PDF_IMAGE_MAX_PER_DOC = 50
@@ -2324,7 +2425,9 @@ class TestDoclingParserParse:
         from app.document.docling_parser import DoclingParser
 
         parser = DoclingParser()
-        with patch.dict("sys.modules", {"docling": None, "docling.document_converter": None}):
+        with patch.dict(
+            "sys.modules", {"docling": None, "docling.document_converter": None}
+        ):
             result = await parser.parse("/fake/doc.pdf")
             assert result == ""
 
@@ -2334,7 +2437,9 @@ class TestDoclingParserParse:
         from app.document.docling_parser import DoclingParser
 
         mock_result = MagicMock()
-        mock_result.document.export_to_html.return_value = "<h1>标题</h1><p>正文内容</p>"
+        mock_result.document.export_to_html.return_value = (
+            "<h1>标题</h1><p>正文内容</p>"
+        )
 
         mock_converter = MagicMock()
         mock_converter.convert.return_value = mock_result
@@ -2442,8 +2547,8 @@ class TestFactoryDoclingPriority:
 
     def test_get_parser_returns_docling_when_enabled(self) -> None:
         """DOCLING_ENABLED=True 且 Docling 可用时返回 DoclingParser。"""
-        from app.document.factory import get_parser
         from app.document.docling_parser import DoclingParser
+        from app.document.factory import get_parser
 
         with patch("app.document.factory._is_docling_enabled", return_value=True):
             parser = get_parser("pdf")
@@ -2496,8 +2601,10 @@ class TestDocumentTasksDoclingIntegration:
         mock_parser = MagicMock()
         mock_parser.parse = AsyncMock(return_value="<h1>HTML 内容</h1>")
 
-        with patch("app.document.factory.get_parser_with_fallback",
-                    return_value=(mock_parser, "docling")):
+        with patch(
+            "app.document.factory.get_parser_with_fallback",
+            return_value=(mock_parser, "docling"),
+        ):
             result, _ = await _parse_document(mock_doc)
 
         assert result == "<h1>HTML 内容</h1>"
@@ -2521,9 +2628,13 @@ class TestDocumentTasksDoclingIntegration:
 
         # _try_docling_parse 调用 get_parser_with_fallback → 返回 docling（空）
         # _parse_pdf 调用 app.document.get_parser → 返回 legacy parser
-        with patch("app.document.factory.get_parser_with_fallback",
-                    return_value=(mock_docling_parser, "docling")), \
-             patch("app.document.get_parser", return_value=mock_legacy_parser):
+        with (
+            patch(
+                "app.document.factory.get_parser_with_fallback",
+                return_value=(mock_docling_parser, "docling"),
+            ),
+            patch("app.document.get_parser", return_value=mock_legacy_parser),
+        ):
             result, _ = await _parse_document(mock_doc)
 
         assert result == "Legacy PDF 内容"
@@ -2543,9 +2654,13 @@ class TestDocumentTasksDoclingIntegration:
         mock_parser.parse = AsyncMock(return_value="PDF 内容")
 
         # get_parser_with_fallback 返回 (None, "none") → 不走 Docling
-        with patch("app.document.factory.get_parser_with_fallback",
-                    return_value=(None, "none")), \
-             patch("app.document.get_parser", return_value=mock_parser):
+        with (
+            patch(
+                "app.document.factory.get_parser_with_fallback",
+                return_value=(None, "none"),
+            ),
+            patch("app.document.get_parser", return_value=mock_parser),
+        ):
             result, _ = await _parse_document(mock_doc)
 
         assert result == "PDF 内容"
@@ -2561,7 +2676,9 @@ class TestDocumentTasksDoclingIntegration:
         mock_doc.file_path = "/fake/video.mp4"
         mock_doc.id = "test-id"
 
-        with patch("tasks.document_tasks._parse_video", new_callable=AsyncMock) as mock_video:
+        with patch(
+            "tasks.document_tasks._parse_video", new_callable=AsyncMock
+        ) as mock_video:
             mock_video.return_value = "视频转写文本"
             result, _ = await _parse_document(mock_doc)
 
@@ -2630,10 +2747,10 @@ class TestImageStorageDimensions:
 
     def test_png_dimensions(self):
         """PNG 尺寸解析 — 构造最小 PNG 头。"""
-        from app.document.image_storage import get_image_dimensions
-
         # PNG 签名 (8 bytes) + IHDR chunk (4 len + 4 type + 4 width + 4 height)
         import struct
+
+        from app.document.image_storage import get_image_dimensions
 
         png_header = (
             b"\x89PNG\r\n\x1a\n"  # PNG signature
@@ -2664,9 +2781,9 @@ class TestImageStorageDimensions:
 
     def test_auto_detect_png(self):
         """无扩展名时自动检测 PNG。"""
-        from app.document.image_storage import get_image_dimensions
-
         import struct
+
+        from app.document.image_storage import get_image_dimensions
 
         png_header = (
             b"\x89PNG\r\n\x1a\n"
@@ -2704,9 +2821,9 @@ class TestImageStorageUpload:
     @pytest.mark.asyncio
     async def test_small_image_filtered(self):
         """小于 min_size 的图片被过滤。"""
-        from app.document.image_storage import upload_image
-
         import struct
+
+        from app.document.image_storage import upload_image
 
         # 构造 30x30 PNG（小于 50px 阈值）
         png_header = (
@@ -2761,9 +2878,9 @@ class TestImageStorageUpload:
     @pytest.mark.asyncio
     async def test_upload_success_mocked(self):
         """上传成功 — mock MinIO upload_file。"""
-        from app.document.image_storage import upload_image
-
         import struct
+
+        from app.document.image_storage import upload_image
 
         # 构造 100x100 PNG
         png_header = (
@@ -2774,7 +2891,9 @@ class TestImageStorageUpload:
             + b"\x08\x02\x00\x00\x00"
         )
 
-        with patch("app.utils.minio_client.upload_file", new_callable=AsyncMock) as mock_upload:
+        with patch(
+            "app.utils.minio_client.upload_file", new_callable=AsyncMock
+        ) as mock_upload:
             mock_upload.return_value = "minio://ekb-documents/test-doc/page0_img0.png"
 
             url = await upload_image(
@@ -2856,9 +2975,7 @@ class TestSectionsToTextPageSeparator:
             ParsedSection(kind="text", content="第二页内容", page=1),
         ]
         sep = "\n\n---\n<!-- page: {page} -->\n"
-        result = DocumentParser.sections_to_text(
-            sections, page_separator=sep
-        )
+        result = DocumentParser.sections_to_text(sections, page_separator=sep)
         assert "第一页内容" in result
         assert "第二页内容" in result
         assert "---" in result
@@ -2910,9 +3027,9 @@ class TestDocxPageBreakDetection:
 
     def test_explicit_page_break_detected(self):
         """显式分页符 <w:br w:type="page"/> 被检测。"""
-        from app.document.docx_parser import DOCXParser
-
         from lxml import etree
+
+        from app.document.docx_parser import DOCXParser
 
         ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
         xml = f'<w:p xmlns:w="{ns}"><w:r><w:br w:type="page"/></w:r></w:p>'
@@ -2921,9 +3038,9 @@ class TestDocxPageBreakDetection:
 
     def test_last_rendered_page_break_detected(self):
         """<w:lastRenderedPageBreak/> 被检测。"""
-        from app.document.docx_parser import DOCXParser
-
         from lxml import etree
+
+        from app.document.docx_parser import DOCXParser
 
         ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
         xml = f'<w:p xmlns:w="{ns}"><w:r><w:lastRenderedPageBreak/></w:r></w:p>'
@@ -2932,9 +3049,9 @@ class TestDocxPageBreakDetection:
 
     def test_no_page_break(self):
         """无分页符返回 False。"""
-        from app.document.docx_parser import DOCXParser
-
         from lxml import etree
+
+        from app.document.docx_parser import DOCXParser
 
         ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
         xml = f'<w:p xmlns:w="{ns}"><w:r><w:t>普通文本</w:t></w:r></w:p>'
@@ -3005,23 +3122,21 @@ class TestDocxHeadingMapping:
         ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
         # XML 转义文本
         escaped_text = (
-            text.replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
+            text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         )
         # 构造 <w:p><w:pPr><w:pStyle w:val="..."/></w:pPr><w:r><w:t>...</w:t></w:r></w:p>
         if style_id:
             xml = (
                 f'<w:p xmlns:w="{ns}">'
                 f'<w:pPr><w:pStyle w:val="{style_id}"/></w:pPr>'
-                f'<w:r><w:t>{escaped_text}</w:t></w:r>'
-                f'</w:p>'
+                f"<w:r><w:t>{escaped_text}</w:t></w:r>"
+                f"</w:p>"
             )
         else:
             xml = (
                 f'<w:p xmlns:w="{ns}">'
-                f'<w:r><w:t>{escaped_text}</w:t></w:r>'
-                f'</w:p>'
+                f"<w:r><w:t>{escaped_text}</w:t></w:r>"
+                f"</w:p>"
             )
         return etree.fromstring(xml)
 
@@ -3125,9 +3240,9 @@ class TestDocxHeadingMapping:
 
     def test_format_paragraph_empty_returns_empty(self):
         """_format_paragraph 对空段落返回空字符串。"""
-        from app.document.docx_parser import DOCXParser
-
         from lxml import etree
+
+        from app.document.docx_parser import DOCXParser
 
         ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
         xml = f'<w:p xmlns:w="{ns}"><w:r><w:t></w:t></w:r></w:p>'
@@ -3151,34 +3266,32 @@ class TestDocxListStructure:
 
         ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
         escaped_text = (
-            text.replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
+            text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         )
         xml = (
             f'<w:p xmlns:w="{ns}">'
             f'<w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr>'
-            f'<w:r><w:t>{escaped_text}</w:t></w:r>'
-            f'</w:p>'
+            f"<w:r><w:t>{escaped_text}</w:t></w:r>"
+            f"</w:p>"
         )
         return etree.fromstring(xml)
 
     @staticmethod
-    def _make_list_style_paragraph(style_id: str = "ListParagraph", text: str = "列表项") -> Any:
+    def _make_list_style_paragraph(
+        style_id: str = "ListParagraph", text: str = "列表项"
+    ) -> Any:
         """构造 ListParagraph 样式的段落 XML。"""
         from lxml import etree
 
         ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
         escaped_text = (
-            text.replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
+            text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         )
         xml = (
             f'<w:p xmlns:w="{ns}">'
             f'<w:pPr><w:pStyle w:val="{style_id}"/></w:pPr>'
-            f'<w:r><w:t>{escaped_text}</w:t></w:r>'
-            f'</w:p>'
+            f"<w:r><w:t>{escaped_text}</w:t></w:r>"
+            f"</w:p>"
         )
         return etree.fromstring(xml)
 
@@ -3189,15 +3302,13 @@ class TestDocxListStructure:
 
         ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
         escaped_text = (
-            text.replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
+            text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         )
         xml = (
             f'<w:p xmlns:w="{ns}">'
             f'<w:pPr><w:pStyle w:val="Normal"/></w:pPr>'
-            f'<w:r><w:t>{escaped_text}</w:t></w:r>'
-            f'</w:p>'
+            f"<w:r><w:t>{escaped_text}</w:t></w:r>"
+            f"</w:p>"
         )
         return etree.fromstring(xml)
 
@@ -3224,9 +3335,9 @@ class TestDocxListStructure:
 
     def test_no_ppr_not_list(self):
         """无 <w:pPr> 的段落不被识别为列表。"""
-        from app.document.docx_parser import DOCXParser
-
         from lxml import etree
+
+        from app.document.docx_parser import DOCXParser
 
         ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
         xml = f'<w:p xmlns:w="{ns}"><w:r><w:t>无 pPr</w:t></w:r></w:p>'
@@ -3304,15 +3415,15 @@ class TestXlsxFallback:
         def mock_read_excel(path, **kwargs):
             if kwargs.get("sheet_name") is None:
                 return {
-                    "Sheet1": pd.DataFrame(
-                        {"姓名": ["张三", "李四"], "年龄": [25, 30]}
-                    )
+                    "Sheet1": pd.DataFrame({"姓名": ["张三", "李四"], "年龄": [25, 30]})
                 }
             return pd.DataFrame()
 
         # mock openpyxl 抛异常，pandas 返回 dict
-        with patch("openpyxl.load_workbook", side_effect=Exception("openpyxl error")), \
-             patch("pandas.read_excel", side_effect=mock_read_excel):
+        with (
+            patch("openpyxl.load_workbook", side_effect=Exception("openpyxl error")),
+            patch("pandas.read_excel", side_effect=mock_read_excel),
+        ):
             result = await parser.parse("/fake/test.xlsx")
 
         assert "<table>" in result
@@ -3326,8 +3437,10 @@ class TestXlsxFallback:
 
         parser = XLSXParser()
 
-        with patch("openpyxl.load_workbook", side_effect=Exception("openpyxl error")), \
-             patch("pandas.read_excel", side_effect=Exception("pandas error")):
+        with (
+            patch("openpyxl.load_workbook", side_effect=Exception("openpyxl error")),
+            patch("pandas.read_excel", side_effect=Exception("pandas error")),
+        ):
             result = await parser.parse("/fake/test.xlsx")
 
         assert result == ""
@@ -3350,8 +3463,10 @@ class TestXlsxFallback:
                 }
             return pd.DataFrame()
 
-        with patch("openpyxl.load_workbook", side_effect=Exception("fail")), \
-             patch("pandas.read_excel", side_effect=mock_read_excel):
+        with (
+            patch("openpyxl.load_workbook", side_effect=Exception("fail")),
+            patch("pandas.read_excel", side_effect=mock_read_excel),
+        ):
             result = await parser.parse("/fake/test.xlsx")
 
         assert "Sheet1" in result
@@ -3368,12 +3483,11 @@ class TestXlsxColumnAlignment:
 
     def test_pad_short_row_to_max_columns(self):
         """短行被补齐到最大列数。"""
-        from app.document.xlsx_parser import XLSXParser
 
         # 模拟合并单元格导致行长度不一致
         rows = [
             ["A", "B", "C"],  # 3 列
-            ["1", "2"],       # 2 列（合并了第 3 列）
+            ["1", "2"],  # 2 列（合并了第 3 列）
             ["x", "y", "z"],  # 3 列
         ]
         # 找出最大列数
@@ -3414,9 +3528,15 @@ class TestPptxGroupRecursion:
     """P0: GROUP 组合形状递归提取 — 表格/图片/图表不再丢失。"""
 
     @staticmethod
-    def _make_shape(shape_type_val: int, has_table: bool = False, has_chart: bool = False,
-                    text: str = "", has_text_frame: bool = False,
-                    child_shapes: list = None, image_blob: bytes = None) -> MagicMock:
+    def _make_shape(
+        shape_type_val: int,
+        has_table: bool = False,
+        has_chart: bool = False,
+        text: str = "",
+        has_text_frame: bool = False,
+        child_shapes: list = None,
+        image_blob: bytes = None,
+    ) -> MagicMock:
         """构造 mock 形状对象。
 
         Args:
@@ -3631,8 +3751,9 @@ class TestPptxImageUploadAndFilter:
     @pytest.mark.asyncio
     async def test_small_image_filtered(self):
         """P1: 小于 min_size 的图片被过滤。"""
-        from app.document.pptx_parser import PPTXParser
         import struct
+
+        from app.document.pptx_parser import PPTXParser
 
         parser = PPTXParser()
 
@@ -3653,7 +3774,11 @@ class TestPptxImageUploadAndFilter:
 
         semaphore = asyncio.Semaphore(3)
         sections, count = await parser._extract_images_recursive(
-            MagicMock(), 0, MagicMock(), semaphore, 1,
+            MagicMock(),
+            0,
+            MagicMock(),
+            semaphore,
+            1,
             image_upload_enabled=False,
             image_min_size=50,
         )
@@ -3663,8 +3788,9 @@ class TestPptxImageUploadAndFilter:
     @pytest.mark.asyncio
     async def test_image_upload_mode_mocked(self):
         """P1: 图片上传模式 — mock MinIO upload_image。"""
-        from app.document.pptx_parser import PPTXParser
         import struct
+
+        from app.document.pptx_parser import PPTXParser
 
         parser = PPTXParser()
 
@@ -3689,13 +3815,24 @@ class TestPptxImageUploadAndFilter:
 
         semaphore = asyncio.Semaphore(3)
 
-        with patch("app.document.pptx_parser.PPTXParser._vlm_describe",
-                   new_callable=AsyncMock, return_value="架构图"), \
-             patch("app.document.image_storage.upload_image",
-                   new_callable=AsyncMock,
-                   return_value="minio://ekb/pptx/page0_img0.png"):
+        with (
+            patch(
+                "app.document.pptx_parser.PPTXParser._vlm_describe",
+                new_callable=AsyncMock,
+                return_value="架构图",
+            ),
+            patch(
+                "app.document.image_storage.upload_image",
+                new_callable=AsyncMock,
+                return_value="minio://ekb/pptx/page0_img0.png",
+            ),
+        ):
             sections, count = await parser._extract_images_recursive(
-                mock_slide, 0, MagicMock(), semaphore, 1,
+                mock_slide,
+                0,
+                MagicMock(),
+                semaphore,
+                1,
                 image_upload_enabled=True,
                 image_min_size=50,
             )
@@ -3708,8 +3845,9 @@ class TestPptxImageUploadAndFilter:
     @pytest.mark.asyncio
     async def test_image_upload_fallback_to_desc(self):
         """P1: 上传失败时降级为 VLM 描述。"""
-        from app.document.pptx_parser import PPTXParser
         import struct
+
+        from app.document.pptx_parser import PPTXParser
 
         parser = PPTXParser()
 
@@ -3732,12 +3870,24 @@ class TestPptxImageUploadAndFilter:
 
         semaphore = asyncio.Semaphore(3)
 
-        with patch("app.document.pptx_parser.PPTXParser._vlm_describe",
-                   new_callable=AsyncMock, return_value="流程图"), \
-             patch("app.document.image_storage.upload_image",
-                   new_callable=AsyncMock, return_value=None):  # 上传失败
+        with (
+            patch(
+                "app.document.pptx_parser.PPTXParser._vlm_describe",
+                new_callable=AsyncMock,
+                return_value="流程图",
+            ),
+            patch(
+                "app.document.image_storage.upload_image",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+        ):  # 上传失败
             sections, count = await parser._extract_images_recursive(
-                mock_slide, 0, MagicMock(), semaphore, 1,
+                mock_slide,
+                0,
+                MagicMock(),
+                semaphore,
+                1,
                 image_upload_enabled=True,
                 image_min_size=50,
             )
@@ -3839,7 +3989,7 @@ class TestPptxTableColumnAlignment:
 
         rows = [
             ["A", "B", "C"],
-            ["1", "2"],       # 缺少第 3 列
+            ["1", "2"],  # 缺少第 3 列
         ]
         html = PPTXParser._rows_to_html(rows)
         assert "<th>A</th>" in html
@@ -3884,12 +4034,15 @@ class TestPptxConfigSafety:
         mock_pptx_module.Presentation = MagicMock(return_value=mock_prs)
         mock_mso_shape_type = MagicMock()
 
-        with patch.dict("sys.modules", {
-            "pptx": mock_pptx_module,
-            "pptx.enum": MagicMock(),
-            "pptx.enum.shapes": MagicMock(),
-            "pptx.enum.shapes.MSO_SHAPE_TYPE": mock_mso_shape_type,
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                "pptx": mock_pptx_module,
+                "pptx.enum": MagicMock(),
+                "pptx.enum.shapes": MagicMock(),
+                "pptx.enum.shapes.MSO_SHAPE_TYPE": mock_mso_shape_type,
+            },
+        ):
             # get_settings 返回 MagicMock（模拟测试场景）
             with patch("app.document.pptx_parser.get_settings") as mock_settings:
                 mock_settings.return_value = MagicMock()
@@ -3973,4 +4126,3 @@ class TestPptxShapeTextCollection:
         text_parts: list = []
         parser._collect_shape_text(shape, text_parts, depth=0)
         assert len(text_parts) == 0
-

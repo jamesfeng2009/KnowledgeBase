@@ -32,10 +32,12 @@ def _chunk_service(db: AsyncSession, request: Request, user: User) -> ChunkServi
 
 
 def _perm(db: AsyncSession, request: Request, user: User) -> PermissionService:
-    return PermissionService(db, user, tenant_id=getattr(request.state, "tenant_id", None))
+    return PermissionService(
+        db, user, tenant_id=getattr(request.state, "tenant_id", None)
+    )
 
 
-def _chunk_dict(chunk) -> dict:  # noqa: ANN001
+def _chunk_dict(chunk) -> dict:
     return {
         "id": str(chunk.id),
         "doc_id": str(chunk.doc_id),
@@ -46,7 +48,7 @@ def _chunk_dict(chunk) -> dict:  # noqa: ANN001
     }
 
 
-def _version_dict(version) -> dict:  # noqa: ANN001
+def _version_dict(version) -> dict:
     return {
         "id": str(version.id),
         "version_seq": version.version_seq,
@@ -163,7 +165,9 @@ async def list_chunk_versions(
     )
 
 
-@router.get("/chunks/{chunk_id}/versions/{version_id}", response_model=ApiResponse[dict])
+@router.get(
+    "/chunks/{chunk_id}/versions/{version_id}", response_model=ApiResponse[dict]
+)
 async def get_chunk_version(
     chunk_id: UUID,
     version_id: UUID,

@@ -66,7 +66,11 @@ def _time_decay(
         return 1.0
     if created_at is None:
         return 1.0
-    created_ts = created_at.timestamp() if isinstance(created_at, datetime) else float(created_at)
+    created_ts = (
+        created_at.timestamp()
+        if isinstance(created_at, datetime)
+        else float(created_at)
+    )
     age_days = (now_ts - created_ts) / 86400.0
     if age_days < 0:
         return 1.0  # 未来时间不衰减
@@ -121,6 +125,7 @@ class Mem0Manager:
         """延迟初始化 Embedder（避免启动时连接模型服务）。"""
         if self._embedder is None:
             from app.llm.factory import get_embedder
+
             self._embedder = get_embedder()
         return self._embedder
 
@@ -204,7 +209,9 @@ class Mem0Manager:
         )
         self.db.add(fact)
         await self.db.flush()
-        logger.info("fact_added", user_id=str(user_id), category=category, fact=fact_text[:100])
+        logger.info(
+            "fact_added", user_id=str(user_id), category=category, fact=fact_text[:100]
+        )
         return fact
 
     async def _deactivate_conflicting(
@@ -229,7 +236,7 @@ class Mem0Manager:
             MemoryFact.user_id == user_id,
             MemoryFact.category == category,
             MemoryFact.fact_key == fact_key,
-            MemoryFact.is_active == True,
+            MemoryFact.is_active.is_(True),
             MemoryFact.fact_value != fact_value,
         )
         result = await self.db.execute(stmt)
@@ -302,7 +309,9 @@ class Mem0Manager:
             fact_text=corrected_text,
             category=old_fact.category,
             fact_key=old_fact.fact_key,
-            fact_value=corrected_value if corrected_value is not None else old_fact.fact_value,
+            fact_value=corrected_value
+            if corrected_value is not None
+            else old_fact.fact_value,
         )
         return new_fact
 
@@ -355,7 +364,7 @@ class Mem0Manager:
                 MemoryFact.user_id == user_id,
                 # 活跃记忆 + 复活窗口内被 superseded 的记忆（P2 软删除窗口）
                 or_(
-                    MemoryFact.is_active == True,
+                    MemoryFact.is_active.is_(True),
                     and_(
                         MemoryFact.superseded_at.is_not(None),
                         MemoryFact.superseded_at > revival_cutoff,
@@ -442,9 +451,7 @@ class Mem0Manager:
         # --- 关键词降级（在原始 DB 结果上操作） ---
         query_lower = query.lower()
         keyword_matched = [
-            f
-            for f in db_facts
-            if f.is_active and query_lower in f.fact_text.lower()
+            f for f in db_facts if f.is_active and query_lower in f.fact_text.lower()
         ]
         if keyword_matched:
             return await self._finalize_results(
@@ -556,13 +563,10 @@ class Mem0Manager:
             命中结果列表；如果 pgvector 不可用或无 vec 数据返回 None。
         """
         # 检查是否有任何 embedding_vec 数据
-        check_stmt = (
-            select(func.count(MemoryFact.id))
-            .where(
-                MemoryFact.user_id == user_id,
-                MemoryFact.is_active == True,
-                MemoryFact.embedding_vec.is_not(None),
-            )
+        check_stmt = select(func.count(MemoryFact.id)).where(
+            MemoryFact.user_id == user_id,
+            MemoryFact.is_active.is_(True),
+            MemoryFact.embedding_vec.is_not(None),
         )
         if category:
             check_stmt = check_stmt.where(MemoryFact.category == category)
@@ -582,7 +586,7 @@ class Mem0Manager:
                 MemoryFact.user_id == user_id,
                 # 活跃记忆 + 复活窗口内被 superseded 的记忆（P2 软删除窗口）
                 or_(
-                    MemoryFact.is_active == True,
+                    MemoryFact.is_active.is_(True),
                     and_(
                         MemoryFact.superseded_at.is_not(None),
                         MemoryFact.superseded_at > revival_cutoff,
@@ -639,7 +643,7 @@ class Mem0Manager:
             MemoryFact.user_id == user_id,
             MemoryFact.category == "preference",
             MemoryFact.fact_key == key,
-            MemoryFact.is_active == True,
+            MemoryFact.is_active.is_(True),
         )
         result = await self.db.execute(stmt)
         fact = result.scalar_one_or_none()
@@ -695,7 +699,7 @@ class Mem0Manager:
         stmt = select(MemoryFact).where(
             MemoryFact.user_id == user_id,
             MemoryFact.source_ref_id.in_(source_ref_ids),
-            MemoryFact.is_active == True,
+            MemoryFact.is_active.is_(True),
         )
         if categories:
             stmt = stmt.where(MemoryFact.category.in_(categories))
@@ -759,7 +763,7 @@ class Mem0Manager:
         stmt = select(MemoryFact).where(
             MemoryFact.user_id == user_id,
             MemoryFact.category == category,
-            MemoryFact.is_active == True,
+            MemoryFact.is_active.is_(True),
         )
         result = await self.db.execute(stmt)
         count = 0
@@ -804,7 +808,7 @@ class Mem0Manager:
             select(MemoryFact)
             .where(
                 MemoryFact.user_id == user_id,
-                MemoryFact.is_active == True,
+                MemoryFact.is_active.is_(True),
                 MemoryFact.embedding.is_not(None),
             )
             .order_by(MemoryFact.created_at.desc())
@@ -847,7 +851,7 @@ class Mem0Manager:
         if not fact_ids:
             return 0
         stmt = select(MemoryFact).where(
-            MemoryFact.id.in_(fact_ids), MemoryFact.is_active == True
+            MemoryFact.id.in_(fact_ids), MemoryFact.is_active.is_(True)
         )
         result = await self.db.execute(stmt)
         now = datetime.utcnow()
@@ -872,7 +876,7 @@ class Mem0Manager:
     async def cleanup_expired(self) -> int:
         """清理过期事实 — 定时任务调用。"""
         stmt = select(MemoryFact).where(
-            MemoryFact.is_active == True,
+            MemoryFact.is_active.is_(True),
             MemoryFact.expires_at.is_not(None),
             MemoryFact.expires_at < func.now(),
         )

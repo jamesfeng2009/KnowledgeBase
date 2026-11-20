@@ -25,7 +25,6 @@ if "celery" not in sys.modules:
 from app.rag.skill_finder import SkillFinder, _cosine
 from app.rag.skill_registry import SkillRegistry
 
-
 # ======================================================================
 # 辅助：Mock Server + 概念空间 Mock Embedder
 # ======================================================================
@@ -107,6 +106,7 @@ def _make_registry() -> SkillRegistry:
 # _cosine
 # ======================================================================
 
+
 class TestCosine:
     def test_identical_vectors(self):
         assert _cosine([1.0, 2.0], [1.0, 2.0]) == pytest.approx(1.0)
@@ -124,6 +124,7 @@ class TestCosine:
 # ======================================================================
 # SkillRegistry 向量预计算
 # ======================================================================
+
 
 class TestBuildEmbeddings:
     @pytest.mark.asyncio
@@ -156,6 +157,7 @@ class TestBuildEmbeddings:
 # ======================================================================
 # afind_relevant_skills — 向量 + 关键词融合
 # ======================================================================
+
 
 class TestVectorRecall:
     @pytest.mark.asyncio
@@ -205,14 +207,18 @@ class TestVectorRecall:
         registry = _make_registry()
         await registry.build_embeddings(MockConceptEmbedder())
         finder = SkillFinder(registry, match_threshold=5)
-        fused = await finder.afind_relevant_skills("搜索文档", embedder=FailingEmbedder())
+        fused = await finder.afind_relevant_skills(
+            "搜索文档", embedder=FailingEmbedder()
+        )
         assert "knowledge_search" in fused
 
     @pytest.mark.asyncio
     async def test_embeddings_not_built_degrades_to_keyword(self):
         registry = _make_registry()  # 未预计算
         finder = SkillFinder(registry, match_threshold=5)
-        fused = await finder.afind_relevant_skills("搜索文档", embedder=MockConceptEmbedder())
+        fused = await finder.afind_relevant_skills(
+            "搜索文档", embedder=MockConceptEmbedder()
+        )
         assert "knowledge_search" in fused
 
     @pytest.mark.asyncio

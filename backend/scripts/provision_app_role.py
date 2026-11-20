@@ -39,6 +39,7 @@ superuser），而应用一直以来就是用建库的那个 superuser 连接的
     0 — 成功（或 --check 判定已就绪）
     2 — 权限/连接问题，无法完成（会打印具体原因）
 """
+
 from __future__ import annotations
 
 import argparse
@@ -155,10 +156,16 @@ async def provision(
             )
             action = "created"
 
-        await conn.execute(f"grant connect on database {_quote_ident(dbname)} to {ident}")
+        await conn.execute(
+            f"grant connect on database {_quote_ident(dbname)} to {ident}"
+        )
         await conn.execute(f"grant usage on schema public to {ident}")
-        await conn.execute(f"grant {_TABLE_PRIVS} on all tables in schema public to {ident}")
-        await conn.execute(f"grant usage, select on all sequences in schema public to {ident}")
+        await conn.execute(
+            f"grant {_TABLE_PRIVS} on all tables in schema public to {ident}"
+        )
+        await conn.execute(
+            f"grant usage, select on all sequences in schema public to {ident}"
+        )
 
         owners = await _table_owners(conn)
         for owner in owners:
@@ -174,7 +181,8 @@ async def provision(
 
         # 复核：权限位必须真的是「非超级用户 + 不绕过 RLS」
         check = await conn.fetchrow(
-            "select rolsuper, rolbypassrls, rolcanlogin from pg_roles where rolname = $1", role
+            "select rolsuper, rolbypassrls, rolcanlogin from pg_roles where rolname = $1",
+            role,
         )
         if check["rolsuper"] or check["rolbypassrls"] or not check["rolcanlogin"]:
             raise RuntimeError(
@@ -203,7 +211,8 @@ async def check(dsn: str, role: str) -> dict[str, object]:
     conn = await asyncpg.connect(dsn=dsn, timeout=5.0)
     try:
         row = await conn.fetchrow(
-            "select rolsuper, rolbypassrls, rolcanlogin from pg_roles where rolname = $1", role
+            "select rolsuper, rolbypassrls, rolcanlogin from pg_roles where rolname = $1",
+            role,
         )
         if row is None:
             return {"exists": False, "role": role}
@@ -213,21 +222,31 @@ async def check(dsn: str, role: str) -> dict[str, object]:
             "login": row["rolcanlogin"],
             "superuser": row["rolsuper"],
             "bypassrls": row["rolbypassrls"],
-            "ready": bool(row["rolcanlogin"]) and not row["rolsuper"] and not row["rolbypassrls"],
+            "ready": bool(row["rolcanlogin"])
+            and not row["rolsuper"]
+            and not row["rolbypassrls"],
         }
     finally:
         await conn.close()
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="创建/校准多租户运行角色（让 RLS 真正生效）")
-    parser.add_argument("--role", default=os.environ.get("APP_DB_ROLE", "ekb_app"), help="运行角色名")
+    parser = argparse.ArgumentParser(
+        description="创建/校准多租户运行角色（让 RLS 真正生效）"
+    )
+    parser.add_argument(
+        "--role", default=os.environ.get("APP_DB_ROLE", "ekb_app"), help="运行角色名"
+    )
     parser.add_argument(
         "--password",
         default=os.environ.get("APP_DB_PASSWORD"),
         help="角色口令（也可用 APP_DB_PASSWORD 环境变量；生产务必用强随机值）",
     )
-    parser.add_argument("--dsn", default=None, help="owner 连接串，默认取 MIGRATION_DATABASE_URL/DATABASE_URL")
+    parser.add_argument(
+        "--dsn",
+        default=None,
+        help="owner 连接串，默认取 MIGRATION_DATABASE_URL/DATABASE_URL",
+    )
     parser.add_argument("--database", default=None, help="目标库名，默认取当前库")
     parser.add_argument("--check", action="store_true", help="只检查现状，不做任何变更")
     args = parser.parse_args(argv)
@@ -248,26 +267,32 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 "✗ 缺少 --password（或 APP_DB_PASSWORD）。\n"
                 "  例：.venv/bin/python scripts/provision_app_role.py "
-                "--password \"$(openssl rand -base64 24)\"",
+                '--password "$(openssl rand -base64 24)"',
                 file=sys.stderr,
             )
             return 2
 
-        result = asyncio.run(provision(dsn, args.role, args.password, database=args.database))
+        result = asyncio.run(
+            provision(dsn, args.role, args.password, database=args.database)
+        )
     except PermissionError as exc:
         print(f"✗ {exc}", file=sys.stderr)
         return 2
-    except Exception as exc:  # noqa: BLE001 - CLI 顶层要展示原始原因
+    except Exception as exc:
         print(f"✗ 失败：{type(exc).__name__}: {exc}", file=sys.stderr)
         return 2
 
-    print(f"✓ 角色 {result['role']} 已{('更新' if result['action'] == 'updated' else '创建')}")
+    print(
+        f"✓ 角色 {result['role']} 已{('更新' if result['action'] == 'updated' else '创建')}"
+    )
     print(f"  库         : {result['database']}")
     print(f"  超级用户   : {result['superuser']}   （必须为 False，否则 RLS 被绕过）")
     print(f"  BYPASSRLS  : {result['bypassrls']}   （必须为 False）")
     print(f"  覆盖表 owner: {', '.join(result['owners']) or '(无表)'}")
     print()
-    print("把下面这行写进运行时的环境变量（保留 owner 连接给 MIGRATION_DATABASE_URL）：")
+    print(
+        "把下面这行写进运行时的环境变量（保留 owner 连接给 MIGRATION_DATABASE_URL）："
+    )
     print(f"  DATABASE_URL={_app_dsn(dsn, args.role, args.password)}")
     return 0
 

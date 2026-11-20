@@ -2,6 +2,7 @@
 
 S3 后端通过 mock boto3 客户端验证契约（不依赖真实 S3/MinIO）。
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -13,13 +14,13 @@ from app.storage.local import LocalStorageBackend
 
 
 @pytest.fixture
-def local(tmp_path) -> LocalStorageBackend:  # noqa: ANN001
+def local(tmp_path) -> LocalStorageBackend:
     return LocalStorageBackend(base_dir=str(tmp_path / "objects"))
 
 
 class TestLocalStorage:
     @pytest.mark.asyncio
-    async def test_put_get_roundtrip(self, local) -> None:  # noqa: ANN001
+    async def test_put_get_roundtrip(self, local) -> None:
         key = await local.put("docs/2026/09/a.pdf", b"pdf-data", "application/pdf")
         assert key == "docs/2026/09/a.pdf"
         obj = await local.get(key)
@@ -27,7 +28,7 @@ class TestLocalStorage:
         assert await local.exists(key) is True
 
     @pytest.mark.asyncio
-    async def test_put_file_handle(self, local, tmp_path) -> None:  # noqa: ANN001
+    async def test_put_file_handle(self, local, tmp_path) -> None:
         src = tmp_path / "src.bin"
         src.write_bytes(b"x" * 2048)
         with open(src, "rb") as fh:
@@ -36,33 +37,33 @@ class TestLocalStorage:
         assert len(obj.data) == 2048
 
     @pytest.mark.asyncio
-    async def test_overwrite_false_raises(self, local) -> None:  # noqa: ANN001
+    async def test_overwrite_false_raises(self, local) -> None:
         await local.put("dup.txt", b"1")
         with pytest.raises(StorageError):
             await local.put("dup.txt", b"2", overwrite=False)
         assert (await local.get("dup.txt")).data == b"1"
 
     @pytest.mark.asyncio
-    async def test_get_missing_raises(self, local) -> None:  # noqa: ANN001
+    async def test_get_missing_raises(self, local) -> None:
         with pytest.raises(StorageError):
             await local.get("missing.txt")
 
     @pytest.mark.asyncio
-    async def test_delete_idempotent(self, local) -> None:  # noqa: ANN001
+    async def test_delete_idempotent(self, local) -> None:
         await local.put("del.txt", b"1")
         await local.delete("del.txt")
         await local.delete("del.txt")  # 不存在时静默
         assert await local.exists("del.txt") is False
 
     @pytest.mark.asyncio
-    async def test_path_traversal_rejected(self, local) -> None:  # noqa: ANN001
+    async def test_path_traversal_rejected(self, local) -> None:
         with pytest.raises(StorageError):
             await local.put("../../etc/passwd", b"x")
         with pytest.raises(StorageError):
             await local.get("a/../b")
 
     @pytest.mark.asyncio
-    async def test_absolute_key_rejected(self, local) -> None:  # noqa: ANN001
+    async def test_absolute_key_rejected(self, local) -> None:
         with pytest.raises(StorageError):
             await local.put("/etc/hosts", b"x")
 
@@ -88,9 +89,10 @@ class TestS3Storage:
     def _make_s3(self, client: MagicMock) -> MagicMock:
         from app.storage.s3 import S3StorageBackend
 
-        with patch("app.storage.s3.boto3") as mock_boto, patch(
-            "app.storage.s3.get_settings"
-        ) as mock_settings:
+        with (
+            patch("app.storage.s3.boto3") as mock_boto,
+            patch("app.storage.s3.get_settings") as mock_settings,
+        ):
             mock_boto.client.return_value = client
             s = mock_settings.return_value
             s.S3_ENDPOINT = "http://minio:9000"

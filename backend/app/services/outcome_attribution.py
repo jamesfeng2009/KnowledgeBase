@@ -470,9 +470,7 @@ def outcome_report(
     binary = metric in BINARY_METRICS
     if binary:
         rows_c = [r for r in rows if r.outcome and r.decision.arm == "control"]
-        rows_t = [
-            r for r in rows if r.outcome and r.decision.arm == "treatment"
-        ]
+        rows_t = [r for r in rows if r.outcome and r.decision.arm == "treatment"]
         x_c, n_c = _counts(rows_c, metric)
         x_t, n_t = _counts(rows_t, metric)
         test = two_proportion_test(x_c, n_c, x_t, n_t, alpha=alpha).__dict__
@@ -523,11 +521,7 @@ def outcome_report(
         if g["worse"]
     ]
     effective_delta = delta
-    if (
-        report["confounding"]
-        and report["confounding"]["n_strata_used"]
-        and binary
-    ):
+    if report["confounding"] and report["confounding"]["n_strata_used"] and binary:
         effective_delta = report["confounding"]["adjusted_delta"]
 
     verdict = judge_experiment(

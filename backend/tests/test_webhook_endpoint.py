@@ -10,13 +10,14 @@
     - Confluence dev 模式（无 secret）
     - 无效 JSON → 400
 """
+
 from __future__ import annotations
 
 import json
 import uuid
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -24,6 +25,8 @@ from fastapi.testclient import TestClient
 
 from app.api.v1.external_webhooks import (
     ResolvedCredential,
+)
+from app.api.v1.external_webhooks import (
     router as external_webhooks_router,
 )
 
@@ -42,7 +45,9 @@ def _allow_unsigned():
         "app.api.v1.external_webhooks.get_settings",
         return_value=SimpleNamespace(WEBHOOK_ALLOW_UNSIGNED=True),
     )
-from app.services.webhook_signature import (
+
+
+from app.services.webhook_signature import (  # noqa: E402  — 有意延迟导入（依赖上方初始化）
     _compute_confluence_signature,
     _compute_feishu_signature,
 )
@@ -90,9 +95,7 @@ def _feishu_event_body(
     )
 
 
-def _confluence_event_body(
-    page_id: int = 123456789, event_id: str = "conf-001"
-) -> str:
+def _confluence_event_body(page_id: int = 123456789, event_id: str = "conf-001") -> str:
     return json.dumps(
         {
             "webhookEvent": "page_updated",
@@ -106,6 +109,7 @@ def _confluence_event_body(
 # 飞书 challenge
 # ==================================================================
 
+
 class TestFeishuChallenge:
     """飞书 URL 验证 — 直接应答，跳过验签/凭证。"""
 
@@ -118,7 +122,9 @@ class TestFeishuChallenge:
             }
         )
         resp = client.post(
-            "/webhooks/external/feishu", content=body, headers={"Content-Type": "application/json"}
+            "/webhooks/external/feishu",
+            content=body,
+            headers={"Content-Type": "application/json"},
         )
         assert resp.status_code == 200
         data = resp.json()["data"]
@@ -128,6 +134,7 @@ class TestFeishuChallenge:
 # ==================================================================
 # 凭证缺失 / 签名失败
 # ==================================================================
+
 
 class TestAuthFailures:
     """无凭证 / 签名失败 → 401。"""
@@ -158,7 +165,9 @@ class TestAuthFailures:
                 content=_feishu_event_body(),
                 headers={
                     "Content-Type": "application/json",
-                    "X-Lark-Request-Timestamp": str(int(datetime.now(timezone.utc).timestamp())),
+                    "X-Lark-Request-Timestamp": str(
+                        int(datetime.now(timezone.utc).timestamp())
+                    ),
                     "X-Lark-Request-Nonce": "n",
                     "X-Lark-Signature": "sha256=invalid-signature",
                 },
@@ -171,6 +180,7 @@ class TestAuthFailures:
 # 合法事件 → 派发 Celery
 # ==================================================================
 
+
 class TestValidEventDispatch:
     """合法签名 + 合法事件 → 派发 Celery + 200 accepted。"""
 
@@ -182,7 +192,9 @@ class TestValidEventDispatch:
         body = _feishu_event_body(event_id="evt-dispatch-1")
         timestamp = str(int(datetime.now(timezone.utc).timestamp()))
         nonce = "nonce-xyz"
-        sig = _compute_feishu_signature(timestamp, nonce, feishu_credentials["encrypt_key"], body)
+        sig = _compute_feishu_signature(
+            timestamp, nonce, feishu_credentials["encrypt_key"], body
+        )
 
         with (
             patch(
@@ -288,6 +300,7 @@ class TestValidEventDispatch:
 # 重复事件 → 跳过
 # ==================================================================
 
+
 class TestDuplicateEvent:
     """幂等去重 — 重复事件返回 skipped。"""
 
@@ -299,7 +312,9 @@ class TestDuplicateEvent:
         body = _feishu_event_body(event_id="evt-dup-1")
         timestamp = str(int(datetime.now(timezone.utc).timestamp()))
         nonce = "n"
-        sig = _compute_feishu_signature(timestamp, nonce, feishu_credentials["encrypt_key"], body)
+        sig = _compute_feishu_signature(
+            timestamp, nonce, feishu_credentials["encrypt_key"], body
+        )
 
         with (
             patch(
@@ -335,6 +350,7 @@ class TestDuplicateEvent:
 # 非关注事件 → ignored
 # ==================================================================
 
+
 class TestIrrelevantEvent:
     """非文档事件（如 contact.user.updated）→ 200 ignored。"""
 
@@ -354,7 +370,9 @@ class TestIrrelevantEvent:
         )
         timestamp = str(int(datetime.now(timezone.utc).timestamp()))
         nonce = "n"
-        sig = _compute_feishu_signature(timestamp, nonce, feishu_credentials["encrypt_key"], body)
+        sig = _compute_feishu_signature(
+            timestamp, nonce, feishu_credentials["encrypt_key"], body
+        )
 
         with (
             patch(
@@ -383,6 +401,7 @@ class TestIrrelevantEvent:
 # P1 修复：派发失败 → 清除幂等标记 + 500
 # ==================================================================
 
+
 class TestDispatchFailureClearsMark:
     """P1 修复：Celery 派发失败时清除幂等标记。
 
@@ -399,7 +418,9 @@ class TestDispatchFailureClearsMark:
         body = _feishu_event_body(event_id="evt-dispatch-fail-1")
         timestamp = str(int(datetime.now(timezone.utc).timestamp()))
         nonce = "n"
-        sig = _compute_feishu_signature(timestamp, nonce, feishu_credentials["encrypt_key"], body)
+        sig = _compute_feishu_signature(
+            timestamp, nonce, feishu_credentials["encrypt_key"], body
+        )
 
         mock_clear = AsyncMock(return_value=True)
 
@@ -476,6 +497,7 @@ class TestDispatchFailureClearsMark:
 # 无效 JSON
 # ==================================================================
 
+
 class TestInvalidBody:
     """无效 JSON body → 400。"""
 
@@ -518,6 +540,7 @@ class TestInvalidBody:
 # 租户身份绑定（fail-closed 改造后的回归）
 # ==================================================================
 
+
 class TestTenantBinding:
     """派发用的租户必须来自验签命中的凭证行，不能来自 query param。"""
 
@@ -535,7 +558,9 @@ class TestTenantBinding:
         body = _feishu_event_body(event_id="evt-tenant-forge")
         timestamp = str(int(datetime.now(timezone.utc).timestamp()))
         nonce = "n"
-        sig = _compute_feishu_signature(timestamp, nonce, feishu_credentials["encrypt_key"], body)
+        sig = _compute_feishu_signature(
+            timestamp, nonce, feishu_credentials["encrypt_key"], body
+        )
 
         with (
             self._signed_feishu_patch(feishu_credentials),
@@ -580,7 +605,9 @@ class TestTenantBinding:
         """私有部署凭证 tenant_id 为 NULL 时，未配置兜底就拒绝派发。"""
         body = _feishu_event_body(event_id="evt-null-tenant")
         timestamp = str(int(datetime.now(timezone.utc).timestamp()))
-        sig = _compute_feishu_signature(timestamp, "n", feishu_credentials["encrypt_key"], body)
+        sig = _compute_feishu_signature(
+            timestamp, "n", feishu_credentials["encrypt_key"], body
+        )
 
         with (
             self._signed_feishu_patch(feishu_credentials, tenant_id=None),
@@ -608,7 +635,9 @@ class TestTenantBinding:
     ) -> None:
         body = _feishu_event_body(event_id="evt-fallback-tenant")
         timestamp = str(int(datetime.now(timezone.utc).timestamp()))
-        sig = _compute_feishu_signature(timestamp, "n", feishu_credentials["encrypt_key"], body)
+        sig = _compute_feishu_signature(
+            timestamp, "n", feishu_credentials["encrypt_key"], body
+        )
 
         with (
             self._signed_feishu_patch(feishu_credentials, tenant_id=None),
@@ -644,7 +673,9 @@ class TestTenantBinding:
         """非法 tenant_id 只应被忽略，不能变成 500。"""
         body = _feishu_event_body(event_id="evt-bad-hint")
         timestamp = str(int(datetime.now(timezone.utc).timestamp()))
-        sig = _compute_feishu_signature(timestamp, "n", feishu_credentials["encrypt_key"], body)
+        sig = _compute_feishu_signature(
+            timestamp, "n", feishu_credentials["encrypt_key"], body
+        )
 
         with (
             self._signed_feishu_patch(feishu_credentials),

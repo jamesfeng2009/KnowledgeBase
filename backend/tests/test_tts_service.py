@@ -4,7 +4,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.services.tts_service import SUPPORTED_VOICES, get_available_voices, synthesize_text
+from app.services.tts_service import (
+    SUPPORTED_VOICES,
+    get_available_voices,
+    synthesize_text,
+)
 
 
 class TestTTSService:
@@ -85,7 +89,9 @@ class TestTTSService:
             mock_settings.TTS_RATE = "+0%"
             mock_settings.TTS_VOLUME = "+0%"
 
-            with patch("edge_tts.Communicate", return_value=mock_communicate) as mock_ctor:
+            with patch(
+                "edge_tts.Communicate", return_value=mock_communicate
+            ) as mock_ctor:
                 result = await synthesize_text(test_text)
 
         # 验证返回的是音频数据

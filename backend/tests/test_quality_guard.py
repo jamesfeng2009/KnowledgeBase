@@ -41,9 +41,7 @@ class TestRetrievalQualityResult:
     def test_creation(self) -> None:
         from app.rag.quality_guard import RetrievalQualityResult
 
-        result = RetrievalQualityResult(
-            mean_score=0.5, passed=True, doc_count=5
-        )
+        result = RetrievalQualityResult(mean_score=0.5, passed=True, doc_count=5)
         assert result.mean_score == 0.5
         assert result.passed is True
         assert result.doc_count == 5
@@ -144,27 +142,21 @@ class TestShouldRetryRetrieval:
         from app.rag.quality_guard import QualityGuard, RetrievalQualityResult
 
         guard = QualityGuard()
-        result = RetrievalQualityResult(
-            mean_score=0.1, passed=False, doc_count=5
-        )
+        result = RetrievalQualityResult(mean_score=0.1, passed=False, doc_count=5)
         assert guard.should_retry_retrieval(result, 0) is True
 
     def test_should_not_retry_high_score(self) -> None:
         from app.rag.quality_guard import QualityGuard, RetrievalQualityResult
 
         guard = QualityGuard()
-        result = RetrievalQualityResult(
-            mean_score=0.8, passed=True, doc_count=5
-        )
+        result = RetrievalQualityResult(mean_score=0.8, passed=True, doc_count=5)
         assert guard.should_retry_retrieval(result, 0) is False
 
     def test_should_not_retry_max_reached(self) -> None:
         from app.rag.quality_guard import QualityGuard, RetrievalQualityResult
 
         guard = QualityGuard()
-        result = RetrievalQualityResult(
-            mean_score=0.1, passed=False, doc_count=5
-        )
+        result = RetrievalQualityResult(mean_score=0.1, passed=False, doc_count=5)
         # retry_count >= max_retries(1)
         assert guard.should_retry_retrieval(result, 1) is False
 
@@ -172,9 +164,7 @@ class TestShouldRetryRetrieval:
         from app.rag.quality_guard import QualityGuard, RetrievalQualityResult
 
         guard = QualityGuard()
-        result = RetrievalQualityResult(
-            mean_score=0.0, passed=False, doc_count=0
-        )
+        result = RetrievalQualityResult(mean_score=0.0, passed=False, doc_count=0)
         assert guard.should_retry_retrieval(result, 0) is False
 
     def test_should_not_retry_when_disabled(self) -> None:
@@ -185,9 +175,7 @@ class TestShouldRetryRetrieval:
             mock_settings.return_value.RAG_QUALITY_GUARD_ENABLED = False
             mock_settings.return_value.RAG_RETRIEVAL_MAX_RETRIES = 1
             mock_settings.return_value.RAG_RETRIEVAL_SCORE_THRESHOLD = 0.3
-            result = RetrievalQualityResult(
-                mean_score=0.1, passed=False, doc_count=5
-            )
+            result = RetrievalQualityResult(mean_score=0.1, passed=False, doc_count=5)
             assert guard.should_retry_retrieval(result, 0) is False
 
 
@@ -393,7 +381,15 @@ class TestEngineRetrievalGuardIntegration:
 
         mock_retriever = MagicMock()
         mock_retriever.search = AsyncMock(
-            return_value=[{"doc_id": "1", "chunk_id": "c1", "content": "doc1", "score": 0.5, "source": "vector"}]
+            return_value=[
+                {
+                    "doc_id": "1",
+                    "chunk_id": "c1",
+                    "content": "doc1",
+                    "score": 0.5,
+                    "source": "vector",
+                }
+            ]
         )
 
         engine = AgenticRAGEngine(
@@ -437,7 +433,15 @@ class TestEngineRetrievalGuardIntegration:
         )
         mock_retriever = MagicMock()
         mock_retriever.search = AsyncMock(
-            return_value=[{"doc_id": "1", "chunk_id": "c1", "content": "doc1", "score": 0.5, "source": "vector"}]
+            return_value=[
+                {
+                    "doc_id": "1",
+                    "chunk_id": "c1",
+                    "content": "doc1",
+                    "score": 0.5,
+                    "source": "vector",
+                }
+            ]
         )
 
         engine = AgenticRAGEngine(
@@ -471,7 +475,15 @@ class TestEngineRetrievalGuardIntegration:
 
         mock_retriever = MagicMock()
         mock_retriever.search = AsyncMock(
-            return_value=[{"doc_id": "1", "chunk_id": "c1", "content": "doc1", "score": 0.5, "source": "vector"}]
+            return_value=[
+                {
+                    "doc_id": "1",
+                    "chunk_id": "c1",
+                    "content": "doc1",
+                    "score": 0.5,
+                    "source": "vector",
+                }
+            ]
         )
 
         engine = AgenticRAGEngine(
@@ -500,7 +512,15 @@ class TestEngineRetrievalGuardIntegration:
 
         mock_retriever = MagicMock()
         mock_retriever.search = AsyncMock(
-            return_value=[{"doc_id": "1", "chunk_id": "c1", "content": "doc1", "score": 0.5, "source": "vector"}]
+            return_value=[
+                {
+                    "doc_id": "1",
+                    "chunk_id": "c1",
+                    "content": "doc1",
+                    "score": 0.5,
+                    "source": "vector",
+                }
+            ]
         )
 
         engine = AgenticRAGEngine(
@@ -545,7 +565,9 @@ class TestCheckAndRegenerate:
 
         original_answer = "原始答案"
         final_answer, eval_result = await guard.check_and_regenerate(
-            query="test", answer=original_answer, contexts=["ctx"],
+            query="test",
+            answer=original_answer,
+            contexts=["ctx"],
             generator=MagicMock(),
         )
 
@@ -585,7 +607,9 @@ class TestCheckAndRegenerate:
 
         original_answer = "原始低质量答案"
         final_answer, eval_result = await guard.check_and_regenerate(
-            query="test", answer=original_answer, contexts=["ctx"],
+            query="test",
+            answer=original_answer,
+            contexts=["ctx"],
             generator=mock_generator,
         )
 
@@ -610,7 +634,9 @@ class TestCheckAndRegenerate:
 
         original_answer = "原始答案"
         final_answer, eval_result = await guard.check_and_regenerate(
-            query="test", answer=original_answer, contexts=["ctx"],
+            query="test",
+            answer=original_answer,
+            contexts=["ctx"],
             generator=None,  # no generator
         )
 
@@ -641,7 +667,9 @@ class TestCheckAndRegenerate:
 
         original_answer = "原始答案"
         final_answer, eval_result = await guard.check_and_regenerate(
-            query="test", answer=original_answer, contexts=["ctx"],
+            query="test",
+            answer=original_answer,
+            contexts=["ctx"],
             generator=mock_generator,
         )
 
@@ -667,7 +695,9 @@ class TestCheckAndRegenerate:
 
         original_answer = "原始答案"
         final_answer, eval_result = await guard.check_and_regenerate(
-            query="test", answer=original_answer, contexts=["ctx"],
+            query="test",
+            answer=original_answer,
+            contexts=["ctx"],
             generator=mock_generator,
         )
 
@@ -683,7 +713,9 @@ class TestCheckAndRegenerate:
             mock_settings.return_value.RAG_QUALITY_GUARD_ENABLED = False
             mock_settings.return_value.RAG_FAITHFULNESS_THRESHOLD = 3.0
             final_answer, eval_result = await guard.check_and_regenerate(
-                query="test", answer="answer", contexts=["ctx"],
+                query="test",
+                answer="answer",
+                contexts=["ctx"],
                 generator=MagicMock(),
             )
             assert final_answer == "answer"
@@ -783,6 +815,7 @@ class TestEngineReflectUpgradeIntegration:
         from app.rag.engine import AgenticRAGEngine
 
         mock_llm = MagicMock()
+
         async def mock_chat(*args, **kwargs):
             for chunk in ["satisfied"]:
                 yield chunk

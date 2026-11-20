@@ -118,10 +118,12 @@ class TestMultimodalService:
 
     async def test_process_table_with_mock(self):
         """表格结构化应返回 JSON 数组。"""
-        table_json = json.dumps([
-            {"职级": "P7", "报销额度": "5000"},
-            {"职级": "P8", "报销额度": "8000"},
-        ])
+        table_json = json.dumps(
+            [
+                {"职级": "P7", "报销额度": "5000"},
+                {"职级": "P8", "报销额度": "8000"},
+            ]
+        )
         mock_vlm = MockVisionProvider(table_json)
         service = MultimodalService(vlm=mock_vlm)
         result = await service.process_table(b"fake_table_image")
@@ -146,11 +148,13 @@ class TestMultimodalService:
 
     async def test_process_whiteboard_with_mock(self):
         """白板处理应返回结构化会议纪要。"""
-        whiteboard_json = json.dumps({
-            "summary": "讨论了 Q2 规划",
-            "key_points": ["要点1", "要点2"],
-            "action_items": [{"assignee": "张三", "content": "完成文档"}],
-        })
+        whiteboard_json = json.dumps(
+            {
+                "summary": "讨论了 Q2 规划",
+                "key_points": ["要点1", "要点2"],
+                "action_items": [{"assignee": "张三", "content": "完成文档"}],
+            }
+        )
         mock_vlm = MockVisionProvider(whiteboard_json)
         service = MultimodalService(vlm=mock_vlm)
         result = await service.process_whiteboard(b"fake_whiteboard_image")

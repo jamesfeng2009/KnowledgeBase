@@ -136,9 +136,7 @@ async def export_dataset(
     header_key = (request.headers.get("Idempotency-Key") or "").strip()
     body_key = (body.idempotency_key or "").strip()
     idempotency_key = header_key or body_key or None
-    input_hash = canonical_input_hash(
-        {"dataset_type": body.dataset_type, **params}
-    )
+    input_hash = canonical_input_hash({"dataset_type": body.dataset_type, **params})
 
     async def _reuse_existing(existing: DatasetExport) -> ApiResponse[dict]:
         if existing.input_hash != input_hash:
@@ -266,12 +264,16 @@ async def list_datasets(
 
     total = (await db.execute(count_stmt)).scalar_one()
     records = (
-        await db.execute(
-            stmt.order_by(DatasetExport.created_at.desc())
-            .offset((page - 1) * size)
-            .limit(size)
+        (
+            await db.execute(
+                stmt.order_by(DatasetExport.created_at.desc())
+                .offset((page - 1) * size)
+                .limit(size)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     return ApiResponse(
         code=0,

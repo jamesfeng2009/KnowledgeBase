@@ -12,17 +12,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.observability.langfuse_tracer import (
+    TraceContext,
+    _get_langfuse_client,
+    trace_node,
+)
 from app.observability.llm_judge import (
     EvalReport,
     EvalResult,
     LLMJudgeService,
 )
-from app.observability.langfuse_tracer import (
-    TraceContext,
-    trace_node,
-    _get_langfuse_client,
-)
-
 
 # ==================================================================
 # 1. LangFuse 追踪测试
@@ -34,9 +33,7 @@ class TestLangFuseTracer:
 
     def test_get_client_not_configured(self):
         """LangFuse 未配置时返回 None。"""
-        with patch(
-            "app.observability.langfuse_tracer._langfuse_available", False
-        ):
+        with patch("app.observability.langfuse_tracer._langfuse_available", False):
             client = _get_langfuse_client()
             assert client is None
 
@@ -82,7 +79,9 @@ class TestLangFuseTracer:
             return_value=mock_client,
         ):
             ctx.start()
-            ctx.span("think", input_data={"q": "test"}, output_data={"decision": "retrieve"})
+            ctx.span(
+                "think", input_data={"q": "test"}, output_data={"decision": "retrieve"}
+            )
             ctx.span("retrieve", output_data={"docs": 5})
             ctx.finalize(output="answer", metadata={"iterations": 2})
 
@@ -103,7 +102,12 @@ class TestLangFuseTracer:
                 return "retrieve"
 
         engine = MockEngine()
-        state = {"session_id": "s1", "iteration": 1, "retrieved_docs": [], "tool_results": []}
+        state = {
+            "session_id": "s1",
+            "iteration": 1,
+            "retrieved_docs": [],
+            "tool_results": [],
+        }
 
         result = await engine._think(state)
         assert result == "retrieve"
@@ -120,7 +124,12 @@ class TestLangFuseTracer:
                 raise RuntimeError("测试异常")
 
         engine = MockEngine()
-        state = {"session_id": "s1", "iteration": 1, "retrieved_docs": [], "tool_results": []}
+        state = {
+            "session_id": "s1",
+            "iteration": 1,
+            "retrieved_docs": [],
+            "tool_results": [],
+        }
 
         with pytest.raises(RuntimeError, match="测试异常"):
             await engine._think(state)
@@ -147,7 +156,12 @@ class TestLangFuseTracer:
                 return "generate"
 
         engine = MockEngine()
-        state = {"session_id": "s1", "iteration": 1, "retrieved_docs": [{"id": 1}], "tool_results": []}
+        state = {
+            "session_id": "s1",
+            "iteration": 1,
+            "retrieved_docs": [{"id": 1}],
+            "tool_results": [],
+        }
 
         result = await engine._think(state)
         assert result == "generate"
@@ -186,7 +200,9 @@ class TestLLMJudgeService:
 
     def test_extract_json_embedded(self):
         """文本中嵌入的 JSON 提取。"""
-        text = '评测结果如下：\n{"citation_accuracy": 4, "completeness": 5}\n以上是评分。'
+        text = (
+            '评测结果如下：\n{"citation_accuracy": 4, "completeness": 5}\n以上是评分。'
+        )
         result = LLMJudgeService._extract_json(text)
         assert result is not None
         assert "citation_accuracy" in result
@@ -199,13 +215,15 @@ class TestLLMJudgeService:
     def test_parse_judge_response_success(self):
         """成功解析 Judge 响应。"""
         service = LLMJudgeService()
-        response = json.dumps({
-            "citation_accuracy": 4,
-            "completeness": 5,
-            "hallucination_inverse": 4,
-            "total_score": 4.33,
-            "reasoning": "答案准确引用了文档",
-        })
+        response = json.dumps(
+            {
+                "citation_accuracy": 4,
+                "completeness": 5,
+                "hallucination_inverse": 4,
+                "total_score": 4.33,
+                "reasoning": "答案准确引用了文档",
+            }
+        )
 
         result = service._parse_judge_response("问题", "答案", response)
 
@@ -219,11 +237,13 @@ class TestLLMJudgeService:
     def test_parse_judge_response_calculate_total(self):
         """无 total_score 时自动计算。"""
         service = LLMJudgeService()
-        response = json.dumps({
-            "citation_accuracy": 3,
-            "completeness": 4,
-            "hallucination_inverse": 5,
-        })
+        response = json.dumps(
+            {
+                "citation_accuracy": 3,
+                "completeness": 4,
+                "hallucination_inverse": 5,
+            }
+        )
 
         result = service._parse_judge_response("Q", "A", response)
         assert result.total_score == round((3 + 4 + 5) / 3, 2)
@@ -249,13 +269,15 @@ class TestLLMJudgeService:
     async def test_evaluate_single_success(self):
         """单条评测成功。"""
         mock_llm = AsyncMock()
-        response_json = json.dumps({
-            "citation_accuracy": 5,
-            "completeness": 4,
-            "hallucination_inverse": 5,
-            "total_score": 4.67,
-            "reasoning": "答案准确",
-        })
+        response_json = json.dumps(
+            {
+                "citation_accuracy": 5,
+                "completeness": 4,
+                "hallucination_inverse": 5,
+                "total_score": 4.67,
+                "reasoning": "答案准确",
+            }
+        )
 
         async def mock_chat(messages, **kwargs):
             for msg in messages:
@@ -303,8 +325,24 @@ class TestLLMJudgeService:
 
         call_count = 0
         responses = [
-            json.dumps({"citation_accuracy": 5, "completeness": 5, "hallucination_inverse": 5, "total_score": 5.0, "reasoning": "完美"}),
-            json.dumps({"citation_accuracy": 3, "completeness": 2, "hallucination_inverse": 3, "total_score": 2.67, "reasoning": "不完整"}),
+            json.dumps(
+                {
+                    "citation_accuracy": 5,
+                    "completeness": 5,
+                    "hallucination_inverse": 5,
+                    "total_score": 5.0,
+                    "reasoning": "完美",
+                }
+            ),
+            json.dumps(
+                {
+                    "citation_accuracy": 3,
+                    "completeness": 2,
+                    "hallucination_inverse": 3,
+                    "total_score": 2.67,
+                    "reasoning": "不完整",
+                }
+            ),
         ]
 
         async def mock_chat(messages, **kwargs):
@@ -315,10 +353,12 @@ class TestLLMJudgeService:
         mock_llm.chat = mock_chat
 
         service = LLMJudgeService(judge_llm=mock_llm)
-        report = await service.evaluate_batch([
-            {"question": "Q1", "answer": "A1", "contexts": ["C1"]},
-            {"question": "Q2", "answer": "A2", "contexts": ["C2"]},
-        ])
+        report = await service.evaluate_batch(
+            [
+                {"question": "Q1", "answer": "A1", "contexts": ["C1"]},
+                {"question": "Q2", "answer": "A2", "contexts": ["C2"]},
+            ]
+        )
 
         assert report.total == 2
         assert report.passed == 1

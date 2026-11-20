@@ -7,11 +7,11 @@
       结果格式与异常降级（不依赖真实 Qdrant 服务）；
     - 纯函数：_validate_key / payload 构造直接用真实实例验证。
 """
+
 from __future__ import annotations
 
-import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -39,17 +39,16 @@ def store() -> QdrantVectorStore:
 
 class TestQdrantInit:
     def test_init_uses_config(self) -> None:
-        with patch("app.rag.vector_store.qdrant_store.QdrantClient") as mock_cls, patch(
-            "app.rag.vector_store.qdrant_store.get_settings"
-        ) as mock_settings:
+        with (
+            patch("app.rag.vector_store.qdrant_store.QdrantClient") as mock_cls,
+            patch("app.rag.vector_store.qdrant_store.get_settings") as mock_settings,
+        ):
             s = mock_settings.return_value
             s.QDRANT_URL = "http://qdrant:6333"
             s.QDRANT_API_KEY = "secret"
             s.QDRANT_COLLECTION = "coll"
             QdrantVectorStore()
-            mock_cls.assert_called_once_with(
-                url="http://qdrant:6333", api_key="secret"
-            )
+            mock_cls.assert_called_once_with(url="http://qdrant:6333", api_key="secret")
 
     def test_missing_dependency_raises(self) -> None:
         with patch("app.rag.vector_store.qdrant_store.QdrantClient", None):
@@ -59,13 +58,17 @@ class TestQdrantInit:
 
 class TestQdrantContract:
     @pytest.mark.asyncio
-    async def test_search_formats_results(self, store) -> None:  # noqa: ANN001
+    async def test_search_formats_results(self, store) -> None:
         point = SimpleNamespace(
             id="p1",
             score=0.92,
             payload={
-                "doc_id": "d1", "chunk_id": "c1", "content": "内容",
-                "kb_id": "kb1", "title_path": "标题", "parent_id": None,
+                "doc_id": "d1",
+                "chunk_id": "c1",
+                "content": "内容",
+                "kb_id": "kb1",
+                "title_path": "标题",
+                "parent_id": None,
             },
         )
         resp = SimpleNamespace(points=[point])
@@ -87,7 +90,7 @@ class TestQdrantContract:
         assert r["kb_id"] == "kb1"
 
     @pytest.mark.asyncio
-    async def test_search_failure_returns_empty(self, store) -> None:  # noqa: ANN001
+    async def test_search_failure_returns_empty(self, store) -> None:
         async def _raise(*args, **kwargs):
             raise RuntimeError("qdrant down")
 
@@ -96,7 +99,7 @@ class TestQdrantContract:
             assert await store.search([0.1]) == []
 
     @pytest.mark.asyncio
-    async def test_upsert_writes_points_with_payload(self, store) -> None:  # noqa: ANN001
+    async def test_upsert_writes_points_with_payload(self, store) -> None:
         calls: list = []
 
         async def _fake_thread(fn, *args, **kwargs):
@@ -107,7 +110,10 @@ class TestQdrantContract:
         chunks = [_make_chunk("c1"), _make_chunk("c2")]
         with patch("app.rag.vector_store.qdrant_store.asyncio.to_thread", _fake_thread):
             n = await store.upsert(
-                "d1", chunks, [[0.1], [0.2]], kb_id="kb1",
+                "d1",
+                chunks,
+                [[0.1], [0.2]],
+                kb_id="kb1",
                 doc_meta={"series_id": "s1", "depth": 2, "doc_status": "published"},
             )
 
@@ -121,11 +127,11 @@ class TestQdrantContract:
         assert points[0].payload["depth"] == "2"
 
     @pytest.mark.asyncio
-    async def test_upsert_no_chunks_returns_zero(self, store) -> None:  # noqa: ANN001
+    async def test_upsert_no_chunks_returns_zero(self, store) -> None:
         assert await store.upsert("d1", [], []) == 0
 
     @pytest.mark.asyncio
-    async def test_delete_filters_by_doc_id(self, store) -> None:  # noqa: ANN001
+    async def test_delete_filters_by_doc_id(self, store) -> None:
         calls: list = []
 
         async def _fake_thread(fn, *args, **kwargs):
@@ -141,10 +147,15 @@ class TestQdrantContract:
         assert points_selector.must[0].match.any == ["doc-9"]
 
     @pytest.mark.asyncio
-    async def test_fetch_by_ids(self, store) -> None:  # noqa: ANN001
+    async def test_fetch_by_ids(self, store) -> None:
         point = SimpleNamespace(
             id="c1",
-            payload={"chunk_id": "c1", "content": "内容", "title_path": "t", "doc_id": "d1"},
+            payload={
+                "chunk_id": "c1",
+                "content": "内容",
+                "title_path": "t",
+                "doc_id": "d1",
+            },
         )
 
         async def _fake_thread(fn, *args, **kwargs):
@@ -157,7 +168,7 @@ class TestQdrantContract:
         assert out["c1"]["title_path"] == "t"
 
     @pytest.mark.asyncio
-    async def test_health_check(self, store) -> None:  # noqa: ANN001
+    async def test_health_check(self, store) -> None:
         async def _fake_thread(fn, *args, **kwargs):
             return True
 
@@ -167,7 +178,7 @@ class TestQdrantContract:
 
 class TestQdrantEnsureCollection:
     @pytest.mark.asyncio
-    async def test_creates_collection_when_missing(self, store) -> None:  # noqa: ANN001
+    async def test_creates_collection_when_missing(self, store) -> None:
         calls: list = []
 
         async def _fake_thread(fn, *args, **kwargs):
@@ -187,7 +198,7 @@ class TestQdrantEnsureCollection:
         assert calls.count("collection_exists") == 1
 
     @pytest.mark.asyncio
-    async def test_ensure_failure_returns_false(self, store) -> None:  # noqa: ANN001
+    async def test_ensure_failure_returns_false(self, store) -> None:
         async def _raise(*args, **kwargs):
             raise RuntimeError("conn refused")
 

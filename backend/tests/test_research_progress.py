@@ -12,6 +12,7 @@ Deep Research 进度事件源（P4-SSE）测试。
 
 mock 风格参照 notification / recommendation 测试，不依赖外部 Redis。
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -46,8 +47,12 @@ class _FakeRetriever:
 
 
 def _internal(title: str, score: float, content: str = "") -> dict:
-    return {"doc_id": f"/kb/{title}", "metadata": {"title": title},
-            "content": content or f"{title}内部内容", "score": score}
+    return {
+        "doc_id": f"/kb/{title}",
+        "metadata": {"title": title},
+        "content": content or f"{title}内部内容",
+        "score": score,
+    }
 
 
 def _collector():
@@ -82,8 +87,10 @@ async def raw_client():
         limiter.clear()
     app.dependency_overrides.clear()
     import httpx
+
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test",
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
     ) as client:
         yield client
     app.dependency_overrides.clear()
@@ -98,11 +105,13 @@ async def raw_client():
 async def test_research_emits_progress_events() -> None:
     from app.services.deep_research_service import DeepResearchService
 
-    llm = _FakeLLM({
-        "研究课题规划专家": "主题A\n主题B",
-        "知识库文档": '{"conclusion":"结论。", "confidence":0.8}',
-        "研究报告撰写专家": "摘要",
-    })
+    llm = _FakeLLM(
+        {
+            "研究课题规划专家": "主题A\n主题B",
+            "知识库文档": '{"conclusion":"结论。", "confidence":0.8}',
+            "研究报告撰写专家": "摘要",
+        }
+    )
     retriever = _FakeRetriever([_internal("甲", 0.9)])
     service = DeepResearchService(llm, retriever)
 
@@ -125,10 +134,10 @@ async def test_research_emits_progress_events() -> None:
 async def test_publish_progress_redis_down_returns_false() -> None:
     from app.services import research_progress
 
-    with patch.object(research_progress, "_get_redis", new=AsyncMock(return_value=None)):
-        ok = await research_progress.publish_progress(
-            "t1", {"type": "decomposed"}
-        )
+    with patch.object(
+        research_progress, "_get_redis", new=AsyncMock(return_value=None)
+    ):
+        ok = await research_progress.publish_progress("t1", {"type": "decomposed"})
     assert ok is False
 
 
@@ -141,7 +150,9 @@ async def test_publish_progress_writes_snapshot_and_publishes() -> None:
     redis.ltrim = AsyncMock(return_value=True)
     redis.expire = AsyncMock(return_value=True)
     redis.publish = AsyncMock(return_value=1)
-    with patch.object(research_progress, "_get_redis", new=AsyncMock(return_value=redis)):
+    with patch.object(
+        research_progress, "_get_redis", new=AsyncMock(return_value=redis)
+    ):
         ok = await research_progress.publish_progress(
             "t9", {"type": "subtopic", "subtopic": "A"}
         )
@@ -163,7 +174,9 @@ async def test_save_result_redis_down_returns_false() -> None:
     """Redis 不可用时 save_result 返回 False 不抛错。"""
     from app.services import research_progress
 
-    with patch.object(research_progress, "_get_redis", new=AsyncMock(return_value=None)):
+    with patch.object(
+        research_progress, "_get_redis", new=AsyncMock(return_value=None)
+    ):
         ok = await research_progress.save_result("t1", {"summary": "s"})
     assert ok is False
 
@@ -175,11 +188,15 @@ async def test_save_and_load_result_roundtrip() -> None:
 
     redis = MagicMock()
     redis.set = AsyncMock(return_value=True)
-    redis.get = AsyncMock(return_value=json.dumps(
-        {"status": "success", "report": {"summary": "结论"}}, ensure_ascii=False
-    ))
+    redis.get = AsyncMock(
+        return_value=json.dumps(
+            {"status": "success", "report": {"summary": "结论"}}, ensure_ascii=False
+        )
+    )
 
-    with patch.object(research_progress, "_get_redis", new=AsyncMock(return_value=redis)):
+    with patch.object(
+        research_progress, "_get_redis", new=AsyncMock(return_value=redis)
+    ):
         ok = await research_progress.save_result("t9", {"summary": "结论"})
         data = await research_progress.load_result("t9")
 
@@ -197,11 +214,15 @@ async def test_save_failure_and_load() -> None:
 
     redis = MagicMock()
     redis.set = AsyncMock(return_value=True)
-    redis.get = AsyncMock(return_value=json.dumps(
-        {"status": "failed", "error": "timeout"}, ensure_ascii=False
-    ))
+    redis.get = AsyncMock(
+        return_value=json.dumps(
+            {"status": "failed", "error": "timeout"}, ensure_ascii=False
+        )
+    )
 
-    with patch.object(research_progress, "_get_redis", new=AsyncMock(return_value=redis)):
+    with patch.object(
+        research_progress, "_get_redis", new=AsyncMock(return_value=redis)
+    ):
         ok = await research_progress.save_failure("t3", "timeout")
         data = await research_progress.load_result("t3")
 
@@ -217,7 +238,9 @@ async def test_load_result_no_record_returns_none() -> None:
     redis = MagicMock()
     redis.get = AsyncMock(return_value=None)
 
-    with patch.object(research_progress, "_get_redis", new=AsyncMock(return_value=redis)):
+    with patch.object(
+        research_progress, "_get_redis", new=AsyncMock(return_value=redis)
+    ):
         data = await research_progress.load_result("t5")
 
     assert data is None
@@ -248,13 +271,14 @@ async def test_cleanup_stale_research_deletes_only_persistent_keys() -> None:
     client.scan_iter = MagicMock(side_effect=_scan)
 
     fake_settings = MagicMock(REDIS_URL="redis://fake:6379/0")
-    with patch("app.config.get_settings", return_value=fake_settings), patch.object(
-        redis_module, "from_url", return_value=client
+    with (
+        patch("app.config.get_settings", return_value=fake_settings),
+        patch.object(redis_module, "from_url", return_value=client),
     ):
         result = await scheduled_tasks._cleanup_stale_research_async()
 
     assert result["snapshots_cleaned"] == 1  # la
-    assert result["results_cleaned"] == 1    # rc
+    assert result["results_cleaned"] == 1  # rc
     client.delete.assert_any_call("research_events:la")
     client.delete.assert_any_call("research_result:rc")
     # 带 TTL 的键跳过
@@ -285,12 +309,16 @@ async def test_subscribe_stream_replays_snapshot_done() -> None:
 
     redis = MagicMock()
     redis.pubsub.return_value = pubsub
-    redis.lrange = AsyncMock(return_value=[
-        json.dumps({"type": "decomposed", "topics": ["A"]}, ensure_ascii=False),
-        json.dumps({"type": "done"}, ensure_ascii=False),
-    ])
+    redis.lrange = AsyncMock(
+        return_value=[
+            json.dumps({"type": "decomposed", "topics": ["A"]}, ensure_ascii=False),
+            json.dumps({"type": "done"}, ensure_ascii=False),
+        ]
+    )
 
-    with patch.object(research_progress, "_get_redis", new=AsyncMock(return_value=redis)):
+    with patch.object(
+        research_progress, "_get_redis", new=AsyncMock(return_value=redis)
+    ):
         chunks = [c async for c in research_progress.subscribe_stream("t7")]
 
     text = "\n".join(chunks)
@@ -340,7 +368,9 @@ def test_result_running_success_failed() -> None:
             "app.services.research_job_service.backfill_result_from_redis",
             new=AsyncMock(return_value=True),
         ) as bf:
-            r = _run(get_research_result(str(jid), _make_user(uid), _db_returning(queued)))
+            r = _run(
+                get_research_result(str(jid), _make_user(uid), _db_returning(queued))
+            )
             assert r.data["status"] == "success"
             assert r.data["report"]["summary"] == "s"
             bf.assert_awaited_once()
@@ -351,19 +381,26 @@ def test_result_running_success_failed() -> None:
             "app.services.research_job_service.backfill_result_from_redis",
             new=AsyncMock(return_value=True),
         ):
-            r = _run(get_research_result(str(jid), _make_user(uid), _db_returning(queued)))
+            r = _run(
+                get_research_result(str(jid), _make_user(uid), _db_returning(queued))
+            )
             assert r.data["status"] == "failed"
             assert r.data["error"] == "boom"
 
     # DB 已 success → 直读 output_json，Redis 不被查询（DB 权威）
     success_job = SimpleNamespace(
-        id=jid, user_id=uid, status="success",
-        output_json={"summary": "s"}, last_error=None,
+        id=jid,
+        user_id=uid,
+        status="success",
+        output_json={"summary": "s"},
+        last_error=None,
     )
     with patch(
         "app.services.research_progress.load_result", new=AsyncMock(return_value=None)
     ) as lr:
-        r = _run(get_research_result(str(jid), _make_user(uid), _db_returning(success_job)))
+        r = _run(
+            get_research_result(str(jid), _make_user(uid), _db_returning(success_job))
+        )
         assert r.data["status"] == "success"
         assert r.data["report"]["summary"] == "s"
         lr.assert_not_awaited()

@@ -20,7 +20,7 @@ from __future__ import annotations
 import sys
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
@@ -60,9 +60,7 @@ def _rule(
             "condition": {"topic": ["报销"]},
             "required_mentions": ["双签", "双人签批"],
             "forbidden_patterns": [],
-            "amount_limits": [
-                {"op": "gt", "value": 5000, "on_violation": "block"}
-            ],
+            "amount_limits": [{"op": "gt", "value": 5000, "on_violation": "block"}],
         }
     return {
         "rule_id": rule_id,
@@ -111,9 +109,7 @@ class TestVerifierForbiddenPattern:
         rule = _rule(
             normalized={"forbidden_patterns": ["跨级审批"]},
         )
-        violations = ConstraintVerifier.verify(
-            "报销单可以直接跨级审批提交", rule
-        )
+        violations = ConstraintVerifier.verify("报销单可以直接跨级审批提交", rule)
         assert len(violations) == 1
         assert violations[0].check == "forbidden_pattern"
         assert violations[0].severity == "block"
@@ -141,9 +137,7 @@ class TestVerifierRequiredMentions:
                 "required_mentions": ["双签", "双人签批"],
             }
         )
-        violations = ConstraintVerifier.verify(
-            "8000 元的报销可以直接提交", rule
-        )
+        violations = ConstraintVerifier.verify("8000 元的报销可以直接提交", rule)
         assert len(violations) == 1
         assert violations[0].check == "required_mentions"
 
@@ -175,9 +169,7 @@ class TestVerifierAmountLimits:
     def test_over_limit_violates(self) -> None:
         rule = _rule(
             normalized={
-                "amount_limits": [
-                    {"op": "gt", "value": 5000, "on_violation": "block"}
-                ]
+                "amount_limits": [{"op": "gt", "value": 5000, "on_violation": "block"}]
             }
         )
         violations = ConstraintVerifier.verify("报销 8000 元", rule)
@@ -186,28 +178,16 @@ class TestVerifierAmountLimits:
         assert violations[0].severity == "block"
 
     def test_wan_unit_converted_to_yuan_base(self) -> None:
-        rule = _rule(
-            normalized={
-                "amount_limits": [{"op": "gt", "value": 5000}]
-            }
-        )
+        rule = _rule(normalized={"amount_limits": [{"op": "gt", "value": 5000}]})
         # 5 万元 = 50000 元 > 5000 → 违规
         assert ConstraintVerifier.verify("预算 5 万元", rule)
 
     def test_under_limit_passes(self) -> None:
-        rule = _rule(
-            normalized={
-                "amount_limits": [{"op": "gt", "value": 5000}]
-            }
-        )
+        rule = _rule(normalized={"amount_limits": [{"op": "gt", "value": 5000}]})
         assert ConstraintVerifier.verify("报销 3000 元", rule) == []
 
     def test_foreign_currency_not_compared(self) -> None:
-        rule = _rule(
-            normalized={
-                "amount_limits": [{"op": "gt", "value": 5000}]
-            }
-        )
+        rule = _rule(normalized={"amount_limits": [{"op": "gt", "value": 5000}]})
         # 1000 美元 ≈ 7000 元，但无汇率来源不跨币种比较 — 不误判
         assert ConstraintVerifier.verify("采购 1000 美元", rule) == []
 
@@ -215,9 +195,7 @@ class TestVerifierAmountLimits:
         rule = _rule(
             severity="warn",
             normalized={
-                "amount_limits": [
-                    {"op": "gt", "value": 100, "on_violation": "confirm"}
-                ]
+                "amount_limits": [{"op": "gt", "value": 100, "on_violation": "confirm"}]
             },
         )
         violations = ConstraintVerifier.verify("报销 200 元", rule)
@@ -229,23 +207,17 @@ class TestVerifierStillViolates:
         rule = _rule()
         violations = ConstraintVerifier.verify("8000 元的报销直接提交", rule)
         assert any(v.severity == "block" for v in violations)
-        assert not ConstraintVerifier.still_violates(
-            "报销 3000 元需双签", violations
-        )
+        assert not ConstraintVerifier.still_violates("报销 3000 元需双签", violations)
 
     def test_still_violating_answer_fails(self) -> None:
         rule = _rule()
-        violations = ConstraintVerifier.verify(
-            "8000 元的报销无需双签直接提交", rule
-        )
+        violations = ConstraintVerifier.verify("8000 元的报销无需双签直接提交", rule)
         assert ConstraintVerifier.still_violates(
             "8000 元的报销无需双签直接提交", violations
         )
 
     def test_warn_only_not_blocking(self) -> None:
-        rule = _rule(
-            severity="warn", normalized={"forbidden_patterns": ["跨级审批"]}
-        )
+        rule = _rule(severity="warn", normalized={"forbidden_patterns": ["跨级审批"]})
         violations = ConstraintVerifier.verify("可跨级审批", rule)
         assert violations[0].severity == "warn"
         assert not ConstraintVerifier.still_violates("任意答案", violations)
@@ -316,9 +288,7 @@ class TestToolGate:
 
     def test_string_param_amount_parsed(self) -> None:
         rule = _gate_rule(amount_limits=[{"op": "gt", "value": 5000}])
-        decision = ToolGate.check(
-            [rule], "place_order", {"note": "采购金额 6 万元"}
-        )
+        decision = ToolGate.check([rule], "place_order", {"note": "采购金额 6 万元"})
         assert decision is not None and decision.action == "block"
 
     def test_on_violation_confirm(self) -> None:
@@ -329,9 +299,7 @@ class TestToolGate:
         assert decision is not None and decision.action == "confirm"
 
     def test_forbidden_pattern_in_args(self) -> None:
-        rule = _gate_rule(
-            severity="block", forbidden_patterns=["跳过审批"]
-        )
+        rule = _gate_rule(severity="block", forbidden_patterns=["跳过审批"])
         decision = ToolGate.check(
             [rule], "place_order", {"note": "本次跳过审批直接下单"}
         )
@@ -362,9 +330,7 @@ class TestEngineCheckConstraints:
     @pytest.mark.asyncio
     async def test_block_regenerated_and_adopted(self, monkeypatch) -> None:
         """block 违规 → 重生成通过核验 → 采用新答案 + regenerate 审计。"""
-        monkeypatch.setattr(
-            get_settings(), "CONSTRAINT_VERIFY_ON_GENERATION", True
-        )
+        monkeypatch.setattr(get_settings(), "CONSTRAINT_VERIFY_ON_GENERATION", True)
         gen = _FakeGenerator(["报销 ", "3000 元需双签", "审批"])
         engine = _engine(generator=gen)
         state = {
@@ -389,9 +355,7 @@ class TestEngineCheckConstraints:
     @pytest.mark.asyncio
     async def test_block_still_violates_refuses(self, monkeypatch) -> None:
         """block 违规 → 重生成仍违规 → 拒答话术 + constraint_blocked。"""
-        monkeypatch.setattr(
-            get_settings(), "CONSTRAINT_VERIFY_ON_GENERATION", True
-        )
+        monkeypatch.setattr(get_settings(), "CONSTRAINT_VERIFY_ON_GENERATION", True)
         gen = _FakeGenerator(["8000 元的报销无需双签直接提交"])
         engine = _engine(generator=gen)
         state = {
@@ -414,9 +378,7 @@ class TestEngineCheckConstraints:
     @pytest.mark.asyncio
     async def test_warn_violation_surfaced(self, monkeypatch) -> None:
         """warn 违规 → constraint_warnings 透出，答案不变。"""
-        monkeypatch.setattr(
-            get_settings(), "CONSTRAINT_VERIFY_ON_GENERATION", True
-        )
+        monkeypatch.setattr(get_settings(), "CONSTRAINT_VERIFY_ON_GENERATION", True)
         engine = _engine(generator=_FakeGenerator(["不应被调用"]))
         state = {
             "query": "报销流程",
@@ -444,9 +406,7 @@ class TestEngineCheckConstraints:
 
     @pytest.mark.asyncio
     async def test_switch_off_short_circuits(self, monkeypatch) -> None:
-        monkeypatch.setattr(
-            get_settings(), "CONSTRAINT_VERIFY_ON_GENERATION", False
-        )
+        monkeypatch.setattr(get_settings(), "CONSTRAINT_VERIFY_ON_GENERATION", False)
         engine = _engine(generator=_FakeGenerator(["x"]))
         state = {
             "query": "q",
@@ -460,9 +420,7 @@ class TestEngineCheckConstraints:
 
     @pytest.mark.asyncio
     async def test_non_post_verify_rule_skipped(self, monkeypatch) -> None:
-        monkeypatch.setattr(
-            get_settings(), "CONSTRAINT_VERIFY_ON_GENERATION", True
-        )
+        monkeypatch.setattr(get_settings(), "CONSTRAINT_VERIFY_ON_GENERATION", True)
         engine = _engine(generator=_FakeGenerator(["x"]))
         state = {
             "query": "q",
@@ -476,9 +434,7 @@ class TestEngineCheckConstraints:
 
     @pytest.mark.asyncio
     async def test_no_injected_rules_noop(self, monkeypatch) -> None:
-        monkeypatch.setattr(
-            get_settings(), "CONSTRAINT_VERIFY_ON_GENERATION", True
-        )
+        monkeypatch.setattr(get_settings(), "CONSTRAINT_VERIFY_ON_GENERATION", True)
         engine = _engine(generator=_FakeGenerator(["x"]))
         await engine._check_constraints({"query": "q", "answer": "a"})
         engine._schedule_constraint_audit.assert_not_called()
@@ -533,9 +489,7 @@ class TestEngineToolGate:
         )
 
     @pytest.mark.asyncio
-    async def test_gate_confirm_routes_to_approval_flow(
-        self, monkeypatch
-    ) -> None:
+    async def test_gate_confirm_routes_to_approval_flow(self, monkeypatch) -> None:
         """confirm 决策 → 并入守卫 CONFIRM 分支（审批话术 + 不执行）。"""
         monkeypatch.setattr(get_settings(), "CONSTRAINT_TOOL_GATE_ENABLED", True)
         engine = _engine()

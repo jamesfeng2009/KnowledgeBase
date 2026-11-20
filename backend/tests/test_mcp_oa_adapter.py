@@ -8,6 +8,7 @@
 - server.py 工具 handler：输出结构与 mock 时代一致；适配器异常时
   经 call_tool 包装为 {"error", "tool"} 结构化 JSON
 """
+
 from __future__ import annotations
 
 import json
@@ -26,7 +27,6 @@ from app.mcp.oa_adapter import (
     get_oa_adapter,
 )
 from app.mcp.server import KnowledgeBaseMCPServer
-
 
 # ======================================================================
 # 测试辅助 — mock httpx 传输层
@@ -148,8 +148,12 @@ class TestHttpOaAdapterMapping:
         assert result == payload
         # 字段集合与 mock 结构完全一致（下游零改动）
         assert set(result) == {
-            "bill_no", "status", "current_node",
-            "submitter", "submit_time", "history",
+            "bill_no",
+            "status",
+            "current_node",
+            "submitter",
+            "submit_time",
+            "history",
         }
 
     @pytest.mark.asyncio
@@ -189,7 +193,9 @@ class TestHttpOaAdapterMapping:
         result = await adapter.create_it_ticket("网络故障", "办公室断网", "urgent")
         # 请求体透传
         assert captured["body"] == {
-            "title": "网络故障", "description": "办公室断网", "priority": "urgent",
+            "title": "网络故障",
+            "description": "办公室断网",
+            "priority": "urgent",
         }
         # Bearer 认证头
         assert captured["auth"] == "Bearer test-key"
@@ -231,7 +237,9 @@ class TestHttpOaAdapterErrorHandling:
             calls["count"] += 1
             if calls["count"] == 1:
                 raise httpx.ConnectError("connection refused")
-            return httpx.Response(200, json={"bill_no": "BG2024001", "status": "processing"})
+            return httpx.Response(
+                200, json={"bill_no": "BG2024001", "status": "processing"}
+            )
 
         adapter = _make_http_adapter(handler)
         result = await adapter.get_approval_status("BG2024001")
@@ -287,7 +295,11 @@ class TestGetOaAdapter:
     """工厂开关测试。"""
 
     def _fake_settings(
-        self, *, enabled: bool, api_url: str = "", api_key: str = "",
+        self,
+        *,
+        enabled: bool,
+        api_url: str = "",
+        api_key: str = "",
     ) -> SimpleNamespace:
         return SimpleNamespace(
             CONNECTOR_OA_ENABLED=enabled,
@@ -298,7 +310,9 @@ class TestGetOaAdapter:
     def test_enabled_with_url_returns_http(self) -> None:
         """enabled + API_URL → HTTP 实现。"""
         fake = self._fake_settings(
-            enabled=True, api_url="https://oa.example.com", api_key="k",
+            enabled=True,
+            api_url="https://oa.example.com",
+            api_key="k",
         )
         with patch("app.mcp.oa_adapter.get_settings", return_value=fake):
             adapter = get_oa_adapter()
@@ -335,7 +349,9 @@ class TestServerOaTools:
     async def test_query_oa_approval_output_unchanged(self) -> None:
         """默认（Mock 适配器）输出与原内联 mock 完全一致。"""
         server = _make_server()
-        result_str = await server.call_tool("query_oa_approval", {"bill_no": "BG2024001"})
+        result_str = await server.call_tool(
+            "query_oa_approval", {"bill_no": "BG2024001"}
+        )
         result = json.loads(result_str)
         assert result == _expected_mock_approval("BG2024001")
 
@@ -355,7 +371,12 @@ class TestServerOaTools:
         assert result["status"] == "open"
         assert result["created_at"] == "2026-07-06T10:00:00+00:00"
         assert set(result) == {
-            "ticket_id", "title", "description", "priority", "status", "created_at",
+            "ticket_id",
+            "title",
+            "description",
+            "priority",
+            "status",
+            "created_at",
         }
 
     @pytest.mark.asyncio
@@ -363,7 +384,8 @@ class TestServerOaTools:
         """priority 缺省为 normal。"""
         server = _make_server()
         result_str = await server.call_tool(
-            "create_it_ticket", {"title": "t", "description": "d"},
+            "create_it_ticket",
+            {"title": "t", "description": "d"},
         )
         assert json.loads(result_str)["priority"] == "normal"
 
@@ -386,13 +408,19 @@ class TestServerOaTools:
 
         server = _make_server()
         server._oa_adapter = _make_http_adapter(handler)
-        result_str = await server.call_tool("query_oa_approval", {"bill_no": "BG2024001"})
+        result_str = await server.call_tool(
+            "query_oa_approval", {"bill_no": "BG2024001"}
+        )
         result = json.loads(result_str)
         assert result["status"] == "approved"
         assert result["current_node"] == "已完成"
         assert set(result) == {
-            "bill_no", "status", "current_node",
-            "submitter", "submit_time", "history",
+            "bill_no",
+            "status",
+            "current_node",
+            "submitter",
+            "submit_time",
+            "history",
         }
 
     @pytest.mark.asyncio
@@ -405,7 +433,9 @@ class TestServerOaTools:
 
         server = _make_server()
         server._oa_adapter = _FailingAdapter()
-        result_str = await server.call_tool("query_oa_approval", {"bill_no": "BG2024001"})
+        result_str = await server.call_tool(
+            "query_oa_approval", {"bill_no": "BG2024001"}
+        )
         result = json.loads(result_str)
         assert "error" in result
         assert result["tool"] == "query_oa_approval"

@@ -18,7 +18,6 @@ import httpx
 import pytest
 import pytest_asyncio
 from fastapi import Depends, FastAPI
-from fastapi.testclient import TestClient
 from httpx import ASGITransport
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
@@ -40,7 +39,6 @@ from app.models.billing import Tenant
 from app.models.user import User
 from app.services.tenant_service import TenantService
 
-
 # ==================================================================
 # 1. 模块注册表测试
 # ==================================================================
@@ -59,9 +57,11 @@ class TestModuleRegistry:
             assert m.id, f"模块 id 为空: {m}"
             assert m.name, f"模块 name 为空: {m}"
             assert m.description, f"模块 description 为空: {m}"
-            assert m.category in ("basic", "intelligence", "integration"), (
-                f"模块 {m.id} category 无效: {m.category}"
-            )
+            assert m.category in (
+                "basic",
+                "intelligence",
+                "integration",
+            ), f"模块 {m.id} category 无效: {m.category}"
             assert isinstance(m.is_basic, bool)
 
     def test_module_ids_unique(self):
@@ -97,9 +97,9 @@ class TestModuleRegistry:
     def test_plan_defaults_include_basics(self):
         """所有套餐默认模块都包含基础模块。"""
         for plan, modules in PLAN_DEFAULTS.items():
-            assert BASIC_MODULE_IDS.issubset(set(modules)), (
-                f"套餐 {plan} 缺少基础模块: {BASIC_MODULE_IDS - set(modules)}"
-            )
+            assert BASIC_MODULE_IDS.issubset(
+                set(modules)
+            ), f"套餐 {plan} 缺少基础模块: {BASIC_MODULE_IDS - set(modules)}"
 
     def test_enterprise_plan_has_all(self):
         """enterprise 套餐包含所有模块。"""
@@ -197,9 +197,7 @@ async def tenant_enterprise_with_settings(db_session):
 class TestTenantService:
     """TenantService — 模块读写、套餐回退、基础模块保护。"""
 
-    async def test_get_tenant_returns_first_active(
-        self, db_session, tenant_free
-    ):
+    async def test_get_tenant_returns_first_active(self, db_session, tenant_free):
         """无 tenant_id 时返回第一条活跃租户。"""
         service = TenantService(db_session)
         tenant = await service.get_tenant()
@@ -243,9 +241,7 @@ class TestTenantService:
     ):
         """显式 settings 覆盖套餐默认。"""
         service = TenantService(db_session)
-        modules = await service.get_enabled_modules(
-            tenant_enterprise_with_settings.id
-        )
+        modules = await service.get_enabled_modules(tenant_enterprise_with_settings.id)
         # settings 只配了 knowledge_base + multimodal，但基础模块自动补齐
         assert "knowledge_base" in modules
         assert "audit_workflow" in modules
@@ -267,24 +263,16 @@ class TestTenantService:
         assert await service.is_module_enabled("audit_workflow", tenant_free.id)
         assert await service.is_module_enabled("qa_community", tenant_free.id)
 
-    async def test_is_module_enabled_optional_disabled(
-        self, db_session, tenant_free
-    ):
+    async def test_is_module_enabled_optional_disabled(self, db_session, tenant_free):
         """free 套餐不含可选模块。"""
         service = TenantService(db_session)
-        assert not await service.is_module_enabled(
-            "doc_intelligence", tenant_free.id
-        )
+        assert not await service.is_module_enabled("doc_intelligence", tenant_free.id)
         assert not await service.is_module_enabled("multimodal", tenant_free.id)
 
-    async def test_is_module_enabled_optional_enabled(
-        self, db_session, tenant_pro
-    ):
+    async def test_is_module_enabled_optional_enabled(self, db_session, tenant_pro):
         """pro 套餐包含 doc_intelligence。"""
         service = TenantService(db_session)
-        assert await service.is_module_enabled(
-            "doc_intelligence", tenant_pro.id
-        )
+        assert await service.is_module_enabled("doc_intelligence", tenant_pro.id)
 
     async def test_update_enabled_modules(self, db_session, tenant_free):
         """更新模块列表 — 自动补齐基础模块。"""
@@ -303,15 +291,11 @@ class TestTenantService:
         await db_session.refresh(tenant_free)
         assert "enabled_modules" in (tenant_free.settings or {})
 
-    async def test_update_enabled_modules_invalid_id(
-        self, db_session, tenant_free
-    ):
+    async def test_update_enabled_modules_invalid_id(self, db_session, tenant_free):
         """无效模块 ID 抛出 ValueError。"""
         service = TenantService(db_session)
         with pytest.raises(ValueError, match="未知的模块 ID"):
-            await service.update_enabled_modules(
-                ["nonexistent"], tenant_free.id
-            )
+            await service.update_enabled_modules(["nonexistent"], tenant_free.id)
 
     async def test_update_enabled_modules_tenant_not_found(self, db_session):
         """租户不存在抛出 ValueError。"""
@@ -322,27 +306,19 @@ class TestTenantService:
     async def test_toggle_module_enable(self, db_session, tenant_free):
         """启用单个模块。"""
         service = TenantService(db_session)
-        result = await service.toggle_module(
-            "expert_discovery", True, tenant_free.id
-        )
+        result = await service.toggle_module("expert_discovery", True, tenant_free.id)
         assert "expert_discovery" in result
 
     async def test_toggle_module_disable(self, db_session, tenant_pro):
         """禁用单个可选模块。"""
         service = TenantService(db_session)
-        result = await service.toggle_module(
-            "doc_intelligence", False, tenant_pro.id
-        )
+        result = await service.toggle_module("doc_intelligence", False, tenant_pro.id)
         assert "doc_intelligence" not in result
 
-    async def test_toggle_module_basic_cannot_disable(
-        self, db_session, tenant_free
-    ):
+    async def test_toggle_module_basic_cannot_disable(self, db_session, tenant_free):
         """基础模块不可关闭 — 静默忽略。"""
         service = TenantService(db_session)
-        result = await service.toggle_module(
-            "knowledge_base", False, tenant_free.id
-        )
+        result = await service.toggle_module("knowledge_base", False, tenant_free.id)
         # knowledge_base 仍然在列表中
         assert "knowledge_base" in result
 
@@ -362,23 +338,15 @@ class TestTenantService:
             if m["is_basic"]:
                 assert m["enabled"] is True
         # free 套餐可选模块 enabled=False
-        doc_intel = next(
-            m for m in modules if m["id"] == "doc_intelligence"
-        )
+        doc_intel = next(m for m in modules if m["id"] == "doc_intelligence")
         assert doc_intel["enabled"] is False
 
-    async def test_list_modules_with_status_after_update(
-        self, db_session, tenant_free
-    ):
+    async def test_list_modules_with_status_after_update(self, db_session, tenant_free):
         """更新后模块状态正确反映。"""
         service = TenantService(db_session)
-        await service.update_enabled_modules(
-            ["doc_intelligence"], tenant_free.id
-        )
+        await service.update_enabled_modules(["doc_intelligence"], tenant_free.id)
         modules = await service.list_modules_with_status(tenant_free.id)
-        doc_intel = next(
-            m for m in modules if m["id"] == "doc_intelligence"
-        )
+        doc_intel = next(m for m in modules if m["id"] == "doc_intelligence")
         assert doc_intel["enabled"] is True
         multimodal = next(m for m in modules if m["id"] == "multimodal")
         assert multimodal["enabled"] is False
@@ -454,9 +422,7 @@ class TestRequireModule:
         assert response.status_code == 200
         assert response.json()["ok"] is True
 
-    async def test_optional_module_blocked_without_tenant(
-        self, db_session
-    ):
+    async def test_optional_module_blocked_without_tenant(self, db_session):
         """无租户时可选模块被拦截（403）。"""
         app = self._create_test_app(db_session, None)
         async with httpx.AsyncClient(
@@ -466,9 +432,7 @@ class TestRequireModule:
         assert response.status_code == 403
         assert "doc_intelligence" in response.json()["detail"]
 
-    async def test_optional_module_blocked_free_plan(
-        self, db_session, tenant_free
-    ):
+    async def test_optional_module_blocked_free_plan(self, db_session, tenant_free):
         """free 套餐不含 doc_intelligence → 403。"""
         app = self._create_test_app(db_session, tenant_free)
         async with httpx.AsyncClient(
@@ -477,9 +441,7 @@ class TestRequireModule:
             response = await client.get("/test-optional")
         assert response.status_code == 403
 
-    async def test_optional_module_allowed_pro_plan(
-        self, db_session, tenant_pro
-    ):
+    async def test_optional_module_allowed_pro_plan(self, db_session, tenant_pro):
         """pro 套餐包含 doc_intelligence → 200。"""
         app = self._create_test_app(db_session, tenant_pro)
         async with httpx.AsyncClient(
@@ -496,9 +458,7 @@ class TestRequireModule:
 
         doc_intelligence 应被拦截，但此处测试 require_module 的 settings 读取。
         """
-        app = self._create_test_app(
-            db_session, tenant_enterprise_with_settings
-        )
+        app = self._create_test_app(db_session, tenant_enterprise_with_settings)
         async with httpx.AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as client:

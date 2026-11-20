@@ -224,18 +224,24 @@ def get_budget_status(run: RunBudget, budget: HardBudget) -> dict:
         "seconds": {
             "used": round(run.elapsed_seconds, 1),
             "limit": budget.max_seconds,
-            "ratio": run.elapsed_seconds / budget.max_seconds if budget.max_seconds > 0 else 0.0,
+            "ratio": run.elapsed_seconds / budget.max_seconds
+            if budget.max_seconds > 0
+            else 0.0,
         },
         "tokens": {
             "used": run.billable_tokens,
             "total": run.total_tokens,
             "cache_read": run.cache_read_tokens,
             "limit": budget.max_tokens,
-            "ratio": run.billable_tokens / budget.max_tokens if budget.max_tokens > 0 else 0.0,
+            "ratio": run.billable_tokens / budget.max_tokens
+            if budget.max_tokens > 0
+            else 0.0,
         },
         "cost_usd": {
             "used": round(run.cost_usd, 6),
             "limit": budget.max_cost_usd,
-            "ratio": run.cost_usd / budget.max_cost_usd if budget.max_cost_usd > 0 else 0.0,
+            "ratio": run.cost_usd / budget.max_cost_usd
+            if budget.max_cost_usd > 0
+            else 0.0,
         },
     }

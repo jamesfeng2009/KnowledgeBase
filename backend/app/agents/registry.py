@@ -15,8 +15,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TypeAlias
 
-from app.agents.base import BaseAgent
 from app.agents.action_agent import ActionAgent
+from app.agents.base import BaseAgent
 from app.agents.qa_agent import QAAgent
 from app.agents.workflow_agent import WorkflowAgent
 from app.llm.base import LLMProvider
@@ -113,8 +113,7 @@ class AgentRegistry:
         agent_cls = cls._registry.get(agent_type)
         if agent_cls is None:
             raise ValueError(
-                f"未注册的 Agent 类型: {agent_type}，"
-                f"已注册: {list(cls._registry)}"
+                f"未注册的 Agent 类型: {agent_type}，" f"已注册: {list(cls._registry)}"
             )
         logger.info(
             "agent.creating",

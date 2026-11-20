@@ -149,7 +149,7 @@ class DomainClassifier:
             + "、".join(vocab)
             + "\n\n用户查询："
             + query[:_DOMAIN_QUERY_MAX]
-            + "\n\n只输出 JSON：{\"domains\": [\"命中的域标签\"], \"confidence\": 0.0到1.0}\n"
+            + '\n\n只输出 JSON：{"domains": ["命中的域标签"], "confidence": 0.0到1.0}\n'
             "规则：domains 只能取上述列表中的标签；域不明确时 domains 为空数组；\n"
             "confidence 为整体判断置信度；只输出 JSON，不要解释。"
         )
@@ -168,9 +168,7 @@ class DomainClassifier:
             return [], 0.0
 
         domains = (
-            domains
-            if confidence >= settings.CONSTRAINT_DOMAIN_CONFIDENCE_FLOOR
-            else []
+            domains if confidence >= settings.CONSTRAINT_DOMAIN_CONFIDENCE_FLOOR else []
         )
         log.info(
             "constraint.t1.classified",
@@ -345,9 +343,9 @@ class ConstraintRouter:
         与 SQL ILIKE 口径一致）
         """
         tags: set[str] = set()
-        intent_value = getattr(
-            getattr(intent, "intent", None), "value", None
-        ) or str(getattr(intent, "intent", ""))
+        intent_value = getattr(getattr(intent, "intent", None), "value", None) or str(
+            getattr(intent, "intent", "")
+        )
         rule_intents = {str(v).upper() for v in (rule.trigger_intents or [])}
         if intent_value.upper() in rule_intents:
             tags.add("T3:intent")
@@ -401,9 +399,7 @@ class ConstraintRouter:
         stmt = apply_tenant_filter(stmt, ConstraintRule, tenant_id)
         return [row for row in (await session.execute(stmt)).scalars() if row]
 
-    async def high_risk_kb_ids(
-        self, kb_ids: list[UUID], session: Any
-    ) -> list[UUID]:
+    async def high_risk_kb_ids(self, kb_ids: list[UUID], session: Any) -> list[UUID]:
         """T4 判定 — 范围内 KB 的 category ∈ 高风险域列表。"""
         stmt = select(KnowledgeBase.id, KnowledgeBase.category).where(
             KnowledgeBase.id.in_(kb_ids)
@@ -502,7 +498,9 @@ class ConstraintChannel:
         expired: list[Any] = []
         today = date.today()
         for rule in route.rules:
-            (active_rules if self._in_effective_window(rule, today) else expired).append(rule)
+            (
+                active_rules if self._in_effective_window(rule, today) else expired
+            ).append(rule)
         if expired:
             await self._audit(ACTION_EXPIRED, expired, route, **audit_ctx)
         if not active_rules:
@@ -533,16 +531,12 @@ class ConstraintChannel:
             log.error("constraint.channel.perm_filter_error", error=str(exc))
             allowed = []
         allowed_docs = {c.get("doc_id") for c in allowed}
-        perm_allowed = [
-            r for r in active_rules if str(r.document_id) in allowed_docs
-        ]
+        perm_allowed = [r for r in active_rules if str(r.document_id) in allowed_docs]
         perm_blocked = [
             r for r in active_rules if str(r.document_id) not in allowed_docs
         ]
         if perm_blocked:
-            await self._audit(
-                ACTION_FILTERED_PERM, perm_blocked, route, **audit_ctx
-            )
+            await self._audit(ACTION_FILTERED_PERM, perm_blocked, route, **audit_ctx)
         if not perm_allowed:
             return []
 
@@ -605,16 +599,20 @@ class ConstraintChannel:
         async with async_session_factory() as session:
             # T2 实体触发（GIN 直查 — 命中行数少，不缓存）
             for rule in await self._router.match_by_entities(
-                entity_names=entity_names, kb_ids=kb_ids,
-                session=session, tenant_id=tenant_id,
+                entity_names=entity_names,
+                kb_ids=kb_ids,
+                session=session,
+                tenant_id=tenant_id,
             ):
                 rules_by_id[rule.id] = rule
                 hits.setdefault(rule.id, set()).add("T2:entity")
 
             # T3 意图触发（零 LLM — intent 由 IntentRouter 已算好直接传入）
             for rule in await self._router.match_by_intents(
-                intent=intent, kb_ids=kb_ids,
-                session=session, tenant_id=tenant_id,
+                intent=intent,
+                kb_ids=kb_ids,
+                session=session,
+                tenant_id=tenant_id,
             ):
                 rules_by_id[rule.id] = rule
                 hits.setdefault(rule.id, set()).update(
@@ -625,9 +623,7 @@ class ConstraintChannel:
             high_risk = await self._router.high_risk_kb_ids(kb_ids, session)
 
             # T1 词汇表 — 范围内规则实际使用的域标签（空则 T1 整路跳过）
-            vocabulary = await self._router.distinct_domains(
-                kb_ids, session, tenant_id
-            )
+            vocabulary = await self._router.distinct_domains(kb_ids, session, tenant_id)
 
         # T1 域分类与 T4 pinned 缓存加载并行（LLM 延迟被隐藏）
         t1_task = (
@@ -718,9 +714,7 @@ class ConstraintChannel:
                         doc_ids=[str(r.document_id) for r in group],
                     )
                 except Exception as exc:
-                    log.warning(
-                        "constraint.channel.cache_set_failed", error=str(exc)
-                    )
+                    log.warning("constraint.channel.cache_set_failed", error=str(exc))
         return rules
 
     @staticmethod

@@ -23,7 +23,6 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from app.config import get_settings
 from app.document.pdf_parser import PDFParser
 from app.rag.chunker import Chunk, SemanticChunker, estimate_tokens
-
 from tests.test_pdf_pipeline_hardening import (
     _make_text_pdf,
     _png_bytes,
@@ -60,6 +59,7 @@ def _make_asset_pdf(path: str) -> str:
 
 def _mock_image_boundaries(monkeypatch, desc: str = _VLM_DESC):
     """只 mock MinIO 上传与 VLM 描述两个外部边界。"""
+
     async def fake_upload(bucket, object_name, data, content_type):
         return f"minio://{bucket}/{object_name}"
 
@@ -141,9 +141,7 @@ def _run_ops(sync_conn, fn):
 
 async def _seed_legacy_chunk_row(db_session, tmp_path) -> str:
     """模拟存量旧 schema：删掉资产列后插入一行旧分块。"""
-    doc = await _seed_document(
-        db_session, str(tmp_path / "legacy.pdf"), uuid.uuid4()
-    )
+    doc = await _seed_document(db_session, str(tmp_path / "legacy.pdf"), uuid.uuid4())
     for col in ("chunk_type", "asset_ref", "parent_chunk_id"):
         await db_session.execute(
             sa.text(f"ALTER TABLE document_chunks DROP COLUMN IF EXISTS {col}")
@@ -161,7 +159,9 @@ async def _seed_legacy_chunk_row(db_session, tmp_path) -> str:
 
 
 class TestD6Migration:
-    async def test_upgrade_adds_columns_and_backfills(self, db_session, tmp_path, migration):
+    async def test_upgrade_adds_columns_and_backfills(
+        self, db_session, tmp_path, migration
+    ):
         chunk_id = await _seed_legacy_chunk_row(db_session, tmp_path)
 
         engine = create_async_engine(os.environ["DATABASE_URL"])
@@ -248,7 +248,9 @@ class TestD6ChunkerAssets:
             chunker.chunk(text, doc_type="pdf", doc_id="d6-doc"), "d6-doc"
         )
         tables = [c for c in chunks if c.chunk_type == "table"]
-        assert len(tables) == 1, f"应恰有 1 个表格资产块: {[c.chunk_type for c in chunks]}"
+        assert (
+            len(tables) == 1
+        ), f"应恰有 1 个表格资产块: {[c.chunk_type for c in chunks]}"
         t = tables[0]
         assert t.asset_ref and "<table" in t.asset_ref
         assert "指标甲" in t.asset_ref and "数值丁" in t.asset_ref
@@ -277,7 +279,9 @@ class TestD6ChunkerAssets:
         assert "表格与图片之外的结尾正文" in parent.content
 
     async def test_text_only_unchanged_witness(self, tmp_path):
-        path = _make_text_pdf(str(tmp_path / "plain.pdf"), "纯文本文档，没有任何表格和图片。")
+        path = _make_text_pdf(
+            str(tmp_path / "plain.pdf"), "纯文本文档，没有任何表格和图片。"
+        )
         text = await PDFParser().parse(path)
         chunker = SemanticChunker()
         original = chunker.chunk(text, doc_type="pdf", doc_id="d6-plain")
@@ -296,7 +300,9 @@ class TestD6ChunkerAssets:
         out2 = chunker.extract_asset_chunks(
             chunker.chunk(text, doc_type="pdf", doc_id="d6-doc"), "d6-doc"
         )
-        assert [c.id for c in out1] == [c.id for c in out2], "同内容重复抽取 ID 必须一致"
+        assert [c.id for c in out1] == [
+            c.id for c in out2
+        ], "同内容重复抽取 ID 必须一致"
         out3 = chunker.extract_asset_chunks(out1, "d6-doc")
         assert [(c.id, c.content) for c in out3] == [
             (c.id, c.content) for c in out1
@@ -337,7 +343,9 @@ class TestD6ChunkerAssets:
 
 
 class TestD6ChunkService:
-    async def test_init_chunks_persists_asset_fields(self, db_session, tmp_path, monkeypatch):
+    async def test_init_chunks_persists_asset_fields(
+        self, db_session, tmp_path, monkeypatch
+    ):
         from app.services.chunk_service import ChunkService
 
         text = await _parse_asset_pdf(tmp_path, monkeypatch)
@@ -345,7 +353,10 @@ class TestD6ChunkService:
             db_session, str(tmp_path / "asset.pdf"), uuid.uuid4(), content_text=text
         )
         rows = await ChunkService(db_session, user=None).init_chunks(doc.id)
-        by_type = {t: [r for r in rows if r.chunk_type == t] for t in ("text", "image", "table")}
+        by_type = {
+            t: [r for r in rows if r.chunk_type == t]
+            for t in ("text", "image", "table")
+        }
         assert len(by_type["image"]) == 1
         assert len(by_type["table"]) == 1
         img = by_type["image"][0]
@@ -355,7 +366,9 @@ class TestD6ChunkService:
         assert "<table" in tbl.asset_ref
         ids = {r.id for r in rows}
         for asset in (img, tbl):
-            assert asset.parent_chunk_id in ids, "parent_chunk_id 必须回链到真实存在的正文块"
+            assert (
+                asset.parent_chunk_id in ids
+            ), "parent_chunk_id 必须回链到真实存在的正文块"
             parent = next(r for r in rows if r.id == asset.parent_chunk_id)
             assert parent.chunk_type == "text"
 
@@ -364,9 +377,7 @@ class TestD6ChunkService:
 
         path = _make_text_pdf(str(tmp_path / "plain.pdf"), "纯文本存量文档内容。")
         text = await PDFParser().parse(path)
-        doc = await _seed_document(
-            db_session, path, uuid.uuid4(), content_text=text
-        )
+        doc = await _seed_document(db_session, path, uuid.uuid4(), content_text=text)
         rows = await ChunkService(db_session, user=None).init_chunks(doc.id)
         assert rows
         assert all(r.chunk_type == "text" for r in rows)
@@ -380,7 +391,9 @@ class TestD6ChunkService:
 
 
 class TestD6Pipeline:
-    async def test_pipeline_upserts_asset_chunks(self, db_session, tmp_path, monkeypatch):
+    async def test_pipeline_upserts_asset_chunks(
+        self, db_session, tmp_path, monkeypatch
+    ):
         import tasks.document_tasks as dt
 
         monkeypatch.setattr(get_settings(), "DOCLING_ENABLED", False, raising=False)
@@ -426,7 +439,9 @@ class TestD6ChunkTypeFilter:
     def test_milvus_chunk_type_expr(self):
         from app.rag.filter_builder import build_milvus_expr
 
-        assert build_milvus_expr(None, {"chunk_type": "table"}) == "chunk_type == 'table'"
+        assert (
+            build_milvus_expr(None, {"chunk_type": "table"}) == "chunk_type == 'table'"
+        )
         assert (
             build_milvus_expr(None, {"chunk_type": ["image", "table"]})
             == "chunk_type in ['image', 'table']"
@@ -449,8 +464,11 @@ class TestD6VectorStore:
         store._available = True
 
         chunk = Chunk(
-            id="c-img", doc_id="d6", content=_VLM_DESC,
-            chunk_type="image", asset_ref="minio://bkt/d6/page1_img0.png",
+            id="c-img",
+            doc_id="d6",
+            content=_VLM_DESC,
+            chunk_type="image",
+            asset_ref="minio://bkt/d6/page1_img0.png",
         )
         count = await store.upsert("d6", [chunk], [[0.0]])
         assert count == 1
@@ -514,8 +532,11 @@ class TestD6VectorStore:
 
         store = QdrantVectorStore.__new__(QdrantVectorStore)
         chunk = Chunk(
-            id="c-img", doc_id="d6", content=_VLM_DESC,
-            chunk_type="image", asset_ref="minio://bkt/d6/x.png",
+            id="c-img",
+            doc_id="d6",
+            content=_VLM_DESC,
+            chunk_type="image",
+            asset_ref="minio://bkt/d6/x.png",
         )
         payload = store._payload_for_chunk("d6", chunk, None, None, None, None, None)
         assert payload["chunk_type"] == "image"

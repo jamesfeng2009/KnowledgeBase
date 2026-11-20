@@ -120,7 +120,10 @@ class TestCoreferenceEnhanced:
         ]
 
         result = await resolver.resolve(
-            "那上海呢？", focus, history=history, focus_stack=focus_stack,
+            "那上海呢？",
+            focus,
+            history=history,
+            focus_stack=focus_stack,
         )
 
         assert result == "上海今天的天气怎么样？"
@@ -165,7 +168,8 @@ class TestCoreferenceEnhanced:
         focus = ConversationFocus(topic="限号政策", entity="北京")
 
         result = await resolver.resolve(
-            "那上海呢？", focus,
+            "那上海呢？",
+            focus,
             history=[{"role": "user", "content": "北京限号"}],
             focus_stack=[focus],
         )

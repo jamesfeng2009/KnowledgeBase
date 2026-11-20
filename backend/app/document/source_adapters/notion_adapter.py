@@ -16,6 +16,7 @@ Notion 版本约束：API 版本通过 Notion-Version header 指定（默认 202
     或 OAuth 模式::
     {"access_token": "oauth_xxx"}
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -76,9 +77,13 @@ class NotionAdapter(DocumentSourceAdapter):
         Raises:
             AdapterError: API 调用失败或凭证缺失。
         """
-        token = credentials.get("integration_token") or credentials.get("access_token", "")
+        token = credentials.get("integration_token") or credentials.get(
+            "access_token", ""
+        )
         if not token:
-            raise AdapterError(self.adapter_id, "缺少 integration_token 或 access_token")
+            raise AdapterError(
+                self.adapter_id, "缺少 integration_token 或 access_token"
+            )
 
         page_id = self._extract_page_id(doc_url_or_id)
         headers = self._build_headers(token)
@@ -133,7 +138,9 @@ class NotionAdapter(DocumentSourceAdapter):
         Raises:
             AdapterError: API 调用失败。
         """
-        token = credentials.get("integration_token") or credentials.get("access_token", "")
+        token = credentials.get("integration_token") or credentials.get(
+            "access_token", ""
+        )
         if not token:
             raise AdapterError(self.adapter_id, "缺少 integration_token")
 
@@ -202,7 +209,9 @@ class NotionAdapter(DocumentSourceAdapter):
 
     async def test_connection(self, credentials: dict[str, Any]) -> bool:
         """测试 Notion API 连接 — 调用 /v1/users/me 验证 token。"""
-        token = credentials.get("integration_token") or credentials.get("access_token", "")
+        token = credentials.get("integration_token") or credentials.get(
+            "access_token", ""
+        )
         if not token:
             return False
         headers = self._build_headers(token)
@@ -228,9 +237,13 @@ class NotionAdapter(DocumentSourceAdapter):
         Notion API ``GET /v1/pages/{id}`` 返回 ``last_edited_time``
         （ISO 8601 字符串，每次编辑更新）。
         """
-        token = credentials.get("integration_token") or credentials.get("access_token", "")
+        token = credentials.get("integration_token") or credentials.get(
+            "access_token", ""
+        )
         if not token:
-            raise AdapterError(self.adapter_id, "缺少 integration_token 或 access_token")
+            raise AdapterError(
+                self.adapter_id, "缺少 integration_token 或 access_token"
+            )
 
         page_id = self._extract_page_id(doc_url_or_id)
         headers = self._build_headers(token)
@@ -334,9 +347,7 @@ class NotionAdapter(DocumentSourceAdapter):
     # 块 → Markdown 转换
     # ------------------------------------------------------------------
 
-    def _blocks_to_markdown(
-        self, blocks: list[dict[str, Any]], title: str
-    ) -> str:
+    def _blocks_to_markdown(self, blocks: list[dict[str, Any]], title: str) -> str:
         """将 Notion 块列表转换为 Markdown。
 
         Args:
@@ -523,6 +534,7 @@ class NotionAdapter(DocumentSourceAdapter):
         if url:
             # https://www.notion.so/Workspace/Page-Title-pageid → Page Title
             import re
+
             slug = url.rstrip("/").split("/")[-1]
             # 去除末尾的 page ID（32 位十六进制）
             slug = re.sub(r"-[a-f0-9]{32}$", "", slug)

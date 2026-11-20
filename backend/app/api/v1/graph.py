@@ -2,6 +2,7 @@
 
 对应前端 knowledge/graph.astro 页面。
 """
+
 from __future__ import annotations
 
 from fastapi import APIRouter, Body, Depends, Query, Request
@@ -120,6 +121,7 @@ async def create_relationship(
 # 关联推荐 — 三级缓存保障（L1 Redis → L2 Neo4j → L3 PG 降级）
 # ------------------------------------------------------------------
 
+
 @router.get("/recommendations/{doc_id}")
 async def get_recommendations(
     request: Request,
@@ -168,12 +170,11 @@ async def invalidate_recommendation_cache(
 # 批量导入 — 文档入库时批量建图
 # ------------------------------------------------------------------
 
+
 @router.post("/batch-import")
 async def batch_import(
     nodes: list[dict] = Body(..., description="节点列表"),
-    relationships: list[dict] = Body(
-        default=[], description="关系列表"
-    ),
+    relationships: list[dict] = Body(default=[], description="关系列表"),
     batch_size: int = Query(500, ge=1, le=10000),
     user: User = Depends(require_module("knowledge_graph")),
 ) -> ApiResponse:
@@ -234,9 +235,7 @@ async def build_graph_from_document(
     from app.models.knowledge import Document
 
     # 读取文档内容
-    result = await db.execute(
-        select(Document).where(Document.id == UUID(doc_id))
-    )
+    result = await db.execute(select(Document).where(Document.id == UUID(doc_id)))
     doc = result.scalars().first()
     if not doc:
         return ApiResponse(code=404, data=None, message="文档不存在")

@@ -5,10 +5,10 @@
     - 命令能力（search / kb / wiki / queues / upload）逐一覆盖；
     - CLI 参数解析冒烟。
 """
+
 from __future__ import annotations
 
 import io
-import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -63,8 +63,9 @@ class TestCommands:
         http = MagicMock()
         http.post.return_value = _ok_response({"doc_id": "d1"})
         client = _make_client(http)
-        with patch("pathlib.Path.exists", return_value=True), patch(
-            "pathlib.Path.read_bytes", return_value=b"%PDF"
+        with (
+            patch("pathlib.Path.exists", return_value=True),
+            patch("pathlib.Path.read_bytes", return_value=b"%PDF"),
         ):
             result = client.upload_document("kb1", "/tmp/a.pdf", "标题")
         assert result == {"doc_id": "d1"}

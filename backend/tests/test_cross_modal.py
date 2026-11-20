@@ -9,8 +9,9 @@ P2-Step3: 跨模态向量检索测试 — MultimodalEmbedder + CrossModalService
     - 向量维度一致性
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from app.services.cross_modal_service import CrossModalService
 
@@ -127,9 +128,7 @@ class TestJinaCLIPEmbedder:
 
         embedder = JinaCLIPEmbedder()
         mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "data": [{"embedding": [0.1] * 1024}]
-        }
+        mock_response.json.return_value = {"data": [{"embedding": [0.1] * 1024}]}
         mock_response.raise_for_status = MagicMock()
         embedder._http = AsyncMock()
         embedder._http.post = AsyncMock(return_value=mock_response)
@@ -356,9 +355,7 @@ class TestC1C2CrossModalIsolation:
         # Mock get_embedder 返回文本 Embedder
         mock_text_embedder = MagicMock()
         mock_text_embedder.dim = 3072
-        with patch(
-            "app.rag.retriever.get_embedder", return_value=mock_text_embedder
-        ):
+        with patch("app.rag.retriever.get_embedder", return_value=mock_text_embedder):
             embedder = await retriever._get_embedder()
             assert embedder is mock_text_embedder
             assert embedder.dim == 3072

@@ -4,6 +4,7 @@
 - persist：把压缩掉的旧消息落库（detail 类别），空输入不落库；
 - recall：按查询召回相关细节，空查询/无 mem0 时优雅降级返回空。
 """
+
 from __future__ import annotations
 
 from uuid import UUID

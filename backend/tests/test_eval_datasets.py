@@ -9,11 +9,8 @@
 from __future__ import annotations
 
 import json
-import os
 import sys
 from pathlib import Path
-
-import pytest
 
 # 将 backend/ 加入 sys.path 以导入脚本
 _BACKEND_ROOT = Path(__file__).resolve().parent.parent
@@ -95,7 +92,9 @@ class TestDatasetFormat:
             assert "query" in case, f"P0 第{i+1}条缺少 query"
             assert "expected_doc_ids" in case, f"P0 第{i+1}条缺少 expected_doc_ids"
             assert isinstance(case["expected_doc_ids"], list)
-            assert len(case["expected_doc_ids"]) > 0, f"P0 第{i+1}条 expected_doc_ids 为空"
+            assert (
+                len(case["expected_doc_ids"]) > 0
+            ), f"P0 第{i+1}条 expected_doc_ids 为空"
             assert "kb_ids" in case, f"P0 第{i+1}条缺少 kb_ids"
             assert "tags" in case, f"P0 第{i+1}条缺少 tags"
 
@@ -236,18 +235,21 @@ class TestValidateEvalDataset:
     def test_validate_valid_directory(self):
         """验证合法数据集目录应返回 0。"""
         from scripts.validate_eval_dataset import main as validate_main
+
         result = validate_main([str(EVAL_DIR)])
         assert result == 0, f"合法数据集验证失败，退出码: {result}"
 
     def test_validate_valid_file(self):
         """验证单个合法文件应返回 0。"""
         from scripts.validate_eval_dataset import main as validate_main
+
         result = validate_main([str(EVAL_DIR / "p0_mandatory.jsonl")])
         assert result == 0
 
     def test_validate_nonexistent_path(self):
         """验证不存在的路径应返回 1。"""
         from scripts.validate_eval_dataset import main as validate_main
+
         result = validate_main(["/nonexistent/path"])
         assert result == 1
 
@@ -259,6 +261,7 @@ class TestValidateEvalDataset:
             encoding="utf-8",
         )
         from scripts.validate_eval_dataset import main as validate_main
+
         result = validate_main([str(bad_file)])
         assert result == 1
 
@@ -269,10 +272,12 @@ class TestValidateEvalDataset:
             json.dumps(
                 {"query": "", "expected_doc_ids": ["doc_1"]},
                 ensure_ascii=False,
-            ) + "\n",
+            )
+            + "\n",
             encoding="utf-8",
         )
         from scripts.validate_eval_dataset import main as validate_main
+
         result = validate_main([str(bad_file)])
         assert result == 1
 
@@ -283,10 +288,12 @@ class TestValidateEvalDataset:
             json.dumps(
                 {"query": "test", "expected_doc_ids": [], "tags": ["exact_match"]},
                 ensure_ascii=False,
-            ) + "\n",
+            )
+            + "\n",
             encoding="utf-8",
         )
         from scripts.validate_eval_dataset import main as validate_main
+
         result = validate_main([str(bad_file)])
         assert result == 1
 
@@ -301,10 +308,12 @@ class TestValidateEvalDataset:
                     "tags": ["tenant_isolation", "boundary"],
                 },
                 ensure_ascii=False,
-            ) + "\n",
+            )
+            + "\n",
             encoding="utf-8",
         )
         from scripts.validate_eval_dataset import main as validate_main
+
         result = validate_main([str(good_file)])
         # 该文件名为 good，不在 MIN_CASES 中，不检查数量
         # 但 tags 中无 STANDARD_DIMENSIONS，会报错
@@ -316,6 +325,7 @@ class TestValidateEvalDataset:
         bad_file = tmp_path / "bad.jsonl"
         bad_file.write_text("{invalid json}\n", encoding="utf-8")
         from scripts.validate_eval_dataset import main as validate_main
+
         result = validate_main([str(bad_file)])
         assert result == 1
 
@@ -330,9 +340,7 @@ class TestValidateExtendedFields:
 
     def _write(self, tmp_path, obj: dict) -> Path:
         f = tmp_path / "ext.jsonl"
-        f.write_text(
-            json.dumps(obj, ensure_ascii=False) + "\n", encoding="utf-8"
-        )
+        f.write_text(json.dumps(obj, ensure_ascii=False) + "\n", encoding="utf-8")
         return f
 
     def test_invalid_case_type_rejected(self, tmp_path):
@@ -481,4 +489,6 @@ class TestNewDatasetExistence:
         dataset = EvalDataset.load(str(EVAL_DIR / "p5_generation.jsonl"))
         for case in dataset:
             assert case.case_type == "golden"
-            assert case.must_have_points, f"golden 用例缺 must_have_points: {case.query}"
+            assert (
+                case.must_have_points
+            ), f"golden 用例缺 must_have_points: {case.query}"

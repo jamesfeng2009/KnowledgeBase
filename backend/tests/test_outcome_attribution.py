@@ -72,7 +72,9 @@ class TestJoin:
 
 class TestArmSummary:
     def test_rate_and_wilson_interval(self):
-        decisions = [_dec(i, "control" if i % 2 else "treatment", "low") for i in range(20)]
+        decisions = [
+            _dec(i, "control" if i % 2 else "treatment", "low") for i in range(20)
+        ]
         outcomes = [_out(i, filled=(i % 3 == 0)) for i in range(20)]
         rows, _ = join_decisions_outcomes(decisions, outcomes)
         summary = arm_summary(rows, "filled")
@@ -195,7 +197,9 @@ class TestVerdictPaths:
         assert report["verdict"]["reasons"] == []
 
     def test_low_match_rate_is_warned(self):
-        decisions = [_dec(i, "control" if i % 2 else "treatment", "low") for i in range(100)]
+        decisions = [
+            _dec(i, "control" if i % 2 else "treatment", "low") for i in range(100)
+        ]
         outcomes = [_out(i, filled=True) for i in range(20)]
         report = outcome_report(decisions, outcomes)
         assert any("match_rate" in w for w in report["warnings"])

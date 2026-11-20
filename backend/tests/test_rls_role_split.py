@@ -10,6 +10,7 @@
 3. **迁移连接与运行连接必须能分离**：建表要 owner，运行要最小权限角色，
    两者权限要求相反，只能两条 URL。
 """
+
 from __future__ import annotations
 
 import ast
@@ -46,7 +47,9 @@ def _load(name: str, path: Path):
 
 def _owner_dsn() -> str:
     """owner 连接串（asyncpg 直连格式）。"""
-    return os.environ["DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql://", 1)
+    return os.environ["DATABASE_URL"].replace(
+        "postgresql+asyncpg://", "postgresql://", 1
+    )
 
 
 def _with_credentials(dsn: str, user: str, password: str) -> str:
@@ -67,7 +70,9 @@ def _tenant_scoped_model_tables() -> set[str]:
     import app.models  # noqa: F401  — 触发全部模型注册
     from app.models.base import Base
 
-    return {t.name.lower() for t in Base.metadata.sorted_tables if "tenant_id" in t.columns}
+    return {
+        t.name.lower() for t in Base.metadata.sorted_tables if "tenant_id" in t.columns
+    }
 
 
 def _rls_covered_tables() -> set[str]:
@@ -101,9 +106,7 @@ def _rls_covered_tables() -> set[str]:
             except (ValueError, SyntaxError):
                 continue
             if isinstance(items, (list, tuple)):
-                covered.update(
-                    item.lower() for item in items if isinstance(item, str)
-                )
+                covered.update(item.lower() for item in items if isinstance(item, str))
         covered.update(
             m.group(1).lower()
             for m in re.finditer(
@@ -139,8 +142,9 @@ class TestRlsPolicyCoverage:
                 continue
             if "FORCE ROW LEVEL SECURITY" not in text.upper():
                 offenders.append(path.name)
-        assert not offenders, "这些迁移只 ENABLE 没有 FORCE，表 owner 仍可绕过 RLS：\n" + "\n".join(
-            offenders
+        assert not offenders, (
+            "这些迁移只 ENABLE 没有 FORCE，表 owner 仍可绕过 RLS：\n"
+            + "\n".join(offenders)
         )
 
 
@@ -173,7 +177,9 @@ class TestMigrationDatabaseUrl:
         """空字符串按「未配置」处理 —— compose 里常写 `MIGRATION_DATABASE_URL=` 占位。"""
         from app.config import Settings
 
-        s = Settings(DATABASE_URL="postgresql+asyncpg://a:b@h:5432/db", MIGRATION_DATABASE_URL="")
+        s = Settings(
+            DATABASE_URL="postgresql+asyncpg://a:b@h:5432/db", MIGRATION_DATABASE_URL=""
+        )
         assert s.MIGRATION_DATABASE_URL is None
         assert s.migration_database_url == s.DATABASE_URL
 
@@ -195,9 +201,13 @@ class TestMigrationDatabaseUrl:
 
     def test_runtime_migration_runner_prefers_migration_url(self) -> None:
         """AUTO_MIGRATE 启动路径同样要走 owner 连接。"""
-        text = (BACKEND_DIR / "app" / "utils" / "migration.py").read_text(encoding="utf-8")
+        text = (BACKEND_DIR / "app" / "utils" / "migration.py").read_text(
+            encoding="utf-8"
+        )
         assert "MIGRATION_DATABASE_URL" in text
-        assert text.index("MIGRATION_DATABASE_URL") < text.index('os.environ.get("DATABASE_URL"')
+        assert text.index("MIGRATION_DATABASE_URL") < text.index(
+            'os.environ.get("DATABASE_URL"'
+        )
 
 
 class TestProvisionScript:
@@ -232,7 +242,7 @@ async def app_role_credential():
         await prov.provision(_owner_dsn(), TEST_ROLE, password)
     except PermissionError as exc:
         pytest.skip(f"当前连接角色无建角色权限：{exc}")
-    except Exception as exc:  # noqa: BLE001 - 数据库不可用时跳过而不是误报失败
+    except Exception as exc:
         pytest.skip(f"无法准备运行角色：{type(exc).__name__}: {exc}")
     yield TEST_ROLE, password
 
@@ -244,7 +254,7 @@ async def app_role_credential():
             await conn.execute(f'DROP ROLE IF EXISTS "{TEST_ROLE}"')
         finally:
             await conn.close()
-    except Exception:  # noqa: BLE001 - 清理是 best-effort
+    except Exception:
         pass
 
 
@@ -277,7 +287,9 @@ class TestRlsActuallyFilters:
     """用一张与业务表策略完全一致的探针表，验证「换角色后 RLS 真的拦得住」。"""
 
     @pytest.mark.asyncio
-    async def test_tenant_isolation_between_two_tenants(self, app_role_credential) -> None:
+    async def test_tenant_isolation_between_two_tenants(
+        self, app_role_credential
+    ) -> None:
         asyncpg = pytest.importorskip("asyncpg")
         role, password = app_role_credential
         tenant_a = "11111111-1111-1111-1111-111111111111"
@@ -289,7 +301,9 @@ class TestRlsActuallyFilters:
             await owner.execute(
                 f'CREATE TABLE "{PROBE_TABLE}" (id int primary key, tenant_id uuid not null)'
             )
-            await owner.execute(f'ALTER TABLE "{PROBE_TABLE}" ENABLE ROW LEVEL SECURITY')
+            await owner.execute(
+                f'ALTER TABLE "{PROBE_TABLE}" ENABLE ROW LEVEL SECURITY'
+            )
             await owner.execute(f'ALTER TABLE "{PROBE_TABLE}" FORCE ROW LEVEL SECURITY')
             await owner.execute(
                 f"""
@@ -314,8 +328,12 @@ class TestRlsActuallyFilters:
         app = await asyncpg.connect(app_dsn)
         try:
             async with app.transaction():
-                await app.execute("select set_config('app.tenant_id', $1, true)", tenant_a)
-                rows = await app.fetch(f'SELECT id, tenant_id FROM "{PROBE_TABLE}" ORDER BY id')
+                await app.execute(
+                    "select set_config('app.tenant_id', $1, true)", tenant_a
+                )
+                rows = await app.fetch(
+                    f'SELECT id, tenant_id FROM "{PROBE_TABLE}" ORDER BY id'
+                )
             visible = {str(r["tenant_id"]) for r in rows}
             assert visible == {tenant_a}, f"角色 {role} 看到了其它租户的数据：{visible}"
         finally:
@@ -352,7 +370,9 @@ class TestRlsActuallyFilters:
             await owner.execute(
                 f'CREATE TABLE "{PROBE_TABLE}" (id int primary key, tenant_id uuid not null)'
             )
-            await owner.execute(f'ALTER TABLE "{PROBE_TABLE}" ENABLE ROW LEVEL SECURITY')
+            await owner.execute(
+                f'ALTER TABLE "{PROBE_TABLE}" ENABLE ROW LEVEL SECURITY'
+            )
             await owner.execute(f'ALTER TABLE "{PROBE_TABLE}" FORCE ROW LEVEL SECURITY')
             await owner.execute(
                 f"""

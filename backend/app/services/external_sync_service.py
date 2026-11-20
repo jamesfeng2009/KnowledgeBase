@@ -26,6 +26,7 @@ P0 核心机制（消除窗口期）：
             └─ hash 不同 → 用最新内容回答（sync_status=updated_live）
                           + 异步 _trigger_reindex 重建向量
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -59,9 +60,15 @@ _PROBE_TIMEOUT: float = 3.0
 # 阶段 B 拉取全文超时（秒）
 _FETCH_TIMEOUT: float = 5.0
 # 强时效文档类别（仅这些类别触发回源校验）
-_STRONG_FRESHNESS_CATEGORIES: frozenset[str] = frozenset({
-    "政策", "SOP", "合同模板", "规范", "制度",
-})
+_STRONG_FRESHNESS_CATEGORIES: frozenset[str] = frozenset(
+    {
+        "政策",
+        "SOP",
+        "合同模板",
+        "规范",
+        "制度",
+    }
+)
 
 # 后台任务强引用集合 — 事件循环对 Task 仅持弱引用，不保存强引用任务可能
 # 被 GC 提前回收（CPython 官方文档明确警告）；加入本集合并通过
@@ -240,9 +247,7 @@ class ExternalSyncService:
 
         if rev_info is not None:
             # 指纹对比
-            await self._update_last_checked(
-                session, doc_id, rev_info.fingerprint
-            )
+            await self._update_last_checked(session, doc_id, rev_info.fingerprint)
             if rev_info.fingerprint == doc.source_revision:
                 # 指纹一致 → 信任本地（内容未变）
                 return RefreshResult(
@@ -288,9 +293,7 @@ class ExternalSyncService:
                     reason="doc_not_found_by_external_id",
                 )
             # 强制校验（忽略缓存）
-            return await self._verify_and_refresh(
-                session, doc.id, force=True
-            )
+            return await self._verify_and_refresh(session, doc.id, force=True)
 
     # ------------------------------------------------------------------
     # P2：定时巡检兜底
@@ -364,8 +367,11 @@ class ExternalSyncService:
         if total == 0:
             log.info("external_sync.patrol_no_stale_docs", max_age_hours=max_age_hours)
             return {
-                "total": 0, "fresh": 0, "updated": 0,
-                "failed": 0, "skipped": 0,
+                "total": 0,
+                "fresh": 0,
+                "updated": 0,
+                "failed": 0,
+                "skipped": 0,
             }
 
         log.info(
@@ -442,7 +448,7 @@ class ExternalSyncService:
                 adapter.get_revision(doc.source_doc_id or "", credentials),
                 timeout=self._probe_timeout,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             log.warning(
                 "external_sync.probe_timeout",
                 doc_id=str(doc.id),
@@ -484,7 +490,7 @@ class ExternalSyncService:
                 adapter.fetch(doc.source_doc_id or "", credentials),
                 timeout=self._fetch_timeout,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             log.warning(
                 "external_sync.fetch_timeout",
                 doc_id=str(doc.id),
@@ -558,9 +564,7 @@ class ExternalSyncService:
         self, session: AsyncSession, doc_id: uuid.UUID
     ) -> Document | None:
         """按 ID 查文档。"""
-        result = await session.execute(
-            select(Document).where(Document.id == doc_id)
-        )
+        result = await session.execute(select(Document).where(Document.id == doc_id))
         return result.scalar_one_or_none()
 
     async def _get_doc_by_external_id(

@@ -18,7 +18,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from app.context.focus_tracker import ConversationFocus
@@ -50,7 +50,9 @@ class DriftResult:
         return {
             "is_drift": self.is_drift,
             "drift_score": round(self.drift_score, 3),
-            "previous_focus": self.previous_focus.to_dict() if self.previous_focus else None,
+            "previous_focus": self.previous_focus.to_dict()
+            if self.previous_focus
+            else None,
             "detection_method": self.detection_method,
             "action": self.action,
         }
@@ -107,8 +109,10 @@ class DriftDetector:
         # 无焦点 → 无法检测漂移（首轮对话）
         if current_focus is None:
             return DriftResult(
-                is_drift=False, drift_score=0.0,
-                detection_method="none", action="keep_focus",
+                is_drift=False,
+                drift_score=0.0,
+                detection_method="none",
+                action="keep_focus",
             )
 
         # Level 1: 规则检测 — 话题关键词域比较
@@ -133,13 +137,17 @@ class DriftDetector:
 
         # 所有检测失败 → 不漂移，沿用 P3 焦点继承
         return DriftResult(
-            is_drift=False, drift_score=0.0,
+            is_drift=False,
+            drift_score=0.0,
             previous_focus=current_focus,
-            detection_method="none", action="keep_focus",
+            detection_method="none",
+            action="keep_focus",
         )
 
     def _rule_check(
-        self, query: str, focus: ConversationFocus,
+        self,
+        query: str,
+        focus: ConversationFocus,
     ) -> DriftResult | None:
         """规则检测 — 比较查询与焦点的话题关键词域。
 
@@ -156,16 +164,27 @@ class DriftDetector:
         for term in focus_terms:
             if term and term in query_lower:
                 return DriftResult(
-                    is_drift=False, drift_score=0.1,
+                    is_drift=False,
+                    drift_score=0.1,
                     previous_focus=focus,
-                    detection_method="rule", action="keep_focus",
+                    detection_method="rule",
+                    action="keep_focus",
                 )
 
         # 查询中包含明显不同的话题关键词 → 漂移
         # 常见话题关键词域（与 focus_tracker 一致）
         topic_keywords = {
-            "天气", "限号", "限行", "报销", "请假", "合同", "采购",
-            "天气", "weather", "限号政策", "限行政策",
+            "天气",
+            "限号",
+            "限行",
+            "报销",
+            "请假",
+            "合同",
+            "采购",
+            "天气",
+            "weather",
+            "限号政策",
+            "限行政策",
         }
         query_has_topic = any(kw in query_lower for kw in topic_keywords)
         focus_has_topic = any(
@@ -178,16 +197,20 @@ class DriftDetector:
             focus_topic_in_query = focus.topic.lower() in query_lower
             if not focus_topic_in_query:
                 return DriftResult(
-                    is_drift=True, drift_score=0.8,
+                    is_drift=True,
+                    drift_score=0.8,
                     previous_focus=focus,
-                    detection_method="rule", action="reset_focus",
+                    detection_method="rule",
+                    action="reset_focus",
                 )
 
         # 规则无法判断 → 交给 Embedding
         return None
 
     async def _embedding_check(
-        self, query: str, focus: ConversationFocus,
+        self,
+        query: str,
+        focus: ConversationFocus,
     ) -> DriftResult | None:
         """Embedding 检测 — cosine 相似度。
 
@@ -207,40 +230,51 @@ class DriftDetector:
 
             if similarity < self._DRIFT_SIMILARITY_THRESHOLD:
                 return DriftResult(
-                    is_drift=True, drift_score=1.0 - similarity,
+                    is_drift=True,
+                    drift_score=1.0 - similarity,
                     previous_focus=focus,
-                    detection_method="embedding", action="reset_focus",
+                    detection_method="embedding",
+                    action="reset_focus",
                 )
             elif similarity < self._POSSIBLE_DRIFT_THRESHOLD:
                 return DriftResult(
-                    is_drift=False, drift_score=1.0 - similarity,
+                    is_drift=False,
+                    drift_score=1.0 - similarity,
                     previous_focus=focus,
-                    detection_method="embedding", action="expand_retrieval",
+                    detection_method="embedding",
+                    action="expand_retrieval",
                 )
             else:
                 return DriftResult(
-                    is_drift=False, drift_score=1.0 - similarity,
+                    is_drift=False,
+                    drift_score=1.0 - similarity,
                     previous_focus=focus,
-                    detection_method="embedding", action="keep_focus",
+                    detection_method="embedding",
+                    action="keep_focus",
                 )
         except Exception as exc:
             log.warning("drift_detector.embedding_failed", error=str(exc))
             return None
 
     def _confidence_decay_check(
-        self, focus: ConversationFocus,
+        self,
+        focus: ConversationFocus,
     ) -> DriftResult | None:
         """置信度衰减检测 — 连续低置信度轮数。"""
         if self._low_confidence_streak >= self._CONFIDENCE_DECAY_ROUNDS:
             return DriftResult(
-                is_drift=True, drift_score=0.7,
+                is_drift=True,
+                drift_score=0.7,
                 previous_focus=focus,
-                detection_method="confidence", action="reset_focus",
+                detection_method="confidence",
+                action="reset_focus",
             )
         return None
 
     def _update_confidence_streak(
-        self, is_drift: bool, focus: ConversationFocus,
+        self,
+        is_drift: bool,
+        focus: ConversationFocus,
     ) -> None:
         """更新低置信度连续计数。"""
         if focus.confidence < self._LOW_CONFIDENCE_THRESHOLD:

@@ -20,25 +20,23 @@ import pytest
 
 from app.core.error_classifier import classify_error, is_retryable
 from app.core.error_reason import (
+    NON_RETRYABLE_REASONS,
     ClassifiedError,
     ErrorLayer,
     ErrorReason,
-    NON_RETRYABLE_REASONS,
-    PERMANENT_STATUS_CODES,
-    RETRYABLE_STATUS_CODES,
 )
 from app.core.exceptions import (
+    SECURITY_VETO_EXCEPTIONS,
     AgentError,
     BudgetExceeded,
     InfiniteLoopDetected,
     PromptInjectionDetected,
-    SECURITY_VETO_EXCEPTIONS,
 )
-
 
 # ------------------------------------------------------------------
 # 测试辅助：模拟各 SDK 异常形态
 # ------------------------------------------------------------------
+
 
 class FakeSDKError(Exception):
     """模拟 OpenAI / Anthropic SDK 异常 —— 带 status_code / response / message。"""
@@ -61,6 +59,7 @@ class FakeResponse:
 # ------------------------------------------------------------------
 # 枚举与集合测试
 # ------------------------------------------------------------------
+
 
 class TestErrorReasonEnum:
     """ErrorReason 枚举完整性测试。"""
@@ -99,6 +98,7 @@ class TestErrorReasonEnum:
 # ------------------------------------------------------------------
 # HTTP 状态码分类测试
 # ------------------------------------------------------------------
+
 
 class TestHTTPClassification:
     """HTTP 状态码 → ErrorReason 映射测试。"""
@@ -184,6 +184,7 @@ class TestHTTPClassification:
 # LLM 层消息文本二次识别测试
 # ------------------------------------------------------------------
 
+
 class TestLLMClassification:
     """LLM 层在 HTTP 基础上的消息文本二次识别测试。"""
 
@@ -193,7 +194,9 @@ class TestLLMClassification:
             "context_length_exceeded: your input exceeds the maximum context length",
             status_code=400,
         )
-        c = classify_error(exc, layer=ErrorLayer.LLM, provider="anthropic", model="claude")
+        c = classify_error(
+            exc, layer=ErrorLayer.LLM, provider="anthropic", model="claude"
+        )
         assert c.reason == ErrorReason.CONTEXT_OVERFLOW
         assert c.retryable is False
 
@@ -231,12 +234,13 @@ class TestLLMClassification:
 # 传输层与运行时测试
 # ------------------------------------------------------------------
 
+
 class TestTransportClassification:
     """传输层异常分类测试。"""
 
     def test_timeout_retryable(self):
         """TimeoutError 可重试。"""
-        exc = asyncio.TimeoutError("Request timed out")
+        exc = TimeoutError("Request timed out")
         c = classify_error(exc, layer=ErrorLayer.TRANSPORT)
         assert c.reason == ErrorReason.TIMEOUT
         assert c.retryable is True
@@ -254,7 +258,9 @@ class TestRuntimeClassification:
 
     def test_budget_exceeded_non_retryable(self):
         """BudgetExceeded 不可重试。"""
-        exc = BudgetExceeded(axis="tokens", value=150000, limit=100000, run_id="run-123")
+        exc = BudgetExceeded(
+            axis="tokens", value=150000, limit=100000, run_id="run-123"
+        )
         c = classify_error(exc, layer=ErrorLayer.RUNTIME)
         assert c.reason == ErrorReason.BUDGET_EXCEEDED
         assert c.retryable is False
@@ -279,6 +285,7 @@ class TestRuntimeClassification:
 # CancelledError 与兜底测试
 # ------------------------------------------------------------------
 
+
 class TestCancelledAndUnknown:
     """CancelledError 与未知异常处理测试。"""
 
@@ -298,13 +305,14 @@ class TestCancelledAndUnknown:
 
     def test_is_retryable_helper(self):
         """is_retryable 便捷函数行为正确。"""
-        assert is_retryable(asyncio.TimeoutError(), layer=ErrorLayer.TRANSPORT) is True
+        assert is_retryable(TimeoutError(), layer=ErrorLayer.TRANSPORT) is True
         assert is_retryable(ValueError("err"), layer=ErrorLayer.LLM) is False
 
 
 # ------------------------------------------------------------------
 # 序列化测试
 # ------------------------------------------------------------------
+
 
 class TestSerialization:
     """ClassifiedError 序列化 / 反序列化测试。"""
@@ -325,7 +333,9 @@ class TestSerialization:
     def test_from_dict_roundtrip(self):
         """from_dict 能还原 to_dict 的结果。"""
         exc = FakeSDKError("Server error", status_code=500)
-        original = classify_error(exc, layer=ErrorLayer.LLM, provider="anthropic", model="claude")
+        original = classify_error(
+            exc, layer=ErrorLayer.LLM, provider="anthropic", model="claude"
+        )
         d = original.to_dict()
         restored = ClassifiedError.from_dict(d)
         assert restored.reason == original.reason
@@ -343,6 +353,7 @@ class TestSerialization:
 # ------------------------------------------------------------------
 # 异常基类与安全否决测试
 # ------------------------------------------------------------------
+
 
 class TestExceptionsModule:
     """app.core.exceptions 异常层级测试。"""

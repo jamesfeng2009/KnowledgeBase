@@ -7,13 +7,12 @@
 测试策略：acquire_beat_lock 是纯函数（不依赖 Celery），
 通过 exec 加载函数定义，mock redis 模块进行测试。
 """
+
 from __future__ import annotations
 
 import sys
 import types
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 # 确保 redis 模块存在（测试环境可能未安装）。
 # 注意：仅在 redis 确实不可导入时才注入 Mock，且 Mock 必须是“包”
@@ -242,7 +241,10 @@ class TestBeatLockRenewal:
 
         with patch("redis.from_url", return_value=client):
             thread, stop = start_renewal(
-                "redis://x", lock_value="v-1", ttl=60, interval=0.05,
+                "redis://x",
+                lock_value="v-1",
+                ttl=60,
+                interval=0.05,
             )
             try:
                 deadline = time.time() + 3
@@ -263,7 +265,10 @@ class TestBeatLockRenewal:
 
         with patch("redis.from_url", return_value=client):
             thread, stop = start_renewal(
-                "redis://x", lock_value="v-1", ttl=60, interval=0.05,
+                "redis://x",
+                lock_value="v-1",
+                ttl=60,
+                interval=0.05,
             )
             thread.join(timeout=3)
             stop.set()
@@ -281,7 +286,10 @@ class TestBeatLockRenewal:
 
         with patch("redis.from_url", return_value=client):
             thread, stop = start_renewal(
-                "redis://x", lock_value="v-1", ttl=60, interval=0.05,
+                "redis://x",
+                lock_value="v-1",
+                ttl=60,
+                interval=0.05,
             )
             try:
                 deadline = time.time() + 3
@@ -306,7 +314,10 @@ class TestBeatLockRenewal:
 
         with patch("redis.from_url", return_value=client):
             thread, stop = start_renewal(
-                "redis://x", lock_value="v-1", ttl=60, interval=0.05,
+                "redis://x",
+                lock_value="v-1",
+                ttl=60,
+                interval=0.05,
             )
             try:
                 deadline = time.time() + 3
@@ -315,9 +326,9 @@ class TestBeatLockRenewal:
                     and time.time() < deadline
                 ):
                     time.sleep(0.02)
-                assert client.store.get("celery:beat:lock") == "v-1", (
-                    "锁过期无人持有时应重新获取"
-                )
+                assert (
+                    client.store.get("celery:beat:lock") == "v-1"
+                ), "锁过期无人持有时应重新获取"
                 assert any(
                     e == "celery.beat_lock_reacquired"
                     for _lv, e, _k in log_stub.records
@@ -333,9 +344,7 @@ class TestBeatLockRenewal:
         client = _FakeRedisClient()
 
         with patch("redis.from_url", return_value=client):
-            result = acquire(
-                "redis://x", lock_value="beat_active:host1:123", ttl=60
-            )
+            result = acquire("redis://x", lock_value="beat_active:host1:123", ttl=60)
 
         assert result is True
         key, value, nx, ex = client.set_calls[0]

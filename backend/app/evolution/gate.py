@@ -35,9 +35,7 @@ class MetricsSnapshot:
         return {
             "avg_score": round(self.avg_score, 4),
             "avg_citation_accuracy": round(self.avg_citation_accuracy, 4),
-            "avg_hallucination_inverse": round(
-                self.avg_hallucination_inverse, 4
-            ),
+            "avg_hallucination_inverse": round(self.avg_hallucination_inverse, 4),
             "n_cases": self.n_cases,
         }
 

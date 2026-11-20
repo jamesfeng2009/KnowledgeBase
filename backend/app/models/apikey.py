@@ -51,6 +51,4 @@ class ApiKey(UUIDMixin, TimestampMixin, Base):
     last_used_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, comment="最后使用时间"
     )
-    is_active: Mapped[bool] = mapped_column(
-        Boolean, default=True, comment="是否启用"
-    )
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, comment="是否启用")

@@ -9,6 +9,7 @@
 2. 测试库端口自动探测 —— `.env` 写的是 compose 设计值（15432），机器上实际
    在跑的可能是手工容器（55432），写错会一次性产生两百多个 Connection refused。
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -56,7 +57,11 @@ class TestPytestTemprootIsolation:
             "print(os.environ.get('PYTEST_DEBUG_TEMPROOT', ''))\n"
         )
         proc = subprocess.run(
-            [sys.executable, "-c", code], capture_output=True, text=True, env=env, timeout=120
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=120,
         )
         assert proc.returncode == 0, proc.stderr
         temproot = proc.stdout.strip().splitlines()[-1]
@@ -99,7 +104,9 @@ class TestDatabaseUrlResolution:
         assert url == "postgresql+asyncpg://u:p@db.internal:55432/ekb_test"
 
     def test_with_dbname_forces_ekb_test(self, conftest_mod) -> None:
-        url = conftest_mod._with_dbname("postgresql+asyncpg://ekb:ekb@h:5432/ekb", "ekb_test")
+        url = conftest_mod._with_dbname(
+            "postgresql+asyncpg://ekb:ekb@h:5432/ekb", "ekb_test"
+        )
         assert url.endswith("/ekb_test")
 
     def test_falls_back_to_candidate_when_configured_port_dead(
@@ -114,9 +121,8 @@ class TestDatabaseUrlResolution:
         monkeypatch.setattr(
             conftest_mod,
             "_tcp_alive",
-            lambda url, timeout=0.4: url.rpartition(":")[2].split("/")[0] == str(
-                conftest_mod._DB_PORT_CANDIDATES[0]
-            ),
+            lambda url, timeout=0.4: url.rpartition(":")[2].split("/")[0]
+            == str(conftest_mod._DB_PORT_CANDIDATES[0]),
         )
         resolved = conftest_mod._resolve_test_db_url()
         assert resolved.endswith("/ekb_test")

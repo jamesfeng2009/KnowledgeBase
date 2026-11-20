@@ -17,8 +17,9 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import Any, Iterator
+from typing import Any
 
 from app.utils.logger import get_logger
 
@@ -230,7 +231,7 @@ class EvalDataset:
             return cls(cases)
 
         try:
-            with open(path, "r", encoding="utf-8") as fh:
+            with open(path, encoding="utf-8") as fh:
                 for line_no, raw_line in enumerate(fh, start=1):
                     line = raw_line.strip()
                     if not line:
@@ -286,9 +287,7 @@ class EvalDataset:
             return cls([])
 
         merged: list[EvalCase] = []
-        jsonl_files = sorted(
-            f for f in os.listdir(dir_path) if f.endswith(".jsonl")
-        )
+        jsonl_files = sorted(f for f in os.listdir(dir_path) if f.endswith(".jsonl"))
         for fname in jsonl_files:
             full = os.path.join(dir_path, fname)
             ds = cls.load(full)

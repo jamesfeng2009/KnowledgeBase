@@ -10,6 +10,7 @@
 并发测试用两个独立连接（同一引擎连接池），并显式安排"双方都查空"的
 空档后再放行插入（对应 barrier 语义），不赌机器快慢。
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -41,7 +42,6 @@ from app.services.submit_idempotency import (
     is_unique_violation,
 )
 
-
 # ======================================================================
 # 夹具 — 真 PostgreSQL（DATABASE_URL 必须为 postgresql+asyncpg）
 # ======================================================================
@@ -50,8 +50,8 @@ from app.services.submit_idempotency import (
 @pytest_asyncio.fixture(scope="module")
 async def pg_engine():
     """模块级引擎 — create_all 幂等建表 + 清空本模块相关表保证可重跑。"""
-    from app.models.base import Base
     import app.models  # noqa: F401  确保全部模型注册进 metadata
+    from app.models.base import Base
 
     engine = create_async_engine(
         os.environ["DATABASE_URL"], echo=False, poolclass=NullPool
@@ -128,9 +128,8 @@ class TestInputHash:
 
     async def test_canonical_hash_stable(self) -> None:
         """canonical_input_hash 键排序 + 紧凑分隔符 — 同内容同指纹。"""
-        assert (
-            canonical_input_hash({"a": 1, "b": 2})
-            == canonical_input_hash({"b": 2, "a": 1})
+        assert canonical_input_hash({"a": 1, "b": 2}) == canonical_input_hash(
+            {"b": 2, "a": 1}
         )
 
 
@@ -141,7 +140,7 @@ class TestUniqueViolationDetection:
             "INSERT ...",
             {},
             Exception(
-                'duplicate key value violates unique constraint '
+                "duplicate key value violates unique constraint "
                 '"uq_research_jobs_idem_active"'
             ),
         )
@@ -162,35 +161,44 @@ class TestCreateResearchJob:
 
         async with await db_maker() as s1:
             job, created = await create_research_job(
-                s1, user_id=user_a.id, tenant_id=None,
-                idempotency_key=key, input_hash=ih,
-                goal="调研物流时效", kb_ids=["kb-1"],
+                s1,
+                user_id=user_a.id,
+                tenant_id=None,
+                idempotency_key=key,
+                input_hash=ih,
+                goal="调研物流时效",
+                kb_ids=["kb-1"],
             )
             assert created is True
             await s1.commit()
 
         async with await db_maker() as s2:
             job2, created2 = await create_research_job(
-                s2, user_id=user_a.id, tenant_id=None,
-                idempotency_key=key, input_hash=ih,
-                goal="调研物流时效", kb_ids=["kb-1"],
+                s2,
+                user_id=user_a.id,
+                tenant_id=None,
+                idempotency_key=key,
+                input_hash=ih,
+                goal="调研物流时效",
+                kb_ids=["kb-1"],
             )
             assert created2 is False
             assert job2.id == job.id
 
         assert await _count_jobs(db_maker, ResearchJob.idempotency_key == key) == 1
 
-    async def test_same_key_different_input_conflicts(
-        self, db_maker, user_a
-    ) -> None:
+    async def test_same_key_different_input_conflicts(self, db_maker, user_a) -> None:
         """同键不同输入 → 409 语义（IdempotencyConflictError），不覆盖原任务。"""
         key = "key:conflict"
         async with await db_maker() as s:
             job, created = await create_research_job(
-                s, user_id=user_a.id, tenant_id=None,
+                s,
+                user_id=user_a.id,
+                tenant_id=None,
                 idempotency_key=key,
                 input_hash=compute_input_hash("订单 ORD-10086", None),
-                goal="订单 ORD-10086", kb_ids=None,
+                goal="订单 ORD-10086",
+                kb_ids=None,
             )
             assert created is True
             await s.commit()
@@ -198,10 +206,13 @@ class TestCreateResearchJob:
         with pytest.raises(IdempotencyConflictError):
             async with await db_maker() as s2:
                 await create_research_job(
-                    s2, user_id=user_a.id, tenant_id=None,
+                    s2,
+                    user_id=user_a.id,
+                    tenant_id=None,
                     idempotency_key=key,
                     input_hash=compute_input_hash("订单 ORD-99999", None),
-                    goal="订单 ORD-99999", kb_ids=None,
+                    goal="订单 ORD-99999",
+                    kb_ids=None,
                 )
 
         assert await _count_jobs(db_maker, ResearchJob.idempotency_key == key) == 1
@@ -217,17 +228,25 @@ class TestCreateResearchJob:
         ih = compute_input_hash("同一目标", None)
         async with await db_maker() as s:
             j1, c1 = await create_research_job(
-                s, user_id=user_a.id, tenant_id=None,
-                idempotency_key=key, input_hash=ih,
-                goal="同一目标", kb_ids=None,
+                s,
+                user_id=user_a.id,
+                tenant_id=None,
+                idempotency_key=key,
+                input_hash=ih,
+                goal="同一目标",
+                kb_ids=None,
             )
             assert c1 is True
             await s.commit()
         async with await db_maker() as s2:
             j2, c2 = await create_research_job(
-                s2, user_id=user_b.id, tenant_id=None,
-                idempotency_key=key, input_hash=ih,
-                goal="同一目标", kb_ids=None,
+                s2,
+                user_id=user_b.id,
+                tenant_id=None,
+                idempotency_key=key,
+                input_hash=ih,
+                goal="同一目标",
+                kb_ids=None,
             )
             assert c2 is True
             assert j2.id != j1.id
@@ -239,22 +258,33 @@ class TestCreateResearchJob:
         ih = compute_input_hash("无键提交", None)
         async with await db_maker() as s:
             j1, _ = await create_research_job(
-                s, user_id=user_a.id, tenant_id=None,
-                idempotency_key=None, input_hash=ih,
-                goal="无键提交", kb_ids=None,
+                s,
+                user_id=user_a.id,
+                tenant_id=None,
+                idempotency_key=None,
+                input_hash=ih,
+                goal="无键提交",
+                kb_ids=None,
             )
             j2, _ = await create_research_job(
-                s, user_id=user_a.id, tenant_id=None,
-                idempotency_key=None, input_hash=ih,
-                goal="无键提交", kb_ids=None,
+                s,
+                user_id=user_a.id,
+                tenant_id=None,
+                idempotency_key=None,
+                input_hash=ih,
+                goal="无键提交",
+                kb_ids=None,
             )
             await s.commit()
             assert j1.id != j2.id
-        assert await _count_jobs(
-            db_maker,
-            ResearchJob.user_id == user_a.id,
-            ResearchJob.goal == "无键提交",
-        ) == 2
+        assert (
+            await _count_jobs(
+                db_maker,
+                ResearchJob.user_id == user_a.id,
+                ResearchJob.goal == "无键提交",
+            )
+            == 2
+        )
 
     async def test_failed_job_releases_key(self, db_maker, user_a) -> None:
         """failed 任务不占键 — 原键重试创建新任务。"""
@@ -262,9 +292,13 @@ class TestCreateResearchJob:
         ih = compute_input_hash("会失败的任务", None)
         async with await db_maker() as s:
             job, created = await create_research_job(
-                s, user_id=user_a.id, tenant_id=None,
-                idempotency_key=key, input_hash=ih,
-                goal="会失败的任务", kb_ids=None,
+                s,
+                user_id=user_a.id,
+                tenant_id=None,
+                idempotency_key=key,
+                input_hash=ih,
+                goal="会失败的任务",
+                kb_ids=None,
             )
             assert created is True
             await s.commit()
@@ -273,9 +307,13 @@ class TestCreateResearchJob:
 
         async with await db_maker() as s2:
             job2, created2 = await create_research_job(
-                s2, user_id=user_a.id, tenant_id=None,
-                idempotency_key=key, input_hash=ih,
-                goal="会失败的任务", kb_ids=None,
+                s2,
+                user_id=user_a.id,
+                tenant_id=None,
+                idempotency_key=key,
+                input_hash=ih,
+                goal="会失败的任务",
+                kb_ids=None,
             )
             assert created2 is True
             assert job2.id != job.id
@@ -288,18 +326,26 @@ class TestCreateResearchJob:
         ih = compute_input_hash("会成功的任务", None)
         async with await db_maker() as s:
             job, _ = await create_research_job(
-                s, user_id=user_a.id, tenant_id=None,
-                idempotency_key=key, input_hash=ih,
-                goal="会成功的任务", kb_ids=None,
+                s,
+                user_id=user_a.id,
+                tenant_id=None,
+                idempotency_key=key,
+                input_hash=ih,
+                goal="会成功的任务",
+                kb_ids=None,
             )
             await s.commit()
         await mark_research_job_status(str(job.id), "success")
 
         async with await db_maker() as s2:
             job2, created2 = await create_research_job(
-                s2, user_id=user_a.id, tenant_id=None,
-                idempotency_key=key, input_hash=ih,
-                goal="会成功的任务", kb_ids=None,
+                s2,
+                user_id=user_a.id,
+                tenant_id=None,
+                idempotency_key=key,
+                input_hash=ih,
+                goal="会成功的任务",
+                kb_ids=None,
             )
             assert created2 is False
             assert job2.id == job.id
@@ -310,11 +356,13 @@ class TestCreateResearchJob:
         with pytest.raises(IntegrityError) as exc_info:
             async with await db_maker() as s:
                 await create_research_job(
-                    s, user_id=uuid4(),  # 不存在的用户 → FK 违例
+                    s,
+                    user_id=uuid4(),  # 不存在的用户 → FK 违例
                     tenant_id=None,
                     idempotency_key="key:fk",
                     input_hash=compute_input_hash("坏用户", None),
-                    goal="坏用户", kb_ids=None,
+                    goal="坏用户",
+                    kb_ids=None,
                 )
         assert not isinstance(exc_info.value, IdempotencyConflictError)
 
@@ -338,9 +386,13 @@ class TestCreateResearchJob:
             my_turn.set()
             await other_turn.wait()
             result = await create_research_job(
-                db, user_id=user_a.id, tenant_id=None,
-                idempotency_key=key, input_hash=ih,
-                goal="并发重复提交", kb_ids=["kb-x"],
+                db,
+                user_id=user_a.id,
+                tenant_id=None,
+                idempotency_key=key,
+                input_hash=ih,
+                goal="并发重复提交",
+                kb_ids=["kb-x"],
             )
             # 3) 赢家立即提交，解除输家在唯一索引上的等待
             await db.commit()
@@ -391,16 +443,12 @@ class _FakeRedis:
 
 
 class TestRebuildLock:
-    async def test_acquire_then_duplicate_returns_existing(
-        self, monkeypatch
-    ) -> None:
+    async def test_acquire_then_duplicate_returns_existing(self, monkeypatch) -> None:
         """首个调用抢锁成功；重复调用拿到原 task_id。"""
         from app.services import rebuild_idempotency as mod
 
         store: dict[str, str] = {}
-        monkeypatch.setattr(
-            "redis.asyncio.from_url", lambda *a, **k: _FakeRedis(store)
-        )
+        monkeypatch.setattr("redis.asyncio.from_url", lambda *a, **k: _FakeRedis(store))
 
         acquired, existing = await mod.acquire_rebuild_lock("tenant-1", "tid-1")
         assert acquired is True and existing is None
@@ -417,9 +465,7 @@ class TestRebuildLock:
         from app.services import rebuild_idempotency as mod
 
         store: dict[str, str] = {mod.rebuild_lock_key("tenant-1"): "tid-1"}
-        monkeypatch.setattr(
-            "redis.asyncio.from_url", lambda *a, **k: _FakeRedis(store)
-        )
+        monkeypatch.setattr("redis.asyncio.from_url", lambda *a, **k: _FakeRedis(store))
         await mod.release_rebuild_lock("tenant-1")
         acquired, _ = await mod.acquire_rebuild_lock("tenant-1", "tid-9")
         assert acquired is True, "释放后可重新抢锁"
@@ -434,9 +480,7 @@ def _patch_perm_unrestricted():
     """Mock PermissionService — None=不限制（kb_ids 原样通过）。"""
     svc = MagicMock()
     svc.get_accessible_kb_ids = AsyncMock(return_value=None)
-    return patch(
-        "app.services.permission_service.PermissionService", return_value=svc
-    )
+    return patch("app.services.permission_service.PermissionService", return_value=svc)
 
 
 def _install_endpoint_overrides(app, db_maker, mock_user):
@@ -464,8 +508,8 @@ def _install_endpoint_overrides(app, db_maker, mock_user):
 
 @pytest_asyncio.fixture
 async def research_client(db_maker, user_a):
-    from app.main import app
     import app.middleware as _mw
+    from app.main import app
 
     # 重置两级限流器全局 — 幂等测试不应受前置测试（如 test_rate_limiter）
     # 打满的桶影响（否则请求直接 429，掩盖被测的幂等语义）
@@ -475,12 +519,16 @@ async def research_client(db_maker, user_a):
         app,
         db_maker,
         SimpleNamespace(
-            id=user_a.id, role="editor", is_active=True,
-            email="e2e@test.local", name="端点用户",
+            id=user_a.id,
+            role="editor",
+            is_active=True,
+            email="e2e@test.local",
+            name="端点用户",
         ),
     )
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test",
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
     ) as c:
         yield c
     app.dependency_overrides.clear()
@@ -493,9 +541,12 @@ class TestResearchEndpointIdempotency:
         """超时重试：同键同输入 → 返回原 task_id，只派发一次。"""
         key = "ticket:T-100:handle:v1"
         body = {"goal": "重试场景调研", "idempotency_key": key}
-        with patch(
-            "tasks.deep_research_tasks.deep_research_task.apply_async"
-        ) as mock_dispatch, _patch_perm_unrestricted():
+        with (
+            patch(
+                "tasks.deep_research_tasks.deep_research_task.apply_async"
+            ) as mock_dispatch,
+            _patch_perm_unrestricted(),
+        ):
             r1 = await research_client.post("/api/v1/research", json=body)
             assert r1.json()["code"] == 0
             assert r1.json()["data"]["reused"] is False
@@ -510,20 +561,17 @@ class TestResearchEndpointIdempotency:
         assert data2["data"]["reused"] is True
         assert data2["data"]["task_id"] == first_task_id
         assert mock_dispatch.call_count == 1, "重试不得再次派发"
-        assert await _count_jobs(
-            db_maker, ResearchJob.idempotency_key == key
-        ) == 1
-        assert await _count_jobs(
-            db_maker, ResearchJob.user_id == user_a.id
-        ) >= 1
+        assert await _count_jobs(db_maker, ResearchJob.idempotency_key == key) == 1
+        assert await _count_jobs(db_maker, ResearchJob.user_id == user_a.id) >= 1
 
     async def test_idempotency_header_supported(self, research_client) -> None:
         """Idempotency-Key 请求头与请求体字段等效。"""
         body = {"goal": "头传键调研"}
         headers = {"Idempotency-Key": "ticket:T-200:handle:v1"}
-        with patch(
-            "tasks.deep_research_tasks.deep_research_task.apply_async"
-        ), _patch_perm_unrestricted():
+        with (
+            patch("tasks.deep_research_tasks.deep_research_task.apply_async"),
+            _patch_perm_unrestricted(),
+        ):
             r1 = await research_client.post(
                 "/api/v1/research", json=body, headers=headers
             )
@@ -536,9 +584,10 @@ class TestResearchEndpointIdempotency:
 
     async def test_same_key_different_body_conflict(self, research_client) -> None:
         """同键不同输入 → 409 IDEMPOTENCY_CONFLICT。"""
-        with patch(
-            "tasks.deep_research_tasks.deep_research_task.apply_async"
-        ), _patch_perm_unrestricted():
+        with (
+            patch("tasks.deep_research_tasks.deep_research_task.apply_async"),
+            _patch_perm_unrestricted(),
+        ):
             r1 = await research_client.post(
                 "/api/v1/research",
                 json={"goal": "订单 ORD-10086", "idempotency_key": "k:conflict"},
@@ -553,9 +602,12 @@ class TestResearchEndpointIdempotency:
 
     async def test_without_key_dispatches_each_time(self, research_client) -> None:
         """无键 → 每次都新建（旧行为向后兼容）。"""
-        with patch(
-            "tasks.deep_research_tasks.deep_research_task.apply_async"
-        ) as mock_dispatch, _patch_perm_unrestricted():
+        with (
+            patch(
+                "tasks.deep_research_tasks.deep_research_task.apply_async"
+            ) as mock_dispatch,
+            _patch_perm_unrestricted(),
+        ):
             r1 = await research_client.post(
                 "/api/v1/research", json={"goal": "无键第一次"}
             )
@@ -567,21 +619,25 @@ class TestResearchEndpointIdempotency:
         assert r1.json()["data"]["task_id"] != r2.json()["data"]["task_id"]
         assert mock_dispatch.call_count == 2
 
-    async def test_broker_down_rolls_back_and_key_free(
-        self, research_client
-    ) -> None:
+    async def test_broker_down_rolls_back_and_key_free(self, research_client) -> None:
         """派发失败（broker 不可用）→ 回滚不入库，原键可重试。"""
         body = {"goal": "broker 挂了", "idempotency_key": "k:broker-down"}
-        with patch(
-            "tasks.deep_research_tasks.deep_research_task.apply_async",
-            side_effect=ConnectionError("broker down"),
-        ), _patch_perm_unrestricted():
+        with (
+            patch(
+                "tasks.deep_research_tasks.deep_research_task.apply_async",
+                side_effect=ConnectionError("broker down"),
+            ),
+            _patch_perm_unrestricted(),
+        ):
             r1 = await research_client.post("/api/v1/research", json=body)
         assert r1.json()["code"] == 500
 
-        with patch(
-            "tasks.deep_research_tasks.deep_research_task.apply_async"
-        ) as mock_dispatch, _patch_perm_unrestricted():
+        with (
+            patch(
+                "tasks.deep_research_tasks.deep_research_task.apply_async"
+            ) as mock_dispatch,
+            _patch_perm_unrestricted(),
+        ):
             r2 = await research_client.post("/api/v1/research", json=body)
         assert r2.json()["code"] == 0
         assert r2.json()["data"]["reused"] is False, "键未被占用，重试创建成功"
@@ -596,8 +652,8 @@ class TestResearchEndpointIdempotency:
 class TestFinetuneExportIdempotency:
     @pytest_asyncio.fixture
     async def admin_client(self, db_maker, user_a):
-        from app.main import app
         import app.middleware as _mw
+        from app.main import app
 
         # 同 research_client — 隔离前置测试残留的限流桶
         _mw._rate_limiter = None
@@ -606,12 +662,16 @@ class TestFinetuneExportIdempotency:
             app,
             db_maker,
             SimpleNamespace(
-                id=user_a.id, role="admin", is_active=True,
-                email="ft@test.local", name="导出管理员",
+                id=user_a.id,
+                role="admin",
+                is_active=True,
+                email="ft@test.local",
+                name="导出管理员",
             ),
         )
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://test",
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://test",
         ) as c:
             yield c
         app.dependency_overrides.clear()
@@ -634,20 +694,16 @@ class TestFinetuneExportIdempotency:
         """同键同参数重试 → 返回原 export_id/task_id，只 delay 一次。"""
         key = "ft-export:v1"
         body = self._body(idempotency_key=key)
-        with patch("tasks.finetune_tasks.build_dataset_task") as mock_task, \
-             patch("app.api.v1.finetune.make_version", return_value="v-test-1"):
-            mock_task.delay = MagicMock(
-                return_value=SimpleNamespace(id="celery-ft-1")
-            )
-            r1 = await admin_client.post(
-                "/api/v1/finetune/datasets/export", json=body
-            )
+        with (
+            patch("tasks.finetune_tasks.build_dataset_task") as mock_task,
+            patch("app.api.v1.finetune.make_version", return_value="v-test-1"),
+        ):
+            mock_task.delay = MagicMock(return_value=SimpleNamespace(id="celery-ft-1"))
+            r1 = await admin_client.post("/api/v1/finetune/datasets/export", json=body)
             assert r1.json()["code"] == 0
             first = r1.json()["data"]
 
-            r2 = await admin_client.post(
-                "/api/v1/finetune/datasets/export", json=body
-            )
+            r2 = await admin_client.post("/api/v1/finetune/datasets/export", json=body)
 
         data2 = r2.json()
         assert data2["code"] == 0
@@ -658,11 +714,11 @@ class TestFinetuneExportIdempotency:
 
     async def test_same_key_different_params_conflict(self, admin_client) -> None:
         """同键不同构建参数 → 409 IDEMPOTENCY_CONFLICT。"""
-        with patch("tasks.finetune_tasks.build_dataset_task") as mock_task, \
-             patch("app.api.v1.finetune.make_version", return_value="v-test-2"):
-            mock_task.delay = MagicMock(
-                return_value=SimpleNamespace(id="celery-ft-2")
-            )
+        with (
+            patch("tasks.finetune_tasks.build_dataset_task") as mock_task,
+            patch("app.api.v1.finetune.make_version", return_value="v-test-2"),
+        ):
+            mock_task.delay = MagicMock(return_value=SimpleNamespace(id="celery-ft-2"))
             r1 = await admin_client.post(
                 "/api/v1/finetune/datasets/export",
                 json=self._body(idempotency_key="ft-export:v2"),

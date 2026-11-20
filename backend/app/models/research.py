@@ -31,9 +31,7 @@ class ResearchJob(UUIDMixin, TimestampMixin, Base):
             "user_id",
             "idempotency_key",
             unique=True,
-            postgresql_where=text(
-                "idempotency_key IS NOT NULL AND status <> 'failed'"
-            ),
+            postgresql_where=text("idempotency_key IS NOT NULL AND status <> 'failed'"),
         ),
         Index("ix_research_jobs_tenant", "tenant_id"),
         Index("ix_research_jobs_user_created", "user_id", "created_at"),
@@ -58,9 +56,7 @@ class ResearchJob(UUIDMixin, TimestampMixin, Base):
         nullable=False,
         comment="提交内容指纹（goal + kb_ids 规范化 JSON 的 SHA-256）",
     )
-    goal: Mapped[str] = mapped_column(
-        String(500), nullable=False, comment="调研目标"
-    )
+    goal: Mapped[str] = mapped_column(String(500), nullable=False, comment="调研目标")
     kb_ids: Mapped[list] = mapped_column(
         JSONB, default=list, comment="权限收敛后的知识库范围"
     )

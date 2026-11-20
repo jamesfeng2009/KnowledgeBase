@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import httpx
 
-from app.connectors.base import BaseConnector, ExternalSearchResult
 from app.config import get_settings
+from app.connectors.base import BaseConnector, ExternalSearchResult
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -55,7 +55,9 @@ class WeComConnector(BaseConnector):
                 for u in users
             ]
         except Exception as exc:
-            logger.warning("connector.wecom.search_failed", keyword=keyword, error=str(exc))
+            logger.warning(
+                "connector.wecom.search_failed", keyword=keyword, error=str(exc)
+            )
             return []
 
     async def test_connection(self) -> bool:

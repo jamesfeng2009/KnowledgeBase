@@ -5,7 +5,6 @@ RAGAS 指标模块测试 — 测试 RagasMetrics 的四项标准指标计算。
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -28,9 +27,7 @@ class TestRagasMetricsHeuristic:
         """答案完全来自上下文时忠实度应较高。"""
         context = "公司报销流程：填写报销单，提交部门审批，财务打款。"
         answer = "公司报销流程：填写报销单，提交部门审批，财务打款。"
-        score = asyncio.run(
-            metrics._faithfulness(answer, [context])
-        )
+        score = asyncio.run(metrics._faithfulness(answer, [context]))
         assert 0.0 <= score <= 1.0
         assert score > 0.5
 
@@ -38,39 +35,29 @@ class TestRagasMetricsHeuristic:
         """答案与上下文完全无关时忠实度应为 0。"""
         context = "公司报销流程：填写报销单。"
         answer = "今天天气很好，适合出去玩。"
-        score = asyncio.run(
-            metrics._faithfulness(answer, [context])
-        )
+        score = asyncio.run(metrics._faithfulness(answer, [context]))
         assert score == 0.0 or score < 0.5
 
     def test_faithfulness_empty_answer(self, metrics):
         """空答案忠实度应为 0。"""
-        score = asyncio.run(
-            metrics._faithfulness("", ["context"])
-        )
+        score = asyncio.run(metrics._faithfulness("", ["context"]))
         assert score == 0.0
 
     def test_faithfulness_empty_context(self, metrics):
         """空上下文忠实度应为 0。"""
-        score = asyncio.run(
-            metrics._faithfulness("answer", [""])
-        )
+        score = asyncio.run(metrics._faithfulness("answer", [""]))
         assert score == 0.0
 
     def test_answer_relevancy_heuristic(self, metrics):
         """切题度启发式评分。"""
         query = "报销流程是什么"
         answer = "报销流程包括填写报销单和审批"
-        score = asyncio.run(
-            metrics._answer_relevancy(query, answer)
-        )
+        score = asyncio.run(metrics._answer_relevancy(query, answer))
         assert 0.0 <= score <= 1.0
 
     def test_answer_relevancy_empty_answer(self, metrics):
         """空答案切题度应为 0。"""
-        score = asyncio.run(
-            metrics._answer_relevancy("query", "")
-        )
+        score = asyncio.run(metrics._answer_relevancy("query", ""))
         assert score == 0.0
 
     def test_context_precision_no_expected(self, metrics):
@@ -85,16 +72,12 @@ class TestRagasMetricsHeuristic:
 
     def test_context_recall_no_expected(self, metrics):
         """无期望答案时召回率应为 1.0。"""
-        score = asyncio.run(
-            metrics._context_recall("", ["ctx1"])
-        )
+        score = asyncio.run(metrics._context_recall("", ["ctx1"]))
         assert score == 1.0
 
     def test_context_recall_empty_contexts(self, metrics):
         """空上下文召回率应为 0。"""
-        score = asyncio.run(
-            metrics._context_recall("expected answer", [])
-        )
+        score = asyncio.run(metrics._context_recall("expected answer", []))
         assert score == 0.0
 
 
@@ -122,9 +105,7 @@ class TestRagasMetricsEvaluate:
     def test_evaluate_empty_inputs(self):
         """空输入不应抛异常，应返回 0 分。"""
         metrics = RagasMetrics(llm=None)
-        result = asyncio.run(
-            metrics.evaluate(query="", answer="", contexts=[])
-        )
+        result = asyncio.run(metrics.evaluate(query="", answer="", contexts=[]))
         assert result["faithfulness"] == 0.0
         assert result["answer_relevancy"] == 0.0
 

@@ -8,10 +8,10 @@
 - _similarity / _sanitize 辅助方法
 - _llm_extract_faq 多轮接入 rewriter（集成）
 """
+
 from __future__ import annotations
 
 import sys
-import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -115,14 +115,16 @@ class TestStandaloneQueryRewriter:
         llm = _make_mock_llm("公司差旅管理办法中国际航班报销标准是什么")
         rewriter = StandaloneQueryRewriter(llm)
 
-        focus = ConversationFocus(
-            topic="差旅报销", entity="公司", intent="查询"
-        )
-        with patch.object(
-            rewriter._tracker, "extract_focus", new=AsyncMock(return_value=focus)
-        ), patch.object(
-            rewriter._resolver, "resolve",
-            new=AsyncMock(return_value="国际航班报销标准"),
+        focus = ConversationFocus(topic="差旅报销", entity="公司", intent="查询")
+        with (
+            patch.object(
+                rewriter._tracker, "extract_focus", new=AsyncMock(return_value=focus)
+            ),
+            patch.object(
+                rewriter._resolver,
+                "resolve",
+                new=AsyncMock(return_value="国际航班报销标准"),
+            ),
         ):
             result = await rewriter.rewrite(
                 current_query="那国际航班呢？",
@@ -146,11 +148,15 @@ class TestStandaloneQueryRewriter:
         rewriter = StandaloneQueryRewriter(llm)
 
         focus = ConversationFocus(topic="差旅", entity="公司")
-        with patch.object(
-            rewriter._tracker, "extract_focus", new=AsyncMock(return_value=focus)
-        ), patch.object(
-            rewriter._resolver, "resolve",
-            new=AsyncMock(return_value="国际航班报销标准"),
+        with (
+            patch.object(
+                rewriter._tracker, "extract_focus", new=AsyncMock(return_value=focus)
+            ),
+            patch.object(
+                rewriter._resolver,
+                "resolve",
+                new=AsyncMock(return_value="国际航班报销标准"),
+            ),
         ):
             result = await rewriter.rewrite(
                 current_query="那国际航班呢？",
@@ -174,11 +180,15 @@ class TestStandaloneQueryRewriter:
         rewriter = StandaloneQueryRewriter(llm)
 
         focus = ConversationFocus(topic="差旅", entity="公司")
-        with patch.object(
-            rewriter._tracker, "extract_focus", new=AsyncMock(return_value=focus)
-        ), patch.object(
-            rewriter._resolver, "resolve",
-            new=AsyncMock(return_value=resolved_text),
+        with (
+            patch.object(
+                rewriter._tracker, "extract_focus", new=AsyncMock(return_value=focus)
+            ),
+            patch.object(
+                rewriter._resolver,
+                "resolve",
+                new=AsyncMock(return_value=resolved_text),
+            ),
         ):
             result = await rewriter.rewrite(
                 current_query="那国际航班呢？",
@@ -245,7 +255,9 @@ class TestFaqExtractionWithRewriter:
         from app.services.knowledge_compounding import KnowledgeCompoundingService
 
         db = _make_mock_db()
-        llm = _make_mock_llm('{"question":"独立问题","answer":"答案","tags":[],"confidence":0.8}')
+        llm = _make_mock_llm(
+            '{"question":"独立问题","answer":"答案","tags":[],"confidence":0.8}'
+        )
         service = KnowledgeCompoundingService(llm, db)
 
         context = {
@@ -275,7 +287,9 @@ class TestFaqExtractionWithRewriter:
         from app.services.knowledge_compounding import KnowledgeCompoundingService
 
         db = _make_mock_db()
-        llm = _make_mock_llm('{"question":"问题","answer":"答案","tags":[],"confidence":0.8}')
+        llm = _make_mock_llm(
+            '{"question":"问题","answer":"答案","tags":[],"confidence":0.8}'
+        )
         service = KnowledgeCompoundingService(llm, db)
 
         context = {
@@ -301,7 +315,9 @@ class TestFaqExtractionWithRewriter:
         from app.services.knowledge_compounding import KnowledgeCompoundingService
 
         db = _make_mock_db()
-        llm = _make_mock_llm('{"question":"问题","answer":"答案","tags":[],"confidence":0.8}')
+        llm = _make_mock_llm(
+            '{"question":"问题","answer":"答案","tags":[],"confidence":0.8}'
+        )
         service = KnowledgeCompoundingService(llm, db)
 
         context = {

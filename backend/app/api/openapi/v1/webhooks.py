@@ -9,11 +9,12 @@
 
 当前为预留实现（内存存储），生产环境应替换为持久化存储。
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from uuid import UUID, uuid4
 from typing import Any
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -63,16 +64,16 @@ class SubscribeRequest(BaseModel):
     """Webhook 订阅请求。"""
 
     url: str = Field(..., description="回调 URL（事件推送目标）")
-    events: list[str] = Field(
-        ..., min_length=1, description="订阅的事件类型列表"
-    )
+    events: list[str] = Field(..., min_length=1, description="订阅的事件类型列表")
     secret: str | None = Field(default=None, description="签名密钥（用于校验回调）")
 
 
 class TestEventRequest(BaseModel):
     """测试事件请求。"""
 
-    url: str | None = Field(default=None, description="目标 URL（为空则推送给所有订阅）")
+    url: str | None = Field(
+        default=None, description="目标 URL（为空则推送给所有订阅）"
+    )
     event: str = Field(default="test.event", description="测试事件类型")
 
 
@@ -144,11 +145,7 @@ async def list_subscriptions(
 ) -> ApiResponse[list[dict]]:
     """列出当前 API Key 创建的 Webhook 订阅。"""
     key_id = api_key_info.get("key_id")
-    data = [
-        sub
-        for sub in _subscriptions.values()
-        if sub.get("key_id") == key_id
-    ]
+    data = [sub for sub in _subscriptions.values() if sub.get("key_id") == key_id]
     return ApiResponse(
         code=0,
         data=data,
@@ -196,9 +193,7 @@ async def send_test_event(
     if body.url:
         target_count = 1
     else:
-        target_count = sum(
-            1 for s in _subscriptions.values() if s.get("is_active")
-        )
+        target_count = sum(1 for s in _subscriptions.values() if s.get("is_active"))
 
     logger.info(
         "openapi.webhook.test_event",

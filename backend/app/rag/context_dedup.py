@@ -130,7 +130,9 @@ class CrossTurnDeduplicator:
         self._seen_results.clear()
 
     @staticmethod
-    def _is_similar(a: str, b: str, threshold: float = _DEDUP_SIMILARITY_THRESHOLD) -> bool:
+    def _is_similar(
+        a: str, b: str, threshold: float = _DEDUP_SIMILARITY_THRESHOLD
+    ) -> bool:
         """判断两段文本是否高度相似（基于 Jaccard 词集相似度）。
 
         Args:

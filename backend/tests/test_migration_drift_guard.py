@@ -36,7 +36,6 @@ from alembic_drift import (  # noqa: E402
     summarize,
 )
 
-
 # ---------------------------------------------------------------------------
 # 分类器
 # ---------------------------------------------------------------------------
@@ -111,7 +110,9 @@ def test_unknown_kind_falls_into_structural_not_noise() -> None:
 
 def test_has_blocking_drift_only_for_destructive_and_structural() -> None:
     assert has_blocking_drift([]) is False
-    assert has_blocking_drift([("modify_comment", "x"), ("modify_default", "y")]) is False
+    assert (
+        has_blocking_drift([("modify_comment", "x"), ("modify_default", "y")]) is False
+    )
     assert has_blocking_drift([("remove_index", "x")]) is True
     assert has_blocking_drift([("add_table", "x")]) is True
 
@@ -134,34 +135,47 @@ def test_filter_hides_db_only_index() -> None:
     """库里有、模型没有的索引 → 隐身（否则 autogenerate 会生成 DROP INDEX）。"""
     t = _fake_table()
     idx = Index("ix_demo_id", t.c.id)
-    assert include_object(idx, "ix_demo_id", "index", reflected=True, compare_to=None) is False
+    assert (
+        include_object(idx, "ix_demo_id", "index", reflected=True, compare_to=None)
+        is False
+    )
 
 
 def test_filter_hides_db_only_fk_and_unique() -> None:
     t = _fake_table()
     for type_ in ("foreign_key_constraint", "unique_constraint", "check_constraint"):
-        assert include_object(t, "some_name", type_, reflected=True, compare_to=None) is False
+        assert (
+            include_object(t, "some_name", type_, reflected=True, compare_to=None)
+            is False
+        )
 
 
 def test_filter_keeps_metadata_side_objects() -> None:
     """模型侧新增的对象必须保留，否则新加的索引/外键会被静默吞掉。"""
     t = _fake_table()
     idx = Index("ix_new", t.c.id)
-    assert include_object(idx, "ix_new", "index", reflected=False, compare_to=None) is True
+    assert (
+        include_object(idx, "ix_new", "index", reflected=False, compare_to=None) is True
+    )
 
 
 def test_filter_keeps_matched_reflected_objects() -> None:
     """库里有且模型也声明了（compare_to 非 None）→ 保留，交给正常比对。"""
     t = _fake_table()
     idx = Index("ix_demo_id", t.c.id)
-    assert include_object(idx, "ix_demo_id", "index", reflected=True, compare_to=idx) is True
+    assert (
+        include_object(idx, "ix_demo_id", "index", reflected=True, compare_to=idx)
+        is True
+    )
 
 
 def test_filter_does_not_hide_tables_or_columns() -> None:
     """删表/删列必须暴露出来（它们是破坏性变更，由门禁硬失败拦下）。"""
     t = _fake_table()
     assert include_object(t, "demo", "table", reflected=True, compare_to=None) is True
-    assert include_object(t.c.id, "id", "column", reflected=True, compare_to=None) is True
+    assert (
+        include_object(t.c.id, "id", "column", reflected=True, compare_to=None) is True
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -190,9 +204,7 @@ def test_env_py_imports_tables_outside_models_package() -> None:
 
 def test_gate_script_in_ci_workflow() -> None:
     """门禁脚本必须挂在 CI 上，否则等于没写。"""
-    workflow = (
-        BACKEND_DIR.parent / ".github" / "workflows" / "backend-migrations.yml"
-    )
+    workflow = BACKEND_DIR.parent / ".github" / "workflows" / "backend-migrations.yml"
     assert workflow.exists(), "缺少 backend-migrations.yml"
     assert "check_migration_drift.py" in workflow.read_text(encoding="utf-8")
 

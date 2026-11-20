@@ -11,6 +11,7 @@
 幂等创建的完整行为（并发重试/冲突）见 test_research_idempotency.py（真库）。
 mock 风格参照 test_recommendation_api.py（httpx ASGI + dependency_overrides）。
 """
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -24,15 +25,19 @@ import pytest_asyncio
 
 def _make_user(role: str = "editor") -> SimpleNamespace:
     return SimpleNamespace(
-        id=uuid4(), role=role, is_active=True, email="u@test.com", name="测试用户",
+        id=uuid4(),
+        role=role,
+        is_active=True,
+        email="u@test.com",
+        name="测试用户",
     )
 
 
 @pytest_asyncio.fixture
 async def raw_client():
     """无认证覆盖的客户端 — 用于测试认证强制。"""
-    from app.main import app
     import app.middleware as _mw
+    from app.main import app
 
     # 重置两级限流器全局 — 本文件测试认证/派发，不禁用会被
     # test_rate_limiter 等前置测试打满的桶污染（429 / MagicMock TypeError）
@@ -40,7 +45,8 @@ async def raw_client():
     _mw._tenant_rate_limiter = None
     app.dependency_overrides.clear()
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test",
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
     ) as client:
         yield client
     app.dependency_overrides.clear()
@@ -49,10 +55,10 @@ async def raw_client():
 @pytest_asyncio.fixture
 async def auth_client():
     """带认证覆盖的客户端（db 为 AsyncMock — 本文件只测派发机制）。"""
+    import app.middleware as _mw
     from app.database import get_db_session
     from app.deps import get_current_active_user
     from app.main import app
-    import app.middleware as _mw
 
     # 同 raw_client — 隔离前置测试残留的限流桶
     _mw._rate_limiter = None
@@ -70,7 +76,8 @@ async def auth_client():
     app.dependency_overrides[get_db_session] = override_db
 
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test",
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
     ) as client:
         yield client
 
@@ -103,9 +110,7 @@ class TestResearchAuth:
     @pytest.mark.asyncio
     async def test_requires_auth(self, raw_client) -> None:
         """未携带 token 访问 POST /research 应返回 401。"""
-        resp = await raw_client.post(
-            "/api/v1/research", json={"goal": "调研某主题"}
-        )
+        resp = await raw_client.post("/api/v1/research", json={"goal": "调研某主题"})
         assert resp.status_code == 401
 
 
@@ -158,8 +163,11 @@ class TestResearchDispatch:
         """权限收敛异常 — fail-closed：kb_ids 置空，不回落为客户端原值。"""
         svc = MagicMock()
         svc.get_accessible_kb_ids = AsyncMock(side_effect=RuntimeError("db down"))
-        with _patch_dispatch() as mock_dispatch, patch(
-            "app.services.permission_service.PermissionService", return_value=svc
+        with (
+            _patch_dispatch() as mock_dispatch,
+            patch(
+                "app.services.permission_service.PermissionService", return_value=svc
+            ),
         ):
             resp = await auth_client.post(
                 "/api/v1/research", json={"goal": "调研某主题", "kb_ids": ["kb1"]}

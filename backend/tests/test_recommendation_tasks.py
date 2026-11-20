@@ -112,7 +112,7 @@ class _FakeResult:
     def __init__(self, rows: list) -> None:
         self._rows = rows
 
-    def scalars(self) -> "_FakeResult":
+    def scalars(self) -> _FakeResult:
         return self
 
     def all(self) -> list:
@@ -202,17 +202,24 @@ def _make_behavior(user_id: uuid.UUID, doc_id: uuid.UUID, weight: float = 1.0):
     )
 
 
-def _run_task(module, fake_session: _FakeSession, fake_redis: _FakeSyncRedis,
-              embedder: Any, **kwargs):
+def _run_task(
+    module,
+    fake_session: _FakeSession,
+    fake_redis: _FakeSyncRedis,
+    embedder: Any,
+    **kwargs,
+):
     """在受控桩环境下执行 rebuild_recommendation_model。"""
 
     @asynccontextmanager
     async def fake_task_db_session():
         yield fake_session
 
-    with patch("app.database.task_db_session", fake_task_db_session), \
-         patch("redis.from_url", return_value=fake_redis), \
-         patch("app.llm.embedder.get_embedder", return_value=embedder):
+    with (
+        patch("app.database.task_db_session", fake_task_db_session),
+        patch("redis.from_url", return_value=fake_redis),
+        patch("app.llm.embedder.get_embedder", return_value=embedder),
+    ):
         return module.rebuild_recommendation_model(**kwargs)
 
 
@@ -310,9 +317,13 @@ class TestRebuildRecommendationModel:
         async def fake_task_db_session():
             yield session
 
-        with patch("app.database.task_db_session", fake_task_db_session), \
-             patch("redis.from_url", return_value=redis_client), \
-             patch("app.llm.embedder.get_embedder", side_effect=RuntimeError("无 embedder")):
+        with (
+            patch("app.database.task_db_session", fake_task_db_session),
+            patch("redis.from_url", return_value=redis_client),
+            patch(
+                "app.llm.embedder.get_embedder", side_effect=RuntimeError("无 embedder")
+            ),
+        ):
             result = module.rebuild_recommendation_model(tenant_id=str(tid))
 
         assert result["status"] == "success"
@@ -332,8 +343,10 @@ class TestRebuildRecommendationModel:
         async def fake_task_db_session():
             yield _BoomSession()
 
-        with patch("app.database.task_db_session", fake_task_db_session), \
-             patch("redis.from_url", return_value=_FakeSyncRedis()):
+        with (
+            patch("app.database.task_db_session", fake_task_db_session),
+            patch("redis.from_url", return_value=_FakeSyncRedis()),
+        ):
             with pytest.raises(ConnectionError):
                 module.rebuild_recommendation_model(tenant_id=str(uuid4()))
 
@@ -443,8 +456,11 @@ async def admin_client():
         limiter.clear()
 
     mock_user = SimpleNamespace(
-        id=uuid4(), role="admin", is_active=True,
-        email="admin@test.com", name="管理员",
+        id=uuid4(),
+        role="admin",
+        is_active=True,
+        email="admin@test.com",
+        name="管理员",
     )
 
     async def override_user():
@@ -473,15 +489,14 @@ class TestRebuildEndpoint:
     ) -> None:
         """管理员调用：锁未被占用 → 以显式 task_id 派发并返回。"""
         mock_task = MagicMock()
-        mock_task.apply_async = MagicMock(
-            return_value=SimpleNamespace(id="unused")
-        )
+        mock_task.apply_async = MagicMock(return_value=SimpleNamespace(id="unused"))
 
-        with patch(
-            "tasks.recommendation_tasks.rebuild_recommendation_model", mock_task
-        ), patch(
-            "app.api.v1.recommendations.acquire_rebuild_lock",
-            AsyncMock(return_value=(True, None)),
+        with (
+            patch("tasks.recommendation_tasks.rebuild_recommendation_model", mock_task),
+            patch(
+                "app.api.v1.recommendations.acquire_rebuild_lock",
+                AsyncMock(return_value=(True, None)),
+            ),
         ):
             response = await admin_client.post("/api/v1/recommendations/rebuild")
 
@@ -502,11 +517,12 @@ class TestRebuildEndpoint:
         mock_task = MagicMock()
         mock_task.apply_async = MagicMock()
 
-        with patch(
-            "tasks.recommendation_tasks.rebuild_recommendation_model", mock_task
-        ), patch(
-            "app.api.v1.recommendations.acquire_rebuild_lock",
-            AsyncMock(return_value=(False, "celery-task-running")),
+        with (
+            patch("tasks.recommendation_tasks.rebuild_recommendation_model", mock_task),
+            patch(
+                "app.api.v1.recommendations.acquire_rebuild_lock",
+                AsyncMock(return_value=(False, "celery-task-running")),
+            ),
         ):
             response = await admin_client.post("/api/v1/recommendations/rebuild")
 
@@ -525,13 +541,13 @@ class TestRebuildEndpoint:
         mock_task.apply_async = MagicMock(side_effect=ConnectionError("broker down"))
         mock_release = AsyncMock()
 
-        with patch(
-            "tasks.recommendation_tasks.rebuild_recommendation_model", mock_task
-        ), patch(
-            "app.api.v1.recommendations.acquire_rebuild_lock",
-            AsyncMock(return_value=(True, None)),
-        ), patch(
-            "app.api.v1.recommendations.release_rebuild_lock", mock_release
+        with (
+            patch("tasks.recommendation_tasks.rebuild_recommendation_model", mock_task),
+            patch(
+                "app.api.v1.recommendations.acquire_rebuild_lock",
+                AsyncMock(return_value=(True, None)),
+            ),
+            patch("app.api.v1.recommendations.release_rebuild_lock", mock_release),
         ):
             response = await admin_client.post("/api/v1/recommendations/rebuild")
 

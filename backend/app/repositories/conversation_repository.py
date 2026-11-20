@@ -33,12 +33,9 @@ class ConversationRepository(BaseRepository[Conversation]):
 
     async def get_by_user(self, user_id: UUID) -> list[Conversation]:
         """查询某用户的所有对话（排除已软删除，按创建时间倒序）。"""
-        stmt = (
-            select(Conversation)
-            .where(
-                Conversation.user_id == user_id,
-                Conversation.deleted_at.is_(None),
-            )
+        stmt = select(Conversation).where(
+            Conversation.user_id == user_id,
+            Conversation.deleted_at.is_(None),
         )
         stmt = self._apply_all_filters(stmt)
         stmt = stmt.order_by(Conversation.created_at.desc())

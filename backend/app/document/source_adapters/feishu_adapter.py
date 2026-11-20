@@ -15,6 +15,7 @@ Wiki 页面通过 doc_token 拉取，与普通文档共用同一 API。
 凭证格式（credentials dict）::
     {"app_id": "cli_xxx", "app_secret": "xxx"}
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -222,9 +223,7 @@ class FeishuAdapter(DocumentSourceAdapter):
                 f"获取 token 请求失败: {exc}",
             ) from exc
 
-    async def _get_document_info(
-        self, doc_token: str, token: str
-    ) -> dict[str, Any]:
+    async def _get_document_info(self, doc_token: str, token: str) -> dict[str, Any]:
         """获取文档元信息。"""
         try:
             import httpx
@@ -260,9 +259,7 @@ class FeishuAdapter(DocumentSourceAdapter):
                 f"获取文档信息失败: {exc}",
             ) from exc
 
-    async def _get_all_blocks(
-        self, doc_token: str, token: str
-    ) -> list[dict[str, Any]]:
+    async def _get_all_blocks(self, doc_token: str, token: str) -> list[dict[str, Any]]:
         """获取文档所有块（分页拉取）。"""
         try:
             import httpx
@@ -276,9 +273,7 @@ class FeishuAdapter(DocumentSourceAdapter):
         try:
             async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT) as client:
                 while True:
-                    url = (
-                        f"{_FEISHU_BASE_URL}/open-apis/docx/v1/documents/{doc_token}/blocks"
-                    )
+                    url = f"{_FEISHU_BASE_URL}/open-apis/docx/v1/documents/{doc_token}/blocks"
                     params: dict[str, Any] = {"page_size": _BLOCK_PAGE_SIZE}
                     if page_token:
                         params["page_token"] = page_token
@@ -316,9 +311,7 @@ class FeishuAdapter(DocumentSourceAdapter):
     # 块 → Markdown 转换
     # ------------------------------------------------------------------
 
-    def _blocks_to_markdown(
-        self, blocks: list[dict[str, Any]], title: str
-    ) -> str:
+    def _blocks_to_markdown(self, blocks: list[dict[str, Any]], title: str) -> str:
         """将飞书文档块列表转换为 Markdown。
 
         Args:
@@ -363,6 +356,7 @@ class FeishuAdapter(DocumentSourceAdapter):
         result = "\n".join(lines)
         # 压缩连续空行
         import re
+
         result = re.sub(r"\n{3,}", "\n\n", result).strip()
         return result
 
@@ -432,7 +426,11 @@ class FeishuAdapter(DocumentSourceAdapter):
             todo_data = block.get("todo", {})
             done = False
             if isinstance(todo_data, dict):
-                done = todo_data.get("style", {}).get("done", False) if isinstance(todo_data.get("style"), dict) else False
+                done = (
+                    todo_data.get("style", {}).get("done", False)
+                    if isinstance(todo_data.get("style"), dict)
+                    else False
+                )
             checkbox = "[x]" if done else "[ ]"
             if text:
                 return f"- {checkbox} {text}"
@@ -481,10 +479,21 @@ class FeishuAdapter(DocumentSourceAdapter):
         """
         # 尝试所有可能的文本字段
         for field in (
-            "text", "heading1", "heading2", "heading3",
-            "heading4", "heading5", "heading6", "heading7",
-            "heading8", "heading9", "bullet", "ordered",
-            "code", "quote", "todo",
+            "text",
+            "heading1",
+            "heading2",
+            "heading3",
+            "heading4",
+            "heading5",
+            "heading6",
+            "heading7",
+            "heading8",
+            "heading9",
+            "bullet",
+            "ordered",
+            "code",
+            "quote",
+            "todo",
         ):
             text_data = block.get(field)
             if isinstance(text_data, dict):
@@ -529,8 +538,16 @@ class FeishuAdapter(DocumentSourceAdapter):
 
         # 飞书表格的 children 是按行优先排列的单元格块 ID
         # 每个单元格是一个 block，包含 text 内容
-        rows = table_data.get("property", {}).get("row_size", 0) if isinstance(table_data.get("property"), dict) else 0
-        cols = table_data.get("property", {}).get("column_size", 0) if isinstance(table_data.get("property"), dict) else 0
+        rows = (
+            table_data.get("property", {}).get("row_size", 0)
+            if isinstance(table_data.get("property"), dict)
+            else 0
+        )
+        cols = (
+            table_data.get("property", {}).get("column_size", 0)
+            if isinstance(table_data.get("property"), dict)
+            else 0
+        )
 
         if rows == 0 or cols == 0:
             return ""
@@ -572,7 +589,10 @@ class FeishuAdapter(DocumentSourceAdapter):
         import re
 
         # 纯 token（字母开头，不含 / :）
-        if re.match(r"^[a-zA-Z]{4,}[a-zA-Z0-9]+$", doc_url_or_id) and "/" not in doc_url_or_id:
+        if (
+            re.match(r"^[a-zA-Z]{4,}[a-zA-Z0-9]+$", doc_url_or_id)
+            and "/" not in doc_url_or_id
+        ):
             return doc_url_or_id
 
         # URL 中的 /docs/{token} 或 /wiki/{token}

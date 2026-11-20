@@ -7,6 +7,7 @@
 4. _to_asyncpg_dsn 正确去掉 SQLAlchemy 驱动前缀。
 不依赖数据库。
 """
+
 from __future__ import annotations
 
 import importlib.util

@@ -6,6 +6,7 @@ P2-13 长任务里程碑 checkpoint + 超时分级测试。
     - CheckpointManager 里程碑方法（save/get/completed/latest，Fake DB）
     - run_stages_with_milestones：全量执行、断点恢复跳过、单步超时记录并重抛
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -113,9 +114,7 @@ class TestCheckpointManagerMilestones:
                 row_data = store.get(params["session_id"])
                 if row_data is None:
                     return _FakeResult(None)
-                return _FakeResult(
-                    (row_data["agent_state"], row_data["iteration"])
-                )
+                return _FakeResult((row_data["agent_state"], row_data["iteration"]))
             return _FakeResult(None)
 
         db.execute = AsyncMock(side_effect=_execute)
@@ -192,7 +191,9 @@ class _FakeCheckpointManager:
     def __init__(self) -> None:
         self.milestones: list[dict] = []
 
-    async def save_milestone(self, key: str, name: str, detail: dict | None = None, **_: object) -> None:
+    async def save_milestone(
+        self, key: str, name: str, detail: dict | None = None, **_: object
+    ) -> None:
         self.milestones.append({"key": key, "name": name, "detail": detail or {}})
 
     async def get_milestones(self, key: str) -> list[dict]:

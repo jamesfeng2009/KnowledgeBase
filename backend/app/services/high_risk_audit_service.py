@@ -28,8 +28,9 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -168,12 +169,16 @@ class HighRiskAuditService:
                     )
                 total = (await session.execute(count_stmt)).scalar_one()
                 rows = (
-                    await session.execute(
-                        stmt.order_by(HighRiskAuditRecord.created_at.desc())
-                        .limit(min(limit, 100))
-                        .offset(offset)
+                    (
+                        await session.execute(
+                            stmt.order_by(HighRiskAuditRecord.created_at.desc())
+                            .limit(min(limit, 100))
+                            .offset(offset)
+                        )
                     )
-                ).scalars().all()
+                    .scalars()
+                    .all()
+                )
                 return {
                     "total": total,
                     "items": [self._to_dict(r) for r in rows],
@@ -242,9 +247,7 @@ class HighRiskAuditService:
             async with self.session_factory() as session:
                 await self._bind_tenant(session, tenant_id)
                 total = (
-                    await session.execute(
-                        select(func.count(HighRiskAuditRecord.id))
-                    )
+                    await session.execute(select(func.count(HighRiskAuditRecord.id)))
                 ).scalar_one()
                 rows = (
                     await session.execute(

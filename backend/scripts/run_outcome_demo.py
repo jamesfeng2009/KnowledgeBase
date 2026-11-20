@@ -74,9 +74,7 @@ def generate_events(
 
     for i in range(n_decisions):
         arm = "control" if i % 2 == 0 else "treatment"
-        urgency = (
-            "high" if rng.random() < _URGENCY_HIGH_SHARE[arm] else "low"
-        )
+        urgency = "high" if rng.random() < _URGENCY_HIGH_SHARE[arm] else "low"
         decision_id = f"d{i:05d}"
         decisions.append(
             {
@@ -104,7 +102,9 @@ def generate_events(
                 "responded": responded,
                 "retained_30d": filled and rng.random() < 0.62,
                 "utilization": round(rng.uniform(0.55, 0.95), 3) if filled else None,
-                "filled_latency_hours": round(rng.uniform(1, 72), 1) if filled else None,
+                "filled_latency_hours": round(rng.uniform(1, 72), 1)
+                if filled
+                else None,
                 "source_system": "staffing-core",
             }
         )

@@ -79,9 +79,9 @@ class TestToolDescriptionNegativeBoundary:
         registry = self._get_tool_registry()
         for name, entry in registry.items():
             skill_desc = entry.get("skill_description", "")
-            assert "负向边界" in skill_desc or "不要用于" in skill_desc, (
-                f"工具 {name} 的 skill_description 缺少负向边界约束"
-            )
+            assert (
+                "负向边界" in skill_desc or "不要用于" in skill_desc
+            ), f"工具 {name} 的 skill_description 缺少负向边界约束"
 
     def test_tags_include_user_friendly_keywords(self) -> None:
         """tags 包含用户口语化关键词（提升召回率）。"""
@@ -109,16 +109,36 @@ class TestToolFilteringByAgentType:
 
         # Mock MCPClient.get_tools_for_llm 返回 5 个工具
         mock_mcp = MagicMock()
-        mock_mcp.get_tools_for_llm = AsyncMock(return_value=[
-            {"name": "knowledge_search", "description": "搜索知识库", "parameters": {}},
-            {"name": "document_get", "description": "获取文档", "parameters": {}},
-            {"name": "query_oa_approval", "description": "查审批", "parameters": {}},
-            {"name": "document_create", "description": "创建文档", "parameters": {}},
-            {"name": "create_it_ticket", "description": "创建工单", "parameters": {}},
-        ])
+        mock_mcp.get_tools_for_llm = AsyncMock(
+            return_value=[
+                {
+                    "name": "knowledge_search",
+                    "description": "搜索知识库",
+                    "parameters": {},
+                },
+                {"name": "document_get", "description": "获取文档", "parameters": {}},
+                {
+                    "name": "query_oa_approval",
+                    "description": "查审批",
+                    "parameters": {},
+                },
+                {
+                    "name": "document_create",
+                    "description": "创建文档",
+                    "parameters": {},
+                },
+                {
+                    "name": "create_it_ticket",
+                    "description": "创建工单",
+                    "parameters": {},
+                },
+            ]
+        )
 
-        with patch("app.agents.mcp_tools.CREWAI_AVAILABLE", True), \
-             patch("app.agents.mcp_tools.CrewBaseTool", object):
+        with (
+            patch("app.agents.mcp_tools.CREWAI_AVAILABLE", True),
+            patch("app.agents.mcp_tools.CrewBaseTool", object),
+        ):
             tools = await get_mcp_tools_for_agent_type(mock_mcp, "qa")
 
         tool_names = [t.name for t in tools]
@@ -135,14 +155,18 @@ class TestToolFilteringByAgentType:
         from app.agents.mcp_tools import get_mcp_tools_for_agent_type
 
         mock_mcp = MagicMock()
-        mock_mcp.get_tools_for_llm = AsyncMock(return_value=[
-            {"name": "knowledge_search", "description": "搜索", "parameters": {}},
-            {"name": "document_create", "description": "创建", "parameters": {}},
-            {"name": "create_it_ticket", "description": "工单", "parameters": {}},
-        ])
+        mock_mcp.get_tools_for_llm = AsyncMock(
+            return_value=[
+                {"name": "knowledge_search", "description": "搜索", "parameters": {}},
+                {"name": "document_create", "description": "创建", "parameters": {}},
+                {"name": "create_it_ticket", "description": "工单", "parameters": {}},
+            ]
+        )
 
-        with patch("app.agents.mcp_tools.CREWAI_AVAILABLE", True), \
-             patch("app.agents.mcp_tools.CrewBaseTool", object):
+        with (
+            patch("app.agents.mcp_tools.CREWAI_AVAILABLE", True),
+            patch("app.agents.mcp_tools.CrewBaseTool", object),
+        ):
             tools = await get_mcp_tools_for_agent_type(mock_mcp, "workflow")
 
         tool_names = [t.name for t in tools]
@@ -156,15 +180,19 @@ class TestToolFilteringByAgentType:
         from app.agents.mcp_tools import get_mcp_tools_for_agent_type
 
         mock_mcp = MagicMock()
-        mock_mcp.get_tools_for_llm = AsyncMock(return_value=[
-            {"name": "knowledge_search", "description": "搜索", "parameters": {}},
-            {"name": "document_get", "description": "获取", "parameters": {}},
-            {"name": "document_create", "description": "创建", "parameters": {}},
-            {"name": "create_it_ticket", "description": "工单", "parameters": {}},
-        ])
+        mock_mcp.get_tools_for_llm = AsyncMock(
+            return_value=[
+                {"name": "knowledge_search", "description": "搜索", "parameters": {}},
+                {"name": "document_get", "description": "获取", "parameters": {}},
+                {"name": "document_create", "description": "创建", "parameters": {}},
+                {"name": "create_it_ticket", "description": "工单", "parameters": {}},
+            ]
+        )
 
-        with patch("app.agents.mcp_tools.CREWAI_AVAILABLE", True), \
-             patch("app.agents.mcp_tools.CrewBaseTool", object):
+        with (
+            patch("app.agents.mcp_tools.CREWAI_AVAILABLE", True),
+            patch("app.agents.mcp_tools.CrewBaseTool", object),
+        ):
             tools = await get_mcp_tools_for_agent_type(mock_mcp, "action")
 
         tool_names = [t.name for t in tools]
@@ -178,13 +206,17 @@ class TestToolFilteringByAgentType:
         from app.agents.mcp_tools import get_mcp_tools_for_agent_type
 
         mock_mcp = MagicMock()
-        mock_mcp.get_tools_for_llm = AsyncMock(return_value=[
-            {"name": "knowledge_search", "description": "搜索", "parameters": {}},
-            {"name": "document_create", "description": "创建", "parameters": {}},
-        ])
+        mock_mcp.get_tools_for_llm = AsyncMock(
+            return_value=[
+                {"name": "knowledge_search", "description": "搜索", "parameters": {}},
+                {"name": "document_create", "description": "创建", "parameters": {}},
+            ]
+        )
 
-        with patch("app.agents.mcp_tools.CREWAI_AVAILABLE", True), \
-             patch("app.agents.mcp_tools.CrewBaseTool", object):
+        with (
+            patch("app.agents.mcp_tools.CREWAI_AVAILABLE", True),
+            patch("app.agents.mcp_tools.CrewBaseTool", object),
+        ):
             tools = await get_mcp_tools_for_agent_type(mock_mcp, "unknown_type")
 
         tool_names = [t.name for t in tools]
@@ -207,10 +239,14 @@ class TestToolFilteringByAgentType:
         from app.agents.mcp_tools import get_mcp_tools_for_agent_type
 
         mock_mcp = MagicMock()
-        mock_mcp.get_tools_for_llm = AsyncMock(side_effect=RuntimeError("connection failed"))
+        mock_mcp.get_tools_for_llm = AsyncMock(
+            side_effect=RuntimeError("connection failed")
+        )
 
-        with patch("app.agents.mcp_tools.CREWAI_AVAILABLE", True), \
-             patch("app.agents.mcp_tools.CrewBaseTool", object):
+        with (
+            patch("app.agents.mcp_tools.CREWAI_AVAILABLE", True),
+            patch("app.agents.mcp_tools.CrewBaseTool", object),
+        ):
             tools = await get_mcp_tools_for_agent_type(mock_mcp, "qa")
         assert tools == []
 
@@ -226,9 +262,11 @@ class TestCrewAgentToolAssignment:
     @pytest.mark.asyncio
     async def test_qa_agent_gets_read_only_tools(self) -> None:
         """_build_crew_agents 给 QA Agent 分配只读工具。"""
-        with patch("app.agents.crew.CREWAI_AVAILABLE", True), \
-             patch("app.agents.crew.CrewAgent") as mock_agent_cls, \
-             patch("app.agents.crew.CrewTask"):
+        with (
+            patch("app.agents.crew.CREWAI_AVAILABLE", True),
+            patch("app.agents.crew.CrewAgent") as mock_agent_cls,
+            patch("app.agents.crew.CrewTask"),
+        ):
             from app.agents.crew import KnowledgeBaseCrew
 
             crew = KnowledgeBaseCrew.__new__(KnowledgeBaseCrew)

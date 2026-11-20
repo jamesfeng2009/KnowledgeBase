@@ -22,6 +22,7 @@ Token 读取顺序（优先级递减）：
     python scripts/autodl/manage.py power_off pro-76576c61fdf1
     python scripts/autodl/manage.py release pro-76576c61fdf1
 """
+
 from __future__ import annotations
 
 import argparse
@@ -50,6 +51,7 @@ DEFAULT_CUDA_V = 118
 # Token 与 HTTP
 # ------------------------------------------------------------------
 
+
 def _project_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
@@ -68,8 +70,10 @@ def load_token(cli_token: str | None) -> str:
                 val = line.split("=", 1)[1].strip()
                 if val:
                     return val
-    sys.exit("错误：未找到 token。请用 --token 传入，或设置 AUTODL_API_TOKEN 环境变量，"
-             "或在 frontend/.env 中配置 AUTODL_API_TOKEN")
+    sys.exit(
+        "错误：未找到 token。请用 --token 传入，或设置 AUTODL_API_TOKEN 环境变量，"
+        "或在 frontend/.env 中配置 AUTODL_API_TOKEN"
+    )
 
 
 def _request(method: str, path: str, token: str, body: dict | None = None) -> dict:
@@ -87,7 +91,9 @@ def _request(method: str, path: str, token: str, body: dict | None = None) -> di
     else:
         data = json.dumps(body if body is not None else {}).encode("utf-8")
     req = urllib.request.Request(
-        url, data=data, method=method,
+        url,
+        data=data,
+        method=method,
         headers={
             "Authorization": token,
             "Content-Type": "application/json",
@@ -105,7 +111,9 @@ def _request(method: str, path: str, token: str, body: dict | None = None) -> di
     except urllib.error.URLError as exc:
         sys.exit(f"网络错误 {path}: {exc.reason}")
     if payload.get("code") != "Success":
-        sys.exit(f"API 返回失败 {path}: code={payload.get('code')} msg={payload.get('msg')}")
+        sys.exit(
+            f"API 返回失败 {path}: code={payload.get('code')} msg={payload.get('msg')}"
+        )
     return payload
 
 
@@ -113,14 +121,17 @@ def _request(method: str, path: str, token: str, body: dict | None = None) -> di
 # 子命令
 # ------------------------------------------------------------------
 
+
 def cmd_balance(args: argparse.Namespace, token: str) -> None:
     """查询账户余额（充值后核对到账）。"""
     r = _request("POST", "/api/v1/dev/wallet/balance", token)
     d = r["data"]
     assets_yuan = d["assets"] / 1000
     voucher_yuan = d["voucher_balance"] / 1000
-    print(f"账户余额：{assets_yuan:.2f} 元 | 代金券：{voucher_yuan:.2f} 元 | "
-          f"累计消费：{d['accumulate'] / 1000:.2f} 元")
+    print(
+        f"账户余额：{assets_yuan:.2f} 元 | 代金券：{voucher_yuan:.2f} 元 | "
+        f"累计消费：{d['accumulate'] / 1000:.2f} 元"
+    )
     if assets_yuan < 1 and voucher_yuan < 1:
         print("⚠️  余额不足 1 元，无法创建实例，请先充值。")
 
@@ -137,8 +148,10 @@ def cmd_create(args: argparse.Namespace, token: str) -> None:
     }
     if args.region:
         body["data_center_list"] = args.region
-    print(f"创建实例：GPU={args.gpu_spec} ×{args.gpu_amount}  镜像={args.image}  "
-          f"系统盘+{args.disk_gb}GB  cuda>={args.cuda_v}")
+    print(
+        f"创建实例：GPU={args.gpu_spec} ×{args.gpu_amount}  镜像={args.image}  "
+        f"系统盘+{args.disk_gb}GB  cuda>={args.cuda_v}"
+    )
     r = _request("POST", "/api/v1/dev/instance/pro/create", token, body)
     instance_uuid = r["data"]
     print(f"✅ 创建成功：{instance_uuid}")
@@ -146,15 +159,17 @@ def cmd_create(args: argparse.Namespace, token: str) -> None:
 
 
 def cmd_status(args: argparse.Namespace, token: str) -> None:
-    r = _request("GET", "/api/v1/dev/instance/pro/status", token,
-                 {"instance_uuid": args.uuid})
+    r = _request(
+        "GET", "/api/v1/dev/instance/pro/status", token, {"instance_uuid": args.uuid}
+    )
     print(f"{args.uuid}: {r['data']}")
 
 
 def cmd_detail(args: argparse.Namespace, token: str) -> None:
     """获取实例详情：SSH 连接信息 / jupyter / 资源占用。"""
-    r = _request("GET", "/api/v1/dev/instance/pro/snapshot", token,
-                 {"instance_uuid": args.uuid})
+    r = _request(
+        "GET", "/api/v1/dev/instance/pro/snapshot", token, {"instance_uuid": args.uuid}
+    )
     d = r["data"]
     u = d.get("usage_info", {})
     print(f"=== 实例 {args.uuid} ===")
@@ -166,10 +181,14 @@ def cmd_detail(args: argparse.Namespace, token: str) -> None:
     print(f"密码:   {d.get('root_password', '?')}")
     print(f"Jupyter: {d.get('jupyter_domain', '?')}")
     print(f"  token: {d.get('jupyter_token', '?')}")
-    print(f"内存:   {u.get('mem_usage_percent', 0):.1f}% / "
-          f"{u.get('mem_limit', 0) / 1024 / 1024 / 1024:.1f} GB")
-    print(f"磁盘:   根分区 {u.get('root_fs_used_size', 0) / 1024 / 1024 / 1024:.1f} / "
-          f"{u.get('root_fs_total_size', 0) / 1024 / 1024 / 1024:.1f} GB")
+    print(
+        f"内存:   {u.get('mem_usage_percent', 0):.1f}% / "
+        f"{u.get('mem_limit', 0) / 1024 / 1024 / 1024:.1f} GB"
+    )
+    print(
+        f"磁盘:   根分区 {u.get('root_fs_used_size', 0) / 1024 / 1024 / 1024:.1f} / "
+        f"{u.get('root_fs_total_size', 0) / 1024 / 1024 / 1024:.1f} GB"
+    )
 
 
 def cmd_wait(args: argparse.Namespace, token: str) -> None:
@@ -177,69 +196,95 @@ def cmd_wait(args: argparse.Namespace, token: str) -> None:
     deadline = time.time() + args.timeout
     last = None
     while time.time() < deadline:
-        r = _request("GET", "/api/v1/dev/instance/pro/status", token,
-                     {"instance_uuid": args.uuid})
+        r = _request(
+            "GET",
+            "/api/v1/dev/instance/pro/status",
+            token,
+            {"instance_uuid": args.uuid},
+        )
         status = r["data"]
         if status != last:
             print(f"[{time.strftime('%H:%M:%S')}] 状态: {status}")
             last = status
         if status == "running":
-            print(f"✅ 实例已运行，获取连接信息...")
+            print("✅ 实例已运行，获取连接信息...")
             # 复用 detail 打印 SSH 信息
             args_detail = argparse.Namespace(uuid=args.uuid)
             cmd_detail(args_detail, token)
             return
         time.sleep(args.interval)
-    sys.exit(f"⏰ 等待超时（{args.timeout}s），实例仍未 running。"
-             f"当前状态: {last}（可能仍在拉取镜像，稍后重试 wait）")
+    sys.exit(
+        f"⏰ 等待超时（{args.timeout}s），实例仍未 running。"
+        f"当前状态: {last}（可能仍在拉取镜像，稍后重试 wait）"
+    )
 
 
 def cmd_power_on(args: argparse.Namespace, token: str) -> None:
-    _request("POST", "/api/v1/dev/instance/pro/power_on", token,
-             {"instance_uuid": args.uuid, "payload": "gpu"})
+    _request(
+        "POST",
+        "/api/v1/dev/instance/pro/power_on",
+        token,
+        {"instance_uuid": args.uuid, "payload": "gpu"},
+    )
     print(f"✅ 已发送开机指令：{args.uuid}")
 
 
 def cmd_power_off(args: argparse.Namespace, token: str) -> None:
-    _request("POST", "/api/v1/dev/instance/pro/power_off", token,
-             {"instance_uuid": args.uuid})
+    _request(
+        "POST",
+        "/api/v1/dev/instance/pro/power_off",
+        token,
+        {"instance_uuid": args.uuid},
+    )
     print(f"✅ 已发送关机指令：{args.uuid}（关机后不计 GPU 费用，仅收磁盘存储费）")
 
 
 def cmd_release(args: argparse.Namespace, token: str) -> None:
     if not args.yes:
-        confirm = input(f"确认释放实例 {args.uuid}？此操作不可逆，数据将全部丢失 [y/N]: ")
+        confirm = input(
+            f"确认释放实例 {args.uuid}？此操作不可逆，数据将全部丢失 [y/N]: "
+        )
         if confirm.lower() != "y":
             print("已取消")
             return
-    _request("POST", "/api/v1/dev/instance/pro/release", token,
-             {"instance_uuid": args.uuid})
+    _request(
+        "POST", "/api/v1/dev/instance/pro/release", token, {"instance_uuid": args.uuid}
+    )
     print(f"✅ 已释放实例：{args.uuid}")
 
 
 def cmd_list(args: argparse.Namespace, token: str) -> None:
-    r = _request("POST", "/api/v1/dev/instance/pro/list", token,
-                 {"page_index": 1, "page_size": 50})
+    r = _request(
+        "POST",
+        "/api/v1/dev/instance/pro/list",
+        token,
+        {"page_index": 1, "page_size": 50},
+    )
     items = r["data"]["list"]
     if not items:
         print("无实例")
         return
     print(f"{'UUID':<22} {'状态':<10} {'GPU规格':<12} {'名称':<16} {'创建时间'}")
     for it in items:
-        print(f"{it['uuid']:<22} {it['status']:<10} {it.get('gpu_spec_uuid', '?'):<12} "
-              f"{it.get('name', ''):<16} {it['created_at']}")
+        print(
+            f"{it['uuid']:<22} {it['status']:<10} {it.get('gpu_spec_uuid', '?'):<12} "
+            f"{it.get('name', ''):<16} {it['created_at']}"
+        )
 
 
 # ------------------------------------------------------------------
 # CLI
 # ------------------------------------------------------------------
 
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description="AutoDL 容器实例 Pro 管理（创建/查询/开关机/释放）",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    p.add_argument("--token", default=None, help="AutoDL 开发者 token（默认从 .env/环境变量读）")
+    p.add_argument(
+        "--token", default=None, help="AutoDL 开发者 token（默认从 .env/环境变量读）"
+    )
     sub = p.add_subparsers(dest="cmd", required=True)
 
     # balance
@@ -247,15 +292,24 @@ def build_parser() -> argparse.ArgumentParser:
 
     # create
     pc = sub.add_parser("create", help="创建实例")
-    pc.add_argument("--gpu_spec", default=DEFAULT_GPU_SPEC,
-                   help="GPU 规格ID（4090D / v-48g-350w / pro6000-p / h800 等）")
+    pc.add_argument(
+        "--gpu_spec",
+        default=DEFAULT_GPU_SPEC,
+        help="GPU 规格ID（4090D / v-48g-350w / pro6000-p / h800 等）",
+    )
     pc.add_argument("--gpu_amount", type=int, default=1, help="GPU 数量")
     pc.add_argument("--image", default=DEFAULT_IMAGE, help="镜像 UUID")
-    pc.add_argument("--disk_gb", type=int, default=DEFAULT_DISK_GB, help="系统盘扩容 GB")
+    pc.add_argument(
+        "--disk_gb", type=int, default=DEFAULT_DISK_GB, help="系统盘扩容 GB"
+    )
     pc.add_argument("--cuda_v", type=int, default=DEFAULT_CUDA_V, help="CUDA 版本下限")
     pc.add_argument("--name", default="ekb-finetune", help="实例备注名")
-    pc.add_argument("--region", nargs="+", default=None,
-                   help="地区（westDC3 西北 / beijingDC2 北京），默认自动选")
+    pc.add_argument(
+        "--region",
+        nargs="+",
+        default=None,
+        help="地区（westDC3 西北 / beijingDC2 北京），默认自动选",
+    )
     pc.set_defaults(func=cmd_create)
 
     # status

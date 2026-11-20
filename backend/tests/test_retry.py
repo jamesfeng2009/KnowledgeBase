@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
@@ -22,7 +21,6 @@ from app.utils.retry import (
     make_celery_retry_kwargs,
     with_retry,
 )
-
 
 # ======================================================================
 # L2: with_retry 装饰器测试
@@ -43,6 +41,7 @@ class TestWithRetryDecorator:
 
     def test_with_retry_preserves_function_name(self):
         """装饰器保留原函数名（functools.wraps）。"""
+
         @with_retry()
         def my_function():
             """my docstring"""
@@ -172,9 +171,7 @@ class TestBuildRetryHttpClient:
 
     def test_build_retry_http_client_with_base_url(self):
         """支持 base_url 参数。"""
-        client = build_retry_http_client(
-            timeout=10.0, base_url="http://milvus:19530"
-        )
+        client = build_retry_http_client(timeout=10.0, base_url="http://milvus:19530")
         assert client.base_url == "http://milvus:19530"
         self._close(client)
 
@@ -197,9 +194,7 @@ class TestBuildRetryHttpClient:
 
     def test_build_retry_http_client_custom_retry_codes(self):
         """支持自定义重试状态码。"""
-        client = build_retry_http_client(
-            timeout=10.0, retry_status_codes=[502, 503]
-        )
+        client = build_retry_http_client(timeout=10.0, retry_status_codes=[502, 503])
         assert isinstance(client, httpx.AsyncClient)
         self._close(client)
 
@@ -289,6 +284,7 @@ class TestRetryIntegration:
             make_celery_retry_kwargs,
             with_retry,
         )
+
         assert callable(with_retry)
         assert callable(build_retry_http_client)
         assert callable(make_celery_retry_kwargs)

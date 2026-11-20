@@ -7,6 +7,7 @@
       用 FakeDB 收集 add/flush 的持久化对象；
     - diff 走真实 _make_diff（difflib），断言统一 diff 结构。
 """
+
 from __future__ import annotations
 
 import uuid
@@ -19,10 +20,10 @@ from app.models.chunk import ChunkVersion, DocumentChunk
 from app.rag.chunker import Chunk
 from app.services.chunk_service import ChunkService
 
-
 # ==================================================================
 # 测试夹具
 # ==================================================================
+
 
 class _FakeDB:
     """最小 AsyncSession 替身 — add(同步)/flush(异步) 收集写入。"""
@@ -31,7 +32,7 @@ class _FakeDB:
         self.added: list = []
         self.flushed: int = 0
 
-    def add(self, obj) -> None:  # noqa: ANN001
+    def add(self, obj) -> None:
         self.added.append(obj)
 
     async def flush(self) -> None:
@@ -40,8 +41,11 @@ class _FakeDB:
 
 def _make_doc(**kw) -> SimpleNamespace:
     defaults = dict(
-        id=uuid.uuid4(), kb_id=uuid.uuid4(), title="测试文档",
-        content_text="# 标题\n正文内容段落", doc_type="md",
+        id=uuid.uuid4(),
+        kb_id=uuid.uuid4(),
+        title="测试文档",
+        content_text="# 标题\n正文内容段落",
+        doc_type="md",
     )
     defaults.update(kw)
     return SimpleNamespace(**defaults)
@@ -49,9 +53,15 @@ def _make_doc(**kw) -> SimpleNamespace:
 
 def _make_chunk(**kw) -> DocumentChunk:
     defaults = dict(
-        id=uuid.uuid4(), doc_id=uuid.uuid4(), kb_id=uuid.uuid4(),
-        chunk_index=0, section_path="标题", content_text="旧内容 v1",
-        token_count=10, tenant_id=None, deleted_at=None,
+        id=uuid.uuid4(),
+        doc_id=uuid.uuid4(),
+        kb_id=uuid.uuid4(),
+        chunk_index=0,
+        section_path="标题",
+        content_text="旧内容 v1",
+        token_count=10,
+        tenant_id=None,
+        deleted_at=None,
     )
     defaults.update(kw)
     return DocumentChunk(**defaults)
@@ -59,8 +69,12 @@ def _make_chunk(**kw) -> DocumentChunk:
 
 def _make_version(**kw) -> ChunkVersion:
     defaults = dict(
-        id=uuid.uuid4(), chunk_id=uuid.uuid4(), version_seq=1,
-        content_text="旧内容 v1", author_id=uuid.uuid4(), summary=None,
+        id=uuid.uuid4(),
+        chunk_id=uuid.uuid4(),
+        version_seq=1,
+        content_text="旧内容 v1",
+        author_id=uuid.uuid4(),
+        summary=None,
     )
     defaults.update(kw)
     return ChunkVersion(**defaults)
@@ -69,6 +83,7 @@ def _make_version(**kw) -> ChunkVersion:
 # ==================================================================
 # init_chunks
 # ==================================================================
+
 
 @pytest.mark.asyncio
 async def test_init_chunks_persists_chunks() -> None:
@@ -79,8 +94,16 @@ async def test_init_chunks_persists_chunks() -> None:
     service.list_chunks = AsyncMock(return_value=[])
 
     fake_chunks = [
-        Chunk(id="c1", doc_id=str(doc.id), content="第一块", title_path="标题", token_count=4),
-        Chunk(id="c2", doc_id=str(doc.id), content="第二块", title_path="", token_count=4),
+        Chunk(
+            id="c1",
+            doc_id=str(doc.id),
+            content="第一块",
+            title_path="标题",
+            token_count=4,
+        ),
+        Chunk(
+            id="c2", doc_id=str(doc.id), content="第二块", title_path="", token_count=4
+        ),
     ]
     with patch("app.services.chunk_service.SemanticChunker") as mock_cls:
         mock_cls.return_value.chunk.return_value = fake_chunks
@@ -130,6 +153,7 @@ async def test_init_chunks_empty_content_raises() -> None:
 # update_chunk
 # ==================================================================
 
+
 @pytest.mark.asyncio
 async def test_update_chunk_snapshots_and_reindexes() -> None:
     db = _FakeDB()
@@ -164,14 +188,19 @@ async def test_update_chunk_missing_raises() -> None:
 # rollback
 # ==================================================================
 
+
 @pytest.mark.asyncio
 async def test_rollback_restores_version_content() -> None:
     db = _FakeDB()
     service = ChunkService(db=db, user=None)  # type: ignore[arg-type]
     chunk = _make_chunk(content_text="当前内容 v3")
     service.get_chunk = AsyncMock(return_value=chunk)
-    version = _make_version(chunk_id=chunk.id, version_seq=2, content_text="回滚目标 v2")
-    service._snapshot = AsyncMock(return_value=_make_version(chunk_id=chunk.id, version_seq=3))
+    version = _make_version(
+        chunk_id=chunk.id, version_seq=2, content_text="回滚目标 v2"
+    )
+    service._snapshot = AsyncMock(
+        return_value=_make_version(chunk_id=chunk.id, version_seq=3)
+    )
 
     async def fake_execute(stmt):
         return SimpleNamespace(
@@ -213,6 +242,7 @@ async def test_rollback_missing_version_raises() -> None:
 # 版本查询与 diff
 # ==================================================================
 
+
 @pytest.mark.asyncio
 async def test_list_versions_desc_order() -> None:
     db = _FakeDB()
@@ -223,7 +253,9 @@ async def test_list_versions_desc_order() -> None:
     async def fake_execute(stmt):
         return SimpleNamespace(
             scalars=lambda: SimpleNamespace(
-                first=lambda: None, all=lambda: [v1, v2], __iter__=lambda self: iter([v1, v2])
+                first=lambda: None,
+                all=lambda: [v1, v2],
+                __iter__=lambda self: iter([v1, v2]),
             )
         )
 
@@ -279,6 +311,7 @@ async def test_get_version_no_diff_when_identical() -> None:
 # ==================================================================
 # _snapshot 版本号递增
 # ==================================================================
+
 
 @pytest.mark.asyncio
 async def test_snapshot_version_seq_increments() -> None:

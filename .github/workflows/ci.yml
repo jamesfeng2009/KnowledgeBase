@@ -24,7 +24,9 @@ jobs:
           cache-dependency-path: backend/requirements.txt
 
       - name: Install ruff
-        run: pip install ruff>=0.8.0
+        # 锁定版本：规则集由 backend/ruff.toml 固化；新版 ruff 会改变默认规则，
+        # 不锁版本会导致同样的代码在不同时间跑出完全不同的结果。
+        run: pip install ruff==0.8.0
 
       - name: Run ruff check
         working-directory: backend

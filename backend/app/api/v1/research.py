@@ -128,9 +128,7 @@ async def start_research(
                 else:
                     kb_ids = sorted(accessible_strs)
                 if not kb_ids:
-                    logger.info(
-                        "research.no_accessible_kb", user_id=str(user.id)
-                    )
+                    logger.info("research.no_accessible_kb", user_id=str(user.id))
         except Exception as perm_exc:
             # 权限收敛失败 — fail-closed：显式置空（无可检索知识库），
             # 不允许回落为客户端原值造成越权。
@@ -152,9 +150,7 @@ async def start_research(
     except IdempotencyConflictError:
         return _conflict_response()
     except Exception as exc:
-        logger.error(
-            "research.submit_failed", error=str(exc), goal=payload.goal[:80]
-        )
+        logger.error("research.submit_failed", error=str(exc), goal=payload.goal[:80])
         return ApiResponse(code=500, data=None, message=f"调研任务提交失败: {exc}")
 
     if not created:
@@ -188,9 +184,7 @@ async def start_research(
         )
     except Exception as exc:
         await db.rollback()
-        logger.error(
-            "research.submit_failed", error=str(exc), goal=payload.goal[:80]
-        )
+        logger.error("research.submit_failed", error=str(exc), goal=payload.goal[:80])
         return ApiResponse(code=500, data=None, message=f"调研任务提交失败: {exc}")
 
     logger.info("research.submitted", task_id=str(job.id), user_id=str(user.id))
@@ -246,9 +240,8 @@ async def get_research_result(
 
     try:
         job = (
-            (await db.execute(select(ResearchJob).where(ResearchJob.id == jid)))
-            .scalar_one_or_none()
-        )
+            await db.execute(select(ResearchJob).where(ResearchJob.id == jid))
+        ).scalar_one_or_none()
     except Exception as exc:
         logger.error("research.result_query_unavailable", error=str(exc)[:200])
         return ApiResponse(code=503, data=None, message=f"任务结果查询不可用: {exc}")
@@ -256,9 +249,7 @@ async def get_research_result(
     if job is None:
         return ApiResponse(code=404, data=None, message="调研任务不存在")
     if job.user_id != user.id and getattr(user, "role", "") != "admin":
-        logger.info(
-            "research.result_denied", task_id=task_id, user_id=str(user.id)
-        )
+        logger.info("research.result_denied", task_id=task_id, user_id=str(user.id))
         return ApiResponse(code=403, data=None, message="无权查看该调研任务")
 
     if job.status == "success":
@@ -297,6 +288,4 @@ async def get_research_result(
             data={"status": "failed", "error": data.get("error", "unknown error")},
             message="调研任务失败",
         )
-    return ApiResponse(
-        code=0, data={"status": "running"}, message="调研任务进行中"
-    )
+    return ApiResponse(code=0, data={"status": "running"}, message="调研任务进行中")

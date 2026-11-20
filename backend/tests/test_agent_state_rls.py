@@ -8,6 +8,7 @@ session_id 的调用方直调 load_checkpoint / list_after 即可越权读状态
 红基线（修复前）：跨租户 load_checkpoint 能读到别租户状态；
 写入行无 tenant 列可填；无 GUC 写入不被拒绝。
 """
+
 from __future__ import annotations
 
 import uuid
@@ -29,9 +30,7 @@ async def _clean_state_tables(rls_db):
 
     conn = await asyncpg.connect(rls_db.owner_url)
     try:
-        await conn.execute(
-            "TRUNCATE agent_checkpoints, agent_event_logs CASCADE"
-        )
+        await conn.execute("TRUNCATE agent_checkpoints, agent_event_logs CASCADE")
     finally:
         await conn.close()
 

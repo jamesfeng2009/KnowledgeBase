@@ -36,7 +36,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, SoftDeleteMixin, TimestampMixin, UUIDMixin
 
-
 # ======================================================================
 # 测试套件 — 一次 Prompt Injection 防御测试的顶层容器
 # ======================================================================
@@ -50,15 +49,14 @@ class InjectionTestSuite(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
 
     __tablename__ = "ai_eval_injection_suites"
 
-    name: Mapped[str] = mapped_column(
-        String(255), nullable=False, comment="套件名称"
-    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False, comment="套件名称")
     description: Mapped[str | None] = mapped_column(
         Text, nullable=True, comment="套件描述"
     )
     # 测试目标：system_prompt（仅测系统提示词防御）/ full_rag（测完整RAG链路）
     target_mode: Mapped[str] = mapped_column(
-        String(20), default="system_prompt",
+        String(20),
+        default="system_prompt",
         comment="测试目标: system_prompt/full_rag",
     )
     # 关联知识库 ID（full_rag 模式下使用）
@@ -66,36 +64,32 @@ class InjectionTestSuite(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
         JSONB, nullable=True, comment="关联知识库 ID 列表（full_rag 模式）"
     )
     status: Mapped[str] = mapped_column(
-        String(20), default="created",
+        String(20),
+        default="created",
         comment="状态: created/running/completed/failed",
     )
     # 汇总统计
-    total_cases: Mapped[int] = mapped_column(
-        Integer, default=0, comment="用例总数"
-    )
-    passed_count: Mapped[int] = mapped_column(
-        Integer, default=0, comment="完美防御数"
-    )
-    partial_count: Mapped[int] = mapped_column(
-        Integer, default=0, comment="部分防御数"
-    )
-    failed_count: Mapped[int] = mapped_column(
-        Integer, default=0, comment="防御失败数"
-    )
+    total_cases: Mapped[int] = mapped_column(Integer, default=0, comment="用例总数")
+    passed_count: Mapped[int] = mapped_column(Integer, default=0, comment="完美防御数")
+    partial_count: Mapped[int] = mapped_column(Integer, default=0, comment="部分防御数")
+    failed_count: Mapped[int] = mapped_column(Integer, default=0, comment="防御失败数")
     # 执行耗时（秒）
     duration_seconds: Mapped[int] = mapped_column(
         Integer, default=0, comment="执行耗时（秒）"
     )
     created_by: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True,
-        comment="创建者 ID"
+        UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False,
+        index=True,
+        comment="创建者 ID",
     )
     tenant_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), nullable=True, index=True, comment="租户 ID（多租户隔离）"
     )
 
     # 关系
-    cases: Mapped[list["InjectionTestCase"]] = relationship(
+    cases: Mapped[list[InjectionTestCase]] = relationship(
         back_populates="suite", cascade="all, delete-orphan"
     )
 
@@ -114,37 +108,39 @@ class InjectionTestCase(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "ai_eval_injection_cases"
 
     suite_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("ai_eval_injection_suites.id"),
-        nullable=False, index=True, comment="所属套件 ID"
+        UUID(as_uuid=True),
+        ForeignKey("ai_eval_injection_suites.id"),
+        nullable=False,
+        index=True,
+        comment="所属套件 ID",
     )
     # 攻击类型：basic_jailbreak / role_playing / system_override /
     # context_poisoning / multi_turn / encoding_obfuscation /
     # indirect_injection / combined
     attack_type: Mapped[str] = mapped_column(
-        String(40), nullable=False,
+        String(40),
+        nullable=False,
         comment="攻击类型: basic_jailbreak/role_playing/system_override/"
-                "context_poisoning/multi_turn/encoding_obfuscation/"
-                "indirect_injection/combined",
+        "context_poisoning/multi_turn/encoding_obfuscation/"
+        "indirect_injection/combined",
     )
     # 严重程度：medium / high / critical
     severity: Mapped[str] = mapped_column(
-        String(20), default="high",
+        String(20),
+        default="high",
         comment="严重程度: medium/high/critical",
     )
-    title: Mapped[str] = mapped_column(
-        String(500), nullable=False, comment="用例标题"
-    )
+    title: Mapped[str] = mapped_column(String(500), nullable=False, comment="用例标题")
     # 攻击提示词（多轮攻击时为 JSON 数组，每项为单轮提示词）
-    prompt: Mapped[str] = mapped_column(
-        Text, nullable=False, comment="攻击提示词"
-    )
+    prompt: Mapped[str] = mapped_column(Text, nullable=False, comment="攻击提示词")
     # 期望行为描述（用于辅助评分）
     expected_behavior: Mapped[str] = mapped_column(
         Text, nullable=False, comment="期望行为：模型应拒绝执行并给出安全提示"
     )
     # 攻击目标（期望模型不应输出的内容关键词）
     attack_target: Mapped[str | None] = mapped_column(
-        Text, nullable=True,
+        Text,
+        nullable=True,
         comment="攻击目标关键词（用于检测模型是否泄露了敏感内容）",
     )
     # 来源：preset / custom
@@ -154,7 +150,7 @@ class InjectionTestCase(UUIDMixin, TimestampMixin, Base):
 
     # 关系
     suite: Mapped[InjectionTestSuite] = relationship(back_populates="cases")
-    result: Mapped["InjectionTestResult | None"] = relationship(
+    result: Mapped[InjectionTestResult | None] = relationship(
         back_populates="case", uselist=False, cascade="all, delete-orphan"
     )
 
@@ -173,12 +169,18 @@ class InjectionTestResult(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "ai_eval_injection_results"
 
     case_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("ai_eval_injection_cases.id"),
-        nullable=False, index=True, comment="关联用例 ID"
+        UUID(as_uuid=True),
+        ForeignKey("ai_eval_injection_cases.id"),
+        nullable=False,
+        index=True,
+        comment="关联用例 ID",
     )
     suite_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("ai_eval_injection_suites.id"),
-        nullable=False, index=True, comment="所属套件 ID"
+        UUID(as_uuid=True),
+        ForeignKey("ai_eval_injection_suites.id"),
+        nullable=False,
+        index=True,
+        comment="所属套件 ID",
     )
     # 模型响应文本
     response_text: Mapped[str | None] = mapped_column(
@@ -186,7 +188,8 @@ class InjectionTestResult(UUIDMixin, TimestampMixin, Base):
     )
     # 评分等级：pass / partial / fail
     verdict: Mapped[str] = mapped_column(
-        String(20), default="pending",
+        String(20),
+        default="pending",
         comment="评分等级: pass/partial/fail",
     )
     # 5 维度检查结果（JSONB）
@@ -235,9 +238,7 @@ class RagEvalDataset(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
 
     __tablename__ = "ai_eval_rag_datasets"
 
-    name: Mapped[str] = mapped_column(
-        String(255), nullable=False, comment="数据集名称"
-    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False, comment="数据集名称")
     description: Mapped[str | None] = mapped_column(
         Text, nullable=True, comment="数据集描述"
     )
@@ -246,11 +247,10 @@ class RagEvalDataset(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
         JSONB, nullable=True, comment="关联知识库 ID 列表（限定检索范围）"
     )
     # 默认 top_k：检索召回数量上限
-    top_k: Mapped[int] = mapped_column(
-        Integer, default=5, comment="默认检索 top_k"
-    )
+    top_k: Mapped[int] = mapped_column(Integer, default=5, comment="默认检索 top_k")
     status: Mapped[str] = mapped_column(
-        String(20), default="created",
+        String(20),
+        default="created",
         comment="状态: created/running/completed/failed",
     )
     # 汇总统计
@@ -277,7 +277,7 @@ class RagEvalDataset(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     )
 
     # 关系
-    queries: Mapped[list["RagEvalQuery"]] = relationship(
+    queries: Mapped[list[RagEvalQuery]] = relationship(
         back_populates="dataset", cascade="all, delete-orphan"
     )
 
@@ -291,23 +291,25 @@ class RagEvalQuery(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     __tablename__ = "ai_eval_rag_queries"
 
     dataset_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("ai_eval_rag_datasets.id"),
-        nullable=False, comment="所属数据集 ID"
+        UUID(as_uuid=True),
+        ForeignKey("ai_eval_rag_datasets.id"),
+        nullable=False,
+        comment="所属数据集 ID",
     )
     # 查询文本（用户问题）
-    query: Mapped[str] = mapped_column(
-        Text, nullable=False, comment="查询文本"
-    )
+    query: Mapped[str] = mapped_column(Text, nullable=False, comment="查询文本")
     # 查询类型：exact_match / semantic / synonym / cross_lingual /
     # fuzzy / multi_constraint
     query_type: Mapped[str] = mapped_column(
-        String(30), default="semantic",
+        String(30),
+        default="semantic",
         comment="查询类型: exact_match/semantic/synonym/"
-                "cross_lingual/fuzzy/multi_constraint",
+        "cross_lingual/fuzzy/multi_constraint",
     )
     # 难度：easy / medium / hard
     difficulty: Mapped[str] = mapped_column(
-        String(20), default="medium",
+        String(20),
+        default="medium",
         comment="难度: easy/medium/hard",
     )
     # 人工标注的相关文档 ID 列表（ground truth）
@@ -326,7 +328,7 @@ class RagEvalQuery(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
 
     # 关系
     dataset: Mapped[RagEvalDataset] = relationship(back_populates="queries")
-    result: Mapped["RagEvalResult | None"] = relationship(
+    result: Mapped[RagEvalResult | None] = relationship(
         back_populates="query", uselist=False, cascade="all, delete-orphan"
     )
 
@@ -342,12 +344,16 @@ class RagEvalResult(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "ai_eval_rag_results"
 
     query_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("ai_eval_rag_queries.id"),
-        nullable=False, comment="关联查询 ID"
+        UUID(as_uuid=True),
+        ForeignKey("ai_eval_rag_queries.id"),
+        nullable=False,
+        comment="关联查询 ID",
     )
     dataset_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("ai_eval_rag_datasets.id"),
-        nullable=False, comment="所属数据集 ID"
+        UUID(as_uuid=True),
+        ForeignKey("ai_eval_rag_datasets.id"),
+        nullable=False,
+        comment="所属数据集 ID",
     )
     # 检索结果列表（按 rank 排序）：
     # [{doc_id, chunk_id, score, rank, source, title}, ...]
@@ -400,19 +406,16 @@ class DocParseDataset(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
 
     __tablename__ = "ai_eval_doc_parse_datasets"
 
-    name: Mapped[str] = mapped_column(
-        String(255), nullable=False, comment="数据集名称"
-    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False, comment="数据集名称")
     description: Mapped[str | None] = mapped_column(
         Text, nullable=True, comment="数据集描述"
     )
     status: Mapped[str] = mapped_column(
-        String(20), default="created",
+        String(20),
+        default="created",
         comment="状态: created/running/completed/failed",
     )
-    total_cases: Mapped[int] = mapped_column(
-        Integer, default=0, comment="用例总数"
-    )
+    total_cases: Mapped[int] = mapped_column(Integer, default=0, comment="用例总数")
     # 聚合指标 JSONB
     metrics: Mapped[dict | None] = mapped_column(
         JSONB, nullable=True, comment="聚合解析质量指标"
@@ -428,7 +431,7 @@ class DocParseDataset(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     )
 
     # 关系
-    cases: Mapped[list["DocParseCase"]] = relationship(
+    cases: Mapped[list[DocParseCase]] = relationship(
         back_populates="dataset", cascade="all, delete-orphan"
     )
 
@@ -444,12 +447,12 @@ class DocParseCase(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     __tablename__ = "ai_eval_doc_parse_cases"
 
     dataset_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("ai_eval_doc_parse_datasets.id"),
-        nullable=False, comment="所属数据集 ID"
+        UUID(as_uuid=True),
+        ForeignKey("ai_eval_doc_parse_datasets.id"),
+        nullable=False,
+        comment="所属数据集 ID",
     )
-    title: Mapped[str] = mapped_column(
-        String(500), nullable=False, comment="用例标题"
-    )
+    title: Mapped[str] = mapped_column(String(500), nullable=False, comment="用例标题")
     # 文档类型：pdf/docx/pptx/xlsx/html/image
     doc_type: Mapped[str] = mapped_column(
         String(20), default="pdf", comment="文档类型: pdf/docx/pptx/xlsx/html/image"
@@ -477,7 +480,7 @@ class DocParseCase(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
 
     # 关系
     dataset: Mapped[DocParseDataset] = relationship(back_populates="cases")
-    result: Mapped["DocParseResult | None"] = relationship(
+    result: Mapped[DocParseResult | None] = relationship(
         back_populates="case", uselist=False, cascade="all, delete-orphan"
     )
 
@@ -492,12 +495,16 @@ class DocParseResult(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "ai_eval_doc_parse_results"
 
     case_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("ai_eval_doc_parse_cases.id"),
-        nullable=False, comment="关联用例 ID"
+        UUID(as_uuid=True),
+        ForeignKey("ai_eval_doc_parse_cases.id"),
+        nullable=False,
+        comment="关联用例 ID",
     )
     dataset_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("ai_eval_doc_parse_datasets.id"),
-        nullable=False, comment="所属数据集 ID"
+        UUID(as_uuid=True),
+        ForeignKey("ai_eval_doc_parse_datasets.id"),
+        nullable=False,
+        comment="所属数据集 ID",
     )
     # 实际用于评测的解析结果文本（直接提供或 Docling 解析得到）
     parsed_text: Mapped[str | None] = mapped_column(
@@ -544,9 +551,7 @@ class JudgeDataset(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
 
     __tablename__ = "ai_eval_judge_datasets"
 
-    name: Mapped[str] = mapped_column(
-        String(255), nullable=False, comment="数据集名称"
-    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False, comment="数据集名称")
     description: Mapped[str | None] = mapped_column(
         Text, nullable=True, comment="数据集描述"
     )
@@ -559,12 +564,11 @@ class JudgeDataset(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
         JSONB, nullable=True, comment="评分维度列表"
     )
     status: Mapped[str] = mapped_column(
-        String(20), default="created",
+        String(20),
+        default="created",
         comment="状态: created/running/completed/failed",
     )
-    total_cases: Mapped[int] = mapped_column(
-        Integer, default=0, comment="用例总数"
-    )
+    total_cases: Mapped[int] = mapped_column(Integer, default=0, comment="用例总数")
     # 聚合评分 JSONB：{dimension: avg_score, overall: avg}
     metrics: Mapped[dict | None] = mapped_column(
         JSONB, nullable=True, comment="聚合裁判评分"
@@ -580,7 +584,7 @@ class JudgeDataset(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     )
 
     # 关系
-    cases: Mapped[list["JudgeCase"]] = relationship(
+    cases: Mapped[list[JudgeCase]] = relationship(
         back_populates="dataset", cascade="all, delete-orphan"
     )
 
@@ -594,13 +598,13 @@ class JudgeCase(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     __tablename__ = "ai_eval_judge_cases"
 
     dataset_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("ai_eval_judge_datasets.id"),
-        nullable=False, comment="所属数据集 ID"
+        UUID(as_uuid=True),
+        ForeignKey("ai_eval_judge_datasets.id"),
+        nullable=False,
+        comment="所属数据集 ID",
     )
     # 问题/指令
-    question: Mapped[str] = mapped_column(
-        Text, nullable=False, comment="问题/指令"
-    )
+    question: Mapped[str] = mapped_column(Text, nullable=False, comment="问题/指令")
     # 参考答案（标准答案，供裁判对比）
     reference_answer: Mapped[str] = mapped_column(
         Text, nullable=False, comment="参考答案（标准答案）"
@@ -611,7 +615,8 @@ class JudgeCase(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     )
     # 场景类别：instruction/qa/reasoning/code/roleplay/safety
     category: Mapped[str] = mapped_column(
-        String(30), default="qa",
+        String(30),
+        default="qa",
         comment="场景类别: instruction/qa/reasoning/code/roleplay/safety",
     )
     # 来源：preset / custom
@@ -621,7 +626,7 @@ class JudgeCase(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
 
     # 关系
     dataset: Mapped[JudgeDataset] = relationship(back_populates="cases")
-    result: Mapped["JudgeResult | None"] = relationship(
+    result: Mapped[JudgeResult | None] = relationship(
         back_populates="case", uselist=False, cascade="all, delete-orphan"
     )
 
@@ -635,12 +640,16 @@ class JudgeResult(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "ai_eval_judge_results"
 
     case_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("ai_eval_judge_cases.id"),
-        nullable=False, comment="关联用例 ID"
+        UUID(as_uuid=True),
+        ForeignKey("ai_eval_judge_cases.id"),
+        nullable=False,
+        comment="关联用例 ID",
     )
     dataset_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("ai_eval_judge_datasets.id"),
-        nullable=False, comment="所属数据集 ID"
+        UUID(as_uuid=True),
+        ForeignKey("ai_eval_judge_datasets.id"),
+        nullable=False,
+        comment="所属数据集 ID",
     )
     # 各维度评分 JSONB：{dimension: score}
     scores: Mapped[dict | None] = mapped_column(

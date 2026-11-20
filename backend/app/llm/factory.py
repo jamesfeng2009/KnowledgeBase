@@ -118,8 +118,7 @@ def get_llm_provider() -> LLMProvider:
     factory = _llm_provider_registry.get(mode)
     if factory is None:
         raise ValueError(
-            f"不支持的 DEPLOY_MODE: {mode}，"
-            f"已注册: {list(_llm_provider_registry)}"
+            f"不支持的 DEPLOY_MODE: {mode}，" f"已注册: {list(_llm_provider_registry)}"
         )
     return factory()
 
@@ -185,9 +184,7 @@ def get_llm_provider_by_model(model_id: str) -> LLMProvider:
     provider_type = model_config.get("provider_type", "")
     constructor = _PROVIDER_CONSTRUCTORS.get(provider_type)
     if constructor is None:
-        raise ValueError(
-            f"未知 provider_type: {provider_type}（模型 {model_id}）"
-        )
+        raise ValueError(f"未知 provider_type: {provider_type}（模型 {model_id}）")
 
     # 传入 models.json 中的实际 model_id（如 "claude-haiku-4-20250506"）
     actual_model = model_config.get("model_id", "")

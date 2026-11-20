@@ -16,6 +16,7 @@
 核心流程（5 步）：
     执行结果收集 → AI 知识提取 → 知识资产沉淀 → 冲突检测 → 复用注入
 """
+
 from __future__ import annotations
 
 import json
@@ -237,35 +238,37 @@ def _make_conflict(
 
 def _make_llm_extraction_response():
     """创建 LLM 知识提取的 Mock 响应 JSON。"""
-    return json.dumps({
-        "defect_experience": {
-            "title": "登录接口空指针缺陷",
-            "content": "根因：用户名为空时未做空值检查，导致 NullPointerException。复现步骤：1. 发送空用户名 2. 调用登录接口 3. 服务端 500 错误",
-            "summary": "空用户名导致空指针异常",
-            "tags": ["api", "null_check", "login"],
-            "confidence": 0.9,
-        },
-        "regression_sop": {
-            "title": "登录接口回归 SOP",
-            "content": "验证步骤：1. 正常登录 2. 空用户名 3. 错误密码 4. 账号锁定。检查点：HTTP 状态码、错误消息、token 有效性",
-            "summary": "登录接口回归验证流程",
-            "tags": ["regression", "login"],
-            "confidence": 0.85,
-        },
-        "graph_triples": [
-            ["登录接口", "验证方式", "API测试"],
-            ["空指针", "根因", "空值检查缺失"],
-        ],
-        "verification_baseline": {
-            "entity_name": "登录接口验证基线",
-            "content": "基线：正常登录返回200+token，异常返回4xx",
-            "summary": "登录接口验证基线 v1",
-            "version": "v1",
-            "old_version": None,
-            "tags": ["baseline", "login"],
-            "confidence": 0.9,
-        },
-    })
+    return json.dumps(
+        {
+            "defect_experience": {
+                "title": "登录接口空指针缺陷",
+                "content": "根因：用户名为空时未做空值检查，导致 NullPointerException。复现步骤：1. 发送空用户名 2. 调用登录接口 3. 服务端 500 错误",
+                "summary": "空用户名导致空指针异常",
+                "tags": ["api", "null_check", "login"],
+                "confidence": 0.9,
+            },
+            "regression_sop": {
+                "title": "登录接口回归 SOP",
+                "content": "验证步骤：1. 正常登录 2. 空用户名 3. 错误密码 4. 账号锁定。检查点：HTTP 状态码、错误消息、token 有效性",
+                "summary": "登录接口回归验证流程",
+                "tags": ["regression", "login"],
+                "confidence": 0.85,
+            },
+            "graph_triples": [
+                ["登录接口", "验证方式", "API测试"],
+                ["空指针", "根因", "空值检查缺失"],
+            ],
+            "verification_baseline": {
+                "entity_name": "登录接口验证基线",
+                "content": "基线：正常登录返回200+token，异常返回4xx",
+                "summary": "登录接口验证基线 v1",
+                "version": "v1",
+                "old_version": None,
+                "tags": ["baseline", "login"],
+                "confidence": 0.9,
+            },
+        }
+    )
 
 
 # ======================================================================
@@ -324,7 +327,7 @@ class TestCompoundingModels:
 
     def test_testing_model_new_fields(self):
         """测试测试模型新增的知识回流字段。"""
-        from app.models.testing import TestExecution, TestCase, TestRequirement
+        from app.models.testing import TestCase, TestExecution, TestRequirement
 
         # TestExecution 新增字段
         assert hasattr(TestExecution, "evidence_ref")
@@ -343,6 +346,7 @@ class TestCompoundingModels:
             KnowledgeAsset,
             KnowledgeConflict,
         )
+
         assert KnowledgeAsset is not None
         assert CompoundingTask is not None
         assert KnowledgeConflict is not None
@@ -478,9 +482,7 @@ class TestKnowledgeCompoundingService:
         from app.services.knowledge_compounding import KnowledgeCompoundingService
 
         db = _make_mock_db()
-        db.execute = AsyncMock(
-            return_value=_make_scalar_one_or_none_result(None)
-        )
+        db.execute = AsyncMock(return_value=_make_scalar_one_or_none_result(None))
 
         service = KnowledgeCompoundingService(None, db)
         with pytest.raises(ValueError, match="执行记录不存在"):
@@ -524,11 +526,14 @@ class TestKnowledgeCompoundingService:
         db.scalar = AsyncMock(return_value=0)  # count queries
 
         # mock GraphitiManager.sync_to_graphiti
-        with patch(
-            "app.memory.graphiti_manager.GraphitiManager.register_entity"
-        ) as mock_register, patch(
-            "app.memory.graphiti_manager.GraphitiManager.record_event"
-        ) as mock_record:
+        with (
+            patch(
+                "app.memory.graphiti_manager.GraphitiManager.register_entity"
+            ) as mock_register,
+            patch(
+                "app.memory.graphiti_manager.GraphitiManager.record_event"
+            ) as mock_record,
+        ):
             mock_entity = MagicMock()
             mock_entity.id = uuid.uuid4()
             mock_register = AsyncMock(return_value=mock_entity)
@@ -549,9 +554,7 @@ class TestKnowledgeCompoundingService:
         db = _make_mock_db()
         execution = _make_execution(compounding_status="processed")
 
-        db.execute = AsyncMock(
-            return_value=_make_scalar_one_or_none_result(execution)
-        )
+        db.execute = AsyncMock(return_value=_make_scalar_one_or_none_result(execution))
 
         service = KnowledgeCompoundingService(None, db)
         result = await service.extract_knowledge(str(execution.id))
@@ -565,9 +568,7 @@ class TestKnowledgeCompoundingService:
         from app.services.knowledge_compounding import KnowledgeCompoundingService
 
         db = _make_mock_db()
-        db.execute = AsyncMock(
-            return_value=_make_scalar_one_or_none_result(None)
-        )
+        db.execute = AsyncMock(return_value=_make_scalar_one_or_none_result(None))
 
         service = KnowledgeCompoundingService(None, db)
         with pytest.raises(ValueError, match="执行记录不存在"):
@@ -660,9 +661,7 @@ class TestKnowledgeCompoundingService:
         from app.services.knowledge_compounding import KnowledgeCompoundingService
 
         db = _make_mock_db()
-        db.execute = AsyncMock(
-            return_value=_make_scalar_one_or_none_result(None)
-        )
+        db.execute = AsyncMock(return_value=_make_scalar_one_or_none_result(None))
 
         service = KnowledgeCompoundingService(None, db)
         with pytest.raises(ValueError, match="知识资产不存在"):
@@ -723,9 +722,7 @@ class TestKnowledgeCompoundingService:
         from app.services.knowledge_compounding import KnowledgeCompoundingService
 
         db = _make_mock_db()
-        db.execute = AsyncMock(
-            return_value=_make_scalar_one_or_none_result(None)
-        )
+        db.execute = AsyncMock(return_value=_make_scalar_one_or_none_result(None))
 
         service = KnowledgeCompoundingService(None, db)
         with pytest.raises(ValueError, match="需求点不存在"):
@@ -740,9 +737,7 @@ class TestKnowledgeCompoundingService:
         assets = [_make_knowledge_asset(), _make_knowledge_asset()]
 
         db.scalar = AsyncMock(return_value=2)
-        db.execute = AsyncMock(
-            return_value=_make_scalars_result(assets)
-        )
+        db.execute = AsyncMock(return_value=_make_scalars_result(assets))
 
         service = KnowledgeCompoundingService(None, db)
         items, total = await service.list_assets(page=1, size=20)
@@ -759,9 +754,7 @@ class TestKnowledgeCompoundingService:
         tasks = [_make_compounding_task()]
 
         db.scalar = AsyncMock(return_value=1)
-        db.execute = AsyncMock(
-            return_value=_make_scalars_result(tasks)
-        )
+        db.execute = AsyncMock(return_value=_make_scalars_result(tasks))
 
         service = KnowledgeCompoundingService(None, db)
         items, total = await service.list_tasks(page=1, size=20)
@@ -778,9 +771,7 @@ class TestKnowledgeCompoundingService:
         conflicts = [_make_conflict()]
 
         db.scalar = AsyncMock(return_value=1)
-        db.execute = AsyncMock(
-            return_value=_make_scalars_result(conflicts)
-        )
+        db.execute = AsyncMock(return_value=_make_scalars_result(conflicts))
 
         service = KnowledgeCompoundingService(None, db)
         items, total = await service.list_conflicts(page=1, size=20)
@@ -819,9 +810,7 @@ class TestKnowledgeCompoundingService:
         from app.services.knowledge_compounding import KnowledgeCompoundingService
 
         db = _make_mock_db()
-        db.execute = AsyncMock(
-            return_value=_make_scalar_one_or_none_result(None)
-        )
+        db.execute = AsyncMock(return_value=_make_scalar_one_or_none_result(None))
 
         service = KnowledgeCompoundingService(None, db)
         with pytest.raises(ValueError, match="知识冲突不存在"):
@@ -1047,7 +1036,6 @@ class TestCompoundingCeleryTasks:
     @pytest.mark.asyncio
     async def test_run_async_helper(self):
         """测试 _run_async 辅助函数 — 验证协程可同步执行。"""
-        import asyncio
 
         async def sample_coro():
             return 42
@@ -1082,9 +1070,13 @@ class TestCompoundingAPIRegistration:
 
         # 检查关键端点路径存在
         paths = {r.path for r in compounding_router.routes if hasattr(r, "path")}
-        assert any("/extract" in p for p in paths), f"extract endpoint not found: {paths}"
+        assert any(
+            "/extract" in p for p in paths
+        ), f"extract endpoint not found: {paths}"
         assert any("/assets" in p for p in paths), f"assets endpoint not found: {paths}"
-        assert any("/conflicts" in p for p in paths), f"conflicts endpoint not found: {paths}"
+        assert any(
+            "/conflicts" in p for p in paths
+        ), f"conflicts endpoint not found: {paths}"
         assert any("/reuse" in p for p in paths), f"reuse endpoint not found: {paths}"
         assert any("/stats" in p for p in paths), f"stats endpoint not found: {paths}"
 
@@ -1117,35 +1109,50 @@ class TestChatFaqCompounding:
         kb_id = uuid.uuid4()
         asset_mock = MagicMock(id=uuid.uuid4(), doc_id=uuid.uuid4())
 
-        with patch.object(
-            # P3: 闸门直沉路径测试 — 显式关闭候选池（默认开启会先行入池返回 queued）
-            get_settings(),
-            "CHAT_FAQ_CANDIDATE_POOL_ENABLED",
-            False,
-        ), patch.object(
-            service, "_get_asset_by_source", new=AsyncMock(return_value=None)
-        ), patch.object(
-            service, "_load_chat_feedback_context",
-            new=AsyncMock(return_value={
-                "feedback_id": str(feedback_id),
-                "user_id": uuid.uuid4(),
-                "conversation_id": str(uuid.uuid4()),
-                "user_query": "公司差旅报销标准？",
-                "assistant_answer": "经济舱按实报销...",
-                "feedback_content": "回答很详细",
-            }),
-        ), patch.object(
-            service, "_llm_extract_faq",
-            new=AsyncMock(return_value={
-                "question": "公司差旅报销标准是什么？",
-                "answer": "经济舱按实报销...",
-                "tags": ["差旅", "报销"],
-                "confidence": 0.85,
-            }),
-        ), patch.object(
-            service, "_precipitate_faq_asset", new=AsyncMock(return_value=asset_mock)
-        ), patch.object(
-            service, "_detect_conflicts_for_assets", new=AsyncMock(return_value=[])
+        with (
+            patch.object(
+                # P3: 闸门直沉路径测试 — 显式关闭候选池（默认开启会先行入池返回 queued）
+                get_settings(),
+                "CHAT_FAQ_CANDIDATE_POOL_ENABLED",
+                False,
+            ),
+            patch.object(
+                service, "_get_asset_by_source", new=AsyncMock(return_value=None)
+            ),
+            patch.object(
+                service,
+                "_load_chat_feedback_context",
+                new=AsyncMock(
+                    return_value={
+                        "feedback_id": str(feedback_id),
+                        "user_id": uuid.uuid4(),
+                        "conversation_id": str(uuid.uuid4()),
+                        "user_query": "公司差旅报销标准？",
+                        "assistant_answer": "经济舱按实报销...",
+                        "feedback_content": "回答很详细",
+                    }
+                ),
+            ),
+            patch.object(
+                service,
+                "_llm_extract_faq",
+                new=AsyncMock(
+                    return_value={
+                        "question": "公司差旅报销标准是什么？",
+                        "answer": "经济舱按实报销...",
+                        "tags": ["差旅", "报销"],
+                        "confidence": 0.85,
+                    }
+                ),
+            ),
+            patch.object(
+                service,
+                "_precipitate_faq_asset",
+                new=AsyncMock(return_value=asset_mock),
+            ),
+            patch.object(
+                service, "_detect_conflicts_for_assets", new=AsyncMock(return_value=[])
+            ),
         ):
             result = await service.extract_from_chat_feedback(feedback_id, kb_id)
 
@@ -1167,7 +1174,8 @@ class TestChatFaqCompounding:
         existing_asset = MagicMock(id=uuid.uuid4())
 
         with patch.object(
-            service, "_get_asset_by_source",
+            service,
+            "_get_asset_by_source",
             new=AsyncMock(return_value=existing_asset),
         ):
             result = await service.extract_from_chat_feedback(feedback_id, kb_id)
@@ -1186,10 +1194,17 @@ class TestChatFaqCompounding:
         feedback_id = uuid.uuid4()
         kb_id = uuid.uuid4()
 
-        with patch.object(
-            service, "_get_asset_by_source", new=AsyncMock(return_value=None),
-        ), patch.object(
-            service, "_load_chat_feedback_context", new=AsyncMock(return_value=None),
+        with (
+            patch.object(
+                service,
+                "_get_asset_by_source",
+                new=AsyncMock(return_value=None),
+            ),
+            patch.object(
+                service,
+                "_load_chat_feedback_context",
+                new=AsyncMock(return_value=None),
+            ),
         ):
             result = await service.extract_from_chat_feedback(feedback_id, kb_id)
 
@@ -1207,31 +1222,44 @@ class TestChatFaqCompounding:
         feedback_id = uuid.uuid4()
         kb_id = uuid.uuid4()
 
-        with patch.object(
-            # P3: 闸门直沉路径测试 — 显式关闭候选池
-            get_settings(),
-            "CHAT_FAQ_CANDIDATE_POOL_ENABLED",
-            False,
-        ), patch.object(
-            service, "_get_asset_by_source", new=AsyncMock(return_value=None),
-        ), patch.object(
-            service, "_load_chat_feedback_context",
-            new=AsyncMock(return_value={
-                "feedback_id": str(feedback_id),
-                "user_id": uuid.uuid4(),
-                "conversation_id": str(uuid.uuid4()),
-                "user_query": "...",
-                "assistant_answer": "...",
-                "feedback_content": "",
-            }),
-        ), patch.object(
-            service, "_llm_extract_faq",
-            new=AsyncMock(return_value={
-                "question": "",  # 空 question
-                "answer": "有答案",
-                "tags": [],
-                "confidence": 0.5,
-            }),
+        with (
+            patch.object(
+                # P3: 闸门直沉路径测试 — 显式关闭候选池
+                get_settings(),
+                "CHAT_FAQ_CANDIDATE_POOL_ENABLED",
+                False,
+            ),
+            patch.object(
+                service,
+                "_get_asset_by_source",
+                new=AsyncMock(return_value=None),
+            ),
+            patch.object(
+                service,
+                "_load_chat_feedback_context",
+                new=AsyncMock(
+                    return_value={
+                        "feedback_id": str(feedback_id),
+                        "user_id": uuid.uuid4(),
+                        "conversation_id": str(uuid.uuid4()),
+                        "user_query": "...",
+                        "assistant_answer": "...",
+                        "feedback_content": "",
+                    }
+                ),
+            ),
+            patch.object(
+                service,
+                "_llm_extract_faq",
+                new=AsyncMock(
+                    return_value={
+                        "question": "",  # 空 question
+                        "answer": "有答案",
+                        "tags": [],
+                        "confidence": 0.5,
+                    }
+                ),
+            ),
         ):
             result = await service.extract_from_chat_feedback(feedback_id, kb_id)
 
@@ -1250,26 +1278,39 @@ class TestChatFaqCompounding:
         kb_id = uuid.uuid4()
         asset_mock = MagicMock(id=uuid.uuid4(), doc_id=uuid.uuid4())
 
-        with patch.object(
-            # P3: 闸门直沉路径测试 — 显式关闭候选池
-            get_settings(),
-            "CHAT_FAQ_CANDIDATE_POOL_ENABLED",
-            False,
-        ), patch.object(
-            service, "_get_asset_by_source", new=AsyncMock(return_value=None),
-        ), patch.object(
-            service, "_load_accepted_answer_context",
-            new=AsyncMock(return_value={
-                "question_id": str(uuid.uuid4()),
-                "question_title": "如何申请年假？",
-                "answer_content": "在 OA 系统提交年假申请...",
-                "user_id": uuid.uuid4(),
-                "tags": ["人事", "年假", "human"],
-            }),
-        ), patch.object(
-            service, "_precipitate_faq_asset", new=AsyncMock(return_value=asset_mock)
-        ), patch.object(
-            service, "_detect_conflicts_for_assets", new=AsyncMock(return_value=[])
+        with (
+            patch.object(
+                # P3: 闸门直沉路径测试 — 显式关闭候选池
+                get_settings(),
+                "CHAT_FAQ_CANDIDATE_POOL_ENABLED",
+                False,
+            ),
+            patch.object(
+                service,
+                "_get_asset_by_source",
+                new=AsyncMock(return_value=None),
+            ),
+            patch.object(
+                service,
+                "_load_accepted_answer_context",
+                new=AsyncMock(
+                    return_value={
+                        "question_id": str(uuid.uuid4()),
+                        "question_title": "如何申请年假？",
+                        "answer_content": "在 OA 系统提交年假申请...",
+                        "user_id": uuid.uuid4(),
+                        "tags": ["人事", "年假", "human"],
+                    }
+                ),
+            ),
+            patch.object(
+                service,
+                "_precipitate_faq_asset",
+                new=AsyncMock(return_value=asset_mock),
+            ),
+            patch.object(
+                service, "_detect_conflicts_for_assets", new=AsyncMock(return_value=[])
+            ),
         ):
             result = await service.extract_from_accepted_answer(answer_id, kb_id)
 
@@ -1290,7 +1331,8 @@ class TestChatFaqCompounding:
         existing_asset = MagicMock(id=uuid.uuid4())
 
         with patch.object(
-            service, "_get_asset_by_source",
+            service,
+            "_get_asset_by_source",
             new=AsyncMock(return_value=existing_asset),
         ):
             result = await service.extract_from_accepted_answer(answer_id, kb_id)
@@ -1309,11 +1351,17 @@ class TestChatFaqCompounding:
         answer_id = uuid.uuid4()
         kb_id = uuid.uuid4()
 
-        with patch.object(
-            service, "_get_asset_by_source", new=AsyncMock(return_value=None),
-        ), patch.object(
-            service, "_load_accepted_answer_context",
-            new=AsyncMock(return_value=None),
+        with (
+            patch.object(
+                service,
+                "_get_asset_by_source",
+                new=AsyncMock(return_value=None),
+            ),
+            patch.object(
+                service,
+                "_load_accepted_answer_context",
+                new=AsyncMock(return_value=None),
+            ),
         ):
             result = await service.extract_from_accepted_answer(answer_id, kb_id)
 

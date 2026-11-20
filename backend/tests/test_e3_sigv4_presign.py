@@ -75,7 +75,9 @@ class TestE3SigV4:
         bucket = get_settings().MINIO_BUCKET
         obj = f"e3-gate/{uuid.uuid4().hex}.png"
         data = _png_bytes()
-        await upload_file(bucket=bucket, object_name=obj, data=data, content_type="image/png")
+        await upload_file(
+            bucket=bucket, object_name=obj, data=data, content_type="image/png"
+        )
         try:
             url = await get_presigned_url(bucket, obj)
             assert "X-Amz-Signature" in _query_keys(url)
@@ -115,10 +117,19 @@ class TestE3SigV4:
         bucket = get_settings().MINIO_BUCKET
         obj = f"e3-gate/{uuid.uuid4().hex}.png"
         data = _png_bytes()
-        ref = await upload_file(bucket=bucket, object_name=obj, data=data, content_type="image/png")
+        ref = await upload_file(
+            bucket=bucket, object_name=obj, data=data, content_type="image/png"
+        )
         try:
             out = await enrich_asset_docs(
-                [{"chunk_id": "c1", "chunk_type": "image", "asset_ref": ref, "content": "描述"}]
+                [
+                    {
+                        "chunk_id": "c1",
+                        "chunk_type": "image",
+                        "asset_ref": ref,
+                        "content": "描述",
+                    }
+                ]
             )
             url = out[0]["asset_url"]
             assert "X-Amz-Signature" in _query_keys(url)

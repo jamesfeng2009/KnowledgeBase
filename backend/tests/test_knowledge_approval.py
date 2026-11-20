@@ -9,11 +9,11 @@
 - TestPiiDetection: PII 检测
 - TestSubmitFaqForReview: compounding_service 审批接入 + 降级
 """
+
 from __future__ import annotations
 
 import sys
 import uuid
-from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -95,10 +95,9 @@ class TestKnowledgeApprovalService:
         service = KnowledgeApprovalService(db)
         asset = _make_mock_asset(confidence=0.95)
 
-        with patch.object(
-            service, "_detect_pii", return_value=(False, [])
-        ), patch.object(
-            service, "_update_doc_status", new=AsyncMock()
+        with (
+            patch.object(service, "_detect_pii", return_value=(False, [])),
+            patch.object(service, "_update_doc_status", new=AsyncMock()),
         ):
             approval = await service.submit_for_review(
                 asset=asset,
@@ -122,13 +121,13 @@ class TestKnowledgeApprovalService:
         service = KnowledgeApprovalService(db)
         asset = _make_mock_asset(confidence=0.5)
 
-        with patch.object(
-            service, "_detect_pii", return_value=(False, [])
-        ), patch.object(
-            service, "_update_doc_status", new=AsyncMock()
-        ), patch.object(
-            service, "_soft_delete_doc", new=AsyncMock()
-        ) as mock_soft_delete:
+        with (
+            patch.object(service, "_detect_pii", return_value=(False, [])),
+            patch.object(service, "_update_doc_status", new=AsyncMock()),
+            patch.object(
+                service, "_soft_delete_doc", new=AsyncMock()
+            ) as mock_soft_delete,
+        ):
             approval = await service.submit_for_review(
                 asset=asset,
                 doc_id=asset.doc_id,
@@ -153,10 +152,9 @@ class TestKnowledgeApprovalService:
         service = KnowledgeApprovalService(db)
         asset = _make_mock_asset(confidence=0.7)
 
-        with patch.object(
-            service, "_detect_pii", return_value=(False, [])
-        ), patch.object(
-            service, "_update_doc_status", new=AsyncMock()
+        with (
+            patch.object(service, "_detect_pii", return_value=(False, [])),
+            patch.object(service, "_update_doc_status", new=AsyncMock()),
         ):
             approval = await service.submit_for_review(
                 asset=asset,
@@ -181,10 +179,9 @@ class TestKnowledgeApprovalService:
         service = KnowledgeApprovalService(db)
         asset = _make_mock_asset(confidence=0.95)
 
-        with patch.object(
-            service, "_detect_pii", return_value=(False, [])
-        ), patch.object(
-            service, "_update_doc_status", new=AsyncMock()
+        with (
+            patch.object(service, "_detect_pii", return_value=(False, [])),
+            patch.object(service, "_update_doc_status", new=AsyncMock()),
         ):
             approval = await service.submit_for_review(
                 asset=asset,
@@ -208,10 +205,9 @@ class TestKnowledgeApprovalService:
         service = KnowledgeApprovalService(db)
         asset = _make_mock_asset(confidence=0.95)
 
-        with patch.object(
-            service, "_detect_pii", return_value=(True, ["phone"])
-        ), patch.object(
-            service, "_update_doc_status", new=AsyncMock()
+        with (
+            patch.object(service, "_detect_pii", return_value=(True, ["phone"])),
+            patch.object(service, "_update_doc_status", new=AsyncMock()),
         ):
             approval = await service.submit_for_review(
                 asset=asset,
@@ -244,12 +240,12 @@ class TestKnowledgeApprovalService:
 
         user = _make_mock_user()
 
-        with patch.object(
-            service, "_get_approval", new=AsyncMock(return_value=approval)
-        ), patch.object(
-            service, "_get_asset", new=AsyncMock(return_value=asset)
-        ), patch.object(
-            service, "_update_doc_status", new=AsyncMock()
+        with (
+            patch.object(
+                service, "_get_approval", new=AsyncMock(return_value=approval)
+            ),
+            patch.object(service, "_get_asset", new=AsyncMock(return_value=asset)),
+            patch.object(service, "_update_doc_status", new=AsyncMock()),
         ):
             result = await service.approve(approval.id, user, note="通过")
 
@@ -277,12 +273,12 @@ class TestKnowledgeApprovalService:
         asset = _make_mock_asset()
         user = _make_mock_user()
 
-        with patch.object(
-            service, "_get_approval", new=AsyncMock(return_value=approval)
-        ), patch.object(
-            service, "_get_asset", new=AsyncMock(return_value=asset)
-        ), patch.object(
-            service, "_soft_delete_doc", new=AsyncMock()
+        with (
+            patch.object(
+                service, "_get_approval", new=AsyncMock(return_value=approval)
+            ),
+            patch.object(service, "_get_asset", new=AsyncMock(return_value=asset)),
+            patch.object(service, "_soft_delete_doc", new=AsyncMock()),
         ):
             result = await service.reject(approval.id, user, reason="内容不准确")
 
@@ -324,9 +320,7 @@ class TestKnowledgeApprovalService:
         service = KnowledgeApprovalService(db)
         user = _make_mock_user()
 
-        with patch.object(
-            service, "_get_approval", new=AsyncMock(return_value=None)
-        ):
+        with patch.object(service, "_get_approval", new=AsyncMock(return_value=None)):
             with pytest.raises(ValueError, match="审批不存在"):
                 await service.approve(uuid.uuid4(), user)
 

@@ -27,7 +27,6 @@ import sqlalchemy as sa
 
 from app.config import get_settings
 from app.document.pdf_parser import PDFParser
-
 from tests.test_d6_asset_chunks import (
     _VLM_DESC,
     _make_asset_pdf,
@@ -192,7 +191,9 @@ class TestD7ParseFork:
         # 表格提取不受图片开关影响（两侧都保留）
         assert "指标甲" in doc_a.content_text and "指标甲" in doc_b.content_text
 
-    async def test_unconfigured_tenant_falls_back_global(self, db_session, tmp_path, monkeypatch):
+    async def test_unconfigured_tenant_falls_back_global(
+        self, db_session, tmp_path, monkeypatch
+    ):
         """正向证人：未配置租户行为等于全局默认（图片描述开）。"""
         import tasks.document_tasks as dt
 
@@ -334,7 +335,10 @@ class TestD7DoclingMineru:
         from app.document.docling_parser import DoclingParser
 
         monkeypatch.setattr(
-            get_settings(), "MINERU_PYTHON", "/fake/mineru/venv/bin/python", raising=False
+            get_settings(),
+            "MINERU_PYTHON",
+            "/fake/mineru/venv/bin/python",
+            raising=False,
         )
         path = _make_scanned_pdf(str(tmp_path / "mineru.pdf"))
         parser = DoclingParser()
@@ -356,10 +360,10 @@ class TestD7API:
     async def test_parse_config_endpoints(self, db_session):
         import httpx
 
-        from app.models import User
         from app.database import get_db_session
         from app.deps import get_current_active_user
         from app.main import app
+        from app.models import User
 
         tid = uuid.uuid4()
         await _seed_tenant(db_session, tid)

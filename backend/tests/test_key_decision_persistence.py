@@ -63,6 +63,7 @@ class TestExtractAndSaveKeyDecisions:
         manager = self._make_memory_manager()
 
         mock_llm = MagicMock()
+
         async def mock_chat(*args, **kwargs):
             yield "用户确认选择方案A"
 
@@ -91,6 +92,7 @@ class TestExtractAndSaveKeyDecisions:
         manager = self._make_memory_manager()
 
         mock_llm = MagicMock()
+
         async def mock_chat(*args, **kwargs):
             yield "确认报销金额5000元"
 
@@ -115,6 +117,7 @@ class TestExtractAndSaveKeyDecisions:
         manager = self._make_memory_manager()
 
         mock_llm = MagicMock()
+
         async def mock_chat(*args, **kwargs):
             yield "NONE"
 
@@ -138,7 +141,10 @@ class TestExtractAndSaveKeyDecisions:
 
         manager = self._make_memory_manager()
 
-        with patch("app.memory.memory_manager.get_llm_provider", side_effect=Exception("no llm")):
+        with patch(
+            "app.memory.memory_manager.get_llm_provider",
+            side_effect=Exception("no llm"),
+        ):
             result = await MemoryManager.extract_and_save_key_decisions(
                 manager,
                 user_id=uuid.uuid4(),
@@ -157,6 +163,7 @@ class TestExtractAndSaveKeyDecisions:
         manager = self._make_memory_manager()
 
         mock_llm = MagicMock()
+
         async def mock_chat(*args, **kwargs):
             raise Exception("llm error")
             yield  # never reached
@@ -182,6 +189,7 @@ class TestExtractAndSaveKeyDecisions:
         manager = self._make_memory_manager()
 
         mock_llm = MagicMock()
+
         async def mock_chat(*args, **kwargs):
             yield "设定审批阈值为10000元"
 

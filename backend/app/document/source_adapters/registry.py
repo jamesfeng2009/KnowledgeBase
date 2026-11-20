@@ -15,6 +15,7 @@
     # 注册自定义适配器
     adapter_registry.register(MyAdapter())
 """
+
 from __future__ import annotations
 
 from app.document.source_adapters.base import DocumentSourceAdapter
@@ -89,7 +90,6 @@ class SourceAdapterRegistry:
 
 # 避免在类型注解中引用 Any 时未导入
 from typing import Any  # noqa: E402
-
 
 # ------------------------------------------------------------------
 # 全局单例 — 延迟注册内置适配器

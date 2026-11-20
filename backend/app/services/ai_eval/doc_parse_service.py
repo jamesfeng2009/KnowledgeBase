@@ -38,11 +38,22 @@ log = get_logger(__name__)
 
 # Docling 解析的文件后缀映射
 _DOC_SUFFIX_MAP = {
-    "pdf": ".pdf", "docx": ".docx", "pptx": ".pptx",
-    "xlsx": ".xlsx", "xls": ".xls", "html": ".html", "htm": ".html",
-    "md": ".md", "txt": ".txt",
-    "png": ".png", "jpg": ".jpg", "jpeg": ".jpeg", "gif": ".gif",
-    "webp": ".webp", "tiff": ".tiff", "bmp": ".bmp",
+    "pdf": ".pdf",
+    "docx": ".docx",
+    "pptx": ".pptx",
+    "xlsx": ".xlsx",
+    "xls": ".xls",
+    "html": ".html",
+    "htm": ".html",
+    "md": ".md",
+    "txt": ".txt",
+    "png": ".png",
+    "jpg": ".jpg",
+    "jpeg": ".jpeg",
+    "gif": ".gif",
+    "webp": ".webp",
+    "tiff": ".tiff",
+    "bmp": ".bmp",
 }
 
 
@@ -55,15 +66,23 @@ def _strip_html_to_text(html: str) -> str:
     if not html:
         return ""
     import re
+
     # 块级标签转换行
-    text = re.sub(r"<\s*(/)?\s*(p|div|h[1-6]|li|tr|br)[^>]*>", "\n", html, flags=re.IGNORECASE)
+    text = re.sub(
+        r"<\s*(/)?\s*(p|div|h[1-6]|li|tr|br)[^>]*>", "\n", html, flags=re.IGNORECASE
+    )
     # 表格单元格转 | 分隔
     text = re.sub(r"<\s*(/)?\s*td[^>]*>", " | ", text, flags=re.IGNORECASE)
     text = re.sub(r"<\s*(/)?\s*th[^>]*>", " | ", text, flags=re.IGNORECASE)
     # 去除其余标签
     text = re.sub(r"<[^>]+>", "", text)
     # HTML 实体
-    text = text.replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+    text = (
+        text.replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+    )
     # 合并多余空行
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
@@ -225,31 +244,39 @@ class DocParseService:
                     # 累加各维度得分
                     for key in ("text_similarity", "token_similarity"):
                         if key in metrics:
-                            metric_sums[key] = metric_sums.get(key, 0.0) + float(metrics[key])
-                    metric_sums["cer"] = metric_sums.get("cer", 0.0) + float(metrics.get("cer", 0.0))
-                    metric_sums["table_score"] = metric_sums.get("table_score", 0.0) + float(
-                        metrics.get("table", {}).get("overall_score", 0.0)
+                            metric_sums[key] = metric_sums.get(key, 0.0) + float(
+                                metrics[key]
+                            )
+                    metric_sums["cer"] = metric_sums.get("cer", 0.0) + float(
+                        metrics.get("cer", 0.0)
                     )
-                    metric_sums["formula_score"] = metric_sums.get("formula_score", 0.0) + float(
-                        metrics.get("formula", {}).get("overall_score", 0.0)
-                    )
-                    metric_sums["layout_score"] = metric_sums.get("layout_score", 0.0) + float(
-                        metrics.get("layout", {}).get("overall_score", 0.0)
-                    )
-                    metric_sums["overall_score"] = metric_sums.get("overall_score", 0.0) + float(
-                        metrics.get("overall_score", 0.0)
-                    )
+                    metric_sums["table_score"] = metric_sums.get(
+                        "table_score", 0.0
+                    ) + float(metrics.get("table", {}).get("overall_score", 0.0))
+                    metric_sums["formula_score"] = metric_sums.get(
+                        "formula_score", 0.0
+                    ) + float(metrics.get("formula", {}).get("overall_score", 0.0))
+                    metric_sums["layout_score"] = metric_sums.get(
+                        "layout_score", 0.0
+                    ) + float(metrics.get("layout", {}).get("overall_score", 0.0))
+                    metric_sums["overall_score"] = metric_sums.get(
+                        "overall_score", 0.0
+                    ) + float(metrics.get("overall_score", 0.0))
                 except Exception as exc:
-                    log.error("doc_parse_case_error", case_id=str(case.id), error=str(exc))
-                    self.db.add(DocParseResult(
-                        case_id=case.id,
-                        dataset_id=dataset_id,
-                        parsed_text=None,
-                        metrics={},
-                        overall_score=0,
-                        error_message=str(exc),
-                        executed_at=datetime.now(timezone.utc),
-                    ))
+                    log.error(
+                        "doc_parse_case_error", case_id=str(case.id), error=str(exc)
+                    )
+                    self.db.add(
+                        DocParseResult(
+                            case_id=case.id,
+                            dataset_id=dataset_id,
+                            parsed_text=None,
+                            metrics={},
+                            overall_score=0,
+                            error_message=str(exc),
+                            executed_at=datetime.now(timezone.utc),
+                        )
+                    )
         except Exception:
             # 任何未捕获异常（如 DB 中断）时落库 failed，
             # 否则数据集永久卡在 "running"，无法再触发评测。
@@ -302,7 +329,9 @@ class DocParseService:
             parsed_text = case.parsed_text
         elif case.document_id:
             # Docling 端到端模式：下载文档 → Docling 解析
-            parsed_text = await self._parse_with_docling(case.document_id, case.doc_type)
+            parsed_text = await self._parse_with_docling(
+                case.document_id, case.doc_type
+            )
             used_docling = True
         else:
             # 无解析结果可评测
@@ -360,9 +389,9 @@ class DocParseService:
         doc_type: str,
     ) -> str:
         """Docling 端到端解析：下载文档 → 写临时文件 → Docling 解析 → 转纯文本。"""
+        from app.document.docling_parser import DoclingParser
         from app.models.knowledge import Document
         from app.utils.minio_client import download_file
-        from app.document.docling_parser import DoclingParser
 
         # 查文档获取 file_path（minio://bucket/object）
         doc = await self.db.get(Document, document_id)
@@ -374,7 +403,7 @@ class DocParseService:
         # 解析 minio://bucket/object
         file_path = doc.file_path
         if file_path.startswith("minio://"):
-            parts = file_path[len("minio://"):].split("/", 1)
+            parts = file_path[len("minio://") :].split("/", 1)
             if len(parts) != 2:
                 raise ValueError(f"file_path 格式非法: {file_path}")
             bucket, object_name = parts
@@ -394,7 +423,9 @@ class DocParseService:
             parser = DoclingParser()
             html = await parser.parse(tmp_path)
             if not html:
-                raise ValueError("Docling 解析返回空结果（可能 Docling 不可用或文档无法解析）")
+                raise ValueError(
+                    "Docling 解析返回空结果（可能 Docling 不可用或文档无法解析）"
+                )
             return _strip_html_to_text(html)
         finally:
             try:
@@ -420,20 +451,24 @@ class DocParseService:
         rows = result.all()
         results: list[dict] = []
         for case, res in rows:
-            results.append({
-                "case_id": str(case.id),
-                "title": case.title,
-                "doc_type": case.doc_type,
-                "difficulty": case.difficulty,
-                "expected_text": case.expected_text,
-                "parsed_text": res.parsed_text if res else case.parsed_text,
-                "metrics": res.metrics if res else None,
-                "overall_score": res.overall_score if res else 0,
-                "parse_time_ms": res.parse_time_ms if res else 0,
-                "used_docling": res.used_docling if res else False,
-                "error_message": res.error_message if res else None,
-                "executed_at": res.executed_at.isoformat() if res and res.executed_at else None,
-            })
+            results.append(
+                {
+                    "case_id": str(case.id),
+                    "title": case.title,
+                    "doc_type": case.doc_type,
+                    "difficulty": case.difficulty,
+                    "expected_text": case.expected_text,
+                    "parsed_text": res.parsed_text if res else case.parsed_text,
+                    "metrics": res.metrics if res else None,
+                    "overall_score": res.overall_score if res else 0,
+                    "parse_time_ms": res.parse_time_ms if res else 0,
+                    "used_docling": res.used_docling if res else False,
+                    "error_message": res.error_message if res else None,
+                    "executed_at": res.executed_at.isoformat()
+                    if res and res.executed_at
+                    else None,
+                }
+            )
         return results
 
     # ------------------------------------------------------------------
@@ -442,22 +477,28 @@ class DocParseService:
 
     async def get_stats(self) -> dict:
         """获取文档解析评测全局统计。"""
-        total_datasets = await self.db.scalar(
-            select(func.count())
-            .select_from(DocParseDataset)
-            .where(DocParseDataset.deleted_at.is_(None))
-        ) or 0
+        total_datasets = (
+            await self.db.scalar(
+                select(func.count())
+                .select_from(DocParseDataset)
+                .where(DocParseDataset.deleted_at.is_(None))
+            )
+            or 0
+        )
 
-        total_cases = await self.db.scalar(
-            select(func.count())
-            .select_from(DocParseCase)
-            .join(DocParseDataset, DocParseDataset.id == DocParseCase.dataset_id)
-            .where(DocParseDataset.deleted_at.is_(None))
-        ) or 0
+        total_cases = (
+            await self.db.scalar(
+                select(func.count())
+                .select_from(DocParseCase)
+                .join(DocParseDataset, DocParseDataset.id == DocParseCase.dataset_id)
+                .where(DocParseDataset.deleted_at.is_(None))
+            )
+            or 0
+        )
 
-        total_executed = await self.db.scalar(
-            select(func.count()).select_from(DocParseResult)
-        ) or 0
+        total_executed = (
+            await self.db.scalar(select(func.count()).select_from(DocParseResult)) or 0
+        )
 
         # 聚合已执行结果
         ds_result = await self.db.execute(
@@ -469,8 +510,12 @@ class DocParseService:
         )
         completed = list(ds_result.scalars().all())
         agg_keys = [
-            "text_similarity", "cer", "table_score",
-            "formula_score", "layout_score", "overall_score",
+            "text_similarity",
+            "cer",
+            "table_score",
+            "formula_score",
+            "layout_score",
+            "overall_score",
         ]
         sums = {k: 0.0 for k in agg_keys}
         weight = 0
@@ -486,10 +531,20 @@ class DocParseService:
             "total_datasets": total_datasets,
             "total_cases": total_cases,
             "total_executed": total_executed,
-            "avg_text_similarity": round(sums["text_similarity"] / weight, 4) if weight else 0.0,
+            "avg_text_similarity": round(sums["text_similarity"] / weight, 4)
+            if weight
+            else 0.0,
             "avg_cer": round(sums["cer"] / weight, 4) if weight else 0.0,
-            "avg_table_score": round(sums["table_score"] / weight, 4) if weight else 0.0,
-            "avg_formula_score": round(sums["formula_score"] / weight, 4) if weight else 0.0,
-            "avg_layout_score": round(sums["layout_score"] / weight, 4) if weight else 0.0,
-            "avg_overall_score": round(sums["overall_score"] / weight, 4) if weight else 0.0,
+            "avg_table_score": round(sums["table_score"] / weight, 4)
+            if weight
+            else 0.0,
+            "avg_formula_score": round(sums["formula_score"] / weight, 4)
+            if weight
+            else 0.0,
+            "avg_layout_score": round(sums["layout_score"] / weight, 4)
+            if weight
+            else 0.0,
+            "avg_overall_score": round(sums["overall_score"] / weight, 4)
+            if weight
+            else 0.0,
         }

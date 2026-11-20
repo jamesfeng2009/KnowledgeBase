@@ -40,9 +40,7 @@ class AgentCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255, description="Agent 名称")
     type: AgentType = Field(default=AgentType.qa, description="Agent 类型")
     description: str | None = Field(default=None, description="Agent 描述")
-    config: dict[str, Any] | None = Field(
-        default=None, description="Agent 专属配置"
-    )
+    config: dict[str, Any] | None = Field(default=None, description="Agent 专属配置")
 
 
 class AgentUpdate(BaseModel):
@@ -75,6 +73,4 @@ class AgentListResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    agents: list[AgentInfo] = Field(
-        default_factory=list, description="Agent 列表"
-    )
+    agents: list[AgentInfo] = Field(default_factory=list, description="Agent 列表")

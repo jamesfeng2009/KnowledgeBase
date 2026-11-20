@@ -14,6 +14,7 @@
   - 简单任务（"公司报销流程是什么"）→ 直接走单个 Agent
   - 复杂任务（"查报销单 BG001 状态并创建新报销单"）→ CrewAI 拆分 + 多 Agent 协同
 """
+
 from __future__ import annotations
 
 import json
@@ -29,7 +30,10 @@ logger = get_logger(__name__)
 
 # CrewAI 延迟导入
 try:
-    from crewai import Agent as CrewAgent, Task as CrewTask, Crew, Process
+    from crewai import Agent as CrewAgent
+    from crewai import Crew, Process
+    from crewai import Task as CrewTask
+
     CREWAI_AVAILABLE = True
 except ImportError:
     CrewAgent = None
@@ -86,7 +90,16 @@ class KnowledgeBaseCrew:
         """
         # 启发式规则：快速判断
         complexity_keywords = ["并且", "然后", "同时", "接着", "之后", "再", "还要"]
-        action_keywords = ["查询", "创建", "提交", "审批", "分析", "生成", "修改", "删除"]
+        action_keywords = [
+            "查询",
+            "创建",
+            "提交",
+            "审批",
+            "分析",
+            "生成",
+            "修改",
+            "删除",
+        ]
 
         has_connector = any(kw in query for kw in complexity_keywords)
         action_count = sum(1 for kw in action_keywords if kw in query)
@@ -150,7 +163,9 @@ class KnowledgeBaseCrew:
             if not sub_tasks:
                 return None
 
-            logger.info("crew.task_decomposed", query=query[:50], sub_tasks=len(sub_tasks))
+            logger.info(
+                "crew.task_decomposed", query=query[:50], sub_tasks=len(sub_tasks)
+            )
 
             # 注入原始查询到子任务（防传话游戏透传字段）：
             # _decompose_task 返回的 LLM JSON 只有 type/description/expected_output，
@@ -209,21 +224,25 @@ class KnowledgeBaseCrew:
         from app.agents.planner import STEP_DONE, map_task_type_to_action
 
         structured = {
-            "original_query": sub_tasks[0].get("original_query", "") if sub_tasks else "",
+            "original_query": sub_tasks[0].get("original_query", "")
+            if sub_tasks
+            else "",
             "task_count": len(sub_tasks),
             "results": [],
             "summary": raw_result[:500] if raw_result else "",
         }
 
         for i, sub in enumerate(sub_tasks):
-            structured["results"].append({
-                "step_id": i + 1,
-                "action": map_task_type_to_action(sub.get("type", "")),
-                "type": sub.get("type", "unknown"),
-                "description": sub.get("description", ""),
-                "expected_output": sub.get("expected_output", ""),
-                "status": STEP_DONE,
-            })
+            structured["results"].append(
+                {
+                    "step_id": i + 1,
+                    "action": map_task_type_to_action(sub.get("type", "")),
+                    "type": sub.get("type", "unknown"),
+                    "description": sub.get("description", ""),
+                    "expected_output": sub.get("expected_output", ""),
+                    "status": STEP_DONE,
+                }
+            )
 
         try:
             return _json.dumps(structured, ensure_ascii=False, indent=2)
@@ -301,9 +320,15 @@ class KnowledgeBaseCrew:
         from app.agents.mcp_tools import get_mcp_tools_for_agent_type
 
         # P1: 按 Agent 类型分别加载工具（而非全量塞入）
-        qa_tools = await get_mcp_tools_for_agent_type(self.mcp, "qa", tenant_id=tenant_id)
-        workflow_tools = await get_mcp_tools_for_agent_type(self.mcp, "workflow", tenant_id=tenant_id)
-        action_tools = await get_mcp_tools_for_agent_type(self.mcp, "action", tenant_id=tenant_id)
+        qa_tools = await get_mcp_tools_for_agent_type(
+            self.mcp, "qa", tenant_id=tenant_id
+        )
+        workflow_tools = await get_mcp_tools_for_agent_type(
+            self.mcp, "workflow", tenant_id=tenant_id
+        )
+        action_tools = await get_mcp_tools_for_agent_type(
+            self.mcp, "action", tenant_id=tenant_id
+        )
 
         qa_agent = CrewAgent(
             role="知识库问答专家",
@@ -373,8 +398,8 @@ class KnowledgeBaseCrew:
                     f"原始用户需求（不可修改，必须参考）：{original_query}\n"
                     f"当前子任务：{desc}\n"
                     f"请完成当前子任务，输出必须包含字段："
-                    f'action_type（qa/workflow/action）、'
-                    f'result_data（结构化结果）、status（completed/failed）。'
+                    f"action_type（qa/workflow/action）、"
+                    f"result_data（结构化结果）、status（completed/failed）。"
                 )
 
             task = CrewTask(

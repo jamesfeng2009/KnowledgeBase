@@ -15,8 +15,12 @@ class FolderCreate(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    name: str = Field(..., min_length=1, max_length=255, description="文件夹名（单段，不含 '/'）")
-    parent_path: str | None = Field(default=None, max_length=1000, description="父路径（None=根级）")
+    name: str = Field(
+        ..., min_length=1, max_length=255, description="文件夹名（单段，不含 '/'）"
+    )
+    parent_path: str | None = Field(
+        default=None, max_length=1000, description="父路径（None=根级）"
+    )
     sort_order: int | None = Field(default=None, ge=0, description="同级排序（可选）")
 
 
@@ -25,7 +29,9 @@ class FolderRename(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    name: str = Field(..., min_length=1, max_length=255, description="新名称（单段，不含 '/'）")
+    name: str = Field(
+        ..., min_length=1, max_length=255, description="新名称（单段，不含 '/'）"
+    )
 
 
 class DocumentMove(BaseModel):
@@ -33,5 +39,7 @@ class DocumentMove(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    path: str | None = Field(default=None, max_length=1000, description="目标文件夹路径（None=根级）")
+    path: str | None = Field(
+        default=None, max_length=1000, description="目标文件夹路径（None=根级）"
+    )
     sort_order: int | None = Field(default=None, ge=0, description="同级排序（可选）")

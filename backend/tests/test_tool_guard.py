@@ -8,6 +8,7 @@
 - engine 集成：_execute_tool_use 守卫拦截 + 确认后放行
 - P1-4: _execute_tool_use 改为 async generator，yield approval_required 事件
 """
+
 from __future__ import annotations
 
 import json
@@ -29,11 +30,11 @@ if "celery_app" not in sys.modules:
     sys.modules["celery_app"] = mock_celery_app
 
 from app.rag.tool_guard import (
+    _DEFAULT_DANGEROUS_TOOLS,
+    _SAFE_TOOLS,
     DangerousToolGuard,
     GuardAction,
     GuardResult,
-    _DEFAULT_DANGEROUS_TOOLS,
-    _SAFE_TOOLS,
 )
 from app.utils.sse import SSEEvent, SSEEventType
 
@@ -68,21 +69,27 @@ class TestGuardResult:
 
     def test_allow_result(self) -> None:
         """ALLOW 动作的属性正确。"""
-        result = GuardResult(action=GuardAction.ALLOW, tool_name="search", reason="只读")
+        result = GuardResult(
+            action=GuardAction.ALLOW, tool_name="search", reason="只读"
+        )
         assert result.allowed is True
         assert result.blocked is False
         assert result.needs_confirmation is False
 
     def test_block_result(self) -> None:
         """BLOCK 动作的属性正确。"""
-        result = GuardResult(action=GuardAction.BLOCK, tool_name="delete", reason="危险")
+        result = GuardResult(
+            action=GuardAction.BLOCK, tool_name="delete", reason="危险"
+        )
         assert result.allowed is False
         assert result.blocked is True
         assert result.needs_confirmation is False
 
     def test_confirm_result(self) -> None:
         """CONFIRM 动作的属性正确。"""
-        result = GuardResult(action=GuardAction.CONFIRM, tool_name="create", reason="写操作")
+        result = GuardResult(
+            action=GuardAction.CONFIRM, tool_name="create", reason="写操作"
+        )
         assert result.allowed is False
         assert result.blocked is False
         assert result.needs_confirmation is True
@@ -286,7 +293,11 @@ class TestEngineToolGuardIntegration:
         mock_mcp.call_tool = AsyncMock(return_value='{"results": []}')
 
         state: dict[str, Any] = {"tool_results": []}
-        tool_use = {"name": "knowledge_search", "input": {"query": "test"}, "id": "tu-1"}
+        tool_use = {
+            "name": "knowledge_search",
+            "input": {"query": "test"},
+            "id": "tu-1",
+        }
 
         events = await _drain_tool_use(engine, state, tool_use)
 
@@ -363,7 +374,11 @@ class TestEngineToolGuardIntegration:
         engine.mcp.call_tool = AsyncMock()
 
         state: dict[str, Any] = {"tool_results": []}
-        tool_use = {"name": "create_it_ticket", "input": {"title": "工单"}, "id": "tu-5"}
+        tool_use = {
+            "name": "create_it_ticket",
+            "input": {"title": "工单"},
+            "id": "tu-5",
+        }
 
         await _drain_tool_use(engine, state, tool_use)
 
@@ -374,7 +389,9 @@ class TestEngineToolGuardIntegration:
     async def test_custom_guard_integration(self) -> None:
         """自定义守卫配置集成测试。"""
         custom_guard = DangerousToolGuard(
-            dangerous_tools={"my_dangerous_tool": {"reason": "自定义危险", "irreversible": False}},
+            dangerous_tools={
+                "my_dangerous_tool": {"reason": "自定义危险", "irreversible": False}
+            },
             safe_tools={"my_safe_tool"},
         )
         engine = self._make_engine(guard=custom_guard)

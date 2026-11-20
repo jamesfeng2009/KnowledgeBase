@@ -62,6 +62,7 @@ class TestBaseConnector:
         """BaseConnector.get_permissions 默认返回空列表。"""
         connector = MockConnector()
         import asyncio
+
         permissions = asyncio.run(connector.get_permissions("user-123"))
         assert permissions == []
 
@@ -164,39 +165,48 @@ class TestBuiltinConnectors:
     def test_oa_connector_disabled_by_default(self):
         """OA 连接器默认应返回空结果（未配置 API）。"""
         from app.connectors.oa import OAConnector
+
         connector = OAConnector()
         # is_active 取决于环境变量，测试环境通常未配置
         import asyncio
+
         results = asyncio.run(connector.search("test"))
         assert results == []
 
     def test_erp_connector_disabled_by_default(self):
         """ERP 连接器默认应返回空结果。"""
         from app.connectors.erp import ERPConnector
+
         connector = ERPConnector()
         import asyncio
+
         results = asyncio.run(connector.search("test"))
         assert results == []
 
     def test_crm_connector_disabled_by_default(self):
         """CRM 连接器默认应返回空结果。"""
         from app.connectors.crm import CRMConnector
+
         connector = CRMConnector()
         import asyncio
+
         results = asyncio.run(connector.search("test"))
         assert results == []
 
     def test_mail_connector_disabled_by_default(self):
         """邮件连接器默认应返回空结果。"""
         from app.connectors.mail import MailConnector
+
         connector = MailConnector()
         import asyncio
+
         results = asyncio.run(connector.search("test"))
         assert results == []
 
     def test_global_registry_has_all_connectors(self):
         """全局注册表应包含所有 4 个内置连接器。"""
         from app.connectors.registry import connector_registry
+
         all_connectors = connector_registry.list_connectors()
         ids = [c["connector_id"] for c in all_connectors]
         assert "oa" in ids

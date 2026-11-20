@@ -21,9 +21,9 @@ from typing import Any
 
 import redis
 
-from celery_app import celery_app
 from app.utils.logger import get_logger
 from app.utils.retry import make_celery_retry_kwargs
+from celery_app import celery_app
 
 logger = get_logger(__name__)
 

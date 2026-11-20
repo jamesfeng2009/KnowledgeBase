@@ -15,25 +15,23 @@ from __future__ import annotations
 
 import os
 import uuid
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 
-from app.core.tenant_resolver import (
-    parse_tenant_subdomain,
-    extract_domain_from_request,
-    resolve_tenant_id,
-    TENANT_ID_HEADER,
-)
 from app.core import secrets as secrets_module
+from app.core.tenant_resolver import (
+    TENANT_ID_HEADER,
+    extract_domain_from_request,
+    parse_tenant_subdomain,
+    resolve_tenant_id,
+)
 from app.middleware import (
     RateLimiter,
     RedisRateLimiter,
     _build_limiter,
-    get_tenant_rate_limiter,
 )
 from app.utils import metrics
-
 
 # ==================================================================
 # 1. 租户维度限流
@@ -78,9 +76,7 @@ class TestTenantRateLimit:
 class TestTenantResolver:
     def test_parse_tenant_subdomain_basic(self):
         """解析 {workspace}.{root_domain} 中的 workspace。"""
-        assert (
-            parse_tenant_subdomain("acme.example.com", "example.com") == "acme"
-        )
+        assert parse_tenant_subdomain("acme.example.com", "example.com") == "acme"
 
     def test_parse_tenant_subdomain_no_root(self):
         """未配置根域不路由。"""
@@ -102,9 +98,7 @@ class TestTenantResolver:
             "type": "http",
             "method": "GET",
             "path": "/api/v1/chat",
-            "headers": [
-                (k.lower().encode(), v.encode()) for k, v in headers.items()
-            ],
+            "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()],
         }
         return Request(scope)
 
@@ -189,13 +183,9 @@ class TestMetrics:
         from app.utils.metrics import _normalize_path
 
         tid = str(uuid.uuid4())
-        assert _normalize_path(f"/api/v1/documents/{tid}") == (
-            "/api/v1/documents/{id}"
-        )
+        assert _normalize_path(f"/api/v1/documents/{tid}") == ("/api/v1/documents/{id}")
         # 数字段归一化
-        assert _normalize_path("/api/v1/knowledge/42") == (
-            "/api/v1/knowledge/{id}"
-        )
+        assert _normalize_path("/api/v1/knowledge/42") == ("/api/v1/knowledge/{id}")
         # 静态段保留
         assert _normalize_path("/api/v1/chat") == "/api/v1/chat"
 

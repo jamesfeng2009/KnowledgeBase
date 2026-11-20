@@ -20,6 +20,7 @@
     python scripts/finetune/generate_sft_data.py \\
         --output data/open/sft.jsonl --count 800
 """
+
 from __future__ import annotations
 
 import argparse
@@ -53,30 +54,46 @@ SYSTEM_PROMPT_RAG = (
 
 # 边界 case：超出知识库能力范围的问题，教模型拒答 + 引导
 _BOUNDARY_CASES: list[tuple[str, str]] = [
-    ("帮我写一首关于秋天的诗",
-     "我是企业知识库助手，主要负责回答工作相关问题（IT运维、HR人事、OA审批等）。"
-     "创意写作不在我的服务范围内，建议您使用专业的写作工具或咨询相关同事。"),
-    ("今天股票行情怎么样",
-     "我无法提供实时金融数据。如需查看股票行情，建议使用专业财经平台"
-     "（如东方财富、同花顺）。企业投资相关事宜请联系财务部。"),
-    ("帮我预订明天去北京的机票",
-     "机票预订请使用公司差旅平台 tripmgmt.example.com 提交出差申请，"
-     "审批通过后系统自动预订。紧急出差可联系行政部协助加急处理。"),
-    ("今天天气怎么样",
-     "我无法查询实时天气信息，建议使用天气 App 或搜索引擎查询。"
-     "如需了解出差目的地的天气，差旅平台预订页面有当地天气参考。"),
-    ("帮我翻译一段英文邮件",
-     "翻译服务不在知识库范围内。建议使用 DeepL、百度翻译等专业工具。"
-     "如需正式商务邮件翻译，可联系行政部翻译岗协助。"),
-    ("帮我写一段代码",
-     "编程开发问题建议咨询技术团队或使用专业编程助手。"
-     "企业知识库中有开发规范和技术文档，可在知识库-技术文档目录查阅。"),
-    ("公司附近有什么好吃的餐厅",
-     "餐厅推荐不在我的服务范围内。建议使用大众点评等本地生活平台搜索。"
-     "公司食堂每周菜单可在行政服务-食堂管理页面查看。"),
-    ("帮我算一下我的八字",
-     "我是企业知识库助手，不提供命理玄学类服务。"
-     "工作相关问题（HR、IT、OA等）欢迎随时提问。"),
+    (
+        "帮我写一首关于秋天的诗",
+        "我是企业知识库助手，主要负责回答工作相关问题（IT运维、HR人事、OA审批等）。"
+        "创意写作不在我的服务范围内，建议您使用专业的写作工具或咨询相关同事。",
+    ),
+    (
+        "今天股票行情怎么样",
+        "我无法提供实时金融数据。如需查看股票行情，建议使用专业财经平台"
+        "（如东方财富、同花顺）。企业投资相关事宜请联系财务部。",
+    ),
+    (
+        "帮我预订明天去北京的机票",
+        "机票预订请使用公司差旅平台 tripmgmt.example.com 提交出差申请，"
+        "审批通过后系统自动预订。紧急出差可联系行政部协助加急处理。",
+    ),
+    (
+        "今天天气怎么样",
+        "我无法查询实时天气信息，建议使用天气 App 或搜索引擎查询。"
+        "如需了解出差目的地的天气，差旅平台预订页面有当地天气参考。",
+    ),
+    (
+        "帮我翻译一段英文邮件",
+        "翻译服务不在知识库范围内。建议使用 DeepL、百度翻译等专业工具。"
+        "如需正式商务邮件翻译，可联系行政部翻译岗协助。",
+    ),
+    (
+        "帮我写一段代码",
+        "编程开发问题建议咨询技术团队或使用专业编程助手。"
+        "企业知识库中有开发规范和技术文档，可在知识库-技术文档目录查阅。",
+    ),
+    (
+        "公司附近有什么好吃的餐厅",
+        "餐厅推荐不在我的服务范围内。建议使用大众点评等本地生活平台搜索。"
+        "公司食堂每周菜单可在行政服务-食堂管理页面查看。",
+    ),
+    (
+        "帮我算一下我的八字",
+        "我是企业知识库助手，不提供命理玄学类服务。"
+        "工作相关问题（HR、IT、OA等）欢迎随时提问。",
+    ),
 ]
 
 
@@ -117,7 +134,12 @@ def _load_extractive_answers() -> dict[str, str] | None:
     import json
     from pathlib import Path
 
-    path = Path(__file__).parent.parent.parent / "data" / "open" / "extractive_answers.json"
+    path = (
+        Path(__file__).parent.parent.parent
+        / "data"
+        / "open"
+        / "extractive_answers.json"
+    )
     if not path.exists():
         return None
     try:
@@ -219,7 +241,11 @@ def generate_sft_samples(count: int = 800, seed: int = 42) -> list[dict]:
         for variant in _query_variants(qa[1]):
             if len(samples) >= rag_count:
                 break
-            samples.append(_build_rag_sample(qa, variant, qa_index=qa_idx, all_qas=_QA_TEMPLATES, rng=rng))
+            samples.append(
+                _build_rag_sample(
+                    qa, variant, qa_index=qa_idx, all_qas=_QA_TEMPLATES, rng=rng
+                )
+            )
         if len(samples) >= rag_count:
             break
 
@@ -262,7 +288,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         description="本地生成 SFT 微调数据文件（messages 格式，不依赖网络/数据库）",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--output", default="data/open/sft.jsonl", help="输出 jsonl 路径")
+    parser.add_argument(
+        "--output", default="data/open/sft.jsonl", help="输出 jsonl 路径"
+    )
     parser.add_argument("--count", type=int, default=800, help="生成条数上限")
     parser.add_argument("--seed", type=int, default=42, help="随机种子（可复现）")
     return parser.parse_args(argv)
@@ -270,7 +298,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
+    )
 
     samples = generate_sft_samples(count=args.count, seed=args.seed)
     n = write_jsonl(samples, args.output)
@@ -284,19 +314,23 @@ def main(argv: list[str] | None = None) -> int:
         sc = s["meta"].get("scene", "boundary")
         scenes[sc] = scenes.get(sc, 0) + 1
 
-    print(f"\n===== SFT 数据生成完成 =====")
+    print("\n===== SFT 数据生成完成 =====")
     print(f"文件: {args.output}")
     print(f"总数: {n} 条")
-    print(f"类型分布:")
+    print("类型分布:")
     for t, c in sorted(types.items(), key=lambda x: -x[1]):
         print(f"  {t}: {c} 条 ({c/n*100:.0f}%)")
-    print(f"场景分布:")
+    print("场景分布:")
     for s, c in sorted(scenes.items(), key=lambda x: -x[1]):
         print(f"  {s}: {c} 条 ({c/n*100:.0f}%)")
-    print(f"\n下一步:")
+    print("\n下一步:")
     print(f"  1. 看数据画像: python scripts/finetune/data_stats.py {args.output}")
-    print(f"  2. MLX 训练: mlx_lm.lora --model Qwen/Qwen2.5-1.5B-Instruct-4bit --train --data <dir>")
-    print(f"  3. HF 训练: python scripts/finetune/train_lora.py --data {args.output} --base_model Qwen/Qwen2.5-1.5B-Instruct")
+    print(
+        "  2. MLX 训练: mlx_lm.lora --model Qwen/Qwen2.5-1.5B-Instruct-4bit --train --data <dir>"
+    )
+    print(
+        f"  3. HF 训练: python scripts/finetune/train_lora.py --data {args.output} --base_model Qwen/Qwen2.5-1.5B-Instruct"
+    )
     return 0
 
 

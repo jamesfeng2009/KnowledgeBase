@@ -12,13 +12,13 @@ P2 核心流程：
     → get_rag_engine_by_model(model_id) 获取对应引擎
     → engine.answer() 使用指定模型生成
 """
+
 from __future__ import annotations
 
 import json
 import sys
 import uuid
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -44,7 +44,6 @@ class TestModelConfig:
 
     def test_models_json_exists_and_valid(self) -> None:
         """models.json 文件存在且 JSON 格式正确。"""
-        from pathlib import Path
 
         from app.llm.model_config import _MODELS_JSON_PATH
 
@@ -70,10 +69,8 @@ class TestModelConfig:
 
     def test_get_model_by_id(self) -> None:
         """按 ID 查找模型。"""
-        from app.llm.model_config import get_model_by_id
-
         # 先获取一个已知的模型 ID
-        from app.llm.model_config import _load_models_raw
+        from app.llm.model_config import _load_models_raw, get_model_by_id
 
         all_models = _load_models_raw()
         if all_models:
@@ -90,8 +87,8 @@ class TestModelConfig:
 
     def test_get_available_models_filtered_by_deploy_mode(self) -> None:
         """get_available_models 只返回当前 deploy_mode 的模型。"""
-        from app.llm.model_config import get_available_models, _load_models_raw
         from app.config import get_settings
+        from app.llm.model_config import get_available_models
 
         settings = get_settings()
         available = get_available_models()
@@ -102,7 +99,7 @@ class TestModelConfig:
 
     def test_get_default_model(self) -> None:
         """get_default_model 返回 is_default=True 的模型。"""
-        from app.llm.model_config import get_default_model, get_available_models
+        from app.llm.model_config import get_available_models, get_default_model
 
         available = get_available_models()
         if not available:
@@ -127,8 +124,9 @@ class TestModelConfig:
 
     def test_each_deploy_mode_has_default(self) -> None:
         """每个 deploy_mode 至少有一个 is_default=True 的模型。"""
-        from app.llm.model_config import _load_models_raw
         from collections import defaultdict
+
+        from app.llm.model_config import _load_models_raw
 
         all_models = _load_models_raw()
         defaults_by_mode: dict[str, int] = defaultdict(int)
@@ -175,15 +173,16 @@ class TestModelSelectionService:
     @pytest.mark.asyncio
     async def test_set_session_model_creates_new(self) -> None:
         """设置会话模型 — 新建记录。"""
-        from app.services.model_selection_service import ModelSelectionService
-        from app.llm.model_config import _load_models_raw
         from app.config import get_settings
+        from app.llm.model_config import _load_models_raw
+        from app.services.model_selection_service import ModelSelectionService
 
         # 获取当前 deploy_mode 的一个可用模型
         settings = get_settings()
         all_models = _load_models_raw()
         available = [
-            m for m in all_models
+            m
+            for m in all_models
             if m["deploy_mode"] == settings.DEPLOY_MODE and m.get("enabled", True)
         ]
         if not available:
@@ -197,9 +196,7 @@ class TestModelSelectionService:
         db.execute = AsyncMock(return_value=mock_result)
 
         service = ModelSelectionService(db)
-        result = await service.set_session_model(
-            uuid.uuid4(), "test-session", model_id
-        )
+        result = await service.set_session_model(uuid.uuid4(), "test-session", model_id)
 
         db.add.assert_called_once()
         assert result.model_id == model_id
@@ -220,8 +217,8 @@ class TestModelSelectionService:
     @pytest.mark.asyncio
     async def test_resolve_model_falls_back_to_default(self) -> None:
         """未设置会话模型时回退到系统默认。"""
-        from app.services.model_selection_service import ModelSelectionService
         from app.llm.model_config import get_default_model
+        from app.services.model_selection_service import ModelSelectionService
 
         db = self._make_mock_db()
         mock_result = MagicMock()
@@ -240,14 +237,15 @@ class TestModelSelectionService:
     @pytest.mark.asyncio
     async def test_resolve_model_uses_session_model(self) -> None:
         """设置了会话模型时返回会话模型。"""
-        from app.services.model_selection_service import ModelSelectionService
-        from app.llm.model_config import _load_models_raw, get_model_config_for_user
         from app.config import get_settings
+        from app.llm.model_config import _load_models_raw
+        from app.services.model_selection_service import ModelSelectionService
 
         settings = get_settings()
         all_models = _load_models_raw()
         available = [
-            m for m in all_models
+            m
+            for m in all_models
             if m["deploy_mode"] == settings.DEPLOY_MODE and m.get("enabled", True)
         ]
         if not available:
@@ -291,9 +289,12 @@ class TestProviderFactory:
 
     def test_get_llm_provider_by_model_returns_provider(self) -> None:
         """按 model_id 返回 LLMProvider 实例。"""
-        from app.llm.factory import get_llm_provider_by_model, clear_model_provider_cache
-        from app.llm.model_config import _load_models_raw, get_available_models
         from app.llm.base import LLMProvider
+        from app.llm.factory import (
+            clear_model_provider_cache,
+            get_llm_provider_by_model,
+        )
+        from app.llm.model_config import get_available_models
 
         available = get_available_models()
         if not available:
@@ -307,7 +308,10 @@ class TestProviderFactory:
 
     def test_get_llm_provider_by_model_cached(self) -> None:
         """同一 model_id 返回缓存的 Provider 实例。"""
-        from app.llm.factory import get_llm_provider_by_model, clear_model_provider_cache
+        from app.llm.factory import (
+            clear_model_provider_cache,
+            get_llm_provider_by_model,
+        )
         from app.llm.model_config import get_available_models
 
         available = get_available_models()
@@ -323,7 +327,10 @@ class TestProviderFactory:
 
     def test_get_llm_provider_by_model_invalid_id_raises(self) -> None:
         """无效 model_id 抛出 ValueError。"""
-        from app.llm.factory import get_llm_provider_by_model, clear_model_provider_cache
+        from app.llm.factory import (
+            clear_model_provider_cache,
+            get_llm_provider_by_model,
+        )
 
         clear_model_provider_cache()
         with pytest.raises(ValueError, match="不存在"):
@@ -331,16 +338,18 @@ class TestProviderFactory:
 
     def test_get_llm_provider_by_model_wrong_deploy_mode_raises(self) -> None:
         """不属于当前 deploy_mode 的模型抛出 ValueError。"""
-        from app.llm.factory import get_llm_provider_by_model, clear_model_provider_cache
-        from app.llm.model_config import _load_models_raw
         from app.config import get_settings
+        from app.llm.factory import (
+            clear_model_provider_cache,
+            get_llm_provider_by_model,
+        )
+        from app.llm.model_config import _load_models_raw
 
         settings = get_settings()
         all_models = _load_models_raw()
         # 找一个不属于当前 deploy_mode 的模型
         wrong_mode_models = [
-            m for m in all_models
-            if m["deploy_mode"] != settings.DEPLOY_MODE
+            m for m in all_models if m["deploy_mode"] != settings.DEPLOY_MODE
         ]
         if not wrong_mode_models:
             pytest.skip("只有一个 deploy_mode，无法测试跨模式")
@@ -372,9 +381,9 @@ class TestRagEngineFactory:
 
     def test_get_rag_engine_by_model(self) -> None:
         """按 model_id 返回 AgenticRAGEngine 实例。"""
-        from app.rag.factory import get_rag_engine_by_model, clear_model_engine_cache
-        from app.rag.engine import AgenticRAGEngine
         from app.llm.model_config import get_available_models
+        from app.rag.engine import AgenticRAGEngine
+        from app.rag.factory import clear_model_engine_cache, get_rag_engine_by_model
 
         available = get_available_models()
         if not available:
@@ -388,8 +397,8 @@ class TestRagEngineFactory:
 
     def test_get_rag_engine_by_model_cached(self) -> None:
         """同一 model_id 返回缓存的引擎实例。"""
-        from app.rag.factory import get_rag_engine_by_model, clear_model_engine_cache
         from app.llm.model_config import get_available_models
+        from app.rag.factory import clear_model_engine_cache, get_rag_engine_by_model
 
         available = get_available_models()
         if not available:
@@ -404,8 +413,8 @@ class TestRagEngineFactory:
 
     def test_different_models_return_different_engines(self) -> None:
         """不同 model_id 返回不同的引擎实例（但共享 MCP/Retriever）。"""
-        from app.rag.factory import get_rag_engine_by_model, clear_model_engine_cache
         from app.llm.model_config import get_available_models
+        from app.rag.factory import clear_model_engine_cache, get_rag_engine_by_model
 
         available = get_available_models()
         if len(available) < 2:
@@ -441,12 +450,20 @@ class TestUserModelPreferenceModel:
         from app.models.user_model_preference import UserModelPreference
 
         columns = {c.name for c in UserModelPreference.__table__.columns}
-        required = {"id", "user_id", "session_id", "model_id", "tenant_id", "created_at", "updated_at"}
+        required = {
+            "id",
+            "user_id",
+            "session_id",
+            "model_id",
+            "tenant_id",
+            "created_at",
+            "updated_at",
+        }
         assert required.issubset(columns), f"缺少字段: {required - columns}"
 
     def test_model_registered_in_metadata(self) -> None:
         """模型已注册到 Base.metadata。"""
-        from app.models import Base, UserModelPreference
+        from app.models import Base
 
         assert "user_model_preferences" in Base.metadata.tables
 

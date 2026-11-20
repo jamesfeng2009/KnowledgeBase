@@ -5,9 +5,10 @@
 - IntentRouter: 规则匹配 + LLM fallback + 兜底策略
 - IntentResult: 快捷路径判断逻辑
 """
+
 import pytest
 
-from app.intent.router import IntentRouter, IntentResult, IntentType, _SHORTCUT_INTENTS
+from app.intent.router import _SHORTCUT_INTENTS, IntentResult, IntentRouter, IntentType
 from app.intent.rule_matcher import RuleMatcher
 
 
@@ -19,18 +20,21 @@ class TestRuleMatcher:
 
     # --- RAG_SEARCH ---
 
-    @pytest.mark.parametrize("query", [
-        "搜索报销流程",
-        "查找合同文档",
-        "查一下微服务架构",
-        "搜一下年假政策",
-        "search for contract template",
-        "find related documents",
-        "微服务是什么",
-        "如何申请报销",
-        "什么是知识图谱",
-        "K8s和Docker的区别",
-    ])
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "搜索报销流程",
+            "查找合同文档",
+            "查一下微服务架构",
+            "搜一下年假政策",
+            "search for contract template",
+            "find related documents",
+            "微服务是什么",
+            "如何申请报销",
+            "什么是知识图谱",
+            "K8s和Docker的区别",
+        ],
+    )
     def test_rag_search_match(self, query):
         result = self.matcher.match(query)
         assert result is not None
@@ -40,14 +44,17 @@ class TestRuleMatcher:
 
     # --- LIST_DOCUMENTS ---
 
-    @pytest.mark.parametrize("query", [
-        "列出所有文档",
-        "有哪些知识库",
-        "显示一下文件列表",
-        "我的文档列表",
-        "list all documents",
-        "show knowledge bases",
-    ])
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "列出所有文档",
+            "有哪些知识库",
+            "显示一下文件列表",
+            "我的文档列表",
+            "list all documents",
+            "show knowledge bases",
+        ],
+    )
     def test_list_documents_match(self, query):
         result = self.matcher.match(query)
         assert result is not None
@@ -57,12 +64,15 @@ class TestRuleMatcher:
 
     # --- GET_DOCUMENT ---
 
-    @pytest.mark.parametrize("query", [
-        "查看合同文档",
-        "打开报销流程文档",
-        "看看用户手册",
-        "view document abc123",
-    ])
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "查看合同文档",
+            "打开报销流程文档",
+            "看看用户手册",
+            "view document abc123",
+        ],
+    )
     def test_get_document_match(self, query):
         result = self.matcher.match(query)
         assert result is not None
@@ -72,13 +82,16 @@ class TestRuleMatcher:
 
     # --- CREATE_DOCUMENT ---
 
-    @pytest.mark.parametrize("query", [
-        "创建新文档",
-        "上传合同文件",
-        "添加知识库资料",
-        "create new document",
-        "upload file",
-    ])
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "创建新文档",
+            "上传合同文件",
+            "添加知识库资料",
+            "create new document",
+            "upload file",
+        ],
+    )
     def test_create_document_match(self, query):
         result = self.matcher.match(query)
         assert result is not None
@@ -88,12 +101,15 @@ class TestRuleMatcher:
 
     # --- 无匹配 ---
 
-    @pytest.mark.parametrize("query", [
-        "compare the performance of Redis and Memcached",
-        "你好",
-        "",
-        "  ",
-    ])
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "compare the performance of Redis and Memcached",
+            "你好",
+            "",
+            "  ",
+        ],
+    )
     def test_no_match(self, query):
         result = self.matcher.match(query)
         # 空字符串返回 None，复杂查询可能返回 None 或低置信度匹配

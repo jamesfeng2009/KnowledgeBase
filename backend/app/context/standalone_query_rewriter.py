@@ -26,9 +26,8 @@
     )
     # standalone_q = "公司差旅管理办法中，国际航班的报销标准是什么？"
 """
-from __future__ import annotations
 
-from typing import Any
+from __future__ import annotations
 
 from app.context.coreference_resolver import CoreferenceResolver
 from app.context.focus_tracker import ConversationFocus, TopicTracker
@@ -173,10 +172,9 @@ class StandaloneQueryRewriter:
         # 构建历史文本（最近 N 轮）
         history_text = "（无）"
         if history:
-            recent = history[-self._HISTORY_TURNS:]
+            recent = history[-self._HISTORY_TURNS :]
             history_text = "\n".join(
-                f"{m.get('role', 'user')}: {m.get('content', '')[:150]}"
-                for m in recent
+                f"{m.get('role', 'user')}: {m.get('content', '')[:150]}" for m in recent
             )
 
         focus_text = focus.to_context_str() if focus else "（无）"

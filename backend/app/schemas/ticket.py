@@ -18,7 +18,9 @@ class TicketCreate(BaseModel):
     """创建工单请求体。"""
 
     title: str = Field(..., min_length=1, max_length=500, description="工单标题")
-    description: str = Field(..., min_length=1, max_length=20_000, description="问题描述")
+    description: str = Field(
+        ..., min_length=1, max_length=20_000, description="问题描述"
+    )
     category: str = Field(
         default="other",
         max_length=30,

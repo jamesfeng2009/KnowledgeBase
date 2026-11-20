@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.repositories.user_repository import UserRepository
 from app.services.auth_service import AuthService
-from app.utils.crypto import create_access_token, hash_password
+from app.utils.crypto import create_access_token
 from app.utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -197,9 +197,7 @@ class OIDCService:
             existing = await user_repo.get_by_email(email)
         return existing
 
-    async def login_or_register(
-        self, userinfo: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def login_or_register(self, userinfo: dict[str, Any]) -> dict[str, Any]:
         """按 OIDC subject 幂等登录/注册用户，签发本系统 JWT。
 
         Returns:

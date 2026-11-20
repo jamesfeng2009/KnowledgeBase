@@ -141,11 +141,13 @@ class AuthService:
             raise ValueError("邮箱或密码错误")
 
         # JWT payload 中写入用户 ID（sub）、角色（role）和租户 ID（tenant_id）
-        token = create_access_token({
-            "sub": str(user.id),
-            "role": user.role,
-            "tenant_id": str(user.tenant_id) if user.tenant_id else None,
-        })
+        token = create_access_token(
+            {
+                "sub": str(user.id),
+                "role": user.role,
+                "tenant_id": str(user.tenant_id) if user.tenant_id else None,
+            }
+        )
         return TokenResponse(
             access_token=token,
             token_type="bearer",

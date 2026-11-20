@@ -16,16 +16,14 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import httpx
 import pytest
 
 from app.config import get_settings
-
 from tests.test_d6_asset_chunks import _make_asset_pdf, _mock_image_boundaries
-from tests.test_pdf_pipeline_hardening import _make_text_pdf, _seed_document
-
+from tests.test_pdf_pipeline_hardening import _seed_document
 
 # ----------------------------------------------------------------------
 # 边界 mock：向量化 / 跨模态提取 / 索引构建 / 索引删除 HTTP
@@ -97,7 +95,9 @@ async def _seed_legacy_doc(db_session, tmp_path, tenant_id, name="legacy.pdf"):
 
 class TestD11ForceReparse:
     @pytest.mark.asyncio
-    async def test_force_bypasses_hash_early_exit(self, db_session, tmp_path, monkeypatch):
+    async def test_force_bypasses_hash_early_exit(
+        self, db_session, tmp_path, monkeypatch
+    ):
         """哈希一致时 force_reparse=True 仍必须重解析并产出资产块。"""
         import tasks.document_tasks as dt
 
@@ -129,7 +129,9 @@ class TestD11ForceReparse:
         assert "指标甲" in doc.content_text, "content_text 应为真实解析产物"
 
     @pytest.mark.asyncio
-    async def test_default_keeps_a14_early_exit(self, db_session, tmp_path, monkeypatch):
+    async def test_default_keeps_a14_early_exit(
+        self, db_session, tmp_path, monkeypatch
+    ):
         """正向证人：不传 force 时 A14 哈希早退语义不变。"""
         import tasks.document_tasks as dt
 
@@ -153,7 +155,9 @@ class TestD11ForceReparse:
         assert doc.content_text == "存量旧文本，没有任何资产块"
 
     @pytest.mark.asyncio
-    async def test_force_no_file_returns_edited_content(self, db_session, tmp_path, monkeypatch):
+    async def test_force_no_file_returns_edited_content(
+        self, db_session, tmp_path, monkeypatch
+    ):
         """正向证人：无源文件的编辑型文档，force 也不得崩溃/清空内容。"""
         import tasks.document_tasks as dt
 
@@ -171,7 +175,9 @@ class TestD11ForceReparse:
         assert doc.content_text == "存量旧文本，没有任何资产块"
 
     @pytest.mark.asyncio
-    async def test_force_missing_file_returns_old_content(self, db_session, tmp_path, monkeypatch):
+    async def test_force_missing_file_returns_old_content(
+        self, db_session, tmp_path, monkeypatch
+    ):
         """正向证人：源文件丢失（不可哈希）时 force 维持已有内容。"""
         import tasks.document_tasks as dt
 
@@ -196,7 +202,9 @@ class TestD11ForceReparse:
 
 class TestD11BackfillCommand:
     @pytest.mark.asyncio
-    async def test_backfill_generates_assets_and_cleans_old(self, db_session, tmp_path, monkeypatch):
+    async def test_backfill_generates_assets_and_cleans_old(
+        self, db_session, tmp_path, monkeypatch
+    ):
         """回填产出资产块；重建前必须按 doc_id 删除三个索引的旧条目。"""
         import scripts.backfill_asset_chunks as bf
 
@@ -223,7 +231,11 @@ class TestD11BackfillCommand:
         assert all(
             i < build_idx for i, (kind, _) in enumerate(events) if kind == "delete"
         ), f"旧条目删除必须先于重建: {events}"
-        for index in ("ekb_documents", "ekb_knn_vectors", get_settings().OPENSEARCH_CROSS_MODAL_INDEX):
+        for index in (
+            "ekb_documents",
+            "ekb_knn_vectors",
+            get_settings().OPENSEARCH_CROSS_MODAL_INDEX,
+        ):
             assert any(
                 f"/{index}/_delete_by_query" in url for url in deletes
             ), f"缺少索引 {index} 的旧条目清理: {deletes}"
@@ -255,7 +267,7 @@ class TestD11BackfillCommand:
         # 第二轮重建前同样先清理（防止 cross-modal 随机 ID 条目累积）
         second_build_idx = [i for i, (k, _) in enumerate(events) if k == "build"][1]
         assert any(
-            k == "delete" for k, _ in events[second_build_idx - 3:second_build_idx]
+            k == "delete" for k, _ in events[second_build_idx - 3 : second_build_idx]
         )
 
     @pytest.mark.asyncio
@@ -314,7 +326,9 @@ class TestD11TargetSelection:
         assert str(doc2.id) not in ids
 
     @pytest.mark.asyncio
-    async def test_scope_excludes_unsupported_and_deleted(self, db_session, tmp_path, monkeypatch):
+    async def test_scope_excludes_unsupported_and_deleted(
+        self, db_session, tmp_path, monkeypatch
+    ):
         """视频/音频/.doc/.ppt 与软删除文档不得进入回填目标。"""
         import scripts.backfill_asset_chunks as bf
 
@@ -352,13 +366,17 @@ class TestD11Isolation:
         )
         good = await _seed_legacy_doc(db_session, tmp_path, t, name="good.pdf")
 
-        summary = await bf.backfill_documents([
-            {"doc_id": str(bad.id), "tenant_id": str(t)},
-            {"doc_id": str(good.id), "tenant_id": str(t)},
-        ])
+        summary = await bf.backfill_documents(
+            [
+                {"doc_id": str(bad.id), "tenant_id": str(t)},
+                {"doc_id": str(good.id), "tenant_id": str(t)},
+            ]
+        )
         assert summary["failed"] == 1, summary
         assert summary["done"] == 1, summary
-        assert any(kind == "build" and payload == str(good.id) for kind, payload in events)
+        assert any(
+            kind == "build" and payload == str(good.id) for kind, payload in events
+        )
 
     @pytest.mark.asyncio
     async def test_unbackfilled_doc_unchanged(self, db_session, tmp_path, monkeypatch):
@@ -377,6 +395,6 @@ class TestD11Isolation:
 
         await db_session.refresh(doc_b)
         assert (doc_b.content_text, doc_b.file_hash, doc_b.parse_status) == before
-        assert all(str(doc_b.id) not in payload for _, payload in events), (
-            "未回填文档不得出现在删除/重建事件中"
-        )
+        assert all(
+            str(doc_b.id) not in payload for _, payload in events
+        ), "未回填文档不得出现在删除/重建事件中"

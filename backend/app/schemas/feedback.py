@@ -54,7 +54,8 @@ class FeedbackCreate(BaseModel):
         default=None, description="关联消息 ID"
     )
     doc_id: uuid.UUID | None = Field(
-        default=None, description="关联文档 ID（可选，缺省时服务端从关联消息引用来源解析）"
+        default=None,
+        description="关联文档 ID（可选，缺省时服务端从关联消息引用来源解析）",
     )
 
 

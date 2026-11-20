@@ -11,6 +11,7 @@
 mock 风格照 test_quality_service.py：AsyncMock/MagicMock + SimpleNamespace，
 不依赖外部服务。
 """
+
 from __future__ import annotations
 
 import json
@@ -40,7 +41,6 @@ from app.finetune.dataset_builder import (
     build_sft_dataset,
 )
 from app.finetune.exporter import export_jsonl, make_version, read_jsonl_head
-
 
 # ======================================================================
 # 工具函数
@@ -75,11 +75,15 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _question(title: str = "如何重置密码", content: str = "忘记了登录密码，需要重置") -> SimpleNamespace:
+def _question(
+    title: str = "如何重置密码", content: str = "忘记了登录密码，需要重置"
+) -> SimpleNamespace:
     return SimpleNamespace(id=uuid4(), title=title, content=content, deleted_at=None)
 
 
-def _answer(content: str, *, question_id=None, is_accepted: bool = True) -> SimpleNamespace:
+def _answer(
+    content: str, *, question_id=None, is_accepted: bool = True
+) -> SimpleNamespace:
     return SimpleNamespace(
         id=uuid4(),
         question_id=question_id or uuid4(),
@@ -262,20 +266,31 @@ class TestBuildSftDataset:
         """QA 社区已采纳答案 → SFT 样本（user=标题+详情，assistant=采纳回答）。"""
         # 标题/内容选取哈希落入 SFT 侧（非 Golden 桶）的文本（评审 #3 互斥）
         question = _question(title="如何申请年假", content="入职满一年，想休年假")
-        adopted = _answer("在 OA 系统提交年假申请，主管审批后生效。", question_id=question.id)
-        db = _db_with_execute([
-            _exec_result(rows=[(adopted, question)]),  # 1. QA 采纳
-            _exec_result(scalars=[]),  # 2. chat 好评反馈为空 → 提前返回
-            # QA 样本无 doc_ids → 密级查询跳过
-        ])
+        adopted = _answer(
+            "在 OA 系统提交年假申请，主管审批后生效。", question_id=question.id
+        )
+        db = _db_with_execute(
+            [
+                _exec_result(rows=[(adopted, question)]),  # 1. QA 采纳
+                _exec_result(scalars=[]),  # 2. chat 好评反馈为空 → 提前返回
+                # QA 样本无 doc_ids → 密级查询跳过
+            ]
+        )
 
         samples, stats = await build_sft_dataset(db, None)
 
         assert len(samples) == 1
         sample = samples[0]
-        assert [m["role"] for m in sample["messages"]] == ["system", "user", "assistant"]
+        assert [m["role"] for m in sample["messages"]] == [
+            "system",
+            "user",
+            "assistant",
+        ]
         assert "如何申请年假" in sample["messages"][1]["content"]
-        assert sample["messages"][2]["content"] == "在 OA 系统提交年假申请，主管审批后生效。"
+        assert (
+            sample["messages"][2]["content"]
+            == "在 OA 系统提交年假申请，主管审批后生效。"
+        )
         assert sample["meta"]["source"] == "qa_adopted"
         assert stats["classification"] == 0
         assert stats["golden_excluded"] == 0
@@ -286,10 +301,12 @@ class TestBuildSftDataset:
         # 默认 _question 文本经 SHA-256 分桶恰好落入 Golden 桶（bucket 0）
         question = _question()
         adopted = _answer("打开设置-账号安全-重置密码即可。", question_id=question.id)
-        db = _db_with_execute([
-            _exec_result(rows=[(adopted, question)]),
-            _exec_result(scalars=[]),
-        ])
+        db = _db_with_execute(
+            [
+                _exec_result(rows=[(adopted, question)]),
+                _exec_result(scalars=[]),
+            ]
+        )
 
         samples, stats = await build_sft_dataset(db, None)
 
@@ -301,7 +318,9 @@ class TestBuildSftDataset:
         """chat 好评问答对 → SFT 样本（同会话前一条 user 消息作 prompt）。"""
         conv_id = uuid4()
         t0 = _now()
-        user_msg = _message("user", "请问报销流程具体是什么？", conversation_id=conv_id, created_at=t0)
+        user_msg = _message(
+            "user", "请问报销流程具体是什么？", conversation_id=conv_id, created_at=t0
+        )
         assistant_msg = _message(
             "assistant",
             "报销流程：提交申请 → 主管审批 → 财务打款。",
@@ -310,13 +329,17 @@ class TestBuildSftDataset:
             created_at=t0,
         )
         praised_fb = _feedback("praise", assistant_msg.id)
-        db = _db_with_execute([
-            _exec_result(rows=[]),  # 1. QA 采纳为空
-            _exec_result(scalars=[praised_fb]),  # 2. 好评反馈
-            _exec_result(scalars=[assistant_msg]),  # 3. assistant 消息
-            _exec_result(scalars=[user_msg]),  # 4. 会话 user 消息
-            _exec_result(rows=[(assistant_msg.sources[0]["doc_id"], "internal")]),  # 5. 密级
-        ])
+        db = _db_with_execute(
+            [
+                _exec_result(rows=[]),  # 1. QA 采纳为空
+                _exec_result(scalars=[praised_fb]),  # 2. 好评反馈
+                _exec_result(scalars=[assistant_msg]),  # 3. assistant 消息
+                _exec_result(scalars=[user_msg]),  # 4. 会话 user 消息
+                _exec_result(
+                    rows=[(assistant_msg.sources[0]["doc_id"], "internal")]
+                ),  # 5. 密级
+            ]
+        )
 
         samples, stats = await build_sft_dataset(db, None, min_rating=4)
 
@@ -332,7 +355,9 @@ class TestBuildSftDataset:
         conv_id = uuid4()
         t0 = _now()
         secret_doc_id = uuid4()
-        user_msg = _message("user", "核心算法的实现细节有哪些？", conversation_id=conv_id, created_at=t0)
+        user_msg = _message(
+            "user", "核心算法的实现细节有哪些？", conversation_id=conv_id, created_at=t0
+        )
         assistant_msg = _message(
             "assistant",
             "核心算法实现细节如下所述内容。",
@@ -340,13 +365,15 @@ class TestBuildSftDataset:
             sources=[{"doc_id": str(secret_doc_id)}],
             created_at=t0,
         )
-        db = _db_with_execute([
-            _exec_result(rows=[]),
-            _exec_result(scalars=[_feedback("praise", assistant_msg.id)]),
-            _exec_result(scalars=[assistant_msg]),
-            _exec_result(scalars=[user_msg]),
-            _exec_result(rows=[(secret_doc_id, "secret")]),  # 密级超阈
-        ])
+        db = _db_with_execute(
+            [
+                _exec_result(rows=[]),
+                _exec_result(scalars=[_feedback("praise", assistant_msg.id)]),
+                _exec_result(scalars=[assistant_msg]),
+                _exec_result(scalars=[user_msg]),
+                _exec_result(rows=[(secret_doc_id, "secret")]),  # 密级超阈
+            ]
+        )
 
         samples, stats = await build_sft_dataset(
             db, None, max_classification="internal"
@@ -360,10 +387,12 @@ class TestBuildSftDataset:
         """PII 命中只脱敏不剔除，样本保留且内容已改写。"""
         question = _question(content="我的手机号是 13812345678，请问如何重置密码？")
         adopted = _answer("请携带工卡到前台办理重置手续。", question_id=question.id)
-        db = _db_with_execute([
-            _exec_result(rows=[(adopted, question)]),
-            _exec_result(scalars=[]),
-        ])
+        db = _db_with_execute(
+            [
+                _exec_result(rows=[(adopted, question)]),
+                _exec_result(scalars=[]),
+            ]
+        )
 
         samples, stats = await build_sft_dataset(db, None)
 
@@ -386,21 +415,37 @@ class TestBuildDpoDataset:
         """同一 user 消息下好评 × 差评 → pair_type=feedback。"""
         conv_id = uuid4()
         t0 = _now()
-        user_msg = _message("user", "请问年假一共有多少天？", conversation_id=conv_id, created_at=t0)
-        chosen_msg = _message("assistant", "正式员工年假 10 天起。", conversation_id=conv_id, created_at=t0)
-        rejected_msg = _message("assistant", "不太清楚具体的年假天数。", conversation_id=conv_id, created_at=t0)
+        user_msg = _message(
+            "user", "请问年假一共有多少天？", conversation_id=conv_id, created_at=t0
+        )
+        chosen_msg = _message(
+            "assistant",
+            "正式员工年假 10 天起。",
+            conversation_id=conv_id,
+            created_at=t0,
+        )
+        rejected_msg = _message(
+            "assistant",
+            "不太清楚具体的年假天数。",
+            conversation_id=conv_id,
+            created_at=t0,
+        )
         feedbacks = [
             _feedback("praise", chosen_msg.id),
             _feedback("complaint", rejected_msg.id),
         ]
-        db = _db_with_execute([
-            _exec_result(scalars=feedbacks),  # 1. 反馈
-            _exec_result(scalars=[chosen_msg, rejected_msg]),  # 2. 反馈关联消息
-            _exec_result(scalars=[user_msg, chosen_msg, rejected_msg]),  # 3. 会话全部消息
-            _exec_result(rows=[]),  # 4. QA 采纳为空
-            _exec_result(scalars=[]),  # 6. 高风险拦截为空（5. 未采纳查询跳过）
-            # doc_ids 为空 → 密级查询跳过
-        ])
+        db = _db_with_execute(
+            [
+                _exec_result(scalars=feedbacks),  # 1. 反馈
+                _exec_result(scalars=[chosen_msg, rejected_msg]),  # 2. 反馈关联消息
+                _exec_result(
+                    scalars=[user_msg, chosen_msg, rejected_msg]
+                ),  # 3. 会话全部消息
+                _exec_result(rows=[]),  # 4. QA 采纳为空
+                _exec_result(scalars=[]),  # 6. 高风险拦截为空（5. 未采纳查询跳过）
+                # doc_ids 为空 → 密级查询跳过
+            ]
+        )
 
         samples, stats = await build_dpo_dataset(db, None)
 
@@ -416,16 +461,30 @@ class TestBuildDpoDataset:
         """差评不足时以无反馈答案充当 rejected → pair_type=no_feedback。"""
         conv_id = uuid4()
         t0 = _now()
-        user_msg = _message("user", "请问如何申请 VPN 权限？", conversation_id=conv_id, created_at=t0)
-        chosen_msg = _message("assistant", "在 OA 系统提交 VPN 申请单即可。", conversation_id=conv_id, created_at=t0)
-        neutral_msg = _message("assistant", "建议咨询 IT 服务台处理。", conversation_id=conv_id, created_at=t0)
-        db = _db_with_execute([
-            _exec_result(scalars=[_feedback("praise", chosen_msg.id)]),
-            _exec_result(scalars=[chosen_msg]),
-            _exec_result(scalars=[user_msg, chosen_msg, neutral_msg]),
-            _exec_result(rows=[]),
-            _exec_result(scalars=[]),
-        ])
+        user_msg = _message(
+            "user", "请问如何申请 VPN 权限？", conversation_id=conv_id, created_at=t0
+        )
+        chosen_msg = _message(
+            "assistant",
+            "在 OA 系统提交 VPN 申请单即可。",
+            conversation_id=conv_id,
+            created_at=t0,
+        )
+        neutral_msg = _message(
+            "assistant",
+            "建议咨询 IT 服务台处理。",
+            conversation_id=conv_id,
+            created_at=t0,
+        )
+        db = _db_with_execute(
+            [
+                _exec_result(scalars=[_feedback("praise", chosen_msg.id)]),
+                _exec_result(scalars=[chosen_msg]),
+                _exec_result(scalars=[user_msg, chosen_msg, neutral_msg]),
+                _exec_result(rows=[]),
+                _exec_result(scalars=[]),
+            ]
+        )
 
         samples, _ = await build_dpo_dataset(db, None)
 
@@ -438,13 +497,17 @@ class TestBuildDpoDataset:
         """QA 社区采纳 × 未采纳答案配对 → pair_type=qa_adopted。"""
         question = _question()
         adopted = _answer("标准做法是先备份再升级版本。", question_id=question.id)
-        unadopted = _answer("直接升级应该没问题。", question_id=question.id, is_accepted=False)
-        db = _db_with_execute([
-            _exec_result(scalars=[]),  # 1. 反馈为空 → 跳过消息查询
-            _exec_result(rows=[(adopted, question)]),  # 4. QA 采纳
-            _exec_result(scalars=[unadopted]),  # 5. 未采纳答案
-            _exec_result(scalars=[]),  # 6. 高风险拦截为空
-        ])
+        unadopted = _answer(
+            "直接升级应该没问题。", question_id=question.id, is_accepted=False
+        )
+        db = _db_with_execute(
+            [
+                _exec_result(scalars=[]),  # 1. 反馈为空 → 跳过消息查询
+                _exec_result(rows=[(adopted, question)]),  # 4. QA 采纳
+                _exec_result(scalars=[unadopted]),  # 5. 未采纳答案
+                _exec_result(scalars=[]),  # 6. 高风险拦截为空
+            ]
+        )
 
         samples, _ = await build_dpo_dataset(db, None)
 
@@ -475,15 +538,15 @@ class TestBuildEmbeddingDataset:
             clicked_doc_id=pos_doc.id,
             created_at=_now(),
         )
-        db = _db_with_execute([
-            _exec_result(scalars=[click_log]),  # 1. 点击行为
-            _exec_result(scalars=[pos_doc]),  # 2. 正例文档
-            _exec_result(scalars=[neg_doc]),  # 3. 负例候选池
-        ])
-
-        samples, stats = await build_embedding_dataset(
-            db, None, rng=random.Random(42)
+        db = _db_with_execute(
+            [
+                _exec_result(scalars=[click_log]),  # 1. 点击行为
+                _exec_result(scalars=[pos_doc]),  # 2. 正例文档
+                _exec_result(scalars=[neg_doc]),  # 3. 负例候选池
+            ]
         )
+
+        samples, stats = await build_embedding_dataset(db, None, rng=random.Random(42))
 
         assert len(samples) == 1
         sample = samples[0]
@@ -506,11 +569,13 @@ class TestBuildEmbeddingDataset:
             clicked_doc_id=pos_doc.id,
             created_at=_now(),
         )
-        db = _db_with_execute([
-            _exec_result(scalars=[click_log]),
-            _exec_result(scalars=[pos_doc]),
-            _exec_result(scalars=[_document()]),
-        ])
+        db = _db_with_execute(
+            [
+                _exec_result(scalars=[click_log]),
+                _exec_result(scalars=[pos_doc]),
+                _exec_result(scalars=[_document()]),
+            ]
+        )
 
         samples, stats = await build_embedding_dataset(
             db, None, max_classification="internal"
@@ -543,10 +608,12 @@ class TestBuildGoldenSet:
         """输出 {query, expected_answer, expected_doc_ids, meta}，frozen=True。"""
         question = _question()
         adopted = _answer("重置密码需验证身份后由管理员操作。", question_id=question.id)
-        db = _db_with_execute([
-            _exec_result(rows=[(adopted, question)]),
-            _exec_result(scalars=[]),
-        ])
+        db = _db_with_execute(
+            [
+                _exec_result(rows=[(adopted, question)]),
+                _exec_result(scalars=[]),
+            ]
+        )
 
         samples, _ = await build_golden_set(db, None)
 
@@ -564,12 +631,16 @@ class TestBuildGoldenSet:
         # 评测问题{0,2,4} 的标题+详情经 SHA-256 分桶均落入 Golden 桶（bucket 0）
         rows = []
         for i in (0, 2, 4):
-            q = _question(title=f"评测问题{i}标题内容", content=f"评测问题{i}的详细描述内容")
+            q = _question(
+                title=f"评测问题{i}标题内容", content=f"评测问题{i}的详细描述内容"
+            )
             rows.append((_answer(f"评测问题{i}的采纳回答内容。", question_id=q.id), q))
-        db = _db_with_execute([
-            _exec_result(rows=rows),
-            _exec_result(scalars=[]),
-        ])
+        db = _db_with_execute(
+            [
+                _exec_result(rows=rows),
+                _exec_result(scalars=[]),
+            ]
+        )
 
         samples, _ = await build_golden_set(db, None, limit=2)
 
@@ -580,11 +651,15 @@ class TestBuildGoldenSet:
         """评审 #3：非 Golden 桶的问答对不得进 Golden 评测集（留给 SFT）。"""
         # "如何申请年假" 文本分桶落在 SFT 侧（bucket 7）
         question = _question(title="如何申请年假", content="入职满一年，想休年假")
-        adopted = _answer("在 OA 系统提交年假申请，主管审批后生效。", question_id=question.id)
-        db = _db_with_execute([
-            _exec_result(rows=[(adopted, question)]),
-            _exec_result(scalars=[]),
-        ])
+        adopted = _answer(
+            "在 OA 系统提交年假申请，主管审批后生效。", question_id=question.id
+        )
+        db = _db_with_execute(
+            [
+                _exec_result(rows=[(adopted, question)]),
+                _exec_result(scalars=[]),
+            ]
+        )
 
         samples, stats = await build_golden_set(db, None)
 
@@ -741,7 +816,9 @@ class TestExportEndpoint:
         assert data["data"]["status"] == "building"
         assert data["data"]["task_id"] == "celery-task-ft"
         # export_id 与 Celery 提交参数一致（同一记录）
-        assert mock_task.delay.call_args.kwargs["export_id"] == data["data"]["export_id"]
+        assert (
+            mock_task.delay.call_args.kwargs["export_id"] == data["data"]["export_id"]
+        )
         db.add.assert_called_once()
 
     @pytest.mark.asyncio
@@ -766,12 +843,16 @@ class TestListAndDetail:
         """分页列表返回 items/total/pages。"""
         client, db = admin_client
         records = [_export_record(), _export_record(dataset_type="dpo")]
-        db.execute = AsyncMock(side_effect=[
-            _exec_result(scalar_one=2),  # count
-            _exec_result(scalars=records),  # items
-        ])
+        db.execute = AsyncMock(
+            side_effect=[
+                _exec_result(scalar_one=2),  # count
+                _exec_result(scalars=records),  # items
+            ]
+        )
 
-        response = await client.get("/api/v1/finetune/datasets", params={"page": 1, "size": 20})
+        response = await client.get(
+            "/api/v1/finetune/datasets", params={"page": 1, "size": 20}
+        )
 
         assert response.status_code == 200
         data = response.json()
@@ -823,7 +904,9 @@ class TestPreviewAndDownload:
     ) -> None:
         """preview 返回 JSONL 前 N 行。"""
         client, db = admin_client
-        samples = [{"query": f"问题{i}", "expected_answer": f"答案{i}"} for i in range(3)]
+        samples = [
+            {"query": f"问题{i}", "expected_answer": f"答案{i}"} for i in range(3)
+        ]
         file_path, _ = export_jsonl(
             samples, None, "golden", "v20260808-100000", base_dir=tmp_path
         )

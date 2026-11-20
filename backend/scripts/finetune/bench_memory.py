@@ -11,6 +11,7 @@ C组（隔离ckpt）：  ckpt=False, batch=1, max_len=1024  ← 与A仅 ckpt 不
 用法：
     python scripts/finetune/bench_memory.py --steps 15
 """
+
 from __future__ import annotations
 
 import argparse
@@ -23,16 +24,20 @@ sys.path.insert(0, str(FINETUNE_DIR))
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="gradient_checkpointing 内存/速度对照实验")
+    parser = argparse.ArgumentParser(
+        description="gradient_checkpointing 内存/速度对照实验"
+    )
     parser.add_argument("--data", default="data/open/sft.jsonl", help="sft.jsonl 路径")
-    parser.add_argument("--base_model", default="models/Qwen2.5-1.5B-Instruct", help="基座模型")
+    parser.add_argument(
+        "--base_model", default="models/Qwen2.5-1.5B-Instruct", help="基座模型"
+    )
     parser.add_argument("--steps", type=int, default=15, help="每组训练 step 数")
     args = parser.parse_args()
 
     import torch
     from peft import LoraConfig, get_peft_model
-    from transformers import AutoModelForCausalLM, AutoTokenizer
     from train_lora import DEFAULT_TARGET_MODULES, load_sft_jsonl, render_chat
+    from transformers import AutoModelForCausalLM, AutoTokenizer
 
     tokenizer = AutoTokenizer.from_pretrained(args.base_model, trust_remote_code=True)
     if tokenizer.pad_token is None:
@@ -44,26 +49,40 @@ def main() -> int:
     print(f"加载 {len(texts)} 条 SFT 样本")
 
     def make_batches(max_len: int, batch_size: int, n: int):
-        enc = tokenizer(texts, truncation=True, max_length=max_len,
-                        padding="max_length", return_tensors="pt")
+        enc = tokenizer(
+            texts,
+            truncation=True,
+            max_length=max_len,
+            padding="max_length",
+            return_tensors="pt",
+        )
         batches = []
         for i in range(0, len(texts) - batch_size + 1, batch_size):
             if len(batches) >= n:
                 break
-            input_ids = enc["input_ids"][i:i + batch_size].to("mps")
-            attn = enc["attention_mask"][i:i + batch_size].to("mps")
+            input_ids = enc["input_ids"][i : i + batch_size].to("mps")
+            attn = enc["attention_mask"][i : i + batch_size].to("mps")
             labels = input_ids.clone()
             labels[attn == 0] = -100  # pad 不计 loss
-            batches.append({"input_ids": input_ids, "attention_mask": attn, "labels": labels})
+            batches.append(
+                {"input_ids": input_ids, "attention_mask": attn, "labels": labels}
+            )
         return batches
 
     def load_fresh_model():
         model = AutoModelForCausalLM.from_pretrained(
-            args.base_model, torch_dtype=torch.bfloat16, trust_remote_code=True)
+            args.base_model, torch_dtype=torch.bfloat16, trust_remote_code=True
+        )
         model.config.use_cache = False
         model = model.to("mps")
-        peft_config = LoraConfig(r=16, lora_alpha=32, lora_dropout=0.05, bias="none",
-                                 task_type="CAUSAL_LM", target_modules=DEFAULT_TARGET_MODULES)
+        peft_config = LoraConfig(
+            r=16,
+            lora_alpha=32,
+            lora_dropout=0.05,
+            bias="none",
+            task_type="CAUSAL_LM",
+            target_modules=DEFAULT_TARGET_MODULES,
+        )
         model = get_peft_model(model, peft_config)
         model.train()
         return model
@@ -80,7 +99,8 @@ def main() -> int:
 
         batches = make_batches(max_len, batch_size, args.steps)
         optimizer = torch.optim.AdamW(
-            [p for p in model.parameters() if p.requires_grad], lr=1e-4)
+            [p for p in model.parameters() if p.requires_grad], lr=1e-4
+        )
 
         torch.mps.empty_cache()
         times = []
@@ -97,28 +117,46 @@ def main() -> int:
                 cur = torch.mps.current_allocated_memory() / 1e9
                 peak_tracker = max(peak_tracker, cur)
                 if step % 5 == 0:
-                    print(f"  step {step}: loss={out.loss.item():.3f}  {dt:.2f}s  cur={cur:.1f}GB")
+                    print(
+                        f"  step {step}: loss={out.loss.item():.3f}  {dt:.2f}s  cur={cur:.1f}GB"
+                    )
         except RuntimeError as e:
             if "out of memory" in str(e).lower():
                 peak = torch.mps.current_allocated_memory() / 1e9
                 print(f"  → OOM @ step {len(times)}: 峰值 {peak:.1f}GB — {str(e)[:90]}")
                 del model, optimizer
                 torch.mps.empty_cache()
-                return {"name": name, "ckpt": ckpt, "batch": batch_size, "max_len": max_len,
-                        "peak_gb": f"OOM({peak:.0f}G)", "driver_gb": "-", "avg_step_s": "-",
-                        "throughput": 0, "steps": len(times), "oom": True}
+                return {
+                    "name": name,
+                    "ckpt": ckpt,
+                    "batch": batch_size,
+                    "max_len": max_len,
+                    "peak_gb": f"OOM({peak:.0f}G)",
+                    "driver_gb": "-",
+                    "avg_step_s": "-",
+                    "throughput": 0,
+                    "steps": len(times),
+                    "oom": True,
+                }
             raise
 
         peak = peak_tracker
         driver = torch.mps.driver_allocated_memory() / 1e9
         avg = sum(times) / len(times)
         result = {
-            "name": name, "ckpt": ckpt, "batch": batch_size, "max_len": max_len,
-            "peak_gb": round(peak, 2), "driver_gb": round(driver, 2),
-            "avg_step_s": round(avg, 3), "throughput": round(batch_size / avg, 2),
+            "name": name,
+            "ckpt": ckpt,
+            "batch": batch_size,
+            "max_len": max_len,
+            "peak_gb": round(peak, 2),
+            "driver_gb": round(driver, 2),
+            "avg_step_s": round(avg, 3),
+            "throughput": round(batch_size / avg, 2),
             "steps": len(times),
         }
-        print(f"  → 峰值 {peak:.2f}GB / driver {driver:.2f}GB / 均step {avg:.2f}s / 吞吐 {batch_size/avg:.1f}样本/s")
+        print(
+            f"  → 峰值 {peak:.2f}GB / driver {driver:.2f}GB / 均step {avg:.2f}s / 吞吐 {batch_size/avg:.1f}样本/s"
+        )
         del model, optimizer
         torch.mps.empty_cache()
         return result
@@ -134,16 +172,26 @@ def main() -> int:
     print("\n" + "=" * 78)
     print("对照实验汇总（1.5B, bf16, LoRA rank16, M3 Max 36G）")
     print("=" * 78)
-    print(f"{'配置':<14} {'ckpt':<6} {'batch':<7} {'maxlen':<8} {'峰值GB':<11} {'均step(s)':<11} {'吞吐':<10}")
+    print(
+        f"{'配置':<14} {'ckpt':<6} {'batch':<7} {'maxlen':<8} {'峰值GB':<11} {'均step(s)':<11} {'吞吐':<10}"
+    )
     for r in results:
-        print(f"{r['name']:<14} {str(r['ckpt']):<6} {r['batch']:<7} {r['max_len']:<8} "
-              f"{str(r['peak_gb']):<11} {str(r['avg_step_s']):<11} {r['throughput']:<10}")
+        print(
+            f"{r['name']:<14} {str(r['ckpt']):<6} {r['batch']:<7} {r['max_len']:<8} "
+            f"{str(r['peak_gb']):<11} {str(r['avg_step_s']):<11} {r['throughput']:<10}"
+        )
 
     a, c = results[0], results[1]
-    if isinstance(a["peak_gb"], (int, float)) and isinstance(c["peak_gb"], (int, float)):
+    if isinstance(a["peak_gb"], (int, float)) and isinstance(
+        c["peak_gb"], (int, float)
+    ):
         sp = "C更快" if c["avg_step_s"] < a["avg_step_s"] else "A更快"
-        print(f"\n[ckpt影响] A→C(仅关ckpt): 内存 {c['peak_gb']/a['peak_gb']:.1f}x, 速度 {a['avg_step_s']/c['avg_step_s']:.1f}x ({sp})")
-    print(f"[极限] B组(batch4,max2048,nockpt): {results[3]['peak_gb']} — 即使1.5B完全不省内存也OOM")
+        print(
+            f"\n[ckpt影响] A→C(仅关ckpt): 内存 {c['peak_gb']/a['peak_gb']:.1f}x, 速度 {a['avg_step_s']/c['avg_step_s']:.1f}x ({sp})"
+        )
+    print(
+        f"[极限] B组(batch4,max2048,nockpt): {results[3]['peak_gb']} — 即使1.5B完全不省内存也OOM"
+    )
     return 0
 
 

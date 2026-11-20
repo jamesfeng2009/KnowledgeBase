@@ -11,15 +11,15 @@ Webhook 端点收到事件后立即返回 200，实际同步由本模块的 Cele
         ↓ P0 两阶段校验（已在 P0 实现）
         ↓ 内容变化 → 重建向量索引
 """
+
 from __future__ import annotations
 
 import asyncio
 from typing import Any
 
-from celery_app import celery_app
-
 from app.utils.logger import get_logger
 from app.utils.retry import make_celery_retry_kwargs
+from celery_app import celery_app
 
 logger = get_logger(__name__)
 

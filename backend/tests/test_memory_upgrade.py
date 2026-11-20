@@ -8,17 +8,21 @@
 - P2a L1 短期窗口 Redis 热层（append/get_window/replace/invalidate + 降级）
 - P2b 事实提取 prompt 显式负规则（寒暄/知识库内容/工具结果不写入）
 """
+
 from __future__ import annotations
 
 import uuid
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from app.config import get_settings
 from app.memory.memory_manager import MemoryManager
 
+if TYPE_CHECKING:
+    from app.memory.short_term_cache import ShortTermCache
 
 # ----------------------------------------------------------------------
 # 测试替身
@@ -50,13 +54,29 @@ class _SelectiveMem0:
         return list(self.facts)
 
 
-def _make_manager(fail_category: str | None = None) -> tuple[MemoryManager, _SelectiveMem0]:
+def _make_manager(
+    fail_category: str | None = None,
+) -> tuple[MemoryManager, _SelectiveMem0]:
     mgr = MemoryManager(db=MagicMock(), sidecar=None)
     mem0 = _SelectiveMem0(
-        facts=[SimpleNamespace(id=uuid.uuid4(), category="preference", fact_text="偏好A",
-                                fact_key="", fact_value="")],
-        working=[SimpleNamespace(id=uuid.uuid4(), category="working", fact_text="工作B",
-                                  fact_key="", fact_value="")],
+        facts=[
+            SimpleNamespace(
+                id=uuid.uuid4(),
+                category="preference",
+                fact_text="偏好A",
+                fact_key="",
+                fact_value="",
+            )
+        ],
+        working=[
+            SimpleNamespace(
+                id=uuid.uuid4(),
+                category="working",
+                fact_text="工作B",
+                fact_key="",
+                fact_value="",
+            )
+        ],
         fail_category=fail_category,
     )
     mgr.mem0 = mem0
@@ -107,12 +127,13 @@ class TestP1aParallelBuildContext:
             calls["n"] += 1
             if calls["n"] == 1:
                 raise RuntimeError("mem0 down")
-            return await original(user_id, query=query, category=category,
-                                  limit=limit, **kw)
+            return await original(
+                user_id, query=query, category=category, limit=limit, **kw
+            )
 
         mem0.search_facts = flaky
         ctx = await mgr.build_context(user_id=uuid.uuid4(), query="问题")
-        assert ctx.user_facts == []          # L3 失败 → 空列表
+        assert ctx.user_facts == []  # L3 失败 → 空列表
         assert len(ctx.working_memory) == 1  # L4 不受影响
 
     @pytest.mark.asyncio
@@ -120,9 +141,7 @@ class TestP1aParallelBuildContext:
         """checkpoint 分支必须走独立短会话（AsyncSession 不可并发共享）。"""
         mgr, _mem0 = _make_manager()
         # B7 后无 tenant_id 时先读请求会话 GUC（MagicMock 需可 await）
-        mgr.db.execute = AsyncMock(
-            return_value=SimpleNamespace(scalar=lambda: None)
-        )
+        mgr.db.execute = AsyncMock(return_value=SimpleNamespace(scalar=lambda: None))
         fresh_session = MagicMock()
         fresh_session.execute = AsyncMock()
         factory_calls: list[int] = []
@@ -131,9 +150,7 @@ class TestP1aParallelBuildContext:
             factory_calls.append(1)
             return _FakeAsyncSessionCtx(fresh_session)
 
-        monkeypatch.setattr(
-            "app.database.async_session_factory", fake_factory
-        )
+        monkeypatch.setattr("app.database.async_session_factory", fake_factory)
         fake_cm = MagicMock(
             load_checkpoint_with_event_log=AsyncMock(
                 return_value={"iteration": 2, "retrieved_docs": ["d1"]}
@@ -150,7 +167,7 @@ class TestP1aParallelBuildContext:
 
         assert ctx.checkpoint is not None
         assert ctx.checkpoint["iteration"] == 2
-        assert len(factory_calls) == 1          # 用了独立会话工厂
+        assert len(factory_calls) == 1  # 用了独立会话工厂
         fake_cm.load_checkpoint_with_event_log.assert_awaited_once_with("sess-1")
 
     @pytest.mark.asyncio
@@ -175,9 +192,7 @@ class TestP1aParallelBuildContext:
             ),
         )
 
-        await mgr.build_context(
-            user_id=uuid.uuid4(), session_id="sess-1", query="问题"
-        )
+        await mgr.build_context(user_id=uuid.uuid4(), session_id="sess-1", query="问题")
 
         fresh_session.execute.assert_awaited_once()
         stmt = fresh_session.execute.await_args.args[0]
@@ -188,9 +203,7 @@ class TestP1aParallelBuildContext:
     async def test_checkpoint_failure_isolated(self, monkeypatch):
         """checkpoint 分支失败不影响 L3/L4。"""
         mgr, mem0 = _make_manager()
-        mgr.db.execute = AsyncMock(
-            return_value=SimpleNamespace(scalar=lambda: None)
-        )
+        mgr.db.execute = AsyncMock(return_value=SimpleNamespace(scalar=lambda: None))
         fresh_session = MagicMock()
         fresh_session.execute = AsyncMock()
         monkeypatch.setattr(
@@ -211,9 +224,9 @@ class TestP1aParallelBuildContext:
         ctx = await mgr.build_context(
             user_id=uuid.uuid4(), session_id="sess-1", query="问题"
         )
-        assert ctx.checkpoint is None          # checkpoint 降级为 None
-        assert len(ctx.user_facts) == 1        # L3 不受影响
-        assert len(ctx.working_memory) == 1    # L4 不受影响
+        assert ctx.checkpoint is None  # checkpoint 降级为 None
+        assert len(ctx.user_facts) == 1  # L3 不受影响
+        assert len(ctx.working_memory) == 1  # L4 不受影响
 
 
 # ----------------------------------------------------------------------
@@ -240,18 +253,14 @@ class TestP1bCleanupConversationMemory:
             MagicMock(return_value=fake_elm),
         )
         fake_cache = MagicMock(invalidate=AsyncMock(return_value=True))
-        monkeypatch.setattr(
-            "app.memory.short_term_cache.short_term_cache", fake_cache
-        )
+        monkeypatch.setattr("app.memory.short_term_cache.short_term_cache", fake_cache)
         return msg_ids, fake_elm, fake_cache
 
     @pytest.mark.asyncio
     async def test_cleanup_orchestrates_all_paths(self, monkeypatch):
         user_id, conv_id = uuid.uuid4(), uuid.uuid4()
         mgr, _mem0 = _make_manager()
-        mgr.mem0 = MagicMock(
-            deactivate_facts_by_source_refs=AsyncMock(return_value=3)
-        )
+        mgr.mem0 = MagicMock(deactivate_facts_by_source_refs=AsyncMock(return_value=3))
         mgr.checkpoint = MagicMock(delete_checkpoint=AsyncMock())
         msg_ids, fake_elm, fake_cache = self._prepare(monkeypatch, mgr)
 
@@ -484,12 +493,8 @@ class TestP0DispatchMemoryWrite:
     def test_disabled_returns_false(self, monkeypatch):
         from tasks.memory_tasks import dispatch_memory_write
 
-        monkeypatch.setattr(
-            get_settings(), "MEMORY_ASYNC_WRITE_ENABLED", False
-        )
-        assert (
-            dispatch_memory_write(user_id="u", session_id="s", query="q") is False
-        )
+        monkeypatch.setattr(get_settings(), "MEMORY_ASYNC_WRITE_ENABLED", False)
+        assert dispatch_memory_write(user_id="u", session_id="s", query="q") is False
 
     def test_dispatch_success_returns_true(self, monkeypatch):
         import tasks.memory_tasks as mt
@@ -517,10 +522,7 @@ class TestP0DispatchMemoryWrite:
         fake_task.delay.side_effect = RuntimeError("broker down")
         monkeypatch.setattr(mt, "persist_conversation_memory", fake_task)
 
-        assert (
-            mt.dispatch_memory_write(user_id="u", session_id="s", query="q")
-            is False
-        )
+        assert mt.dispatch_memory_write(user_id="u", session_id="s", query="q") is False
 
 
 # ----------------------------------------------------------------------
@@ -598,7 +600,7 @@ class _FakeRedis:
         return count
 
 
-def _make_cache(**kwargs) -> "ShortTermCache":
+def _make_cache(**kwargs) -> ShortTermCache:
     from app.memory.short_term_cache import ShortTermCache
 
     cache = ShortTermCache(redis_url="redis://faketest", **kwargs)
@@ -702,9 +704,7 @@ class TestP2bNegativeRulesInPrompt:
     @pytest.mark.asyncio
     async def test_prompt_contains_negative_rules(self, monkeypatch):
         llm = _CapturingLLM("NONE")
-        monkeypatch.setattr(
-            "app.memory.memory_manager.get_llm_provider", lambda: llm
-        )
+        monkeypatch.setattr("app.memory.memory_manager.get_llm_provider", lambda: llm)
         mgr = MemoryManager(db=MagicMock(), sidecar=None)
 
         long_msg = "请帮我查一下报销流程的文档，然后总结要点给我" * 4
@@ -724,9 +724,7 @@ class TestP2bNegativeRulesInPrompt:
     async def test_short_conversation_skipped(self, monkeypatch):
         """对话过短不调用 LLM（也无需负规则）。"""
         llm = _CapturingLLM("NONE")
-        monkeypatch.setattr(
-            "app.memory.memory_manager.get_llm_provider", lambda: llm
-        )
+        monkeypatch.setattr("app.memory.memory_manager.get_llm_provider", lambda: llm)
         mgr = MemoryManager(db=MagicMock(), sidecar=None)
 
         result = await mgr._llm_extract_facts(

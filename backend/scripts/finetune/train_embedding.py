@@ -27,13 +27,17 @@ import json
 import logging
 import random
 import sys
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 logger = logging.getLogger("train_embedding")
 
 # 分组切分工具（评审 #2：同一基问题的 query 变体不得跨 train/eval）
-from finetune_utils import grouped_split_indices, question_group_key
+from finetune_utils import (  # noqa: E402  — 有意延迟导入（依赖上方初始化）
+    grouped_split_indices,
+    question_group_key,
+)
 
 
 def iter_jsonl(path: str | Path) -> Iterator[tuple[int, dict]]:
@@ -64,7 +68,9 @@ def load_triplets(path: str | Path) -> list[dict]:
     for lineno, obj in iter_jsonl(path):
         query, pos, neg = obj.get("query"), obj.get("pos"), obj.get("neg")
         if not all(isinstance(x, str) and x.strip() for x in (query, pos, neg)):
-            logger.warning("跳过样本 %s:%d — query/pos/neg 必须为非空字符串", path, lineno)
+            logger.warning(
+                "跳过样本 %s:%d — query/pos/neg 必须为非空字符串", path, lineno
+            )
             continue
         meta = obj.get("meta") if isinstance(obj.get("meta"), dict) else {}
         records.append({"query": query, "pos": pos, "neg": neg, "meta": meta})
@@ -107,15 +113,22 @@ def evaluate_recall(
 
     q_emb = model.encode(
         [s["query"] for s in samples],
-        batch_size=batch_size, normalize_embeddings=True, show_progress_bar=False,
+        batch_size=batch_size,
+        normalize_embeddings=True,
+        show_progress_bar=False,
     )
     c_emb = model.encode(
-        corpus, batch_size=batch_size, normalize_embeddings=True, show_progress_bar=False,
+        corpus,
+        batch_size=batch_size,
+        normalize_embeddings=True,
+        show_progress_bar=False,
     )
     sims = np.asarray(q_emb) @ np.asarray(c_emb).T
     topk = np.argsort(-sims, axis=1)[:, :k_eff]
 
-    hits = sum(1 for i, s in enumerate(samples) if pos_index[s["pos"]] in set(topk[i].tolist()))
+    hits = sum(
+        1 for i, s in enumerate(samples) if pos_index[s["pos"]] in set(topk[i].tolist())
+    )
     return hits / len(samples)
 
 
@@ -125,23 +138,54 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--data", required=True, help="embedding.jsonl 路径")
-    parser.add_argument("--base_model", default="BAAI/bge-base-zh-v1.5", help="基座向量模型")
-    parser.add_argument("--output_dir", default="outputs/embedding-ft", help="微调模型输出目录")
+    parser.add_argument(
+        "--base_model", default="BAAI/bge-base-zh-v1.5", help="基座向量模型"
+    )
+    parser.add_argument(
+        "--output_dir", default="outputs/embedding-ft", help="微调模型输出目录"
+    )
     parser.add_argument("--epochs", type=int, default=3, help="训练轮数")
-    parser.add_argument("--batch_size", type=int, default=32, help="batch size（MNR 依赖 in-batch 负例，不宜过小）")
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=32,
+        help="batch size（MNR 依赖 in-batch 负例，不宜过小）",
+    )
     parser.add_argument("--lr", type=float, default=2e-5, help="学习率")
     parser.add_argument("--max_len", type=int, default=512, help="最大 token 长度")
-    parser.add_argument("--eval_samples", type=int, default=100, help="评测集条数上限（从数据尾部留出，不参与训练）")
-    parser.add_argument("--eval_ratio", type=float, default=0.2, help="评测集占比（与 --eval_samples 取较小者）")
-    parser.add_argument("--num_distractors", type=int, default=200, help="干扰文档数量（0=不加干扰，仅 pos 语料；>0 从非匹配 pos+neg 中抽取）")
-    parser.add_argument("--eval_k", type=int, default=1, help="Recall@k 的 k 值（1=最严格，10=宽松；小语料建议 1）")
+    parser.add_argument(
+        "--eval_samples",
+        type=int,
+        default=100,
+        help="评测集条数上限（从数据尾部留出，不参与训练）",
+    )
+    parser.add_argument(
+        "--eval_ratio",
+        type=float,
+        default=0.2,
+        help="评测集占比（与 --eval_samples 取较小者）",
+    )
+    parser.add_argument(
+        "--num_distractors",
+        type=int,
+        default=200,
+        help="干扰文档数量（0=不加干扰，仅 pos 语料；>0 从非匹配 pos+neg 中抽取）",
+    )
+    parser.add_argument(
+        "--eval_k",
+        type=int,
+        default=1,
+        help="Recall@k 的 k 值（1=最严格，10=宽松；小语料建议 1）",
+    )
     parser.add_argument("--seed", type=int, default=42, help="随机种子")
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
 
     # ---- 重依赖延迟导入：保证无 GPU 环境（或无 sentence-transformers）下 import 本模块不报错 ----
     import torch
@@ -161,7 +205,9 @@ def main(argv: list[str] | None = None) -> int:
     # 行级随机切分会让变体同时落入 train/eval，Recall 虚高。
     keys = [question_group_key(r["query"]) for r in records]
     eval_size = max(1, min(args.eval_samples, int(len(records) * args.eval_ratio)))
-    train_idx, eval_idx = grouped_split_indices(keys, test_size=eval_size, seed=args.seed)
+    train_idx, eval_idx = grouped_split_indices(
+        keys, test_size=eval_size, seed=args.seed
+    )
     eval_records = [records[i] for i in eval_idx]
     train_records = [records[i] for i in train_idx]
     rng = random.Random(args.seed)
@@ -174,28 +220,50 @@ def main(argv: list[str] | None = None) -> int:
     if args.num_distractors > 0:
         if len(distractor_pool) > args.num_distractors:
             rng.shuffle(distractor_pool)
-            distractor_pool = distractor_pool[:args.num_distractors]
+            distractor_pool = distractor_pool[: args.num_distractors]
         distractors: list[str] | None = distractor_pool
     else:
         distractors = None
 
     corpus_size = len({s["pos"] for s in eval_records}) + len(distractors or [])
-    logger.info("数据拆分: train=%d, eval=%d, 干扰文档=%d, 语料总量=%d, Recall@%d",
-                len(train_records), len(eval_records), len(distractors or []), corpus_size, args.eval_k)
+    logger.info(
+        "数据拆分: train=%d, eval=%d, 干扰文档=%d, 语料总量=%d, Recall@%d",
+        len(train_records),
+        len(eval_records),
+        len(distractors or []),
+        corpus_size,
+        args.eval_k,
+    )
 
     # ---- 训练前评估（基线 Recall@k，独立 eval 集 + 干扰文档）----
     recall_before = evaluate_recall(
-        model, eval_records, k=args.eval_k, batch_size=args.batch_size, distractors=distractors,
+        model,
+        eval_records,
+        k=args.eval_k,
+        batch_size=args.batch_size,
+        distractors=distractors,
     )
-    logger.info("[训练前] Recall@%d = %.4f（eval=%d, 语料=%d）",
-                args.eval_k, recall_before, len(eval_records), corpus_size)
+    logger.info(
+        "[训练前] Recall@%d = %.4f（eval=%d, 语料=%d）",
+        args.eval_k,
+        recall_before,
+        len(eval_records),
+        corpus_size,
+    )
 
     # ---- 训练（只用 train_records，eval 不参与）----
     if len(train_records) < args.batch_size:
-        logger.warning("训练样本数(%d) < batch_size(%d)，in-batch 负例过少会显著削弱 MNR 效果",
-                       len(train_records), args.batch_size)
-    train_examples = [InputExample(texts=[r["query"], r["pos"], r["neg"]]) for r in train_records]
-    train_dataloader = DataLoader(train_examples, shuffle=True, batch_size=args.batch_size, drop_last=True)
+        logger.warning(
+            "训练样本数(%d) < batch_size(%d)，in-batch 负例过少会显著削弱 MNR 效果",
+            len(train_records),
+            args.batch_size,
+        )
+    train_examples = [
+        InputExample(texts=[r["query"], r["pos"], r["neg"]]) for r in train_records
+    ]
+    train_dataloader = DataLoader(
+        train_examples, shuffle=True, batch_size=args.batch_size, drop_last=True
+    )
     train_loss = losses.MultipleNegativesRankingLoss(model)
     warmup_steps = max(1, int(len(train_dataloader) * args.epochs * 0.1))
 
@@ -226,12 +294,26 @@ def main(argv: list[str] | None = None) -> int:
 
     # ---- 训练后评估（同一批 eval + 干扰文档，对比微调收益）----
     recall_after = evaluate_recall(
-        model, eval_records, k=args.eval_k, batch_size=args.batch_size, distractors=distractors,
+        model,
+        eval_records,
+        k=args.eval_k,
+        batch_size=args.batch_size,
+        distractors=distractors,
     )
-    logger.info("[训练后] Recall@%d = %.4f（eval=%d, 语料=%d）",
-                args.eval_k, recall_after, len(eval_records), corpus_size)
-    logger.info("微调收益: Recall@%d %+.4f（%.4f -> %.4f）",
-                args.eval_k, recall_after - recall_before, recall_before, recall_after)
+    logger.info(
+        "[训练后] Recall@%d = %.4f（eval=%d, 语料=%d）",
+        args.eval_k,
+        recall_after,
+        len(eval_records),
+        corpus_size,
+    )
+    logger.info(
+        "微调收益: Recall@%d %+.4f（%.4f -> %.4f）",
+        args.eval_k,
+        recall_after - recall_before,
+        recall_before,
+        recall_after,
+    )
     logger.info("微调模型已保存至 %s", args.output_dir)
     return 0
 

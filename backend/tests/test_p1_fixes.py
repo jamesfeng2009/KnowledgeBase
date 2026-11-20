@@ -4,13 +4,11 @@ P1-2: 证据门禁重排后仍低分时不拒答 → 拒答/澄清分支
 P1-3: Claim 核验不检查 chunk 内容是否支持 claim → 内容级回溯核验
 P1-4: Trace 未记录知识库版本号 → Trace span 增加 kb_version
 """
+
 from __future__ import annotations
 
 import sys
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 if "celery" not in sys.modules:
     mock_celery = MagicMock()
@@ -18,7 +16,6 @@ if "celery" not in sys.modules:
     sys.modules["celery"] = mock_celery
 
 from app.rag.quality_guard import QualityGuard, RetrievalQualityResult
-
 
 # ======================================================================
 # P1-2: 证据门禁重排后仍低分时拒答
@@ -31,25 +28,19 @@ class TestP12ShouldRejectAfterRetry:
     def test_reject_when_score_below_threshold_and_retries_exhausted(self) -> None:
         """重试次数用尽 + 分数低于阈值 → 应拒答。"""
         guard = QualityGuard()
-        result = RetrievalQualityResult(
-            mean_score=0.1, passed=False, doc_count=5
-        )
+        result = RetrievalQualityResult(mean_score=0.1, passed=False, doc_count=5)
         assert guard.should_reject_after_retry(result, retry_count=1) is True
 
     def test_no_reject_when_score_passes(self) -> None:
         """分数通过阈值 → 不拒答。"""
         guard = QualityGuard()
-        result = RetrievalQualityResult(
-            mean_score=0.8, passed=True, doc_count=5
-        )
+        result = RetrievalQualityResult(mean_score=0.8, passed=True, doc_count=5)
         assert guard.should_reject_after_retry(result, retry_count=1) is False
 
     def test_no_reject_when_retries_remaining(self) -> None:
         """仍有重试次数 → 不拒答（给重试机会）。"""
         guard = QualityGuard()
-        result = RetrievalQualityResult(
-            mean_score=0.1, passed=False, doc_count=5
-        )
+        result = RetrievalQualityResult(mean_score=0.1, passed=False, doc_count=5)
         assert guard.should_reject_after_retry(result, retry_count=0) is False
 
     def test_no_reject_when_guard_disabled(self) -> None:
@@ -58,9 +49,7 @@ class TestP12ShouldRejectAfterRetry:
         mock_settings = MagicMock()
         mock_settings.RAG_QUALITY_GUARD_ENABLED = False
         with patch("app.rag.quality_guard.get_settings", return_value=mock_settings):
-            result = RetrievalQualityResult(
-                mean_score=0.1, passed=False, doc_count=5
-            )
+            result = RetrievalQualityResult(mean_score=0.1, passed=False, doc_count=5)
             assert guard.should_reject_after_retry(result, retry_count=1) is False
 
     def test_no_reject_when_no_docs(self) -> None:
@@ -68,9 +57,7 @@ class TestP12ShouldRejectAfterRetry:
         空结果由上层逻辑直接处理（短路返回空检索结果）。
         """
         guard = QualityGuard()
-        result = RetrievalQualityResult(
-            mean_score=0.0, passed=False, doc_count=0
-        )
+        result = RetrievalQualityResult(mean_score=0.0, passed=False, doc_count=0)
         # should_reject_after_retry 检查 not passed，空结果 passed=False
         # 但 retry_count=1 已用尽 → 返回 True
         assert guard.should_reject_after_retry(result, retry_count=1) is True
@@ -159,11 +146,7 @@ class TestP13VerifyClaimsAgainstChunks:
     def test_mixed_verified_and_unverified(self) -> None:
         """混合场景：部分 claim 通过，部分未通过 → should_flag 取决于比例。"""
         # 3 个 claim，1 个未核验 → 33% > 30% → should_flag=True
-        answer = (
-            "报销上限为5000元[1]。"
-            "生效日期为2026-01-01[2]。"
-            "审批人为张三[3]。"
-        )
+        answer = "报销上限为5000元[1]。" "生效日期为2026-01-01[2]。" "审批人为张三[3]。"
         docs = [
             {"content": "报销上限为5000元。"},
             {"content": "生效日期为2026-01-01。"},
@@ -240,6 +223,7 @@ class TestP14KBVersionInTrace:
     def test_kb_version_snapshot_is_iso_format(self) -> None:
         """kb_version_snapshot 应为 ISO 8601 格式时间戳。"""
         from datetime import datetime, timezone
+
         snapshot = datetime.now(timezone.utc).isoformat()
         # 验证可以解析回来
         parsed = datetime.fromisoformat(snapshot)

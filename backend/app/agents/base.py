@@ -17,7 +17,6 @@ from __future__ import annotations
 import json
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
-from typing import Any
 
 from app.agents.state import AgentState
 from app.llm.base import LLMProvider, Message
@@ -131,12 +130,8 @@ class BaseAgent(ABC):
         if memory_fragment:
             system_prompt = system_prompt + "\n\n" + memory_fragment
 
-        state["messages"].append(
-            Message(role="system", content=system_prompt)
-        )
-        state["messages"].append(
-            Message(role="user", content=query)
-        )
+        state["messages"].append(Message(role="system", content=system_prompt))
+        state["messages"].append(Message(role="user", content=query))
 
         # Agent Loop 主循环
         for iteration in range(1, self.max_iterations + 1):
@@ -170,7 +165,9 @@ class BaseAgent(ABC):
                         answer_parts.append(chunk)
                         yield format_sse_event(chunk)
             except Exception as exc:
-                logger.error("agent.execute_failed", error=str(exc), iteration=iteration)
+                logger.error(
+                    "agent.execute_failed", error=str(exc), iteration=iteration
+                )
                 yield format_sse_event(
                     json.dumps(
                         {"type": "error", "message": f"执行失败: {exc}"},
@@ -186,7 +183,9 @@ class BaseAgent(ABC):
             try:
                 need_retry = await self.reflect(state)
             except Exception as exc:
-                logger.error("agent.reflect_failed", error=str(exc), iteration=iteration)
+                logger.error(
+                    "agent.reflect_failed", error=str(exc), iteration=iteration
+                )
                 need_retry = False
 
             if not need_retry:

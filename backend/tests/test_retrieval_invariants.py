@@ -93,7 +93,9 @@ def _make_perm_svc(
         accessible_kbs = [KB_ID]
 
     user = SimpleNamespace(
-        id=uuid4(), role=role, clearance_level=clearance,
+        id=uuid4(),
+        role=role,
+        clearance_level=clearance,
         dept_id=None,  # P1 visibility：None 跳过 dept 可见性分支
     )
     db = AsyncMock()
@@ -190,14 +192,17 @@ def _make_retriever() -> HybridRetriever:
 async def _check_channel_pushdown(channel: str) -> None:
     """验证通道在 search() 调用链上收到 doc_status=published 下推子句。"""
     retriever = _make_retriever()
-    with patch.object(
-        retriever, "_vector_search", new=AsyncMock(return_value=[])
-    ) as vec, patch.object(
-        retriever, "_fulltext_search", new=AsyncMock(return_value=[])
-    ) as ft, patch.object(
-        retriever, "_cross_modal_search", new=AsyncMock(return_value=[])
-    ) as cm, patch.object(
-        retriever, "_graph_search", new=AsyncMock(return_value=[])
+    with (
+        patch.object(
+            retriever, "_vector_search", new=AsyncMock(return_value=[])
+        ) as vec,
+        patch.object(
+            retriever, "_fulltext_search", new=AsyncMock(return_value=[])
+        ) as ft,
+        patch.object(
+            retriever, "_cross_modal_search", new=AsyncMock(return_value=[])
+        ) as cm,
+        patch.object(retriever, "_graph_search", new=AsyncMock(return_value=[])),
     ):
         await retriever.search("查询", [KB_ID], 20, {"series_id": "s1"})
 
@@ -226,9 +231,7 @@ class TestPushdownChannelContract:
         """BM25 路：doc_status 下推必须落到 OpenSearch bool.filter 子句。"""
         retriever = _make_retriever()
         await retriever._fulltext_search(
-            "查询", [KB_ID], 20, RetrievalInvariants.pushdown(
-                "fulltext", [KB_ID], None
-            )
+            "查询", [KB_ID], 20, RetrievalInvariants.pushdown("fulltext", [KB_ID], None)
         )
         payload = retriever._http.post.call_args.kwargs.get("json", {})
         clauses = payload.get("query", {}).get("bool", {}).get("filter", [])
@@ -239,9 +242,7 @@ class TestPushdownChannelContract:
         """向量路：filters 必须透传给 VectorStoreBase.search（后端转 filter 子句）。"""
         retriever = _make_retriever()
         await retriever._vector_search(
-            "查询", [KB_ID], 20, RetrievalInvariants.pushdown(
-                "vector", [KB_ID], None
-            )
+            "查询", [KB_ID], 20, RetrievalInvariants.pushdown("vector", [KB_ID], None)
         )
         kwargs = retriever._vector_store.search.call_args.kwargs
         assert kwargs.get("filters", {}).get("doc_status") == "published"
@@ -251,17 +252,23 @@ class TestPushdownChannelContract:
         """P0 密级下推 — search(classifications=...) 必须随 effective_filters
         下推到向量 / 全文 / 跨模态三路召回通道（图谱路 Final Gate 兜底）。"""
         retriever = _make_retriever()
-        with patch.object(
-            retriever, "_vector_search", new=AsyncMock(return_value=[])
-        ) as vec, patch.object(
-            retriever, "_fulltext_search", new=AsyncMock(return_value=[])
-        ) as ft, patch.object(
-            retriever, "_cross_modal_search", new=AsyncMock(return_value=[])
-        ) as cm, patch.object(
-            retriever, "_graph_search", new=AsyncMock(return_value=[])
+        with (
+            patch.object(
+                retriever, "_vector_search", new=AsyncMock(return_value=[])
+            ) as vec,
+            patch.object(
+                retriever, "_fulltext_search", new=AsyncMock(return_value=[])
+            ) as ft,
+            patch.object(
+                retriever, "_cross_modal_search", new=AsyncMock(return_value=[])
+            ) as cm,
+            patch.object(retriever, "_graph_search", new=AsyncMock(return_value=[])),
         ):
             await retriever.search(
-                "查询", [KB_ID], 20, {"series_id": "s1"},
+                "查询",
+                [KB_ID],
+                20,
+                {"series_id": "s1"},
                 classifications=["public", "internal"],
             )
 
@@ -293,7 +300,7 @@ class _FakeResult:
 class _FakeSession:
     queries: list[str] = []
 
-    async def __aenter__(self) -> "_FakeSession":
+    async def __aenter__(self) -> _FakeSession:
         return self
 
     async def __aexit__(self, *args: Any) -> bool:
@@ -336,8 +343,7 @@ class TestGraphCypherContract:
         await service.find_related_documents_by_entity(["实体A"])
         # 回退查询特征：直接 MENTIONS 到 Document（含 NOT HAS_CHUNK 排除子句）
         fallback_queries = [
-            q for q in _FakeSession.queries
-            if "MENTIONS]-(d:Document)" in q
+            q for q in _FakeSession.queries if "MENTIONS]-(d:Document)" in q
         ]
         assert fallback_queries, "应包含 Document 级回退查询"
         assert all("d.doc_status = 'published'" in q for q in fallback_queries)
@@ -354,7 +360,10 @@ class TestGraphCypherContract:
 
         service.batch_import_graph = fake_import  # type: ignore[method-assign]
         await service.batch_import_document(
-            doc_id=str(uuid4()), title="t", content="c", kb_id=KB_ID,
+            doc_id=str(uuid4()),
+            title="t",
+            content="c",
+            kb_id=KB_ID,
             doc_status="published",
         )
         doc_nodes = [n for n in captured["nodes"] if n.get("label") == "Document"]
@@ -524,18 +533,14 @@ async def _run_channel_contract(channel: str) -> None:
             {"doc_id": PUBLISHED_ID, "kb_id": KB_ID, "title": "t"},
             {"doc_id": OTHER_KB_DOC_ID, "kb_id": OTHER_KB_ID, "title": "t2"},
         ]
-        with patch(
-            "app.services.graph_service.GraphService"
-        ) as MockGraph:
-            MockGraph.return_value.find_related_documents_by_entity = (
-                AsyncMock(return_value=related)
+        with patch("app.services.graph_service.GraphService") as MockGraph:
+            MockGraph.return_value.find_related_documents_by_entity = AsyncMock(
+                return_value=related
             )
             from app.config import get_settings as _gs
 
             with patch.object(_gs(), "GRAPH_SEARCH_ENABLED", True):
-                results = await retriever._graph_search(
-                    ["实体A"], [KB_ID], 10
-                )
+                results = await retriever._graph_search(["实体A"], [KB_ID], 10)
         assert all(r["kb_id"] == KB_ID for r in results)
         return
 
@@ -564,7 +569,11 @@ class TestChannelContract:
     def test_all_channels_registered(self) -> None:
         """通道注册表完整性 — 与实现检查的通道集一致。"""
         assert set(ALL_CHANNELS) == {
-            "vector", "fulltext", "cross_modal", "graph", "constraint"
+            "vector",
+            "fulltext",
+            "cross_modal",
+            "graph",
+            "constraint",
         }
 
 

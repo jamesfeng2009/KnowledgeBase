@@ -11,7 +11,6 @@ StreamableHTTP 传输层综合测试 — 对齐 MCP 2026-07-28 规范。
 from __future__ import annotations
 
 import json
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -20,37 +19,33 @@ from app.llm.base import Tool
 from app.mcp.client import MCPClient
 from app.mcp.protocol import (
     INVALID_PARAMS,
+    INVALID_REQUEST,
     METHOD_NOT_FOUND,
-    METHOD_TOOLS_CALL,
-    METHOD_TOOLS_LIST,
+    METHOD_NOTIFICATION_INITIALIZED,
     METHOD_TASKS_CANCEL,
     METHOD_TASKS_CREATE,
     METHOD_TASKS_GET,
-    METHOD_NOTIFICATION_INITIALIZED,
+    METHOD_TOOLS_CALL,
+    METHOD_TOOLS_LIST,
     PARSE_ERROR,
-    INVALID_REQUEST,
-    INTERNAL_ERROR,
-    TOOL_NOT_FOUND,
-    TOOL_EXECUTION_ERROR,
-    TASK_NOT_FOUND,
-    TASK_ALREADY_TERMINAL,
     SUPPORTED_MCP_METHODS,
+    TASK_ALREADY_TERMINAL,
+    TASK_NOT_FOUND,
     JSONRPCError,
     JSONRPCRequest,
     JSONRPCResponse,
-    parse_request,
-    make_success_response,
     make_error_response,
     make_notification_response,
-    make_tools_list_params,
-    make_tools_call_params,
+    make_success_response,
+    make_tasks_cancel_params,
     make_tasks_create_params,
     make_tasks_get_params,
-    make_tasks_cancel_params,
+    make_tools_call_params,
+    make_tools_list_params,
+    parse_request,
 )
 from app.mcp.streamable_http import StreamableHTTPTransport, sse_serialize
 from app.mcp.task_store import TaskStore
-
 
 # ======================================================================
 # Fixtures
@@ -63,48 +58,54 @@ def mock_server():
     server = MagicMock()
 
     # 工具列表
-    server.list_tools = AsyncMock(return_value=[
-        Tool(
-            name="knowledge_search",
-            description="搜索知识库",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "搜索关键词"},
+    server.list_tools = AsyncMock(
+        return_value=[
+            Tool(
+                name="knowledge_search",
+                description="搜索知识库",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "搜索关键词"},
+                    },
+                    "required": ["query"],
                 },
-                "required": ["query"],
-            },
-        ),
-        Tool(
-            name="query_oa_approval",
-            description="查询 OA 审批状态",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "bill_no": {"type": "string", "description": "单据编号"},
+            ),
+            Tool(
+                name="query_oa_approval",
+                description="查询 OA 审批状态",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "bill_no": {"type": "string", "description": "单据编号"},
+                    },
+                    "required": ["bill_no"],
                 },
-                "required": ["bill_no"],
-            },
-        ),
-        Tool(
-            name="batch_analyze_documents",
-            description="批量分析文档",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "kb_id": {"type": "string", "description": "知识库 ID"},
+            ),
+            Tool(
+                name="batch_analyze_documents",
+                description="批量分析文档",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "kb_id": {"type": "string", "description": "知识库 ID"},
+                    },
+                    "required": ["kb_id"],
                 },
-                "required": ["kb_id"],
-            },
-        ),
-    ])
+            ),
+        ]
+    )
 
     # 同步工具调用
     async def _call_tool(tool_name: str, arguments: dict, *, tenant_id=None):
         if tool_name == "knowledge_search":
-            return json.dumps({"results": [{"id": "doc-1", "title": "Test Doc"}], "count": 1})
+            return json.dumps(
+                {"results": [{"id": "doc-1", "title": "Test Doc"}], "count": 1}
+            )
         if tool_name == "query_oa_approval":
-            return json.dumps({"bill_no": arguments.get("bill_no", ""), "status": "processing"})
+            return json.dumps(
+                {"bill_no": arguments.get("bill_no", ""), "status": "processing"}
+            )
         return json.dumps({"error": f"未知工具: {tool_name}"})
 
     server.call_tool = AsyncMock(side_effect=_call_tool)
@@ -117,12 +118,14 @@ def mock_server():
 
     # 异步工具调用
     async def _call_tool_async(tool_name: str, arguments: dict, *, tenant_id=None):
-        return json.dumps({
-            "task_id": "test-task-123",
-            "status": "working",
-            "poll_interval_ms": 2000,
-            "ttl_ms": 3600000,
-        })
+        return json.dumps(
+            {
+                "task_id": "test-task-123",
+                "status": "working",
+                "poll_interval_ms": 2000,
+                "ttl_ms": 3600000,
+            }
+        )
 
     server.call_tool_async = AsyncMock(side_effect=_call_tool_async)
 
@@ -219,7 +222,9 @@ class TestProtocolParseRequest:
 
     def test_invalid_params_type(self):
         """params 必须是 object 或 array。"""
-        raw = '{"jsonrpc": "2.0", "method": "tools/list", "params": "invalid", "id": "1"}'
+        raw = (
+            '{"jsonrpc": "2.0", "method": "tools/list", "params": "invalid", "id": "1"}'
+        )
         with pytest.raises(JSONRPCError) as exc:
             parse_request(raw)
         assert exc.value.code == INVALID_REQUEST
@@ -316,7 +321,9 @@ class TestProtocolResponse:
 
     def test_error_to_dict(self):
         """错误对象序列化。"""
-        error = JSONRPCError(code=PARSE_ERROR, message="Parse error", data={"detail": "bad json"})
+        error = JSONRPCError(
+            code=PARSE_ERROR, message="Parse error", data={"detail": "bad json"}
+        )
         d = error.to_dict()
         assert d["code"] == PARSE_ERROR
         assert d["message"] == "Parse error"
@@ -389,12 +396,14 @@ class TestStreamableHTTPTransport:
     @pytest.mark.asyncio
     async def test_tools_call_sync(self, transport):
         """tools/call：同步工具调用。"""
-        raw_body = json.dumps({
-            "jsonrpc": "2.0",
-            "method": "tools/call",
-            "params": {"name": "knowledge_search", "arguments": {"query": "test"}},
-            "id": "2",
-        })
+        raw_body = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {"name": "knowledge_search", "arguments": {"query": "test"}},
+                "id": "2",
+            }
+        )
         result = await transport.handle_request(raw_body)
 
         assert isinstance(result, JSONRPCResponse)
@@ -407,12 +416,14 @@ class TestStreamableHTTPTransport:
     @pytest.mark.asyncio
     async def test_tools_call_missing_name(self, transport):
         """tools/call：缺少工具名称。"""
-        raw_body = json.dumps({
-            "jsonrpc": "2.0",
-            "method": "tools/call",
-            "params": {"arguments": {}},
-            "id": "3",
-        })
+        raw_body = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {"arguments": {}},
+                "id": "3",
+            }
+        )
         result = await transport.handle_request(raw_body)
 
         assert isinstance(result, JSONRPCResponse)
@@ -422,12 +433,14 @@ class TestStreamableHTTPTransport:
     @pytest.mark.asyncio
     async def test_tools_call_unknown_tool(self, transport):
         """tools/call：未知工具（MCP Server 兜底返回 error JSON）。"""
-        raw_body = json.dumps({
-            "jsonrpc": "2.0",
-            "method": "tools/call",
-            "params": {"name": "nonexistent_tool", "arguments": {}},
-            "id": "4",
-        })
+        raw_body = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {"name": "nonexistent_tool", "arguments": {}},
+                "id": "4",
+            }
+        )
         result = await transport.handle_request(raw_body)
 
         assert isinstance(result, JSONRPCResponse)
@@ -442,12 +455,17 @@ class TestStreamableHTTPTransport:
     @pytest.mark.asyncio
     async def test_tools_call_long_running_async(self, transport):
         """tools/call：长耗时工具返回 SSE 流。"""
-        raw_body = json.dumps({
-            "jsonrpc": "2.0",
-            "method": "tools/call",
-            "params": {"name": "query_oa_approval", "arguments": {"bill_no": "BG2024001"}},
-            "id": "5",
-        })
+        raw_body = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {
+                    "name": "query_oa_approval",
+                    "arguments": {"bill_no": "BG2024001"},
+                },
+                "id": "5",
+            }
+        )
         result = await transport.handle_request(raw_body)
 
         # 长耗时工具应返回 AsyncIterator
@@ -473,12 +491,14 @@ class TestStreamableHTTPTransport:
             arguments={"key": "value"},
         )
 
-        raw_body = json.dumps({
-            "jsonrpc": "2.0",
-            "method": "tasks/get",
-            "params": {"task_id": task_id},
-            "id": "6",
-        })
+        raw_body = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "method": "tasks/get",
+                "params": {"task_id": task_id},
+                "id": "6",
+            }
+        )
         result = await transport.handle_request(raw_body)
 
         assert isinstance(result, JSONRPCResponse)
@@ -490,12 +510,14 @@ class TestStreamableHTTPTransport:
     @pytest.mark.asyncio
     async def test_tasks_get_not_found(self, transport):
         """tasks/get：任务不存在。"""
-        raw_body = json.dumps({
-            "jsonrpc": "2.0",
-            "method": "tasks/get",
-            "params": {"task_id": "nonexistent-task"},
-            "id": "7",
-        })
+        raw_body = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "method": "tasks/get",
+                "params": {"task_id": "nonexistent-task"},
+                "id": "7",
+            }
+        )
         result = await transport.handle_request(raw_body)
 
         assert isinstance(result, JSONRPCResponse)
@@ -505,12 +527,14 @@ class TestStreamableHTTPTransport:
     @pytest.mark.asyncio
     async def test_tasks_get_missing_task_id(self, transport):
         """tasks/get：缺少 task_id。"""
-        raw_body = json.dumps({
-            "jsonrpc": "2.0",
-            "method": "tasks/get",
-            "params": {},
-            "id": "8",
-        })
+        raw_body = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "method": "tasks/get",
+                "params": {},
+                "id": "8",
+            }
+        )
         result = await transport.handle_request(raw_body)
 
         assert isinstance(result, JSONRPCResponse)
@@ -526,12 +550,14 @@ class TestStreamableHTTPTransport:
             arguments={},
         )
 
-        raw_body = json.dumps({
-            "jsonrpc": "2.0",
-            "method": "tasks/cancel",
-            "params": {"task_id": task_id},
-            "id": "9",
-        })
+        raw_body = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "method": "tasks/cancel",
+                "params": {"task_id": task_id},
+                "id": "9",
+            }
+        )
         result = await transport.handle_request(raw_body)
 
         assert isinstance(result, JSONRPCResponse)
@@ -542,12 +568,14 @@ class TestStreamableHTTPTransport:
     @pytest.mark.asyncio
     async def test_tasks_cancel_not_found(self, transport):
         """tasks/cancel：任务不存在。"""
-        raw_body = json.dumps({
-            "jsonrpc": "2.0",
-            "method": "tasks/cancel",
-            "params": {"task_id": "nonexistent"},
-            "id": "10",
-        })
+        raw_body = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "method": "tasks/cancel",
+                "params": {"task_id": "nonexistent"},
+                "id": "10",
+            }
+        )
         result = await transport.handle_request(raw_body)
 
         assert isinstance(result, JSONRPCResponse)
@@ -564,12 +592,14 @@ class TestStreamableHTTPTransport:
         )
         await transport._task_store.complete_task(task_id, {"result": "done"})
 
-        raw_body = json.dumps({
-            "jsonrpc": "2.0",
-            "method": "tasks/cancel",
-            "params": {"task_id": task_id},
-            "id": "11",
-        })
+        raw_body = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "method": "tasks/cancel",
+                "params": {"task_id": task_id},
+                "id": "11",
+            }
+        )
         result = await transport.handle_request(raw_body)
 
         assert isinstance(result, JSONRPCResponse)
@@ -579,12 +609,14 @@ class TestStreamableHTTPTransport:
     @pytest.mark.asyncio
     async def test_tasks_cancel_missing_task_id(self, transport):
         """tasks/cancel：缺少 task_id。"""
-        raw_body = json.dumps({
-            "jsonrpc": "2.0",
-            "method": "tasks/cancel",
-            "params": {},
-            "id": "12",
-        })
+        raw_body = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "method": "tasks/cancel",
+                "params": {},
+                "id": "12",
+            }
+        )
         result = await transport.handle_request(raw_body)
 
         assert isinstance(result, JSONRPCResponse)
@@ -594,12 +626,17 @@ class TestStreamableHTTPTransport:
     @pytest.mark.asyncio
     async def test_tasks_create(self, transport):
         """tasks/create：创建任务。"""
-        raw_body = json.dumps({
-            "jsonrpc": "2.0",
-            "method": "tasks/create",
-            "params": {"tool": "query_oa_approval", "arguments": {"bill_no": "BG2024001"}},
-            "id": "13",
-        })
+        raw_body = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "method": "tasks/create",
+                "params": {
+                    "tool": "query_oa_approval",
+                    "arguments": {"bill_no": "BG2024001"},
+                },
+                "id": "13",
+            }
+        )
         result = await transport.handle_request(raw_body)
 
         assert isinstance(result, JSONRPCResponse)
@@ -611,12 +648,14 @@ class TestStreamableHTTPTransport:
     @pytest.mark.asyncio
     async def test_tasks_create_missing_tool(self, transport):
         """tasks/create：缺少 tool 参数。"""
-        raw_body = json.dumps({
-            "jsonrpc": "2.0",
-            "method": "tasks/create",
-            "params": {"arguments": {}},
-            "id": "14",
-        })
+        raw_body = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "method": "tasks/create",
+                "params": {"arguments": {}},
+                "id": "14",
+            }
+        )
         result = await transport.handle_request(raw_body)
 
         assert isinstance(result, JSONRPCResponse)
@@ -664,12 +703,14 @@ class TestStreamableHTTPTransport:
         )
         await transport._task_store.complete_task(task_id, {"result_data": "success"})
 
-        raw_body = json.dumps({
-            "jsonrpc": "2.0",
-            "method": "tasks/get",
-            "params": {"task_id": task_id},
-            "id": "16",
-        })
+        raw_body = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "method": "tasks/get",
+                "params": {"task_id": task_id},
+                "id": "16",
+            }
+        )
         result = await transport.handle_request(raw_body)
 
         assert isinstance(result, JSONRPCResponse)
@@ -687,12 +728,14 @@ class TestStreamableHTTPTransport:
         )
         await transport._task_store.fail_task(task_id, "Something went wrong")
 
-        raw_body = json.dumps({
-            "jsonrpc": "2.0",
-            "method": "tasks/get",
-            "params": {"task_id": task_id},
-            "id": "17",
-        })
+        raw_body = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "method": "tasks/get",
+                "params": {"task_id": task_id},
+                "id": "17",
+            }
+        )
         result = await transport.handle_request(raw_body)
 
         assert isinstance(result, JSONRPCResponse)
@@ -835,12 +878,14 @@ class TestFastAPIJsonRPCEndpoint:
     @pytest.mark.asyncio
     async def test_mcp_endpoint_tools_call(self, client):
         """通过 StreamableHTTPTransport 模拟 tools/call 请求。"""
-        raw_body = json.dumps({
-            "jsonrpc": "2.0",
-            "method": "tools/call",
-            "params": {"name": "knowledge_search", "arguments": {"query": "test"}},
-            "id": "2",
-        })
+        raw_body = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {"name": "knowledge_search", "arguments": {"query": "test"}},
+                "id": "2",
+            }
+        )
         transport = client._transport
         result = await transport.handle_request(raw_body, tenant_id=None)
 
@@ -852,12 +897,17 @@ class TestFastAPIJsonRPCEndpoint:
     @pytest.mark.asyncio
     async def test_sse_streaming_contains_tool_result(self, client):
         """SSE 流式响应包含工具结果。"""
-        raw_body = json.dumps({
-            "jsonrpc": "2.0",
-            "method": "tools/call",
-            "params": {"name": "query_oa_approval", "arguments": {"bill_no": "BG2024001"}},
-            "id": "3",
-        })
+        raw_body = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {
+                    "name": "query_oa_approval",
+                    "arguments": {"bill_no": "BG2024001"},
+                },
+                "id": "3",
+            }
+        )
         transport = client._transport
         result = await transport.handle_request(raw_body, tenant_id=None)
 

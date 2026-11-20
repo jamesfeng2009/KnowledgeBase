@@ -93,8 +93,7 @@ async def is_request_admin(request) -> bool:
     except Exception:
         return False
     return bool(
-        getattr(user, "role", None) == "admin"
-        and getattr(user, "is_active", False)
+        getattr(user, "role", None) == "admin" and getattr(user, "is_active", False)
     )
 
 
@@ -131,9 +130,7 @@ class HealthCheckService:
         """
         entries = get_all_provider_entries()
         now = datetime.now(timezone.utc).isoformat()
-        timeout = float(
-            getattr(self._settings, "HEALTH_CHECK_TIMEOUT", 10)
-        )
+        timeout = float(getattr(self._settings, "HEALTH_CHECK_TIMEOUT", 10))
 
         log.info(
             "health_check.start",
@@ -147,7 +144,7 @@ class HealthCheckService:
                 return await asyncio.wait_for(
                     self._check_provider(entry, now), timeout=timeout
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 log.warning(
                     "health_check.timeout",
                     name=entry.breaker_name,
@@ -189,9 +186,7 @@ class HealthCheckService:
 
         return results
 
-    async def _check_provider(
-        self, entry: ProviderMeta, now: str
-    ) -> ProviderHealth:
+    async def _check_provider(self, entry: ProviderMeta, now: str) -> ProviderHealth:
         """检查单个 Provider — 实例化 + 轻量级调用。"""
         cb = _breakers.get(entry.breaker_name)
         circuit_state = cb.state.value if cb else "closed"
@@ -244,9 +239,7 @@ class HealthCheckService:
                 last_check=now,
             )
 
-    async def _do_lightweight_check(
-        self, entry: ProviderMeta, provider: Any
-    ) -> None:
+    async def _do_lightweight_check(self, entry: ProviderMeta, provider: Any) -> None:
         """根据 Provider 类型执行轻量级健康检查。"""
         if entry.type == "embedder":
             # embed("health_check") — 验证 API 可达
@@ -266,9 +259,7 @@ class HealthCheckService:
 
         elif entry.type == "llm":
             # LLM — 调用 client.models.list() 验证 API 可达
-            if hasattr(provider, "client") and hasattr(
-                provider.client, "models"
-            ):
+            if hasattr(provider, "client") and hasattr(provider.client, "models"):
                 await provider.client.models.list()
             else:
                 # 无 list models API — 仅检查熔断器状态
@@ -276,15 +267,11 @@ class HealthCheckService:
                     if cb.state == CircuitState.OPEN:
                         raise ValueError("circuit breaker is OPEN")
 
-    async def _save_to_redis(
-        self, results: dict[str, ProviderHealth]
-    ) -> None:
+    async def _save_to_redis(self, results: dict[str, ProviderHealth]) -> None:
         """将健康检查结果写入 Redis（复用连接，异常时重置待下次重建）。"""
         try:
             redis = self._get_redis()
-            payload = json.dumps(
-                {k: v.model_dump() for k, v in results.items()}
-            )
+            payload = json.dumps({k: v.model_dump() for k, v in results.items()})
             ttl = getattr(self._settings, "HEALTH_CHECK_CACHE_TTL", 60)
             await redis.setex(REDIS_KEY, ttl, payload)
             log.debug("health_check.redis_saved", key=REDIS_KEY, ttl=ttl)
@@ -303,9 +290,7 @@ class HealthCheckService:
             data = await redis.get(REDIS_KEY)
             if data:
                 parsed = json.loads(data)
-                return {
-                    k: ProviderHealth(**v) for k, v in parsed.items()
-                }
+                return {k: ProviderHealth(**v) for k, v in parsed.items()}
             return None
         except Exception as exc:
             self._reset_redis()

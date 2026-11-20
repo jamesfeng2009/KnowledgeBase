@@ -13,9 +13,14 @@ from __future__ import annotations
 import sys
 import uuid
 from datetime import datetime, timedelta
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+
+if TYPE_CHECKING:
+    from app.memory.forgetting import DefaultActivation
+    from app.memory.mem0_manager import Mem0Manager
 
 # Mock celery（测试环境未安装）
 if "celery" not in sys.modules:
@@ -87,7 +92,7 @@ def _make_fact(
 class TestActivationACTR:
     """forgetting.DefaultActivation 三因子计算。"""
 
-    def _policy(self, **kwargs) -> "DefaultActivation":
+    def _policy(self, **kwargs) -> DefaultActivation:
         from app.memory.forgetting import DefaultActivation
 
         return DefaultActivation(
@@ -217,7 +222,7 @@ class TestActivationACTR:
 class TestRankCandidatesGate:
     """_rank_candidates 激活值闸门 + 复活窗口。"""
 
-    def _manager(self) -> "Mem0Manager":
+    def _manager(self) -> Mem0Manager:
         from app.memory.mem0_manager import Mem0Manager
 
         return Mem0Manager(MagicMock())
@@ -239,9 +244,7 @@ class TestRankCandidatesGate:
         )  # 激活值极低
         fresh = _make_fact(category="preference")  # 恒 1.0
 
-        results, revived = manager._rank_candidates(
-            [(0.9, stale), (0.8, fresh)]
-        )
+        results, revived = manager._rank_candidates([(0.9, stale), (0.8, fresh)])
         assert results == [fresh]
         assert revived == []
 
@@ -260,9 +263,7 @@ class TestRankCandidatesGate:
             created_at=now - timedelta(days=60),
             expires_at=now - timedelta(days=59) + timedelta(hours=24),
         )  # sim 0.95 × 低激活
-        new_low_sim = _make_fact(
-            category="preference"
-        )  # sim 0.7 × 1.0
+        new_low_sim = _make_fact(category="preference")  # sim 0.7 × 1.0
         results, _ = manager._rank_candidates(
             [(0.95, old_high_sim), (0.7, new_low_sim)]
         )
@@ -324,7 +325,7 @@ class TestRankCandidatesGate:
 class TestRecordAccess:
     """召回命中写回 — 激活值频率/近期因子的数据源。"""
 
-    def _manager(self) -> "Mem0Manager":
+    def _manager(self) -> Mem0Manager:
         from app.memory.mem0_manager import Mem0Manager
 
         mock_db = MagicMock()
@@ -461,9 +462,7 @@ class TestConflictArbiter:
         """相似度 >= 上限：规则短路判等价，新记忆丢弃（省 LLM）。"""
         arbiter, mem0 = self._arbiter(monkeypatch)
         existing = _make_fact(category="fact", text="项目使用 PostgreSQL")
-        mem0.search_similar_with_scores = AsyncMock(
-            return_value=[(existing, 0.95)]
-        )
+        mem0.search_similar_with_scores = AsyncMock(return_value=[(existing, 0.95)])
 
         verdict = await arbiter.consolidate(uuid.uuid4(), "项目使用 PostgreSQL", "fact")
         assert verdict.action == "discard"
@@ -474,12 +473,8 @@ class TestConflictArbiter:
         """LLM 裁决冲突：新胜旧退场。"""
         arbiter, mem0 = self._arbiter(monkeypatch)
         old_pref = _make_fact(category="preference", text="喜欢VIP免费洗车权益")
-        mem0.search_similar_with_scores = AsyncMock(
-            return_value=[(old_pref, 0.7)]
-        )
-        arbiter._llm_arbitrate = AsyncMock(
-            return_value={old_pref.id: "conflict"}
-        )
+        mem0.search_similar_with_scores = AsyncMock(return_value=[(old_pref, 0.7)])
+        arbiter._llm_arbitrate = AsyncMock(return_value={old_pref.id: "conflict"})
 
         verdict = await arbiter.consolidate(
             uuid.uuid4(), "因成本控制将套餐降级为基础版", "fact"
@@ -492,12 +487,8 @@ class TestConflictArbiter:
         """LLM 裁决等价：旧胜新丢弃（去重）。"""
         arbiter, mem0 = self._arbiter(monkeypatch)
         existing = _make_fact(category="fact", text="用户偏好简洁回答")
-        mem0.search_similar_with_scores = AsyncMock(
-            return_value=[(existing, 0.7)]
-        )
-        arbiter._llm_arbitrate = AsyncMock(
-            return_value={existing.id: "equivalent"}
-        )
+        mem0.search_similar_with_scores = AsyncMock(return_value=[(existing, 0.7)])
+        arbiter._llm_arbitrate = AsyncMock(return_value={existing.id: "equivalent"})
 
         verdict = await arbiter.consolidate(uuid.uuid4(), "用户喜欢简洁回答", "fact")
         assert verdict.action == "discard"
@@ -507,9 +498,7 @@ class TestConflictArbiter:
         """LLM 失败：fail-open 正常写入，不断言冲突。"""
         arbiter, mem0 = self._arbiter(monkeypatch)
         existing = _make_fact(category="preference", text="旧偏好")
-        mem0.search_similar_with_scores = AsyncMock(
-            return_value=[(existing, 0.7)]
-        )
+        mem0.search_similar_with_scores = AsyncMock(return_value=[(existing, 0.7)])
         arbiter._llm_arbitrate = AsyncMock(return_value={})
 
         verdict = await arbiter.consolidate(uuid.uuid4(), "新记忆", "fact")
@@ -521,9 +510,7 @@ class TestConflictArbiter:
         """LLM 裁决关闭：冲突区间内不裁决，直接写入（降级为纯规则）。"""
         arbiter, mem0 = self._arbiter(monkeypatch, llm_enabled=False)
         existing = _make_fact(category="preference", text="旧偏好")
-        mem0.search_similar_with_scores = AsyncMock(
-            return_value=[(existing, 0.7)]
-        )
+        mem0.search_similar_with_scores = AsyncMock(return_value=[(existing, 0.7)])
 
         verdict = await arbiter.consolidate(uuid.uuid4(), "新记忆", "fact")
         assert verdict.action == "write"
@@ -666,9 +653,7 @@ class TestPlanDowngradeScenario:
 
         # 1. 写入路径：裁决冲突，新情节落盘，旧偏好退场
         mm = MagicMock()
-        vip_pref = _make_fact(
-            category="preference", text="喜欢VIP免费洗车权益"
-        )
+        vip_pref = _make_fact(category="preference", text="喜欢VIP免费洗车权益")
         verdict = ConsolidateVerdict(
             ACTION_WRITE, superseded_ids=[vip_pref.id], reason="llm_conflict"
         )

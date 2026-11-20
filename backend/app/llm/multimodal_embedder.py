@@ -26,8 +26,6 @@ from collections.abc import Callable
 from functools import lru_cache
 from typing import Any
 
-import httpx
-
 from app.config import get_settings
 from app.llm.embedder import EmbeddingProvider
 from app.utils.circuit_breaker import circuit_call
@@ -38,7 +36,7 @@ settings = get_settings()
 log = get_logger(__name__)
 
 # 跨模态 Embedder 工厂注册表
-_multimodal_registry: dict[str, Callable[[], "MultimodalEmbeddingProvider"]] = {}
+_multimodal_registry: dict[str, Callable[[], MultimodalEmbeddingProvider]] = {}
 
 
 class MultimodalEmbeddingProvider(EmbeddingProvider, ABC):
@@ -87,6 +85,7 @@ class JinaCLIPEmbedder(MultimodalEmbeddingProvider):
         if not texts:
             return []
         import time
+
         t0 = time.monotonic()
         log.info("embedder.jina_clip.text_start", text_count=len(texts))
         try:
@@ -103,11 +102,15 @@ class JinaCLIPEmbedder(MultimodalEmbeddingProvider):
             data: Any = resp.json()
             result = [item["embedding"] for item in data.get("data", [])]
             elapsed_ms = round((time.monotonic() - t0) * 1000, 2)
-            log.info("embedder.jina_clip.text_success", dim=self.dim, latency_ms=elapsed_ms)
+            log.info(
+                "embedder.jina_clip.text_success", dim=self.dim, latency_ms=elapsed_ms
+            )
             return result
         except Exception as exc:
             elapsed_ms = round((time.monotonic() - t0) * 1000, 2)
-            log.warning("embedder.jina_clip.text_error", error=str(exc), latency_ms=elapsed_ms)
+            log.warning(
+                "embedder.jina_clip.text_error", error=str(exc), latency_ms=elapsed_ms
+            )
             raise
 
     @circuit_call("embedder_jina_clip_image")
@@ -116,6 +119,7 @@ class JinaCLIPEmbedder(MultimodalEmbeddingProvider):
         if not images:
             return []
         import time
+
         t0 = time.monotonic()
         log.info("embedder.jina_clip.image_start", image_count=len(images))
         try:
@@ -138,11 +142,15 @@ class JinaCLIPEmbedder(MultimodalEmbeddingProvider):
             data: Any = resp.json()
             result = [item["embedding"] for item in data.get("data", [])]
             elapsed_ms = round((time.monotonic() - t0) * 1000, 2)
-            log.info("embedder.jina_clip.image_success", dim=self.dim, latency_ms=elapsed_ms)
+            log.info(
+                "embedder.jina_clip.image_success", dim=self.dim, latency_ms=elapsed_ms
+            )
             return result
         except Exception as exc:
             elapsed_ms = round((time.monotonic() - t0) * 1000, 2)
-            log.warning("embedder.jina_clip.image_error", error=str(exc), latency_ms=elapsed_ms)
+            log.warning(
+                "embedder.jina_clip.image_error", error=str(exc), latency_ms=elapsed_ms
+            )
             raise
 
     async def close(self) -> None:
@@ -260,7 +268,9 @@ class DashScopeMultimodalEmbedder(MultimodalEmbeddingProvider):
             embeddings: list[list[float]] = []
             for r in results:
                 if isinstance(r, Exception):
-                    log.warning("embedder.dashscope.text_item_failed", error=str(r)[:200])
+                    log.warning(
+                        "embedder.dashscope.text_item_failed", error=str(r)[:200]
+                    )
                     embeddings.append([0.0] * self.dim)
                 else:
                     embeddings.append(r)
@@ -308,7 +318,9 @@ class DashScopeMultimodalEmbedder(MultimodalEmbeddingProvider):
             embeddings: list[list[float]] = []
             for r in results:
                 if isinstance(r, Exception):
-                    log.warning("embedder.dashscope.image_item_failed", error=str(r)[:200])
+                    log.warning(
+                        "embedder.dashscope.image_item_failed", error=str(r)[:200]
+                    )
                     embeddings.append([0.0] * self.dim)
                 else:
                     embeddings.append(r)
@@ -341,12 +353,15 @@ class DashScopeMultimodalEmbedder(MultimodalEmbeddingProvider):
 
 def register_multimodal_embedder(
     deploy_mode: str,
-) -> Callable[[Callable[[], "MultimodalEmbeddingProvider"]], Callable[[], "MultimodalEmbeddingProvider"]]:
+) -> Callable[
+    [Callable[[], MultimodalEmbeddingProvider]],
+    Callable[[], MultimodalEmbeddingProvider],
+]:
     """装饰器：注册某部署模式对应的多模态 Embedder 工厂函数。"""
 
     def decorator(
-        factory: Callable[[], "MultimodalEmbeddingProvider"],
-    ) -> Callable[[], "MultimodalEmbeddingProvider"]:
+        factory: Callable[[], MultimodalEmbeddingProvider],
+    ) -> Callable[[], MultimodalEmbeddingProvider]:
         _multimodal_registry[deploy_mode] = factory
         return factory
 

@@ -30,6 +30,7 @@
       --sft_adapter ../../outputs/sft-v5-7b-transformers \\
       --dpo_adapter ../../outputs/dpo-rlaif-final-7b --label "7B SFT+DPO"
 """
+
 from __future__ import annotations
 
 import argparse
@@ -39,14 +40,13 @@ from collections import defaultdict
 from contextlib import nullcontext as _nullcontext
 
 import torch
-from peft import PeftModel
-from transformers import AutoModelForCausalLM, AutoTokenizer
-
 from finetune_utils import (
     GUIDANCE_SIGNALS,
     REFUSAL_KEYWORDS,
     SUBSTANTIVE_MIN_LEN,
 )
+from peft import PeftModel
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 SYSTEM_PROMPT = (
     "你是企业知识库智能助手，负责回答员工在工作中的各类问题"
@@ -302,15 +302,26 @@ STRICT_REFUSAL = REFUSAL_KEYWORDS
 # 宽松拒答关键词（旧版词表，用于对比虚高）
 BROAD_REFUSAL = (
     *STRICT_REFUSAL,
-    "不在", "无法", "不能提供", "建议", "服务台", "请使用",
-    "不在服务范围", "超出", "无法查询", "无法提供",
+    "不在",
+    "无法",
+    "不能提供",
+    "建议",
+    "服务台",
+    "请使用",
+    "不在服务范围",
+    "超出",
+    "无法查询",
+    "无法提供",
 )
 
 
 def _detect_bf16() -> bool:
     if torch.cuda.is_available():
         return bool(torch.cuda.is_bf16_supported())
-    if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+    if (
+        getattr(torch.backends, "mps", None) is not None
+        and torch.backends.mps.is_available()
+    ):
         try:
             torch.zeros(1, dtype=torch.bfloat16, device="mps")
             return True
@@ -319,13 +330,20 @@ def _detect_bf16() -> bool:
     return False
 
 
-def load_model(base: str, adapter: str | None, sft_adapter: str | None, dpo_adapter: str | None, grpo_adapter: str | None = None, qlora: bool = False):
+def load_model(
+    base: str,
+    adapter: str | None,
+    sft_adapter: str | None,
+    dpo_adapter: str | None,
+    grpo_adapter: str | None = None,
+    qlora: bool = False,
+):
     """加载模型 + adapter。
 
-      - 单 adapter（--adapter）：直接 merge
-      - 双 adapter（--sft_adapter + --dpo_adapter）：先 SFT merge 再 DPO merge
-      - 三层 adapter（--sft_adapter + --dpo_adapter + --grpo_adapter）：SFT+DPO merge 后再 GRPO merge
-      - qlora=True：4-bit 量化加载，不 merge adapter（PeftModel 直接推理）
+    - 单 adapter（--adapter）：直接 merge
+    - 双 adapter（--sft_adapter + --dpo_adapter）：先 SFT merge 再 DPO merge
+    - 三层 adapter（--sft_adapter + --dpo_adapter + --grpo_adapter）：SFT+DPO merge 后再 GRPO merge
+    - qlora=True：4-bit 量化加载，不 merge adapter（PeftModel 直接推理）
     """
     tok = AutoTokenizer.from_pretrained(base, trust_remote_code=True)
     if tok.pad_token is None:
@@ -334,12 +352,18 @@ def load_model(base: str, adapter: str | None, sft_adapter: str | None, dpo_adap
     dtype = torch.bfloat16 if use_bf16 else torch.float16
     print(f"[加载] 基座 {base} (bf16={use_bf16}, qlora={qlora}) ...", flush=True)
 
-    if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+    if (
+        getattr(torch.backends, "mps", None) is not None
+        and torch.backends.mps.is_available()
+    ):
         model = AutoModelForCausalLM.from_pretrained(
-            base, torch_dtype=dtype, trust_remote_code=True,
+            base,
+            torch_dtype=dtype,
+            trust_remote_code=True,
         ).to("mps")
     elif qlora:
         from transformers import BitsAndBytesConfig
+
         bnb_config = BitsAndBytesConfig(
             load_in_4bit=True,
             bnb_4bit_quant_type="nf4",
@@ -347,12 +371,17 @@ def load_model(base: str, adapter: str | None, sft_adapter: str | None, dpo_adap
             bnb_4bit_use_double_quant=True,
         )
         model = AutoModelForCausalLM.from_pretrained(
-            base, quantization_config=bnb_config, device_map="auto",
+            base,
+            quantization_config=bnb_config,
+            device_map="auto",
             trust_remote_code=True,
         )
     else:
         model = AutoModelForCausalLM.from_pretrained(
-            base, torch_dtype=dtype, device_map="auto", trust_remote_code=True,
+            base,
+            torch_dtype=dtype,
+            device_map="auto",
+            trust_remote_code=True,
         )
 
     # qlora 模式：不 merge，直接用 PeftModel 推理（省显存）
@@ -362,13 +391,20 @@ def load_model(base: str, adapter: str | None, sft_adapter: str | None, dpo_adap
             model = PeftModel.from_pretrained(model, adapter)
         else:
             if sft_adapter:
-                print(f"[加载] 加载 SFT adapter {sft_adapter}（不 merge）...", flush=True)
+                print(
+                    f"[加载] 加载 SFT adapter {sft_adapter}（不 merge）...", flush=True
+                )
                 model = PeftModel.from_pretrained(model, sft_adapter)
             if dpo_adapter:
-                print(f"[加载] 叠加 DPO adapter {dpo_adapter}（不 merge）...", flush=True)
+                print(
+                    f"[加载] 叠加 DPO adapter {dpo_adapter}（不 merge）...", flush=True
+                )
                 model = PeftModel.from_pretrained(model, dpo_adapter)
             if grpo_adapter:
-                print(f"[加载] 叠加 GRPO adapter {grpo_adapter}（不 merge）...", flush=True)
+                print(
+                    f"[加载] 叠加 GRPO adapter {grpo_adapter}（不 merge）...",
+                    flush=True,
+                )
                 model = PeftModel.from_pretrained(model, grpo_adapter)
     else:
         # 非 qlora 模式：merge adapter 进基座
@@ -396,13 +432,17 @@ def load_model(base: str, adapter: str | None, sft_adapter: str | None, dpo_adap
 
 
 def gen(model, tok, question: str) -> str:
-    msgs = [{"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": question}]
+    msgs = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": question},
+    ]
     text = tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
     inputs = tok(text, return_tensors="pt").to(model.device)
     with torch.no_grad():
         out = model.generate(
-            **inputs, max_new_tokens=256, do_sample=False,
+            **inputs,
+            max_new_tokens=256,
+            do_sample=False,
             pad_token_id=tok.eos_token_id,
         )
     input_len = inputs["input_ids"].shape[-1]
@@ -474,8 +514,13 @@ class LLMJudge:
     --judge_model self 共享基座，disable_adapter 用未训练权重当 judge）。
     """
 
-    def __init__(self, judge_model: str = "models/Qwen2.5-7B-Instruct",
-                 shared_model=None, shared_tokenizer=None, disable_adapter: bool = False):
+    def __init__(
+        self,
+        judge_model: str = "models/Qwen2.5-7B-Instruct",
+        shared_model=None,
+        shared_tokenizer=None,
+        disable_adapter: bool = False,
+    ):
         """judge_model='self' 时用 shared_model/shared_tokenizer（被测模型基座）。
 
         disable_adapter=True 仅当模型是 PeftModel（未 merge 的动态 adapter）时有效；
@@ -485,11 +530,16 @@ class LLMJudge:
             self.model = shared_model
             self.tokenizer = shared_tokenizer
             self._disable_adapter = disable_adapter
-            print(f"[加载] judge 共享被测模型基座（disable_adapter={disable_adapter}）", flush=True)
+            print(
+                f"[加载] judge 共享被测模型基座（disable_adapter={disable_adapter}）",
+                flush=True,
+            )
         else:
             use_bf16 = _detect_bf16()
             print(f"[加载] judge 模型 {judge_model} (bf16={use_bf16})", flush=True)
-            self.tokenizer = AutoTokenizer.from_pretrained(judge_model, trust_remote_code=True)
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                judge_model, trust_remote_code=True
+            )
             if self.tokenizer.pad_token is None:
                 self.tokenizer.pad_token = self.tokenizer.eos_token
             self.model = AutoModelForCausalLM.from_pretrained(
@@ -505,10 +555,13 @@ class LLMJudge:
     def _judge(self, sys_prompt: str, question: str, answer: str) -> str:
         """调 judge 判定，返回 'REFUSE' 或 'ANSWER'。失败默认 'ANSWER'（保守）。"""
         user_msg = f"问题：{question}\n\n助手回复：{answer}\n\n判定："
-        msgs = [{"role": "system", "content": sys_prompt},
-                {"role": "user", "content": user_msg}]
+        msgs = [
+            {"role": "system", "content": sys_prompt},
+            {"role": "user", "content": user_msg},
+        ]
         text = self.tokenizer.apply_chat_template(
-            msgs, tokenize=False, add_generation_prompt=True)
+            msgs, tokenize=False, add_generation_prompt=True
+        )
         inputs = self.tokenizer(text, return_tensors="pt").to(self.model.device)
         if self._disable_adapter and hasattr(self.model, "disable_adapters"):
             try:
@@ -519,11 +572,18 @@ class LLMJudge:
             cm = _nullcontext()
         with cm, torch.no_grad():
             out = self.model.generate(
-                **inputs, max_new_tokens=16, do_sample=False,
+                **inputs,
+                max_new_tokens=16,
+                do_sample=False,
                 pad_token_id=self.tokenizer.eos_token_id,
             )
-        result = self.tokenizer.decode(
-            out[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True).strip().upper()
+        result = (
+            self.tokenizer.decode(
+                out[0][inputs["input_ids"].shape[1] :], skip_special_tokens=True
+            )
+            .strip()
+            .upper()
+        )
         return "REFUSE" if "REFUSE" in result else "ANSWER"
 
     def judge_boundary(self, question: str, answer: str) -> bool:
@@ -536,21 +596,42 @@ class LLMJudge:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="200 题边界拒答评测（100 边界 + 100 工作）")
+    parser = argparse.ArgumentParser(
+        description="200 题边界拒答评测（100 边界 + 100 工作）"
+    )
     parser.add_argument("--base_model", default="../../models/Qwen2.5-7B-Instruct")
-    parser.add_argument("--adapter", default=None,
-                        help="单 adapter 模式（兼容旧 shell 脚本用法）")
-    parser.add_argument("--sft_adapter", default=None, help="SFT adapter（双 adapter 模式）")
-    parser.add_argument("--dpo_adapter", default=None, help="DPO adapter（双 adapter 模式）")
-    parser.add_argument("--grpo_adapter", default=None, help="GRPO adapter（三层 adapter 模式：SFT+DPO+GRPO）")
-    parser.add_argument("--qlora", action="store_true", help="4-bit 量化加载（14B+ 模型在 24G 显存上必须开启）")
+    parser.add_argument(
+        "--adapter", default=None, help="单 adapter 模式（兼容旧 shell 脚本用法）"
+    )
+    parser.add_argument(
+        "--sft_adapter", default=None, help="SFT adapter（双 adapter 模式）"
+    )
+    parser.add_argument(
+        "--dpo_adapter", default=None, help="DPO adapter（双 adapter 模式）"
+    )
+    parser.add_argument(
+        "--grpo_adapter",
+        default=None,
+        help="GRPO adapter（三层 adapter 模式：SFT+DPO+GRPO）",
+    )
+    parser.add_argument(
+        "--qlora",
+        action="store_true",
+        help="4-bit 量化加载（14B+ 模型在 24G 显存上必须开启）",
+    )
     parser.add_argument("--label", default="model")
     parser.add_argument("--output", default=None, help="JSON 结果输出路径")
-    parser.add_argument("--judge_model", default=None,
-                        help="LLM judge 模型路径（启用 LLM-as-judge 判定，如 models/Qwen2.5-7B-Instruct）")
-    parser.add_argument("--judge_mode", default="keyword",
-                        choices=["keyword", "llm", "both"],
-                        help="判定模式：keyword=关键词(strict/broad)，llm=7B judge，both=两者都跑对比")
+    parser.add_argument(
+        "--judge_model",
+        default=None,
+        help="LLM judge 模型路径（启用 LLM-as-judge 判定，如 models/Qwen2.5-7B-Instruct）",
+    )
+    parser.add_argument(
+        "--judge_mode",
+        default="keyword",
+        choices=["keyword", "llm", "both"],
+        help="判定模式：keyword=关键词(strict/broad)，llm=7B judge，both=两者都跑对比",
+    )
     args = parser.parse_args()
 
     label = args.label
@@ -566,22 +647,41 @@ def main():
         print(f"    SFT: {args.sft_adapter}")
     if args.dpo_adapter:
         print(f"    DPO: {args.dpo_adapter}")
-    print(f"    判定模式: {args.judge_mode}" + (f" (judge={args.judge_model})" if use_llm else ""))
+    print(
+        f"    判定模式: {args.judge_mode}"
+        + (f" (judge={args.judge_model})" if use_llm else "")
+    )
     print(f"    边界题 {n_boundary} + 工作题 {n_work} = {n_boundary + n_work} 题")
     print(f"{'=' * 70}\n", flush=True)
 
-    model, tok = load_model(args.base_model, args.adapter, args.sft_adapter, args.dpo_adapter, args.grpo_adapter, qlora=args.qlora)
+    model, tok = load_model(
+        args.base_model,
+        args.adapter,
+        args.sft_adapter,
+        args.dpo_adapter,
+        args.grpo_adapter,
+        qlora=args.qlora,
+    )
     if use_llm:
         if args.judge_model == "self":
             is_peft = isinstance(model, PeftModel)
-            judge = LLMJudge("self", shared_model=model, shared_tokenizer=tok,
-                             disable_adapter=is_peft)
+            judge = LLMJudge(
+                "self",
+                shared_model=model,
+                shared_tokenizer=tok,
+                disable_adapter=is_peft,
+            )
         else:
             judge = LLMJudge(args.judge_model)
     else:
         judge = None
 
-    results = {"label": label, "judge_mode": args.judge_mode, "boundary": [], "work": []}
+    results = {
+        "label": label,
+        "judge_mode": args.judge_mode,
+        "boundary": [],
+        "work": [],
+    }
 
     # ---- 100 边界问题 ----
     print(f"\n{'=' * 70}")
@@ -606,13 +706,23 @@ def main():
             b_llm_pass += int(cls["llm_refuse"])
             tag = "✅LLM拒" if cls["llm_refuse"] else "❌LLM硬答"
         else:
-            tag = "✅拒" if cls["strict_refuse"] else ("~宽拒" if cls["broad_refuse"] else "❌硬答")
+            tag = (
+                "✅拒"
+                if cls["strict_refuse"]
+                else ("~宽拒" if cls["broad_refuse"] else "❌硬答")
+            )
         print(f"[B{i:03d}/{cat:16s}] {tag} ({dt:.1f}s) Q: {q}")
         print(f"         A: {ans[:200]}")
-        results["boundary"].append({
-            "id": i, "category": cat, "question": q,
-            "answer": ans, "classification": cls, "time_sec": round(dt, 1),
-        })
+        results["boundary"].append(
+            {
+                "id": i,
+                "category": cat,
+                "question": q,
+                "answer": ans,
+                "classification": cls,
+                "time_sec": round(dt, 1),
+            }
+        )
 
     # ---- 100 工作问题 ----
     print(f"\n{'=' * 70}")
@@ -635,32 +745,59 @@ def main():
             w_llm_pass += int(cls["llm_substantive"])
             tag = "✅LLM实质" if cls["llm_substantive"] else "⚠️LLM误拒"
         else:
-            tag = "✅实质" if cls["is_substantive"] and not cls["strict_false_refuse"] else \
-                  ("⚠️误拒" if cls["strict_false_refuse"] else "~短答")
+            tag = (
+                "✅实质"
+                if cls["is_substantive"] and not cls["strict_false_refuse"]
+                else ("⚠️误拒" if cls["strict_false_refuse"] else "~短答")
+            )
         print(f"[W{i:03d}/{cat:12s}] {tag} ({dt:.1f}s) Q: {q}")
         print(f"         A: {ans[:200]}")
-        results["work"].append({
-            "id": i, "category": cat, "question": q,
-            "answer": ans, "classification": cls, "time_sec": round(dt, 1),
-        })
+        results["work"].append(
+            {
+                "id": i,
+                "category": cat,
+                "question": q,
+                "answer": ans,
+                "classification": cls,
+                "time_sec": round(dt, 1),
+            }
+        )
 
     # ---- 汇总 ----
     print(f"\n{'=' * 70}")
     print(f"=== 汇总 [{label}] ===")
     print(f"{'=' * 70}")
     print(f"\n--- 边界拒答（{n_boundary} 题，期望拒答）---")
-    print(f"  严格拒答率:    {b_strict_pass:3d}/{n_boundary} = {b_strict_pass * 100 // n_boundary}%")
-    print(f"  宽松拒答率:    {b_broad_pass:3d}/{n_boundary} = {b_broad_pass * 100 // n_boundary}%")
-    print(f"  含引导信号:    {b_guidance_pass:3d}/{n_boundary} = {b_guidance_pass * 100 // n_boundary}%")
-    print(f"  硬答(应拒未拒): {b_hard_answer:3d}/{n_boundary} = {b_hard_answer * 100 // n_boundary}%")
+    print(
+        f"  严格拒答率:    {b_strict_pass:3d}/{n_boundary} = {b_strict_pass * 100 // n_boundary}%"
+    )
+    print(
+        f"  宽松拒答率:    {b_broad_pass:3d}/{n_boundary} = {b_broad_pass * 100 // n_boundary}%"
+    )
+    print(
+        f"  含引导信号:    {b_guidance_pass:3d}/{n_boundary} = {b_guidance_pass * 100 // n_boundary}%"
+    )
+    print(
+        f"  硬答(应拒未拒): {b_hard_answer:3d}/{n_boundary} = {b_hard_answer * 100 // n_boundary}%"
+    )
     if judge:
-        print(f"  LLM拒答率:     {b_llm_pass:3d}/{n_boundary} = {b_llm_pass * 100 // n_boundary}%")
+        print(
+            f"  LLM拒答率:     {b_llm_pass:3d}/{n_boundary} = {b_llm_pass * 100 // n_boundary}%"
+        )
     print(f"\n--- 工作问题（{n_work} 题，期望实质回答）---")
-    print(f"  严格误拒答率:  {w_strict_false:3d}/{n_work} = {w_strict_false * 100 // n_work}%")
-    print(f"  宽松误拒答率:  {w_broad_false:3d}/{n_work} = {w_broad_false * 100 // n_work}%")
-    print(f"  实质回答率:    {w_substantive:3d}/{n_work} = {w_substantive * 100 // n_work}%")
+    print(
+        f"  严格误拒答率:  {w_strict_false:3d}/{n_work} = {w_strict_false * 100 // n_work}%"
+    )
+    print(
+        f"  宽松误拒答率:  {w_broad_false:3d}/{n_work} = {w_broad_false * 100 // n_work}%"
+    )
+    print(
+        f"  实质回答率:    {w_substantive:3d}/{n_work} = {w_substantive * 100 // n_work}%"
+    )
     if judge:
-        print(f"  LLM实质率:     {w_llm_pass:3d}/{n_work} = {w_llm_pass * 100 // n_work}%")
+        print(
+            f"  LLM实质率:     {w_llm_pass:3d}/{n_work} = {w_llm_pass * 100 // n_work}%"
+        )
 
     # 按类别分布（边界）— llm 模式用 llm_refuse，否则用 strict_refuse
     primary_key = "llm_refuse" if judge else "strict_refuse"
@@ -683,8 +820,10 @@ def main():
         if judge:
             wcat_stats[c][0] += int(item["classification"][w_key])
         else:
-            wcat_stats[c][0] += int(item["classification"][w_key]
-                                    and not item["classification"]["strict_false_refuse"])
+            wcat_stats[c][0] += int(
+                item["classification"][w_key]
+                and not item["classification"]["strict_false_refuse"]
+            )
         wcat_stats[c][1] += 1
     for c, (passed, total) in sorted(wcat_stats.items()):
         flag = " ⚠️短板" if passed < total else ""
@@ -702,7 +841,9 @@ def main():
         "work_strict_false_refusal": f"{w_strict_false}/{n_work}",
         "work_broad_false_refusal": f"{w_broad_false}/{n_work}",
         "work_substantive_rate": f"{w_substantive}/{n_work}",
-        "boundary_by_category": {c: f"{p}/{t}" for c, (p, t) in sorted(cat_stats.items())},
+        "boundary_by_category": {
+            c: f"{p}/{t}" for c, (p, t) in sorted(cat_stats.items())
+        },
         "work_by_category": {c: f"{p}/{t}" for c, (p, t) in sorted(wcat_stats.items())},
     }
     if judge:

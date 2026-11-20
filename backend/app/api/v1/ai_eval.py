@@ -205,8 +205,8 @@ async def run_suite(
         code=0,
         data=summary,
         message=f"测试完成：{summary['passed']} 通过, "
-                f"{summary['partial']} 部分通过, "
-                f"{summary['failed']} 失败",
+        f"{summary['partial']} 部分通过, "
+        f"{summary['failed']} 失败",
     )
 
 

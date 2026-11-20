@@ -87,7 +87,9 @@ class TokenCache:
         # L2 内存缓存：query_hash → _L2Entry
         # 有界 LRU（OrderedDict）：容量可配置（默认 CACHE_L2_MAX_SIZE=1000），
         # 超容逐出最久未使用条目；TTL 语义不变（过期条目读时跳过、写时清理）。
-        self._l2_max_size: int = max(1, l2_max_size if l2_max_size is not None else settings.CACHE_L2_MAX_SIZE)
+        self._l2_max_size: int = max(
+            1, l2_max_size if l2_max_size is not None else settings.CACHE_L2_MAX_SIZE
+        )
         self._l2_store: OrderedDict[str, _L2Entry] = OrderedDict()
         self._redis_available: bool | None = None
 
@@ -153,20 +155,32 @@ class TokenCache:
         # L1: Redis 精确缓存
         cached = await self._l1_get(query, tenant_id, scope)
         if cached is not None:
-            log.debug("cache.hit", level="L1", query_hash=self._hash(query, tenant_id, scope)[:12])
+            log.debug(
+                "cache.hit",
+                level="L1",
+                query_hash=self._hash(query, tenant_id, scope)[:12],
+            )
             return cached
 
         # L2: 内存语义缓存
         l2_hit = await self._l2_get(query, tenant_id, scope)
         if l2_hit is not None:
             cached, hit_doc_ids = l2_hit
-            log.debug("cache.hit", level="L2", query_hash=self._hash(query, tenant_id, scope)[:12])
+            log.debug(
+                "cache.hit",
+                level="L2",
+                query_hash=self._hash(query, tenant_id, scope)[:12],
+            )
             # 回填 L1 加速后续精确命中 — 必须带上 doc_ids 写入反向索引，
             # 否则回填的 key 不受 invalidate_by_doc_id 主动失效管理，
             # 文档更新后陈旧答案仍会在 L1 中服务至 TTL 过期。
             await self._l1_set(
-                query, cached, ttl=_L1_TTL, tenant_id=tenant_id,
-                doc_ids=hit_doc_ids, scope=scope,
+                query,
+                cached,
+                ttl=_L1_TTL,
+                tenant_id=tenant_id,
+                doc_ids=hit_doc_ids,
+                scope=scope,
             )
             return cached
 
@@ -192,7 +206,14 @@ class TokenCache:
             scope: 权限视图指纹（安全隔离，可选）— 与 get 传入值一致
                    才可命中。
         """
-        await self._l1_set(query, answer, ttl=_L1_TTL, tenant_id=tenant_id, doc_ids=doc_ids, scope=scope)
+        await self._l1_set(
+            query,
+            answer,
+            ttl=_L1_TTL,
+            tenant_id=tenant_id,
+            doc_ids=doc_ids,
+            scope=scope,
+        )
         await self._l2_set(query, answer, tenant_id, doc_ids, scope)
 
     # ------------------------------------------------------------------
@@ -399,7 +420,8 @@ class TokenCache:
 
         # L2: 遍历内存缓存，删除 doc_ids 包含该 doc_id 的条目
         keys_to_remove = [
-            key for key, entry in self._l2_store.items()
+            key
+            for key, entry in self._l2_store.items()
             if entry.doc_ids and doc_id in entry.doc_ids
         ]
         for key in keys_to_remove:

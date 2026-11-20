@@ -7,6 +7,7 @@
       与新用户注册两条路径；
     - 路由注册：/auth/oidc/login 与 /callback 存在。
 """
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -70,7 +71,9 @@ class TestOIDCDiscovery:
     async def test_discover_fetches_document(self) -> None:
         service = _make_service()
         mock_client = _fake_http_post(_DISCOVERY_DOC, {})
-        with patch("app.services.oidc_service.httpx.AsyncClient", return_value=mock_client):
+        with patch(
+            "app.services.oidc_service.httpx.AsyncClient", return_value=mock_client
+        ):
             result = await service.discover()
         assert result["token_endpoint"].endswith("/token")
         called_url = mock_client.get.call_args.args[0]
@@ -80,7 +83,9 @@ class TestOIDCDiscovery:
     async def test_discover_non_200_raises(self) -> None:
         service = _make_service()
         mock_client = _fake_http_post({}, {}, status=404)
-        with patch("app.services.oidc_service.httpx.AsyncClient", return_value=mock_client):
+        with patch(
+            "app.services.oidc_service.httpx.AsyncClient", return_value=mock_client
+        ):
             with pytest.raises(OIDCError):
                 await service.discover()
 
@@ -92,7 +97,9 @@ class TestOIDCExchange:
         mock_client = _fake_http_post(
             _DISCOVERY_DOC, {"access_token": "AT", "id_token": "IT"}
         )
-        with patch("app.services.oidc_service.httpx.AsyncClient", return_value=mock_client):
+        with patch(
+            "app.services.oidc_service.httpx.AsyncClient", return_value=mock_client
+        ):
             tokens = await service.exchange_code("CODE")
 
         assert tokens["access_token"] == "AT"
@@ -106,10 +113,16 @@ class TestOIDCExchange:
         # 第一次 get = discovery，第二次 get = userinfo
         userinfo_resp = MagicMock()
         userinfo_resp.status_code = 200
-        userinfo_resp.json.return_value = {"sub": "u1", "email": "a@b.com", "name": "Alice"}
+        userinfo_resp.json.return_value = {
+            "sub": "u1",
+            "email": "a@b.com",
+            "name": "Alice",
+        }
         mock_client = _fake_http_post(_DISCOVERY_DOC, {})
         mock_client.get.side_effect = [mock_client.get.return_value, userinfo_resp]
-        with patch("app.services.oidc_service.httpx.AsyncClient", return_value=mock_client):
+        with patch(
+            "app.services.oidc_service.httpx.AsyncClient", return_value=mock_client
+        ):
             info = await service.get_userinfo("AT")
 
         assert info["sub"] == "u1"
@@ -122,9 +135,7 @@ class TestOIDCLoginOrRegister:
     async def test_existing_user_logs_in(self) -> None:
         db = MagicMock()
         service = _make_service(db)
-        existing = SimpleNamespace(
-            id="user-1", role="viewer", tenant_id=TENANT_ID
-        )
+        existing = SimpleNamespace(id="user-1", role="viewer", tenant_id=TENANT_ID)
 
         service._existing_by_sub_or_email = AsyncMock(return_value=existing)
         with patch(
@@ -141,9 +152,7 @@ class TestOIDCLoginOrRegister:
     async def test_new_user_registers(self) -> None:
         db = MagicMock()
         service = _make_service(db)
-        new_user = SimpleNamespace(
-            id="user-2", role="admin", tenant_id=TENANT_ID
-        )
+        new_user = SimpleNamespace(id="user-2", role="admin", tenant_id=TENANT_ID)
 
         # 第一次查不到 → 注册成功
         service._existing_by_sub_or_email = AsyncMock(return_value=None)
@@ -157,12 +166,16 @@ class TestOIDCLoginOrRegister:
             async def get_by_email(self, email):
                 return None
 
-        with patch("app.services.oidc_service.AuthService", return_value=FakeAuth()), patch(
-            "app.services.oidc_service.UserRepository", return_value=FakeRepo()
-        ), patch(
-            "app.services.oidc_service.create_access_token", return_value="JWT2"
-        ) as mock_token:
-            result = await service.login_or_register({"sub": "u1", "email": "a@b.com", "name": "Alice"})
+        with (
+            patch("app.services.oidc_service.AuthService", return_value=FakeAuth()),
+            patch("app.services.oidc_service.UserRepository", return_value=FakeRepo()),
+            patch(
+                "app.services.oidc_service.create_access_token", return_value="JWT2"
+            ) as mock_token,
+        ):
+            result = await service.login_or_register(
+                {"sub": "u1", "email": "a@b.com", "name": "Alice"}
+            )
 
         assert result["user_id"] == "user-2"
         assert result["access_token"] == "JWT2"
@@ -179,7 +192,9 @@ class TestOIDCBuildAuthorizeUrl:
     def test_build_url_contains_params(self) -> None:
         service = _make_service()
         with patch.object(
-            service, "_cached_authorize_endpoint", return_value="https://issuer.example.com/authorize"
+            service,
+            "_cached_authorize_endpoint",
+            return_value="https://issuer.example.com/authorize",
         ):
             url, state = service.build_authorize_url("fixed-state")
 

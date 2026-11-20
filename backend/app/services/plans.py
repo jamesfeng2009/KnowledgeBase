@@ -21,23 +21,23 @@ PLANS: dict[str, dict] = {
     "free": {
         "name": "免费版",
         "max_users": 3,
-        "max_storage_bytes": 1 * _GB,           # 1 GB
-        "max_llm_tokens_per_month": 500_000,    # 50 万 token / 月
+        "max_storage_bytes": 1 * _GB,  # 1 GB
+        "max_llm_tokens_per_month": 500_000,  # 50 万 token / 月
         "price_cents": 0,
     },
     "pro": {
         "name": "专业版",
         "max_users": 20,
-        "max_storage_bytes": 20 * _GB,          # 20 GB
+        "max_storage_bytes": 20 * _GB,  # 20 GB
         "max_llm_tokens_per_month": 5_000_000,  # 500 万 token / 月
-        "price_cents": 9900,                    # ¥99 / 月
+        "price_cents": 9900,  # ¥99 / 月
     },
     "enterprise": {
         "name": "企业版",
         "max_users": 500,
-        "max_storage_bytes": 500 * _GB,         # 500 GB
+        "max_storage_bytes": 500 * _GB,  # 500 GB
         "max_llm_tokens_per_month": 50_000_000,  # 5000 万 token / 月
-        "price_cents": 49900,                   # ¥499 / 月
+        "price_cents": 49900,  # ¥499 / 月
     },
 }
 

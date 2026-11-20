@@ -10,6 +10,7 @@
 - 低置信 / 被拦截答案不写入缓存；
 - shortcut_handler 快捷路径权限过滤（重排前 + 异常保守返回空）。
 """
+
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
@@ -23,7 +24,6 @@ import pytest
 from app.rag.engine import AgenticRAGEngine
 from app.services.permission_service import PermissionService
 from app.utils.sse import SSEEvent, SSEEventType
-
 
 # ======================================================================
 # Mock 组件（与 test_rag_engine.py 同款风格）
@@ -61,7 +61,15 @@ class FakeRetriever:
         filters: dict[str, Any] | None = None,
         classifications: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        self.search_calls.append({"query": query, "kb_ids": kb_ids, "top_k": top_k, "filters": filters, "classifications": classifications})
+        self.search_calls.append(
+            {
+                "query": query,
+                "kb_ids": kb_ids,
+                "top_k": top_k,
+                "filters": filters,
+                "classifications": classifications,
+            }
+        )
         return self.candidates
 
 
@@ -212,7 +220,9 @@ class TestGetAccessibleKbIds:
     async def test_normal_user_returns_set(self) -> None:
         """普通用户返回 DB 查询到的可访问 kb_id 集合。"""
         kb_id = uuid4()
-        user = SimpleNamespace(role="editor", clearance_level="internal", id=uuid4(), dept_id=None)
+        user = SimpleNamespace(
+            role="editor", clearance_level="internal", id=uuid4(), dept_id=None
+        )
 
         db = AsyncMock()
         exec_result = MagicMock()
@@ -227,7 +237,9 @@ class TestGetAccessibleKbIds:
     @pytest.mark.asyncio
     async def test_normal_user_empty_set(self) -> None:
         """普通用户无可访问知识库时返回空集合（而非 None）。"""
-        user = SimpleNamespace(role="viewer", clearance_level="public", id=uuid4(), dept_id=None)
+        user = SimpleNamespace(
+            role="viewer", clearance_level="public", id=uuid4(), dept_id=None
+        )
 
         db = AsyncMock()
         exec_result = MagicMock()
@@ -281,7 +293,9 @@ class TestFilterRetrievalCandidates:
     @pytest.mark.asyncio
     async def test_empty_accessible_set_returns_empty(self) -> None:
         """可访问集合为空时，所有候选被剔除。"""
-        user = SimpleNamespace(role="viewer", clearance_level="public", id=uuid4(), dept_id=None)
+        user = SimpleNamespace(
+            role="viewer", clearance_level="public", id=uuid4(), dept_id=None
+        )
 
         db = AsyncMock()
         exec_result = MagicMock()
@@ -302,7 +316,9 @@ class TestFilterRetrievalCandidates:
         kb_other = uuid4()
         doc_ok = uuid4()
         doc_secret = uuid4()
-        user = SimpleNamespace(role="editor", clearance_level="internal", id=uuid4(), dept_id=None)
+        user = SimpleNamespace(
+            role="editor", clearance_level="internal", id=uuid4(), dept_id=None
+        )
 
         db = AsyncMock()
 
@@ -322,7 +338,11 @@ class TestFilterRetrievalCandidates:
 
         candidates = [
             {"doc_id": str(doc_ok), "kb_id": str(kb_allowed), "content": "可见"},
-            {"doc_id": str(doc_secret), "kb_id": str(kb_allowed), "content": "密级超限"},
+            {
+                "doc_id": str(doc_secret),
+                "kb_id": str(kb_allowed),
+                "content": "密级超限",
+            },
             {"doc_id": str(uuid4()), "kb_id": str(kb_other), "content": "越权知识库"},
             {"doc_id": str(uuid4()), "kb_id": None, "content": "kb_id 缺失"},
         ]
@@ -343,7 +363,9 @@ class TestFilterRetrievalCandidates:
         """
         kb_allowed = uuid4()
         doc_id = uuid4()
-        user = SimpleNamespace(role="editor", clearance_level="internal", id=uuid4(), dept_id=None)
+        user = SimpleNamespace(
+            role="editor", clearance_level="internal", id=uuid4(), dept_id=None
+        )
 
         db = AsyncMock()
         meta_result = MagicMock()
@@ -399,7 +421,9 @@ class TestEmptyKbIdsShortCircuit:
         """answer 收到空 kb_ids 时跳过 FAQ 快捷匹配（防跨知识库泄漏）。"""
         faq_matcher = AsyncMock()
         faq_matcher.match = AsyncMock(
-            return_value=SimpleNamespace(matched=True, answer="FAQ答案", score=1.0, chunk_id="c1", doc_id="d1")
+            return_value=SimpleNamespace(
+                matched=True, answer="FAQ答案", score=1.0, chunk_id="c1", doc_id="d1"
+            )
         )
         engine, _, _ = _make_engine(faq_matcher=faq_matcher)
 
@@ -607,7 +631,9 @@ class TestShortcutPermissionFilter:
         async def permission_filter(docs: list[dict]) -> list[dict]:
             return [d for d in docs if d.get("keep")]
 
-        intent = IntentResult(intent=IntentType.RAG_SEARCH, confidence=0.95, use_shortcut=True)
+        intent = IntentResult(
+            intent=IntentType.RAG_SEARCH, confidence=0.95, use_shortcut=True
+        )
         user = SimpleNamespace(id=uuid4(), role="editor")
 
         chunks = []
@@ -641,7 +667,9 @@ class TestShortcutPermissionFilter:
         async def error_filter(docs: list[dict]) -> list[dict]:
             raise RuntimeError("permission down")
 
-        intent = IntentResult(intent=IntentType.RAG_SEARCH, confidence=0.95, use_shortcut=True)
+        intent = IntentResult(
+            intent=IntentType.RAG_SEARCH, confidence=0.95, use_shortcut=True
+        )
         user = SimpleNamespace(id=uuid4(), role="editor")
 
         chunks = []
@@ -659,7 +687,8 @@ class TestShortcutPermissionFilter:
         assert not reranker.called
         # retrieve_end 事件 doc_count=0
         end_events = [
-            c for c in chunks
+            c
+            for c in chunks
             if isinstance(c, SSEEvent) and c.event == SSEEventType.RETRIEVE_END
         ]
         assert end_events and end_events[0].data["doc_count"] == 0

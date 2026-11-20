@@ -11,9 +11,7 @@ from __future__ import annotations
 
 import json
 import sys
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 # Mock celery
 if "celery" not in sys.modules:
@@ -40,8 +38,12 @@ class TestAggregateResults:
 
         crew = KnowledgeBaseCrew.__new__(KnowledgeBaseCrew)
         sub_tasks = [
-            {"type": "qa", "description": "查报销政策", "expected_output": "政策摘要",
-             "original_query": "查报销单 BG001 状态并创建新报销单"},
+            {
+                "type": "qa",
+                "description": "查报销政策",
+                "expected_output": "政策摘要",
+                "original_query": "查报销单 BG001 状态并创建新报销单",
+            },
         ]
         result = crew._aggregate_results("报销政策已找到", sub_tasks)
         data = json.loads(result)
@@ -113,19 +115,31 @@ class TestBuildCrewTasksStructured:
     def test_original_query_injected_into_description(self) -> None:
         """原始用户需求注入到每个任务描述中。"""
         # Mock CrewAI 模块
-        with patch("app.agents.crew.CREWAI_AVAILABLE", True), \
-             patch("app.agents.crew.CrewTask") as mock_task_cls:
+        with (
+            patch("app.agents.crew.CREWAI_AVAILABLE", True),
+            patch("app.agents.crew.CrewTask") as mock_task_cls,
+        ):
             from app.agents.crew import KnowledgeBaseCrew
 
             crew = KnowledgeBaseCrew.__new__(KnowledgeBaseCrew)
             mock_agent = MagicMock()
             agents = {"qa": mock_agent}
             sub_tasks = [
-                {"type": "qa", "description": "查报销政策", "expected_output": "政策摘要"},
-                {"type": "action", "description": "创建报销单", "expected_output": "单号"},
+                {
+                    "type": "qa",
+                    "description": "查报销政策",
+                    "expected_output": "政策摘要",
+                },
+                {
+                    "type": "action",
+                    "description": "创建报销单",
+                    "expected_output": "单号",
+                },
             ]
 
-            crew._build_crew_tasks(sub_tasks, agents, original_query="退款但保留会员资格")
+            crew._build_crew_tasks(
+                sub_tasks, agents, original_query="退款但保留会员资格"
+            )
 
             # 验证每个 Task 的 description 包含原始需求
             assert mock_task_cls.call_count == 2
@@ -136,14 +150,18 @@ class TestBuildCrewTasksStructured:
 
     def test_structured_output_instruction_in_description(self) -> None:
         """任务描述包含结构化 JSON 输出指令。"""
-        with patch("app.agents.crew.CREWAI_AVAILABLE", True), \
-             patch("app.agents.crew.CrewTask") as mock_task_cls:
+        with (
+            patch("app.agents.crew.CREWAI_AVAILABLE", True),
+            patch("app.agents.crew.CrewTask") as mock_task_cls,
+        ):
             from app.agents.crew import KnowledgeBaseCrew
 
             crew = KnowledgeBaseCrew.__new__(KnowledgeBaseCrew)
             mock_agent = MagicMock()
             agents = {"qa": mock_agent}
-            sub_tasks = [{"type": "qa", "description": "测试", "expected_output": "结果"}]
+            sub_tasks = [
+                {"type": "qa", "description": "测试", "expected_output": "结果"}
+            ]
 
             crew._build_crew_tasks(sub_tasks, agents, original_query="测试需求")
 
@@ -155,14 +173,18 @@ class TestBuildCrewTasksStructured:
 
     def test_expected_output_marked_as_json(self) -> None:
         """期望输出标记为结构化 JSON 格式。"""
-        with patch("app.agents.crew.CREWAI_AVAILABLE", True), \
-             patch("app.agents.crew.CrewTask") as mock_task_cls:
+        with (
+            patch("app.agents.crew.CREWAI_AVAILABLE", True),
+            patch("app.agents.crew.CrewTask") as mock_task_cls,
+        ):
             from app.agents.crew import KnowledgeBaseCrew
 
             crew = KnowledgeBaseCrew.__new__(KnowledgeBaseCrew)
             mock_agent = MagicMock()
             agents = {"qa": mock_agent}
-            sub_tasks = [{"type": "qa", "description": "测试", "expected_output": "政策摘要"}]
+            sub_tasks = [
+                {"type": "qa", "description": "测试", "expected_output": "政策摘要"}
+            ]
 
             crew._build_crew_tasks(sub_tasks, agents, original_query="测试")
 
@@ -173,14 +195,18 @@ class TestBuildCrewTasksStructured:
 
     def test_no_original_query_falls_back(self) -> None:
         """无 original_query 时使用原始描述。"""
-        with patch("app.agents.crew.CREWAI_AVAILABLE", True), \
-             patch("app.agents.crew.CrewTask") as mock_task_cls:
+        with (
+            patch("app.agents.crew.CREWAI_AVAILABLE", True),
+            patch("app.agents.crew.CrewTask") as mock_task_cls,
+        ):
             from app.agents.crew import KnowledgeBaseCrew
 
             crew = KnowledgeBaseCrew.__new__(KnowledgeBaseCrew)
             mock_agent = MagicMock()
             agents = {"qa": mock_agent}
-            sub_tasks = [{"type": "qa", "description": "简单任务", "expected_output": "结果"}]
+            sub_tasks = [
+                {"type": "qa", "description": "简单任务", "expected_output": "结果"}
+            ]
 
             crew._build_crew_tasks(sub_tasks, agents, original_query="")
 

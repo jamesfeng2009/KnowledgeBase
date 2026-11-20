@@ -5,7 +5,6 @@
 """
 
 import os
-import uuid
 
 import pytest
 import pytest_asyncio
@@ -103,7 +102,9 @@ async def sample_data(db_session):
 class TestNotificationService:
     """知识主动推送服务测试。"""
 
-    async def test_generate_personal_digest_with_activity(self, db_session, sample_data):
+    async def test_generate_personal_digest_with_activity(
+        self, db_session, sample_data
+    ):
         """有评论记录的用户应生成个性化日报。"""
         service = NotificationService(db_session)
         recs = await service.generate_personal_digest(str(sample_data["user1"].id))

@@ -167,7 +167,8 @@ class ContradictionDetector:
             for m in history[-6:]
         )
         prompt = self._USER_CONTRADICTION_PROMPT.format(
-            history=history_text, query=query,
+            history=history_text,
+            query=query,
         )
         try:
             result = await self._call_llm_json(prompt)
@@ -225,7 +226,8 @@ class ContradictionDetector:
             )
 
         prompt = self._ANSWER_CONSISTENCY_PROMPT.format(
-            context=context, answer=answer[:1000],
+            context=context,
+            answer=answer[:1000],
         )
         try:
             result = await self._call_llm_json(prompt)
@@ -277,22 +279,33 @@ class ContradictionDetector:
                     continue
 
                 prompt = self._DOC_CONTRADICTION_PROMPT.format(
-                    doc_a=doc_a, doc_b=doc_b,
+                    doc_a=doc_a,
+                    doc_b=doc_b,
                 )
                 try:
                     result = await self._call_llm_json(prompt)
                     if result.get("contradiction"):
-                        results.append(ContradictionResult(
-                            has_contradiction=True,
-                            contradiction_type="doc_vs_doc",
-                            description=result.get("description", ""),
-                            conflicting_sources=[
-                                str(docs[i].get("doc_id", docs[i].get("id", "unknown"))),
-                                str(docs[j].get("doc_id", docs[j].get("id", "unknown"))),
-                            ],
-                            severity=result.get("severity", "medium"),
-                            action="flag",
-                        ))
+                        results.append(
+                            ContradictionResult(
+                                has_contradiction=True,
+                                contradiction_type="doc_vs_doc",
+                                description=result.get("description", ""),
+                                conflicting_sources=[
+                                    str(
+                                        docs[i].get(
+                                            "doc_id", docs[i].get("id", "unknown")
+                                        )
+                                    ),
+                                    str(
+                                        docs[j].get(
+                                            "doc_id", docs[j].get("id", "unknown")
+                                        )
+                                    ),
+                                ],
+                                severity=result.get("severity", "medium"),
+                                action="flag",
+                            )
+                        )
                 except Exception as exc:
                     log.debug("contradiction.doc_check_pair_failed", error=str(exc))
 

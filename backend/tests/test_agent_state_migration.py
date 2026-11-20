@@ -8,6 +8,7 @@
 断言两侧不同源：期望租户来自测试插入的 conversations 行，
 实际值读自迁移后的 information_schema / pg_policies / 表数据。
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -90,6 +91,7 @@ class TestB6AgentStateMigration:
 
         engine = create_async_engine(os.environ["DATABASE_URL"])
         try:
+
             def _run_upgrade(sync_conn):
                 from alembic.migration import MigrationContext
                 from alembic.operations import Operations
@@ -127,9 +129,9 @@ class TestB6AgentStateMigration:
                             {"t": table},
                         )
                     ).scalar()
-                    assert policy and "app.tenant_id" in policy, (
-                        f"{table} 缺 fail-closed tenant_isolation 策略"
-                    )
+                    assert (
+                        policy and "app.tenant_id" in policy
+                    ), f"{table} 缺 fail-closed tenant_isolation 策略"
                     forced = (
                         await conn.execute(
                             sa.text(
@@ -144,9 +146,7 @@ class TestB6AgentStateMigration:
                 # 回填断言：期望值来自插入的会话租户，实际值读自迁移后的表
                 rows = (
                     await conn.execute(
-                        sa.text(
-                            "SELECT session_id, tenant_id FROM agent_checkpoints"
-                        )
+                        sa.text("SELECT session_id, tenant_id FROM agent_checkpoints")
                     )
                 ).all()
                 by_sid = {r[0]: r[1] for r in rows}
@@ -156,9 +156,7 @@ class TestB6AgentStateMigration:
 
                 ev_rows = (
                     await conn.execute(
-                        sa.text(
-                            "SELECT session_id, tenant_id FROM agent_event_logs"
-                        )
+                        sa.text("SELECT session_id, tenant_id FROM agent_event_logs")
                     )
                 ).all()
                 ev_by_sid = {r[0]: r[1] for r in ev_rows}

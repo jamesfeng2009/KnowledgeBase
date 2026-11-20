@@ -103,13 +103,19 @@ class WikiService:
 
         for doc in docs:
             try:
-                content_md = await self._generate_page_md(doc, [p.title for p in pages_by_title])
+                content_md = await self._generate_page_md(
+                    doc, [p.title for p in pages_by_title]
+                )
                 title = self._parse_title(content_md, doc.title or "未命名")
                 page = pages_by_title.get(title)
                 if page is None:
                     # 按 source_doc_id 再匹配一次（标题可能变化）
                     page = next(
-                        (p for p in pages_by_title.values() if p.source_doc_id == doc.id),
+                        (
+                            p
+                            for p in pages_by_title.values()
+                            if p.source_doc_id == doc.id
+                        ),
                         None,
                     )
                 if page is None:
@@ -125,24 +131,36 @@ class WikiService:
                     self.db.add(page)
                     created += 1
                 else:
-                    await self._snapshot(page, author_id=author_id, summary="auto-generate")
+                    await self._snapshot(
+                        page, author_id=author_id, summary="auto-generate"
+                    )
                     page.title = title
                     page.content_md = content_md
                     updated += 1
                 pages_by_title[title] = page
-            except Exception as exc:  # noqa: BLE001 — 单篇失败跳过
+            except Exception as exc:
                 failed += 1
                 log.warning(
                     "wiki.generate_page_failed",
-                    doc_id=str(doc.id), error=str(exc),
+                    doc_id=str(doc.id),
+                    error=str(exc),
                 )
         await self.db.flush()
         await self._rebuild_links(kb_id)
         await self.db.flush()
         log.info(
-            "wiki.generated", kb_id=str(kb_id), created=created, updated=updated, failed=failed
+            "wiki.generated",
+            kb_id=str(kb_id),
+            created=created,
+            updated=updated,
+            failed=failed,
         )
-        return {"created": created, "updated": updated, "failed": failed, "pages": len(pages_by_title)}
+        return {
+            "created": created,
+            "updated": updated,
+            "failed": failed,
+            "pages": len(pages_by_title),
+        }
 
     # ------------------------------------------------------------------
     # 查询
@@ -261,13 +279,19 @@ class WikiService:
         if version is None:
             raise ValueError("wiki_version_not_found")
 
-        await self._snapshot(page, author_id=author_id, summary=f"rollback to v{version.version_seq}")
+        await self._snapshot(
+            page, author_id=author_id, summary=f"rollback to v{version.version_seq}"
+        )
         page.title = version.title
         page.content_md = version.content_md
         await self.db.flush()
         await self._rebuild_page_links(page)
         await self.db.flush()
-        log.info("wiki.page_rolled_back", page_id=str(page_id), version_seq=version.version_seq)
+        log.info(
+            "wiki.page_rolled_back",
+            page_id=str(page_id),
+            version_seq=version.version_seq,
+        )
         return page
 
     # ------------------------------------------------------------------
@@ -300,7 +324,8 @@ class WikiService:
             {
                 "role": "system",
                 "content": _GENERATE_SYSTEM_PROMPT.format(
-                    linkable_titles="\n".join(f"- {t}" for t in linkable_titles) or "-（无）"
+                    linkable_titles="\n".join(f"- {t}" for t in linkable_titles)
+                    or "-（无）"
                 ),
             },
             {
@@ -356,7 +381,11 @@ class WikiService:
             by_title[page.title] = page
         for page in pages:
             links = self._extract_links(page.content_md)
-            targets = [by_title[t] for t in links if t in by_title and by_title[t].id != page.id]
+            targets = [
+                by_title[t]
+                for t in links
+                if t in by_title and by_title[t].id != page.id
+            ]
             for target in targets:
                 self.db.add(
                     WikiPageLink(

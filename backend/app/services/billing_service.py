@@ -207,9 +207,7 @@ class BillingService:
             Document.file_size == 0,
         )
 
-        sum_file = select(
-            func.coalesce(func.sum(Document.file_size), 0)
-        ).where(
+        sum_file = select(func.coalesce(func.sum(Document.file_size), 0)).where(
             Document.tenant_id == tenant_id,
             Document.deleted_at.is_(None),
         )
@@ -392,7 +390,9 @@ class BillingService:
         await self._db.flush()
         return sub
 
-    async def reactivate_subscription(self, tenant_id: uuid.UUID) -> Subscription | None:
+    async def reactivate_subscription(
+        self, tenant_id: uuid.UUID
+    ) -> Subscription | None:
         """恢复订阅（续费后重新激活为 free 套餐）。
 
         手动开通过渡：欠费/到期后，管理员恢复时默认回到 free 套餐
@@ -420,9 +420,7 @@ class BillingService:
         await self._db.flush()
         return sub
 
-    async def get_plan_status(
-        self, tenant_id: uuid.UUID
-    ) -> dict[str, Any]:
+    async def get_plan_status(self, tenant_id: uuid.UUID) -> dict[str, Any]:
         """计算租户当前计划状态（用于到期/欠费停服判定与前端展示）。
 
         Returns:
@@ -431,7 +429,12 @@ class BillingService:
         """
         tenant = await self.get_tenant(tenant_id)
         if tenant is None:
-            return {"plan": DEFAULT_PLAN, "status": SUB_EXPIRED, "expired_at": None, "usable": False}
+            return {
+                "plan": DEFAULT_PLAN,
+                "status": SUB_EXPIRED,
+                "expired_at": None,
+                "usable": False,
+            }
 
         sub = await self.get_subscription(tenant_id)
         status = sub.status if sub else SUB_EXPIRED
@@ -480,10 +483,15 @@ class BillingService:
         tenant = await self.get_tenant(tenant_id)
         if tenant is None:
             return {
-                "llm_tokens": 0, "llm_limit": 0, "llm_used_pct": 0,
-                "cost_cents": 0, "cost_limit": 0,
-                "user_count": 0, "user_limit": 0,
-                "storage_bytes": 0, "storage_limit": 0,
+                "llm_tokens": 0,
+                "llm_limit": 0,
+                "llm_used_pct": 0,
+                "cost_cents": 0,
+                "cost_limit": 0,
+                "user_count": 0,
+                "user_limit": 0,
+                "storage_bytes": 0,
+                "storage_limit": 0,
             }
 
         plan_cfg = await self._effective_plan(tenant)

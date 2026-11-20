@@ -62,21 +62,18 @@ class ReportRepository:
         Returns:
             包含聚合指标的 dict。
         """
-        stmt = (
-            select(
-                func.count(UsageRecord.id).label("total_queries"),
-                func.count(func.distinct(UsageRecord.user_id)).label("unique_users"),
-                func.sum(
-                    UsageRecord.input_tokens + UsageRecord.output_tokens
-                ).label("total_tokens"),
-                func.sum(UsageRecord.cost_cents).label("total_cost_cents"),
-                # P0-Stage2: 真实平均响应时间（替代 reports.py 硬编码 1.5s）
-                func.avg(UsageRecord.duration_ms).label("avg_duration_ms"),
-            )
-            .where(
-                UsageRecord.created_at >= start_date,
-                UsageRecord.created_at < end_date,
-            )
+        stmt = select(
+            func.count(UsageRecord.id).label("total_queries"),
+            func.count(func.distinct(UsageRecord.user_id)).label("unique_users"),
+            func.sum(UsageRecord.input_tokens + UsageRecord.output_tokens).label(
+                "total_tokens"
+            ),
+            func.sum(UsageRecord.cost_cents).label("total_cost_cents"),
+            # P0-Stage2: 真实平均响应时间（替代 reports.py 硬编码 1.5s）
+            func.avg(UsageRecord.duration_ms).label("avg_duration_ms"),
+        ).where(
+            UsageRecord.created_at >= start_date,
+            UsageRecord.created_at < end_date,
         )
         if self._tenant_id is not None:
             stmt = stmt.where(UsageRecord.tenant_id == self._tenant_id)
@@ -127,22 +124,19 @@ class ReportRepository:
         trunc = trunc_map.get(group_by, "day")
 
         period = func.date_trunc(trunc, UsageRecord.created_at).label("period")
-        stmt = (
-            select(
-                period,
-                func.count(UsageRecord.id).label("total_queries"),
-                func.count(func.distinct(UsageRecord.user_id)).label("unique_users"),
-                func.sum(
-                    UsageRecord.input_tokens + UsageRecord.output_tokens
-                ).label("total_tokens"),
-                func.sum(UsageRecord.cost_cents).label("total_cost_cents"),
-                # P0-Stage2: 真实平均响应时间
-                func.avg(UsageRecord.duration_ms).label("avg_duration_ms"),
-            )
-            .where(
-                UsageRecord.created_at >= start_date,
-                UsageRecord.created_at < end_date,
-            )
+        stmt = select(
+            period,
+            func.count(UsageRecord.id).label("total_queries"),
+            func.count(func.distinct(UsageRecord.user_id)).label("unique_users"),
+            func.sum(UsageRecord.input_tokens + UsageRecord.output_tokens).label(
+                "total_tokens"
+            ),
+            func.sum(UsageRecord.cost_cents).label("total_cost_cents"),
+            # P0-Stage2: 真实平均响应时间
+            func.avg(UsageRecord.duration_ms).label("avg_duration_ms"),
+        ).where(
+            UsageRecord.created_at >= start_date,
+            UsageRecord.created_at < end_date,
         )
         if self._tenant_id is not None:
             stmt = stmt.where(UsageRecord.tenant_id == self._tenant_id)
@@ -177,54 +171,42 @@ class ReportRepository:
             total_output_tokens / by_model / by_request_type 的 dict。
         """
         # 汇总
-        summary_stmt = (
-            select(
-                func.sum(UsageRecord.cost_cents).label("total_cost_cents"),
-                func.sum(UsageRecord.input_tokens).label("total_input_tokens"),
-                func.sum(UsageRecord.output_tokens).label("total_output_tokens"),
-            )
-            .where(
-                UsageRecord.created_at >= start_date,
-                UsageRecord.created_at < end_date,
-            )
+        summary_stmt = select(
+            func.sum(UsageRecord.cost_cents).label("total_cost_cents"),
+            func.sum(UsageRecord.input_tokens).label("total_input_tokens"),
+            func.sum(UsageRecord.output_tokens).label("total_output_tokens"),
+        ).where(
+            UsageRecord.created_at >= start_date,
+            UsageRecord.created_at < end_date,
         )
         if self._tenant_id is not None:
-            summary_stmt = summary_stmt.where(
-                UsageRecord.tenant_id == self._tenant_id
-            )
+            summary_stmt = summary_stmt.where(UsageRecord.tenant_id == self._tenant_id)
         summary_result = await self.session.execute(summary_stmt)
         summary_row = summary_result.one_or_none()
 
         # 按模型分组
-        model_stmt = (
-            select(
-                UsageRecord.model,
-                func.sum(UsageRecord.cost_cents).label("cost"),
-            )
-            .where(
-                UsageRecord.created_at >= start_date,
-                UsageRecord.created_at < end_date,
-            )
+        model_stmt = select(
+            UsageRecord.model,
+            func.sum(UsageRecord.cost_cents).label("cost"),
+        ).where(
+            UsageRecord.created_at >= start_date,
+            UsageRecord.created_at < end_date,
         )
         if self._tenant_id is not None:
             model_stmt = model_stmt.where(UsageRecord.tenant_id == self._tenant_id)
         model_stmt = model_stmt.group_by(UsageRecord.model)
         model_result = await self.session.execute(model_stmt)
         by_model = {
-            row.model: float(int(row.cost or 0)) / 100.0
-            for row in model_result.all()
+            row.model: float(int(row.cost or 0)) / 100.0 for row in model_result.all()
         }
 
         # 按请求类型分组
-        type_stmt = (
-            select(
-                UsageRecord.request_type,
-                func.sum(UsageRecord.cost_cents).label("cost"),
-            )
-            .where(
-                UsageRecord.created_at >= start_date,
-                UsageRecord.created_at < end_date,
-            )
+        type_stmt = select(
+            UsageRecord.request_type,
+            func.sum(UsageRecord.cost_cents).label("cost"),
+        ).where(
+            UsageRecord.created_at >= start_date,
+            UsageRecord.created_at < end_date,
         )
         if self._tenant_id is not None:
             type_stmt = type_stmt.where(UsageRecord.tenant_id == self._tenant_id)
@@ -236,9 +218,15 @@ class ReportRepository:
         }
 
         return {
-            "total_cost_cents": int(summary_row.total_cost_cents or 0) if summary_row else 0,
-            "total_input_tokens": int(summary_row.total_input_tokens or 0) if summary_row else 0,
-            "total_output_tokens": int(summary_row.total_output_tokens or 0) if summary_row else 0,
+            "total_cost_cents": int(summary_row.total_cost_cents or 0)
+            if summary_row
+            else 0,
+            "total_input_tokens": int(summary_row.total_input_tokens or 0)
+            if summary_row
+            else 0,
+            "total_output_tokens": int(summary_row.total_output_tokens or 0)
+            if summary_row
+            else 0,
             "by_model": by_model,
             "by_request_type": by_request_type,
         }
@@ -257,39 +245,35 @@ class ReportRepository:
             包含知识库统计指标的 dict。
         """
         # 文档总数与状态分布
-        doc_stmt = (
-            select(
-                func.count(Document.id).label("total_docs"),
-                func.sum(
-                    case(
-                        (Document.status == "published", 1),
-                        else_=0,
-                    )
-                ).label("published_count"),
-                func.sum(
-                    case(
-                        (Document.status == "draft", 1),
-                        else_=0,
-                    )
-                ).label("draft_count"),
-                func.sum(
-                    case(
-                        (Document.status == "archived", 1),
-                        else_=0,
-                    )
-                ).label("archived_count"),
-            )
-            .where(Document.deleted_at.is_(None))
-        )
+        doc_stmt = select(
+            func.count(Document.id).label("total_docs"),
+            func.sum(
+                case(
+                    (Document.status == "published", 1),
+                    else_=0,
+                )
+            ).label("published_count"),
+            func.sum(
+                case(
+                    (Document.status == "draft", 1),
+                    else_=0,
+                )
+            ).label("draft_count"),
+            func.sum(
+                case(
+                    (Document.status == "archived", 1),
+                    else_=0,
+                )
+            ).label("archived_count"),
+        ).where(Document.deleted_at.is_(None))
         if self._tenant_id is not None:
             doc_stmt = doc_stmt.where(Document.tenant_id == self._tenant_id)
         doc_result = await self.session.execute(doc_stmt)
         doc_row = doc_result.one_or_none()
 
         # 知识库总数
-        kb_stmt = (
-            select(func.count(KnowledgeBase.id))
-            .where(KnowledgeBase.deleted_at.is_(None))
+        kb_stmt = select(func.count(KnowledgeBase.id)).where(
+            KnowledgeBase.deleted_at.is_(None)
         )
         if self._tenant_id is not None:
             kb_stmt = kb_stmt.where(KnowledgeBase.tenant_id == self._tenant_id)

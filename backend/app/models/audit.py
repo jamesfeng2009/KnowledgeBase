@@ -15,9 +15,7 @@ class AuditFlow(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     """审核流程表 — 文档发布等操作的审核。"""
 
     __tablename__ = "audit_flows"
-    __table_args__ = (
-        Index("ix_audit_flows_tenant_id", "tenant_id"),
-    )
+    __table_args__ = (Index("ix_audit_flows_tenant_id", "tenant_id"),)
 
     resource_type: Mapped[str] = mapped_column(
         String(50), nullable=False, comment="资源类型: document/kb/question"

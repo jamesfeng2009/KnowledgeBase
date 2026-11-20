@@ -6,6 +6,7 @@
 3. Celery worker_shutdown 信号注册
 4. Docker/Dockerfile 配置
 """
+
 from __future__ import annotations
 
 import asyncio

@@ -13,12 +13,11 @@ import json
 from typing import Any
 
 from app.intent.router import (
+    _SHORTCUT_INTENTS,
+    _TERMINAL_INTENTS,
     IntentConstraints,
     IntentResult,
     IntentType,
-    SlotName,
-    _SHORTCUT_INTENTS,
-    _TERMINAL_INTENTS,
 )
 from app.utils.logger import get_logger
 
@@ -26,23 +25,32 @@ log = get_logger(__name__)
 
 # 硬约束支持的键 — 用于白名单校验 LLM 返回的 hard 字段，
 # 防止 LLM 注入未知键导致下游误过滤。
-_HARD_KEYS: frozenset[str] = frozenset({
-    "classification_max",
-    "exclude_classifications",
-    "kb_ids",
-    "mandatory_keywords",
-})
+_HARD_KEYS: frozenset[str] = frozenset(
+    {
+        "classification_max",
+        "exclude_classifications",
+        "kb_ids",
+        "mandatory_keywords",
+    }
+)
 # 软约束支持的键
-_SOFT_KEYS: frozenset[str] = frozenset({
-    "time_range",
-    "doc_type",
-    "source",
-    "preferred_keywords",
-})
+_SOFT_KEYS: frozenset[str] = frozenset(
+    {
+        "time_range",
+        "doc_type",
+        "source",
+        "preferred_keywords",
+    }
+)
 # 合法密级值（对应 permission_service 密级权重表）
-_CLASSIFICATION_VALUES: frozenset[str] = frozenset({
-    "public", "internal", "confidential", "secret",
-})
+_CLASSIFICATION_VALUES: frozenset[str] = frozenset(
+    {
+        "public",
+        "internal",
+        "confidential",
+        "secret",
+    }
+)
 
 _SYSTEM_PROMPT = (
     "你是企业知识库的意图识别器。分析用户输入，返回 JSON：\n"
@@ -60,7 +68,7 @@ _SYSTEM_PROMPT = (
     "- unsupported: 超出知识库服务范围的问题（订票/转账/天气/闲聊等），拒绝回答\n"
     "- unclear: 关键参数缺失或歧义，无法确定检索目标，需要澄清\n"
     "missing_slots 说明（仅 intent=unclear 时填写）：\n"
-    "- search_query: 缺少检索主题（如\"查一下文档\"未指明查什么）\n"
+    '- search_query: 缺少检索主题（如"查一下文档"未指明查什么）\n'
     "- time_range: 缺少时间范围\n"
     "- classification: 缺少密级\n"
     "- doc_type: 缺少文档类型\n"

@@ -71,7 +71,9 @@ async def list_constraint_rules(
         description="按状态筛选: active/pending_review/retired（空=全部）",
     ),
     kb_id: str | None = Query(None, description="按知识库筛选"),
-    severity: str | None = Query(None, description="按 severity 筛选: block/confirm/warn"),
+    severity: str | None = Query(
+        None, description="按 severity 筛选: block/confirm/warn"
+    ),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     user: User = Depends(get_current_active_user),
@@ -105,9 +107,7 @@ async def list_constraint_rules(
     )
     return ApiResponse(
         code=0,
-        data=ConstraintRuleListResponse(
-            total=result["total"], items=result["items"]
-        ),
+        data=ConstraintRuleListResponse(total=result["total"], items=result["items"]),
     )
 
 
@@ -158,7 +158,10 @@ async def review_constraint_rule(
         )
     return ApiResponse(
         code=0,
-        data={"id": rule_id, "status": "active" if body.action == "approve" else "retired"},
+        data={
+            "id": rule_id,
+            "status": "active" if body.action == "approve" else "retired",
+        },
     )
 
 

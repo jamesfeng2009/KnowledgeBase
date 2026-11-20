@@ -41,7 +41,7 @@ DEFAULT_GUARDRAILS = ("ndcg_at_5", "mrr")
 
 def _load_cases(path: str) -> list[dict[str, Any]]:
     """读 run JSON 的 case_results（容忍传入的就是 case 列表）。"""
-    with open(path, "r", encoding="utf-8") as fh:
+    with open(path, encoding="utf-8") as fh:
         data = json.load(fh)
     if isinstance(data, list):
         return [c for c in data if isinstance(c, dict)]
@@ -67,9 +67,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--min-samples", type=int, default=30, help="最小配对样本量（低于则 hold）"
     )
-    parser.add_argument(
-        "--resamples", type=int, default=2000, help="自助重采样次数"
-    )
+    parser.add_argument("--resamples", type=int, default=2000, help="自助重采样次数")
     parser.add_argument(
         "--guardrails",
         default=",".join(DEFAULT_GUARDRAILS),

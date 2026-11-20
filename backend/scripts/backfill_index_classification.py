@@ -57,7 +57,9 @@ async def _load_doc_classifications() -> list[tuple[str, str]]:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     engine = create_task_engine()
-    session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
     try:
         async with session_factory() as session:
             result = await session.execute(
@@ -104,7 +106,9 @@ async def _backfill_one(
 async def main() -> int:
     parser = argparse.ArgumentParser(description="回填索引 classification 字段")
     parser.add_argument("--dry-run", action="store_true", help="只统计不写入")
-    parser.add_argument("--skip-cross-modal", action="store_true", help="跳过跨模态索引")
+    parser.add_argument(
+        "--skip-cross-modal", action="store_true", help="跳过跨模态索引"
+    )
     args = parser.parse_args()
 
     pairs = await _load_doc_classifications()
@@ -126,6 +130,7 @@ async def main() -> int:
     total_missing = 0  # 索引中不存在（未入库/已清理）的文档数
 
     async with httpx.AsyncClient(timeout=30.0) as client:
+
         async def _run(index: str, doc_id: str, classification: str) -> None:
             nonlocal total_updated, total_missing
             async with semaphore:
@@ -135,7 +140,10 @@ async def main() -> int:
                     )
                 except Exception as exc:
                     log.error(
-                        "backfill.doc_failed", index=index, doc_id=doc_id, error=str(exc)
+                        "backfill.doc_failed",
+                        index=index,
+                        doc_id=doc_id,
+                        error=str(exc),
                     )
                     return
                 if updated == 0:

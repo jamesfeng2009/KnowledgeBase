@@ -5,6 +5,7 @@
     - WeComBotService：mock httpx 验证推送成功/失败，纯函数验签算法；
     - 回调验签：用标准企微算法构造正反例。
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -26,7 +27,10 @@ class TestWeComConnector:
     async def test_search_returns_empty_when_disabled(self) -> None:
         from types import SimpleNamespace
 
-        with patch("app.connectors.wecom.settings", SimpleNamespace(CONNECTOR_WECOM_ENABLED=False)):
+        with patch(
+            "app.connectors.wecom.settings",
+            SimpleNamespace(CONNECTOR_WECOM_ENABLED=False),
+        ):
             conn = WeComConnector()
             assert await conn.search("张三") == []
 
@@ -37,7 +41,9 @@ class TestWeComConnector:
         with patch(
             "app.connectors.wecom.settings",
             SimpleNamespace(
-                CONNECTOR_WECOM_ENABLED=True, WECOM_CORP_ID="corp1", WECOM_SECRET="secret"
+                CONNECTOR_WECOM_ENABLED=True,
+                WECOM_CORP_ID="corp1",
+                WECOM_SECRET="secret",
             ),
         ):
             conn = WeComConnector()
@@ -47,7 +53,12 @@ class TestWeComConnector:
 
         async def fake_search(token, keyword, top_k):
             return [
-                {"userid": "u1", "name": "张三", "department_label": "技术部", "position": "工程师"}
+                {
+                    "userid": "u1",
+                    "name": "张三",
+                    "department_label": "技术部",
+                    "position": "工程师",
+                }
             ]
 
         conn._get_access_token = fake_get_token
@@ -66,7 +77,9 @@ class TestWeComConnector:
         with patch(
             "app.connectors.wecom.settings",
             SimpleNamespace(
-                CONNECTOR_WECOM_ENABLED=True, WECOM_CORP_ID="corp1", WECOM_SECRET="secret"
+                CONNECTOR_WECOM_ENABLED=True,
+                WECOM_CORP_ID="corp1",
+                WECOM_SECRET="secret",
             ),
         ):
             conn = WeComConnector()
@@ -91,15 +104,22 @@ class TestWeComBotService:
         """标准企微验签算法：sha1(排序拼接)。"""
         import hashlib
 
-        token, timestamp, nonce, echostr = "TESTTOKEN", "1409659813", "1372623149", "hello"
+        token, timestamp, nonce, echostr = (
+            "TESTTOKEN",
+            "1409659813",
+            "1372623149",
+            "hello",
+        )
         raw = "".join(sorted([token, timestamp, nonce, echostr]))
         expect = hashlib.sha1(raw.encode()).hexdigest()
-        assert WeComBotService.verify_signature(
-            token, timestamp, nonce, echostr, expect
-        ) is True
-        assert WeComBotService.verify_signature(
-            token, timestamp, nonce, echostr, "0" * 40
-        ) is False
+        assert (
+            WeComBotService.verify_signature(token, timestamp, nonce, echostr, expect)
+            is True
+        )
+        assert (
+            WeComBotService.verify_signature(token, timestamp, nonce, echostr, "0" * 40)
+            is False
+        )
 
     @pytest.mark.asyncio
     async def test_send_markdown_success(self) -> None:
@@ -110,8 +130,12 @@ class TestWeComBotService:
         mock_client.__aenter__.return_value = mock_client
         mock_client.__aexit__.return_value = None
 
-        with patch("app.services.wecom_bot_service.httpx.AsyncClient", return_value=mock_client):
-            ok = await WeComBotService(webhook="https://qyapi.weixin.qq.com/cgi-bin/webhook/send").send_markdown("# 标题")
+        with patch(
+            "app.services.wecom_bot_service.httpx.AsyncClient", return_value=mock_client
+        ):
+            ok = await WeComBotService(
+                webhook="https://qyapi.weixin.qq.com/cgi-bin/webhook/send"
+            ).send_markdown("# 标题")
 
         assert ok is True
         sent_payload = mock_client.post.call_args.kwargs["json"]
@@ -130,7 +154,9 @@ class TestWeComBotService:
         mock_client.__aenter__.return_value = mock_client
         mock_client.__aexit__.return_value = None
 
-        with patch("app.services.wecom_bot_service.httpx.AsyncClient", return_value=mock_client):
+        with patch(
+            "app.services.wecom_bot_service.httpx.AsyncClient", return_value=mock_client
+        ):
             ok = await WeComBotService(webhook="https://x/send").send_markdown("x")
 
         assert ok is False
@@ -142,7 +168,9 @@ class TestWeComBotService:
         mock_client.__aenter__.return_value = mock_client
         mock_client.__aexit__.return_value = None
 
-        with patch("app.services.wecom_bot_service.httpx.AsyncClient", return_value=mock_client):
+        with patch(
+            "app.services.wecom_bot_service.httpx.AsyncClient", return_value=mock_client
+        ):
             ok = await WeComBotService(webhook="https://x/send").send_markdown("x")
 
         assert ok is False

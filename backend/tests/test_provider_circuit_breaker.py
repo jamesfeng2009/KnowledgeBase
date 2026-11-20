@@ -20,8 +20,7 @@ from __future__ import annotations
 import asyncio
 import os
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -37,10 +36,10 @@ from app.utils.circuit_breaker import (
     reset_all_circuit_breakers,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(autouse=True)
 def reset_breakers():
@@ -80,6 +79,7 @@ class _MockAsyncStream:
 # Embedder 熔断器测试
 # ---------------------------------------------------------------------------
 
+
 class TestOpenAIEmbedderCircuitBreaker:
     """OpenAIEmbedder 熔断器集成测试。"""
 
@@ -105,7 +105,9 @@ class TestOpenAIEmbedderCircuitBreaker:
         from app.llm.embedder import OpenAIEmbedder
 
         emb = OpenAIEmbedder()
-        emb.client.embeddings.create = AsyncMock(side_effect=RuntimeError("API timeout"))
+        emb.client.embeddings.create = AsyncMock(
+            side_effect=RuntimeError("API timeout")
+        )
         _configure_breaker("embedder_openai", threshold=3)
 
         for _ in range(3):
@@ -150,7 +152,9 @@ class TestOpenAIEmbedderCircuitBreaker:
         from app.llm.embedder import OpenAIEmbedder
 
         emb = OpenAIEmbedder()
-        emb.client.embeddings.create = AsyncMock(side_effect=RuntimeError("API timeout"))
+        emb.client.embeddings.create = AsyncMock(
+            side_effect=RuntimeError("API timeout")
+        )
         _configure_breaker("embedder_openai", threshold=2, recovery=0.05)
 
         # 触发熔断
@@ -269,7 +273,9 @@ class TestDashScopeEmbedderCircuitBreaker:
         from app.llm.embedder import DashScopeEmbedder
 
         emb = DashScopeEmbedder()
-        emb.client.embeddings.create = AsyncMock(side_effect=RuntimeError("API timeout"))
+        emb.client.embeddings.create = AsyncMock(
+            side_effect=RuntimeError("API timeout")
+        )
         _configure_breaker("embedder_dashscope", threshold=2)
 
         for _ in range(2):
@@ -283,6 +289,7 @@ class TestDashScopeEmbedderCircuitBreaker:
 # ---------------------------------------------------------------------------
 # Reranker 熔断器测试
 # ---------------------------------------------------------------------------
+
 
 class TestCohereRerankerCircuitBreaker:
     """CohereReranker 熔断器集成测试。"""
@@ -380,6 +387,7 @@ class TestTEIRerankerCircuitBreaker:
 # ---------------------------------------------------------------------------
 # VectorStore 熔断器测试
 # ---------------------------------------------------------------------------
+
 
 class TestOpenSearchStoreCircuitBreaker:
     """OpenSearchVectorStore 熔断器集成测试。"""
@@ -498,6 +506,7 @@ class TestMilvusStoreCircuitBreaker:
 # LLM Provider 熔断器测试（补充 provider 级别）
 # ---------------------------------------------------------------------------
 
+
 class TestVLLMProviderCircuitBreaker:
     """VLLMProvider 熔断器集成测试 — chat() 是 async generator。"""
 
@@ -506,12 +515,16 @@ class TestVLLMProviderCircuitBreaker:
 
         provider = VLLMProvider()
         mock_chunk = MagicMock()
-        mock_chunk.choices = [MagicMock(delta=MagicMock(content="hello", tool_calls=None))]
+        mock_chunk.choices = [
+            MagicMock(delta=MagicMock(content="hello", tool_calls=None))
+        ]
         mock_resp = _MockAsyncStream([mock_chunk])
         provider.client.chat.completions.create = AsyncMock(return_value=mock_resp)
 
         async def consume():
-            async for token in provider.chat([{"role": "user", "content": "hi"}], stream=True):
+            async for token in provider.chat(
+                [{"role": "user", "content": "hi"}], stream=True
+            ):
                 pass
 
         asyncio.run(consume())
@@ -523,11 +536,15 @@ class TestVLLMProviderCircuitBreaker:
         from app.llm.vllm_provider import VLLMProvider
 
         provider = VLLMProvider()
-        provider.client.chat.completions.create = AsyncMock(side_effect=RuntimeError("vLLM down"))
+        provider.client.chat.completions.create = AsyncMock(
+            side_effect=RuntimeError("vLLM down")
+        )
         _configure_breaker("vllm", threshold=2)
 
         async def consume():
-            async for _ in provider.chat([{"role": "user", "content": "hi"}], stream=True):
+            async for _ in provider.chat(
+                [{"role": "user", "content": "hi"}], stream=True
+            ):
                 pass
 
         for _ in range(2):
@@ -541,11 +558,15 @@ class TestVLLMProviderCircuitBreaker:
         from app.llm.vllm_provider import VLLMProvider
 
         provider = VLLMProvider()
-        provider.client.chat.completions.create = AsyncMock(side_effect=RuntimeError("vLLM down"))
+        provider.client.chat.completions.create = AsyncMock(
+            side_effect=RuntimeError("vLLM down")
+        )
         _configure_breaker("vllm", threshold=2)
 
         async def consume():
-            async for _ in provider.chat([{"role": "user", "content": "hi"}], stream=True):
+            async for _ in provider.chat(
+                [{"role": "user", "content": "hi"}], stream=True
+            ):
                 pass
 
         for _ in range(2):
@@ -566,12 +587,16 @@ class TestAnthropicProviderCircuitBreaker:
         provider = AnthropicProvider()
         # mock messages.stream to raise
         mock_stream_ctx = AsyncMock()
-        mock_stream_ctx.__aenter__ = AsyncMock(side_effect=RuntimeError("Anthropic API error"))
+        mock_stream_ctx.__aenter__ = AsyncMock(
+            side_effect=RuntimeError("Anthropic API error")
+        )
         provider.client.messages.stream = MagicMock(return_value=mock_stream_ctx)
         _configure_breaker("anthropic", threshold=2)
 
         async def consume():
-            async for _ in provider.chat([{"role": "user", "content": "hi"}], stream=True):
+            async for _ in provider.chat(
+                [{"role": "user", "content": "hi"}], stream=True
+            ):
                 pass
 
         for _ in range(2):
@@ -586,12 +611,16 @@ class TestAnthropicProviderCircuitBreaker:
 
         provider = AnthropicProvider()
         mock_stream_ctx = AsyncMock()
-        mock_stream_ctx.__aenter__ = AsyncMock(side_effect=RuntimeError("Anthropic API error"))
+        mock_stream_ctx.__aenter__ = AsyncMock(
+            side_effect=RuntimeError("Anthropic API error")
+        )
         provider.client.messages.stream = MagicMock(return_value=mock_stream_ctx)
         _configure_breaker("anthropic", threshold=2)
 
         async def consume():
-            async for _ in provider.chat([{"role": "user", "content": "hi"}], stream=True):
+            async for _ in provider.chat(
+                [{"role": "user", "content": "hi"}], stream=True
+            ):
                 pass
 
         for _ in range(2):
@@ -606,18 +635,13 @@ class TestAnthropicProviderCircuitBreaker:
 # 熔断器注册验证
 # ---------------------------------------------------------------------------
 
+
 class TestCircuitBreakerRegistration:
     """验证所有 Provider 的熔断器在模块加载时正确注册。"""
 
     def test_all_breakers_registered(self):
         """所有 Provider 熔断器名称在注册表中存在。"""
         # 触发模块加载 — 包括 DashScope
-        from app.llm.embedder import OpenAIEmbedder, TEIEmbedder, DashScopeEmbedder
-        from app.rag.reranker import CohereReranker, TEIReranker
-        from app.rag.vector_store.opensearch_store import OpenSearchVectorStore
-        from app.rag.vector_store.milvus_store import MilvusVectorStore
-        from app.llm.vllm_provider import VLLMProvider
-        from app.llm.anthropic_provider import AnthropicProvider
         try:
             from app.llm.dashscope_provider import DashScopeProvider
         except ImportError:
@@ -637,6 +661,7 @@ class TestCircuitBreakerRegistration:
         # dashscope LLM breaker 仅在 DashScopeProvider 实例化时注册（inline 模式）
         try:
             from app.llm.dashscope_provider import DashScopeProvider
+
             DashScopeProvider()  # 触发 __init__ → get_circuit_breaker("dashscope")
             expected_names.append("dashscope")
         except (ImportError, Exception):

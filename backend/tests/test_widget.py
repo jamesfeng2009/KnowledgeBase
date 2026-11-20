@@ -5,6 +5,7 @@
     - 限流：同 key 连续超限抛 WidgetRateLimited，窗口滑动后可恢复；
     - API 路由：/widget/token 与 /widget/ask 注册。
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -20,8 +21,8 @@ from fastapi.testclient import TestClient
 
 from app.services.widget_token_service import (
     WidgetClaims,
-    WidgetRateLimiter,
     WidgetRateLimited,
+    WidgetRateLimiter,
     WidgetTokenError,
     WidgetTokenService,
 )
@@ -31,7 +32,7 @@ OTHER_TENANT = "22222222-2222-2222-2222-222222222222"
 KB_ID = "aaaaaaaa-0000-4000-8000-000000000001"
 
 
-def _legacy_token(service: "WidgetTokenService") -> str:
+def _legacy_token(service: WidgetTokenService) -> str:
     """构造改造前签发的、不含 tenant_id 字段的合法签名令牌。"""
     payload = {
         "kb_id": KB_ID,
@@ -59,7 +60,7 @@ def service() -> WidgetTokenService:
 
 
 class TestTokenLifecycle:
-    def test_create_and_verify(self, service) -> None:  # noqa: ANN001
+    def test_create_and_verify(self, service) -> None:
         data = service.create_token("kb-1", tenant_id=TENANT_ID)
         assert data["kb_id"] == "kb-1"
         assert data["tenant_id"] == TENANT_ID
@@ -70,17 +71,17 @@ class TestTokenLifecycle:
         assert claims.kb_id == "kb-1"
         assert claims.tenant_id == TENANT_ID
 
-    def test_tenant_id_is_required(self, service) -> None:  # noqa: ANN001
+    def test_tenant_id_is_required(self, service) -> None:
         """不带租户签不出牌：fail-closed 下那必然是一张查不到数据的废牌。"""
         with pytest.raises(TypeError):
             service.create_token("kb-1")  # type: ignore[call-arg]
 
-    def test_legacy_token_without_tenant_is_detected(self, service) -> None:  # noqa: ANN001
+    def test_legacy_token_without_tenant_is_detected(self, service) -> None:
         """改造前签发的旧令牌没有 tenant_id 字段，调用方必须能识别并拒绝。"""
         claims = service.verify_token(_legacy_token(service))
         assert claims.tenant_id is None
 
-    def test_signature_covers_tenant_id(self, service) -> None:  # noqa: ANN001
+    def test_signature_covers_tenant_id(self, service) -> None:
         """换签名（等价于篡改 payload 里的租户）必须验签失败。"""
         a = service.create_token("kb-1", tenant_id=TENANT_ID)
         b = service.create_token("kb-1", tenant_id=OTHER_TENANT)
@@ -89,22 +90,24 @@ class TestTokenLifecycle:
         with pytest.raises(WidgetTokenError):
             service.verify_token(f"{body_a}.{sig_b}")
 
-    def test_tampered_token_rejected(self, service) -> None:  # noqa: ANN001
+    def test_tampered_token_rejected(self, service) -> None:
         data = service.create_token("kb-1", tenant_id=TENANT_ID)
-        tampered = data["token"][:-2] + ("aa" if not data["token"].endswith("aa") else "bb")
+        tampered = data["token"][:-2] + (
+            "aa" if not data["token"].endswith("aa") else "bb"
+        )
         with pytest.raises(WidgetTokenError):
             service.verify_token(tampered)
 
-    def test_expired_token_rejected(self, service) -> None:  # noqa: ANN001
+    def test_expired_token_rejected(self, service) -> None:
         data = service.create_token("kb-1", tenant_id=TENANT_ID, ttl=-10)
         with pytest.raises(WidgetTokenError, match="过期"):
             service.verify_token(data["token"])
 
-    def test_malformed_token_rejected(self, service) -> None:  # noqa: ANN001
+    def test_malformed_token_rejected(self, service) -> None:
         with pytest.raises(WidgetTokenError):
             service.verify_token("not-a-token")
 
-    def test_custom_ttl(self, service) -> None:  # noqa: ANN001
+    def test_custom_ttl(self, service) -> None:
         data = service.create_token("kb-1", tenant_id=TENANT_ID, ttl=60)
         assert data["expires_at"] - int(time.time()) <= 60
 
@@ -175,7 +178,9 @@ class TestWidgetAskTenantContext:
         with (
             patch.object(widget_module(), "_token_service", svc),
             patch.object(widget_module(), "_rate_limiter"),
-            patch.object(widget_module(), "apply_tenant", new_callable=AsyncMock) as apply,
+            patch.object(
+                widget_module(), "apply_tenant", new_callable=AsyncMock
+            ) as apply,
         ):
             resp = client.post(
                 "/widget/ask",
@@ -194,7 +199,9 @@ class TestWidgetAskTenantContext:
         with (
             patch.object(widget_module(), "_token_service", svc),
             patch.object(widget_module(), "_rate_limiter"),
-            patch.object(widget_module(), "apply_tenant", new_callable=AsyncMock) as apply,
+            patch.object(
+                widget_module(), "apply_tenant", new_callable=AsyncMock
+            ) as apply,
         ):
             resp = client.post(
                 "/widget/ask",

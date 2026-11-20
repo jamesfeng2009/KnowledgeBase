@@ -12,6 +12,7 @@
 - 凭证通过 credentials dict 传入（API token/OAuth/access_token），
   适配器不负责凭证存储，由调用方从 Connector 凭证管理获取
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod

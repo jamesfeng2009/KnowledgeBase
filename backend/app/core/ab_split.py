@@ -128,7 +128,9 @@ class ABExperiment:
 
     def arm_overrides(self, arm: str) -> ABOverrides:
         """取指定臂的变体（未知臂回落 control）。"""
-        return self.treatment_overrides if arm == "treatment" else self.control_overrides
+        return (
+            self.treatment_overrides if arm == "treatment" else self.control_overrides
+        )
 
 
 @lru_cache(maxsize=1)
@@ -220,7 +222,7 @@ def _bucket_of(experiment_name: str, sticky_key: str) -> int:
     experiment_name 参与哈希：不同实验对同一用户的分桶独立，
     避免多个实验间用户分组完全相关的耦合。
     """
-    digest = hashlib.sha256(f"{experiment_name}:{sticky_key}".encode("utf-8"))
+    digest = hashlib.sha256(f"{experiment_name}:{sticky_key}".encode())
     return int(digest.hexdigest()[:8], 16) % 100
 
 
@@ -365,6 +367,4 @@ def apply_ab_split(
     Returns:
         最终使用的模型 ID（未命中实验时原样返回入参）。
     """
-    return assign_ab_arm(
-        resolved_model_id, tenant_id=tenant_id, user_id=user_id
-    ).model
+    return assign_ab_arm(resolved_model_id, tenant_id=tenant_id, user_id=user_id).model

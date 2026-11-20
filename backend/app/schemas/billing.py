@@ -24,7 +24,6 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-
 # ======================================================================
 # P2: 缺失的 Response Schema 补全
 # ======================================================================
@@ -37,7 +36,9 @@ class NotificationResponse(BaseModel):
 
     id: uuid.UUID = Field(..., description="通知 ID")
     user_id: uuid.UUID = Field(..., description="接收用户 ID")
-    notification_type: str = Field(..., description="通知类型: personal_digest/document_change/gap_alert")
+    notification_type: str = Field(
+        ..., description="通知类型: personal_digest/document_change/gap_alert"
+    )
     title: str = Field(..., description="通知标题")
     content: str = Field(..., description="通知内容")
     doc_id: uuid.UUID | None = Field(default=None, description="关联文档 ID")
@@ -59,9 +60,7 @@ class KnowledgeGapResponse(BaseModel):
     status: str = Field(
         default="open", description="状态: open/analyzing/resolved/ignored"
     )
-    suggested_doc_title: str | None = Field(
-        default=None, description="建议文档标题"
-    )
+    suggested_doc_title: str | None = Field(default=None, description="建议文档标题")
     created_at: datetime = Field(..., description="创建时间")
     updated_at: datetime = Field(..., description="更新时间")
 
@@ -94,9 +93,7 @@ class SearchLogResponse(BaseModel):
     source: str = Field(..., description="搜索源: knowledge_base/oa/erp/crm")
     result_count: int = Field(default=0, ge=0, description="返回结果数")
     clicked: bool = Field(default=False, description="是否点击了结果")
-    clicked_doc_id: uuid.UUID | None = Field(
-        default=None, description="点击的文档 ID"
-    )
+    clicked_doc_id: uuid.UUID | None = Field(default=None, description="点击的文档 ID")
     tenant_id: uuid.UUID | None = Field(default=None, description="租户 ID")
     created_at: datetime = Field(..., description="创建时间")
 

@@ -31,12 +31,8 @@ from app.utils.logger import get_logger
 
 log = get_logger(__name__)
 
-_current_tenant: ContextVar[str | None] = ContextVar(
-    "ekb_task_tenant_id", default=None
-)
-_current_task_name: ContextVar[str | None] = ContextVar(
-    "ekb_task_name", default=None
-)
+_current_tenant: ContextVar[str | None] = ContextVar("ekb_task_tenant_id", default=None)
+_current_task_name: ContextVar[str | None] = ContextVar("ekb_task_name", default=None)
 
 
 def bind_task_tenant(tenant_id: Any) -> None:

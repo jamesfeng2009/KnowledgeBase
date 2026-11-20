@@ -10,8 +10,9 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from typing import Any, AsyncGenerator, Optional
+from typing import Any, Optional
 
 from fastapi.responses import StreamingResponse
 

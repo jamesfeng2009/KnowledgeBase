@@ -12,7 +12,6 @@
 
 from __future__ import annotations
 
-import uuid
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -87,7 +86,9 @@ class TestDefaultRejectsHeaders:
     """默认配置：请求头永远不能决定租户身份。"""
 
     def test_no_credentials_yields_no_tenant(self, hardened_settings) -> None:
-        tid, _ = resolve_tenant_id(_request({"host": "attacker.example.com"}), hardened_settings)
+        tid, _ = resolve_tenant_id(
+            _request({"host": "attacker.example.com"}), hardened_settings
+        )
         assert tid is None
 
     def test_forged_tenant_id_header_is_ignored(self, hardened_settings) -> None:
@@ -111,7 +112,9 @@ class TestDefaultRejectsHeaders:
         )
         assert tid is None
 
-    def test_invalid_jwt_with_gateway_token_still_fail_closed(self, gateway_settings) -> None:
+    def test_invalid_jwt_with_gateway_token_still_fail_closed(
+        self, gateway_settings
+    ) -> None:
         """JWT 解码失败是硬失败，连可信网关通道都不降级。"""
         tid, _ = resolve_tenant_id(
             _request(
@@ -137,7 +140,9 @@ class TestDefaultRejectsHeaders:
         )
         assert str(tid) == ATTACKER
 
-    def test_valid_jwt_without_tenant_claim_stays_fail_closed(self, hardened_settings) -> None:
+    def test_valid_jwt_without_tenant_claim_stays_fail_closed(
+        self, hardened_settings
+    ) -> None:
         tid, _ = resolve_tenant_id(
             _request(
                 {
@@ -173,9 +178,7 @@ class TestGatewayOptIn:
         assert tid is None
 
     def test_missing_gateway_token_rejects(self, gateway_settings) -> None:
-        tid, _ = resolve_tenant_id(
-            _request({"X-Tenant-Id": VICTIM}), gateway_settings
-        )
+        tid, _ = resolve_tenant_id(_request({"X-Tenant-Id": VICTIM}), gateway_settings)
         assert tid is None
 
     def test_wrong_gateway_token_rejects(self, gateway_settings) -> None:
@@ -240,7 +243,9 @@ class TestGatewayOptIn:
 class TestDomainIsSemanticOnly:
     """子域只是语义标识，必须经权威映射才能变成 tenant_id。"""
 
-    def test_header_domain_without_mapper_yields_no_tenant(self, hardened_settings) -> None:
+    def test_header_domain_without_mapper_yields_no_tenant(
+        self, hardened_settings
+    ) -> None:
         tid, domain = resolve_tenant_id(
             _request({"X-Tenant-Domain": "victim-workspace", "X-Tenant-Id": VICTIM}),
             hardened_settings,

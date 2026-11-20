@@ -11,9 +11,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.schemas.common import PaginationParams
-
-
 # ======================================================================
 # 测试套件
 # ======================================================================
@@ -27,7 +24,9 @@ class InjectionSuiteCreate(BaseModel):
     target_mode: str = Field(
         "system_prompt", description="测试目标: system_prompt/full_rag"
     )
-    kb_ids: list[str] | None = Field(None, description="关联知识库 ID 列表（full_rag 模式）")
+    kb_ids: list[str] | None = Field(
+        None, description="关联知识库 ID 列表（full_rag 模式）"
+    )
 
 
 class InjectionSuiteResponse(BaseModel):
@@ -282,8 +281,12 @@ class DocParseCaseCreate(BaseModel):
     doc_type: str = Field("pdf", description="文档类型: pdf/docx/pptx/xlsx/html/image")
     difficulty: str = Field("medium", description="难度: easy/medium/hard")
     expected_text: str = Field(..., min_length=1, description="人工标注的标准答案文本")
-    document_id: UUID | None = Field(None, description="关联文档 ID（Docling 端到端模式）")
-    parsed_text: str | None = Field(None, description="待评测的解析结果文本（直接提供模式）")
+    document_id: UUID | None = Field(
+        None, description="关联文档 ID（Docling 端到端模式）"
+    )
+    parsed_text: str | None = Field(
+        None, description="待评测的解析结果文本（直接提供模式）"
+    )
 
 
 class DocParseCaseResponse(BaseModel):
@@ -335,7 +338,8 @@ class JudgeDatasetCreate(BaseModel):
     description: str | None = None
     judge_model: str = Field("default", description="裁判模型标识")
     dimensions: list[str] | None = Field(
-        None, description="评分维度列表（默认 accuracy/completeness/relevance/clarity/safety）"
+        None,
+        description="评分维度列表（默认 accuracy/completeness/relevance/clarity/safety）",
     )
 
 
@@ -362,7 +366,9 @@ class JudgeCaseCreate(BaseModel):
     question: str = Field(..., min_length=1)
     reference_answer: str = Field(..., min_length=1)
     model_answer: str = Field(..., min_length=1)
-    category: str = Field("qa", description="场景类别: instruction/qa/reasoning/code/roleplay/safety")
+    category: str = Field(
+        "qa", description="场景类别: instruction/qa/reasoning/code/roleplay/safety"
+    )
 
 
 class JudgeCaseBatchCreate(BaseModel):

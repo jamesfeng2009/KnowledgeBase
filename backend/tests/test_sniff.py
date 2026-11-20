@@ -72,7 +72,7 @@ class TestSniffFileType:
         assert sniff_file_type(_pk(b"ppt/presentation.xml")).format == "pptx"
 
     def test_plain_text(self) -> None:
-        assert sniff_file_type("这是一段中文文本\n".encode("utf-8")).is_text is True
+        assert sniff_file_type("这是一段中文文本\n".encode()).is_text is True
 
     def test_empty_is_unknown(self) -> None:
         assert sniff_file_type(b"").format == "unknown"
@@ -80,7 +80,7 @@ class TestSniffFileType:
 
 class TestResolveUploadDocType:
     def test_md_text_accepted_keeps_declared(self) -> None:
-        doc_type, reason = resolve_upload_doc_type("# 标题\n正文".encode("utf-8"), "md")
+        doc_type, reason = resolve_upload_doc_type("# 标题\n正文".encode(), "md")
         assert doc_type == "md" and reason is None
 
     def test_pdf_accepted(self) -> None:

@@ -266,13 +266,16 @@ class KnowledgeBaseMCPServer:
                 "category": getattr(method, "_mcp_tool_category", "general"),
                 "tags": getattr(method, "_mcp_tool_tags", []),
                 "skill_description": getattr(
-                    method, "_mcp_tool_skill_description",
+                    method,
+                    "_mcp_tool_skill_description",
                     description,
                 ),
                 "long_running": getattr(method, "_mcp_tool_long_running", False),
                 "when_to_use": when_to_use,
                 "when_not_to_use": when_not_to_use,
-                "output_interpretation": getattr(method, "_mcp_tool_output_interpretation", ""),
+                "output_interpretation": getattr(
+                    method, "_mcp_tool_output_interpretation", ""
+                ),
                 "version": getattr(method, "_mcp_tool_version", "1.0.0"),
                 "review_status": getattr(method, "_mcp_tool_review_status", "draft"),
             }
@@ -323,7 +326,9 @@ class KnowledgeBaseMCPServer:
                 "name": name,
                 "category": entry.get("category", "general"),
                 "tags": entry.get("tags", []),
-                "description": entry.get("skill_description", entry["definition"]["description"]),
+                "description": entry.get(
+                    "skill_description", entry["definition"]["description"]
+                ),
             }
             for name, entry in self._tool_registry.items()
         ]
@@ -442,7 +447,9 @@ class KnowledgeBaseMCPServer:
         if tenant_id is not None:
             try:
                 tenant_uuid = (
-                    tenant_id if isinstance(tenant_id, uuid.UUID) else uuid.UUID(str(tenant_id))
+                    tenant_id
+                    if isinstance(tenant_id, uuid.UUID)
+                    else uuid.UUID(str(tenant_id))
                 )
             except (ValueError, TypeError):
                 log.warning("mcp.invalid_tenant_id", tenant_id=str(tenant_id))
@@ -451,7 +458,9 @@ class KnowledgeBaseMCPServer:
         if user_id is not None:
             try:
                 user_uuid = (
-                    user_id if isinstance(user_id, uuid.UUID) else uuid.UUID(str(user_id))
+                    user_id
+                    if isinstance(user_id, uuid.UUID)
+                    else uuid.UUID(str(user_id))
                 )
             except (ValueError, TypeError):
                 log.warning("mcp.invalid_user_id", user_id=str(user_id))
@@ -542,7 +551,10 @@ class KnowledgeBaseMCPServer:
         async def _execute() -> None:
             try:
                 result_str = await self.call_tool(
-                    tool_name, arguments, tenant_id=tenant_id, user_id=user_id,
+                    tool_name,
+                    arguments,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
                 )
                 # 尝试解析为 dict 便于客户端消费；解析失败保留原始字符串
                 try:
@@ -553,7 +565,9 @@ class KnowledgeBaseMCPServer:
             except Exception as exc:
                 log.error(
                     "mcp.task_execution_error",
-                    task_id=task_id, tool=tool_name, error=str(exc),
+                    task_id=task_id,
+                    tool=tool_name,
+                    error=str(exc),
                 )
                 await store.fail_task(task_id, str(exc))
 
@@ -758,7 +772,9 @@ class KnowledgeBaseMCPServer:
                     "kb_id": str(doc.kb_id),
                     "classification": doc.classification,
                     "view_count": doc.view_count,
-                    "created_at": doc.created_at.isoformat() if doc.created_at else None,
+                    "created_at": doc.created_at.isoformat()
+                    if doc.created_at
+                    else None,
                 }
                 await session.commit()
                 return json.dumps(result, ensure_ascii=False, default=str)
@@ -1064,9 +1080,7 @@ class KnowledgeBaseMCPServer:
                 {"error": "spill file not found", "path": path}, ensure_ascii=False
             )
         except ValueError as exc:
-            return json.dumps(
-                {"error": str(exc), "path": path}, ensure_ascii=False
-            )
+            return json.dumps({"error": str(exc), "path": path}, ensure_ascii=False)
 
     @mcp_tool(
         name="batch_analyze_documents",

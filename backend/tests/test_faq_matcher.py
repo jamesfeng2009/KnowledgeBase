@@ -10,18 +10,17 @@ FAQ 快捷匹配器单元测试 — app/rag/faq_matcher.py。
     - kb_ids 过滤
 """
 
-import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
 
 from app.rag.faq_matcher import FAQMatcher, FAQMatchResult, _extract_answer
 
-
 # ======================================================================
 # FAQMatchResult
 # ======================================================================
+
 
 class TestFAQMatchResult:
     """FAQMatchResult 数据结构测试。"""
@@ -52,6 +51,7 @@ class TestFAQMatchResult:
 # ======================================================================
 # _extract_answer
 # ======================================================================
+
 
 class TestExtractAnswer:
     """_extract_answer 辅助函数测试。"""
@@ -89,6 +89,7 @@ class TestExtractAnswer:
 # FAQMatcher.match
 # ======================================================================
 
+
 def _make_mock_response(
     hits: list[dict] | None = None,
     status_code: int = 200,
@@ -113,17 +114,21 @@ class TestFAQMatcherMatch:
     async def test_faq_hit(self):
         """FAQ 精准命中 — score > threshold。"""
         mock_http = MagicMock()
-        mock_http.post = AsyncMock(return_value=_make_mock_response([
-            {
-                "_score": 22.5,
-                "_source": {
-                    "doc_id": "d1",
-                    "chunk_id": "c1",
-                    "content": "问：报销流程是什么？\n\n答：填写报销单并提交给财务。",
-                    "title_path": "财务制度 > 报销",
-                },
-            }
-        ]))
+        mock_http.post = AsyncMock(
+            return_value=_make_mock_response(
+                [
+                    {
+                        "_score": 22.5,
+                        "_source": {
+                            "doc_id": "d1",
+                            "chunk_id": "c1",
+                            "content": "问：报销流程是什么？\n\n答：填写报销单并提交给财务。",
+                            "title_path": "财务制度 > 报销",
+                        },
+                    }
+                ]
+            )
+        )
         matcher = FAQMatcher(http_client=mock_http, score_threshold=15.0)
 
         result = await matcher.match("报销流程是什么？")
@@ -138,16 +143,20 @@ class TestFAQMatcherMatch:
     async def test_faq_below_threshold(self):
         """FAQ score 低于阈值 — 不命中。"""
         mock_http = MagicMock()
-        mock_http.post = AsyncMock(return_value=_make_mock_response([
-            {
-                "_score": 10.0,
-                "_source": {
-                    "doc_id": "d1",
-                    "chunk_id": "c1",
-                    "content": "问：其他\n\n答：其他答案",
-                },
-            }
-        ]))
+        mock_http.post = AsyncMock(
+            return_value=_make_mock_response(
+                [
+                    {
+                        "_score": 10.0,
+                        "_source": {
+                            "doc_id": "d1",
+                            "chunk_id": "c1",
+                            "content": "问：其他\n\n答：其他答案",
+                        },
+                    }
+                ]
+            )
+        )
         matcher = FAQMatcher(http_client=mock_http, score_threshold=15.0)
 
         result = await matcher.match("模糊查询")
@@ -243,16 +252,20 @@ class TestFAQMatcherMatch:
     async def test_extract_answer_from_english_faq(self):
         """命中英文 FAQ chunk — 正确提取答案。"""
         mock_http = MagicMock()
-        mock_http.post = AsyncMock(return_value=_make_mock_response([
-            {
-                "_score": 20.0,
-                "_source": {
-                    "doc_id": "d1",
-                    "chunk_id": "c1",
-                    "content": "Q: How to reset password?\nA: Click reset link in email.",
-                },
-            }
-        ]))
+        mock_http.post = AsyncMock(
+            return_value=_make_mock_response(
+                [
+                    {
+                        "_score": 20.0,
+                        "_source": {
+                            "doc_id": "d1",
+                            "chunk_id": "c1",
+                            "content": "Q: How to reset password?\nA: Click reset link in email.",
+                        },
+                    }
+                ]
+            )
+        )
         matcher = FAQMatcher(http_client=mock_http, score_threshold=15.0)
 
         result = await matcher.match("How to reset password?")
@@ -264,16 +277,20 @@ class TestFAQMatcherMatch:
     async def test_malformed_content_returns_original(self):
         """FAQ chunk 内容格式不匹配 → 返回原文。"""
         mock_http = MagicMock()
-        mock_http.post = AsyncMock(return_value=_make_mock_response([
-            {
-                "_score": 20.0,
-                "_source": {
-                    "doc_id": "d1",
-                    "chunk_id": "c1",
-                    "content": "这是一段没有问答格式的文本内容。",
-                },
-            }
-        ]))
+        mock_http.post = AsyncMock(
+            return_value=_make_mock_response(
+                [
+                    {
+                        "_score": 20.0,
+                        "_source": {
+                            "doc_id": "d1",
+                            "chunk_id": "c1",
+                            "content": "这是一段没有问答格式的文本内容。",
+                        },
+                    }
+                ]
+            )
+        )
         matcher = FAQMatcher(http_client=mock_http, score_threshold=15.0)
 
         result = await matcher.match("查询")
@@ -289,16 +306,18 @@ class TestFAQMatcherMatch:
         mock_http.post = AsyncMock(
             side_effect=[
                 ConnectionError("OS unavailable"),
-                _make_mock_response([
-                    {
-                        "_score": 20.0,
-                        "_source": {
-                            "doc_id": "d1",
-                            "chunk_id": "c1",
-                            "content": "问：测试\n\n答：结果",
-                        },
-                    }
-                ]),
+                _make_mock_response(
+                    [
+                        {
+                            "_score": 20.0,
+                            "_source": {
+                                "doc_id": "d1",
+                                "chunk_id": "c1",
+                                "content": "问：测试\n\n答：结果",
+                            },
+                        }
+                    ]
+                ),
             ]
         )
         matcher = FAQMatcher(http_client=mock_http, score_threshold=15.0)

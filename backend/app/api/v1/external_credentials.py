@@ -11,8 +11,6 @@
 from __future__ import annotations
 
 import json
-import uuid
-from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -70,9 +68,7 @@ async def list_credentials(
     creds = result.scalars().all()
     return ApiResponse(
         code=0,
-        data=[
-            ExternalCredentialResponse.model_validate(c) for c in creds
-        ],
+        data=[ExternalCredentialResponse.model_validate(c) for c in creds],
         message="success",
     )
 
@@ -207,9 +203,7 @@ async def test_credential(
 
     adapter = adapter_registry.get(adapter_id)
     if adapter is None:
-        return ApiResponse(
-            code=404, data=None, message=f"适配器不存在: {adapter_id}"
-        )
+        return ApiResponse(code=404, data=None, message=f"适配器不存在: {adapter_id}")
 
     # 读取凭证
     tenant_id = getattr(user, "tenant_id", None)

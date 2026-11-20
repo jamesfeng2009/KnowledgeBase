@@ -32,9 +32,8 @@ StreamableHTTP 传输约定：
 from __future__ import annotations
 
 import json
-import uuid
-from dataclasses import dataclass, field, fields
-from typing import Any, Generic, Literal, TypeVar
+from dataclasses import dataclass
+from typing import Any, Generic, TypeVar
 
 # ======================================================================
 # JSON-RPC 2.0 规范错误码
@@ -189,16 +188,18 @@ METHOD_TASKS_CANCEL = "tasks/cancel"
 METHOD_NOTIFICATION_INITIALIZED = "notifications/initialized"
 
 #: 所有支持的 MCP 方法列表
-SUPPORTED_MCP_METHODS: frozenset[str] = frozenset({
-    METHOD_TOOLS_LIST,
-    METHOD_TOOLS_CALL,
-    METHOD_RESOURCES_LIST,
-    METHOD_RESOURCES_READ,
-    METHOD_TASKS_CREATE,
-    METHOD_TASKS_GET,
-    METHOD_TASKS_CANCEL,
-    METHOD_NOTIFICATION_INITIALIZED,
-})
+SUPPORTED_MCP_METHODS: frozenset[str] = frozenset(
+    {
+        METHOD_TOOLS_LIST,
+        METHOD_TOOLS_CALL,
+        METHOD_RESOURCES_LIST,
+        METHOD_RESOURCES_READ,
+        METHOD_TASKS_CREATE,
+        METHOD_TASKS_GET,
+        METHOD_TASKS_CANCEL,
+        METHOD_NOTIFICATION_INITIALIZED,
+    }
+)
 
 
 # ======================================================================

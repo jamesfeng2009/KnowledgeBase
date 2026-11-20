@@ -9,7 +9,6 @@ Alembic 迁移 + Pydantic V2 校验测试。
 
 from __future__ import annotations
 
-import os
 import warnings
 from pathlib import Path
 
@@ -17,7 +16,6 @@ import pytest
 from pydantic import ValidationError
 
 from app.config import Settings
-
 
 # ============================================================
 # Pydantic V2 field_validator 测试
@@ -46,26 +44,32 @@ class TestDatabaseUrlValidator:
 class TestPositiveIntValidator:
     """正整数校验 — 零/负数硬失败。"""
 
-    @pytest.mark.parametrize("field", [
-        "DATABASE_POOL_SIZE",
-        "DATABASE_MAX_OVERFLOW",
-        "RATE_LIMIT_PER_MINUTE",
-        "RATE_LIMIT_BURST",
-        "SKILL_MAX_LOADED",
-        "ACCESS_TOKEN_EXPIRE_MINUTES",
-        "RAG_RETRIEVE_TOP_K",
-        "RAG_RERANK_TOP_K",
-        "RAG_MAX_ITERATIONS",
-    ])
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "DATABASE_POOL_SIZE",
+            "DATABASE_MAX_OVERFLOW",
+            "RATE_LIMIT_PER_MINUTE",
+            "RATE_LIMIT_BURST",
+            "SKILL_MAX_LOADED",
+            "ACCESS_TOKEN_EXPIRE_MINUTES",
+            "RAG_RETRIEVE_TOP_K",
+            "RAG_RERANK_TOP_K",
+            "RAG_MAX_ITERATIONS",
+        ],
+    )
     def test_zero_rejected(self, field):
         """零值被拒绝。"""
         with pytest.raises(ValidationError, match="正整数"):
             Settings(**{field: 0})
 
-    @pytest.mark.parametrize("field", [
-        "DATABASE_POOL_SIZE",
-        "RATE_LIMIT_PER_MINUTE",
-    ])
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "DATABASE_POOL_SIZE",
+            "RATE_LIMIT_PER_MINUTE",
+        ],
+    )
     def test_negative_rejected(self, field):
         """负值被拒绝。"""
         with pytest.raises(ValidationError, match="正整数"):
@@ -95,20 +99,26 @@ class TestNonNegativeIntValidator:
 class TestFloat01Validator:
     """[0, 1] 浮点校验。"""
 
-    @pytest.mark.parametrize("field", [
-        "RAG_RETRIEVAL_SCORE_THRESHOLD",
-        "EVAL_REGRESSION_THRESHOLD",
-        "VIDEO_KEYFRAME_SCENE_THRESHOLD",
-    ])
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "RAG_RETRIEVAL_SCORE_THRESHOLD",
+            "EVAL_REGRESSION_THRESHOLD",
+            "VIDEO_KEYFRAME_SCENE_THRESHOLD",
+        ],
+    )
     def test_below_zero_rejected(self, field):
         """小于 0 被拒绝。"""
         with pytest.raises(ValidationError, match=r"\[0\.0, 1\.0\]"):
             Settings(**{field: -0.1})
 
-    @pytest.mark.parametrize("field", [
-        "RAG_RETRIEVAL_SCORE_THRESHOLD",
-        "EVAL_REGRESSION_THRESHOLD",
-    ])
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "RAG_RETRIEVAL_SCORE_THRESHOLD",
+            "EVAL_REGRESSION_THRESHOLD",
+        ],
+    )
     def test_above_one_rejected(self, field):
         """大于 1 被拒绝。"""
         with pytest.raises(ValidationError, match=r"\[0\.0, 1\.0\]"):

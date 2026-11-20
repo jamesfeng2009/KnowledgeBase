@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import threading
 import uuid
 from types import SimpleNamespace
@@ -17,7 +16,6 @@ import pytest
 
 from app.config import get_settings
 from app.document.pdf_parser import PDFParser
-
 
 # ----------------------------------------------------------------------
 # 真实 PDF 构造工具
@@ -124,7 +122,9 @@ class TestA4EncryptedPdf:
             await PDFParser().parse(path)
 
     @pytest.mark.asyncio
-    async def test_parse_pdf_pipeline_raises_not_silent_empty(self, tmp_path, monkeypatch):
+    async def test_parse_pdf_pipeline_raises_not_silent_empty(
+        self, tmp_path, monkeypatch
+    ):
         monkeypatch.setattr(get_settings(), "DOCLING_ENABLED", False, raising=False)
         from tasks.document_tasks import _parse_pdf
 
@@ -161,11 +161,21 @@ class TestA5ColumnDetection:
         path = str(tmp_path / "indent.pdf")
         doc = fitz.open()
         page = doc.new_page()
-        page.insert_textbox(fitz.Rect(72, 100, 500, 118), "第一段正文内容", fontname="china-s")
-        page.insert_textbox(fitz.Rect(72, 120, 500, 138), "第二段正文内容", fontname="china-s")
-        page.insert_textbox(fitz.Rect(110, 140, 500, 158), "缩进引用块内容", fontname="china-s")
-        page.insert_textbox(fitz.Rect(72, 160, 500, 178), "第三段正文内容", fontname="china-s")
-        page.insert_textbox(fitz.Rect(72, 180, 500, 198), "第四段正文内容", fontname="china-s")
+        page.insert_textbox(
+            fitz.Rect(72, 100, 500, 118), "第一段正文内容", fontname="china-s"
+        )
+        page.insert_textbox(
+            fitz.Rect(72, 120, 500, 138), "第二段正文内容", fontname="china-s"
+        )
+        page.insert_textbox(
+            fitz.Rect(110, 140, 500, 158), "缩进引用块内容", fontname="china-s"
+        )
+        page.insert_textbox(
+            fitz.Rect(72, 160, 500, 178), "第三段正文内容", fontname="china-s"
+        )
+        page.insert_textbox(
+            fitz.Rect(72, 180, 500, 198), "第四段正文内容", fontname="china-s"
+        )
         doc.save(path)
         doc.close()
 
@@ -174,7 +184,13 @@ class TestA5ColumnDetection:
             text = extract_page_text_ordered(doc[0].get_text("dict"), doc[0].rect.width)
         finally:
             doc.close()
-        assert text.index("第一段") < text.index("第二段") < text.index("缩进引用") < text.index("第三段") < text.index("第四段")
+        assert (
+            text.index("第一段")
+            < text.index("第二段")
+            < text.index("缩进引用")
+            < text.index("第三段")
+            < text.index("第四段")
+        )
 
     def test_real_two_column_pdf_left_before_right(self, tmp_path):
         from app.document.layout_analyzer import extract_page_text_ordered
@@ -182,8 +198,16 @@ class TestA5ColumnDetection:
         path = str(tmp_path / "twocol.pdf")
         doc = fitz.open()
         page = doc.new_page()
-        page.insert_textbox(fitz.Rect(72, 100, 280, 400), "左栏第一行\n左栏第二行\n左栏第三行", fontname="china-s")
-        page.insert_textbox(fitz.Rect(330, 100, 540, 400), "右栏第一行\n右栏第二行\n右栏第三行", fontname="china-s")
+        page.insert_textbox(
+            fitz.Rect(72, 100, 280, 400),
+            "左栏第一行\n左栏第二行\n左栏第三行",
+            fontname="china-s",
+        )
+        page.insert_textbox(
+            fitz.Rect(330, 100, 540, 400),
+            "右栏第一行\n右栏第二行\n右栏第三行",
+            fontname="china-s",
+        )
         doc.save(path)
         doc.close()
 
@@ -204,7 +228,9 @@ class TestA6Chunker:
     def test_markdown_preamble_preserved(self):
         from app.rag.chunker import SemanticChunker
 
-        content = "这是首个标题之前的前导说明文字。\n\n# 标题一\n内容A\n\n## 标题二\n内容B"
+        content = (
+            "这是首个标题之前的前导说明文字。\n\n# 标题一\n内容A\n\n## 标题二\n内容B"
+        )
         chunks = SemanticChunker._split_markdown(content, "doc-1")
         assert chunks, "结构化分块不应为空"
         assert any("前导说明文字" in c.content for c in chunks)
@@ -258,7 +284,9 @@ class TestA7ImageNamespace:
     async def test_two_docs_image_keys_do_not_collide(self, tmp_path, monkeypatch):
         settings = get_settings()
         monkeypatch.setattr(settings, "PDF_IMAGE_UPLOAD_ENABLED", True, raising=False)
-        monkeypatch.setattr(settings, "PDF_IMAGE_EXTRACTION_ENABLED", True, raising=False)
+        monkeypatch.setattr(
+            settings, "PDF_IMAGE_EXTRACTION_ENABLED", True, raising=False
+        )
         monkeypatch.setattr(PDFParser, "_vlm_describe", AsyncMock(return_value=""))
 
         captured: list[str] = []
@@ -333,9 +361,9 @@ class TestA8ScanOcr:
         parser = PDFParser()
         await parser.parse(path)
         warnings = parser.last_parse_warnings
-        assert any("21" in w and "OCR" in w for w in warnings), (
-            f"超出 OCR 上限的第 21 页必须产生 warning，实际: {warnings}"
-        )
+        assert any(
+            "21" in w and "OCR" in w for w in warnings
+        ), f"超出 OCR 上限的第 21 页必须产生 warning，实际: {warnings}"
         assert ocr_mock.await_count == 20, "超限页不应再渲染/调用 OCR"
 
     @pytest.mark.asyncio
@@ -441,7 +469,9 @@ async def _seed_document(db_session, file_path: str, tenant_id, content_text=Non
 
 class TestA1A2PipelineIntegration:
     @pytest.mark.asyncio
-    async def test_parse_and_chunk_with_explicit_tenant(self, db_session, tmp_path, monkeypatch):
+    async def test_parse_and_chunk_with_explicit_tenant(
+        self, db_session, tmp_path, monkeypatch
+    ):
         """A1：真实调用 _parse_and_chunk_async（带 tenant_id），不得 NameError。"""
         monkeypatch.setattr(get_settings(), "DOCLING_ENABLED", False, raising=False)
         from tasks.document_tasks import _parse_and_chunk_async
@@ -457,7 +487,9 @@ class TestA1A2PipelineIntegration:
         assert "真实管线解析文本" in joined
 
     @pytest.mark.asyncio
-    async def test_parse_and_chunk_tenant_lookup_fallback(self, db_session, tmp_path, monkeypatch):
+    async def test_parse_and_chunk_tenant_lookup_fallback(
+        self, db_session, tmp_path, monkeypatch
+    ):
         """A1：历史队列消息不带 tenant_id 时按 doc_id 反查也能跑通。"""
         monkeypatch.setattr(get_settings(), "DOCLING_ENABLED", False, raising=False)
         from tasks.document_tasks import _parse_and_chunk_async
@@ -471,7 +503,9 @@ class TestA1A2PipelineIntegration:
         assert result["chunk_objects"]
 
     @pytest.mark.asyncio
-    async def test_minio_path_downloaded_before_parse(self, db_session, tmp_path, monkeypatch):
+    async def test_minio_path_downloaded_before_parse(
+        self, db_session, tmp_path, monkeypatch
+    ):
         """A2：minio:// 路径必须先下载再解析，产出非空文本。"""
         monkeypatch.setattr(get_settings(), "DOCLING_ENABLED", False, raising=False)
         from tasks.document_tasks import _parse_and_chunk_async
@@ -502,10 +536,14 @@ class TestA1A2PipelineIntegration:
 
         await db_session.refresh(doc)
         assert doc.parse_status in ("parsed", "partial")
-        assert doc.file_path == "minio://ekb-documents/kb/test.pdf", "临时路径不得写回 DB"
+        assert (
+            doc.file_path == "minio://ekb-documents/kb/test.pdf"
+        ), "临时路径不得写回 DB"
 
     @pytest.mark.asyncio
-    async def test_empty_content_must_not_be_parsed(self, db_session, tmp_path, monkeypatch):
+    async def test_empty_content_must_not_be_parsed(
+        self, db_session, tmp_path, monkeypatch
+    ):
         """A2 反向闸门：解析结果为空时 parse_status 不得为 parsed。"""
         monkeypatch.setattr(get_settings(), "DOCLING_ENABLED", False, raising=False)
         monkeypatch.setattr(PDFParser, "_scan_page_ocr", AsyncMock(return_value=""))
@@ -523,7 +561,9 @@ class TestA1A2PipelineIntegration:
         assert doc.parse_warnings, "必须带用户可见 warning"
 
     @pytest.mark.asyncio
-    async def test_encrypted_pdf_pipeline_failed_with_warning(self, db_session, tmp_path, monkeypatch):
+    async def test_encrypted_pdf_pipeline_failed_with_warning(
+        self, db_session, tmp_path, monkeypatch
+    ):
         """A4 管线级：加密 PDF → failed + 用户可见「加密」warning。"""
         monkeypatch.setattr(get_settings(), "DOCLING_ENABLED", False, raising=False)
         from tasks.document_tasks import _parse_and_chunk_async

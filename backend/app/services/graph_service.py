@@ -13,6 +13,7 @@
 4. 图遍历查询：多跳关系查询（如"与文档A间接相关的所有政策"）
 5. 图谱可视化：返回节点和边数据供前端力导向图渲染
 """
+
 from __future__ import annotations
 
 import re
@@ -41,10 +42,12 @@ def _validate_cypher_ident(value: str, kind: str = "label") -> str:
         raise ValueError(f"非法 Cypher {kind}: {value!r}")
     return value
 
+
 # 延迟导入 neo4j
 try:
     from neo4j import AsyncGraphDatabase
-    from neo4j.exceptions import ServiceUnavailable, AuthError
+    from neo4j.exceptions import AuthError, ServiceUnavailable
+
     NEO4J_AVAILABLE = True
 except ImportError:
     NEO4J_AVAILABLE = False
@@ -166,7 +169,9 @@ class GraphService:
                 keys.append(key)
             if keys:
                 await redis.delete(*keys)
-                logger.info("graph.recommend_cache_invalidated", doc_id=doc_id, keys=len(keys))
+                logger.info(
+                    "graph.recommend_cache_invalidated", doc_id=doc_id, keys=len(keys)
+                )
         except Exception as exc:
             logger.warning("graph.cache_invalidate_error", error=str(exc))
 
@@ -193,7 +198,9 @@ class GraphService:
         try:
             label = _validate_cypher_ident(label)
             query = f"CREATE (n:{label} $props) RETURN n"
-            async with self._driver.session(database=settings.NEO4J_DATABASE) as session:
+            async with self._driver.session(
+                database=settings.NEO4J_DATABASE
+            ) as session:
                 result = await session.run(query, props=properties)
                 record = await result.single()
                 if record:
@@ -211,7 +218,9 @@ class GraphService:
         try:
             label = _validate_cypher_ident(label)
             query = f"MATCH (n:{label} {{id: $node_id}}) RETURN n"
-            async with self._driver.session(database=settings.NEO4J_DATABASE) as session:
+            async with self._driver.session(
+                database=settings.NEO4J_DATABASE
+            ) as session:
                 result = await session.run(query, node_id=node_id)
                 record = await result.single()
                 if record:
@@ -228,7 +237,9 @@ class GraphService:
         try:
             label = _validate_cypher_ident(label)
             query = f"MATCH (n:{label} {{id: $node_id}}) DETACH DELETE n"
-            async with self._driver.session(database=settings.NEO4J_DATABASE) as session:
+            async with self._driver.session(
+                database=settings.NEO4J_DATABASE
+            ) as session:
                 await session.run(query, node_id=node_id)
             return True
         except Exception as e:
@@ -273,9 +284,12 @@ class GraphService:
                 f"MERGE (a)-[r:{rel_type}]->(b) "
                 f"SET r += $props RETURN r"
             )
-            async with self._driver.session(database=settings.NEO4J_DATABASE) as session:
-                await session.run(query, from_id=from_id, to_id=to_id,
-                                 props=properties or {})
+            async with self._driver.session(
+                database=settings.NEO4J_DATABASE
+            ) as session:
+                await session.run(
+                    query, from_id=from_id, to_id=to_id, props=properties or {}
+                )
             return True
         except Exception as e:
             logger.error("neo4j.create_rel_error", rel_type=rel_type, error=str(e))
@@ -301,7 +315,9 @@ class GraphService:
                 f"-[r:{rel_type}]->"
                 f"(b:{to_label} {{id: $to_id}}) DELETE r"
             )
-            async with self._driver.session(database=settings.NEO4J_DATABASE) as session:
+            async with self._driver.session(
+                database=settings.NEO4J_DATABASE
+            ) as session:
                 await session.run(query, from_id=from_id, to_id=to_id)
             return True
         except Exception as e:
@@ -363,7 +379,9 @@ class GraphService:
                 f"RETURN DISTINCT m, length(r) as depth "
                 f"ORDER BY depth LIMIT 50"
             )
-            async with self._driver.session(database=settings.NEO4J_DATABASE) as session:
+            async with self._driver.session(
+                database=settings.NEO4J_DATABASE
+            ) as session:
                 result = await session.run(query, **query_params)
                 records = await result.data()
             return [{"node": r["m"], "depth": r["depth"]} for r in records]
@@ -431,7 +449,9 @@ class GraphService:
                     "min(length(r)) as depth "
                     "ORDER BY depth LIMIT $top_k"
                 )
-                async with self._driver.session(database=settings.NEO4J_DATABASE) as session:
+                async with self._driver.session(
+                    database=settings.NEO4J_DATABASE
+                ) as session:
                     result = await session.run(query, doc_id=doc_id, top_k=top_k * 2)
                     records = await result.data()
                 recommendations = [
@@ -483,7 +503,9 @@ class GraphService:
                         r for r in recommendations if r["id"] in filtered_ids
                     ]
             except Exception as exc:
-                logger.warning("graph.recommend.permission_filter_error", error=str(exc))
+                logger.warning(
+                    "graph.recommend.permission_filter_error", error=str(exc)
+                )
 
         recommendations = recommendations[:top_k]
 
@@ -540,28 +562,22 @@ class GraphService:
             keywords = [w for w in title.split() if len(w) >= 2]
             if not keywords:
                 # 回退：取同知识库的最新文档
-                stmt = (
-                    select(Document)
-                    .where(
-                        Document.kb_id == current_doc.kb_id,
-                        Document.id != current_doc.id,
-                        Document.deleted_at.is_(None),
-                        Document.status == "published",
-                    )
+                stmt = select(Document).where(
+                    Document.kb_id == current_doc.kb_id,
+                    Document.id != current_doc.id,
+                    Document.deleted_at.is_(None),
+                    Document.status == "published",
                 )
             else:
                 # OR ILIKE 模糊匹配
                 conditions = []
                 for kw in keywords:
                     conditions.append(Document.title.ilike(f"%{kw}%"))
-                stmt = (
-                    select(Document)
-                    .where(
-                        Document.id != current_doc.id,
-                        Document.deleted_at.is_(None),
-                        Document.status == "published",
-                        or_(*conditions) if conditions else True,
-                    )
+                stmt = select(Document).where(
+                    Document.id != current_doc.id,
+                    Document.deleted_at.is_(None),
+                    Document.status == "published",
+                    or_(*conditions) if conditions else True,
                 )
 
             stmt = apply_tenant_filter(stmt, Document, self._tenant_id)
@@ -603,14 +619,18 @@ class GraphService:
                 f"RETURN [node in nodes(p) | node] as path_nodes, "
                 f"[rel in relationships(p) | type(rel)] as path_rels"
             )
-            async with self._driver.session(database=settings.NEO4J_DATABASE) as session:
+            async with self._driver.session(
+                database=settings.NEO4J_DATABASE
+            ) as session:
                 result = await session.run(query, from_id=from_id, to_id=to_id)
                 record = await result.single()
                 if record:
-                    return [{
-                        "nodes": [dict(n.items()) for n in record["path_nodes"]],
-                        "relationships": record["path_rels"],
-                    }]
+                    return [
+                        {
+                            "nodes": [dict(n.items()) for n in record["path_nodes"]],
+                            "relationships": record["path_rels"],
+                        }
+                    ]
             return None
         except Exception as e:
             logger.error("neo4j.shortest_path_error", error=str(e))
@@ -654,9 +674,12 @@ class GraphService:
                     f"UNWIND nodes AS n "
                     f"OPTIONAL MATCH (n)-[r]-(m) WHERE m IN nodes "
                     f"RETURN collect(DISTINCT {id: n.id, label: labels(n)[0], properties: n}) as nodes, "
-                    f"collect(DISTINCT {source: startNode(r).id, target: endNode(r).id, type: type(r)}) as edges"
+                    # {source:...} 是 Cypher map 语法而非 Python 变量，F821 为误报
+                    f"collect(DISTINCT {source: startNode(r).id, target: endNode(r).id, type: type(r)}) as edges"  # noqa: F821
                 )
-                async with self._driver.session(database=settings.NEO4J_DATABASE) as session:
+                async with self._driver.session(
+                    database=settings.NEO4J_DATABASE
+                ) as session:
                     result = await session.run(query, node_id=node_id, limit=limit)
                     record = await result.single()
             else:
@@ -668,7 +691,9 @@ class GraphService:
                     f"RETURN collect(DISTINCT n) as nodes, "
                     f"collect(DISTINCT {{source: startNode(r).id, target: endNode(r).id, type: type(r)}}) as edges"
                 )
-                async with self._driver.session(database=settings.NEO4J_DATABASE) as session:
+                async with self._driver.session(
+                    database=settings.NEO4J_DATABASE
+                ) as session:
                     result = await session.run(query, limit=limit)
                     record = await result.single()
 
@@ -676,21 +701,25 @@ class GraphService:
                 nodes_data = []
                 for n in record["nodes"]:
                     if n:
-                        props = dict(n.items()) if hasattr(n, 'items') else dict(n)
-                        nodes_data.append({
-                            "id": str(props.get("id", "")),
-                            "label": props.get("name", props.get("title", "未知")),
-                            "type": props.get("entity_type", "unknown"),
-                            "properties": props,
-                        })
+                        props = dict(n.items()) if hasattr(n, "items") else dict(n)
+                        nodes_data.append(
+                            {
+                                "id": str(props.get("id", "")),
+                                "label": props.get("name", props.get("title", "未知")),
+                                "type": props.get("entity_type", "unknown"),
+                                "properties": props,
+                            }
+                        )
                 edges_data = []
                 for e in record["edges"]:
                     if e and e.get("source") and e.get("target"):
-                        edges_data.append({
-                            "source": str(e["source"]),
-                            "target": str(e["target"]),
-                            "type": e.get("type", "RELATES_TO"),
-                        })
+                        edges_data.append(
+                            {
+                                "source": str(e["source"]),
+                                "target": str(e["target"]),
+                                "type": e.get("type", "RELATES_TO"),
+                            }
+                        )
                 return {"nodes": nodes_data[:limit], "edges": edges_data}
             return {"nodes": [], "edges": []}
         except Exception as e:
@@ -706,27 +735,60 @@ class GraphService:
     # 正则中 (?P<s>...) 是 subject，(?P<o>...) 是 object
     _RULE_PATTERNS: list[tuple[str, str]] = [
         # X属于Y / X属于Y的Z
-        (r"(?P<s>[\u4e00-\u9fa5A-Za-z0-9_]{2,20})属于(?P<o>[\u4e00-\u9fa5A-Za-z0-9_]{2,30})", "属于"),
+        (
+            r"(?P<s>[\u4e00-\u9fa5A-Za-z0-9_]{2,20})属于(?P<o>[\u4e00-\u9fa5A-Za-z0-9_]{2,30})",
+            "属于",
+        ),
         # X包含Y / X包括Y
-        (r"(?P<s>[\u4e00-\u9fa5A-Za-z0-9_]{2,20})包[含括](?P<o>[\u4e00-\u9fa5A-Za-z0-9_]{2,30})", "包含"),
+        (
+            r"(?P<s>[\u4e00-\u9fa5A-Za-z0-9_]{2,20})包[含括](?P<o>[\u4e00-\u9fa5A-Za-z0-9_]{2,30})",
+            "包含",
+        ),
         # X引用Y / X参考Y
-        (r"(?P<s>[\u4e00-\u9fa5A-Za-z0-9_]{2,20})引[用考](?P<o>[\u4e00-\u9fa5A-Za-z0-9_]{2,30})", "引用"),
+        (
+            r"(?P<s>[\u4e00-\u9fa5A-Za-z0-9_]{2,20})引[用考](?P<o>[\u4e00-\u9fa5A-Za-z0-9_]{2,30})",
+            "引用",
+        ),
         # X替代Y / X取代Y
-        (r"(?P<s>[\u4e00-\u9fa5A-Za-z0-9_]{2,20})[替取]代(?P<o>[\u4e00-\u9fa5A-Za-z0-9_]{2,30})", "替代"),
+        (
+            r"(?P<s>[\u4e00-\u9fa5A-Za-z0-9_]{2,20})[替取]代(?P<o>[\u4e00-\u9fa5A-Za-z0-9_]{2,30})",
+            "替代",
+        ),
         # X依赖Y / X依赖Y的Z
-        (r"(?P<s>[\u4e00-\u9fa5A-Za-z0-9_]{2,20})依赖(?P<o>[\u4e00-\u9fa5A-Za-z0-9_]{2,30})", "依赖"),
+        (
+            r"(?P<s>[\u4e00-\u9fa5A-Za-z0-9_]{2,20})依赖(?P<o>[\u4e00-\u9fa5A-Za-z0-9_]{2,30})",
+            "依赖",
+        ),
         # X基于Y / X基于Y构建
-        (r"(?P<s>[\u4e00-\u9fa5A-Za-z0-9_]{2,20})基于(?P<o>[\u4e00-\u9fa5A-Za-z0-9_]{2,30})", "基于"),
+        (
+            r"(?P<s>[\u4e00-\u9fa5A-Za-z0-9_]{2,20})基于(?P<o>[\u4e00-\u9fa5A-Za-z0-9_]{2,30})",
+            "基于",
+        ),
         # X是Y / X是一种Y
-        (r"(?P<s>[\u4e00-\u9fa5A-Za-z0-9_]{2,15})是一?[种个项类]?(?P<o>[\u4e00-\u9fa5A-Za-z0-9_]{2,20})", "属于"),
+        (
+            r"(?P<s>[\u4e00-\u9fa5A-Za-z0-9_]{2,15})是一?[种个项类]?(?P<o>[\u4e00-\u9fa5A-Za-z0-9_]{2,20})",
+            "属于",
+        ),
         # X使用Y / X采用Y
-        (r"(?P<s>[\u4e00-\u9fa5A-Za-z0-9_]{2,20})[使采]用(?P<o>[\u4e00-\u9fa5A-Za-z0-9_]{2,30})", "使用"),
+        (
+            r"(?P<s>[\u4e00-\u9fa5A-Za-z0-9_]{2,20})[使采]用(?P<o>[\u4e00-\u9fa5A-Za-z0-9_]{2,30})",
+            "使用",
+        ),
         # X定义Y / X定义了Y
-        (r"(?P<s>[\u4e00-\u9fa5A-Za-z0-9_]{2,20})定义了?(?P<o>[\u4e00-\u9fa5A-Za-z0-9_]{2,30})", "定义"),
+        (
+            r"(?P<s>[\u4e00-\u9fa5A-Za-z0-9_]{2,20})定义了?(?P<o>[\u4e00-\u9fa5A-Za-z0-9_]{2,30})",
+            "定义",
+        ),
         # X管理Y / X管理器Y
-        (r"(?P<s>[\u4e00-\u9fa5A-Za-z0-9_]{2,20})管理(?P<o>[\u4e00-\u9fa5A-Za-z0-9_]{2,30})", "管理"),
+        (
+            r"(?P<s>[\u4e00-\u9fa5A-Za-z0-9_]{2,20})管理(?P<o>[\u4e00-\u9fa5A-Za-z0-9_]{2,30})",
+            "管理",
+        ),
         # X实现Y / X实现了Y
-        (r"(?P<s>[\u4e00-\u9fa5A-Za-z0-9_]{2,20})实现了?(?P<o>[\u4e00-\u9fa5A-Za-z0-9_]{2,30})", "实现"),
+        (
+            r"(?P<s>[\u4e00-\u9fa5A-Za-z0-9_]{2,20})实现了?(?P<o>[\u4e00-\u9fa5A-Za-z0-9_]{2,30})",
+            "实现",
+        ),
     ]
 
     async def extract_triples_from_text(
@@ -795,9 +857,7 @@ class GraphService:
 
         # === 批量写入图谱 ===
         # P2-T3: 使用 EntityRegistry 归一化实体类型和关系类型
-        nodes, relationships = self._build_normalized_graph_data(
-            all_triples, doc_id
-        )
+        nodes, relationships = self._build_normalized_graph_data(all_triples, doc_id)
 
         # 批量导入（比逐条快 10-50x）
         await self.batch_import_graph(nodes, relationships)
@@ -865,11 +925,7 @@ class GraphService:
                         all_triples.append(t)
 
             # LLM 兜底（仅当全局规则结果不足时，避免每 chunk 都调 LLM）
-            if (
-                use_llm
-                and len(all_triples) < llm_fallback_threshold
-                and llm_provider
-            ):
+            if use_llm and len(all_triples) < llm_fallback_threshold and llm_provider:
                 llm_triples = await self._extract_triples_by_llm(text, llm_provider)
                 for t in llm_triples:
                     chunk_triples.append(t)
@@ -946,11 +1002,44 @@ class GraphService:
         """
         # 停用词集合
         stopwords = {
-            "我们", "你们", "他们", "她们", "它们", "这个", "那个", "这些", "那些",
-            "什么", "怎么", "为什么", "因为", "所以", "但是", "不过", "而且",
-            "可以", "不能", "能够", "应该", "需要", "必须", "如果", "虽然",
-            "一个", "一种", "一些", "这项", "该", "此", "其", "本",
-            "本文", "本文档", "该文档", "该系统", "该功能",
+            "我们",
+            "你们",
+            "他们",
+            "她们",
+            "它们",
+            "这个",
+            "那个",
+            "这些",
+            "那些",
+            "什么",
+            "怎么",
+            "为什么",
+            "因为",
+            "所以",
+            "但是",
+            "不过",
+            "而且",
+            "可以",
+            "不能",
+            "能够",
+            "应该",
+            "需要",
+            "必须",
+            "如果",
+            "虽然",
+            "一个",
+            "一种",
+            "一些",
+            "这项",
+            "该",
+            "此",
+            "其",
+            "本",
+            "本文",
+            "本文档",
+            "该文档",
+            "该系统",
+            "该功能",
         }
         if entity in stopwords:
             return False
@@ -1018,7 +1107,8 @@ class GraphService:
         self,
         triples: list[tuple[str, str, str]],
         doc_id: str,
-        chunk_data: list[tuple[str, str, str, list[tuple[str, str, str]]]] | None = None,
+        chunk_data: list[tuple[str, str, str, list[tuple[str, str, str]]]]
+        | None = None,
         doc_title: str = "",
         kb_id: str | None = None,
         doc_status: str = "published",
@@ -1091,13 +1181,15 @@ class GraphService:
                     chunk_node["tenant_id"] = tenant_id_str
                 nodes.append(chunk_node)
                 # Document → DocumentChunk HAS_CHUNK
-                relationships.append({
-                    "from_label": "Document",
-                    "from_id": doc_id,
-                    "to_label": "DocumentChunk",
-                    "to_id": chunk_id,
-                    "type": "HAS_CHUNK",
-                })
+                relationships.append(
+                    {
+                        "from_label": "Document",
+                        "from_id": doc_id,
+                        "to_label": "DocumentChunk",
+                        "to_id": chunk_id,
+                        "type": "HAS_CHUNK",
+                    }
+                )
 
         for subject, predicate, obj in triples:
             # 归一化三元组
@@ -1129,53 +1221,62 @@ class GraphService:
             nodes.append(o_node)
 
             # 实体间关系（标准英文关系类型）
-            relationships.append({
-                "from_label": s_label,
-                "from_id": s_id,
-                "to_label": o_label,
-                "to_id": o_id,
-                "type": rel_type,
-            })
+            relationships.append(
+                {
+                    "from_label": s_label,
+                    "from_id": s_id,
+                    "to_label": o_label,
+                    "to_id": o_id,
+                    "type": rel_type,
+                }
+            )
 
             # MENTIONS: Chunk → Entity（有 chunk 溯源）或 Document → Entity（无 chunk 回退）
             if chunk_data:
                 for chunk_id, _, _, chunk_triples in chunk_data:
                     # 该 chunk 是否提及此三元组的 subject 或 object
                     triple_in_chunk = any(
-                        t[0] == subject and t[2] == obj
-                        for t in chunk_triples
+                        t[0] == subject and t[2] == obj for t in chunk_triples
                     )
                     if triple_in_chunk:
-                        relationships.append({
-                            "from_label": "DocumentChunk",
-                            "from_id": chunk_id,
-                            "to_label": s_label,
-                            "to_id": s_id,
-                            "type": "MENTIONS",
-                        })
-                        relationships.append({
-                            "from_label": "DocumentChunk",
-                            "from_id": chunk_id,
-                            "to_label": o_label,
-                            "to_id": o_id,
-                            "type": "MENTIONS",
-                        })
+                        relationships.append(
+                            {
+                                "from_label": "DocumentChunk",
+                                "from_id": chunk_id,
+                                "to_label": s_label,
+                                "to_id": s_id,
+                                "type": "MENTIONS",
+                            }
+                        )
+                        relationships.append(
+                            {
+                                "from_label": "DocumentChunk",
+                                "from_id": chunk_id,
+                                "to_label": o_label,
+                                "to_id": o_id,
+                                "type": "MENTIONS",
+                            }
+                        )
             else:
                 # 回退: 无 chunk 信息时，Document → Entity MENTIONS
-                relationships.append({
-                    "from_label": "Document",
-                    "from_id": doc_id,
-                    "to_label": s_label,
-                    "to_id": s_id,
-                    "type": "MENTIONS",
-                })
-                relationships.append({
-                    "from_label": "Document",
-                    "from_id": doc_id,
-                    "to_label": o_label,
-                    "to_id": o_id,
-                    "type": "MENTIONS",
-                })
+                relationships.append(
+                    {
+                        "from_label": "Document",
+                        "from_id": doc_id,
+                        "to_label": s_label,
+                        "to_id": s_id,
+                        "type": "MENTIONS",
+                    }
+                )
+                relationships.append(
+                    {
+                        "from_label": "Document",
+                        "from_id": doc_id,
+                        "to_label": o_label,
+                        "to_id": o_id,
+                        "type": "MENTIONS",
+                    }
+                )
 
         return nodes, relationships
 
@@ -1183,7 +1284,8 @@ class GraphService:
         self,
         triples: list[tuple[str, str, str]],
         doc_id: str,
-        chunk_data: list[tuple[str, str, str, list[tuple[str, str, str]]]] | None = None,
+        chunk_data: list[tuple[str, str, str, list[tuple[str, str, str]]]]
+        | None = None,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """降级构建 — EntityRegistry 不可用时使用原有逻辑。
 
@@ -1200,79 +1302,96 @@ class GraphService:
                 if not chunk_id or chunk_id in chunk_node_ids:
                     continue
                 chunk_node_ids.add(chunk_id)
-                nodes.append({
-                    "label": "DocumentChunk",
-                    "id": chunk_id,
-                    "doc_id": doc_id,
-                    "text": chunk_text[:500],
-                    "title_path": chunk_title_path,
-                })
-                relationships.append({
-                    "from_label": "Document",
-                    "from_id": doc_id,
-                    "to_label": "DocumentChunk",
-                    "to_id": chunk_id,
-                    "type": "HAS_CHUNK",
-                })
+                nodes.append(
+                    {
+                        "label": "DocumentChunk",
+                        "id": chunk_id,
+                        "doc_id": doc_id,
+                        "text": chunk_text[:500],
+                        "title_path": chunk_title_path,
+                    }
+                )
+                relationships.append(
+                    {
+                        "from_label": "Document",
+                        "from_id": doc_id,
+                        "to_label": "DocumentChunk",
+                        "to_id": chunk_id,
+                        "type": "HAS_CHUNK",
+                    }
+                )
 
         for subject, predicate, obj in triples:
-            nodes.append({
-                "label": "Concept",
-                "id": subject,
-                "name": subject,
-                "entity_type": "concept",
-            })
-            nodes.append({
-                "label": "Concept",
-                "id": obj,
-                "name": obj,
-                "entity_type": "concept",
-            })
+            nodes.append(
+                {
+                    "label": "Concept",
+                    "id": subject,
+                    "name": subject,
+                    "entity_type": "concept",
+                }
+            )
+            nodes.append(
+                {
+                    "label": "Concept",
+                    "id": obj,
+                    "name": obj,
+                    "entity_type": "concept",
+                }
+            )
             rel_type = predicate.upper().replace(" ", "_")
-            relationships.append({
-                "from_label": "Concept",
-                "from_id": subject,
-                "to_label": "Concept",
-                "to_id": obj,
-                "type": rel_type,
-            })
+            relationships.append(
+                {
+                    "from_label": "Concept",
+                    "from_id": subject,
+                    "to_label": "Concept",
+                    "to_id": obj,
+                    "type": rel_type,
+                }
+            )
             # MENTIONS: Chunk → Concept（有 chunk 溯源）或 Document → Concept（回退）
             if chunk_data:
                 for chunk_id, _, _, chunk_triples in chunk_data:
                     triple_in_chunk = any(
-                        t[0] == subject and t[2] == obj
-                        for t in chunk_triples
+                        t[0] == subject and t[2] == obj for t in chunk_triples
                     )
                     if triple_in_chunk:
-                        relationships.append({
-                            "from_label": "DocumentChunk",
-                            "from_id": chunk_id,
-                            "to_label": "Concept",
-                            "to_id": subject,
-                            "type": "MENTIONS",
-                        })
-                        relationships.append({
-                            "from_label": "DocumentChunk",
-                            "from_id": chunk_id,
-                            "to_label": "Concept",
-                            "to_id": obj,
-                            "type": "MENTIONS",
-                        })
+                        relationships.append(
+                            {
+                                "from_label": "DocumentChunk",
+                                "from_id": chunk_id,
+                                "to_label": "Concept",
+                                "to_id": subject,
+                                "type": "MENTIONS",
+                            }
+                        )
+                        relationships.append(
+                            {
+                                "from_label": "DocumentChunk",
+                                "from_id": chunk_id,
+                                "to_label": "Concept",
+                                "to_id": obj,
+                                "type": "MENTIONS",
+                            }
+                        )
             else:
-                relationships.append({
-                    "from_label": "Document",
-                    "from_id": doc_id,
-                    "to_label": "Concept",
-                    "to_id": subject,
-                    "type": "MENTIONS",
-                })
-                relationships.append({
-                    "from_label": "Document",
-                    "from_id": doc_id,
-                    "to_label": "Concept",
-                    "to_id": obj,
-                    "type": "MENTIONS",
-                })
+                relationships.append(
+                    {
+                        "from_label": "Document",
+                        "from_id": doc_id,
+                        "to_label": "Concept",
+                        "to_id": subject,
+                        "type": "MENTIONS",
+                    }
+                )
+                relationships.append(
+                    {
+                        "from_label": "Document",
+                        "from_id": doc_id,
+                        "to_label": "Concept",
+                        "to_id": obj,
+                        "type": "MENTIONS",
+                    }
+                )
         return nodes, relationships
 
     # ------------------------------------------------------------------
@@ -1352,7 +1471,9 @@ class GraphService:
                     "  best_hops as hops "
                     "LIMIT $limit"
                 )
-                async with self._driver.session(database=settings.NEO4J_DATABASE) as session:
+                async with self._driver.session(
+                    database=settings.NEO4J_DATABASE
+                ) as session:
                     result = await session.run(chunk_query, **params)
                     records = await result.data()
 
@@ -1360,15 +1481,17 @@ class GraphService:
                     doc_id = record.get("doc_id", "")
                     if doc_id and doc_id not in seen_doc_ids:
                         seen_doc_ids.add(doc_id)
-                        results.append({
-                            "doc_id": doc_id,
-                            "title": record.get("title", ""),
-                            "kb_id": record.get("kb_id"),
-                            "chunk_id": record.get("chunk_id"),
-                            "chunk_text": record.get("chunk_text"),
-                            "title_path": record.get("title_path"),
-                            "hops": record.get("hops", max_depth),
-                        })
+                        results.append(
+                            {
+                                "doc_id": doc_id,
+                                "title": record.get("title", ""),
+                                "kb_id": record.get("kb_id"),
+                                "chunk_id": record.get("chunk_id"),
+                                "chunk_text": record.get("chunk_text"),
+                                "title_path": record.get("title_path"),
+                                "hops": record.get("hops", max_depth),
+                            }
+                        )
 
                 # 2. Document 级回退（旧结构无 DocumentChunk）:
                 #    Entity ← MENTIONS ← Document
@@ -1387,7 +1510,9 @@ class GraphService:
                         "  d.id as doc_id, d.title as title, d.kb_id as kb_id "
                         "LIMIT $limit"
                     )
-                    async with self._driver.session(database=settings.NEO4J_DATABASE) as session:
+                    async with self._driver.session(
+                        database=settings.NEO4J_DATABASE
+                    ) as session:
                         result = await session.run(doc_query, **params)
                         records = await result.data()
 
@@ -1395,14 +1520,16 @@ class GraphService:
                         doc_id = record.get("doc_id", "")
                         if doc_id and doc_id not in seen_doc_ids:
                             seen_doc_ids.add(doc_id)
-                            results.append({
-                                "doc_id": doc_id,
-                                "title": record.get("title", ""),
-                                "kb_id": record.get("kb_id"),
-                                "chunk_id": None,
-                                "chunk_text": None,
-                                "title_path": None,
-                            })
+                            results.append(
+                                {
+                                    "doc_id": doc_id,
+                                    "title": record.get("title", ""),
+                                    "kb_id": record.get("kb_id"),
+                                    "chunk_id": None,
+                                    "chunk_text": None,
+                                    "title_path": None,
+                                }
+                            )
 
             except Exception as exc:
                 logger.warning(
@@ -1440,7 +1567,9 @@ class GraphService:
             return 0
 
         updated = 0
-        items = [{"doc_id": did, "status": str(status)} for did, status in status_map.items()]
+        items = [
+            {"doc_id": did, "status": str(status)} for did, status in status_map.items()
+        ]
         for i in range(0, len(items), batch_size):
             batch = items[i : i + batch_size]
             try:
@@ -1450,7 +1579,9 @@ class GraphService:
                     "SET d.doc_status = item.status "
                     "RETURN count(d) as updated"
                 )
-                async with self._driver.session(database=settings.NEO4J_DATABASE) as session:
+                async with self._driver.session(
+                    database=settings.NEO4J_DATABASE
+                ) as session:
                     result = await session.run(query, batch=batch)
                     record = await result.single()
                     if record:
@@ -1534,7 +1665,9 @@ class GraphService:
                             f"SET n += props "
                             f"RETURN count(n) as created"
                         )
-                        async with self._driver.session(database=settings.NEO4J_DATABASE) as session:
+                        async with self._driver.session(
+                            database=settings.NEO4J_DATABASE
+                        ) as session:
                             result = await session.run(query, batch=batch)
                             record = await result.single()
                             if record:
@@ -1581,7 +1714,9 @@ class GraphService:
                             f"MERGE (a)-[r:{rel_type}]->(b) "
                             f"RETURN count(r) as created"
                         )
-                        async with self._driver.session(database=settings.NEO4J_DATABASE) as session:
+                        async with self._driver.session(
+                            database=settings.NEO4J_DATABASE
+                        ) as session:
                             result = await session.run(query, batch=batch)
                             record = await result.single()
                             if record:
@@ -1657,77 +1792,95 @@ class GraphService:
                 if not chunk_id:
                     continue
                 chunk_ids.append(chunk_id)
-                nodes.append({
-                    "label": "DocumentChunk",
-                    "id": chunk_id,
-                    "doc_id": doc_id,
-                    "text": (chunk.get("content", "") or "")[:500],
-                    "title_path": chunk.get("title_path", "") or "",
-                })
-                relationships.append({
-                    "from_label": "Document",
-                    "from_id": doc_id,
-                    "to_label": "DocumentChunk",
-                    "to_id": chunk_id,
-                    "type": "HAS_CHUNK",
-                })
+                nodes.append(
+                    {
+                        "label": "DocumentChunk",
+                        "id": chunk_id,
+                        "doc_id": doc_id,
+                        "text": (chunk.get("content", "") or "")[:500],
+                        "title_path": chunk.get("title_path", "") or "",
+                    }
+                )
+                relationships.append(
+                    {
+                        "from_label": "Document",
+                        "from_id": doc_id,
+                        "to_label": "DocumentChunk",
+                        "to_id": chunk_id,
+                        "type": "HAS_CHUNK",
+                    }
+                )
 
         if triples:
             for subject, predicate, obj in triples:
-                nodes.append({
-                    "label": "Concept",
-                    "id": subject,
-                    "name": subject,
-                    "entity_type": "concept",
-                })
-                nodes.append({
-                    "label": "Concept",
-                    "id": obj,
-                    "name": obj,
-                    "entity_type": "concept",
-                })
+                nodes.append(
+                    {
+                        "label": "Concept",
+                        "id": subject,
+                        "name": subject,
+                        "entity_type": "concept",
+                    }
+                )
+                nodes.append(
+                    {
+                        "label": "Concept",
+                        "id": obj,
+                        "name": obj,
+                        "entity_type": "concept",
+                    }
+                )
                 # 概念间关系
                 rel_type = predicate.upper().replace(" ", "_")
-                relationships.append({
-                    "from_label": "Concept",
-                    "from_id": subject,
-                    "to_label": "Concept",
-                    "to_id": obj,
-                    "type": rel_type,
-                })
+                relationships.append(
+                    {
+                        "from_label": "Concept",
+                        "from_id": subject,
+                        "to_label": "Concept",
+                        "to_id": obj,
+                        "type": rel_type,
+                    }
+                )
                 # MENTIONS: Chunk → Concept（有 chunk 时）或 Document → Concept（无 chunk 时）
                 if chunk_ids:
                     for chunk_id in chunk_ids:
-                        relationships.append({
-                            "from_label": "DocumentChunk",
-                            "from_id": chunk_id,
+                        relationships.append(
+                            {
+                                "from_label": "DocumentChunk",
+                                "from_id": chunk_id,
+                                "to_label": "Concept",
+                                "to_id": subject,
+                                "type": "MENTIONS",
+                            }
+                        )
+                        relationships.append(
+                            {
+                                "from_label": "DocumentChunk",
+                                "from_id": chunk_id,
+                                "to_label": "Concept",
+                                "to_id": obj,
+                                "type": "MENTIONS",
+                            }
+                        )
+                else:
+                    # 无 chunk 信息时，Document → Concept MENTIONS
+                    relationships.append(
+                        {
+                            "from_label": "Document",
+                            "from_id": doc_id,
                             "to_label": "Concept",
                             "to_id": subject,
                             "type": "MENTIONS",
-                        })
-                        relationships.append({
-                            "from_label": "DocumentChunk",
-                            "from_id": chunk_id,
+                        }
+                    )
+                    relationships.append(
+                        {
+                            "from_label": "Document",
+                            "from_id": doc_id,
                             "to_label": "Concept",
                             "to_id": obj,
                             "type": "MENTIONS",
-                        })
-                else:
-                    # 无 chunk 信息时，Document → Concept MENTIONS
-                    relationships.append({
-                        "from_label": "Document",
-                        "from_id": doc_id,
-                        "to_label": "Concept",
-                        "to_id": subject,
-                        "type": "MENTIONS",
-                    })
-                    relationships.append({
-                        "from_label": "Document",
-                        "from_id": doc_id,
-                        "to_label": "Concept",
-                        "to_id": obj,
-                        "type": "MENTIONS",
-                    })
+                        }
+                    )
 
         return await self.batch_import_graph(nodes, relationships)
 
@@ -1781,13 +1934,15 @@ class GraphService:
                 node["tenant_id"] = tenant_id_str
             nodes.append(node)
 
-            relationships.append({
-                "from_label": "Document",
-                "from_id": doc_id,
-                "to_label": "Image",
-                "to_id": img_id,
-                "type": "CONTAINS",
-            })
+            relationships.append(
+                {
+                    "from_label": "Document",
+                    "from_id": doc_id,
+                    "to_label": "Image",
+                    "to_id": img_id,
+                    "type": "CONTAINS",
+                }
+            )
 
         try:
             result = await self.batch_import_graph(nodes, relationships)
@@ -1825,7 +1980,9 @@ class GraphService:
                 "img.size_bytes as size_bytes "
                 "ORDER BY img.id"
             )
-            async with self._driver.session(database=settings.NEO4J_DATABASE) as session:
+            async with self._driver.session(
+                database=settings.NEO4J_DATABASE
+            ) as session:
                 result = await session.run(query, doc_id=doc_id)
                 records = await result.data()
             return [
@@ -1849,7 +2006,9 @@ class GraphService:
         if not await self._ensure_connected():
             return {"total_nodes": 0, "total_edges": 0, "labels": {}}
         try:
-            async with self._driver.session(database=settings.NEO4J_DATABASE) as session:
+            async with self._driver.session(
+                database=settings.NEO4J_DATABASE
+            ) as session:
                 # 节点总数
                 result = await session.run("MATCH (n) RETURN count(n) as count")
                 record = await result.single()
@@ -1880,6 +2039,7 @@ class GraphService:
 
 # 单例
 _graph_service: GraphService | None = None
+
 
 def get_graph_service() -> GraphService:
     """获取 GraphService 单例。"""

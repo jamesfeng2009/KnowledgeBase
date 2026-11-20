@@ -39,13 +39,12 @@ from __future__ import annotations
 from typing import Any
 
 from app.core.error_reason import (
+    _RETRY_AFTER_HEADERS,
+    _STATUS_REASON_MAP,
+    PERMANENT_STATUS_CODES,
     ClassifiedError,
     ErrorLayer,
     ErrorReason,
-    NON_RETRYABLE_REASONS,
-    PERMANENT_STATUS_CODES,
-    _RETRY_AFTER_HEADERS,
-    _STATUS_REASON_MAP,
 )
 from app.utils.logger import get_logger
 
@@ -56,22 +55,36 @@ _MAX_MESSAGE_LEN = 500
 
 # 429 消息含这些关键词时升级为 QUOTA_EXHAUSTED（不可恢复）
 _QUOTA_KEYWORDS: tuple[str, ...] = (
-    "quota", "exhausted", "insufficient", "balance",
-    "credit", "payment", "billing",
+    "quota",
+    "exhausted",
+    "insufficient",
+    "balance",
+    "credit",
+    "payment",
+    "billing",
 )
 
 # LLM 层消息文本二次识别关键词
 _CONTEXT_OVERFLOW_KEYWORDS: tuple[str, ...] = (
-    "context_length", "context window", "maximum context",
-    "context length", "too long",
+    "context_length",
+    "context window",
+    "maximum context",
+    "context length",
+    "too long",
 )
 _CONTENT_BLOCKED_KEYWORDS: tuple[str, ...] = (
-    "content_policy", "content policy", "safety",
-    "content filter", "blocked by policy",
+    "content_policy",
+    "content policy",
+    "safety",
+    "content filter",
+    "blocked by policy",
 )
 _MODEL_NOT_FOUND_KEYWORDS: tuple[str, ...] = (
-    "model_not_found", "model not found", "does not exist",
-    "invalid model", "unknown model",
+    "model_not_found",
+    "model not found",
+    "does not exist",
+    "invalid model",
+    "unknown model",
 )
 
 
@@ -340,6 +353,7 @@ def classify_error(
     # 这里只做记录，不吞信号
     try:
         import asyncio
+
         if isinstance(exc, asyncio.CancelledError):
             # 返回不可重试的 ClassifiedError，但调用方应单独捕获 CancelledError 直接 raise
             return ClassifiedError(

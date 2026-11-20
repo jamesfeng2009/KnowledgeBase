@@ -71,12 +71,14 @@ class WorkflowAgent(BaseAgent):
             oa_result = await self._query_oa_approval(bill_no)
             if oa_result:
                 state["tool_results"].append(
-                    {"tool": "query_oa_approval", "bill_no": bill_no, "result": oa_result}
+                    {
+                        "tool": "query_oa_approval",
+                        "bill_no": bill_no,
+                        "result": oa_result,
+                    }
                 )
                 oa_context = f"OA 审批状态查询结果：\n{oa_result}"
-                state["messages"].append(
-                    {"role": "system", "content": oa_context}
-                )
+                state["messages"].append({"role": "system", "content": oa_context})
 
         # 2. 流式生成引导回复
         try:

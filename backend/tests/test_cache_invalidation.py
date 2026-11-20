@@ -10,17 +10,16 @@ Token 缓存主动失效测试 — app/rag/cache.py 的 invalidate_by_doc_id。
     - set 方法正确记录 doc_ids
 """
 
-import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.rag.cache import TokenCache, _L2Entry
-
+from app.rag.cache import TokenCache
 
 # ======================================================================
 # Mock Embedder
 # ======================================================================
+
 
 class MockEmbedder:
     """Mock Embedder — 不同查询生成近似正交的确定性向量。
@@ -50,6 +49,7 @@ class MockEmbedder:
 # ======================================================================
 # L2 内存缓存主动失效
 # ======================================================================
+
 
 class TestL2Invalidate:
     """L2 内存缓存主动失效测试。"""
@@ -136,6 +136,7 @@ class TestL2Invalidate:
 # L1 Redis 缓存主动失效
 # ======================================================================
 
+
 class TestL1Invalidate:
     """L1 Redis 缓存主动失效测试。"""
 
@@ -186,6 +187,7 @@ class TestL1Invalidate:
 # ======================================================================
 # set 方法 doc_ids 记录
 # ======================================================================
+
 
 class TestSetWithDocIds:
     """set 方法正确记录 doc_ids 测试。"""

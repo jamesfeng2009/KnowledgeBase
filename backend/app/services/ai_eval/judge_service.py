@@ -40,7 +40,11 @@ log = get_logger(__name__)
 
 # 默认评分维度
 DEFAULT_DIMENSIONS: list[str] = [
-    "accuracy", "completeness", "relevance", "clarity", "safety",
+    "accuracy",
+    "completeness",
+    "relevance",
+    "clarity",
+    "safety",
 ]
 
 # 维度中文名映射（供提示词与展示）
@@ -78,8 +82,7 @@ def build_judge_prompt(
     要求 LLM 输出严格 JSON，包含各维度评分（0-100）与评语。
     """
     dim_desc = "\n".join(
-        f"    - {d}（{DIMENSION_NAMES.get(d, d)}）：0-100 分"
-        for d in dimensions
+        f"    - {d}（{DIMENSION_NAMES.get(d, d)}）：0-100 分" for d in dimensions
     )
     dim_keys = ", ".join(f'"{d}"' for d in dimensions)
 
@@ -155,7 +158,11 @@ def parse_judge_response(
         val = raw_scores.get(d) if isinstance(raw_scores, dict) else None
         if val is None:
             # 兼容中文名
-            val = raw_scores.get(DIMENSION_NAMES.get(d, d)) if isinstance(raw_scores, dict) else None
+            val = (
+                raw_scores.get(DIMENSION_NAMES.get(d, d))
+                if isinstance(raw_scores, dict)
+                else None
+            )
         if val is not None:
             try:
                 scores[d] = max(0, min(100, int(round(float(val)))))
@@ -294,7 +301,9 @@ class JudgeService:
         if dataset:
             dataset.total_cases = (dataset.total_cases or 0) + len(added)
             await self.db.flush()
-        log.info("judge_cases_batch_added", dataset_id=str(dataset_id), count=len(added))
+        log.info(
+            "judge_cases_batch_added", dataset_id=str(dataset_id), count=len(added)
+        )
         return added
 
     async def delete_case(self, case_id: uuid.UUID) -> bool:
@@ -379,14 +388,16 @@ class JudgeService:
                             dimension_counts[d] += 1
                 except Exception as exc:
                     log.error("judge_case_error", case_id=str(case.id), error=str(exc))
-                    self.db.add(JudgeResult(
-                        case_id=case.id,
-                        dataset_id=dataset_id,
-                        scores={},
-                        overall_score=0,
-                        error_message=str(exc),
-                        executed_at=datetime.now(timezone.utc),
-                    ))
+                    self.db.add(
+                        JudgeResult(
+                            case_id=case.id,
+                            dataset_id=dataset_id,
+                            scores={},
+                            overall_score=0,
+                            error_message=str(exc),
+                            executed_at=datetime.now(timezone.utc),
+                        )
+                    )
         except Exception:
             # list_cases / get_llm_provider 等前置步骤失败时恢复状态，
             # 否则数据集永久卡在 "running"，无法再触发评测。
@@ -400,7 +411,9 @@ class JudgeService:
             if executed > 0:
                 for d in dimensions:
                     if dimension_counts[d] > 0:
-                        agg_metrics[d] = round(dimension_sums[d] / dimension_counts[d], 2)
+                        agg_metrics[d] = round(
+                            dimension_sums[d] / dimension_counts[d], 2
+                        )
                 agg_metrics["overall"] = round(overall_sum / executed, 2)
 
             elapsed = int(time.time() - start_time)
@@ -468,9 +481,14 @@ class JudgeService:
             result.overall_score = parsed["overall"]
             result.reasoning = parsed["reasoning"]
             result.raw_response = parsed["raw"]
-            result.judge_model = getattr(provider, "model_name", None) or getattr(provider, "__class__", None).__name__
+            result.judge_model = (
+                getattr(provider, "model_name", None)
+                or getattr(provider, "__class__", None).__name__
+            )
             result.response_time_ms = response_time_ms
-            result.error_message = "裁判响应解析失败" if parsed.get("parse_error") else None
+            result.error_message = (
+                "裁判响应解析失败" if parsed.get("parse_error") else None
+            )
             result.executed_at = datetime.now(timezone.utc)
         else:
             result = JudgeResult(
@@ -480,7 +498,8 @@ class JudgeService:
                 overall_score=parsed["overall"],
                 reasoning=parsed["reasoning"],
                 raw_response=parsed["raw"],
-                judge_model=getattr(provider, "model_name", None) or getattr(provider, "__class__", None).__name__,
+                judge_model=getattr(provider, "model_name", None)
+                or getattr(provider, "__class__", None).__name__,
                 response_time_ms=response_time_ms,
                 error_message="裁判响应解析失败" if parsed.get("parse_error") else None,
                 executed_at=datetime.now(timezone.utc),
@@ -516,20 +535,24 @@ class JudgeService:
         rows = result.all()
         results: list[dict] = []
         for case, res in rows:
-            results.append({
-                "case_id": str(case.id),
-                "question": case.question,
-                "reference_answer": case.reference_answer,
-                "model_answer": case.model_answer,
-                "category": case.category,
-                "scores": res.scores if res else None,
-                "overall_score": res.overall_score if res else 0,
-                "reasoning": res.reasoning if res else None,
-                "judge_model": res.judge_model if res else None,
-                "response_time_ms": res.response_time_ms if res else 0,
-                "error_message": res.error_message if res else None,
-                "executed_at": res.executed_at.isoformat() if res and res.executed_at else None,
-            })
+            results.append(
+                {
+                    "case_id": str(case.id),
+                    "question": case.question,
+                    "reference_answer": case.reference_answer,
+                    "model_answer": case.model_answer,
+                    "category": case.category,
+                    "scores": res.scores if res else None,
+                    "overall_score": res.overall_score if res else 0,
+                    "reasoning": res.reasoning if res else None,
+                    "judge_model": res.judge_model if res else None,
+                    "response_time_ms": res.response_time_ms if res else 0,
+                    "error_message": res.error_message if res else None,
+                    "executed_at": res.executed_at.isoformat()
+                    if res and res.executed_at
+                    else None,
+                }
+            )
         return results
 
     # ------------------------------------------------------------------
@@ -538,26 +561,35 @@ class JudgeService:
 
     async def get_stats(self) -> dict:
         """获取 AI Judge 评测全局统计。"""
-        total_datasets = await self.db.scalar(
-            select(func.count())
-            .select_from(JudgeDataset)
-            .where(JudgeDataset.deleted_at.is_(None))
-        ) or 0
+        total_datasets = (
+            await self.db.scalar(
+                select(func.count())
+                .select_from(JudgeDataset)
+                .where(JudgeDataset.deleted_at.is_(None))
+            )
+            or 0
+        )
 
-        total_cases = await self.db.scalar(
-            select(func.count())
-            .select_from(JudgeCase)
-            .join(JudgeDataset, JudgeDataset.id == JudgeCase.dataset_id)
-            .where(JudgeDataset.deleted_at.is_(None))
-        ) or 0
+        total_cases = (
+            await self.db.scalar(
+                select(func.count())
+                .select_from(JudgeCase)
+                .join(JudgeDataset, JudgeDataset.id == JudgeCase.dataset_id)
+                .where(JudgeDataset.deleted_at.is_(None))
+            )
+            or 0
+        )
 
         # 排除软删除数据集下的结果，保持与 total_datasets/total_cases 口径一致
-        total_executed = await self.db.scalar(
-            select(func.count())
-            .select_from(JudgeResult)
-            .join(JudgeDataset, JudgeDataset.id == JudgeResult.dataset_id)
-            .where(JudgeDataset.deleted_at.is_(None))
-        ) or 0
+        total_executed = (
+            await self.db.scalar(
+                select(func.count())
+                .select_from(JudgeResult)
+                .join(JudgeDataset, JudgeDataset.id == JudgeResult.dataset_id)
+                .where(JudgeDataset.deleted_at.is_(None))
+            )
+            or 0
+        )
 
         # 聚合已执行数据集
         ds_result = await self.db.execute(
@@ -602,7 +634,9 @@ class JudgeService:
             "avg_overall": round(overall_sum / weight, 2) if weight else 0.0,
             "dimension_averages": {
                 k: round(v / weight, 2) for k, v in dimension_sums.items()
-            } if weight else {},
+            }
+            if weight
+            else {},
             "default_dimensions": DEFAULT_DIMENSIONS,
             "dimension_names": DIMENSION_NAMES,
             "category_names": CATEGORY_NAMES,

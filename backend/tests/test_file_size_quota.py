@@ -104,9 +104,9 @@ async def test_file_upload_records_real_byte_size(db_session, seeded) -> None:
     doc_id = resp.json()["data"]["id"]
     await db_session.commit()
     doc = await _load_doc(db_session, doc_id)
-    assert doc.file_size == len(payload), (
-        f"file_size 应为文件字节数 {len(payload)}，实际 {doc.file_size}"
-    )
+    assert doc.file_size == len(
+        payload
+    ), f"file_size 应为文件字节数 {len(payload)}，实际 {doc.file_size}"
 
 
 # ======================================================================
@@ -270,9 +270,13 @@ async def test_multipart_pipeline_triggers_on_large_video(db_session, seeded) ->
     await db_session.commit()
 
     # _should_use_multipart_pipeline 内部用 asyncio.run()，必须在无事件循环的线程里跑
-    assert await asyncio.to_thread(_should_use_multipart_pipeline, str(small.id)) is False
+    assert (
+        await asyncio.to_thread(_should_use_multipart_pipeline, str(small.id)) is False
+    )
     assert await asyncio.to_thread(_should_use_multipart_pipeline, str(big.id)) is True
-    assert await asyncio.to_thread(_should_use_multipart_pipeline, str(nofile.id)) is False
+    assert (
+        await asyncio.to_thread(_should_use_multipart_pipeline, str(nofile.id)) is False
+    )
 
 
 # ======================================================================
@@ -329,7 +333,9 @@ def test_every_document_create_path_passes_file_size() -> None:
                 continue
             kwargs = {kw.arg for kw in node.keywords}
             if "file_size" not in kwargs:
-                offenders.append(f"{path.relative_to(BACKEND_DIR)}:{node.lineno} {name}(...)")
+                offenders.append(
+                    f"{path.relative_to(BACKEND_DIR)}:{node.lineno} {name}(...)"
+                )
 
     assert not offenders, (
         "以下创建 Document 的调用未传 file_size（会让存储配额与大文件分流失效）：\n  "

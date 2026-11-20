@@ -17,10 +17,12 @@
 遵循单一职责：本模块仅做 HTTP 路由与工具调用转发，
 工具实现逻辑由 KnowledgeBaseMCPServer 提供。
 """
+
 from __future__ import annotations
 
 import json
-from typing import Any, AsyncIterator, Literal
+from collections.abc import AsyncIterator
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -29,8 +31,8 @@ from pydantic import BaseModel, Field
 from app.api.openapi.deps import require_scope
 from app.database import async_session_factory
 from app.mcp.client import MCPClient
-from app.mcp.server import KnowledgeBaseMCPServer
 from app.mcp.protocol import JSONRPCResponse
+from app.mcp.server import KnowledgeBaseMCPServer
 from app.mcp.streamable_http import StreamableHTTPTransport, sse_serialize
 from app.mcp.task_store import get_task_store, task_tenant_matches
 from app.schemas.common import ApiResponse
@@ -76,9 +78,7 @@ def response_from_jsonrpc(response: JSONRPCResponse) -> JSONResponse:
 class InvokeToolRequest(BaseModel):
     """MCP 工具调用请求。"""
 
-    arguments: dict[str, Any] = Field(
-        default_factory=dict, description="工具入参"
-    )
+    arguments: dict[str, Any] = Field(default_factory=dict, description="工具入参")
     mode: Literal["auto", "sync", "async"] = Field(
         default="auto",
         description=(

@@ -40,7 +40,7 @@ def _client(args: argparse.Namespace) -> EkbClient:
     return EkbClient(base_url=base_url, api_key=api_key)
 
 
-def _print(data) -> None:  # noqa: ANN001
+def _print(data) -> None:
     print(json.dumps(data, ensure_ascii=False, indent=2))
 
 

@@ -129,12 +129,12 @@ def split_usage_boundaries(description: str) -> tuple[str, str]:
 
     neg_idx = text.find(neg_marker)
     if neg_idx >= 0:
-        when_not_to_use = text[neg_idx + len(neg_marker):].strip().rstrip("。")
+        when_not_to_use = text[neg_idx + len(neg_marker) :].strip().rstrip("。")
         text = text[:neg_idx]
 
     pos_idx = text.find(pos_marker)
     if pos_idx >= 0:
-        when_to_use = text[pos_idx + len(pos_marker):].strip().rstrip("。")
+        when_to_use = text[pos_idx + len(pos_marker) :].strip().rstrip("。")
 
     return when_to_use, when_not_to_use
 
@@ -148,5 +148,5 @@ def parse_resource_uri(uri: str) -> str | None:
     """从资源 URI 解析工具名；非法 URI 返回 None。"""
     if not isinstance(uri, str) or not uri.startswith(RESOURCE_URI_SCHEME):
         return None
-    name = uri[len(RESOURCE_URI_SCHEME):].strip()
+    name = uri[len(RESOURCE_URI_SCHEME) :].strip()
     return name or None

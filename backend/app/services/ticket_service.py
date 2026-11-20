@@ -96,9 +96,12 @@ class TicketService:
         if user_id is not None:
             conditions.append(Ticket.user_id == user_id)
 
-        total = await self.db.scalar(
-            select(func.count()).select_from(Ticket).where(*conditions)
-        ) or 0
+        total = (
+            await self.db.scalar(
+                select(func.count()).select_from(Ticket).where(*conditions)
+            )
+            or 0
+        )
 
         result = await self.db.execute(
             select(Ticket)

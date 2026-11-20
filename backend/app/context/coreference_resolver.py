@@ -35,15 +35,39 @@ class CoreferenceResolver:
 
     # 省略句特征词 — 出现这些词时可能需要指代消解
     _ELLIPSIS_INDICATORS: list[str] = [
-        "呢", "怎么样", "如何", "也是", "他", "她", "它",
-        "这个", "那个", "上面", "刚才", "也是这样", "同样",
+        "呢",
+        "怎么样",
+        "如何",
+        "也是",
+        "他",
+        "她",
+        "它",
+        "这个",
+        "那个",
+        "上面",
+        "刚才",
+        "也是这样",
+        "同样",
     ]
 
     # 明确动词 — 出现这些词时查询已完整，不需要消解
     _EXPLICIT_VERBS: list[str] = [
-        "搜索", "查找", "查看", "创建", "上传", "提交", "列出",
-        "search", "find", "view", "create", "upload", "list",
-        "什么是", "为什么", "解释",
+        "搜索",
+        "查找",
+        "查看",
+        "创建",
+        "上传",
+        "提交",
+        "列出",
+        "search",
+        "find",
+        "view",
+        "create",
+        "upload",
+        "list",
+        "什么是",
+        "为什么",
+        "解释",
     ]
 
     _RESOLVE_PROMPT: str = (
@@ -87,9 +111,7 @@ class CoreferenceResolver:
             return False
 
         has_indicator = any(ind in query_stripped for ind in self._ELLIPSIS_INDICATORS)
-        has_explicit_verb = any(
-            kw in query_stripped for kw in self._EXPLICIT_VERBS
-        )
+        has_explicit_verb = any(kw in query_stripped for kw in self._EXPLICIT_VERBS)
         return has_indicator and not has_explicit_verb
 
     async def resolve(
@@ -125,8 +147,7 @@ class CoreferenceResolver:
         if history:
             recent = history[-6:]
             history_text = "\n".join(
-                f"{m.get('role', 'user')}: {m.get('content', '')[:100]}"
-                for m in recent
+                f"{m.get('role', 'user')}: {m.get('content', '')[:100]}" for m in recent
             )
 
         focus_text = focus.to_context_str()
@@ -142,7 +163,14 @@ class CoreferenceResolver:
         try:
             resolved = await self._call_llm(prompt)
             # 清理 LLM 输出
-            resolved = resolved.strip().strip('"').strip("'").strip("「」").strip("「").strip("」")
+            resolved = (
+                resolved.strip()
+                .strip('"')
+                .strip("'")
+                .strip("「」")
+                .strip("「")
+                .strip("」")
+            )
             if resolved and len(resolved) < 200:
                 if resolved != query:
                     log.info(

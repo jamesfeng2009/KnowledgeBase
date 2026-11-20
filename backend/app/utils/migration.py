@@ -55,7 +55,9 @@ def _get_alembic_config() -> Config:
     # 迁移必须走「有 DDL 权限」的连接：优先 MIGRATION_DATABASE_URL，
     # 未配置时回退 DATABASE_URL（单角色部署的兼容路径）。
     # 顺序与 app.config.Settings.migration_database_url 保持一致。
-    db_url = os.environ.get("MIGRATION_DATABASE_URL") or os.environ.get("DATABASE_URL", "")
+    db_url = os.environ.get("MIGRATION_DATABASE_URL") or os.environ.get(
+        "DATABASE_URL", ""
+    )
     if db_url:
         config.set_main_option("sqlalchemy.url", db_url)
 
@@ -90,8 +92,9 @@ def get_current_revision() -> str | None:
         当前版本号字符串，未迁移过返回 None。
     """
     try:
-        from alembic.runtime.migration import MigrationContext
         from sqlalchemy import create_engine
+
+        from alembic.runtime.migration import MigrationContext
 
         db_url = os.environ.get("DATABASE_URL", "")
         if not db_url:

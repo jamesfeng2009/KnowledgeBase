@@ -97,11 +97,11 @@ class XLSXParser(DocumentParser):
             return None
 
         try:
-            workbook = openpyxl.load_workbook(
-                file_path, read_only=True, data_only=True
-            )
+            workbook = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
         except Exception as exc:
-            log.warning("xlsx.openpyxl_open_failed", file_path=file_path, error=str(exc))
+            log.warning(
+                "xlsx.openpyxl_open_failed", file_path=file_path, error=str(exc)
+            )
             return None
 
         sections: list[ParsedSection] = []
@@ -213,8 +213,7 @@ class XLSXParser(DocumentParser):
                 # 数据行
                 for _, row in df_limited.iterrows():
                     cells = [
-                        str(v).strip() if pd.notna(v) else ""
-                        for v in row.tolist()
+                        str(v).strip() if pd.notna(v) else "" for v in row.tolist()
                     ]
                     # 跳过全空行
                     if all(c == "" for c in cells):
@@ -308,8 +307,4 @@ class XLSXParser(DocumentParser):
         """转义 HTML 特殊字符。"""
         if not text:
             return ""
-        return (
-            text.replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-        )
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")

@@ -9,6 +9,7 @@ Deep Research 公网混合取证（P4）端到端验证。
 
 复用 P2-11 测试的 Mock 风格（celery / FakeLLM / FakeRetriever）。
 """
+
 from __future__ import annotations
 
 import sys
@@ -63,16 +64,18 @@ class _FakeWeb:
     def __init__(self, hits: list[dict] | None = None) -> None:
         self._hits = hits or []
 
-    async def search(self, query: str, max_results: int = 5,
-                     tenant_id: str | None = None) -> list[dict]:
+    async def search(
+        self, query: str, max_results: int = 5, tenant_id: str | None = None
+    ) -> list[dict]:
         return self._hits[:max_results]
 
 
 class _BoomWeb:
     """不可用公网提供商 — 验证降级不阻塞。"""
 
-    async def search(self, query: str, max_results: int = 5,
-                     tenant_id: str | None = None) -> list[dict]:
+    async def search(
+        self, query: str, max_results: int = 5, tenant_id: str | None = None
+    ) -> list[dict]:
         raise RuntimeError("provider down")
 
 
@@ -83,20 +86,29 @@ class _RecordingWeb:
         self._hits = hits or []
         self.received_tenant: list[str | None] = []
 
-    async def search(self, query: str, max_results: int = 5,
-                     tenant_id: str | None = None) -> list[dict]:
+    async def search(
+        self, query: str, max_results: int = 5, tenant_id: str | None = None
+    ) -> list[dict]:
         self.received_tenant.append(tenant_id)
         return self._hits[:max_results]
 
 
 def _internal(title: str, score: float, content: str = "") -> dict:
-    return {"doc_id": f"/kb/{title}", "metadata": {"title": title},
-            "content": content or f"{title}内部内容", "score": score}
+    return {
+        "doc_id": f"/kb/{title}",
+        "metadata": {"title": title},
+        "content": content or f"{title}内部内容",
+        "score": score,
+    }
 
 
 def _web(title: str, score: float, snippet: str = "") -> dict:
-    return {"title": title, "url": f"https://example.com/{title}",
-            "snippet": snippet or f"{title}网络快照", "score": score}
+    return {
+        "title": title,
+        "url": f"https://example.com/{title}",
+        "snippet": snippet or f"{title}网络快照",
+        "score": score,
+    }
 
 
 class TestDualSourceGather:
@@ -105,14 +117,18 @@ class TestDualSourceGather:
     @pytest.mark.asyncio
     async def test_citations_carry_source_type(self) -> None:
         llm = _FakeLLM({"资料片段": '{"conclusion":"内部优先。", "confidence":0.8}'})
-        retriever = _FakeRetriever([
-            _internal("内部甲", 0.9, "内部甲详细内容"),
-            _internal("内部乙", 0.8, "内部乙详细内容"),
-        ])
-        web = _FakeWeb([
-            _web("网络A", 90.0, "网络A快照"),
-            _web("网络B", 80.0, "网络B快照"),
-        ])
+        retriever = _FakeRetriever(
+            [
+                _internal("内部甲", 0.9, "内部甲详细内容"),
+                _internal("内部乙", 0.8, "内部乙详细内容"),
+            ]
+        )
+        web = _FakeWeb(
+            [
+                _web("网络A", 90.0, "网络A快照"),
+                _web("网络B", 80.0, "网络B快照"),
+            ]
+        )
         service = DeepResearchService(llm, retriever, web_provider=web)
         card = await service._gather_evidence("某主题", None)
 
@@ -146,7 +162,9 @@ class TestSingleSourceFallback:
         retriever = _FakeRetriever([_internal("内部甲", 0.9)])
         service = DeepResearchService(llm, retriever)  # 不传 web_provider
         card = await service._gather_evidence("某主题", None)
-        assert card.citations and all(c["source_type"] == "internal" for c in card.citations)
+        assert card.citations and all(
+            c["source_type"] == "internal" for c in card.citations
+        )
 
 
 class TestDegrade:
@@ -154,15 +172,21 @@ class TestDegrade:
 
     @pytest.mark.asyncio
     async def test_web_down_falls_back_to_internal(self) -> None:
-        llm = _FakeLLM({"资料片段": '{"conclusion":"内部兜底结论。", "confidence":0.8}'})
-        retriever = _FakeRetriever([
-            _internal("内部甲", 0.85, "内部甲内容"),
-            _internal("内部乙", 0.6, "内部乙内容"),
-        ])
+        llm = _FakeLLM(
+            {"资料片段": '{"conclusion":"内部兜底结论。", "confidence":0.8}'}
+        )
+        retriever = _FakeRetriever(
+            [
+                _internal("内部甲", 0.85, "内部甲内容"),
+                _internal("内部乙", 0.6, "内部乙内容"),
+            ]
+        )
         service = DeepResearchService(llm, retriever, web_provider=_BoomWeb())
         card = await service._gather_evidence("某主题", None)
         assert card.status == "confirmed"
-        assert card.citations and all(c["source_type"] == "internal" for c in card.citations)
+        assert card.citations and all(
+            c["source_type"] == "internal" for c in card.citations
+        )
 
     @pytest.mark.asyncio
     async def test_both_empty_gap(self) -> None:
@@ -181,11 +205,13 @@ class TestFullResearchFlow:
 
     @pytest.mark.asyncio
     async def test_research_propagates_source_type(self) -> None:
-        llm = _FakeLLM({
-            "研究课题规划专家": "主题A\n主题B",           # 分解两个子课题
-            "资料片段": '{"conclusion":"结论带[内部]和[网络]标注。", "confidence":0.8}',  # 双源归纳
-            "研究报告撰写专家": "总体摘要",                 # 汇总
-        })
+        llm = _FakeLLM(
+            {
+                "研究课题规划专家": "主题A\n主题B",  # 分解两个子课题
+                "资料片段": '{"conclusion":"结论带[内部]和[网络]标注。", "confidence":0.8}',  # 双源归纳
+                "研究报告撰写专家": "总体摘要",  # 汇总
+            }
+        )
         retriever = _FakeRetriever([_internal("内部甲", 0.9, "内部甲内容")])
         web = _FakeWeb([_web("网络A", 90.0, "网络A快照"), _web("网络B", 80.0)])
         service = DeepResearchService(llm, retriever, web_provider=web)
@@ -205,11 +231,13 @@ class TestTenantQuotaPropagation:
 
     @pytest.mark.asyncio
     async def test_research_passes_tenant_to_provider(self) -> None:
-        llm = _FakeLLM({
-            "研究课题规划专家": "主题A\n主题B",
-            "资料片段": '{"conclusion":"结论。", "confidence":0.8}',
-            "研究报告撰写专家": "摘要",
-        })
+        llm = _FakeLLM(
+            {
+                "研究课题规划专家": "主题A\n主题B",
+                "资料片段": '{"conclusion":"结论。", "confidence":0.8}',
+                "研究报告撰写专家": "摘要",
+            }
+        )
         retriever = _FakeRetriever([_internal("内部甲", 0.9, "内部甲内容")])
         web = _RecordingWeb([_web("网络A", 90.0, "nv")])
         service = DeepResearchService(llm, retriever, web_provider=web)
@@ -225,7 +253,9 @@ class TestTenantQuotaPropagation:
         llm = _FakeLLM({"资料片段": '{"conclusion":"x", "confidence":0.8}'})
         web = _RecordingWeb([_web("网络A", 90.0)])
         service = DeepResearchService(
-            llm, _FakeRetriever([_internal("甲", 0.9)]), web_provider=web,
+            llm,
+            _FakeRetriever([_internal("甲", 0.9)]),
+            web_provider=web,
         )
         await service._gather_evidence("某主题", None)
         assert web.received_tenant == [None]
@@ -239,13 +269,21 @@ class TestBoostObservabilityE2E:
         llm = _FakeLLM({"资料片段": '{"conclusion":"x", "confidence":0.8}'})
         retriever = _FakeRetriever([_internal("内部甲", 0.9), _internal("内部乙", 0.8)])
         web = _FakeWeb([_web("网络A", 90.0, "nv"), _web("网络B", 80.0, "nv")])
-        mc = {"k_internal": 5, "k_web": 5, "boost": 2.0,
-              "min_internal": 1, "min_web": 1, "total_budget": 6}
+        mc = {
+            "k_internal": 5,
+            "k_web": 5,
+            "boost": 2.0,
+            "min_internal": 1,
+            "min_web": 1,
+            "total_budget": 6,
+        }
         s_high = DeepResearchService(llm, retriever, web_provider=web, merge_config=mc)
         card_high = await s_high._gather_evidence("某主题", None)
 
         mc_low = dict(mc, boost=0.2)
-        s_low = DeepResearchService(llm, retriever, web_provider=web, merge_config=mc_low)
+        s_low = DeepResearchService(
+            llm, retriever, web_provider=web, merge_config=mc_low
+        )
         card_low = await s_low._gather_evidence("某主题", None)
 
         # boost 高时内部靠前，boost 低时网络靠前 → boost 非死参数
@@ -257,15 +295,25 @@ class TestBoostObservabilityE2E:
     @pytest.mark.asyncio
     async def test_research_accepts_merge_config(self) -> None:
         """merge_config 注入生效于 research() 全流程（防止死参数）。"""
-        llm = _FakeLLM({
-            "研究课题规划专家": "主题X",
-            "资料片段": '{"conclusion":"x", "confidence":0.8}',
-            "研究报告撰写专家": "摘要",
-        })
-        min_cfg = {"k_internal": 2, "k_web": 2, "boost": 1.2,
-                   "min_internal": 1, "min_web": 1, "total_budget": 2}
+        llm = _FakeLLM(
+            {
+                "研究课题规划专家": "主题X",
+                "资料片段": '{"conclusion":"x", "confidence":0.8}',
+                "研究报告撰写专家": "摘要",
+            }
+        )
+        min_cfg = {
+            "k_internal": 2,
+            "k_web": 2,
+            "boost": 1.2,
+            "min_internal": 1,
+            "min_web": 1,
+            "total_budget": 2,
+        }
         service = DeepResearchService(
-            llm, _FakeRetriever([_internal("甲", 0.9)]), _FakeWeb([_web("网", 90.0)]),
+            llm,
+            _FakeRetriever([_internal("甲", 0.9)]),
+            _FakeWeb([_web("网", 90.0)]),
             merge_config=min_cfg,
         )
         report = await service.research("目标", kb_ids=None)

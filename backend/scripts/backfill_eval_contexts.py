@@ -50,9 +50,7 @@ def parse_args() -> argparse.Namespace:
         "--out", default="eval_cases/candidates.jsonl", help="候选池输出路径"
     )
     parser.add_argument("--top-k", type=int, default=3, help="每查询检索 chunk 数")
-    parser.add_argument(
-        "--prefix", default="kg", help="case_id 前缀（如 kg / fb）"
-    )
+    parser.add_argument("--prefix", default="kg", help="case_id 前缀（如 kg / fb）")
     return parser.parse_args()
 
 
@@ -129,7 +127,7 @@ async def main() -> int:
                 results = await retriever.search(
                     query, kb_ids=item["kb_ids"] or None, top_k=args.top_k
                 )
-            except Exception as exc:  # noqa: BLE001 — 单条失败不阻断整批
+            except Exception as exc:
                 print(f"[失败] {args.prefix}_{idx:03d} 检索异常：{exc}")
                 continue
 
@@ -158,11 +156,7 @@ async def main() -> int:
             hit = bool(expected & set(retrieved_doc_ids)) if expected else None
             if hit:
                 hits += 1
-            mark = (
-                "hit" if hit else "MISS"
-                if hit is not None
-                else "n/a"
-            )
+            mark = "hit" if hit else "MISS" if hit is not None else "n/a"
             print(
                 f"{args.prefix}_{idx:03d} [{mark}] {query[:30]} → "
                 f"{len(contexts)} chunks, docs={retrieved_doc_ids}"

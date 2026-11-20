@@ -55,13 +55,27 @@ class QueryType(str, Enum):
 
 # 强多意图标记 — 命中 1 个即判定复合查询
 _MULTI_STRONG_MARKERS: tuple[str, ...] = (
-    "以及", "同时", "还要", "另外", "然后", "并且", "；", ";",
+    "以及",
+    "同时",
+    "还要",
+    "另外",
+    "然后",
+    "并且",
+    "；",
+    ";",
 )
 # 弱多意图标记 — 需配合长度阈值（短查询中"和/与/并"多为词组内连接）
 _MULTI_WEAK_MARKERS: tuple[str, ...] = ("和", "与", "并", "再")
 # 模糊查询标记 — 指示代词/泛化动词，语义需假设文档承载
 _VAGUE_MARKERS: tuple[str, ...] = (
-    "这个", "那个", "怎么办", "怎么处理", "怎么弄", "如何办", "咋办", "啥",
+    "这个",
+    "那个",
+    "怎么办",
+    "怎么处理",
+    "怎么弄",
+    "如何办",
+    "咋办",
+    "啥",
 )
 # 弱标记触发多意图所需的最小查询长度（字符数）
 _MULTI_WEAK_MIN_LEN: int = 12
@@ -646,12 +660,14 @@ def get_query_rewriter() -> QueryRewriter | None:
     settings = get_settings()
 
     # 未启用任何策略时不创建
-    if not any([
-        settings.QUERY_REWRITE_ENABLED,
-        settings.QUERY_EXPANSION_ENABLED,
-        settings.QUERY_DECOMPOSITION_ENABLED,
-        settings.HYDE_ENABLED,
-    ]):
+    if not any(
+        [
+            settings.QUERY_REWRITE_ENABLED,
+            settings.QUERY_EXPANSION_ENABLED,
+            settings.QUERY_DECOMPOSITION_ENABLED,
+            settings.HYDE_ENABLED,
+        ]
+    ):
         return None
 
     try:

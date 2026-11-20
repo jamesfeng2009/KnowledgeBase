@@ -10,6 +10,7 @@ Mem0Manager.cleanup_expired + sync_to_graph 挂 record_event 后 best-effort。
 
 基座：C1 rls_harness；API 走 ASGITransport + 依赖覆盖（真实 PG 会话）。
 """
+
 from __future__ import annotations
 
 import uuid
@@ -104,8 +105,14 @@ async def _seed_user(rls_db, tenant_id: str | None = TENANT_A):
         await engine.dispose()
 
 
-async def _seed_fact(rls_db, user_id, category="working", tenant_id=TENANT_A,
-                     expired=False, fact_text="待处理事实"):
+async def _seed_fact(
+    rls_db,
+    user_id,
+    category="working",
+    tenant_id=TENANT_A,
+    expired=False,
+    fact_text="待处理事实",
+):
     from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
     from sqlalchemy.orm import sessionmaker
 
@@ -123,8 +130,7 @@ async def _seed_fact(rls_db, user_id, category="working", tenant_id=TENANT_A,
                 tenant_id=uuid.UUID(tenant_id) if tenant_id else None,
                 is_active=True,
                 expires_at=(
-                    datetime.now(timezone.utc) - timedelta(hours=1)
-                    if expired else None
+                    datetime.now(timezone.utc) - timedelta(hours=1) if expired else None
                 ),
             )
             s.add(fact)
@@ -145,6 +151,7 @@ async def api_client(rls_db):
     user = await _seed_user(rls_db)
     async with rls_db.factory() as session:
         async with tenant_scope(session, TENANT_A):
+
             async def override_user():
                 return user
 
@@ -171,7 +178,9 @@ class TestB9MemoryApi:
             "/api/v1/memory/preferences",
             json={"key": "answer_style", "value": "简洁"},
         )
-        assert resp.status_code == 200, f"偏好入口必须存在：{resp.status_code} {resp.text}"
+        assert (
+            resp.status_code == 200
+        ), f"偏好入口必须存在：{resp.status_code} {resp.text}"
         await session.commit()
 
         facts = await _owner_exec(
@@ -208,7 +217,9 @@ class TestB9MemoryApi:
             f"/api/v1/memory/facts/{fact_id}/correct",
             json={"corrected_text": "报销上限: 800", "corrected_value": "800"},
         )
-        assert resp.status_code == 200, f"纠错入口必须存在：{resp.status_code} {resp.text}"
+        assert (
+            resp.status_code == 200
+        ), f"纠错入口必须存在：{resp.status_code} {resp.text}"
         await session.commit()
 
         rows = await _owner_exec(
@@ -253,7 +264,9 @@ class TestB9MemoryApi:
         await _seed_fact(rls_db, user.id, category="preference", fact_text="长期偏好")
 
         resp = await client.delete("/api/v1/memory/working-memory")
-        assert resp.status_code == 200, f"清空入口必须存在：{resp.status_code} {resp.text}"
+        assert (
+            resp.status_code == 200
+        ), f"清空入口必须存在：{resp.status_code} {resp.text}"
         await session.commit()
 
         working = await _owner_exec(
@@ -298,9 +311,9 @@ class TestB9CleanupUnification:
 
         result = await _cleanup_expired_facts_async()
         assert result["status"] == "success"
-        assert result["cleaned_count"] == 2, (
-            "租户行与单租户 NULL 行都必须被清理（审计现状：NULL 行漏清）"
-        )
+        assert (
+            result["cleaned_count"] == 2
+        ), "租户行与单租户 NULL 行都必须被清理（审计现状：NULL 行漏清）"
 
         rows = await _owner_exec(
             rls_db,
@@ -311,9 +324,9 @@ class TestB9CleanupUnification:
         by_id = {r["id"]: r for r in rows}
         for fid in (fact_a, fact_null):
             assert by_id[fid]["is_active"] is False
-            assert by_id[fid]["forgotten_reason"] == "expired", (
-                "清理必须带退场语义（审计现状：定时任务自写 SQL 缺 forgotten_reason）"
-            )
+            assert (
+                by_id[fid]["forgotten_reason"] == "expired"
+            ), "清理必须带退场语义（审计现状：定时任务自写 SQL 缺 forgotten_reason）"
             assert by_id[fid]["activation_value"] is not None
         assert by_id[fact_live]["is_active"] is True
 
@@ -346,9 +359,9 @@ class TestB9SyncToGraphWiring:
                     )
             await session.commit()
 
-        assert graph_spy.create_node.await_count >= 2, (
-            "实体变更后必须尝试同步 Neo4j（实体节点 + 事件节点；审计现状：零调用）"
-        )
+        assert (
+            graph_spy.create_node.await_count >= 2
+        ), "实体变更后必须尝试同步 Neo4j（实体节点 + 事件节点；审计现状：零调用）"
         labels = [c.args[0] for c in graph_spy.create_node.await_args_list]
         assert "KnowledgeEntity" in labels
         assert "TimelineEvent" in labels

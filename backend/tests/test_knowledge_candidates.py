@@ -21,9 +21,9 @@
 - TestScheduledTask: 配置跳过 / 异步晋升-过期编排 / 单簇失败隔离
 - TestBeatRegistration: beat 注册与 30 分钟周期
 """
+
 from __future__ import annotations
 
-import asyncio
 import json
 import sys
 import uuid
@@ -33,8 +33,6 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
-from app.config import get_settings
 
 # ------------------------------------------------------------------
 # Mock celery before importing app modules（与 test_knowledge_compounding 一致）
@@ -88,7 +86,10 @@ def _cand_row(
     )
 
 
-def _praise_event(source_id: str = "fb-1", user_id: str | None = "11111111-1111-4111-8111-111111111111") -> dict:
+def _praise_event(
+    source_id: str = "fb-1",
+    user_id: str | None = "11111111-1111-4111-8111-111111111111",
+) -> dict:
     return {
         "source_type": "chat_feedback",
         "source_id": source_id,
@@ -99,7 +100,10 @@ def _praise_event(source_id: str = "fb-1", user_id: str | None = "11111111-1111-
     }
 
 
-def _accept_event(source_id: str = "acc-1", user_id: str | None = "11111111-1111-4111-8111-111111111111") -> dict:
+def _accept_event(
+    source_id: str = "acc-1",
+    user_id: str | None = "11111111-1111-4111-8111-111111111111",
+) -> dict:
     return {
         "source_type": "qa_accepted",
         "source_id": source_id,
@@ -357,7 +361,9 @@ class TestUpsertFromSignal:
                 question_hint="今天午餐吃什么好",
             )
         assert out["status"] == "queued"
-        assert "INSERT INTO knowledge_candidates" in str(db.execute.call_args_list[2][0][0])
+        assert "INSERT INTO knowledge_candidates" in str(
+            db.execute.call_args_list[2][0][0]
+        )
 
     @pytest.mark.asyncio
     async def test_post_promotion_signal_traced(self):
@@ -461,7 +467,9 @@ class TestPromoteCandidate:
     async def test_requires_compounding(self):
         pool = _make_pool(_make_db())
         with pytest.raises(ValueError):
-            await pool.promote_candidate(_eligible_candidate(), target_kb_id=uuid.uuid4())
+            await pool.promote_candidate(
+                _eligible_candidate(), target_kb_id=uuid.uuid4()
+            )
 
     @pytest.mark.asyncio
     async def test_no_answer_source_skipped(self):
@@ -473,7 +481,11 @@ class TestPromoteCandidate:
         db.execute = AsyncMock(return_value=_result(row=None))
         pool = _make_pool(db, compounding=MagicMock())
         out = await pool.promote_candidate(cand, target_kb_id=uuid.uuid4())
-        assert out == {"status": "skipped", "reason": "no_answer_source", "id": str(cand.id)}
+        assert out == {
+            "status": "skipped",
+            "reason": "no_answer_source",
+            "id": str(cand.id),
+        }
 
     @pytest.mark.asyncio
     async def test_dedup_blocked_dismisses(self):
@@ -493,7 +505,11 @@ class TestPromoteCandidate:
         ):
             out = await pool.promote_candidate(cand, target_kb_id=uuid.uuid4())
 
-        assert out == {"status": "dismissed", "reason": "duplicate_existing", "id": str(cand.id)}
+        assert out == {
+            "status": "dismissed",
+            "reason": "duplicate_existing",
+            "id": str(cand.id),
+        }
         svc._precipitate_faq_asset.assert_not_awaited()
         # 状态置 dismissed 且留痕
         dismiss_sql = str(db.execute.call_args_list[1][0][0])
@@ -510,7 +526,9 @@ class TestPromoteCandidate:
 
         db.execute = AsyncMock(
             side_effect=[
-                _result(row=SimpleNamespace(content="经济舱按实报销。")),  # messages 查询
+                _result(
+                    row=SimpleNamespace(content="经济舱按实报销。")
+                ),  # messages 查询
                 _result(rowcount=1),  # promoting
                 _result(rowcount=1),  # promoted 回填
             ]
@@ -601,9 +619,7 @@ class TestListCandidates:
     async def test_pagination_and_total(self):
         db = _make_db()
         rows = [_cand_row(), _cand_row()]
-        db.execute = AsyncMock(
-            side_effect=[_result(scalar=5), _result(rows=rows)]
-        )
+        db.execute = AsyncMock(side_effect=[_result(scalar=5), _result(rows=rows)])
         pool = _make_pool(db, tenant_id=uuid.uuid4())
         got, total = await pool.list_candidates(status="candidate", page=2, size=2)
         assert total == 5
@@ -724,7 +740,12 @@ class TestScheduledTask:
         pool_instance.expire_stale = AsyncMock(return_value=2)
         pool_instance.list_eligible = AsyncMock(return_value=[row])
         pool_instance.promote_candidate = AsyncMock(
-            return_value={"status": "promoted", "id": str(row.id), "asset_id": "a", "conflicts": 0}
+            return_value={
+                "status": "promoted",
+                "id": str(row.id),
+                "asset_id": "a",
+                "conflicts": 0,
+            }
         )
 
         @asynccontextmanager
@@ -732,13 +753,17 @@ class TestScheduledTask:
             yield db
 
         svc_cls = MagicMock()
-        with patch("app.database.task_db_session", fake_session), patch(
-            "app.llm.factory.get_llm_provider", return_value=MagicMock()
-        ), patch(
-            "app.services.knowledge_compounding.KnowledgeCompoundingService", svc_cls
-        ), patch(
-            "app.services.knowledge_compounding.knowledge_candidates.KnowledgeCandidatePool",
-            MagicMock(return_value=pool_instance),
+        with (
+            patch("app.database.task_db_session", fake_session),
+            patch("app.llm.factory.get_llm_provider", return_value=MagicMock()),
+            patch(
+                "app.services.knowledge_compounding.KnowledgeCompoundingService",
+                svc_cls,
+            ),
+            patch(
+                "app.services.knowledge_compounding.knowledge_candidates.KnowledgeCandidatePool",
+                MagicMock(return_value=pool_instance),
+            ),
         ):
             out = await _promote_knowledge_candidates_async(_task_settings())
 
@@ -761,19 +786,25 @@ class TestScheduledTask:
         pool_instance = MagicMock()
         pool_instance.expire_stale = AsyncMock(return_value=0)
         pool_instance.list_eligible = AsyncMock(return_value=[row])
-        pool_instance.promote_candidate = AsyncMock(side_effect=RuntimeError("llm boom"))
+        pool_instance.promote_candidate = AsyncMock(
+            side_effect=RuntimeError("llm boom")
+        )
 
         @asynccontextmanager
         async def fake_session(**_kwargs):
             yield db
 
-        with patch("app.database.task_db_session", fake_session), patch(
-            "app.llm.factory.get_llm_provider", return_value=MagicMock()
-        ), patch(
-            "app.services.knowledge_compounding.KnowledgeCompoundingService", MagicMock()
-        ), patch(
-            "app.services.knowledge_compounding.knowledge_candidates.KnowledgeCandidatePool",
-            MagicMock(return_value=pool_instance),
+        with (
+            patch("app.database.task_db_session", fake_session),
+            patch("app.llm.factory.get_llm_provider", return_value=MagicMock()),
+            patch(
+                "app.services.knowledge_compounding.KnowledgeCompoundingService",
+                MagicMock(),
+            ),
+            patch(
+                "app.services.knowledge_compounding.knowledge_candidates.KnowledgeCandidatePool",
+                MagicMock(return_value=pool_instance),
+            ),
         ):
             out = await _promote_knowledge_candidates_async(_task_settings())
 

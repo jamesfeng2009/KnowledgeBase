@@ -4,10 +4,10 @@ P0-1: 检索增加文档 status=published 过滤，杜绝半成品泄漏
 P0-2: update_document 触发重建索引，消除混合状态
 P0-3: conflict_resolver 保留冲突标记 + 补证触发，不让模型偷偷选边
 """
+
 from __future__ import annotations
 
 import sys
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -73,22 +73,36 @@ class TestP01RetrieverStatusFilter:
         self, retriever_with_mocks: HybridRetriever
     ) -> None:
         """search() 应在传给 _vector_search 的 filters 中注入 doc_status=published。"""
-        with patch.object(
-            retriever_with_mocks, "_vector_search", new=AsyncMock(return_value=[])
-        ) as mock_vec, patch.object(
-            retriever_with_mocks, "_fulltext_search", new=AsyncMock(return_value=[])
-        ), patch.object(
-            retriever_with_mocks, "_cross_modal_search", new=AsyncMock(return_value=[])
-        ), patch.object(
-            retriever_with_mocks, "_graph_search", new=AsyncMock(return_value=[])
-        ), patch.object(
-            retriever_with_mocks, "_expand_to_parents", new=AsyncMock(return_value=[])
+        with (
+            patch.object(
+                retriever_with_mocks, "_vector_search", new=AsyncMock(return_value=[])
+            ) as mock_vec,
+            patch.object(
+                retriever_with_mocks, "_fulltext_search", new=AsyncMock(return_value=[])
+            ),
+            patch.object(
+                retriever_with_mocks,
+                "_cross_modal_search",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch.object(
+                retriever_with_mocks, "_graph_search", new=AsyncMock(return_value=[])
+            ),
+            patch.object(
+                retriever_with_mocks,
+                "_expand_to_parents",
+                new=AsyncMock(return_value=[]),
+            ),
         ):
             await retriever_with_mocks.search("查询", ["kb1"], 20)
 
         # filters 是第 4 个位置参数（query, kb_ids, top_k, filters）
         call_args = mock_vec.call_args
-        filters = call_args.args[3] if len(call_args.args) >= 4 else call_args.kwargs.get("filters", {})
+        filters = (
+            call_args.args[3]
+            if len(call_args.args) >= 4
+            else call_args.kwargs.get("filters", {})
+        )
         assert filters.get("doc_status") == "published"
 
     @pytest.mark.asyncio
@@ -96,21 +110,35 @@ class TestP01RetrieverStatusFilter:
         self, retriever_with_mocks: HybridRetriever
     ) -> None:
         """search() 应在传给 _fulltext_search 的 filters 中注入 doc_status=published。"""
-        with patch.object(
-            retriever_with_mocks, "_vector_search", new=AsyncMock(return_value=[])
-        ), patch.object(
-            retriever_with_mocks, "_fulltext_search", new=AsyncMock(return_value=[])
-        ) as mock_ft, patch.object(
-            retriever_with_mocks, "_cross_modal_search", new=AsyncMock(return_value=[])
-        ), patch.object(
-            retriever_with_mocks, "_graph_search", new=AsyncMock(return_value=[])
-        ), patch.object(
-            retriever_with_mocks, "_expand_to_parents", new=AsyncMock(return_value=[])
+        with (
+            patch.object(
+                retriever_with_mocks, "_vector_search", new=AsyncMock(return_value=[])
+            ),
+            patch.object(
+                retriever_with_mocks, "_fulltext_search", new=AsyncMock(return_value=[])
+            ) as mock_ft,
+            patch.object(
+                retriever_with_mocks,
+                "_cross_modal_search",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch.object(
+                retriever_with_mocks, "_graph_search", new=AsyncMock(return_value=[])
+            ),
+            patch.object(
+                retriever_with_mocks,
+                "_expand_to_parents",
+                new=AsyncMock(return_value=[]),
+            ),
         ):
             await retriever_with_mocks.search("查询", ["kb1"], 20)
 
         call_args = mock_ft.call_args
-        filters = call_args.args[3] if len(call_args.args) >= 4 else call_args.kwargs.get("filters", {})
+        filters = (
+            call_args.args[3]
+            if len(call_args.args) >= 4
+            else call_args.kwargs.get("filters", {})
+        )
         assert filters.get("doc_status") == "published"
 
     @pytest.mark.asyncio
@@ -118,23 +146,37 @@ class TestP01RetrieverStatusFilter:
         self, retriever_with_mocks: HybridRetriever
     ) -> None:
         """调用方传入 doc_status=draft 应被覆盖为 published（安全优先）。"""
-        with patch.object(
-            retriever_with_mocks, "_vector_search", new=AsyncMock(return_value=[])
-        ) as mock_vec, patch.object(
-            retriever_with_mocks, "_fulltext_search", new=AsyncMock(return_value=[])
-        ), patch.object(
-            retriever_with_mocks, "_cross_modal_search", new=AsyncMock(return_value=[])
-        ), patch.object(
-            retriever_with_mocks, "_graph_search", new=AsyncMock(return_value=[])
-        ), patch.object(
-            retriever_with_mocks, "_expand_to_parents", new=AsyncMock(return_value=[])
+        with (
+            patch.object(
+                retriever_with_mocks, "_vector_search", new=AsyncMock(return_value=[])
+            ) as mock_vec,
+            patch.object(
+                retriever_with_mocks, "_fulltext_search", new=AsyncMock(return_value=[])
+            ),
+            patch.object(
+                retriever_with_mocks,
+                "_cross_modal_search",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch.object(
+                retriever_with_mocks, "_graph_search", new=AsyncMock(return_value=[])
+            ),
+            patch.object(
+                retriever_with_mocks,
+                "_expand_to_parents",
+                new=AsyncMock(return_value=[]),
+            ),
         ):
             await retriever_with_mocks.search(
                 "查询", ["kb1"], 20, filters={"doc_status": "draft", "series_id": "s1"}
             )
 
         call_args = mock_vec.call_args
-        filters = call_args.args[3] if len(call_args.args) >= 4 else call_args.kwargs.get("filters", {})
+        filters = (
+            call_args.args[3]
+            if len(call_args.args) >= 4
+            else call_args.kwargs.get("filters", {})
+        )
         # doc_status 必须被覆盖为 published
         assert filters["doc_status"] == "published"
         # 其他 filter 应保留
@@ -145,21 +187,35 @@ class TestP01RetrieverStatusFilter:
         self, retriever_with_mocks: HybridRetriever
     ) -> None:
         """filters=None 时也应注入 doc_status=published。"""
-        with patch.object(
-            retriever_with_mocks, "_vector_search", new=AsyncMock(return_value=[])
-        ) as mock_vec, patch.object(
-            retriever_with_mocks, "_fulltext_search", new=AsyncMock(return_value=[])
-        ), patch.object(
-            retriever_with_mocks, "_cross_modal_search", new=AsyncMock(return_value=[])
-        ), patch.object(
-            retriever_with_mocks, "_graph_search", new=AsyncMock(return_value=[])
-        ), patch.object(
-            retriever_with_mocks, "_expand_to_parents", new=AsyncMock(return_value=[])
+        with (
+            patch.object(
+                retriever_with_mocks, "_vector_search", new=AsyncMock(return_value=[])
+            ) as mock_vec,
+            patch.object(
+                retriever_with_mocks, "_fulltext_search", new=AsyncMock(return_value=[])
+            ),
+            patch.object(
+                retriever_with_mocks,
+                "_cross_modal_search",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch.object(
+                retriever_with_mocks, "_graph_search", new=AsyncMock(return_value=[])
+            ),
+            patch.object(
+                retriever_with_mocks,
+                "_expand_to_parents",
+                new=AsyncMock(return_value=[]),
+            ),
         ):
             await retriever_with_mocks.search("查询", ["kb1"], 20, filters=None)
 
         call_args = mock_vec.call_args
-        filters = call_args.args[3] if len(call_args.args) >= 4 else call_args.kwargs.get("filters", {})
+        filters = (
+            call_args.args[3]
+            if len(call_args.args) >= 4
+            else call_args.kwargs.get("filters", {})
+        )
         assert filters.get("doc_status") == "published"
 
 
@@ -239,12 +295,20 @@ class TestP02ReindexTrigger:
         mock_tasks_mod = _make_mock_tasks_module()
 
         # get_vector_store 打上"不应被调用"哨兵 — 若代码触碰向量存储即失败
-        with patch.dict(sys.modules, {
-            "tasks": mock_tasks_mod,
-            "tasks.document_tasks": mock_tasks_mod,
-        }), patch(
-            "app.rag.vector_store.get_vector_store",
-            side_effect=AssertionError("API 侧不应触碰向量存储（P1：删除移入任务内）"),
+        with (
+            patch.dict(
+                sys.modules,
+                {
+                    "tasks": mock_tasks_mod,
+                    "tasks.document_tasks": mock_tasks_mod,
+                },
+            ),
+            patch(
+                "app.rag.vector_store.get_vector_store",
+                side_effect=AssertionError(
+                    "API 侧不应触碰向量存储（P1：删除移入任务内）"
+                ),
+            ),
         ):
             await service._trigger_reindex("doc-123", "kb-456")
 
@@ -265,10 +329,13 @@ class TestP02ReindexTrigger:
 
         mock_tasks_mod = _make_mock_tasks_module()
 
-        with patch.dict(sys.modules, {
-            "tasks": mock_tasks_mod,
-            "tasks.document_tasks": mock_tasks_mod,
-        }):
+        with patch.dict(
+            sys.modules,
+            {
+                "tasks": mock_tasks_mod,
+                "tasks.document_tasks": mock_tasks_mod,
+            },
+        ):
             await service._trigger_reindex("doc-123", "kb-456")
 
         mock_tasks_mod.process_document.delay.assert_called_once_with("doc-123")
@@ -286,12 +353,17 @@ class TestP02ReindexTrigger:
         service = KnowledgeService(mock_db, mock_user)
 
         mock_tasks_mod = _make_mock_tasks_module()
-        mock_tasks_mod.process_document.delay = MagicMock(side_effect=Exception("Celery down"))
+        mock_tasks_mod.process_document.delay = MagicMock(
+            side_effect=Exception("Celery down")
+        )
 
-        with patch.dict(sys.modules, {
-            "tasks": mock_tasks_mod,
-            "tasks.document_tasks": mock_tasks_mod,
-        }):
+        with patch.dict(
+            sys.modules,
+            {
+                "tasks": mock_tasks_mod,
+                "tasks.document_tasks": mock_tasks_mod,
+            },
+        ):
             # 不应抛异常
             await service._trigger_reindex("doc-123", "kb-456")
 
@@ -307,11 +379,13 @@ class TestP03ConflictPreservation:
     def test_multi_source_conflict_preserves_losers(self) -> None:
         """多源冲突时 conflicting_claims 应保留所有被否决的声称。"""
         resolver = ConflictResolver()
-        result = resolver.resolve([
-            ConflictClaim("10000", "system_rule", "公司制度", key="报销上限"),
-            ConflictClaim("5000", "tool_fact", "ERP", key="报销上限"),
-            ConflictClaim("3000", "model_inference", "模型推测", key="报销上限"),
-        ])
+        result = resolver.resolve(
+            [
+                ConflictClaim("10000", "system_rule", "公司制度", key="报销上限"),
+                ConflictClaim("5000", "tool_fact", "ERP", key="报销上限"),
+                ConflictClaim("3000", "model_inference", "模型推测", key="报销上限"),
+            ]
+        )
         assert result is not None
         assert result.resolved_value == "10000"
         assert len(result.conflicting_claims) == 2
@@ -321,20 +395,24 @@ class TestP03ConflictPreservation:
     def test_multi_source_conflict_triggers_clarification(self) -> None:
         """多源值冲突时 needs_clarification 应为 True。"""
         resolver = ConflictResolver()
-        result = resolver.resolve([
-            ConflictClaim("10天", "system_rule", "公司制度"),
-            ConflictClaim("3天", "user_input", "用户"),
-        ])
+        result = resolver.resolve(
+            [
+                ConflictClaim("10天", "system_rule", "公司制度"),
+                ConflictClaim("3天", "user_input", "用户"),
+            ]
+        )
         assert result is not None
         assert result.needs_clarification is True
 
     def test_same_source_self_contradiction_no_clarification(self) -> None:
         """同源自我矛盾（last win）不触发补证。"""
         resolver = ConflictResolver()
-        result = resolver.resolve([
-            ConflictClaim("5000", "tool_fact", "ERP", "2026-01-01", key="报销上限"),
-            ConflictClaim("8000", "tool_fact", "ERP", "2026-02-01", key="报销上限"),
-        ])
+        result = resolver.resolve(
+            [
+                ConflictClaim("5000", "tool_fact", "ERP", "2026-01-01", key="报销上限"),
+                ConflictClaim("8000", "tool_fact", "ERP", "2026-02-01", key="报销上限"),
+            ]
+        )
         assert result is not None
         assert result.needs_clarification is False
         # 但仍保留被否决的声称供审计
@@ -344,9 +422,11 @@ class TestP03ConflictPreservation:
     def test_single_claim_no_conflicts(self) -> None:
         """单条声称无冲突 — conflicting_claims 为空，needs_clarification 为 False。"""
         resolver = ConflictResolver()
-        result = resolver.resolve([
-            ConflictClaim("唯一值", "system_rule", "制度"),
-        ])
+        result = resolver.resolve(
+            [
+                ConflictClaim("唯一值", "system_rule", "制度"),
+            ]
+        )
         assert result is not None
         assert result.conflicting_claims == []
         assert result.needs_clarification is False
@@ -354,10 +434,13 @@ class TestP03ConflictPreservation:
     def test_multi_source_same_value_no_clarification(self) -> None:
         """多源声称值相同（非冲突）时不触发补证。"""
         resolver = ConflictResolver()
-        result = resolver.resolve([
-            ConflictClaim("10天", "system_rule", "公司制度"),
-            ConflictClaim("10天", "user_input", "用户"),
-        ], same_key_only=False)
+        result = resolver.resolve(
+            [
+                ConflictClaim("10天", "system_rule", "公司制度"),
+                ConflictClaim("10天", "user_input", "用户"),
+            ],
+            same_key_only=False,
+        )
         assert result is not None
         assert result.resolved_value == "10天"
         # 值相同 → 非真实冲突 → 不需要补证
@@ -368,10 +451,13 @@ class TestP03ConflictPreservation:
     def test_authority_tie_preserves_losers(self) -> None:
         """权威并列 last win 时也保留被否决声称。"""
         resolver = ConflictResolver()
-        result = resolver.resolve([
-            ConflictClaim("旧值", "tool_fact", "ERP", "2026-01-01"),
-            ConflictClaim("新值", "tool_fact", "ERP", "2026-03-01"),
-        ], same_key_only=False)
+        result = resolver.resolve(
+            [
+                ConflictClaim("旧值", "tool_fact", "ERP", "2026-01-01"),
+                ConflictClaim("新值", "tool_fact", "ERP", "2026-03-01"),
+            ],
+            same_key_only=False,
+        )
         assert result is not None
         assert result.reason == "权威并列,last win"
         assert len(result.conflicting_claims) == 1
@@ -380,10 +466,12 @@ class TestP03ConflictPreservation:
     def test_conflicting_claims_contains_full_claim_objects(self) -> None:
         """conflicting_claims 应包含完整的 ConflictClaim 对象（含 source/authority）。"""
         resolver = ConflictResolver()
-        result = resolver.resolve([
-            ConflictClaim("10天", "system_rule", "公司制度"),
-            ConflictClaim("3天", "user_input", "用户"),
-        ])
+        result = resolver.resolve(
+            [
+                ConflictClaim("10天", "system_rule", "公司制度"),
+                ConflictClaim("3天", "user_input", "用户"),
+            ]
+        )
         assert result is not None
         loser = result.conflicting_claims[0]
         assert isinstance(loser, ConflictClaim)

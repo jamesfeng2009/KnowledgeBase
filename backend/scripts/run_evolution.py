@@ -47,7 +47,9 @@ def parse_args() -> argparse.Namespace:
         default="app/rag/prompts/generate_base.md",
         help="进化目标文件",
     )
-    parser.add_argument("--run-dir", default=None, help="审计链输出目录（缺省按时间戳新建）")
+    parser.add_argument(
+        "--run-dir", default=None, help="审计链输出目录（缺省按时间戳新建）"
+    )
     parser.add_argument("--rounds", type=int, default=None, help="覆盖最大轮数")
     parser.add_argument("--deadband", type=float, default=None, help="覆盖门控死区")
     parser.add_argument("--budget", type=int, default=None, help="覆盖每轮编辑预算")

@@ -70,9 +70,7 @@ class TestOpenSearchSearchFilters:
         store = OpenSearchVectorStore(http_client=http)
         store._available = True
 
-        await store.search(
-            [0.1] * 8, filters={"path_prefix": "产品/合规/"}, top_k=10
-        )
+        await store.search([0.1] * 8, filters={"path_prefix": "产品/合规/"}, top_k=10)
         payload = http.post.call_args.kwargs.get("json", {})
         filter_clauses = payload["query"]["bool"]["filter"]
         assert {"prefix": {"path": "产品/合规/"}} in filter_clauses
@@ -129,9 +127,7 @@ class TestMilvusSearchFilters:
         store = MilvusVectorStore(http_client=http)
         store._available = True
 
-        await store.search(
-            [0.1] * 8, filters={"path_prefix": "产品/"}, top_k=10
-        )
+        await store.search([0.1] * 8, filters={"path_prefix": "产品/"}, top_k=10)
         payload = http.post.call_args.kwargs.get("json", {})
         assert payload["filter"] == "path like '产品/%'"
 

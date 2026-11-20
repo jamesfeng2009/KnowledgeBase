@@ -17,9 +17,13 @@
 from __future__ import annotations
 
 import sys
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+if TYPE_CHECKING:
+    from app.rag.frequency_threshold import FrequencyBasedThreshold
 
 # Mock celery（测试环境未安装）
 if "celery" not in sys.modules:
@@ -72,7 +76,7 @@ class TestNormalizeQuery:
 class TestComputeThreshold:
     """阈值计算纯函数测试（无 IO）。"""
 
-    def _fbt(self) -> "FrequencyBasedThreshold":
+    def _fbt(self) -> FrequencyBasedThreshold:
         from app.rag.frequency_threshold import FrequencyBasedThreshold
 
         fbt = FrequencyBasedThreshold()
@@ -145,7 +149,7 @@ class TestComputeThreshold:
 class TestMemoryPath:
     """Redis 不可用时的进程内计数器路径测试。"""
 
-    def _fbt(self) -> "FrequencyBasedThreshold":
+    def _fbt(self) -> FrequencyBasedThreshold:
         from app.rag.frequency_threshold import FrequencyBasedThreshold
 
         fbt = FrequencyBasedThreshold()
@@ -167,7 +171,10 @@ class TestMemoryPath:
         await fbt.record_query("query A")
         await fbt.record_query("query B")
         # query B 只记录 1 次
-        assert await fbt.get_threshold("query B") < await fbt.get_threshold("query A") or True
+        assert (
+            await fbt.get_threshold("query B") < await fbt.get_threshold("query A")
+            or True
+        )
         # 验证计数独立：A=2, B=1 — 通过 get_threshold 间接验证（都是 cold，阈值相同）
         # 直接验证内存计数
         from app.rag.frequency_threshold import _query_hash
@@ -225,7 +232,7 @@ class TestMemoryPath:
 class TestRedisPath:
     """Redis 可用时的频次追踪测试（mock Redis）。"""
 
-    def _fbt_with_mock_redis(self, redis_mock: MagicMock) -> "FrequencyBasedThreshold":
+    def _fbt_with_mock_redis(self, redis_mock: MagicMock) -> FrequencyBasedThreshold:
         from app.rag.frequency_threshold import FrequencyBasedThreshold
 
         fbt = FrequencyBasedThreshold(redis=redis_mock)

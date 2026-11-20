@@ -11,6 +11,7 @@
 
 红基线（修复前）：组 1/2 静默截断不报错；组 3 saas 模式列宽 1024 ≠ 3072。
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -32,8 +33,8 @@ def _embedder_dim_for_mode(mode: str, monkeypatch) -> int:
     InvalidURL(':1]')（即 task.md 勘误里 52 条既有失败的共性根因，范围外）。
     这里只清理测试进程的环境变量，不改产品代码。
     """
-    from app.config import Settings
     import app.llm.embedder as emb
+    from app.config import Settings
 
     monkeypatch.setenv("NO_PROXY", "localhost,127.0.0.1")
     monkeypatch.setenv("no_proxy", "localhost,127.0.0.1")
@@ -169,9 +170,9 @@ class TestB2ModelColumnWidth:
         )
         assert proc.returncode == 0, f"子进程建表失败：{proc.stderr[-2000:]}"
         width = proc.stdout.strip().splitlines()[-1]
-        assert width == f"vector({expected})", (
-            f"DEPLOY_MODE={mode}：真实列宽 {width} ≠ embedder.dim {expected}"
-        )
+        assert (
+            width == f"vector({expected})"
+        ), f"DEPLOY_MODE={mode}：真实列宽 {width} ≠ embedder.dim {expected}"
 
 
 def _load_migration(name: str, path: Path):
@@ -196,12 +197,14 @@ class TestB2AlignMigration:
         return _load_migration("b2_align_migration", hits[-1])
 
     @pytest.mark.parametrize("mode", MODES)
-    async def test_upgrade_realigns_width_to_embedder(self, mode, migration, monkeypatch):
+    async def test_upgrade_realigns_width_to_embedder(
+        self, mode, migration, monkeypatch
+    ):
         import sqlalchemy as sa
-        from alembic.migration import MigrationContext
-        from alembic.operations import Operations
         from sqlalchemy.ext.asyncio import create_async_engine
 
+        from alembic.migration import MigrationContext
+        from alembic.operations import Operations
         from app.config import Settings
 
         expected = _embedder_dim_for_mode(mode, monkeypatch)

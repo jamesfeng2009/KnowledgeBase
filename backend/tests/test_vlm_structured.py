@@ -33,6 +33,7 @@ def _make_json(**kwargs) -> str:
 # build_structured_prompt — prompt 路由
 # ============================================================
 
+
 class TestBuildStructuredPrompt:
     """按图片类型路由 prompt。"""
 
@@ -60,13 +61,16 @@ class TestBuildStructuredPrompt:
 # parse_structured — schema 校验 + 数值范围校验
 # ============================================================
 
+
 class TestParseStructured:
     """结构化输出解析与校验。"""
 
     def test_valid_output_not_low_confidence(self):
         result = parse_structured(
             _make_json(
-                numbers=[{"label": "占比", "value": 85.0, "unit": "%", "confidence": 0.9}]
+                numbers=[
+                    {"label": "占比", "value": 85.0, "unit": "%", "confidence": 0.9}
+                ]
             ),
             image_type="chart",
         )
@@ -108,7 +112,9 @@ class TestParseStructured:
         """核心验证场景：图表数值 250% 越界 → low_confidence + issue。"""
         result = parse_structured(
             _make_json(
-                numbers=[{"label": "增长率", "value": 250.0, "unit": "%", "confidence": 0.9}]
+                numbers=[
+                    {"label": "增长率", "value": 250.0, "unit": "%", "confidence": 0.9}
+                ]
             ),
             image_type="chart",
         )
@@ -168,12 +174,15 @@ class TestParseStructured:
 # VisionProvider.understand_structured
 # ============================================================
 
+
 class _MockStructuredVLM(VisionProvider):
     def __init__(self, response: str):
         self._response = response
         self.last_prompt: str | None = None
 
-    async def understand(self, image: bytes, prompt: str, mime_type: str = "image/png") -> str:
+    async def understand(
+        self, image: bytes, prompt: str, mime_type: str = "image/png"
+    ) -> str:
         self.last_prompt = prompt
         return self._response
 
@@ -206,8 +215,11 @@ class TestUnderstandStructured:
 # MultimodalService.process_image_typed
 # ============================================================
 
+
 class _FailingVLM(VisionProvider):
-    async def understand(self, image: bytes, prompt: str, mime_type: str = "image/png") -> str:
+    async def understand(
+        self, image: bytes, prompt: str, mime_type: str = "image/png"
+    ) -> str:
         raise RuntimeError("VLM 不可用")
 
 

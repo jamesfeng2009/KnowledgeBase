@@ -63,8 +63,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any
 
-from locust import HttpUser, task, events, between
-from locust import LoadTestShape
+from locust import HttpUser, LoadTestShape, between, events, task
 
 # ============================================================
 # 全局配置常量
@@ -379,9 +378,7 @@ class MetricsCollector:
                     "p95_ms": self._percentile(latencies, 95),
                     "p99_ms": self._percentile(latencies, 99),
                     "avg_ms": (
-                        round(sum(latencies) / len(latencies), 2)
-                        if latencies
-                        else 0.0
+                        round(sum(latencies) / len(latencies), 2) if latencies else 0.0
                     ),
                 }
 
@@ -575,9 +572,7 @@ def parse_sse_stream(response: Any, start_time: float) -> SSEResult:
                 # 记录首 token 到达时间
                 # 默认事件（current_event 为 None）的 data 即为 token 文本
                 if current_event is None and result.ttft_ms is None:
-                    result.ttft_ms = round(
-                        (time.perf_counter() - start_time) * 1000, 2
-                    )
+                    result.ttft_ms = round((time.perf_counter() - start_time) * 1000, 2)
 
             # id 字段暂不处理
 
@@ -740,9 +735,7 @@ class RAGChatUser(HttpUser):
                         error_body = ""
                     error_msg = f"HTTP {response.status_code}: {error_body}"
                     response.failure(error_msg)
-                    latency_ms = round(
-                        (time.perf_counter() - start_time) * 1000, 2
-                    )
+                    latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
                     metrics_collector.record(
                         question_type=question_type,
                         latency_ms=latency_ms,
@@ -752,9 +745,7 @@ class RAGChatUser(HttpUser):
 
                 # 解析 SSE 流式响应
                 sse_result = parse_sse_stream(response, start_time)
-                latency_ms = round(
-                    (time.perf_counter() - start_time) * 1000, 2
-                )
+                latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
 
                 # 标记 Locust 请求成功/失败
                 if sse_result.success:
@@ -906,16 +897,11 @@ def _on_test_start(environment: Any, **kwargs: Any) -> None:
     print(f"  阶梯加压      : {'是 (10->50->100)' if staged else '否'}")
 
     if not staged:
-        print(
-            f"  并发用户数    : {environment.parsed_options.num_users}"
-        )
-        print(
-            f"  递增速率      : {environment.parsed_options.spawn_rate}/s"
-        )
+        print(f"  并发用户数    : {environment.parsed_options.num_users}")
+        print(f"  递增速率      : {environment.parsed_options.spawn_rate}/s")
 
     print(
-        "  问题类型分布  : 事实型 40% / 推理型 30% / "
-        "工具调用型 20% / 无答案型 10%"
+        "  问题类型分布  : 事实型 40% / 推理型 30% / " "工具调用型 20% / 无答案型 10%"
     )
     print("=" * 70 + "\n")
 
@@ -988,23 +974,14 @@ def _on_test_stop(environment: Any, **kwargs: Any) -> None:
     print("\n  [Token 消耗与成本估算]")
     print(f"    总 Token 数        : {token_stats['total_tokens']:,}")
     print(f"    总成本估算         : {token_stats['total_cost']:.4f}")
-    print(
-        f"    平均每请求 Token   : {token_stats['avg_tokens_per_request']:.1f}"
-    )
+    print(f"    平均每请求 Token   : {token_stats['avg_tokens_per_request']:.1f}")
     if token_stats["by_model"]:
         print("\n    [按模型分组]")
-        model_header = (
-            f"      {'模型':<22} {'Token 数':>12} {'成本':>12}"
-        )
+        model_header = f"      {'模型':<22} {'Token 数':>12} {'成本':>12}"
         print(model_header)
-        print(
-            f"      {'-' * 22} {'-' * 12} {'-' * 12}"
-        )
+        print(f"      {'-' * 22} {'-' * 12} {'-' * 12}")
         for model, info in token_stats["by_model"].items():
-            print(
-                f"      {model:<22} {info['tokens']:>12,} "
-                f"{info['cost']:>12.4f}"
-            )
+            print(f"      {model:<22} {info['tokens']:>12,} " f"{info['cost']:>12.4f}")
 
     print("\n" + "=" * 70)
     print(

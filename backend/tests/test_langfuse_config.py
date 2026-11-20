@@ -1,4 +1,5 @@
 """LangFuse 自托管配置安全测试。"""
+
 from __future__ import annotations
 
 from pathlib import Path

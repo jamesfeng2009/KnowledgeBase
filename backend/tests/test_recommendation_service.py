@@ -6,7 +6,6 @@
 """
 
 import os
-import uuid
 
 import pytest
 import pytest_asyncio
@@ -82,21 +81,19 @@ class TestRecordBehavior:
         await svc.record_behavior(dataset["u1"].id, dataset["docs"][0].id, "view")
         await db_session.commit()
 
-        rows = (await db_session.execute(
-            select(UserBehavior)
-        )).scalars().all()
+        rows = (await db_session.execute(select(UserBehavior))).scalars().all()
         assert len(rows) == 1
         assert rows[0].weight == 1.0
         assert rows[0].action_type == "view"
 
     async def test_record_upserts_weight(self, db_session, dataset):
         svc = RecommendationService(db_session)
-        await _add_behavior(db_session, dataset["u1"].id, dataset["docs"][0].id, "view", n=3)
+        await _add_behavior(
+            db_session, dataset["u1"].id, dataset["docs"][0].id, "view", n=3
+        )
         await db_session.commit()
 
-        rows = (await db_session.execute(
-            select(UserBehavior)
-        )).scalars().all()
+        rows = (await db_session.execute(select(UserBehavior))).scalars().all()
         # 同 (user, doc, action) 应合并为一行，权重累加
         assert len(rows) == 1
         assert rows[0].weight == 3.0
@@ -105,9 +102,7 @@ class TestRecordBehavior:
         svc = RecommendationService(db_session)
         await svc.record_behavior(dataset["u1"].id, dataset["docs"][0].id, "like")
         await db_session.commit()
-        rows = (await db_session.execute(
-            select(UserBehavior)
-        )).scalars().all()
+        rows = (await db_session.execute(select(UserBehavior))).scalars().all()
         assert rows[0].weight == 3.0  # like 权重 3.0
 
     async def test_record_invalid_action_raises(self, db_session, dataset):
@@ -210,6 +205,7 @@ class TestPermissionFilter:
         await db_session.commit()
 
         svc = RecommendationService(db_session)
+
         # 权限过滤：只允许 d4
         async def only_d4(doc_list):
             return [d for d in doc_list if d.id == docs[3].id]
@@ -228,11 +224,16 @@ class TestRelatedDocuments:
         docs = dataset["docs"]
 
         class FakeGraph:
-            async def get_related_recommendations(self, doc_id, user_id, top_k=5,
-                                                  permission_filter=None, db_session=None):
+            async def get_related_recommendations(
+                self, doc_id, user_id, top_k=5, permission_filter=None, db_session=None
+            ):
                 return [
-                    {"id": str(docs[1].id), "title": doc.title, "depth": 1,
-                     "score": 1.0}
+                    {
+                        "id": str(docs[1].id),
+                        "title": doc.title,
+                        "depth": 1,
+                        "score": 1.0,
+                    }
                     for doc in [docs[1]]
                 ]
 
@@ -244,10 +245,13 @@ class TestRelatedDocuments:
 
     async def test_related_empty_when_graph_empty(self, db_session, dataset):
         class EmptyGraph:
-            async def get_related_recommendations(self, doc_id, user_id, top_k=5,
-                                                  permission_filter=None, db_session=None):
+            async def get_related_recommendations(
+                self, doc_id, user_id, top_k=5, permission_filter=None, db_session=None
+            ):
                 return []
 
         svc = RecommendationService(db_session, graph_service=EmptyGraph())
-        result = await svc.get_related_documents(dataset["docs"][0].id, dataset["u1"].id)
+        result = await svc.get_related_documents(
+            dataset["docs"][0].id, dataset["u1"].id
+        )
         assert result == []

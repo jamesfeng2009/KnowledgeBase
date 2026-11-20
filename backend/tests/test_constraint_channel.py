@@ -77,7 +77,7 @@ class _FakeSession:
         self._queue = queue
         self.added: list = []
 
-    async def __aenter__(self) -> "_FakeSession":
+    async def __aenter__(self) -> _FakeSession:
         return self
 
     async def __aexit__(self, *args: Any) -> bool:
@@ -233,15 +233,11 @@ class TestChannelFetch:
 
     @pytest.mark.asyncio
     async def test_empty_kb_short_circuit(self) -> None:
-        out = await _channel().fetch(
-            query="q", kb_ids=[], perm_filter=_allow_all
-        )
+        out = await _channel().fetch(query="q", kb_ids=[], perm_filter=_allow_all)
         assert out == []
 
     @pytest.mark.asyncio
-    async def test_enforce_injects_with_triggers(
-        self, settings_on, audit_mock
-    ) -> None:
+    async def test_enforce_injects_with_triggers(self, settings_on, audit_mock) -> None:
         """enforce — T2 命中注入，条目携带触发器证据。"""
         rule = _rule(severity="block")
         # 队列：1) T2 GIN 匹配 2) T4 kb.category 查询 3) T1 词汇表（空→T1 跳过）
@@ -251,11 +247,12 @@ class TestChannelFetch:
             _FakeResult(scalars=[]),  # T1 词汇表为空
         ]
         channel = _channel()
-        with patch(
-            "app.rag.constraint_channel.async_session_factory",
-            _FakeSessionFactory(queue),
-        ), patch.object(
-            ConstraintRouter, "extract_entities", return_value=["报销"]
+        with (
+            patch(
+                "app.rag.constraint_channel.async_session_factory",
+                _FakeSessionFactory(queue),
+            ),
+            patch.object(ConstraintRouter, "extract_entities", return_value=["报销"]),
         ):
             out = await channel.fetch(**_fetch_kwargs())
 
@@ -268,9 +265,7 @@ class TestChannelFetch:
         assert audit_mock.call_args.args[0] == ACTION_INJECTED
 
     @pytest.mark.asyncio
-    async def test_t4_or_merge(
-        self, settings_on, audit_mock
-    ) -> None:
+    async def test_t4_or_merge(self, settings_on, audit_mock) -> None:
         """T4 高风险域 — KB 全部 active 规则无条件进候选（OR 合并）。"""
         t4_rule = _rule(entities=("无关实体",))  # T2 不命中
         # 队列：1) T4 kb.category 判定（T2 实体为空直接短路，不发查询）
@@ -281,11 +276,12 @@ class TestChannelFetch:
             _FakeResult(scalars=[t4_rule]),  # T4 全量规则
         ]
         channel = _channel()
-        with patch(
-            "app.rag.constraint_channel.async_session_factory",
-            _FakeSessionFactory(queue),
-        ), patch.object(
-            ConstraintRouter, "extract_entities", return_value=[]
+        with (
+            patch(
+                "app.rag.constraint_channel.async_session_factory",
+                _FakeSessionFactory(queue),
+            ),
+            patch.object(ConstraintRouter, "extract_entities", return_value=[]),
         ):
             out = await channel.fetch(**_fetch_kwargs())
 
@@ -293,9 +289,7 @@ class TestChannelFetch:
         assert out[0]["triggers"] == ["T4:kb_domain"]
 
     @pytest.mark.asyncio
-    async def test_effective_window_expired(
-        self, settings_on, audit_mock
-    ) -> None:
+    async def test_effective_window_expired(self, settings_on, audit_mock) -> None:
         """生效窗外 → 剔除 + expired 审计。"""
         from datetime import date, timedelta
 
@@ -306,11 +300,12 @@ class TestChannelFetch:
             _FakeResult(scalars=[]),  # T1 词汇表为空
         ]
         channel = _channel()
-        with patch(
-            "app.rag.constraint_channel.async_session_factory",
-            _FakeSessionFactory(queue),
-        ), patch.object(
-            ConstraintRouter, "extract_entities", return_value=["报销"]
+        with (
+            patch(
+                "app.rag.constraint_channel.async_session_factory",
+                _FakeSessionFactory(queue),
+            ),
+            patch.object(ConstraintRouter, "extract_entities", return_value=["报销"]),
         ):
             out = await channel.fetch(**_fetch_kwargs())
 
@@ -329,11 +324,12 @@ class TestChannelFetch:
             _FakeResult(scalars=[]),  # T1 词汇表为空
         ]
         channel = _channel()
-        with patch(
-            "app.rag.constraint_channel.async_session_factory",
-            _FakeSessionFactory(queue),
-        ), patch.object(
-            ConstraintRouter, "extract_entities", return_value=["报销"]
+        with (
+            patch(
+                "app.rag.constraint_channel.async_session_factory",
+                _FakeSessionFactory(queue),
+            ),
+            patch.object(ConstraintRouter, "extract_entities", return_value=["报销"]),
         ):
             out = await channel.fetch(**{**_fetch_kwargs(), "perm_filter": None})
 
@@ -341,14 +337,14 @@ class TestChannelFetch:
         assert audit_mock.call_args.args[0] == ACTION_FILTERED_PERM
 
     @pytest.mark.asyncio
-    async def test_perm_filter_blocks_rule(
-        self, settings_on, audit_mock
-    ) -> None:
+    async def test_perm_filter_blocks_rule(self, settings_on, audit_mock) -> None:
         """权限链剔除 — 规则文档密级超限 / 非 published（Final Gate 复检）。"""
         allowed_rule, blocked_rule = _rule(), _rule()
 
         async def perm_filter(candidates: list[dict]) -> list[dict]:
-            return [c for c in candidates if c["doc_id"] == str(allowed_rule.document_id)]
+            return [
+                c for c in candidates if c["doc_id"] == str(allowed_rule.document_id)
+            ]
 
         queue = [
             _FakeResult(scalars=[allowed_rule, blocked_rule]),
@@ -356,11 +352,12 @@ class TestChannelFetch:
             _FakeResult(scalars=[]),  # T1 词汇表为空
         ]
         channel = _channel()
-        with patch(
-            "app.rag.constraint_channel.async_session_factory",
-            _FakeSessionFactory(queue),
-        ), patch.object(
-            ConstraintRouter, "extract_entities", return_value=["报销"]
+        with (
+            patch(
+                "app.rag.constraint_channel.async_session_factory",
+                _FakeSessionFactory(queue),
+            ),
+            patch.object(ConstraintRouter, "extract_entities", return_value=["报销"]),
         ):
             out = await channel.fetch(**{**_fetch_kwargs(), "perm_filter": perm_filter})
 
@@ -372,9 +369,7 @@ class TestChannelFetch:
         assert ACTION_INJECTED in actions
 
     @pytest.mark.asyncio
-    async def test_observe_mode_audit_only(
-        self, settings_observe, audit_mock
-    ) -> None:
+    async def test_observe_mode_audit_only(self, settings_observe, audit_mock) -> None:
         """observe 灰度 — 路由照常、审计 skipped_observe、不注入。"""
         rule = _rule()
         queue = [
@@ -383,11 +378,12 @@ class TestChannelFetch:
             _FakeResult(scalars=[]),  # T1 词汇表为空
         ]
         channel = _channel()
-        with patch(
-            "app.rag.constraint_channel.async_session_factory",
-            _FakeSessionFactory(queue),
-        ), patch.object(
-            ConstraintRouter, "extract_entities", return_value=["报销"]
+        with (
+            patch(
+                "app.rag.constraint_channel.async_session_factory",
+                _FakeSessionFactory(queue),
+            ),
+            patch.object(ConstraintRouter, "extract_entities", return_value=["报销"]),
         ):
             out = await channel.fetch(**_fetch_kwargs())
 
@@ -395,12 +391,11 @@ class TestChannelFetch:
         assert audit_mock.call_args.args[0] == ACTION_SKIPPED_OBSERVE
 
     @pytest.mark.asyncio
-    async def test_block_first_ordering(
-        self, settings_on, audit_mock
-    ) -> None:
+    async def test_block_first_ordering(self, settings_on, audit_mock) -> None:
         """输出排序 — block 先行（供预算分槽）。"""
         warn_rule = _rule(severity="warn")
         block_rule = _rule(severity="block")
+
         async def perm_filter(c: list[dict]) -> list[dict]:
             return c
 
@@ -410,11 +405,12 @@ class TestChannelFetch:
             _FakeResult(scalars=[]),  # T1 词汇表为空
         ]
         channel = _channel()
-        with patch(
-            "app.rag.constraint_channel.async_session_factory",
-            _FakeSessionFactory(queue),
-        ), patch.object(
-            ConstraintRouter, "extract_entities", return_value=["报销"]
+        with (
+            patch(
+                "app.rag.constraint_channel.async_session_factory",
+                _FakeSessionFactory(queue),
+            ),
+            patch.object(ConstraintRouter, "extract_entities", return_value=["报销"]),
         ):
             out = await channel.fetch(**{**_fetch_kwargs(), "perm_filter": perm_filter})
 
@@ -476,9 +472,12 @@ class TestBuildConstraintItems:
 
     def test_empty_and_blank(self) -> None:
         assert ContextItemBuilder.build_constraint_items(None) == []
-        assert ContextItemBuilder.build_constraint_items(
-            [{"rule_text": "", "severity": "block"}]
-        ) == []
+        assert (
+            ContextItemBuilder.build_constraint_items(
+                [{"rule_text": "", "severity": "block"}]
+            )
+            == []
+        )
 
 
 # ======================================================================
@@ -540,7 +539,9 @@ class TestGeneratorRedline:
         assert "【红线·必须遵守】" in prompt_constrained
         # 约束版本的知识库来源条目数 ≤ 无约束版本（预算被红线挤占）
         kb_plain = prompt_plain.count("[1]") + prompt_plain.count("[2]")
-        kb_constrained = prompt_constrained.count("[1]") + prompt_constrained.count("[2]")
+        kb_constrained = prompt_constrained.count("[1]") + prompt_constrained.count(
+            "[2]"
+        )
         assert kb_constrained <= kb_plain
 
 
@@ -622,9 +623,7 @@ class TestDomainClassifierParse:
         assert conf == 0.8
 
     def test_confidence_clamped(self) -> None:
-        _, conf = DomainClassifier._parse(
-            '{"domains": [], "confidence": 1.7}', []
-        )
+        _, conf = DomainClassifier._parse('{"domains": [], "confidence": 1.7}', [])
         assert conf == 1.0
 
     def test_invalid_json_returns_empty(self) -> None:
@@ -642,9 +641,7 @@ class TestDomainClassifierClassify:
 
     @pytest.mark.asyncio
     async def test_above_floor_returns_domains(self) -> None:
-        classifier, gen = _llm_returning(
-            '{"domains": ["finance"], "confidence": 0.9}'
-        )
+        classifier, gen = _llm_returning('{"domains": ["finance"], "confidence": 0.9}')
         with gen:
             domains, conf = await classifier.classify(
                 "报销单怎么填", ["finance", "legal"]
@@ -656,12 +653,8 @@ class TestDomainClassifierClassify:
     async def test_below_floor_no_conclusion(self, monkeypatch) -> None:
         """conf < FLOOR → 本路不出结论（[]），由 T4 兜底。"""
         settings = get_settings()
-        monkeypatch.setattr(
-            settings, "CONSTRAINT_DOMAIN_CONFIDENCE_FLOOR", 0.8
-        )
-        classifier, gen = _llm_returning(
-            '{"domains": ["finance"], "confidence": 0.5}'
-        )
+        monkeypatch.setattr(settings, "CONSTRAINT_DOMAIN_CONFIDENCE_FLOOR", 0.8)
+        classifier, gen = _llm_returning('{"domains": ["finance"], "confidence": 0.5}')
         with gen:
             domains, _ = await classifier.classify("帮我写个周报", ["finance"])
         assert domains == []
@@ -681,9 +674,7 @@ class TestDomainClassifierClassify:
     async def test_empty_vocabulary_zero_llm(self) -> None:
         """词汇表为空（无域标签规则）→ 零 LLM 成本直接返回。"""
         classifier = DomainClassifier()
-        with patch.object(
-            classifier, "_generate", new=AsyncMock()
-        ) as gen:
+        with patch.object(classifier, "_generate", new=AsyncMock()) as gen:
             domains, _ = await classifier.classify("报销", [])
         assert domains == []
         gen.assert_not_called()
@@ -691,9 +682,7 @@ class TestDomainClassifierClassify:
     @pytest.mark.asyncio
     async def test_blank_query_zero_llm(self) -> None:
         classifier = DomainClassifier()
-        with patch.object(
-            classifier, "_generate", new=AsyncMock()
-        ) as gen:
+        with patch.object(classifier, "_generate", new=AsyncMock()) as gen:
             domains, _ = await classifier.classify("   ", ["finance"])
         assert domains == []
         gen.assert_not_called()
@@ -751,14 +740,18 @@ class TestRouteT1Integration:
             _FakeResult(scalars=[domain_rule]),  # T1 域匹配
         ]
         channel = ConstraintChannel(cache=None)
-        with patch(
-            "app.rag.constraint_channel.async_session_factory",
-            _FakeSessionFactory(queue),
-        ), patch.object(
-            ConstraintRouter, "extract_entities", return_value=[]
-        ), patch.object(
-            DomainClassifier, "classify", new=AsyncMock(return_value=(["finance"], 0.9))
-        ) as classify_mock:
+        with (
+            patch(
+                "app.rag.constraint_channel.async_session_factory",
+                _FakeSessionFactory(queue),
+            ),
+            patch.object(ConstraintRouter, "extract_entities", return_value=[]),
+            patch.object(
+                DomainClassifier,
+                "classify",
+                new=AsyncMock(return_value=(["finance"], 0.9)),
+            ) as classify_mock,
+        ):
             out = await channel.fetch(**_fetch_kwargs())
 
         classify_mock.assert_awaited_once()
@@ -776,13 +769,17 @@ class TestRouteT1Integration:
             _FakeResult(scalars=[rule]),  # T1 域命中（同一条规则）
         ]
         channel = ConstraintChannel(cache=None)
-        with patch(
-            "app.rag.constraint_channel.async_session_factory",
-            _FakeSessionFactory(queue),
-        ), patch.object(
-            ConstraintRouter, "extract_entities", return_value=["报销"]
-        ), patch.object(
-            DomainClassifier, "classify", new=AsyncMock(return_value=(["finance"], 0.9))
+        with (
+            patch(
+                "app.rag.constraint_channel.async_session_factory",
+                _FakeSessionFactory(queue),
+            ),
+            patch.object(ConstraintRouter, "extract_entities", return_value=["报销"]),
+            patch.object(
+                DomainClassifier,
+                "classify",
+                new=AsyncMock(return_value=(["finance"], 0.9)),
+            ),
         ):
             out = await channel.fetch(**_fetch_kwargs())
 
@@ -803,15 +800,17 @@ class TestRouteT1Integration:
             _FakeResult(scalars=[]),  # T1 域匹配（legal 误判，finance 规则不命中）
         ]
         channel = ConstraintChannel(cache=None)
-        with patch(
-            "app.rag.constraint_channel.async_session_factory",
-            _FakeSessionFactory(queue),
-        ), patch.object(
-            ConstraintRouter, "extract_entities", return_value=[]
-        ), patch.object(
-            DomainClassifier,
-            "classify",
-            new=AsyncMock(return_value=(["legal"], 0.9)),
+        with (
+            patch(
+                "app.rag.constraint_channel.async_session_factory",
+                _FakeSessionFactory(queue),
+            ),
+            patch.object(ConstraintRouter, "extract_entities", return_value=[]),
+            patch.object(
+                DomainClassifier,
+                "classify",
+                new=AsyncMock(return_value=(["legal"], 0.9)),
+            ),
         ):
             out = await channel.fetch(**_fetch_kwargs())
 
@@ -830,15 +829,17 @@ class TestRouteT1Integration:
             _FakeResult(scalars=[t4_rule]),  # T4 全量规则
         ]
         channel = ConstraintChannel(cache=None)
-        with patch(
-            "app.rag.constraint_channel.async_session_factory",
-            _FakeSessionFactory(queue),
-        ), patch.object(
-            ConstraintRouter, "extract_entities", return_value=[]
-        ), patch.object(
-            DomainClassifier,
-            "classify",
-            new=AsyncMock(side_effect=RuntimeError("llm timeout")),
+        with (
+            patch(
+                "app.rag.constraint_channel.async_session_factory",
+                _FakeSessionFactory(queue),
+            ),
+            patch.object(ConstraintRouter, "extract_entities", return_value=[]),
+            patch.object(
+                DomainClassifier,
+                "classify",
+                new=AsyncMock(side_effect=RuntimeError("llm timeout")),
+            ),
         ):
             out = await channel.fetch(**_fetch_kwargs())
 
@@ -858,14 +859,16 @@ class TestRouteT1Integration:
             _FakeResult(scalars=["finance"]),  # T1 词汇表
         ]
         channel = ConstraintChannel(cache=None)
-        with patch(
-            "app.rag.constraint_channel.async_session_factory",
-            _FakeSessionFactory(queue),
-        ), patch.object(
-            ConstraintRouter, "extract_entities", return_value=[]
-        ), patch.object(
-            DomainClassifier, "classify", new=AsyncMock(return_value=([], 0.5))
-        ) as classify_mock:
+        with (
+            patch(
+                "app.rag.constraint_channel.async_session_factory",
+                _FakeSessionFactory(queue),
+            ),
+            patch.object(ConstraintRouter, "extract_entities", return_value=[]),
+            patch.object(
+                DomainClassifier, "classify", new=AsyncMock(return_value=([], 0.5))
+            ) as classify_mock,
+        ):
             out = await channel.fetch(**_fetch_kwargs())
 
         classify_mock.assert_awaited_once()
@@ -952,9 +955,7 @@ class TestRouterT3:
 
         assert _mandatory_keywords(None) == []
         assert _mandatory_keywords(_intent_result("rag_search")) == []
-        intent = _intent_result(
-            "rag_search", mandatory_keywords=["招标", " ", None]
-        )
+        intent = _intent_result("rag_search", mandatory_keywords=["招标", " ", None])
         assert _mandatory_keywords(intent) == ["招标"]
 
 
@@ -972,11 +973,12 @@ class TestRouteT3Integration:
             _FakeResult(scalars=[]),  # T1 词汇表为空
         ]
         channel = ConstraintChannel(cache=None)
-        with patch(
-            "app.rag.constraint_channel.async_session_factory",
-            _FakeSessionFactory(queue),
-        ), patch.object(
-            ConstraintRouter, "extract_entities", return_value=[]
+        with (
+            patch(
+                "app.rag.constraint_channel.async_session_factory",
+                _FakeSessionFactory(queue),
+            ),
+            patch.object(ConstraintRouter, "extract_entities", return_value=[]),
         ):
             out = await channel.fetch(
                 **_fetch_kwargs(), intent=_intent_result("rag_search")
@@ -988,20 +990,19 @@ class TestRouteT3Integration:
     @pytest.mark.asyncio
     async def test_t3_keyword_hit_injects(self, settings_on) -> None:
         """mandatory_keywords 命中条款文本 → T3:keyword 注入。"""
-        t3_rule = _rule(
-            text="公开招标项目一律留档备查", entities=(), intents=()
-        )
+        t3_rule = _rule(text="公开招标项目一律留档备查", entities=(), intents=())
         queue = [
             _FakeResult(scalars=[t3_rule]),  # T3 关键词命中
             _FakeResult(all_rows=[]),
             _FakeResult(scalars=[]),  # T1 词汇表为空
         ]
         channel = ConstraintChannel(cache=None)
-        with patch(
-            "app.rag.constraint_channel.async_session_factory",
-            _FakeSessionFactory(queue),
-        ), patch.object(
-            ConstraintRouter, "extract_entities", return_value=[]
+        with (
+            patch(
+                "app.rag.constraint_channel.async_session_factory",
+                _FakeSessionFactory(queue),
+            ),
+            patch.object(ConstraintRouter, "extract_entities", return_value=[]),
         ):
             out = await channel.fetch(
                 **_fetch_kwargs(),
@@ -1023,11 +1024,12 @@ class TestRouteT3Integration:
             _FakeResult(scalars=[]),
         ]
         channel = ConstraintChannel(cache=None)
-        with patch(
-            "app.rag.constraint_channel.async_session_factory",
-            _FakeSessionFactory(queue),
-        ), patch.object(
-            ConstraintRouter, "extract_entities", return_value=["报销"]
+        with (
+            patch(
+                "app.rag.constraint_channel.async_session_factory",
+                _FakeSessionFactory(queue),
+            ),
+            patch.object(ConstraintRouter, "extract_entities", return_value=["报销"]),
         ):
             out = await channel.fetch(
                 **_fetch_kwargs(), intent=_intent_result("rag_search")
@@ -1047,11 +1049,12 @@ class TestRouteT3Integration:
             _FakeResult(scalars=[]),
         ]
         channel = ConstraintChannel(cache=None)
-        with patch(
-            "app.rag.constraint_channel.async_session_factory",
-            _FakeSessionFactory(queue),
-        ), patch.object(
-            ConstraintRouter, "extract_entities", return_value=["报销"]
+        with (
+            patch(
+                "app.rag.constraint_channel.async_session_factory",
+                _FakeSessionFactory(queue),
+            ),
+            patch.object(ConstraintRouter, "extract_entities", return_value=["报销"]),
         ):
             out = await channel.fetch(**_fetch_kwargs())
 

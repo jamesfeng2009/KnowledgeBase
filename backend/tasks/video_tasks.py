@@ -25,9 +25,9 @@ import os
 import uuid
 from typing import Any
 
-from celery_app import celery_app
 from app.utils.logger import get_logger
 from app.utils.retry import make_celery_retry_kwargs
+from celery_app import celery_app
 
 log = get_logger(__name__)
 
@@ -58,7 +58,6 @@ def process_video_multipart(doc_id: str) -> None:
     _update_parse_progress(doc_id, "queued", message="GB 视频已入队，准备处理")
 
     try:
-        from celery_app import celery_app
         from celery import chord, group
     except ImportError:
         log.warning("video_tasks.celery_not_installed")
@@ -78,9 +77,7 @@ def process_video_multipart(doc_id: str) -> None:
                 asr_multipart_task.s(doc_id, wav_path),
                 keyframe_task.s(doc_id),
             )
-        )(
-            finalize_video_task.s(doc_id, wav_path)
-        )
+        )(finalize_video_task.s(doc_id, wav_path))
         log.info("video_multipart.chord_dispatched", doc_id=doc_id)
     except Exception:
         log.exception("video_multipart.chord_failed", doc_id=doc_id)
@@ -100,21 +97,18 @@ def _extract_audio_stage(doc_id: str) -> str | None:
     from tasks.document_tasks import _update_parse_progress
 
     _update_parse_progress(
-        doc_id, "parsing",
+        doc_id,
+        "parsing",
         message="正在提取音轨...",
         sub_stage="extract_audio",
     )
 
     try:
-        import tempfile
-
-        from app.config import get_settings
-        from app.utils.minio_client import download_file_to_path
-
-        settings = get_settings()
-
         # 查询文档获取 file_path
         import asyncio
+        import tempfile
+
+        from app.utils.minio_client import download_file_to_path
 
         async def _get_doc() -> Any:
             from app.database import task_db_session
@@ -122,7 +116,10 @@ def _extract_audio_stage(doc_id: str) -> str | None:
 
             async with task_db_session() as db:
                 from app.core.tenant_context import apply_tenant, resolve_task_tenant
-                _tid = await resolve_task_tenant(db, doc_id=doc_id, reason="video_tasks._extract_audio_stage")
+
+                _tid = await resolve_task_tenant(
+                    db, doc_id=doc_id, reason="video_tasks._extract_audio_stage"
+                )
                 if _tid:
                     await apply_tenant(db, _tid)
                 # 按主键查找文档，无需租户过滤（仅读取 file_path）
@@ -170,10 +167,12 @@ def _extract_audio_stage(doc_id: str) -> str | None:
             return None
 
         _update_parse_progress(
-            doc_id, "parsing",
+            doc_id,
+            "parsing",
             message="音轨提取完成，准备 ASR 转写",
             sub_stage="extract_audio_done",
-            sub_current=1, sub_total=1,
+            sub_current=1,
+            sub_total=1,
         )
         return wav_path
 
@@ -208,10 +207,12 @@ def asr_multipart_task(self, doc_id: str, wav_path: str) -> dict[str, Any]:
     from tasks.document_tasks import _update_parse_progress
 
     _update_parse_progress(
-        doc_id, "parsing",
+        doc_id,
+        "parsing",
         message="ASR 分段转写中...",
         sub_stage="asr_multipart",
-        sub_current=0, sub_total=1,
+        sub_current=0,
+        sub_total=1,
     )
 
     try:
@@ -222,10 +223,12 @@ def asr_multipart_task(self, doc_id: str, wav_path: str) -> dict[str, Any]:
         # 进度回调
         def _progress(seg_idx: int, total: int, segments_count: int) -> None:
             _update_parse_progress(
-                doc_id, "parsing",
+                doc_id,
+                "parsing",
                 message=f"ASR 转写 {seg_idx}/{total} 段",
                 sub_stage=f"asr_segment_{seg_idx}",
-                sub_current=seg_idx, sub_total=total,
+                sub_current=seg_idx,
+                sub_total=total,
             )
 
         # 调用分段 ASR
@@ -262,10 +265,12 @@ def asr_multipart_task(self, doc_id: str, wav_path: str) -> dict[str, Any]:
             log.debug("video_multipart.asr_redis_failed", doc_id=doc_id)
 
         _update_parse_progress(
-            doc_id, "parsing",
+            doc_id,
+            "parsing",
             message=f"ASR 转写完成，共 {len(segments)} 段",
             sub_stage="asr_done",
-            sub_current=len(segments), sub_total=len(segments),
+            sub_current=len(segments),
+            sub_total=len(segments),
         )
 
         return {"doc_id": doc_id, "segments": seg_list, "text": text}
@@ -280,7 +285,8 @@ def asr_multipart_task(self, doc_id: str, wav_path: str) -> dict[str, Any]:
         ):
             raise self.retry(exc=exc)
         _update_parse_progress(
-            doc_id, "parsing",
+            doc_id,
+            "parsing",
             message=f"ASR 转写失败: {exc}",
             sub_stage="asr_failed",
         )
@@ -308,21 +314,23 @@ def keyframe_task(doc_id: str) -> dict[str, Any]:
     from tasks.document_tasks import _update_parse_progress
 
     _update_parse_progress(
-        doc_id, "parsing",
+        doc_id,
+        "parsing",
         message="关键帧提取中...",
         sub_stage="keyframe_extract",
-        sub_current=0, sub_total=1,
+        sub_current=0,
+        sub_total=1,
     )
 
     try:
         # 复用 document_tasks._extract_keyframe_descriptions
-        from tasks.document_tasks import _extract_keyframe_descriptions
-
         import asyncio
+
+        from sqlalchemy import select  # noqa: F401  # 保留供其他分支使用
 
         # 获取视频文件路径
         from app.models.knowledge import Document  # noqa: F401  # 保留供类型推断
-        from sqlalchemy import select  # noqa: F401  # 保留供其他分支使用
+        from tasks.document_tasks import _extract_keyframe_descriptions
 
         async def _get_doc() -> Any:
             from app.database import task_db_session
@@ -330,7 +338,10 @@ def keyframe_task(doc_id: str) -> dict[str, Any]:
 
             async with task_db_session() as db:
                 from app.core.tenant_context import apply_tenant, resolve_task_tenant
-                _tid = await resolve_task_tenant(db, doc_id=doc_id, reason="video_tasks.keyframe_task")
+
+                _tid = await resolve_task_tenant(
+                    db, doc_id=doc_id, reason="video_tasks.keyframe_task"
+                )
                 if _tid:
                     await apply_tenant(db, _tid)
                 # 按主键查找文档，无需租户过滤（仅读取 file_path）
@@ -359,9 +370,7 @@ def keyframe_task(doc_id: str) -> dict[str, Any]:
             video_path = doc.file_path.replace("local://", "")
 
         try:
-            descriptions = asyncio.run(
-                _extract_keyframe_descriptions(video_path)
-            )
+            descriptions = asyncio.run(_extract_keyframe_descriptions(video_path))
         finally:
             # 清理临时视频文件
             if doc.file_path.startswith("minio://"):
@@ -371,10 +380,12 @@ def keyframe_task(doc_id: str) -> dict[str, Any]:
                     pass
 
         _update_parse_progress(
-            doc_id, "parsing",
+            doc_id,
+            "parsing",
             message=f"关键帧提取完成，共 {len(descriptions)} 帧",
             sub_stage="keyframe_done",
-            sub_current=len(descriptions), sub_total=len(descriptions),
+            sub_current=len(descriptions),
+            sub_total=len(descriptions),
         )
 
         return {"doc_id": doc_id, "keyframes": descriptions}
@@ -382,7 +393,8 @@ def keyframe_task(doc_id: str) -> dict[str, Any]:
     except Exception as exc:
         log.exception("video_multipart.keyframe_failed", doc_id=doc_id)
         _update_parse_progress(
-            doc_id, "parsing",
+            doc_id,
+            "parsing",
             message=f"关键帧提取失败: {exc}",
             sub_stage="keyframe_failed",
         )
@@ -426,7 +438,8 @@ def finalize_video_task(
     from tasks.document_tasks import _update_parse_progress
 
     _update_parse_progress(
-        doc_id, "chunking",
+        doc_id,
+        "chunking",
         message="合并 ASR 结果，开始分块...",
         sub_stage="finalize_start",
     )
@@ -467,7 +480,8 @@ def finalize_video_task(
         if not segments:
             log.warning("video_multipart.finalize_no_segments", doc_id=doc_id)
             _update_parse_progress(
-                doc_id, "failed",
+                doc_id,
+                "failed",
                 message="ASR 无转写结果，无法处理",
             )
             return
@@ -479,7 +493,10 @@ def finalize_video_task(
 
             async with task_db_session() as db:
                 from app.core.tenant_context import apply_tenant, resolve_task_tenant
-                _tid = await resolve_task_tenant(db, doc_id=doc_id, reason="video_tasks.finalize_video_task")
+
+                _tid = await resolve_task_tenant(
+                    db, doc_id=doc_id, reason="video_tasks.finalize_video_task"
+                )
                 if _tid:
                     await apply_tenant(db, _tid)
                 # 先无租户过滤地查找文档，获取其 tenant_id
@@ -495,8 +512,9 @@ def finalize_video_task(
         asyncio.run(_update_doc_content())
 
         # 3. 分块（复用 document_tasks._chunk_video_document）
-        from app.models.knowledge import Document  # noqa: F401  # 保留供类型推断
         from sqlalchemy import select  # noqa: F401  # 保留供其他分支使用
+
+        from app.models.knowledge import Document  # noqa: F401  # 保留供类型推断
 
         async def _get_doc() -> Any:
             from app.database import task_db_session
@@ -504,7 +522,10 @@ def finalize_video_task(
 
             async with task_db_session() as db:
                 from app.core.tenant_context import apply_tenant, resolve_task_tenant
-                _tid = await resolve_task_tenant(db, doc_id=doc_id, reason="video_tasks.finalize_video_task")
+
+                _tid = await resolve_task_tenant(
+                    db, doc_id=doc_id, reason="video_tasks.finalize_video_task"
+                )
                 if _tid:
                     await apply_tenant(db, _tid)
                 # 按主键查找文档，无需租户过滤（仅读取元数据）
@@ -524,7 +545,8 @@ def finalize_video_task(
         from tasks.document_tasks import _chunk_document
 
         _update_parse_progress(
-            doc_id, "chunking",
+            doc_id,
+            "chunking",
             message="视频语义分块中...",
             sub_stage="chunking",
         )
@@ -539,7 +561,8 @@ def finalize_video_task(
         # 4. 向量化 + 索引（对齐 document_tasks 真实函数签名：
         #    _generate_embeddings(chunks) + _build_indexes(doc_id, chunk_objects, chunks, embeddings)）
         _update_parse_progress(
-            doc_id, "embedding",
+            doc_id,
+            "embedding",
             message=f"向量化 {len(chunk_objects)} 个分块...",
             sub_stage="embedding",
         )
@@ -552,7 +575,10 @@ def finalize_video_task(
             # 传入文档所属 kb_id（对齐 document_tasks 正常管线的传参方式），
             # 缺失时索引无 kb_id，非 admin 用户按知识库过滤将检索不到该视频
             await _build_indexes(
-                doc_id, chunk_objects, chunks, embeddings,
+                doc_id,
+                chunk_objects,
+                chunks,
+                embeddings,
                 kb_id=str(doc.kb_id) if doc.kb_id else None,
             )
 
@@ -560,7 +586,8 @@ def finalize_video_task(
 
         # 5. 更新文档状态
         _update_parse_progress(
-            doc_id, "publishing",
+            doc_id,
+            "publishing",
             message="发布文档...",
             sub_stage="publishing",
         )
@@ -571,7 +598,10 @@ def finalize_video_task(
 
             async with task_db_session() as db:
                 from app.core.tenant_context import apply_tenant, resolve_task_tenant
-                _tid = await resolve_task_tenant(db, doc_id=doc_id, reason="video_tasks.finalize_video_task")
+
+                _tid = await resolve_task_tenant(
+                    db, doc_id=doc_id, reason="video_tasks.finalize_video_task"
+                )
                 if _tid:
                     await apply_tenant(db, _tid)
                 # 先无租户过滤地查找文档，获取其 tenant_id
@@ -606,7 +636,8 @@ def finalize_video_task(
             pass
 
         _update_parse_progress(
-            doc_id, "done",
+            doc_id,
+            "done",
             message=f"GB 视频处理完成，共 {len(chunk_objects)} 个分块",
         )
 
@@ -627,7 +658,8 @@ def finalize_video_task(
         ):
             raise self.retry(exc=exc)
         _update_parse_progress(
-            doc_id, "failed",
+            doc_id,
+            "failed",
             message=f"合并处理失败: {exc}",
         )
 

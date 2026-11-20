@@ -5,6 +5,7 @@
     2. _build_vector_index：写新向量前清理旧向量（顺序保证 / 删除失败不阻塞）；
     3. update_document：内容变更即置 parse_status=pending（补偿网接管的前提）。
 """
+
 from __future__ import annotations
 
 import uuid
@@ -12,10 +13,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
 # ==================================================================
 # 1. clear_event_mark — webhook 幂等标记清除
 # ==================================================================
+
 
 class TestClearEventMark:
     """webhook_idempotency.clear_event_mark。"""
@@ -73,6 +74,7 @@ class TestClearEventMark:
 # 2. _build_vector_index — 写新向量前清理旧向量
 # ==================================================================
 
+
 class TestBuildVectorIndexStaleDelete:
     """document_tasks._build_vector_index P1 修复：任务内写前清理。"""
 
@@ -88,9 +90,7 @@ class TestBuildVectorIndexStaleDelete:
         mock_chunk = MagicMock()
         mock_embedding = [0.1] * 8
 
-        with patch(
-            "app.rag.vector_store.get_vector_store", return_value=mock_store
-        ):
+        with patch("app.rag.vector_store.get_vector_store", return_value=mock_store):
             count = await _build_vector_index("doc-001", [mock_chunk], [mock_embedding])
 
         assert count == 3
@@ -111,9 +111,7 @@ class TestBuildVectorIndexStaleDelete:
 
         mock_chunk = MagicMock()
 
-        with patch(
-            "app.rag.vector_store.get_vector_store", return_value=mock_store
-        ):
+        with patch("app.rag.vector_store.get_vector_store", return_value=mock_store):
             count = await _build_vector_index("doc-002", [mock_chunk], [[0.2] * 8])
 
         assert count == 2
@@ -133,6 +131,7 @@ class TestBuildVectorIndexStaleDelete:
 # 3. update_document — 内容变更即置 parse_status=pending
 # ==================================================================
 
+
 class TestUpdateDocumentMarksPending:
     """knowledge_service.update_document P1 修复：同事务置 pending。"""
 
@@ -151,7 +150,9 @@ class TestUpdateDocumentMarksPending:
         mock_doc.classification = "internal"
         service.doc_repo.get_by_id = AsyncMock(return_value=mock_doc)
         service.permission.check_write = AsyncMock(return_value=True)
-        service.permission.allowed_classifications = MagicMock(return_value=["internal"])
+        service.permission.allowed_classifications = MagicMock(
+            return_value=["internal"]
+        )
 
         updated = MagicMock()
         updated.kb_id = mock_doc.kb_id
@@ -183,7 +184,9 @@ class TestUpdateDocumentMarksPending:
         mock_doc.classification = "internal"
         service.doc_repo.get_by_id = AsyncMock(return_value=mock_doc)
         service.permission.check_write = AsyncMock(return_value=True)
-        service.permission.allowed_classifications = MagicMock(return_value=["internal"])
+        service.permission.allowed_classifications = MagicMock(
+            return_value=["internal"]
+        )
 
         service.doc_repo.update = AsyncMock(return_value=mock_doc)
         service._invalidate_cache_for_doc = AsyncMock()

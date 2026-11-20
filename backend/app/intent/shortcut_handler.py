@@ -52,7 +52,9 @@ _CLASSIFICATION_WEIGHT: dict[str, int] = {
 }
 
 # 拒识通用话术
-_UNSUPPORTED_MESSAGE = "该问题超出企业知识库服务范围，无法在知识库中作答，请联系对应业务服务台。"
+_UNSUPPORTED_MESSAGE = (
+    "该问题超出企业知识库服务范围，无法在知识库中作答，请联系对应业务服务台。"
+)
 
 # 法律咨询专属拒答话术 — 引导到法务部/12348，比通用话术更精准
 _LEGAL_UNSUPPORTED_MESSAGE = (
@@ -120,8 +122,14 @@ class ShortcutHandler:
         try:
             if intent.intent == IntentType.RAG_SEARCH:
                 async for event in self._handle_search(
-                    query, user, db, tenant_id, kb_ids, memory_context,
-                    permission_filter, intent.constraints,
+                    query,
+                    user,
+                    db,
+                    tenant_id,
+                    kb_ids,
+                    memory_context,
+                    permission_filter,
+                    intent.constraints,
                     allowed_classifications,
                 ):
                     yield event
@@ -149,11 +157,16 @@ class ShortcutHandler:
                     yield event
             else:
                 yield SSEEvent(
-                    data={"type": "error", "message": f"不支持的快捷意图: {intent.intent.value}"},
+                    data={
+                        "type": "error",
+                        "message": f"不支持的快捷意图: {intent.intent.value}",
+                    },
                     event=SSEEventType.ERROR,
                 )
         except Exception as exc:
-            log.error("shortcut_handler.error", error=str(exc), intent=intent.intent.value)
+            log.error(
+                "shortcut_handler.error", error=str(exc), intent=intent.intent.value
+            )
             yield SSEEvent(
                 data={"type": "error", "message": f"快捷路径执行失败: {exc}"},
                 event=SSEEventType.ERROR,
@@ -188,7 +201,9 @@ class ShortcutHandler:
         # P0 密级下推：召回层注入用户可见密级白名单（与 Agent Loop 路径
         # 同一约束）；None = 不下推（Final Gate DB 复检兜底）
         candidates = await retriever.search(
-            query, kb_ids=kb_ids, top_k=_SHORTCUT_TOP_K,
+            query,
+            kb_ids=kb_ids,
+            top_k=_SHORTCUT_TOP_K,
             classifications=allowed_classifications,
         )
 
@@ -329,7 +344,10 @@ class ShortcutHandler:
         memory_context: str,
     ) -> AsyncIterator[SSEEvent | str]:
         """快捷列表路径 — 查询数据库直接返回（零 LLM）。"""
-        from app.repositories.knowledge_repository import DocumentRepository, KnowledgeBaseRepository
+        from app.repositories.knowledge_repository import (
+            DocumentRepository,
+            KnowledgeBaseRepository,
+        )
 
         kb_repo = KnowledgeBaseRepository(db, tenant_id=tenant_id)
         doc_repo = DocumentRepository(db, tenant_id=tenant_id)
@@ -363,7 +381,8 @@ class ShortcutHandler:
     # ------------------------------------------------------------------
 
     async def _handle_unsupported(
-        self, parameters: dict[str, Any] | None = None,
+        self,
+        parameters: dict[str, Any] | None = None,
     ) -> AsyncIterator[SSEEvent | str]:
         """拒识出口 — 用户问题超出知识库服务范围，直接拒绝。
 
@@ -413,7 +432,11 @@ class ShortcutHandler:
             hint = _SLOT_HINTS.get(slot)
             if hint:
                 messages.append(hint)
-        message = "；".join(messages) if messages else "您的问题信息不足，请补充检索主题或范围。"
+        message = (
+            "；".join(messages)
+            if messages
+            else "您的问题信息不足，请补充检索主题或范围。"
+        )
 
         yield SSEEvent(
             data={
@@ -454,10 +477,7 @@ class ShortcutHandler:
         kb_ids = hard.get("kb_ids")
         if kb_ids:
             kb_set = {str(k) for k in kb_ids}
-            result = [
-                c for c in result
-                if c.get("kb_id") and str(c["kb_id"]) in kb_set
-            ]
+            result = [c for c in result if c.get("kb_id") and str(c["kb_id"]) in kb_set]
             if not result:
                 return []
 
@@ -491,11 +511,9 @@ class ShortcutHandler:
         if mandatory:
             kws = [str(k).lower() for k in mandatory if k]
             result = [
-                c for c in result
-                if all(
-                    kw in (c.get("content") or "").lower()
-                    for kw in kws
-                )
+                c
+                for c in result
+                if all(kw in (c.get("content") or "").lower() for kw in kws)
             ]
         return result
 

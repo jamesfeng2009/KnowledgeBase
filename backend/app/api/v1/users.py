@@ -70,9 +70,7 @@ async def list_users(
         stmt = stmt.where(User.tenant_id == user.tenant_id)
     if keyword:
         pattern = f"%{keyword}%"
-        stmt = stmt.where(
-            (User.name.ilike(pattern)) | (User.email.ilike(pattern))
-        )
+        stmt = stmt.where((User.name.ilike(pattern)) | (User.email.ilike(pattern)))
     if role:
         stmt = stmt.where(User.role == role)
     if dept_id:

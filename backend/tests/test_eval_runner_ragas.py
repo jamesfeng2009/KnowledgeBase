@@ -20,6 +20,7 @@ from app.eval.runner import (
 @dataclass
 class MockEvalCase:
     """模拟评测用例。"""
+
     query: str
     expected_doc_ids: list[str]
     expected_answer: str | None = None
@@ -33,12 +34,14 @@ class TestEvalRunnerRagasIntegration:
     def mock_ragas(self):
         """模拟 RagasMetrics。"""
         ragas = MagicMock()
-        ragas.evaluate = AsyncMock(return_value={
-            "faithfulness": 0.85,
-            "answer_relevancy": 0.90,
-            "context_precision": 0.80,
-            "context_recall": 0.75,
-        })
+        ragas.evaluate = AsyncMock(
+            return_value={
+                "faithfulness": 0.85,
+                "answer_relevancy": 0.90,
+                "context_precision": 0.80,
+                "context_recall": 0.75,
+            }
+        )
         return ragas
 
     @pytest.fixture
@@ -118,15 +121,15 @@ class TestEvalRunnerRagasIntegration:
         )
         assert runner.ragas_metrics is not None
 
-        dataset = [MockEvalCase(
-            query="报销流程是什么",
-            expected_doc_ids=["doc_001"],
-            expected_answer="报销流程包括填写报销单和审批。",
-        )]
+        dataset = [
+            MockEvalCase(
+                query="报销流程是什么",
+                expected_doc_ids=["doc_001"],
+                expected_answer="报销流程包括填写报销单和审批。",
+            )
+        ]
 
-        result = asyncio.run(
-            runner.run(dataset, with_generation=True)
-        )
+        result = asyncio.run(runner.run(dataset, with_generation=True))
 
         # 应有 RAGAS 指标
         assert len(result.avg_ragas) == 4
@@ -148,14 +151,14 @@ class TestEvalRunnerRagasIntegration:
         )
         assert runner.ragas_metrics is None
 
-        dataset = [MockEvalCase(
-            query="test",
-            expected_doc_ids=["doc_001"],
-        )]
+        dataset = [
+            MockEvalCase(
+                query="test",
+                expected_doc_ids=["doc_001"],
+            )
+        ]
 
-        result = asyncio.run(
-            runner.run(dataset, with_generation=True)
-        )
+        result = asyncio.run(runner.run(dataset, with_generation=True))
 
         # avg_ragas 应为空字典
         assert result.avg_ragas == {}
@@ -174,14 +177,14 @@ class TestEvalRunnerRagasIntegration:
             ragas_metrics=ragas,
         )
 
-        dataset = [MockEvalCase(
-            query="test",
-            expected_doc_ids=["doc_001"],
-        )]
+        dataset = [
+            MockEvalCase(
+                query="test",
+                expected_doc_ids=["doc_001"],
+            )
+        ]
 
-        result = asyncio.run(
-            runner.run(dataset, with_generation=True)
-        )
+        result = asyncio.run(runner.run(dataset, with_generation=True))
 
         # 评测不应崩溃
         assert result.total == 1
@@ -196,14 +199,14 @@ class TestEvalRunnerRagasIntegration:
             ragas_metrics=mock_ragas,
         )
 
-        dataset = [MockEvalCase(
-            query="test",
-            expected_doc_ids=["doc_001"],
-        )]
+        dataset = [
+            MockEvalCase(
+                query="test",
+                expected_doc_ids=["doc_001"],
+            )
+        ]
 
-        result = asyncio.run(
-            runner.run(dataset, with_generation=False)
-        )
+        result = asyncio.run(runner.run(dataset, with_generation=False))
 
         # RAGAS 未被调用
         mock_ragas.evaluate.assert_not_called()

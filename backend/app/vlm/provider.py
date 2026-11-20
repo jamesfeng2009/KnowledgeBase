@@ -34,7 +34,7 @@ log = get_logger(__name__)
 settings = get_settings()
 
 # Vision Provider 工厂注册表 — deploy_mode → 工厂函数。
-_vision_registry: dict[str, Callable[[], "VisionProvider"]] = {}
+_vision_registry: dict[str, Callable[[], VisionProvider]] = {}
 
 
 class VisionProvider(ABC):
@@ -235,12 +235,12 @@ class DashScopeVisionProvider(VLLMVisionProvider):
 
 def register_vision_provider(
     deploy_mode: str,
-) -> Callable[[Callable[[], "VisionProvider"]], Callable[[], "VisionProvider"]]:
+) -> Callable[[Callable[[], VisionProvider]], Callable[[], VisionProvider]]:
     """装饰器：注册某部署模式对应的 VisionProvider 工厂函数。"""
 
     def decorator(
-        factory: Callable[[], "VisionProvider"],
-    ) -> Callable[[], "VisionProvider"]:
+        factory: Callable[[], VisionProvider],
+    ) -> Callable[[], VisionProvider]:
         _vision_registry[deploy_mode] = factory
         return factory
 

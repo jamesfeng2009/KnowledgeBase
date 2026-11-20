@@ -11,7 +11,7 @@ import logging
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db_session
@@ -21,8 +21,8 @@ from app.schemas.common import ApiResponse
 from app.schemas.search import (
     ReindexRequest,
     ReindexResponse,
-    SearchResult,
     SearchResponse,
+    SearchResult,
     SearchSuggestion,
     SearchType,
 )
@@ -41,9 +41,7 @@ async def search(
         default=None,
         description="知识库 ID 列表（逗号分隔，如 'uuid1,uuid2'）",
     ),
-    search_type: SearchType = Query(
-        default=SearchType.hybrid, description="搜索类型"
-    ),
+    search_type: SearchType = Query(default=SearchType.hybrid, description="搜索类型"),
     page: int = Query(default=1, ge=1, description="页码"),
     page_size: int = Query(default=20, ge=1, le=100, description="每页数量"),
     # P0 wiki 层级过滤 Query 参数 — GET 场景适合 Query 而非 body
@@ -56,9 +54,7 @@ async def search(
     parent_id: UUID | None = Query(
         default=None, description="父文档 ID 过滤（直系子文档）"
     ),
-    depth: int | None = Query(
-        default=None, ge=0, description="层级深度过滤（根=0）"
-    ),
+    depth: int | None = Query(default=None, ge=0, description="层级深度过滤（根=0）"),
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse[SearchResponse]:
@@ -77,7 +73,9 @@ async def search(
     parsed_kb_ids: list[UUID] | None = None
     if kb_ids:
         try:
-            parsed_kb_ids = [UUID(kid.strip()) for kid in kb_ids.split(",") if kid.strip()]
+            parsed_kb_ids = [
+                UUID(kid.strip()) for kid in kb_ids.split(",") if kid.strip()
+            ]
         except ValueError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,

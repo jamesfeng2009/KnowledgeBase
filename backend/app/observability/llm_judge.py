@@ -173,8 +173,7 @@ class LLMJudgeService:
             EvalResult 评测结果。
         """
         contexts_text = "\n".join(
-            f"[文档{i + 1}] {ctx[:500]}"
-            for i, ctx in enumerate(contexts[:5])
+            f"[文档{i + 1}] {ctx[:500]}" for i, ctx in enumerate(contexts[:5])
         )
 
         prompt = _JUDGE_SYSTEM_PROMPT.format(
@@ -240,9 +239,7 @@ class LLMJudgeService:
                 report.avg_citation_accuracy = (
                     sum(r.citation_accuracy for r in valid_results) / n
                 )
-                report.avg_completeness = (
-                    sum(r.completeness for r in valid_results) / n
-                )
+                report.avg_completeness = sum(r.completeness for r in valid_results) / n
                 report.avg_hallucination_inverse = (
                     sum(r.hallucination_inverse for r in valid_results) / n
                 )

@@ -50,10 +50,7 @@ def generate_for_template(
         {"role": "system", "content": EXTRACT_SYS},
         {
             "role": "user",
-            "content": (
-                f"文档：{answer}\n\n"
-                f"问题：{question}"
-            ),
+            "content": (f"文档：{answer}\n\n" f"问题：{question}"),
         },
     ]
     text = tokenizer.apply_chat_template(
@@ -70,7 +67,7 @@ def generate_for_template(
             pad_token_id=tokenizer.pad_token_id,
         )
     resp = tokenizer.decode(
-        out[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True
+        out[0][inputs["input_ids"].shape[1] :], skip_special_tokens=True
     )
     return resp.strip()
 
@@ -104,9 +101,7 @@ def main(argv: list[str] | None = None) -> int:
     from generate_embedding_data import _QA_TEMPLATES
 
     logger.info("加载基座模型 %s ...", args.base_model)
-    tokenizer = AutoTokenizer.from_pretrained(
-        args.base_model, trust_remote_code=True
-    )
+    tokenizer = AutoTokenizer.from_pretrained(args.base_model, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 

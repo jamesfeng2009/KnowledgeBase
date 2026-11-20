@@ -35,7 +35,10 @@ class KnowledgeBase(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, comment="所有者 ID"
     )
     dept_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("departments.id"), nullable=True, comment="部门 ID"
+        UUID(as_uuid=True),
+        ForeignKey("departments.id"),
+        nullable=True,
+        comment="部门 ID",
     )
     tags: Mapped[list | None] = mapped_column(JSONB, nullable=True, comment="标签列表")
     # KB 领域属性 — T4 高风险域默认注入的判定依据（finance/legal/security/hr）
@@ -57,28 +60,46 @@ class Document(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     __tablename__ = "documents"
 
     kb_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("knowledge_bases.id"), nullable=False, comment="知识库 ID"
+        UUID(as_uuid=True),
+        ForeignKey("knowledge_bases.id"),
+        nullable=False,
+        comment="知识库 ID",
     )
     title: Mapped[str] = mapped_column(String(500), nullable=False, comment="标题")
-    content_html: Mapped[str | None] = mapped_column(Text, nullable=True, comment="HTML 内容")
-    content_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True, comment="Tiptap JSON")
-    content_text: Mapped[str | None] = mapped_column(Text, nullable=True, comment="纯文本（检索用）")
+    content_html: Mapped[str | None] = mapped_column(
+        Text, nullable=True, comment="HTML 内容"
+    )
+    content_json: Mapped[dict | None] = mapped_column(
+        JSONB, nullable=True, comment="Tiptap JSON"
+    )
+    content_text: Mapped[str | None] = mapped_column(
+        Text, nullable=True, comment="纯文本（检索用）"
+    )
     doc_type: Mapped[str] = mapped_column(
         String(20), default="md", comment="文档类型: md/html/docx/pdf"
     )
     status: Mapped[str] = mapped_column(
-        String(20), default="draft", comment="状态: draft/pending_review/published/archived"
+        String(20),
+        default="draft",
+        comment="状态: draft/pending_review/published/archived",
     )
     owner_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, comment="所有者 ID"
     )
     dept_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("departments.id"), nullable=True, comment="部门 ID"
+        UUID(as_uuid=True),
+        ForeignKey("departments.id"),
+        nullable=True,
+        comment="部门 ID",
     )
     classification: Mapped[str] = mapped_column(
-        String(20), default="internal", comment="密级: public/internal/confidential/secret"
+        String(20),
+        default="internal",
+        comment="密级: public/internal/confidential/secret",
     )
-    file_path: Mapped[str | None] = mapped_column(String(500), nullable=True, comment="原始文件路径")
+    file_path: Mapped[str | None] = mapped_column(
+        String(500), nullable=True, comment="原始文件路径"
+    )
     # 必须是 BIGINT：迁移 c9d0e1f2a3b4 建的就是 BIGINT，且该列用于 GB 级视频分流判断，
     # INTEGER 上限 2147483647 字节（约 2.1GB）会让超过 2GB 的文件写入直接 overflow。
     file_size: Mapped[int | None] = mapped_column(
@@ -94,11 +115,17 @@ class Document(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     file_hash: Mapped[str | None] = mapped_column(
         String(64), nullable=True, comment="源文件 SHA-256 哈希（重索引重解析判定）"
     )
-    yjs_update: Mapped[bytes | None] = mapped_column(nullable=True, comment="Yjs 二进制状态")
+    yjs_update: Mapped[bytes | None] = mapped_column(
+        nullable=True, comment="Yjs 二进制状态"
+    )
     view_count: Mapped[int] = mapped_column(Integer, default=0, comment="浏览次数")
-    summary: Mapped[str | None] = mapped_column(Text, nullable=True, comment="AI 自动摘要")
+    summary: Mapped[str | None] = mapped_column(
+        Text, nullable=True, comment="AI 自动摘要"
+    )
     category: Mapped[str | None] = mapped_column(
-        String(50), nullable=True, comment="AI 自动分类: 政策/SOP/技术文档/会议纪要/培训资料/产品文档/合同模板"
+        String(50),
+        nullable=True,
+        comment="AI 自动分类: 政策/SOP/技术文档/会议纪要/培训资料/产品文档/合同模板",
     )
     # === 解析元数据（P1 增强：解析任务产物持久化）===
     # parse_status 区别于 status：status 表示业务状态（draft/published），
@@ -161,43 +188,51 @@ class Document(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
         UUID(as_uuid=True),
         ForeignKey("documents.id", name="fk_documents_version_of", ondelete="SET NULL"),
         nullable=True,
-        comment="版本族主文档 ID（v2 的 version_of 指向 v1）"
+        comment="版本族主文档 ID（v2 的 version_of 指向 v1）",
     )
     # === P2 约束文档粗标（GAP-3）===
     # normal | constraint_source — 文档级粗标，仅供运营检索/日志标注与
     # 向量索引透传；不用于必召回（必召回走 constraint_rules，确定域）
     doc_role: Mapped[str] = mapped_column(
-        String(16), default="normal", nullable=False,
-        comment="文档角色: normal/constraint_source"
+        String(16),
+        default="normal",
+        nullable=False,
+        comment="文档角色: normal/constraint_source",
     )
     # === P0+P3 外部来源元数据（外部文档实时同步）===
     # 文档首次从外部平台（飞书/Confluence/Notion/Obsidian）拉取入库时记录来源信息，
     # 后续检索命中时可回源校验是否已更新（详见 ExternalSyncService）。
     # 全部 nullable：本项目原生创建的文档无外部来源，向后兼容。
     source: Mapped[str | None] = mapped_column(
-        String(30), nullable=True,
-        comment="来源适配器 ID: feishu/confluence/notion/obsidian"
+        String(30),
+        nullable=True,
+        comment="来源适配器 ID: feishu/confluence/notion/obsidian",
     )
     source_doc_id: Mapped[str | None] = mapped_column(
-        String(200), nullable=True,
-        comment="外部平台文档 ID（飞书 doc_token / Confluence pageId 等）"
+        String(200),
+        nullable=True,
+        comment="外部平台文档 ID（飞书 doc_token / Confluence pageId 等）",
     )
     source_url: Mapped[str | None] = mapped_column(
-        String(500), nullable=True,
-        comment="原始文档 URL（引用展示 + P3 prompt 时效声明注入）"
+        String(500),
+        nullable=True,
+        comment="原始文档 URL（引用展示 + P3 prompt 时效声明注入）",
     )
     source_revision: Mapped[str | None] = mapped_column(
-        String(100), nullable=True,
+        String(100),
+        nullable=True,
         comment="外部版本指纹（飞书 revision_id / Confluence version.number / "
-                "Notion last_edited_time / Obsidian mtime_ns）"
+        "Notion last_edited_time / Obsidian mtime_ns）",
     )
     last_synced_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True,
-        comment="最后拉取全文时间（阶段 B 触发时间）"
+        DateTime(timezone=True),
+        nullable=True,
+        comment="最后拉取全文时间（阶段 B 触发时间）",
     )
     last_checked_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True,
-        comment="最后轻量探测时间（阶段 A + 短窗口缓存）"
+        DateTime(timezone=True),
+        nullable=True,
+        comment="最后轻量探测时间（阶段 A + 短窗口缓存）",
     )
 
     knowledge_base: Mapped[KnowledgeBase] = relationship(back_populates="documents")
@@ -233,15 +268,26 @@ class DocumentVersion(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "document_versions"
 
     doc_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("documents.id"), nullable=False, comment="文档 ID"
+        UUID(as_uuid=True),
+        ForeignKey("documents.id"),
+        nullable=False,
+        comment="文档 ID",
     )
-    content_html: Mapped[str | None] = mapped_column(Text, nullable=True, comment="HTML 快照")
-    content_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True, comment="JSON 快照")
-    yjs_update: Mapped[bytes | None] = mapped_column(nullable=True, comment="Yjs 二进制状态")
+    content_html: Mapped[str | None] = mapped_column(
+        Text, nullable=True, comment="HTML 快照"
+    )
+    content_json: Mapped[dict | None] = mapped_column(
+        JSONB, nullable=True, comment="JSON 快照"
+    )
+    yjs_update: Mapped[bytes | None] = mapped_column(
+        nullable=True, comment="Yjs 二进制状态"
+    )
     author_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, comment="操作者 ID"
     )
-    summary: Mapped[str | None] = mapped_column(String(255), nullable=True, comment="版本摘要")
+    summary: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, comment="版本摘要"
+    )
 
     document: Mapped[Document] = relationship(back_populates="versions")
 
@@ -268,16 +314,20 @@ class ExternalCredential(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "external_credentials"
 
     tenant_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True,
-        comment="租户 ID（NULL=私有部署）"
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id"),
+        nullable=True,
+        comment="租户 ID（NULL=私有部署）",
     )
     adapter_id: Mapped[str] = mapped_column(
-        String(30), nullable=False,
-        comment="适配器 ID: feishu/confluence/notion/obsidian"
+        String(30),
+        nullable=False,
+        comment="适配器 ID: feishu/confluence/notion/obsidian",
     )
     credentials_encrypted: Mapped[bytes] = mapped_column(
-        LargeBinary, nullable=False,
-        comment="AES-GCM 加密的凭证 JSON（nonce + ciphertext + tag）"
+        LargeBinary,
+        nullable=False,
+        comment="AES-GCM 加密的凭证 JSON（nonce + ciphertext + tag）",
     )
     is_active: Mapped[bool] = mapped_column(
         Boolean, default=True, nullable=False, comment="是否启用"

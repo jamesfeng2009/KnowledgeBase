@@ -26,8 +26,9 @@ import logging
 import math
 import sys
 from collections import Counter
+from collections.abc import Iterable, Iterator
 from pathlib import Path
-from typing import Any, Iterable, Iterator
+from typing import Any
 
 logger = logging.getLogger("data_stats")
 
@@ -83,11 +84,17 @@ def extract_texts(obj: dict, fmt: str | None = None) -> list[str]:
             if isinstance(m, dict) and isinstance(m.get("content"), str)
         ]
     if fmt == "dpo":
-        return [obj[k] for k in ("prompt", "chosen", "rejected") if isinstance(obj.get(k), str)]
+        return [
+            obj[k]
+            for k in ("prompt", "chosen", "rejected")
+            if isinstance(obj.get(k), str)
+        ]
     if fmt == "embedding":
         return [obj[k] for k in ("query", "pos", "neg") if isinstance(obj.get(k), str)]
     if fmt == "golden":
-        return [obj[k] for k in ("query", "expected_answer") if isinstance(obj.get(k), str)]
+        return [
+            obj[k] for k in ("query", "expected_answer") if isinstance(obj.get(k), str)
+        ]
     return []
 
 
@@ -101,7 +108,15 @@ def compute_length_stats(lengths: Iterable[int]) -> dict[str, Any]:
     """计算长度统计：count / mean / min / max / p50 / p90 / p99。"""
     vals = sorted(int(x) for x in lengths)
     if not vals:
-        return {"count": 0, "mean": 0.0, "min": 0, "max": 0, "p50": 0, "p90": 0, "p99": 0}
+        return {
+            "count": 0,
+            "mean": 0.0,
+            "min": 0,
+            "max": 0,
+            "p50": 0,
+            "p90": 0,
+            "p99": 0,
+        }
     return {
         "count": len(vals),
         "mean": round(sum(vals) / len(vals), 2),
@@ -113,7 +128,9 @@ def compute_length_stats(lengths: Iterable[int]) -> dict[str, Any]:
     }
 
 
-def length_histogram(lengths: Iterable[int], bins: tuple[int, ...] = LENGTH_BINS) -> dict[str, int]:
+def length_histogram(
+    lengths: Iterable[int], bins: tuple[int, ...] = LENGTH_BINS
+) -> dict[str, int]:
     """按分桶统计长度分布，键形如 "<=64"、"65-128"、">4096"。"""
     hist: dict[str, int] = {}
     prev = 0
@@ -193,12 +210,18 @@ def _print_report(summary: dict[str, Any]) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("data", help="JSONL 数据文件路径（sft / dpo / embedding / golden 均可）")
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "data", help="JSONL 数据文件路径（sft / dpo / embedding / golden 均可）"
+    )
     parser.add_argument("--json", action="store_true", help="以 JSON 输出完整统计结果")
     args = parser.parse_args(argv)
 
-    logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(
+        level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s"
+    )
 
     if not Path(args.data).is_file():
         print(f"错误: 文件不存在 — {args.data}", file=sys.stderr)

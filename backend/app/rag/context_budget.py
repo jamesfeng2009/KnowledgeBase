@@ -54,16 +54,17 @@ _COMPRESSED_MSG_MAX_CHARS: int = 80
 # 压缩黄金法则：永远从 L3（最老的历史/工具日志）开始压，L0（system+query）
 # 与 L1（当前状态）是禁区。级别只升不降，不会叠加。
 
-from enum import Enum
+from enum import Enum  # noqa: E402  — 有意延迟导入（依赖上方初始化）
 
 
 class CompressionLevel(Enum):
     """五级渐进压缩：0-4 从保真到保命。"""
-    NONE = 0            # < 50%：无压缩
-    TOOL_COMPRESS = 1   # 50-70%：工具结果压缩（首500+尾200+中间截断）
-    HISTORY_SUMMARY = 2 # 70-85%：历史摘要（关键动作轨迹）
-    TOPIC_SUMMARY = 3   # 85-92%：主题级摘要（更激进，保留更少近期）
-    EMERGENCY = 4       # > 92%：紧急模式（只留 system+query+最近1轮）
+
+    NONE = 0  # < 50%：无压缩
+    TOOL_COMPRESS = 1  # 50-70%：工具结果压缩（首500+尾200+中间截断）
+    HISTORY_SUMMARY = 2  # 70-85%：历史摘要（关键动作轨迹）
+    TOPIC_SUMMARY = 3  # 85-92%：主题级摘要（更激进，保留更少近期）
+    EMERGENCY = 4  # > 92%：紧急模式（只留 system+query+最近1轮）
 
 
 # 五级压缩触发阈值（ratio = 当前 token / max_tokens）
@@ -79,8 +80,8 @@ _EMERGENCY_AT: float = 5.0
 
 # Level 2 工具结果压缩参数
 _TOOL_RESULT_COMPRESS_THRESHOLD: int = 2000  # 超过此字符数的工具结果才压缩
-_TOOL_RESULT_HEAD_CHARS: int = 500           # 保留首部（字段名/结构）
-_TOOL_RESULT_TAIL_CHARS: int = 200           # 保留尾部（状态码/结论）
+_TOOL_RESULT_HEAD_CHARS: int = 500  # 保留首部（字段名/结构）
+_TOOL_RESULT_TAIL_CHARS: int = 200  # 保留尾部（状态码/结论）
 
 # ======================================================================
 # P1-1: 大工具结果写盘（Spill to Disk）
@@ -144,8 +145,9 @@ class SpillStore:
         base = os.path.realpath(self._base_dir)
         if not abs_path.startswith(base + os.sep):
             raise ValueError("spill path escapes base dir")
-        with open(abs_path, "r", encoding="utf-8") as f:
+        with open(abs_path, encoding="utf-8") as f:
             return f.read()
+
 
 # ======================================================================
 # P1-5: CJK 感知的 token 估算
@@ -185,13 +187,13 @@ _NON_CJK_CHARS_PER_TOKEN: float = 4.0
 # CJK 字符 Unicode 范围元组（用于快速判断）
 # 按 code point 升序排列，便于 bisect 或线性扫描
 _CJK_RANGES: tuple[tuple[int, int], ...] = (
-    (0x3000, 0x303F),    # CJK 符号和标点
-    (0x3040, 0x309F),    # 平假名
-    (0x30A0, 0x30FF),    # 片假名
-    (0x3400, 0x4DBF),    # CJK 扩展 A
-    (0x4E00, 0x9FFF),    # CJK 统一表意文字（基本汉字）
-    (0xF900, 0xFAFF),    # CJK 兼容表意文字
-    (0xFF00, 0xFFEF),    # 全角形式
+    (0x3000, 0x303F),  # CJK 符号和标点
+    (0x3040, 0x309F),  # 平假名
+    (0x30A0, 0x30FF),  # 片假名
+    (0x3400, 0x4DBF),  # CJK 扩展 A
+    (0x4E00, 0x9FFF),  # CJK 统一表意文字（基本汉字）
+    (0xF900, 0xFAFF),  # CJK 兼容表意文字
+    (0xFF00, 0xFFEF),  # 全角形式
     (0x20000, 0x2A6DF),  # CJK 扩展 B
     (0x2A700, 0x2B73F),  # CJK 扩展 C
     (0x2B740, 0x2B81F),  # CJK 扩展 D
@@ -358,9 +360,7 @@ class ContextBudgetManager:
                 messages, scratchpad, keep_recent=self._keep_recent
             )
         elif level == CompressionLevel.TOPIC_SUMMARY:
-            result = self._compress_history_summary(
-                messages, scratchpad, keep_recent=1
-            )
+            result = self._compress_history_summary(messages, scratchpad, keep_recent=1)
         else:  # EMERGENCY
             result = self._compress_emergency(messages)
 
@@ -427,9 +427,7 @@ class ContextBudgetManager:
             ):
                 head = content[:_TOOL_RESULT_HEAD_CHARS]
                 tail = content[-_TOOL_RESULT_TAIL_CHARS:]
-                result.append(
-                    {**msg, "content": head + "\n…[中间已压缩]…\n" + tail}
-                )
+                result.append({**msg, "content": head + "\n…[中间已压缩]…\n" + tail})
             else:
                 result.append(msg)
         return result

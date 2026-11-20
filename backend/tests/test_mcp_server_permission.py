@@ -24,8 +24,7 @@ from uuid import uuid4
 import pytest
 
 import app.mcp.server as mcp_server_module
-from app.mcp.server import KnowledgeBaseMCPServer, _PERM_FAIL_CLOSED
-
+from app.mcp.server import _PERM_FAIL_CLOSED, KnowledgeBaseMCPServer
 
 # ======================================================================
 # Fake 基础设施
@@ -72,7 +71,7 @@ class FakeSession:
         self.rollbacks = 0
 
     # 工具经 ``async with self._db_factory() as session`` 持有会话
-    async def __aenter__(self) -> "FakeSession":
+    async def __aenter__(self) -> FakeSession:
         return self
 
     async def __aexit__(self, *args: Any) -> bool:
@@ -216,8 +215,8 @@ class TestKnowledgeSearchPermission:
         session = FakeSession(
             results=[
                 [allowed, over_secret],  # #1 检索结果
-                [user],                  # #2 用户加载
-                [(kb,)],                 # #3 可访问 kb 集合（含 kb）
+                [user],  # #2 用户加载
+                [(kb,)],  # #3 可访问 kb 集合（含 kb）
             ]
         )
         server = _make_server(session)
@@ -270,13 +269,9 @@ class TestKnowledgeSearchPermission:
     async def test_user_ctx_reset_after_call(self) -> None:
         """call_tool 结束后用户上下文复位 — 并发请求互不串扰。"""
         user = _make_user()
-        session = FakeSession(
-            results=[[_make_doc(uuid4())], [user], []]
-        )
+        session = FakeSession(results=[[_make_doc(uuid4())], [user], []])
         server = _make_server(session)
-        await server.call_tool(
-            "knowledge_search", {"query": "x"}, user_id=str(user.id)
-        )
+        await server.call_tool("knowledge_search", {"query": "x"}, user_id=str(user.id))
         assert mcp_server_module._current_user_id() is None
 
 
@@ -295,8 +290,9 @@ class TestDocumentGetPermission:
         session = FakeSession(results=[[doc], [user], [(kb,)]])
         server = _make_server(session)
         out = _parse(
-            await server.call_tool("document_get", {"doc_id": str(doc.id)},
-                                   user_id=str(user.id))
+            await server.call_tool(
+                "document_get", {"doc_id": str(doc.id)}, user_id=str(user.id)
+            )
         )
         assert out.get("id") == str(doc.id)
         assert out.get("content") == "正文内容"
@@ -309,8 +305,9 @@ class TestDocumentGetPermission:
         session = FakeSession(results=[[doc], [user], []])  # 无可访问 kb
         server = _make_server(session)
         out = _parse(
-            await server.call_tool("document_get", {"doc_id": str(doc.id)},
-                                   user_id=str(user.id))
+            await server.call_tool(
+                "document_get", {"doc_id": str(doc.id)}, user_id=str(user.id)
+            )
         )
         assert out == {"error": f"文档不存在: {doc.id}"}
 
@@ -321,8 +318,9 @@ class TestDocumentGetPermission:
         session = FakeSession(results=[[doc], []])
         server = _make_server(session)
         out = _parse(
-            await server.call_tool("document_get", {"doc_id": str(doc.id)},
-                                   user_id=str(uuid4()))
+            await server.call_tool(
+                "document_get", {"doc_id": str(doc.id)}, user_id=str(uuid4())
+            )
         )
         assert out == {"error": f"文档不存在: {doc.id}"}
 
@@ -359,10 +357,10 @@ class TestDocumentCreatePermission:
         kb = SimpleNamespace(id=uuid4(), owner_id=uuid4(), visibility="dept")
         session = FakeSession(
             results=[
-                [kb],    # #1 kb 查询
+                [kb],  # #1 kb 查询
                 [user],  # #2 用户加载
-                [kb],    # #3 check_write 复查 kb（非 owner）
-                [],      # #4 成员查询（admin|editor 成员）→ 空
+                [kb],  # #3 check_write 复查 kb（非 owner）
+                [],  # #4 成员查询（admin|editor 成员）→ 空
             ]
         )
         server = _make_server(session)

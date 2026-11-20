@@ -25,11 +25,10 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import Any
 
-from celery_app import celery_app
-
 from app.rag.chunker import Chunk, SemanticChunker
 from app.utils.logger import get_logger
 from app.utils.retry import make_celery_retry_kwargs
+from celery_app import celery_app
 
 logger = get_logger(__name__)
 
@@ -299,6 +298,7 @@ def _count_pages_from_text(text: str, doc_type: str) -> int:
 
     return 0
 
+
 # 保留旧常量供向后兼容引用，实际分块已委托给 SemanticChunker
 # Deprecated: 使用 SemanticChunker 替代简单滑动窗口
 CHUNK_SIZE: int = 500
@@ -402,7 +402,9 @@ def build_index_task(self, doc_id: str) -> dict[str, Any]:
     chunks = [c.content for c in chunk_objects]
 
     _update_parse_progress(
-        doc_id, stage="embedding", total=len(chunks),
+        doc_id,
+        stage="embedding",
+        total=len(chunks),
         message=f"正在向量化 {len(chunks)} 个文本块",
     )
 
@@ -419,7 +421,12 @@ def build_index_task(self, doc_id: str) -> dict[str, Any]:
                 kwargs={},
                 exc=exc,
             )
-            return {"doc_id": doc_id, "status": "failed", "error": str(exc)[:500], "dead_lettered": True}
+            return {
+                "doc_id": doc_id,
+                "status": "failed",
+                "error": str(exc)[:500],
+                "dead_lettered": True,
+            }
         raise self.retry(exc=exc)
 
 
@@ -451,7 +458,8 @@ def build_graph_task(self, doc_id: str) -> dict[str, Any]:
         return {"doc_id": doc_id, "status": "skipped", "reason": "chunks_not_found"}
 
     _update_parse_progress(
-        doc_id, stage="embedding",
+        doc_id,
+        stage="embedding",
         message="正在构建知识图谱（三元组抽取）",
         sub_stage="graph_building",
     )
@@ -469,7 +477,12 @@ def build_graph_task(self, doc_id: str) -> dict[str, Any]:
                 kwargs={},
                 exc=exc,
             )
-            return {"doc_id": doc_id, "status": "failed", "error": str(exc)[:500], "dead_lettered": True}
+            return {
+                "doc_id": doc_id,
+                "status": "failed",
+                "error": str(exc)[:500],
+                "dead_lettered": True,
+            }
         raise self.retry(exc=exc)
 
 
@@ -519,7 +532,10 @@ def finalize_document_task(self, results: list, doc_id: str = None) -> dict[str,
     **make_celery_retry_kwargs(),
 )
 def process_document(
-    self, doc_id: str, tenant_id: str | None = None, *,
+    self,
+    doc_id: str,
+    tenant_id: str | None = None,
+    *,
     parse_config: dict | None = None,
 ) -> dict[str, Any]:
     """文档处理流水线 — 解析 → 分块 → 向量化 → 索引 → 更新状态。
@@ -560,7 +576,9 @@ def process_document(
                 "message": "文档正在被其他 worker 处理，跳过重复执行",
             }
     except Exception as exc:
-        logger.warning("document.lock_check_failed", doc_id=doc_id, error=str(exc)[:200])
+        logger.warning(
+            "document.lock_check_failed", doc_id=doc_id, error=str(exc)[:200]
+        )
         # Redis 不可用时降级为无锁模式，继续执行
         lock_ctx = None
 
@@ -581,10 +599,13 @@ def process_document(
                     "message": "GB 视频已分流到多任务管线（Chord 编排）",
                 }
             except Exception as exc:
-                logger.exception("document.video_multipart_dispatch_failed", doc_id=doc_id)
+                logger.exception(
+                    "document.video_multipart_dispatch_failed", doc_id=doc_id
+                )
                 # 分流失败时降级走普通管线
                 _update_parse_progress(
-                    doc_id, stage="parsing",
+                    doc_id,
+                    stage="parsing",
                     message=f"GB 视频分流失败，降级普通管线: {exc}",
                 )
 
@@ -623,19 +644,19 @@ def process_document(
                             build_index_task.s(doc_id),
                             build_graph_task.s(doc_id),
                         )
-                    )(
-                        finalize_document_task.s(doc_id)
-                    )
+                    )(finalize_document_task.s(doc_id))
                 else:
                     # 仅索引（知识图谱未启用）
                     chord(
                         group(
                             build_index_task.s(doc_id),
                         )
-                    )(
-                        finalize_document_task.s(doc_id)
-                    )
-                logger.info("document.chord_dispatched", doc_id=doc_id, graph_enabled=graph_enabled)
+                    )(finalize_document_task.s(doc_id))
+                logger.info(
+                    "document.chord_dispatched",
+                    doc_id=doc_id,
+                    graph_enabled=graph_enabled,
+                )
                 return {
                     "doc_id": doc_id,
                     "status": "processing",
@@ -650,7 +671,7 @@ def process_document(
                     _process_document_async(doc_id, parse_config=parse_config)
                 )
                 return result
-            except Exception as exc:
+            except Exception:
                 # chord 分发失败 → 降级串行（串行路径不消费 Redis 暂存，先清理避免孤儿数据）
                 logger.exception("document.chord_failed_fallback", doc_id=doc_id)
                 _cleanup_chunks_redis(doc_id)
@@ -703,8 +724,11 @@ def process_document(
 
 
 async def _parse_and_chunk_async(
-    doc_id: str, tenant_id: str | None = None, *,
-    force_reparse: bool = False, parse_config: dict | None = None,
+    doc_id: str,
+    tenant_id: str | None = None,
+    *,
+    force_reparse: bool = False,
+    parse_config: dict | None = None,
 ) -> dict[str, Any]:
     """chord 入口阶段 — 解析 + 分块 + 检查模块开关。
 
@@ -723,17 +747,20 @@ async def _parse_and_chunk_async(
         {"chunk_objects": [...], "graph_enabled": bool, "parse_warnings": [...]}
         失败时 {"status": "failed", "error": "..."}
     """
+    # E4: 队列边界再校验（API 已校验一次，此处防绕过 API 的入队）
+    from app.core.parse_config import validate_parse_config
     from app.core.tenant_context import apply_tenant, resolve_task_tenant
     from app.database import task_db_session
     from app.repositories.knowledge_repository import DocumentRepository
 
-    # E4: 队列边界再校验（API 已校验一次，此处防绕过 API 的入队）
-    from app.core.parse_config import validate_parse_config
-
     try:
         task_cfg = validate_parse_config(parse_config) if parse_config else {}
     except ValueError as exc:
-        return {"doc_id": doc_id, "status": "failed", "error": f"parse_config 非法: {exc}"}
+        return {
+            "doc_id": doc_id,
+            "status": "failed",
+            "error": f"parse_config 非法: {exc}",
+        }
 
     doc_uuid = uuid.UUID(doc_id)
     warnings: list[str] = []
@@ -837,7 +864,8 @@ async def _parse_and_chunk_async(
         except Exception as exc:
             logger.debug(
                 "document.graph_module_check_failed",
-                doc_id=doc_id, error=str(exc),
+                doc_id=doc_id,
+                error=str(exc),
             )
 
         # 5. 持久化 parse 元数据
@@ -877,7 +905,10 @@ async def _build_index_async(
 
         async with task_db_session() as session:
             from app.core.tenant_context import apply_tenant, resolve_task_tenant
-            _tid = await resolve_task_tenant(session, doc_id=doc_id, reason="document_tasks._build_index_async")
+
+            _tid = await resolve_task_tenant(
+                session, doc_id=doc_id, reason="document_tasks._build_index_async"
+            )
             if _tid:
                 await apply_tenant(session, _tid)
             repo = DocumentRepository(session)
@@ -885,7 +916,9 @@ async def _build_index_async(
             if doc and doc.kb_id:
                 kb_id = str(doc.kb_id)
     except Exception as exc:
-        logger.debug("document.kb_id_lookup_failed", doc_id=doc_id, error=str(exc)[:200])
+        logger.debug(
+            "document.kb_id_lookup_failed", doc_id=doc_id, error=str(exc)[:200]
+        )
 
     # P2-Step3: 提取图片用于跨模态索引（chord 模式下 images 无法通过参数传递，
     # 此处从文档文件重新提取）
@@ -896,7 +929,10 @@ async def _build_index_async(
 
         async with task_db_session() as session:
             from app.core.tenant_context import apply_tenant, resolve_task_tenant
-            _tid = await resolve_task_tenant(session, doc_id=doc_id, reason="document_tasks._build_index_async")
+
+            _tid = await resolve_task_tenant(
+                session, doc_id=doc_id, reason="document_tasks._build_index_async"
+            )
             if _tid:
                 await apply_tenant(session, _tid)
             repo = DocumentRepository(session)
@@ -905,12 +941,20 @@ async def _build_index_async(
                 doc_type = doc.doc_type or "md"
                 extracted_images = await _extract_images_for_cross_modal(doc, doc_type)
     except Exception as exc:
-        logger.debug("document.cross_modal_extract_skipped", doc_id=doc_id, error=str(exc)[:200])
+        logger.debug(
+            "document.cross_modal_extract_skipped", doc_id=doc_id, error=str(exc)[:200]
+        )
 
-    _update_parse_progress(doc_id, stage="indexing", message="正在构建全文索引和向量索引")
+    _update_parse_progress(
+        doc_id, stage="indexing", message="正在构建全文索引和向量索引"
+    )
     try:
         await _build_indexes(
-            doc_id, chunk_objects, chunks, emb, kb_id=kb_id,
+            doc_id,
+            chunk_objects,
+            chunks,
+            emb,
+            kb_id=kb_id,
             images=extracted_images if extracted_images else None,
             doc=doc,
         )
@@ -929,7 +973,10 @@ async def _build_graph_async(doc_id: str, chunk_objects: list[Chunk]) -> dict[st
     warnings: list[str] = []
     async with task_db_session() as session:
         from app.core.tenant_context import apply_tenant, resolve_task_tenant
-        _tid = await resolve_task_tenant(session, doc_id=doc_id, reason="document_tasks._build_graph_async")
+
+        _tid = await resolve_task_tenant(
+            session, doc_id=doc_id, reason="document_tasks._build_graph_async"
+        )
         if _tid:
             await apply_tenant(session, _tid)
         # 先无租户过滤地查找文档，获取其 tenant_id
@@ -946,11 +993,17 @@ async def _build_graph_async(doc_id: str, chunk_objects: list[Chunk]) -> dict[st
             doc_type = doc.doc_type or "md"
             graph_images = await _extract_images_for_cross_modal(doc, doc_type)
         except Exception as exc:
-            logger.debug("document.graph_images_extract_skipped", doc_id=doc_id, error=str(exc)[:200])
+            logger.debug(
+                "document.graph_images_extract_skipped",
+                doc_id=doc_id,
+                error=str(exc)[:200],
+            )
 
         try:
             await _build_knowledge_graph(
-                doc_id, chunk_objects, doc,
+                doc_id,
+                chunk_objects,
+                doc,
                 images=graph_images if graph_images else None,
             )
         except Exception as exc:
@@ -960,9 +1013,7 @@ async def _build_graph_async(doc_id: str, chunk_objects: list[Chunk]) -> dict[st
     return {"doc_id": doc_id, "status": "done", "graph_warnings": warnings}
 
 
-async def _finalize_document_async(
-    doc_id: str, results: list
-) -> dict[str, Any]:
+async def _finalize_document_async(doc_id: str, results: list) -> dict[str, Any]:
     """chord 回调阶段 — 密级路由 + 审核/发布 + 触发智能处理。"""
     from app.database import task_db_session
     from app.repositories.knowledge_repository import DocumentRepository
@@ -977,7 +1028,10 @@ async def _finalize_document_async(
     doc_uuid = uuid.UUID(doc_id)
     async with task_db_session() as session:
         from app.core.tenant_context import apply_tenant, resolve_task_tenant
-        _tid = await resolve_task_tenant(session, doc_id=doc_id, reason="document_tasks._finalize_document_async")
+
+        _tid = await resolve_task_tenant(
+            session, doc_id=doc_id, reason="document_tasks._finalize_document_async"
+        )
         if _tid:
             await apply_tenant(session, _tid)
         # 先无租户过滤地查找文档，获取其 tenant_id
@@ -993,8 +1047,10 @@ async def _finalize_document_async(
             all_warnings = list(doc.parse_warnings) + all_warnings
 
         # 更新 parse_status
-        doc.parse_status = "failed" if not doc.content_text else (
-            "partial" if all_warnings else "parsed"
+        doc.parse_status = (
+            "failed"
+            if not doc.content_text
+            else ("partial" if all_warnings else "parsed")
         )
         doc.parse_warnings = all_warnings if all_warnings else None
 
@@ -1055,7 +1111,9 @@ async def _finalize_document_async(
                 await _submit_for_audit(doc_id, doc.owner_id)
                 logger.info("document.audit_submitted", doc_id=doc_id)
             except Exception as exc:
-                logger.warning("document.audit_submit_failed", doc_id=doc_id, error=str(exc))
+                logger.warning(
+                    "document.audit_submit_failed", doc_id=doc_id, error=str(exc)
+                )
         else:
             doc.status = "published"
             await session.commit()
@@ -1064,9 +1122,7 @@ async def _finalize_document_async(
         from app.services.task_outbox import dispatch_with_outbox
         from tasks.intelligence_tasks import process_intelligence
 
-        dispatched = await dispatch_with_outbox(
-            process_intelligence, doc_id=doc_id
-        )
+        dispatched = await dispatch_with_outbox(process_intelligence, doc_id=doc_id)
         if dispatched:
             logger.info("document.intelligence_triggered", doc_id=doc_id)
 
@@ -1112,11 +1168,13 @@ def batch_process_documents(doc_ids: list[str]) -> list[dict[str, Any]]:
                 doc_id=doc_id,
                 error=str(exc),
             )
-            results.append({
-                "doc_id": doc_id,
-                "status": "failed",
-                "error": str(exc),
-            })
+            results.append(
+                {
+                    "doc_id": doc_id,
+                    "status": "failed",
+                    "error": str(exc),
+                }
+            )
 
     logger.info(
         "document.batch_completed",
@@ -1130,6 +1188,7 @@ def batch_process_documents(doc_ids: list[str]) -> list[dict[str, Any]]:
 # ------------------------------------------------------------------
 # 异步处理逻辑
 # ------------------------------------------------------------------
+
 
 async def _process_document_async(
     doc_id: str, *, parse_config: dict | None = None
@@ -1152,16 +1211,19 @@ async def _process_document_async(
     Returns:
         处理结果字典。
     """
-    from app.database import task_db_session
-    from app.repositories.knowledge_repository import DocumentRepository
-
     # E4: 队列边界再校验 — 非法 fail-closed
     from app.core.parse_config import validate_parse_config
+    from app.database import task_db_session
+    from app.repositories.knowledge_repository import DocumentRepository
 
     try:
         task_cfg = validate_parse_config(parse_config) if parse_config else {}
     except ValueError as exc:
-        return {"doc_id": doc_id, "status": "failed", "error": f"parse_config 非法: {exc}"}
+        return {
+            "doc_id": doc_id,
+            "status": "failed",
+            "error": f"parse_config 非法: {exc}",
+        }
 
     doc_uuid = uuid.UUID(doc_id)
 
@@ -1170,7 +1232,10 @@ async def _process_document_async(
 
     async with task_db_session() as session:
         from app.core.tenant_context import apply_tenant, resolve_task_tenant
-        _tid = await resolve_task_tenant(session, doc_id=doc_id, reason="document_tasks._process_document_async")
+
+        _tid = await resolve_task_tenant(
+            session, doc_id=doc_id, reason="document_tasks._process_document_async"
+        )
         if _tid:
             await apply_tenant(session, _tid)
         # 先无租户过滤地查找文档，获取其 tenant_id
@@ -1182,9 +1247,7 @@ async def _process_document_async(
         repo = DocumentRepository(session, tenant_id=doc.tenant_id)
 
         # 1. 解析文档内容
-        _update_parse_progress(
-            doc_id, stage="parsing", message="正在解析文档内容"
-        )
+        _update_parse_progress(doc_id, stage="parsing", message="正在解析文档内容")
         parse_failed = False
         extracted_images: list[tuple[bytes, str]] = []
         # A12: 清零旧页数 — 解析器能拿真实页数时优先，拿不到再按文本推断
@@ -1196,7 +1259,9 @@ async def _process_document_async(
         tenant_cfg = await TenantService(session).get_parse_config(doc.tenant_id)
         with parse_overrides({**tenant_cfg, **task_cfg}):
             try:
-                parsed_text, extracted_images = await _parse_document(doc, warnings=warnings)
+                parsed_text, extracted_images = await _parse_document(
+                    doc, warnings=warnings
+                )
             except Exception as exc:
                 logger.warning("document.parse_failed", doc_id=doc_id, error=str(exc))
                 parsed_text = doc.content_text or ""
@@ -1236,9 +1301,7 @@ async def _process_document_async(
             await session.flush()
 
         # 3. 分块 — 视频/音频文档走专用分块，其他走 SemanticChunker 四级策略
-        _update_parse_progress(
-            doc_id, stage="chunking", message="正在进行语义分块"
-        )
+        _update_parse_progress(doc_id, stage="chunking", message="正在进行语义分块")
         doc_type = doc.doc_type or "md"
         if doc_type in _VIDEO_TYPES or doc_type in _AUDIO_TYPES:
             # 视频/音频文档：ASR 转写片段 + 关键帧 VLM 描述 → 语义分块
@@ -1289,7 +1352,10 @@ async def _process_document_async(
             )
             try:
                 await _build_indexes(
-                    doc_id, chunk_objects, chunks, emb,
+                    doc_id,
+                    chunk_objects,
+                    chunks,
+                    emb,
                     kb_id=str(doc.kb_id) if doc.kb_id else None,
                     images=extracted_images if extracted_images else None,
                     doc=doc,
@@ -1303,7 +1369,9 @@ async def _process_document_async(
             """支线 B：知识图谱构建（计算复用 chunk_objects）。"""
             try:
                 await _build_knowledge_graph(
-                    doc_id, chunk_objects, doc,
+                    doc_id,
+                    chunk_objects,
+                    doc,
                     images=extracted_images if extracted_images else None,
                 )
             except Exception as exc:
@@ -1376,7 +1444,9 @@ async def _process_document_async(
                 await _submit_for_audit(doc_id, doc.owner_id)
                 logger.info("document.audit_submitted", doc_id=doc_id)
             except Exception as exc:
-                logger.warning("document.audit_submit_failed", doc_id=doc_id, error=str(exc))
+                logger.warning(
+                    "document.audit_submit_failed", doc_id=doc_id, error=str(exc)
+                )
                 warnings.append(f"审核流程提交失败: {str(exc)[:200]}")
         else:
             doc.status = "published"
@@ -1385,10 +1455,13 @@ async def _process_document_async(
         # 7. 链式触发文档智能处理（摘要/标签/分类/行动项）
         try:
             from tasks.intelligence_tasks import process_intelligence
+
             process_intelligence.delay(doc_id)
             logger.info("document.intelligence_triggered", doc_id=doc_id)
         except Exception as exc:
-            logger.warning("document.intelligence_trigger_failed", doc_id=doc_id, error=str(exc))
+            logger.warning(
+                "document.intelligence_trigger_failed", doc_id=doc_id, error=str(exc)
+            )
 
         final_status = "pending_review" if needs_review else "published"
 
@@ -1428,14 +1501,14 @@ async def _localized_file_path(doc: Any):
         if isinstance(original, str) and original.startswith("minio://"):
             from app.utils.minio_client import download_file_to_path
 
-            bucket, object_name = original[len("minio://"):].split("/", 1)
+            bucket, object_name = original[len("minio://") :].split("/", 1)
             suffix = os.path.splitext(object_name)[1] or ".bin"
             fd, tmp_path = tempfile.mkstemp(suffix=suffix, prefix="ekb_parse_")
             os.close(fd)
             await download_file_to_path(bucket, object_name, tmp_path)
             doc.file_path = tmp_path
         elif isinstance(original, str) and original.startswith("local://"):
-            doc.file_path = original[len("local://"):]
+            doc.file_path = original[len("local://") :]
         yield
     finally:
         doc.file_path = original
@@ -1533,7 +1606,9 @@ def _sha256_file(path: str) -> str:
 def _rec_meta(meta: dict | None, engine: str, outcome: str, **extra: Any) -> None:
     """D8: 向降级链追加一级引擎记录（meta 为 None 时静默跳过）。"""
     if meta is not None:
-        meta.setdefault("chain", []).append({"engine": engine, "outcome": outcome, **extra})
+        meta.setdefault("chain", []).append(
+            {"engine": engine, "outcome": outcome, **extra}
+        )
 
 
 async def _parse_document_dispatch(
@@ -1626,9 +1701,7 @@ async def _extract_images_for_cross_modal(
             # 消除原 DoclingParser._parse_raw 对 PDF 的二次全量 ML 解析
             from app.document.image_storage import extract_pdf_images
 
-            raw_images = await asyncio.to_thread(
-                extract_pdf_images, doc.file_path
-            )
+            raw_images = await asyncio.to_thread(extract_pdf_images, doc.file_path)
             images = [(b, "") for b in raw_images]
         elif doc_type in ("docx", "pptx"):
             # DOCX/PPTX: 使用解析器的图片提取能力
@@ -1638,7 +1711,11 @@ async def _extract_images_for_cross_modal(
             if parser is not None and hasattr(parser, "extract_raw_images"):
                 images = await parser.extract_raw_images(doc.file_path)
     except Exception as exc:
-        logger.debug("document.cross_modal_extract_failed", doc_id=str(getattr(doc, "id", "")), error=str(exc)[:200])
+        logger.debug(
+            "document.cross_modal_extract_failed",
+            doc_id=str(getattr(doc, "id", "")),
+            error=str(exc)[:200],
+        )
 
     # 对没有描述的图片批量生成 VLM 描述
     if images:
@@ -1716,7 +1793,9 @@ async def _try_docling_parse(
         return None
 
     except Exception as exc:
-        logger.warning("document.docling_failed_fallback", doc_type=doc_type, error=str(exc))
+        logger.warning(
+            "document.docling_failed_fallback", doc_type=doc_type, error=str(exc)
+        )
         _rec_meta(meta, "docling", "error", error=str(exc)[:200])
         return None
 
@@ -1930,7 +2009,9 @@ async def _parse_xlsx(doc: Any) -> str:
         logger.warning("xlsx.enhanced_parse_failed", error=str(exc))
 
     # 降级：返回 content_text
-    logger.warning("xlsx.parse_skipped", reason="openpyxl not installed or parse failed")
+    logger.warning(
+        "xlsx.parse_skipped", reason="openpyxl not installed or parse failed"
+    )
     return doc.content_text or ""
 
 
@@ -1990,7 +2071,12 @@ def _should_use_multipart_pipeline(doc_id: str) -> bool:
 
             async with task_db_session() as db:
                 from app.core.tenant_context import apply_tenant, resolve_task_tenant
-                _tid = await resolve_task_tenant(db, doc_id=doc_id, reason="document_tasks._should_use_multipart_pipeline")
+
+                _tid = await resolve_task_tenant(
+                    db,
+                    doc_id=doc_id,
+                    reason="document_tasks._should_use_multipart_pipeline",
+                )
                 if _tid:
                     await apply_tenant(db, _tid)
                 # 使用 DocumentRepository 替代裸 select，自动应用软删除过滤；
@@ -2039,8 +2125,8 @@ async def _parse_video(doc: Any) -> str:
         return doc.content_text or ""
 
     try:
-        from app.video import get_video_processor
         from app.asr import get_asr_provider
+        from app.video import get_video_processor
 
         # 1. 提取音轨
         processor = get_video_processor()
@@ -2059,6 +2145,7 @@ async def _parse_video(doc: Any) -> str:
         finally:
             # 清理临时音频文件
             import os
+
             if os.path.exists(wav_path):
                 os.remove(wav_path)
 
@@ -2117,8 +2204,8 @@ async def _parse_audio(doc: Any) -> str:
         return doc.content_text or ""
 
     try:
-        from app.video import get_video_processor
         from app.asr import get_asr_provider
+        from app.video import get_video_processor
 
         # 1. 转换为 WAV（VideoProcessor.extract_audio 对音频输入同样适用）
         processor = get_video_processor()
@@ -2137,6 +2224,7 @@ async def _parse_audio(doc: Any) -> str:
         finally:
             # 清理临时 WAV 文件
             import os
+
             if os.path.exists(wav_path):
                 os.remove(wav_path)
 
@@ -2202,6 +2290,7 @@ async def _extract_keyframe_descriptions(
                 """并发描述单个关键帧 — 异常时返回 None，不中断整体。"""
                 try:
                     import os
+
                     if not os.path.exists(kf.image_path):
                         logger.warning(
                             "video.keyframe_file_missing",
@@ -2278,8 +2367,8 @@ async def _chunk_video_document(doc: Any, transcript_text: str) -> list[Chunk]:
     # 尝试获取 ASR 片段（需要时间戳）
     segments: list[dict[str, Any]] = []
     try:
-        from app.video import get_video_processor
         from app.asr import get_asr_provider
+        from app.video import get_video_processor
 
         if doc.file_path:
             processor = get_video_processor()
@@ -2291,6 +2380,7 @@ async def _chunk_video_document(doc: Any, transcript_text: str) -> list[Chunk]:
                     segments = [s.to_dict() for s in segs]
                 finally:
                     import os
+
                     if os.path.exists(wav_path):
                         os.remove(wav_path)
     except Exception as exc:
@@ -2356,7 +2446,9 @@ def _chunk_document(
         return []
 
     chunker = SemanticChunker()
-    chunks = chunker.chunk(text, doc_type=doc_type, content_type=content_type, doc_id=doc_id)
+    chunks = chunker.chunk(
+        text, doc_type=doc_type, content_type=content_type, doc_id=doc_id
+    )
     # D6 资产化：图片/表格抽取为独立资产块（可单独命中＋回链正文块）
     chunks = chunker.extract_asset_chunks(chunks, doc_id)
     logger.info(
@@ -2433,7 +2525,10 @@ async def _submit_for_audit(doc_id: str, owner_id: Any) -> None:
 
     async with task_db_session() as session:
         from app.core.tenant_context import apply_tenant, resolve_task_tenant
-        _tid = await resolve_task_tenant(session, doc_id=doc_id, reason="document_tasks._submit_for_audit")
+
+        _tid = await resolve_task_tenant(
+            session, doc_id=doc_id, reason="document_tasks._submit_for_audit"
+        )
         if _tid:
             await apply_tenant(session, _tid)
         # AuditFlow 模型无 tenant_id 列，BaseRepository._apply_tenant_filter
@@ -2464,7 +2559,10 @@ async def _publish_document(doc_id: str) -> None:
 
     async with task_db_session() as session:
         from app.core.tenant_context import apply_tenant, resolve_task_tenant
-        _tid = await resolve_task_tenant(session, doc_id=doc_id, reason="document_tasks._publish_document")
+
+        _tid = await resolve_task_tenant(
+            session, doc_id=doc_id, reason="document_tasks._publish_document"
+        )
         if _tid:
             await apply_tenant(session, _tid)
         # 先无租户过滤地查找文档，获取其 tenant_id
@@ -2626,7 +2724,10 @@ async def _revert_document_to_draft(doc_id: str) -> None:
 
     async with task_db_session() as session:
         from app.core.tenant_context import apply_tenant, resolve_task_tenant
-        _tid = await resolve_task_tenant(session, doc_id=doc_id, reason="document_tasks._revert_document_to_draft")
+
+        _tid = await resolve_task_tenant(
+            session, doc_id=doc_id, reason="document_tasks._revert_document_to_draft"
+        )
         if _tid:
             await apply_tenant(session, _tid)
         repo = DocumentRepository(session)
@@ -2660,7 +2761,10 @@ async def _archive_document(doc_id: str) -> None:
 
     async with task_db_session() as session:
         from app.core.tenant_context import apply_tenant, resolve_task_tenant
-        _tid = await resolve_task_tenant(session, doc_id=doc_id, reason="document_tasks._archive_document")
+
+        _tid = await resolve_task_tenant(
+            session, doc_id=doc_id, reason="document_tasks._archive_document"
+        )
         if _tid:
             await apply_tenant(session, _tid)
         repo = DocumentRepository(session)
@@ -2698,7 +2802,10 @@ async def _down_publish_document(doc_id: str) -> None:
 
     async with task_db_session() as session:
         from app.core.tenant_context import apply_tenant, resolve_task_tenant
-        _tid = await resolve_task_tenant(session, doc_id=doc_id, reason="document_tasks._down_publish_document")
+
+        _tid = await resolve_task_tenant(
+            session, doc_id=doc_id, reason="document_tasks._down_publish_document"
+        )
         if _tid:
             await apply_tenant(session, _tid)
         repo = DocumentRepository(session)
@@ -2825,7 +2932,9 @@ async def _build_knowledge_graph(
     # 方向二：从 chunk_objects 提取三元组（计算复用）
     # Bug fix: 传文档元数据构建 Document 节点（HAS_CHUNK 端点）+ doc_status
     # 预判终态与 _build_doc_meta 同源（internal → published，需审核 → pending_review）
-    classification = (getattr(doc, "classification", None) or "internal") if doc else "internal"
+    classification = (
+        (getattr(doc, "classification", None) or "internal") if doc else "internal"
+    )
     graph_doc_status = (
         "pending_review" if classification in _REQUIRES_REVIEW else "published"
     )
@@ -2853,7 +2962,9 @@ async def _build_knowledge_graph(
         try:
             img_count = await service.add_image_nodes(doc_id, images)
             if img_count > 0:
-                logger.info("document.graph_images_added", doc_id=doc_id, count=img_count)
+                logger.info(
+                    "document.graph_images_added", doc_id=doc_id, count=img_count
+                )
         except Exception as exc:
             logger.debug(
                 "document.graph_images_failed",
@@ -2889,14 +3000,19 @@ async def _build_opensearch_index(
     """
     try:
         from opensearchpy import AsyncOpenSearch
+
         from app.config import get_settings
 
         settings = get_settings()
         client = AsyncOpenSearch(hosts=[settings.OPENSEARCH_URL])
 
         # P0-1 fix: 与向量索引同源的预判终态（索引写入早于状态翻转）
-        classification = (getattr(doc, "classification", None) or "internal") if doc else "internal"
-        doc_status = "pending_review" if classification in _REQUIRES_REVIEW else "published"
+        classification = (
+            (getattr(doc, "classification", None) or "internal") if doc else "internal"
+        )
+        doc_status = (
+            "pending_review" if classification in _REQUIRES_REVIEW else "published"
+        )
 
         index_name = "ekb_documents"
         # 确保索引存在
@@ -2937,7 +3053,9 @@ async def _build_opensearch_index(
                     "parent_id": chunk.parent_id,
                     "content": chunk.content,
                     "title_path": chunk.title_path,
-                    "kb_id": kb_id or getattr(chunk, "kb_id", None) or "",  # C5 fix: 不回退 doc_id，避免知识库过滤失效
+                    "kb_id": kb_id
+                    or getattr(chunk, "kb_id", None)
+                    or "",  # C5 fix: 不回退 doc_id，避免知识库过滤失效
                     "content_type": chunk.content_type,
                     "chunk_strategy": chunk.chunk_strategy,
                     "token_count": chunk.token_count,

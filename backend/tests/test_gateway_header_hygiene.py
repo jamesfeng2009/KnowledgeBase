@@ -31,9 +31,7 @@ def routes() -> list[dict]:
 
 def _lua_of(route: dict) -> str:
     funcs = (
-        route.get("plugins", {})
-        .get("serverless-pre-function", {})
-        .get("functions", [])
+        route.get("plugins", {}).get("serverless-pre-function", {}).get("functions", [])
     )
     return "\n".join(funcs)
 
@@ -61,9 +59,9 @@ def test_no_route_injects_tenant_id_or_gateway_token(routes) -> None:
 def test_only_main_route_injects_tenant_domain(routes) -> None:
     for route in routes:
         injects = 'set_header("X-Tenant-Domain"' in _lua_of(route)
-        assert injects == (route["id"] == "api-main"), (
-            f"路由 {route['id']} 的 X-Tenant-Domain 注入行为不符预期"
-        )
+        assert injects == (
+            route["id"] == "api-main"
+        ), f"路由 {route['id']} 的 X-Tenant-Domain 注入行为不符预期"
 
 
 def test_main_route_injects_host_without_environment(routes) -> None:
@@ -93,8 +91,8 @@ def test_compose_does_not_depend_on_root_domain_env() -> None:
     """网关不再读自定义环境变量，compose 里不该残留无效的环境变量声明。"""
     compose = _APISIX_YML.parent / "docker-compose.apisix.yml"
     text = compose.read_text(encoding="utf-8")
-    assert "- TENANT_ROOT_DOMAIN=" not in text, (
-        "网关已改用 ngx.var.host，不该再声明一个 worker 读不到的变量"
-    )
+    assert (
+        "- TENANT_ROOT_DOMAIN=" not in text
+    ), "网关已改用 ngx.var.host，不该再声明一个 worker 读不到的变量"
     assert "- APISIX_STAND_ALONE=true" in text
     assert "apisix.yml:/usr/local/apisix/conf/apisix.yaml:ro" in text

@@ -27,7 +27,6 @@ import asyncio
 import re
 from typing import Any
 
-from app.config import get_settings
 from app.core.parse_config import get_parse_settings
 from app.document.base import DocumentParser, ParsedSection
 from app.utils.logger import get_logger
@@ -78,10 +77,16 @@ class DOCXParser(DocumentParser):
             return ""
 
         settings = get_parse_settings()
-        table_enabled = self._bool(getattr(settings, "DOCX_TABLE_EXTRACTION_ENABLED", True), True)
-        image_enabled = self._bool(getattr(settings, "DOCX_IMAGE_EXTRACTION_ENABLED", True), True)
+        table_enabled = self._bool(
+            getattr(settings, "DOCX_TABLE_EXTRACTION_ENABLED", True), True
+        )
+        image_enabled = self._bool(
+            getattr(settings, "DOCX_IMAGE_EXTRACTION_ENABLED", True), True
+        )
         max_images = self._int(getattr(settings, "DOCX_IMAGE_MAX_PER_DOC", 50), 50)
-        image_upload_enabled = self._bool(getattr(settings, "DOCX_IMAGE_UPLOAD_ENABLED", False), False)
+        image_upload_enabled = self._bool(
+            getattr(settings, "DOCX_IMAGE_UPLOAD_ENABLED", False), False
+        )
         image_min_size = self._int(getattr(settings, "DOCX_IMAGE_MIN_SIZE", 50), 50)
         page_break_detection = self._bool(
             getattr(settings, "DOCX_PAGE_BREAK_DETECTION", True), True
@@ -171,9 +176,7 @@ class DOCXParser(DocumentParser):
             file_path=file_path,
             sections=len(sections),
             tables=sum(1 for s in sections if s.kind == "table"),
-            images=sum(
-                1 for s in sections if s.kind in ("image_desc", "image_url")
-            ),
+            images=sum(1 for s in sections if s.kind in ("image_desc", "image_url")),
             pages=current_page + 1,
         )
 
@@ -215,9 +218,7 @@ class DOCXParser(DocumentParser):
             return False
 
     @staticmethod
-    def _extract_textbox_sections(
-        element: Any, page: int
-    ) -> list[ParsedSection]:
+    def _extract_textbox_sections(element: Any, page: int) -> list[ParsedSection]:
         """从 <w:p> 元素中提取所有文本框（textbox）内容。
 
         支持两种文本框格式：
@@ -523,11 +524,7 @@ class DOCXParser(DocumentParser):
         """转义 HTML 特殊字符。"""
         if not text:
             return ""
-        return (
-            text.replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-        )
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
     @staticmethod
     def _extract_table_html(element: Any) -> str:
@@ -817,7 +814,9 @@ class DOCXParser(DocumentParser):
         try:
             docx_doc = DocxDocument(file_path)
         except Exception as exc:
-            log.warning("docx.open_failed_for_images", file_path=file_path, error=str(exc))
+            log.warning(
+                "docx.open_failed_for_images", file_path=file_path, error=str(exc)
+            )
             return []
 
         images: list[tuple[bytes, str]] = []

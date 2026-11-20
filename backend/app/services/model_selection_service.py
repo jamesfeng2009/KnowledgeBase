@@ -12,6 +12,7 @@
 遵循单一职责：本服务只管理模型选择逻辑，不创建 Provider 实例。
 遵循开闭原则：新增模型类型只需在 models.json 中添加，无需修改本服务。
 """
+
 from __future__ import annotations
 
 import uuid
@@ -145,9 +146,7 @@ class ModelSelectionService:
         )
         return pref
 
-    async def resolve_model(
-        self, user_id: uuid.UUID, session_id: str
-    ) -> str:
+    async def resolve_model(self, user_id: uuid.UUID, session_id: str) -> str:
         """两级优先级解析 — 返回最终使用的模型 ID。
 
         优先级：

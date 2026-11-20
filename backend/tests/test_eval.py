@@ -86,7 +86,9 @@ class TestEvalCase:
     def test_from_dict_tolerant(self) -> None:
         from app.eval.dataset import EvalCase
 
-        case = EvalCase.from_dict({"query": "  q  ", "expected_doc_ids": ["a", None, 1]})
+        case = EvalCase.from_dict(
+            {"query": "  q  ", "expected_doc_ids": ["a", None, 1]}
+        )
         assert case.query == "q"
         # None 被过滤，整数被转为字符串
         assert case.expected_doc_ids == ["a", "1"]
@@ -109,7 +111,9 @@ class TestEvalDatasetLoad:
 
         path = tmp_path / "normal.jsonl"
         path.write_text(
-            json.dumps({"query": "报销", "expected_doc_ids": ["d1"]}, ensure_ascii=False)
+            json.dumps(
+                {"query": "报销", "expected_doc_ids": ["d1"]}, ensure_ascii=False
+            )
             + "\n"
             + json.dumps(
                 {"query": "请假", "expected_doc_ids": ["d2"], "tags": ["hr"]},
@@ -358,9 +362,7 @@ class TestEvalRunnerRun:
             )
         )
 
-        ds = EvalDataset(
-            [EvalCase(query="报销流程", expected_doc_ids=["doc_1"])]
-        )
+        ds = EvalDataset([EvalCase(query="报销流程", expected_doc_ids=["doc_1"])])
         runner = EvalRunner(engine=engine, judge_service=mock_judge)
         result = await runner.run(ds, with_generation=True)
 
@@ -712,7 +714,9 @@ class TestEvalRepositoryPersistence:
         repo = EvalRepository(session=db_session)
         for i in range(3):
             await repo.save(
-                EvalRunResult(avg_recall_at_5=0.1 * i, total=1, passed=1, evaluated_at="t"),
+                EvalRunResult(
+                    avg_recall_at_5=0.1 * i, total=1, passed=1, evaluated_at="t"
+                ),
                 "ds_list",
             )
         results = await repo.list_results("ds_list", limit=10)
@@ -739,7 +743,9 @@ class TestEvalRepositoryDegradation:
 
         with patch.object(repo_mod, "_session_factory", None):
             repo = EvalRepository(session=None)
-            result = EvalRunResult(avg_recall_at_5=0.5, total=1, passed=1, evaluated_at="t")
+            result = EvalRunResult(
+                avg_recall_at_5=0.5, total=1, passed=1, evaluated_at="t"
+            )
             run_id = await repo.save(result, "ds", is_baseline=True)
             assert run_id  # 仍返回 run_id
             # 未持久化 → 查不到
@@ -829,7 +835,9 @@ class TestEvalRepositorySchemaErrors:
         from app.eval.repository import _is_schema_error
 
         exc = ProgrammingError(
-            "SELECT avg_recall_at_5", {}, Exception('column "avg_recall_at_5" does not exist')
+            "SELECT avg_recall_at_5",
+            {},
+            Exception('column "avg_recall_at_5" does not exist'),
         )
         assert _is_schema_error(exc) is True
 
@@ -839,9 +847,7 @@ class TestEvalRepositorySchemaErrors:
 
         from app.eval.repository import _is_schema_error
 
-        exc = OperationalError(
-            "connect", {}, Exception("connection refused")
-        )
+        exc = OperationalError("connect", {}, Exception("connection refused"))
         assert _is_schema_error(exc) is False
 
     async def test_save_raises_on_missing_table(self) -> None:
@@ -886,7 +892,9 @@ class TestEvalRepositorySchemaErrors:
         from app.eval.runner import EvalRunResult
 
         broken = MagicMock()
-        broken.add = MagicMock(side_effect=OperationalError("insert", {}, Exception("connection refused")))
+        broken.add = MagicMock(
+            side_effect=OperationalError("insert", {}, Exception("connection refused"))
+        )
         broken.execute = AsyncMock(
             side_effect=OperationalError("select", {}, Exception("connection refused"))
         )
@@ -906,7 +914,9 @@ class TestEvalRepositorySchemaErrors:
 
         with patch.object(repo_mod, "_session_factory", None):
             repo = EvalRepository(session=None)
-            result = EvalRunResult(avg_recall_at_5=0.5, total=1, passed=1, evaluated_at="t")
+            result = EvalRunResult(
+                avg_recall_at_5=0.5, total=1, passed=1, evaluated_at="t"
+            )
             await repo.save(result, "ds")
             # 工厂不可用属于「已声明降级」而非错误，last_error 保持 None
             assert repo.last_error is None
@@ -940,12 +950,12 @@ class TestRunEvalCLI:
             encoding="utf-8",
         )
 
-        with patch.object(run_eval, "_build_engine", return_value=self._StubEngine()), \
-             patch.object(run_eval, "_build_judge_with_model", return_value=None), \
-             patch("app.eval.repository._session_factory", None):
-            rc = run_eval.main(
-                ["--dataset", str(ds_path), "--no-generation"]
-            )
+        with (
+            patch.object(run_eval, "_build_engine", return_value=self._StubEngine()),
+            patch.object(run_eval, "_build_judge_with_model", return_value=None),
+            patch("app.eval.repository._session_factory", None),
+        ):
+            rc = run_eval.main(["--dataset", str(ds_path), "--no-generation"])
 
         assert rc == 0
         out = capsys.readouterr().out
@@ -963,12 +973,12 @@ class TestRunEvalCLI:
             encoding="utf-8",
         )
 
-        with patch.object(run_eval, "_build_engine", return_value=None), \
-             patch.object(run_eval, "_build_judge_with_model", return_value=None), \
-             patch("app.eval.repository._session_factory", None):
-            rc = run_eval.main(
-                ["--dataset", str(ds_path), "--no-generation"]
-            )
+        with (
+            patch.object(run_eval, "_build_engine", return_value=None),
+            patch.object(run_eval, "_build_judge_with_model", return_value=None),
+            patch("app.eval.repository._session_factory", None),
+        ):
+            rc = run_eval.main(["--dataset", str(ds_path), "--no-generation"])
 
         assert rc == 2
         err = capsys.readouterr().err
@@ -977,7 +987,6 @@ class TestRunEvalCLI:
     def test_main_schema_error_exit_three(self, tmp_path, capsys) -> None:  # type: ignore[no-untyped-def]
         """eval_results 表缺失时退出码 3，不输出「基线已设置」的假绿。"""
         from app.eval.repository import EvalRepository, EvalSchemaError
-
         from scripts import run_eval
 
         ds_path = tmp_path / "sample.jsonl"
@@ -990,10 +999,12 @@ class TestRunEvalCLI:
         boom = AsyncMock(
             side_effect=EvalSchemaError('relation "eval_results" does not exist')
         )
-        with patch.object(run_eval, "_build_engine", return_value=self._StubEngine()), \
-             patch.object(run_eval, "_build_judge_with_model", return_value=None), \
-             patch("app.eval.repository._session_factory", None), \
-             patch.object(EvalRepository, "save", new=boom):
+        with (
+            patch.object(run_eval, "_build_engine", return_value=self._StubEngine()),
+            patch.object(run_eval, "_build_judge_with_model", return_value=None),
+            patch("app.eval.repository._session_factory", None),
+            patch.object(EvalRepository, "save", new=boom),
+        ):
             rc = run_eval.main(["--dataset", str(ds_path), "--no-generation"])
 
         assert rc == 3
@@ -1002,9 +1013,9 @@ class TestRunEvalCLI:
         assert "alembic upgrade head" in err
 
     def test_main_regression_exit_one(self, tmp_path, capsys) -> None:  # type: ignore[no-untyped-def]
-        from scripts import run_eval
         from app.eval.repository import EvalRepository
         from app.eval.runner import EvalRunResult
+        from scripts import run_eval
 
         ds_path = tmp_path / "sample.jsonl"
         ds_path.write_text(
@@ -1024,14 +1035,16 @@ class TestRunEvalCLI:
             evaluated_at="2026-01-01T00:00:00",
         )
 
-        with patch.object(run_eval, "_build_engine", return_value=self._StubEngine()), \
-             patch.object(run_eval, "_build_judge_with_model", return_value=None), \
-             patch("app.eval.repository._session_factory", None), \
-             patch.object(
-                 EvalRepository,
-                 "get_by_run_id",
-                 new=AsyncMock(return_value=high_baseline),
-             ):
+        with (
+            patch.object(run_eval, "_build_engine", return_value=self._StubEngine()),
+            patch.object(run_eval, "_build_judge_with_model", return_value=None),
+            patch("app.eval.repository._session_factory", None),
+            patch.object(
+                EvalRepository,
+                "get_by_run_id",
+                new=AsyncMock(return_value=high_baseline),
+            ),
+        ):
             rc = run_eval.main(
                 [
                     "--dataset",
@@ -1080,10 +1093,12 @@ class TestRunEvalCLI:
 
                 return EvalRunResult(total=1, passed=1, evaluated_at="t")
 
-        with patch.object(run_eval, "_build_engine", return_value=object()), \
-             patch.object(run_eval, "_build_judge_with_model", return_value=None), \
-             patch.object(run_eval, "EvalRunner", _StubRunner), \
-             patch("app.eval.repository._session_factory", None):
+        with (
+            patch.object(run_eval, "_build_engine", return_value=object()),
+            patch.object(run_eval, "_build_judge_with_model", return_value=None),
+            patch.object(run_eval, "EvalRunner", _StubRunner),
+            patch("app.eval.repository._session_factory", None),
+        ):
             rc = run_eval.main(
                 [
                     "--dataset",

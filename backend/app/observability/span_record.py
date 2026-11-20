@@ -28,10 +28,11 @@ from __future__ import annotations
 
 import time
 import uuid
+from collections.abc import Generator
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
-from typing import Any, Generator
+from typing import Any
 
 from app.utils.logger import get_logger
 

@@ -13,7 +13,6 @@ from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
 
-
 # ======================================================================
 # 枚举定义
 # ======================================================================
@@ -175,9 +174,7 @@ class KnowledgeConflictResponse(BaseModel):
 class ConflictResolveRequest(BaseModel):
     """解决冲突请求。"""
 
-    resolution: str = Field(
-        ..., description="解决方案: new_wins/existing_wins/merged"
-    )
+    resolution: str = Field(..., description="解决方案: new_wins/existing_wins/merged")
     note: str | None = Field(default=None, description="解决备注")
 
 

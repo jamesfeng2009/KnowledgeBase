@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
 
 from app.utils.logger import get_logger
 
@@ -69,7 +68,10 @@ async def _process_document_images(doc_id: str) -> dict:
 
     async with task_db_session() as session:
         from app.core.tenant_context import apply_tenant, resolve_task_tenant
-        _tid = await resolve_task_tenant(session, doc_id=doc_id, reason="multimodal_tasks._process_document_images")
+
+        _tid = await resolve_task_tenant(
+            session, doc_id=doc_id, reason="multimodal_tasks._process_document_images"
+        )
         if _tid:
             await apply_tenant(session, _tid)
         repo = DocumentRepository(session)
@@ -212,9 +214,7 @@ async def _extract_raw_images_for_vlm(
             if result is not None:
                 pictures = DoclingParser._extract_pictures(result)
                 for pic in pictures:
-                    images.append(
-                        (pic["data"], pic.get("mime_type", "image/png"))
-                    )
+                    images.append((pic["data"], pic.get("mime_type", "image/png")))
         elif doc_type in ("docx", "pptx"):
             # DOCX/PPTX: 使用解析器的 extract_raw_images 方法
             from app.document.factory import get_parser_with_fallback

@@ -3,13 +3,11 @@
 使用 Mock 避免真实 S3 连接。
 测试覆盖 boto3 标准 S3 API 的封装层。
 """
+
 from __future__ import annotations
 
 import sys
-from typing import Any
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 # Mock celery
 if "celery" not in sys.modules:
@@ -30,6 +28,7 @@ class TestMinioClient:
         """upload_file 返回 minio:// URL(保留前缀兼容数据库记录)。"""
         # 重置懒初始化状态
         import app.utils.minio_client as mc
+
         mc._client = None
         mc._initialized_buckets = set()
 
@@ -38,12 +37,15 @@ class TestMinioClient:
 
         with patch("app.utils.minio_client._get_client", return_value=mock_s3):
             import asyncio
-            result = asyncio.run(mc.upload_file(
-                bucket="ekb-documents",
-                object_name="kb1/doc.pdf",
-                data=b"test content",
-                content_type="application/pdf",
-            ))
+
+            result = asyncio.run(
+                mc.upload_file(
+                    bucket="ekb-documents",
+                    object_name="kb1/doc.pdf",
+                    data=b"test content",
+                    content_type="application/pdf",
+                )
+            )
 
         assert result == "minio://ekb-documents/kb1/doc.pdf"
         mock_s3.put_object.assert_called_once()
@@ -57,6 +59,7 @@ class TestMinioClient:
     def test_upload_file_creates_bucket_if_missing(self) -> None:
         """bucket 不存在时(head_bucket 抛异常)自动创建。"""
         import app.utils.minio_client as mc
+
         mc._client = None
         mc._initialized_buckets = set()
 
@@ -66,17 +69,21 @@ class TestMinioClient:
 
         with patch("app.utils.minio_client._get_client", return_value=mock_s3):
             import asyncio
-            asyncio.run(mc.upload_file(
-                bucket="new-bucket",
-                object_name="test.txt",
-                data=b"data",
-            ))
+
+            asyncio.run(
+                mc.upload_file(
+                    bucket="new-bucket",
+                    object_name="test.txt",
+                    data=b"data",
+                )
+            )
 
         mock_s3.create_bucket.assert_called_once_with(Bucket="new-bucket")
 
     def test_upload_file_bucket_cached(self) -> None:
         """bucket 创建后缓存,不重复检查。"""
         import app.utils.minio_client as mc
+
         mc._client = None
         mc._initialized_buckets = {"ekb-documents"}  # 已缓存
 
@@ -84,11 +91,14 @@ class TestMinioClient:
 
         with patch("app.utils.minio_client._get_client", return_value=mock_s3):
             import asyncio
-            asyncio.run(mc.upload_file(
-                bucket="ekb-documents",
-                object_name="test.txt",
-                data=b"data",
-            ))
+
+            asyncio.run(
+                mc.upload_file(
+                    bucket="ekb-documents",
+                    object_name="test.txt",
+                    data=b"data",
+                )
+            )
 
         # head_bucket 不应被调用(已缓存)
         mock_s3.head_bucket.assert_not_called()
@@ -97,6 +107,7 @@ class TestMinioClient:
     def test_download_file(self) -> None:
         """download_file 返回文件内容(boto3 get_object 返回 Body 流)。"""
         import app.utils.minio_client as mc
+
         mc._client = None
 
         mock_body = MagicMock()
@@ -107,6 +118,7 @@ class TestMinioClient:
 
         with patch("app.utils.minio_client._get_client", return_value=mock_s3):
             import asyncio
+
             result = asyncio.run(mc.download_file("bucket", "obj"))
 
         assert result == b"file content"
@@ -120,6 +132,7 @@ class TestMinioClient:
 
         with patch("app.utils.minio_client._get_client", return_value=mock_s3):
             import asyncio
+
             asyncio.run(mc.delete_file("bucket", "obj"))
 
         mock_s3.delete_object.assert_called_once_with(Bucket="bucket", Key="obj")
@@ -133,6 +146,7 @@ class TestMinioClient:
 
         with patch("app.utils.minio_client._get_client", return_value=mock_s3):
             import asyncio
+
             result = asyncio.run(mc.file_exists("bucket", "obj"))
 
         assert result is True
@@ -146,6 +160,7 @@ class TestMinioClient:
 
         with patch("app.utils.minio_client._get_client", return_value=mock_s3):
             import asyncio
+
             result = asyncio.run(mc.file_exists("bucket", "obj"))
 
         assert result is False
@@ -153,6 +168,7 @@ class TestMinioClient:
     def test_get_client_lazy_init(self) -> None:
         """_get_client 懒初始化 boto3 client。"""
         import app.utils.minio_client as mc
+
         mc._client = None
 
         mock_boto3 = MagicMock()
@@ -195,6 +211,7 @@ class TestMinioClient:
     def test_init_multipart_upload(self) -> None:
         """init_multipart_upload 调用 boto3 create_multipart_upload。"""
         import app.utils.minio_client as mc
+
         mc._client = None
         mc._initialized_buckets = {"ekb-documents"}
 
@@ -203,11 +220,14 @@ class TestMinioClient:
 
         with patch("app.utils.minio_client._get_client", return_value=mock_s3):
             import asyncio
-            result = asyncio.run(mc.init_multipart_upload(
-                bucket="ekb-documents",
-                object_name="kb1/video.mp4",
-                content_type="video/mp4",
-            ))
+
+            result = asyncio.run(
+                mc.init_multipart_upload(
+                    bucket="ekb-documents",
+                    object_name="kb1/video.mp4",
+                    content_type="video/mp4",
+                )
+            )
 
         assert result == "upload-xxx"
         mock_s3.create_multipart_upload.assert_called_once()
@@ -219,6 +239,7 @@ class TestMinioClient:
     def test_upload_part(self) -> None:
         """upload_part 调用 boto3 upload_part,返回去引号的 etag。"""
         import app.utils.minio_client as mc
+
         mc._client = None
 
         mock_s3 = MagicMock()
@@ -227,13 +248,16 @@ class TestMinioClient:
 
         with patch("app.utils.minio_client._get_client", return_value=mock_s3):
             import asyncio
-            result = asyncio.run(mc.upload_part(
-                bucket="ekb-documents",
-                object_name="kb1/video.mp4",
-                upload_id="upload-xxx",
-                part_number=1,
-                data=b"chunk-data",
-            ))
+
+            result = asyncio.run(
+                mc.upload_part(
+                    bucket="ekb-documents",
+                    object_name="kb1/video.mp4",
+                    upload_id="upload-xxx",
+                    part_number=1,
+                    data=b"chunk-data",
+                )
+            )
 
         assert result == {"part_number": 1, "etag": "etag-abc"}  # 去引号
         call_kwargs = mock_s3.upload_part.call_args.kwargs
@@ -249,21 +273,28 @@ class TestMinioClient:
         提交给 S3 complete 时必须加回双引号才符合 S3 规范。
         """
         import app.utils.minio_client as mc
+
         mc._client = None
 
         mock_s3 = MagicMock()
 
         with patch("app.utils.minio_client._get_client", return_value=mock_s3):
             import asyncio
-            result = asyncio.run(mc.complete_multipart_upload(
-                bucket="ekb-documents",
-                object_name="kb1/video.mp4",
-                upload_id="upload-xxx",
-                parts=[
-                    {"part_number": 1, "etag": "etag-1"},  # 不带引号(来自 localStorage)
-                    {"part_number": 2, "etag": "etag-2"},
-                ],
-            ))
+
+            result = asyncio.run(
+                mc.complete_multipart_upload(
+                    bucket="ekb-documents",
+                    object_name="kb1/video.mp4",
+                    upload_id="upload-xxx",
+                    parts=[
+                        {
+                            "part_number": 1,
+                            "etag": "etag-1",
+                        },  # 不带引号(来自 localStorage)
+                        {"part_number": 2, "etag": "etag-2"},
+                    ],
+                )
+            )
 
         assert result == "minio://ekb-documents/kb1/video.mp4"
         call_kwargs = mock_s3.complete_multipart_upload.call_args.kwargs
@@ -276,20 +307,24 @@ class TestMinioClient:
     def test_complete_multipart_upload_etag_already_quoted(self) -> None:
         """complete 时 ETag 已带引号则原样提交(幂等,不重复加引号)。"""
         import app.utils.minio_client as mc
+
         mc._client = None
 
         mock_s3 = MagicMock()
 
         with patch("app.utils.minio_client._get_client", return_value=mock_s3):
             import asyncio
-            asyncio.run(mc.complete_multipart_upload(
-                bucket="ekb-documents",
-                object_name="kb1/video.mp4",
-                upload_id="upload-xxx",
-                parts=[
-                    {"part_number": 1, "etag": '"etag-1"'},  # 已带引号
-                ],
-            ))
+
+            asyncio.run(
+                mc.complete_multipart_upload(
+                    bucket="ekb-documents",
+                    object_name="kb1/video.mp4",
+                    upload_id="upload-xxx",
+                    parts=[
+                        {"part_number": 1, "etag": '"etag-1"'},  # 已带引号
+                    ],
+                )
+            )
 
         call_kwargs = mock_s3.complete_multipart_upload.call_args.kwargs
         # 已带引号的 ETag 原样提交,不会变成 ""etag-1""
@@ -300,17 +335,21 @@ class TestMinioClient:
     def test_abort_multipart_upload(self) -> None:
         """abort_multipart_upload 调用 boto3 abort_multipart_upload。"""
         import app.utils.minio_client as mc
+
         mc._client = None
 
         mock_s3 = MagicMock()
 
         with patch("app.utils.minio_client._get_client", return_value=mock_s3):
             import asyncio
-            asyncio.run(mc.abort_multipart_upload(
-                bucket="ekb-documents",
-                object_name="kb1/video.mp4",
-                upload_id="upload-xxx",
-            ))
+
+            asyncio.run(
+                mc.abort_multipart_upload(
+                    bucket="ekb-documents",
+                    object_name="kb1/video.mp4",
+                    upload_id="upload-xxx",
+                )
+            )
 
         mock_s3.abort_multipart_upload.assert_called_once_with(
             Bucket="ekb-documents",
@@ -321,6 +360,7 @@ class TestMinioClient:
     def test_abort_multipart_upload_failure_no_raise(self) -> None:
         """abort 失败时不抛异常(幂等,仅记录日志)。"""
         import app.utils.minio_client as mc
+
         mc._client = None
 
         mock_s3 = MagicMock()
@@ -328,16 +368,20 @@ class TestMinioClient:
 
         with patch("app.utils.minio_client._get_client", return_value=mock_s3):
             import asyncio
+
             # 不应抛异常
-            asyncio.run(mc.abort_multipart_upload(
-                bucket="ekb-documents",
-                object_name="kb1/video.mp4",
-                upload_id="upload-xxx",
-            ))
+            asyncio.run(
+                mc.abort_multipart_upload(
+                    bucket="ekb-documents",
+                    object_name="kb1/video.mp4",
+                    upload_id="upload-xxx",
+                )
+            )
 
     def test_list_parts(self) -> None:
         """list_parts 返回 snake_case 格式(转换自 boto3 PascalCase)。"""
         import app.utils.minio_client as mc
+
         mc._client = None
 
         mock_s3 = MagicMock()
@@ -350,11 +394,14 @@ class TestMinioClient:
 
         with patch("app.utils.minio_client._get_client", return_value=mock_s3):
             import asyncio
-            result = asyncio.run(mc.list_parts(
-                bucket="ekb-documents",
-                object_name="kb1/video.mp4",
-                upload_id="upload-xxx",
-            ))
+
+            result = asyncio.run(
+                mc.list_parts(
+                    bucket="ekb-documents",
+                    object_name="kb1/video.mp4",
+                    upload_id="upload-xxx",
+                )
+            )
 
         assert result == [
             {"part_number": 1, "etag": "etag-1", "size": 10485760},
@@ -364,6 +411,7 @@ class TestMinioClient:
     def test_list_parts_failure_returns_empty(self) -> None:
         """list_parts 失败时返回空列表(允许继续上传)。"""
         import app.utils.minio_client as mc
+
         mc._client = None
 
         mock_s3 = MagicMock()
@@ -371,39 +419,61 @@ class TestMinioClient:
 
         with patch("app.utils.minio_client._get_client", return_value=mock_s3):
             import asyncio
-            result = asyncio.run(mc.list_parts(
-                bucket="ekb-documents",
-                object_name="kb1/video.mp4",
-                upload_id="upload-xxx",
-            ))
+
+            result = asyncio.run(
+                mc.list_parts(
+                    bucket="ekb-documents",
+                    object_name="kb1/video.mp4",
+                    upload_id="upload-xxx",
+                )
+            )
 
         assert result == []
 
     def test_list_multipart_uploads(self) -> None:
         """list_multipart_uploads 返回 snake_case 格式。"""
         import app.utils.minio_client as mc
+
         mc._client = None
 
         mock_s3 = MagicMock()
         mock_s3.list_multipart_uploads.return_value = {
             "Uploads": [
-                {"UploadId": "uid-1", "Key": "kb1/video1.mp4", "Initiated": "2026-01-01T00:00:00Z"},
-                {"UploadId": "uid-2", "Key": "kb1/video2.mp4", "Initiated": "2026-01-02T00:00:00Z"},
+                {
+                    "UploadId": "uid-1",
+                    "Key": "kb1/video1.mp4",
+                    "Initiated": "2026-01-01T00:00:00Z",
+                },
+                {
+                    "UploadId": "uid-2",
+                    "Key": "kb1/video2.mp4",
+                    "Initiated": "2026-01-02T00:00:00Z",
+                },
             ]
         }
 
         with patch("app.utils.minio_client._get_client", return_value=mock_s3):
             import asyncio
+
             result = asyncio.run(mc.list_multipart_uploads(bucket="ekb-documents"))
 
         assert result == [
-            {"upload_id": "uid-1", "object_name": "kb1/video1.mp4", "initiated": "2026-01-01T00:00:00Z"},
-            {"upload_id": "uid-2", "object_name": "kb1/video2.mp4", "initiated": "2026-01-02T00:00:00Z"},
+            {
+                "upload_id": "uid-1",
+                "object_name": "kb1/video1.mp4",
+                "initiated": "2026-01-01T00:00:00Z",
+            },
+            {
+                "upload_id": "uid-2",
+                "object_name": "kb1/video2.mp4",
+                "initiated": "2026-01-02T00:00:00Z",
+            },
         ]
 
     def test_list_multipart_uploads_failure_returns_empty(self) -> None:
         """list_multipart_uploads 失败时返回空列表(不阻断清理流程)。"""
         import app.utils.minio_client as mc
+
         mc._client = None
 
         mock_s3 = MagicMock()
@@ -411,6 +481,7 @@ class TestMinioClient:
 
         with patch("app.utils.minio_client._get_client", return_value=mock_s3):
             import asyncio
+
             result = asyncio.run(mc.list_multipart_uploads(bucket="ekb-documents"))
 
         assert result == []

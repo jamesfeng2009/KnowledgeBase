@@ -50,9 +50,9 @@ class TestPolicyPredicate:
         """
         mod = _load_migration()
         pred = mod._STRICT_PREDICATE
-        assert "IS NULL" not in pred.upper(), (
-            "严格策略里出现了 IS NULL 分支 —— fail-open 又回来了"
-        )
+        assert (
+            "IS NULL" not in pred.upper()
+        ), "严格策略里出现了 IS NULL 分支 —— fail-open 又回来了"
         assert "app.tenant_id" in pred
         assert "''*''" in pred, "跨租户哨兵分支丢了（system_scope 会失效）"
 
@@ -65,9 +65,9 @@ class TestPolicyPredicate:
         upgrade_body = src.split("def upgrade() -> None:")[1].split(
             "def downgrade() -> None:"
         )[0]
-        assert "_LEGACY_PREDICATE" not in upgrade_body, (
-            "upgrade 里出现了 fail-open 谓词"
-        )
+        assert (
+            "_LEGACY_PREDICATE" not in upgrade_body
+        ), "upgrade 里出现了 fail-open 谓词"
 
     def test_comparison_uses_text_cast(self) -> None:
         """必须用 ``tenant_id::text`` 比较，不能用 ``::uuid``。

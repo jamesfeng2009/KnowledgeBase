@@ -12,6 +12,7 @@ task_db_session()（任务级独立引擎，用完即 dispose）统一工具函�
     2. task_db_session — 会话获取、退出时 dispose 引擎
     3. 跨事件循环安全 — 多个 asyncio.run() 循环连续使用不报错
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -23,7 +24,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from sqlalchemy.pool import NullPool
 
 from app.database import create_task_engine, engine, get_db_session, task_db_session
-
 
 # ======================================================================
 # create_task_engine 测试
@@ -129,7 +129,9 @@ class TestTenantIdValidation:
         return [
             call.args[1]["value"]
             for call in session_mock.execute.call_args_list
-            if len(call.args) > 1 and isinstance(call.args[1], dict) and "value" in call.args[1]
+            if len(call.args) > 1
+            and isinstance(call.args[1], dict)
+            and "value" in call.args[1]
         ]
 
     @pytest.mark.asyncio

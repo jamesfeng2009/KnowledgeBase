@@ -32,7 +32,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from app.config import get_settings
+from app.config import get_settings  # noqa: F401  — 测试 patch 目标（模块属性）
 from app.core.parse_config import get_parse_settings
 from app.document.base import DocumentParser, ParsedSection
 from app.utils.logger import get_logger
@@ -84,9 +84,7 @@ class PPTXParser(DocumentParser):
         # D9: 嵌入音视频不得静默丢失 — 按 slide 关系计数并告警（仅告警，不提取）
         media_count = self._count_embedded_media(prs)
         if media_count:
-            self.last_parse_warnings.append(
-                f"含 {media_count} 个嵌入音视频，未解析"
-            )
+            self.last_parse_warnings.append(f"含 {media_count} 个嵌入音视频，未解析")
             log.info(
                 "pptx.embedded_media_detected",
                 file_path=file_path,
@@ -146,7 +144,9 @@ class PPTXParser(DocumentParser):
             slides=len(prs.slides),
             sections=len(sections),
             tables=sum(1 for s in sections if s.kind == "table"),
-            charts=sum(1 for s in sections if s.kind == "text" and "[图表数据]" in s.content),
+            charts=sum(
+                1 for s in sections if s.kind == "text" and "[图表数据]" in s.content
+            ),
             images=sum(1 for s in sections if s.kind in ("image_desc", "image_url")),
         )
 
@@ -382,7 +382,9 @@ class PPTXParser(DocumentParser):
                 for child_shape in shape.shapes:
                     self._collect_tables(child_shape, slide_num, sections, depth + 1)
             except Exception as exc:
-                log.debug("pptx.group_table_traverse_failed", depth=depth, error=str(exc))
+                log.debug(
+                    "pptx.group_table_traverse_failed", depth=depth, error=str(exc)
+                )
 
     # ============================================================
     # P2: 图表数据提取（含 GROUP 组合形状）
@@ -450,7 +452,9 @@ class PPTXParser(DocumentParser):
                 for child_shape in shape.shapes:
                     self._collect_charts(child_shape, slide_num, sections, depth + 1)
             except Exception as exc:
-                log.debug("pptx.group_chart_traverse_failed", depth=depth, error=str(exc))
+                log.debug(
+                    "pptx.group_chart_traverse_failed", depth=depth, error=str(exc)
+                )
 
     @staticmethod
     def _extract_chart_data(chart: Any) -> str:
@@ -518,13 +522,12 @@ class PPTXParser(DocumentParser):
         Returns:
             (图片 ParsedSection 列表, 实际提取的图片数)
         """
-        # P2: 清理冗余逻辑 — 直接用常量
-        picture_val = _SHAPE_TYPE_PICTURE
-
         # 递归收集所有图片形状（含 GROUP 内的）
         image_shapes: list[Any] = []
         for shape in slide.shapes:
-            self._collect_image_shapes(shape, image_shapes, remaining - len(image_shapes), depth=0)
+            self._collect_image_shapes(
+                shape, image_shapes, remaining - len(image_shapes), depth=0
+            )
 
         if not image_shapes:
             return [], 0
@@ -665,10 +668,15 @@ class PPTXParser(DocumentParser):
                     if len(image_shapes) >= remaining:
                         break
                     self._collect_image_shapes(
-                        child_shape, image_shapes, remaining - len(image_shapes), depth + 1
+                        child_shape,
+                        image_shapes,
+                        remaining - len(image_shapes),
+                        depth + 1,
                     )
             except Exception as exc:
-                log.debug("pptx.group_image_traverse_failed", depth=depth, error=str(exc))
+                log.debug(
+                    "pptx.group_image_traverse_failed", depth=depth, error=str(exc)
+                )
 
     # ============================================================
     # 工具方法
@@ -707,11 +715,7 @@ class PPTXParser(DocumentParser):
         """转义 HTML 特殊字符。"""
         if not text:
             return ""
-        return (
-            text.replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-        )
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
     async def _vlm_describe(self, image: bytes, mime_type: str) -> str:
         """调用 VLM 理解图片内容 — 延迟导入，不可用/失败时返回空字符串。"""
@@ -750,14 +754,15 @@ class PPTXParser(DocumentParser):
         """
         try:
             from pptx import Presentation
-            from pptx.enum.shapes import MSO_SHAPE_TYPE
         except ImportError:
             return []
 
         try:
             prs = Presentation(file_path)
         except Exception as exc:
-            log.warning("pptx.open_failed_for_images", file_path=file_path, error=str(exc))
+            log.warning(
+                "pptx.open_failed_for_images", file_path=file_path, error=str(exc)
+            )
             return []
 
         images: list[tuple[bytes, str]] = []

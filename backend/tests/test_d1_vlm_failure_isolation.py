@@ -11,7 +11,6 @@ PDFParser.parse 用真实 fitz 生成含图 PDF 端到端。
 
 from __future__ import annotations
 
-import base64
 from types import SimpleNamespace
 
 import pytest

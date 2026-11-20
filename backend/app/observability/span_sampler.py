@@ -200,7 +200,9 @@ def get_default_sampler() -> SpanSampler:
         rate = float(getattr(settings, "LANGFUSE_SAMPLING_RATE", 0.1))
         force_error = bool(getattr(settings, "LANGFUSE_SAMPLING_FORCE_ERROR", True))
     except Exception as exc:
-        log.warning("span_sampler.config_read_error", error=str(exc), default="disabled")
+        log.warning(
+            "span_sampler.config_read_error", error=str(exc), default="disabled"
+        )
 
     _default_sampler = SpanSampler(
         sampling_enabled=enabled,

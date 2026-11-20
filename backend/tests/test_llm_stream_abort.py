@@ -14,6 +14,7 @@ Bug 背景：流式途中客户端断开（生成器被 aclose → GeneratorExit
 - HALF_OPEN 下流式途中异常 → 仍按失败记录 → 重新 OPEN（既有行为保持）；
 - HALF_OPEN 下完整消费 → 记录成功 → CLOSED（既有行为保持）。
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -27,7 +28,6 @@ os.environ.setdefault("OPENAI_API_KEY", "test-dummy-key")
 os.environ.setdefault("ANTHROPIC_API_KEY", "test-dummy-key")
 
 from app.utils.circuit_breaker import (
-    CircuitBreakerOpenError,
     CircuitState,
     get_circuit_breaker,
     reset_all_circuit_breakers,
@@ -194,7 +194,12 @@ class TestVLLMStreamAbort:
         )
 
         async def consume():
-            return [t async for t in provider.chat([{"role": "user", "content": "hi"}], stream=True)]
+            return [
+                t
+                async for t in provider.chat(
+                    [{"role": "user", "content": "hi"}], stream=True
+                )
+            ]
 
         tokens = asyncio.run(consume())
         assert "ok" in tokens
@@ -230,7 +235,9 @@ class TestVLLMStreamAbort:
         )
 
         async def consume():
-            async for _ in provider.chat([{"role": "user", "content": "hi"}], stream=True):
+            async for _ in provider.chat(
+                [{"role": "user", "content": "hi"}], stream=True
+            ):
                 pass
 
         with pytest.raises(RuntimeError, match="stream broken"):
@@ -249,7 +256,12 @@ class TestVLLMStreamAbort:
         )
 
         async def consume():
-            return [t async for t in provider.chat([{"role": "user", "content": "hi"}], stream=True)]
+            return [
+                t
+                async for t in provider.chat(
+                    [{"role": "user", "content": "hi"}], stream=True
+                )
+            ]
 
         tokens = asyncio.run(consume())
         assert "fine" in tokens
@@ -298,7 +310,12 @@ class TestAnthropicStreamAbort:
         )
 
         async def consume():
-            return [t async for t in provider.chat([{"role": "user", "content": "hi"}], stream=True)]
+            return [
+                t
+                async for t in provider.chat(
+                    [{"role": "user", "content": "hi"}], stream=True
+                )
+            ]
 
         tokens = asyncio.run(consume())
         assert "ok" in tokens
@@ -370,7 +387,12 @@ class TestDashScopeStreamAbort:
         )
 
         async def consume():
-            return [t async for t in provider.chat([{"role": "user", "content": "hi"}], stream=True)]
+            return [
+                t
+                async for t in provider.chat(
+                    [{"role": "user", "content": "hi"}], stream=True
+                )
+            ]
 
         tokens = asyncio.run(consume())
         assert "ok" in tokens
@@ -405,7 +427,9 @@ class TestDashScopeStreamAbort:
         )
 
         async def consume():
-            async for _ in provider.chat([{"role": "user", "content": "hi"}], stream=True):
+            async for _ in provider.chat(
+                [{"role": "user", "content": "hi"}], stream=True
+            ):
                 pass
 
         asyncio.run(consume())

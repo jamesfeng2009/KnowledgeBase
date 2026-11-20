@@ -14,14 +14,15 @@
 5. Webhook 事件 — 知识变更通知
 6. MCP 工具协议 — 暴露 MCP 工具给外部 AI Agent
 """
+
 from fastapi import APIRouter
 
-from app.api.openapi.v1.knowledge import router as knowledge_router
 from app.api.openapi.v1.connectors import router as connectors_router
+from app.api.openapi.v1.knowledge import router as knowledge_router
 from app.api.openapi.v1.llm import router as llm_router
+from app.api.openapi.v1.mcp import router as mcp_router
 from app.api.openapi.v1.multimedia import router as multimedia_router
 from app.api.openapi.v1.webhooks import router as webhooks_router
-from app.api.openapi.v1.mcp import router as mcp_router
 
 openapi_router = APIRouter(prefix="/openapi", tags=["开放接口"])
 

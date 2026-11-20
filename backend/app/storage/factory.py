@@ -45,7 +45,9 @@ _DEFAULT_BACKEND: str = "local"
 def get_storage_backend() -> StorageBackend:
     """获取对象存储单例 — 根据 OBJECT_STORE 配置选择后端。"""
     settings = get_settings()
-    backend: str = getattr(settings, "OBJECT_STORE", _DEFAULT_BACKEND) or _DEFAULT_BACKEND
+    backend: str = (
+        getattr(settings, "OBJECT_STORE", _DEFAULT_BACKEND) or _DEFAULT_BACKEND
+    )
     if backend not in _BACKENDS:
         raise ValueError(
             f"不支持的对象存储后端: {backend}，支持选项: {list(_BACKENDS.keys())}"

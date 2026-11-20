@@ -204,16 +204,19 @@ class SkillRegistry:
             for name, meta in self._metadata.items():
                 text = " ".join(
                     part
-                    for part in [meta.name, meta.category, " ".join(meta.tags), meta.description]
+                    for part in [
+                        meta.name,
+                        meta.category,
+                        " ".join(meta.tags),
+                        meta.description,
+                    ]
                     if part
                 )
                 names.append(name)
                 texts.append(text)
             vectors = await embedder.embed(texts)
             self._embeddings = {
-                name: vec
-                for name, vec in zip(names, vectors, strict=False)
-                if vec
+                name: vec for name, vec in zip(names, vectors, strict=False) if vec
             }
             log.info(
                 "skill_registry.embeddings_built",

@@ -38,16 +38,25 @@ CAI 优势（见微调.md 第十二章）：chosen 是 AI 主动改写的"理想
         --sft_adapter outputs/sft-v3-distill \\
         --critic_model models/Qwen2.5-7B-Instruct --resume
 """
+
 from __future__ import annotations
 
 import argparse
 import logging
 import random
 import sys
-from typing import Any
+
+# 边界/拒答信号词统一来源（评审 #1/#9 收敛到 finetune_utils）
+from finetune_utils import (
+    BOUNDARY_KEYWORDS,
+    REFUSAL_KEYWORDS,
+    extract_question_text,
+    last_user_content,
+)
 
 # 复用 generate_dpo_data 的弱 prompt（SYSTEM_PROMPT）与边界 prompt 构造
-from generate_dpo_data import SYSTEM_PROMPT, generate_boundary_pairs
+from generate_dpo_data import generate_boundary_pairs
+
 # 复用 generate_rlaif_data 的基础设施：模型加载/设备检测/断点续传/边界变体
 from generate_rlaif_data import (
     _detect_bf16,
@@ -56,13 +65,6 @@ from generate_rlaif_data import (
     build_extra_boundary_prompts,
     load_existing,
     load_policy_model,
-)
-# 边界/拒答信号词统一来源（评审 #1/#9 收敛到 finetune_utils）
-from finetune_utils import (
-    BOUNDARY_KEYWORDS,
-    REFUSAL_KEYWORDS,
-    extract_question_text,
-    last_user_content,
 )
 
 logger = logging.getLogger("generate_cai")
@@ -90,6 +92,7 @@ CAI_REWRITE_SYS = (
 # 硬答判定（规则快速过滤，避免对已拒答的回复做无意义改写）
 # ============================================================================
 
+
 def is_hard_answer(user_text: str, response: str) -> bool:
     """判断是否边界硬答（需 CAI 改写）。
 
@@ -109,6 +112,7 @@ def is_hard_answer(user_text: str, response: str) -> bool:
 # Critic 改写器（本地 7B，按 CAI 宪法改写硬答）
 # ============================================================================
 
+
 class CriticRewriter:
     """本地 critic 模型：按 CAI 宪法改写硬答回复为"拒答+引导"版。
 
@@ -124,7 +128,9 @@ class CriticRewriter:
 
         use_bf16 = _detect_bf16()
         logger.info("加载 critic 改写模型: %s (bf16=%s)", critic_model, use_bf16)
-        self.tokenizer = AutoTokenizer.from_pretrained(critic_model, trust_remote_code=True)
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            critic_model, trust_remote_code=True
+        )
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
         self.model = AutoModelForCausalLM.from_pretrained(
@@ -142,6 +148,7 @@ class CriticRewriter:
         贪心解码（do_sample=False）保证改写稳定可复现。
         """
         import torch
+
         user_msg = (
             f"问题：{user_text}\n\n"
             f"助手回复：{response}\n\n"
@@ -152,7 +159,8 @@ class CriticRewriter:
             {"role": "user", "content": user_msg},
         ]
         text = self.tokenizer.apply_chat_template(
-            msgs, add_generation_prompt=True, tokenize=False)
+            msgs, add_generation_prompt=True, tokenize=False
+        )
         inputs = self.tokenizer(text, return_tensors="pt").to(self.model.device)
         with torch.no_grad():
             out = self.model.generate(
@@ -162,7 +170,8 @@ class CriticRewriter:
                 pad_token_id=self.tokenizer.eos_token_id,
             )
         rewritten = self.tokenizer.decode(
-            out[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True).strip()
+            out[0][inputs["input_ids"].shape[1] :], skip_special_tokens=True
+        ).strip()
         return rewritten
 
 
@@ -170,15 +179,24 @@ class CriticRewriter:
 # Policy 单候选采样（temperature 0.7 造自然硬答）
 # ============================================================================
 
-def sample_one(model, tokenizer, prompt: list[dict],
-               max_new_tokens: int = 256, temperature: float = 0.7) -> str:
+
+def sample_one(
+    model,
+    tokenizer,
+    prompt: list[dict],
+    max_new_tokens: int = 256,
+    temperature: float = 0.7,
+) -> str:
     """policy 对单个 prompt 采样 1 个回复。
 
     temperature 0.7（比 generate_rlaif_data 的 0.3/1.1 中间值）造自然硬答：
     既不像 0.3 过度保守趋同，也不像 1.1 过度发散难解析。
     """
     import torch
-    text = tokenizer.apply_chat_template(prompt, add_generation_prompt=True, tokenize=False)
+
+    text = tokenizer.apply_chat_template(
+        prompt, add_generation_prompt=True, tokenize=False
+    )
     inputs = tokenizer(text, return_tensors="pt").to(model.device)
     with torch.no_grad():
         out = model.generate(
@@ -190,12 +208,14 @@ def sample_one(model, tokenizer, prompt: list[dict],
             pad_token_id=tokenizer.eos_token_id,
         )
     return tokenizer.decode(
-        out[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True).strip()
+        out[0][inputs["input_ids"].shape[1] :], skip_special_tokens=True
+    ).strip()
 
 
 # ============================================================================
 # 边界 prompt 池构建（CAI 只针对边界硬答，不用 RAG/企业聚焦类）
 # ============================================================================
+
 
 def build_boundary_prompt_pool(seed: int = 42) -> list[dict]:
     """构建边界 prompt 池：generate_dpo_data 的边界类 + 额外边界变体。
@@ -216,34 +236,55 @@ def build_boundary_prompt_pool(seed: int = 42) -> list[dict]:
 # 主流程
 # ============================================================================
 
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Constitutional AI 改写扩 DPO 数据（critic 按宪法改写硬答）",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--output", default="data/open/dpo_cai.jsonl", help="输出 jsonl 路径")
+    parser.add_argument(
+        "--output", default="data/open/dpo_cai.jsonl", help="输出 jsonl 路径"
+    )
     parser.add_argument("--count", type=int, default=300, help="生成偏好对数量")
     # 候选生成（policy）
-    parser.add_argument("--policy_model", default="models/Qwen2.5-1.5B-Instruct",
-                        help="候选生成用的本地模型（HF repo 或本地路径）")
-    parser.add_argument("--sft_adapter", default=None,
-                        help="可选：SFT/DPO adapter 路径，提供时先 merge 进基座再生成候选")
-    parser.add_argument("--max_new_tokens", type=int, default=256, help="候选/改写回复最大长度")
-    parser.add_argument("--temperature", type=float, default=0.7,
-                        help="policy 采样温度（造自然硬答）")
+    parser.add_argument(
+        "--policy_model",
+        default="models/Qwen2.5-1.5B-Instruct",
+        help="候选生成用的本地模型（HF repo 或本地路径）",
+    )
+    parser.add_argument(
+        "--sft_adapter",
+        default=None,
+        help="可选：SFT/DPO adapter 路径，提供时先 merge 进基座再生成候选",
+    )
+    parser.add_argument(
+        "--max_new_tokens", type=int, default=256, help="候选/改写回复最大长度"
+    )
+    parser.add_argument(
+        "--temperature", type=float, default=0.7, help="policy 采样温度（造自然硬答）"
+    )
     # critic 改写
-    parser.add_argument("--critic_model", default="models/Qwen2.5-7B-Instruct",
-                        help="CAI 改写用的 critic 模型路径（本地 7B）")
+    parser.add_argument(
+        "--critic_model",
+        default="models/Qwen2.5-7B-Instruct",
+        help="CAI 改写用的 critic 模型路径（本地 7B）",
+    )
     # 断点续传
-    parser.add_argument("--checkpoint_every", type=int, default=30, help="每 N 条存盘一次")
-    parser.add_argument("--resume", action="store_true", help="断点续传：跳过已产出的 prompt")
+    parser.add_argument(
+        "--checkpoint_every", type=int, default=30, help="每 N 条存盘一次"
+    )
+    parser.add_argument(
+        "--resume", action="store_true", help="断点续传：跳过已产出的 prompt"
+    )
     parser.add_argument("--seed", type=int, default=42, help="随机种子")
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
+    )
 
     # ---- 1. prompt 池 ----
     prompt_pool = build_boundary_prompt_pool(seed=args.seed)
@@ -256,6 +297,7 @@ def main(argv: list[str] | None = None) -> int:
         seen = set()
         # 非 resume 模式但文件已有内容：覆盖
         from pathlib import Path
+
         Path(args.output).unlink(missing_ok=True)
 
     # ---- 3. 加载 policy + critic ----
@@ -265,10 +307,9 @@ def main(argv: list[str] | None = None) -> int:
 
     # ---- 4. 采样 → 判硬答 → 改写 → 存盘 ----
     produced = len(seen)
-    skipped_not_hard = 0      # 非硬答（已拒答或非边界）→ 跳过
-    skipped_same = 0          # 改写后与原文相同（critic 认为无需改写）→ 跳过
-    skipped_empty = 0         # 改写失败（空串）→ 跳过
-    rng = random.Random(args.seed)
+    skipped_not_hard = 0  # 非硬答（已拒答或非边界）→ 跳过
+    skipped_same = 0  # 改写后与原文相同（critic 认为无需改写）→ 跳过
+    skipped_empty = 0  # 改写失败（空串）→ 跳过
     buffer: list[dict] = []
 
     pool_idx = 0
@@ -277,7 +318,9 @@ def main(argv: list[str] | None = None) -> int:
         if consecutive_skips >= len(prompt_pool) * 2:
             logger.warning(
                 "连续 %d 个 prompt 未产出（池已耗尽或硬答率过低），提前结束于 %d/%d",
-                consecutive_skips, produced, args.count,
+                consecutive_skips,
+                produced,
+                args.count,
             )
             break
 
@@ -292,8 +335,11 @@ def main(argv: list[str] | None = None) -> int:
 
         # ---- 4a. policy 采样 1 回复 ----
         response = sample_one(
-            model, tokenizer, prompt,
-            max_new_tokens=args.max_new_tokens, temperature=args.temperature,
+            model,
+            tokenizer,
+            prompt,
+            max_new_tokens=args.max_new_tokens,
+            temperature=args.temperature,
         )
         if not response:
             skipped_empty += 1
@@ -309,7 +355,8 @@ def main(argv: list[str] | None = None) -> int:
 
         # ---- 4c. critic 按 CAI 宪法改写 ----
         rewritten = rewriter.rewrite(
-            user_text, response, max_new_tokens=args.max_new_tokens)
+            user_text, response, max_new_tokens=args.max_new_tokens
+        )
         if not rewritten:
             skipped_empty += 1
             consecutive_skips += 1
@@ -338,8 +385,14 @@ def main(argv: list[str] | None = None) -> int:
             for p in buffer:
                 append_pair(args.output, p)
             buffer.clear()
-            logger.info("进度：%d/%d（跳过 非硬答=%d 改写无变化=%d 空=%d）",
-                        produced, args.count, skipped_not_hard, skipped_same, skipped_empty)
+            logger.info(
+                "进度：%d/%d（跳过 非硬答=%d 改写无变化=%d 空=%d）",
+                produced,
+                args.count,
+                skipped_not_hard,
+                skipped_same,
+                skipped_empty,
+            )
 
     # 4e. 写入剩余 buffer
     for p in buffer:
@@ -349,11 +402,19 @@ def main(argv: list[str] | None = None) -> int:
     logger.info("===== CAI 数据生成完成 =====")
     logger.info("文件: %s", args.output)
     logger.info("总数: %d 对", produced)
-    logger.info("跳过: 非硬答=%d, 改写无变化=%d, 空回复=%d",
-                skipped_not_hard, skipped_same, skipped_empty)
+    logger.info(
+        "跳过: 非硬答=%d, 改写无变化=%d, 空回复=%d",
+        skipped_not_hard,
+        skipped_same,
+        skipped_empty,
+    )
     logger.info("critic: %s", args.critic_model)
-    logger.info("下一步: python scripts/finetune/train_dpo.py --data %s "
-                "--base_model %s --output_dir outputs/dpo-cai", args.output, args.policy_model)
+    logger.info(
+        "下一步: python scripts/finetune/train_dpo.py --data %s "
+        "--base_model %s --output_dir outputs/dpo-cai",
+        args.output,
+        args.policy_model,
+    )
     return 0
 
 

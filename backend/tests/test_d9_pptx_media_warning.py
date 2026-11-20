@@ -66,10 +66,10 @@ def _rewrite_to_audio(path):
         for item in zin.infolist():
             data = zin.read(item.filename)
             if item.filename.endswith(".rels"):
-                data = data.replace(
-                    b"relationships/video", b"relationships/audio"
-                )
-            elif item.filename.startswith("ppt/slides/slide") and item.filename.endswith(".xml"):
+                data = data.replace(b"relationships/video", b"relationships/audio")
+            elif item.filename.startswith(
+                "ppt/slides/slide"
+            ) and item.filename.endswith(".xml"):
                 data = data.replace(b"videoFile", b"audioFile")
             zout.writestr(item, data)
     with open(path, "wb") as f:

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import sys
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -143,7 +144,9 @@ class TestStartEndEvidenceRef:
         span = next(s for s in rec.collect() if s.name == "tool:search")
         assert span.evidence_ref == "result_ref:obj_9"
 
-    def test_metadata_not_polluted_by_stash(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_metadata_not_polluted_by_stash(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from app.observability.span_record import SpanRecorder
 
         rec = SpanRecorder()
@@ -168,7 +171,7 @@ class TestStartEndEvidenceRef:
 class TestTraceNodeEvidenceRef:
     """@trace_node 装饰器从 _span_evidence 提取 evidence_ref。"""
 
-    def _run(self, rec: "Any", node_name: str, state: dict, result) -> "Any":
+    def _run(self, rec: Any, node_name: str, state: dict, result) -> Any:
         import asyncio
 
         from app.observability.langfuse_tracer import TraceContext, trace_node
@@ -186,9 +189,7 @@ class TestTraceNodeEvidenceRef:
 
         return asyncio.run(_node(dummy, state))
 
-    def test_evidence_from_span_evidence(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_evidence_from_span_evidence(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from app.observability.span_record import SpanRecorder
 
         _force_langfuse_unavailable(monkeypatch)
@@ -209,9 +210,7 @@ class TestTraceNodeEvidenceRef:
         assert "evidence_ref" not in span.metadata
         assert span.metadata.get("included_refs") == ["d1", "d2"]
 
-    def test_no_span_evidence_no_crash(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_no_span_evidence_no_crash(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from app.observability.span_record import SpanRecorder
 
         _force_langfuse_unavailable(monkeypatch)
@@ -242,7 +241,9 @@ class TestEngineEvidenceAnchors:
     防止未来改动破坏证据贯穿。
     """
 
-    _ENGINE_SRC = os.path.join(os.path.dirname(__file__), "..", "app", "rag", "engine.py")
+    _ENGINE_SRC = os.path.join(
+        os.path.dirname(__file__), "..", "app", "rag", "engine.py"
+    )
 
     def _engine_text(self) -> str:
         with open(os.path.normpath(self._ENGINE_SRC), encoding="utf-8") as f:
@@ -255,7 +256,7 @@ class TestEngineEvidenceAnchors:
 
     def test_tool_span_starts_with_evidence(self) -> None:
         text = self._engine_text()
-        assert "evidence_ref=f\"tool_use:{tool_use_id}\"" in text
+        assert 'evidence_ref=f"tool_use:{tool_use_id}"' in text
 
     def test_retrieve_evidence_ref_in_span_evidence(self) -> None:
         text = self._engine_text()

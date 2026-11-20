@@ -32,9 +32,7 @@ class AuditSubmitBody(BaseModel):
 
     resource_type: ResourceType = Field(..., description="资源类型")
     resource_id: UUID = Field(..., description="资源 ID")
-    priority: AuditPriority = Field(
-        default=AuditPriority.normal, description="优先级"
-    )
+    priority: AuditPriority = Field(default=AuditPriority.normal, description="优先级")
 
 
 class AuditCommentBody(BaseModel):

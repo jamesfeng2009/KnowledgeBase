@@ -4,17 +4,16 @@
 - P0-Opt1: Anthropic Prompt Caching — cache_aligner 检测 + provider cache_control 标记
 - P0-Opt2: Live-Zone 增量上下文 — system prompt 稳定化 + 增量结果追加 + 向后兼容
 """
+
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from app.llm.cache_aligner import check_cache_alignment
-from app.rag.engine import AgentState, AgenticRAGEngine, _THINK_SYSTEM_STABLE
-
+from app.rag.engine import _THINK_SYSTEM_STABLE, AgenticRAGEngine, AgentState
 
 # ======================================================================
 # Mock 实现（复用 test_rag_engine.py 的 Mock，扩展消息记录能力）
@@ -393,10 +392,13 @@ class TestIncrementalContext:
     async def test_system_prompt_same_across_iterations(self) -> None:
         """多轮 think 调用中 system prompt 应保持字节稳定。"""
         engine, llm, _, _ = _make_engine(llm_response="retrieve")
-        state = _make_state(iteration=0, messages=[
-            {"role": "system", "content": _THINK_SYSTEM_STABLE},
-            {"role": "user", "content": "测试问题"},
-        ])
+        state = _make_state(
+            iteration=0,
+            messages=[
+                {"role": "system", "content": _THINK_SYSTEM_STABLE},
+                {"role": "user", "content": "测试问题"},
+            ],
+        )
 
         # 模拟 3 轮 think
         for i in range(1, 4):
@@ -414,18 +416,19 @@ class TestIncrementalContext:
     async def test_query_not_repeated_in_messages(self) -> None:
         """query 应只在稳定前缀中出现一次，不在动态上下文中重复。"""
         engine, llm, _, _ = _make_engine(llm_response="generate")
-        state = _make_state(iteration=1, messages=[
-            {"role": "system", "content": _THINK_SYSTEM_STABLE},
-            {"role": "user", "content": "报销流程怎么走"},
-        ])
+        state = _make_state(
+            iteration=1,
+            messages=[
+                {"role": "system", "content": _THINK_SYSTEM_STABLE},
+                {"role": "user", "content": "报销流程怎么走"},
+            ],
+        )
 
         await engine._think(state)
 
         sent_messages = llm.call_history[0]
         # query 只在第二条消息中出现
-        query_count = sum(
-            1 for m in sent_messages if m["content"] == "报销流程怎么走"
-        )
+        query_count = sum(1 for m in sent_messages if m["content"] == "报销流程怎么走")
         assert query_count == 1
 
 
@@ -484,9 +487,7 @@ class TestRunDecisionLoopIncremental:
     async def test_loop_system_prompt_stable_across_iterations(self) -> None:
         """多轮迭代中 system prompt 保持字节稳定。"""
         candidates = [{"content": "doc1"}]
-        engine, llm, _, _ = _make_engine(
-            candidates=candidates, max_iterations=3
-        )
+        engine, llm, _, _ = _make_engine(candidates=candidates, max_iterations=3)
         state = _make_state()
 
         responses = ["retrieve", "generate"]
@@ -562,10 +563,11 @@ class TestBackwardCompatibility:
     @pytest.mark.asyncio
     async def test_existing_think_error_fallback(self) -> None:
         """LLM 异常时 _think 应降级返回 generate。"""
+
         class ErrorLLM:
             async def chat(self, *args, **kwargs):
                 raise RuntimeError("LLM unavailable")
-                yield  # noqa: E701
+                yield
 
         engine = AgenticRAGEngine(
             llm=ErrorLLM(),

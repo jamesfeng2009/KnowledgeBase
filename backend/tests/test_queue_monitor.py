@@ -6,6 +6,7 @@
     - outbox 统计：mock db.execute 验证分组计数与死信占比；
     - overview：并发汇总两个数据源。
 """
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -41,10 +42,20 @@ class TestQueueDepths:
     async def test_parses_queue_depths(self) -> None:
         service = _make_service()
         mgmt_data = [
-            {"name": "celery", "messages": 10, "messages_ready": 8,
-             "messages_unacknowledged": 2, "consumers": 2},
-            {"name": "dead_letter", "messages": 3, "messages_ready": 3,
-             "messages_unacknowledged": 0, "consumers": 0},
+            {
+                "name": "celery",
+                "messages": 10,
+                "messages_ready": 8,
+                "messages_unacknowledged": 2,
+                "consumers": 2,
+            },
+            {
+                "name": "dead_letter",
+                "messages": 3,
+                "messages_ready": 3,
+                "messages_unacknowledged": 0,
+                "consumers": 0,
+            },
         ]
         mock_resp = MagicMock()
         mock_resp.status_code = 200

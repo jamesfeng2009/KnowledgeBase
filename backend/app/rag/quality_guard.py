@@ -92,9 +92,7 @@ class QualityGuard:
             RetrievalQualityResult 检查结果。
         """
         if not reranked_docs:
-            return RetrievalQualityResult(
-                mean_score=0.0, passed=False, doc_count=0
-            )
+            return RetrievalQualityResult(mean_score=0.0, passed=False, doc_count=0)
 
         scores = [
             float(doc.get("score", 0.0))
@@ -292,9 +290,7 @@ class QualityGuard:
                 question=query, answer=answer, contexts=contexts
             )
 
-            threshold = getattr(
-                self._settings, "RAG_FAITHFULNESS_THRESHOLD", 3.0
-            )
+            threshold = getattr(self._settings, "RAG_FAITHFULNESS_THRESHOLD", 3.0)
             low_confidence = result.hallucination_inverse < threshold
 
             log.info(
@@ -325,9 +321,7 @@ class QualityGuard:
         if eval_result is None or getattr(eval_result, "error", None):
             return False
 
-        threshold = getattr(
-            self._settings, "RAG_FAITHFULNESS_THRESHOLD", 3.0
-        )
+        threshold = getattr(self._settings, "RAG_FAITHFULNESS_THRESHOLD", 3.0)
         return eval_result.hallucination_inverse < threshold
 
     # ------------------------------------------------------------------
@@ -365,7 +359,9 @@ class QualityGuard:
         """
         # 原始评估
         eval_result = await self.check_generation_quality(
-            query=query, answer=answer, contexts=contexts,
+            query=query,
+            answer=answer,
+            contexts=contexts,
         )
 
         # 检查是否需要重生成
@@ -387,7 +383,9 @@ class QualityGuard:
         # 重生成：使用增强 prompt 强调禁止编造
         try:
             new_answer = await self._regenerate_with_strict_prompt(
-                generator, query, contexts,
+                generator,
+                query,
+                contexts,
             )
             if not new_answer or not new_answer.strip():
                 log.warning("quality_guard.regen_empty_fallback")
@@ -395,7 +393,9 @@ class QualityGuard:
 
             # 对新答案重新评估
             new_eval = await self.check_generation_quality(
-                query=query, answer=new_answer, contexts=contexts,
+                query=query,
+                answer=new_answer,
+                contexts=contexts,
             )
 
             # Bug25 修复：仅当新答案忠实度优于原答案时才采用新答案 ——
@@ -440,9 +440,7 @@ class QualityGuard:
             - 必须使用 [n] 引用标注来源。
         """
         # 组装增强上下文
-        context_text = "\n---\n".join(
-            ctx[:1000] for ctx in contexts[:5] if ctx
-        )
+        context_text = "\n---\n".join(ctx[:1000] for ctx in contexts[:5] if ctx)
 
         strict_prompt = (
             "你是企业知识库助手。请严格基于以下上下文回答用户问题。\n"
@@ -546,20 +544,20 @@ class QualityGuard:
                 # 移除 [n] 标注后再提取实体，避免引用编号被误提取为数字
                 clean_sentence = citation_pattern.sub("", sentence)
                 # 提取关键实体：数字（含小数/百分比/金额）
-                numbers = re.findall(
-                    r"\d+\.?\d*\s*[%％]?", clean_sentence
-                )
+                numbers = re.findall(r"\d+\.?\d*\s*[%％]?", clean_sentence)
                 # 提取日期
                 dates = re.findall(
                     r"\d{4}[-/年]\d{1,2}[-/月]\d{1,2}日?|\d{4}[-/]\d{1,2}[-/]\d{1,2}",
                     clean_sentence,
                 )
-                claims.append({
-                    "ref_num": ref_num,
-                    "sentence": sentence.strip()[:300],
-                    "numbers": numbers,
-                    "dates": dates,
-                })
+                claims.append(
+                    {
+                        "ref_num": ref_num,
+                        "sentence": sentence.strip()[:300],
+                        "numbers": numbers,
+                        "dates": dates,
+                    }
+                )
 
         if not claims:
             return {
@@ -578,20 +576,24 @@ class QualityGuard:
             ref_idx = claim["ref_num"] - 1  # [1] → docs[0]
             if ref_idx < 0 or ref_idx >= len(retrieved_docs):
                 # 引用越界 — 标记为未核验
-                unverified.append({
-                    "ref_num": claim["ref_num"],
-                    "reason": "引用编号越界",
-                    "sentence": claim["sentence"],
-                })
+                unverified.append(
+                    {
+                        "ref_num": claim["ref_num"],
+                        "reason": "引用编号越界",
+                        "sentence": claim["sentence"],
+                    }
+                )
                 continue
 
             chunk_content = str(retrieved_docs[ref_idx].get("content", ""))
             if not chunk_content:
-                unverified.append({
-                    "ref_num": claim["ref_num"],
-                    "reason": "引用文档内容为空",
-                    "sentence": claim["sentence"],
-                })
+                unverified.append(
+                    {
+                        "ref_num": claim["ref_num"],
+                        "reason": "引用文档内容为空",
+                        "sentence": claim["sentence"],
+                    }
+                )
                 continue
 
             # 核验关键实体
@@ -602,17 +604,20 @@ class QualityGuard:
                 continue
 
             missing = [
-                entity for entity in all_entities
+                entity
+                for entity in all_entities
                 if entity.strip() and entity.strip() not in chunk_content
             ]
 
             if missing:
-                unverified.append({
-                    "ref_num": claim["ref_num"],
-                    "reason": f"关键实体未在引用内容中找到: {missing[:3]}",
-                    "sentence": claim["sentence"],
-                    "missing_entities": missing[:5],
-                })
+                unverified.append(
+                    {
+                        "ref_num": claim["ref_num"],
+                        "reason": f"关键实体未在引用内容中找到: {missing[:3]}",
+                        "sentence": claim["sentence"],
+                        "missing_entities": missing[:5],
+                    }
+                )
             else:
                 verified_count += 1
 

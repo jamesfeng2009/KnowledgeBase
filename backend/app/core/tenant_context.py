@@ -47,8 +47,9 @@ from __future__ import annotations
 
 import os
 import uuid
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator
+from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -167,9 +168,7 @@ async def system_scope(session: AsyncSession, *, reason: str) -> AsyncIterator[N
     """
     cleaned = (reason or "").strip()
     if not cleaned:
-        raise TenantContextError(
-            "system_scope 必须提供 reason —— 跨租户访问必须可审计"
-        )
+        raise TenantContextError("system_scope 必须提供 reason —— 跨租户访问必须可审计")
     await apply_cross_tenant(session)
     log.warning(
         "tenant.cross_tenant_scope",
@@ -231,7 +230,7 @@ async def resolve_tenant_of_row(
         # 真拿到非法值时说明连接/SQL 层已经坏了，按"拿不到身份"处理更安全
         if found is not None:
             return normalize_tenant_id(found)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         # 反查失败等价于"拿不到身份"，安全侧仍然是 fail-closed（查不到数据），
         # 不会因为这里降级而泄漏。所以不让它把整个任务打成 500；
         # 但必须留 warning —— 真实 SQL 故障要靠这条日志被发现，

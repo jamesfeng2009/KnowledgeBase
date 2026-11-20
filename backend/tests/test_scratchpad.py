@@ -8,8 +8,6 @@ P3-E Scratchpad 草稿本单元测试。
     - 无 Scratchpad 时的兼容性
 """
 
-import pytest
-
 from app.rag.context_budget import ContextBudgetManager
 
 

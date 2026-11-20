@@ -28,15 +28,13 @@ class SearchLog(UUIDMixin, TimestampMixin, Base):
         nullable=True,
         comment="用户 ID（匿名搜索时为空）",
     )
-    query: Mapped[str] = mapped_column(
-        Text, nullable=False, comment="搜索关键词"
-    )
+    query: Mapped[str] = mapped_column(Text, nullable=False, comment="搜索关键词")
     source: Mapped[str] = mapped_column(
-        String(50), default="knowledge_base", comment="搜索源: knowledge_base/oa/erp/crm"
+        String(50),
+        default="knowledge_base",
+        comment="搜索源: knowledge_base/oa/erp/crm",
     )
-    result_count: Mapped[int] = mapped_column(
-        Integer, default=0, comment="返回结果数"
-    )
+    result_count: Mapped[int] = mapped_column(Integer, default=0, comment="返回结果数")
     clicked: Mapped[bool] = mapped_column(
         Boolean, default=False, comment="是否点击了结果"
     )

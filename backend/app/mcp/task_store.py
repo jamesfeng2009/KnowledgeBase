@@ -12,7 +12,6 @@ Redis 不可用时降级为进程内 dict（单实例开发场景兜底）。
 
 from __future__ import annotations
 
-import asyncio
 import json
 import time
 import uuid
@@ -107,8 +106,10 @@ class TaskStore:
             import redis.asyncio as aioredis
 
             self._redis = aioredis.from_url(
-                self._redis_url, decode_responses=True,
-                socket_connect_timeout=2, socket_timeout=2,
+                self._redis_url,
+                decode_responses=True,
+                socket_connect_timeout=2,
+                socket_timeout=2,
             )
             await self._redis.ping()
             log.info("mcp.task_store.redis_connected", url=self._redis_url)
@@ -165,7 +166,10 @@ class TaskStore:
             key = self._key(task_id)
             await redis.hset(
                 key,
-                mapping={k: json.dumps(v, ensure_ascii=False, default=str) for k, v in task_data.items()},
+                mapping={
+                    k: json.dumps(v, ensure_ascii=False, default=str)
+                    for k, v in task_data.items()
+                },
             )
             await redis.expire(key, self._ttl_seconds)
         else:

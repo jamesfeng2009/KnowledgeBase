@@ -6,6 +6,7 @@
 - 兜底路径：doc_id 为 NULL 的旧反馈经 related_message_id → Message.sources 命中；
 - 兜底不命中：引用来源指向其他文档时不计入，返回中性分 0.5。
 """
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -64,10 +65,12 @@ class TestDocIdDirectPath:
             _feedback(type="praise", doc_id=doc_id),
             _feedback(type="complaint", doc_id=doc_id),
         ]
-        service = _service_with_execute([
-            _exec_result(scalars=feedbacks),  # doc_id 直查
-            _exec_result(scalars=[]),  # 旧链路：无 doc_id IS NULL 数据
-        ])
+        service = _service_with_execute(
+            [
+                _exec_result(scalars=feedbacks),  # doc_id 直查
+                _exec_result(scalars=[]),  # 旧链路：无 doc_id IS NULL 数据
+            ]
+        )
 
         score = await service._score_citation(doc_id)
 
@@ -84,10 +87,12 @@ class TestDocIdDirectPath:
             _feedback(status="open", doc_id=doc_id),
             _feedback(status="processing", doc_id=doc_id),
         ]
-        service = _service_with_execute([
-            _exec_result(scalars=feedbacks),
-            _exec_result(scalars=[]),
-        ])
+        service = _service_with_execute(
+            [
+                _exec_result(scalars=feedbacks),
+                _exec_result(scalars=[]),
+            ]
+        )
 
         score = await service._score_feedback(doc_id)
 
@@ -99,14 +104,18 @@ class TestDocIdDirectPath:
         """不同文档得分有区分度：有正面反馈的文档高于无反馈文档（中性 0.5）。"""
         doc_praised = uuid4()
         doc_silent = uuid4()
-        service_praised = _service_with_execute([
-            _exec_result(scalars=[_feedback(type="praise", doc_id=doc_praised)]),
-            _exec_result(scalars=[]),
-        ])
-        service_silent = _service_with_execute([
-            _exec_result(scalars=[]),
-            _exec_result(scalars=[]),
-        ])
+        service_praised = _service_with_execute(
+            [
+                _exec_result(scalars=[_feedback(type="praise", doc_id=doc_praised)]),
+                _exec_result(scalars=[]),
+            ]
+        )
+        service_silent = _service_with_execute(
+            [
+                _exec_result(scalars=[]),
+                _exec_result(scalars=[]),
+            ]
+        )
 
         praised_score = await service_praised._score_citation(doc_praised)
         silent_score = await service_silent._score_citation(doc_silent)
@@ -120,12 +129,14 @@ class TestDocIdDirectPath:
         """其他文档的反馈（doc_id 不同）不会被直查命中 — 由 SQL 过滤，结果为中性分。"""
         doc_id = uuid4()
         # 直查返回空（SQL 层已按 doc_id 过滤），旧链路也无数据
-        service = _service_with_execute([
-            _exec_result(scalars=[]),
-            _exec_result(scalars=[]),
-            _exec_result(scalars=[]),
-            _exec_result(scalars=[]),
-        ])
+        service = _service_with_execute(
+            [
+                _exec_result(scalars=[]),
+                _exec_result(scalars=[]),
+                _exec_result(scalars=[]),
+                _exec_result(scalars=[]),
+            ]
+        )
 
         assert await service._score_citation(doc_id) == pytest.approx(0.5)
         assert await service._score_feedback(doc_id) == pytest.approx(0.5)
@@ -145,11 +156,15 @@ class TestLegacyFallbackPath:
         doc_id = uuid4()
         msg_id = uuid4()
         legacy_fb = _feedback(type="praise", related_message_id=msg_id)
-        service = _service_with_execute([
-            _exec_result(scalars=[]),  # 直查：无新数据
-            _exec_result(scalars=[legacy_fb]),  # 旧链路：命中待扫描反馈
-            _exec_result(rows=[(msg_id, [{"doc_id": str(doc_id), "title": "引用卡片"}])]),
-        ])
+        service = _service_with_execute(
+            [
+                _exec_result(scalars=[]),  # 直查：无新数据
+                _exec_result(scalars=[legacy_fb]),  # 旧链路：命中待扫描反馈
+                _exec_result(
+                    rows=[(msg_id, [{"doc_id": str(doc_id), "title": "引用卡片"}])]
+                ),
+            ]
+        )
 
         score = await service._score_citation(doc_id)
 
@@ -161,11 +176,13 @@ class TestLegacyFallbackPath:
         doc_id = uuid4()
         msg_id = uuid4()
         legacy_fb = _feedback(type="praise", related_message_id=msg_id)
-        service = _service_with_execute([
-            _exec_result(scalars=[]),
-            _exec_result(scalars=[legacy_fb]),
-            _exec_result(rows=[(msg_id, [{"doc_id": str(uuid4())}])]),
-        ])
+        service = _service_with_execute(
+            [
+                _exec_result(scalars=[]),
+                _exec_result(scalars=[legacy_fb]),
+                _exec_result(rows=[(msg_id, [{"doc_id": str(uuid4())}])]),
+            ]
+        )
 
         score = await service._score_citation(doc_id)
 
@@ -180,11 +197,13 @@ class TestLegacyFallbackPath:
         legacy_fb = _feedback(
             type="complaint", status="open", related_message_id=msg_id
         )
-        service = _service_with_execute([
-            _exec_result(scalars=[direct_fb]),
-            _exec_result(scalars=[legacy_fb]),
-            _exec_result(rows=[(msg_id, [{"doc_id": str(doc_id)}])]),
-        ])
+        service = _service_with_execute(
+            [
+                _exec_result(scalars=[direct_fb]),
+                _exec_result(scalars=[legacy_fb]),
+                _exec_result(rows=[(msg_id, [{"doc_id": str(doc_id)}])]),
+            ]
+        )
 
         citation = await service._score_citation(doc_id)
 
@@ -196,10 +215,12 @@ class TestLegacyFallbackPath:
         """无 doc_id IS NULL 的旧反馈时，不再查询 messages 表。"""
         doc_id = uuid4()
         db = AsyncMock()
-        db.execute = AsyncMock(side_effect=[
-            _exec_result(scalars=[_feedback(doc_id=doc_id)]),
-            _exec_result(scalars=[]),
-        ])
+        db.execute = AsyncMock(
+            side_effect=[
+                _exec_result(scalars=[_feedback(doc_id=doc_id)]),
+                _exec_result(scalars=[]),
+            ]
+        )
         service = QualityService(db=db)
 
         feedbacks = await service._load_doc_feedbacks(doc_id)

@@ -45,6 +45,7 @@ class TestLLMSourceBinding:
     @pytest.mark.asyncio
     async def test_llm_fact_binds_to_last_message(self, memory_manager):
         """LLM 提取成功时，来源绑定到 messages 最后一条的 id 与摘录。"""
+
         class MockLLM:
             async def chat(self, messages, stream=True, max_tokens=200):
                 yield "preference|用户偏好使用Python"
@@ -63,7 +64,9 @@ class TestLLMSourceBinding:
             {"role": "assistant", "content": "好的"},
             {"role": "user", "content": "我喜欢使用Python编程，请记住"},
         ]
-        with patch("app.memory.memory_manager.get_llm_provider", return_value=MockLLM()):
+        with patch(
+            "app.memory.memory_manager.get_llm_provider", return_value=MockLLM()
+        ):
             with patch("app.config.get_settings") as mock_settings:
                 mock_settings.return_value.LLM_FACT_EXTRACTION_ENABLED = True
                 await memory_manager.extract_and_save_facts(
@@ -77,6 +80,7 @@ class TestLLMSourceBinding:
     @pytest.mark.asyncio
     async def test_llm_no_message_ids_degrades(self, memory_manager):
         """LLM 路径缺 message_ids → 来源落 None，不阻断提取。"""
+
         class MockLLM:
             async def chat(self, messages, stream=True, max_tokens=200):
                 yield "preference|用户喜欢Python"
@@ -89,8 +93,15 @@ class TestLLMSourceBinding:
 
         memory_manager._consolidated_add = fake_consolidated
 
-        messages = [{"role": "user", "content": "我喜欢使用Python编程，这是我长期的习惯，希望以后一直用这个语言来写代码，真的是一个非常稳定的选择"}]
-        with patch("app.memory.memory_manager.get_llm_provider", return_value=MockLLM()):
+        messages = [
+            {
+                "role": "user",
+                "content": "我喜欢使用Python编程，这是我长期的习惯，希望以后一直用这个语言来写代码，真的是一个非常稳定的选择",
+            }
+        ]
+        with patch(
+            "app.memory.memory_manager.get_llm_provider", return_value=MockLLM()
+        ):
             with patch("app.config.get_settings") as mock_settings:
                 mock_settings.return_value.LLM_FACT_EXTRACTION_ENABLED = True
                 await memory_manager.extract_and_save_facts(uuid.uuid4(), messages)
@@ -170,7 +181,10 @@ class TestKeywordSourceBinding:
             # 只有 1 个 id，但 2 条命中消息 → 第二条 source_ref_id=None
             await memory_manager.extract_and_save_facts(
                 uuid.uuid4(),
-                [{"role": "user", "content": "我偏好打字"}, {"role": "user", "content": "我偏好阅读"}],
+                [
+                    {"role": "user", "content": "我偏好打字"},
+                    {"role": "user", "content": "我偏好阅读"},
+                ],
                 [uuid.uuid4()],
             )
 
@@ -214,8 +228,12 @@ class TestConsolidatedForwardsSource:
 
         sid = uuid.uuid4()
         await memory_manager._consolidated_add(
-            uuid.uuid4(), "用户喜欢Python", "preference",
-            source_type="message", source_ref_id=sid, raw_excerpt="我喜欢Python",
+            uuid.uuid4(),
+            "用户喜欢Python",
+            "preference",
+            source_type="message",
+            source_ref_id=sid,
+            raw_excerpt="我喜欢Python",
         )
 
         memory_manager.mem0.add_fact.assert_awaited_once()

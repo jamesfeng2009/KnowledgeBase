@@ -16,6 +16,7 @@ Confluence storage format 使用 ac:/ri: XML 命名空间，清洗器会剥离�
     Cloud:     {"username": "user@example.com", "api_token": "ATATT..."}
     Server/DC: {"pat": "NzU4M...", "username": "admin"}  # username 可选
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -198,7 +199,9 @@ class ConfluenceAdapter(DocumentSourceAdapter):
                             SourceDocumentInfo(
                                 doc_id=page_id,
                                 title=title,
-                                url=self._build_page_url(base_url, page_id, space_key, title),
+                                url=self._build_page_url(
+                                    base_url, page_id, space_key, title
+                                ),
                                 updated_at="",
                                 author="",
                             )

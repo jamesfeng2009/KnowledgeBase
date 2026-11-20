@@ -113,9 +113,7 @@ async def chat(
     stream_db = async_session_factory()
     if tenant_id is not None:
         # 与新会话重新设置 RLS 租户上下文（准备阶段会话已关闭）
-        await stream_db.execute(
-            text(f"SET LOCAL app.tenant_id = '{tenant_id}'")
-        )
+        await stream_db.execute(text(f"SET LOCAL app.tenant_id = '{tenant_id}'"))
 
     generator = service.stream_chat(prepared, db=stream_db)
     # TTFT 埋点维度 — 首 token 延迟（sse.ttft）与流汇总（sse.stream_done）

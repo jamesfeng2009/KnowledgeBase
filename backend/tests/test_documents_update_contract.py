@@ -19,6 +19,7 @@
     - 内容未变、或仅改标题时不产生垃圾版本；
     - 版本恢复需要写权限（只读协作者不得覆盖文档内容）。
 """
+
 from __future__ import annotations
 
 import collections
@@ -32,7 +33,6 @@ import httpx
 import pytest
 import pytest_asyncio
 from sqlalchemy import func, select
-
 
 # ======================================================================
 # 路由唯一性
@@ -62,7 +62,10 @@ def test_no_duplicate_v1_routes() -> None:
     duplicates = {key: mods for key, mods in seen.items() if len(mods) > 1}
     assert not duplicates, (
         "检测到重复注册的路由（后注册者会被静默遮蔽，不报错）：\n"
-        + "\n".join(f"  {method} {path} <- {mods}" for (method, path), mods in duplicates.items())
+        + "\n".join(
+            f"  {method} {path} <- {mods}"
+            for (method, path), mods in duplicates.items()
+        )
     )
 
 
@@ -146,7 +149,9 @@ async def _snapshot_count(session, doc_id: UUID) -> int:
     from app.models.knowledge import DocumentVersion
 
     result = await session.execute(
-        select(func.count()).select_from(DocumentVersion).where(DocumentVersion.doc_id == doc_id)
+        select(func.count())
+        .select_from(DocumentVersion)
+        .where(DocumentVersion.doc_id == doc_id)
     )
     return int(result.scalar_one())
 
@@ -234,7 +239,9 @@ async def test_put_content_snapshots_previous_content(db_session, seeded) -> Non
 
 
 @pytest.mark.asyncio
-async def test_put_same_content_creates_no_duplicate_version(db_session, seeded) -> None:
+async def test_put_same_content_creates_no_duplicate_version(
+    db_session, seeded
+) -> None:
     """重复提交相同内容不应反复插快照（幂等保存不能写爆版本表）。"""
     payload = {"content_html": "<p>旧内容</p>"}  # 与库中现值完全一致
 

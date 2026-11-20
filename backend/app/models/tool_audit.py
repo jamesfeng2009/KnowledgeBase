@@ -72,12 +72,8 @@ class ToolAuditLog(UUIDMixin, TimestampMixin, Base):
     result_summary: Mapped[str] = mapped_column(
         Text, default="", comment="返回摘要（截断 500 字符）"
     )
-    error: Mapped[str | None] = mapped_column(
-        Text, nullable=True, comment="错误信息"
-    )
-    duration_ms: Mapped[int] = mapped_column(
-        Integer, default=0, comment="耗时（毫秒）"
-    )
+    error: Mapped[str | None] = mapped_column(Text, nullable=True, comment="错误信息")
+    duration_ms: Mapped[int] = mapped_column(Integer, default=0, comment="耗时（毫秒）")
     status: Mapped[str] = mapped_column(
         String(20), default="success", comment="success/error/timeout/blocked"
     )
@@ -86,15 +82,18 @@ class ToolAuditLog(UUIDMixin, TimestampMixin, Base):
     )
     # P2: 完整结果引用 — 对象存储引用为主，关键事件 JSONB 兜底
     result_ref: Mapped[str | None] = mapped_column(
-        String(500), nullable=True,
+        String(500),
+        nullable=True,
         comment="完整结果的对象存储引用（artifact ID/路径/URL）",
     )
     result_full: Mapped[dict[str, Any] | None] = mapped_column(
-        JSONB, nullable=True,
+        JSONB,
+        nullable=True,
         comment="关键事件原文兜底（permission.decision/failure.recover）",
     )
     evidence_ref: Mapped[str | None] = mapped_column(
-        String(500), nullable=True,
+        String(500),
+        nullable=True,
         comment="证据引用（P3 贯穿，doc_id/artifact ID）",
     )
 

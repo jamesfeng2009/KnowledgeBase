@@ -5,6 +5,7 @@
 - BudgetAllocator：强制注入 mandatory 项、按 {优先级,相关性} 贪心择优、
   预算内放不下的被淘汰、单项超预算跳过、保持输入顺序。
 """
+
 from __future__ import annotations
 
 from app.rag.context_item import (
@@ -54,7 +55,10 @@ class TestContextItemBuilder:
     def test_document_relevance_defaults_to_order_decay(self) -> None:
         """无 relevance 时按顺序衰减。"""
         items = ContextItemBuilder.build(
-            retrieved_docs=[{"content": "a", "title": "1"}, {"content": "b", "title": "2"}],
+            retrieved_docs=[
+                {"content": "a", "title": "1"},
+                {"content": "b", "title": "2"},
+            ],
             tool_results=[],
             memory_context="",
         )
@@ -114,6 +118,9 @@ class TestBudgetAllocator:
     def test_empty_and_zero_budget(self) -> None:
         """空列表与零预算均返回空。"""
         assert BudgetAllocator().select([]) == []
-        assert BudgetAllocator().select(
-            [ContextItem(kind="document", content="x", token_cost=10)], budget=0
-        ) == []
+        assert (
+            BudgetAllocator().select(
+                [ContextItem(kind="document", content="x", token_cost=10)], budget=0
+            )
+            == []
+        )

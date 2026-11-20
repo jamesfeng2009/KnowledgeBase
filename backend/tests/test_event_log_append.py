@@ -10,6 +10,7 @@
 只存在于生产迁移 bd2c3d4e5f70（ORM 未声明），这里从迁移本体同源执行，
 不手写副本。
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -72,9 +73,7 @@ class TestB5SavepointIsolation:
 
 
 class TestB5SeqRace:
-    async def test_concurrent_appends_lose_no_events(
-        self, db_session, event_seq_index
-    ):
+    async def test_concurrent_appends_lose_no_events(self, db_session, event_seq_index):
         """8 路并发 append 同一 session_id：一条不丢，seq 恰好 1..8。"""
         from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
         from sqlalchemy.orm import sessionmaker

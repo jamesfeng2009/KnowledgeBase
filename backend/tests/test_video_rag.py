@@ -8,6 +8,7 @@
 - SemanticChunker.chunk_video_transcript：时间窗口合并、关键帧对齐、空输入
 - document_tasks：_parse_video、_chunk_video_document、_extract_keyframe_descriptions
 """
+
 from __future__ import annotations
 
 import sys
@@ -147,8 +148,10 @@ class TestOpenAIASRProvider:
         mock_client = MagicMock()
         mock_client.audio.transcriptions.create = AsyncMock(return_value=mock_response)
 
-        with patch("builtins.open", MagicMock()), \
-             patch("app.asr.provider.get_settings") as mock_settings:
+        with (
+            patch("builtins.open", MagicMock()),
+            patch("app.asr.provider.get_settings") as mock_settings,
+        ):
             mock_settings.return_value = MagicMock(OPENAI_API_KEY="test")
             with patch("openai.AsyncOpenAI", return_value=mock_client):
                 segments = await provider.transcribe("/fake/audio.wav", language="zh")
@@ -195,8 +198,10 @@ class TestWhisperASRProvider:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("builtins.open", MagicMock()), \
-             patch("app.asr.provider.get_settings") as mock_settings:
+        with (
+            patch("builtins.open", MagicMock()),
+            patch("app.asr.provider.get_settings") as mock_settings,
+        ):
             mock_settings.return_value = MagicMock(ASR_HOST="asr", ASR_PORT="8005")
             with patch("httpx.AsyncClient", return_value=mock_client):
                 segments = await provider.transcribe("/fake/audio.wav")
@@ -415,8 +420,8 @@ class TestDocumentTasksVideo:
     @pytest.mark.asyncio
     async def test_parse_video_asr_success(self) -> None:
         """ASR 转写成功返回文本。"""
-        from tasks.document_tasks import _parse_video
         from app.asr.provider import TranscribeSegment
+        from tasks.document_tasks import _parse_video
 
         mock_doc = MagicMock()
         mock_doc.file_path = "/fake/video.mp4"
@@ -434,10 +439,12 @@ class TestDocumentTasksVideo:
             ]
         )
 
-        with patch("app.video.get_video_processor", return_value=mock_processor), \
-             patch("app.asr.get_asr_provider", return_value=mock_asr), \
-             patch("os.path.exists", return_value=True), \
-             patch("os.remove"):
+        with (
+            patch("app.video.get_video_processor", return_value=mock_processor),
+            patch("app.asr.get_asr_provider", return_value=mock_asr),
+            patch("os.path.exists", return_value=True),
+            patch("os.remove"),
+        ):
             result = await _parse_video(mock_doc)
 
         assert "你好" in result
@@ -473,15 +480,17 @@ class TestDocumentTasksVideo:
         mock_processor.extract_audio = AsyncMock(return_value="")
 
         with patch("app.video.get_video_processor", return_value=mock_processor):
-            chunks = await _chunk_video_document(mock_doc, "这是一段足够长的测试文本内容，用于验证分块功能。" * 5)
+            chunks = await _chunk_video_document(
+                mock_doc, "这是一段足够长的测试文本内容，用于验证分块功能。" * 5
+            )
 
         assert len(chunks) > 0
 
     @pytest.mark.asyncio
     async def test_chunk_video_document_with_segments(self) -> None:
         """有 ASR 片段时走视频分块。"""
-        from tasks.document_tasks import _chunk_video_document
         from app.asr.provider import TranscribeSegment
+        from tasks.document_tasks import _chunk_video_document
 
         mock_doc = MagicMock()
         mock_doc.file_path = "/fake/video.mp4"
@@ -497,11 +506,17 @@ class TestDocumentTasksVideo:
             ]
         )
 
-        with patch("app.video.get_video_processor", return_value=mock_processor), \
-             patch("app.asr.get_asr_provider", return_value=mock_asr), \
-             patch("os.path.exists", return_value=True), \
-             patch("os.remove"), \
-             patch("tasks.document_tasks._extract_keyframe_descriptions", new_callable=AsyncMock, return_value=[]):
+        with (
+            patch("app.video.get_video_processor", return_value=mock_processor),
+            patch("app.asr.get_asr_provider", return_value=mock_asr),
+            patch("os.path.exists", return_value=True),
+            patch("os.remove"),
+            patch(
+                "tasks.document_tasks._extract_keyframe_descriptions",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+        ):
             chunks = await _chunk_video_document(mock_doc, "transcript text")
 
         assert len(chunks) >= 1
@@ -519,10 +534,11 @@ class TestDocumentTasksVideo:
     @pytest.mark.asyncio
     async def test_extract_keyframe_descriptions_success(self) -> None:
         """成功提取关键帧描述。"""
-        import tempfile
         import os
-        from tasks.document_tasks import _extract_keyframe_descriptions
+        import tempfile
+
         from app.video.processor import KeyFrame
+        from tasks.document_tasks import _extract_keyframe_descriptions
 
         # 创建真实的临时图片文件 — Phase 4 修复后代码会读取文件 bytes
         tmpdir = tempfile.mkdtemp()
@@ -543,12 +559,12 @@ class TestDocumentTasksVideo:
             )
 
             mock_vlm = MagicMock()
-            mock_vlm.understand = AsyncMock(
-                side_effect=["架构图描述", "流程图描述"]
-            )
+            mock_vlm.understand = AsyncMock(side_effect=["架构图描述", "流程图描述"])
 
-            with patch("app.video.get_video_processor", return_value=mock_processor), \
-                 patch("app.vlm.provider.get_vision_provider", return_value=mock_vlm):
+            with (
+                patch("app.video.get_video_processor", return_value=mock_processor),
+                patch("app.vlm.provider.get_vision_provider", return_value=mock_vlm),
+            ):
                 result = await _extract_keyframe_descriptions("/fake/video.mp4")
 
             assert len(result) == 2
@@ -558,18 +574,22 @@ class TestDocumentTasksVideo:
             assert result[1]["description"] == "流程图描述"
             # 验证 VLM 接收到的是 bytes（Phase 4 修复验证）
             for call in mock_vlm.understand.call_args_list:
-                assert isinstance(call.kwargs.get("image", call.args[0] if call.args else None), bytes)
+                assert isinstance(
+                    call.kwargs.get("image", call.args[0] if call.args else None), bytes
+                )
         finally:
             import shutil
+
             shutil.rmtree(tmpdir, ignore_errors=True)
 
     @pytest.mark.asyncio
     async def test_extract_keyframe_descriptions_vlm_failure(self) -> None:
         """VLM 失败时跳过该帧。"""
-        import tempfile
         import os
-        from tasks.document_tasks import _extract_keyframe_descriptions
+        import tempfile
+
         from app.video.processor import KeyFrame
+        from tasks.document_tasks import _extract_keyframe_descriptions
 
         # 创建真实的临时图片文件
         tmpdir = tempfile.mkdtemp()
@@ -594,14 +614,17 @@ class TestDocumentTasksVideo:
                 side_effect=[Exception("VLM error"), "成功描述"]
             )
 
-            with patch("app.video.get_video_processor", return_value=mock_processor), \
-                 patch("app.vlm.provider.get_vision_provider", return_value=mock_vlm):
+            with (
+                patch("app.video.get_video_processor", return_value=mock_processor),
+                patch("app.vlm.provider.get_vision_provider", return_value=mock_vlm),
+            ):
                 result = await _extract_keyframe_descriptions("/fake/video.mp4")
 
             assert len(result) == 1
             assert result[0]["description"] == "成功描述"
         finally:
             import shutil
+
             shutil.rmtree(tmpdir, ignore_errors=True)
 
 
@@ -744,7 +767,10 @@ class TestFinalizeVideoTask:
             lambda *a, **k: calls["progress"].append((a, k)),
         )
 
-        chunk_objects = [MagicMock(content="分块内容一"), MagicMock(content="分块内容二")]
+        chunk_objects = [
+            MagicMock(content="分块内容一"),
+            MagicMock(content="分块内容二"),
+        ]
 
         class _FakeChunker:
             def chunk_video_transcript(self, segments, keyframe_descriptions):
@@ -763,10 +789,14 @@ class TestFinalizeVideoTask:
             calls["embed"] = chunks
             return [[0.1, 0.2], [0.3, 0.4]][: len(chunks)]
 
-        async def _fake_build_indexes(doc_id, c_objects, chunks, embeddings, kb_id=None):
+        async def _fake_build_indexes(
+            doc_id, c_objects, chunks, embeddings, kb_id=None
+        ):
             calls["indexes"] = (doc_id, c_objects, chunks, embeddings, kb_id)
 
-        monkeypatch.setattr(doc_tasks, "_generate_embeddings", _fake_generate_embeddings)
+        monkeypatch.setattr(
+            doc_tasks, "_generate_embeddings", _fake_generate_embeddings
+        )
         monkeypatch.setattr(doc_tasks, "_build_indexes", _fake_build_indexes)
 
         # --- DB 打桩：task_db_session + DocumentRepository ---
@@ -851,7 +881,11 @@ class TestFinalizeVideoTask:
         monkeypatch.setattr("app.rag.chunker.SemanticChunker", _EmptyChunker)
 
         doc_id = "12345678-1234-5678-1234-567812345678"
-        asr_result = {"doc_id": doc_id, "segments": [{"start": 0, "end": 1, "text": "嗯"}], "text": "嗯"}
+        asr_result = {
+            "doc_id": doc_id,
+            "segments": [{"start": 0, "end": 1, "text": "嗯"}],
+            "text": "嗯",
+        }
         module.finalize_video_task([asr_result], doc_id, "")
 
         assert calls["fallback_chunk"] == ("嗯", "txt")

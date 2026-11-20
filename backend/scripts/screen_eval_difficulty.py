@@ -31,7 +31,6 @@ if str(_BACKEND_ROOT) not in sys.path:
 
 from app.core.prompt_files import (  # noqa: E402
     compose_guidance_prompt,
-    load_prompt_file,
     split_guidance_sections,
 )
 from app.llm.factory import get_llm_provider  # noqa: E402
@@ -44,19 +43,24 @@ _TARGET = "app/rag/prompts/generate_base.md"
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="评测用例难度筛选")
     parser.add_argument(
-        "--input", default="eval_cases/candidates_feedback.jsonl",
+        "--input",
+        default="eval_cases/candidates_feedback.jsonl",
         help="候选池 JSONL（case_id/query/contexts）",
     )
     parser.add_argument(
-        "--hard-out", default="eval_cases/hard_pool.jsonl",
+        "--hard-out",
+        default="eval_cases/hard_pool.jsonl",
         help="难度池输出（总分 ≤ threshold）",
     )
     parser.add_argument(
-        "--report", default="eval_cases/difficulty_report.json",
+        "--report",
+        default="eval_cases/difficulty_report.json",
         help="逐条分数报告输出",
     )
     parser.add_argument(
-        "--threshold", type=float, default=4.5,
+        "--threshold",
+        type=float,
+        default=4.5,
         help="难度判定阈值（总分 ≤ threshold 计为难例）",
     )
     return parser.parse_args()
@@ -79,9 +83,7 @@ async def main() -> int:
         return 1
 
     target = _BACKEND_ROOT / _TARGET
-    guidance, redline = split_guidance_sections(
-        target.read_text(encoding="utf-8")
-    )
+    guidance, redline = split_guidance_sections(target.read_text(encoding="utf-8"))
     base_text = compose_guidance_prompt(guidance, redline)
 
     llm = get_llm_provider()
@@ -125,7 +127,9 @@ async def main() -> int:
         report.append(record)
         if result.error is None and score <= args.threshold:
             hard.append(case)
-        mark = "ERR" if result.error else ("HARD" if score <= args.threshold else "easy")
+        mark = (
+            "ERR" if result.error else ("HARD" if score <= args.threshold else "easy")
+        )
         print(
             f"{case['case_id']} [{mark}] {score:.2f} "
             f"(引用 {result.citation_accuracy} 完整 {result.completeness} "

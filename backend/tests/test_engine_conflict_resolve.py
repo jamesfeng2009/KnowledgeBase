@@ -5,6 +5,7 @@
 - 无冲突键 / 无法裁决时原样保留（零侵入）；
 - _doc_ref 唯一引用。
 """
+
 from __future__ import annotations
 
 from app.rag.engine import AgenticRAGEngine
@@ -20,15 +21,19 @@ def test_resolve_keeps_authoritative_doc():
     engine = _engine()
     docs = [
         {
-            "doc_id": "rule-1", "title": "公司制度",
+            "doc_id": "rule-1",
+            "title": "公司制度",
             "content": "报销上限 10000",
-            "conflict_key": "报销上限", "authority": "system_rule",
+            "conflict_key": "报销上限",
+            "authority": "system_rule",
             "updated_at": "2026-01-01",
         },
         {
-            "doc_id": "tool-1", "title": "ERP 数据",
+            "doc_id": "tool-1",
+            "title": "ERP 数据",
             "content": "报销上限 5000",
-            "conflict_key": "报销上限", "authority": "tool_fact",
+            "conflict_key": "报销上限",
+            "authority": "tool_fact",
             "updated_at": "2026-02-01",
         },
     ]
@@ -42,15 +47,19 @@ def test_resolve_same_authority_uses_last_win():
     engine = _engine()
     docs = [
         {
-            "doc_id": "v1", "title": "旧版规范",
+            "doc_id": "v1",
+            "title": "旧版规范",
             "content": "接口超时 3s",
-            "conflict_key": "接口超时", "authority": "tool_fact",
+            "conflict_key": "接口超时",
+            "authority": "tool_fact",
             "updated_at": "2026-01-01",
         },
         {
-            "doc_id": "v2", "title": "新版规范",
+            "doc_id": "v2",
+            "title": "新版规范",
             "content": "接口超时 5s",
-            "conflict_key": "接口超时", "authority": "tool_fact",
+            "conflict_key": "接口超时",
+            "authority": "tool_fact",
             "updated_at": "2026-03-01",
         },
     ]
@@ -65,12 +74,18 @@ def test_resolve_mixed_group_keeps_others_untouched():
     docs = [
         {"doc_id": "a", "content": "无关文档"},
         {
-            "doc_id": "b", "content": "冲突A",
-            "conflict_key": "K", "authority": "tool_fact", "updated_at": "2026-01-01",
+            "doc_id": "b",
+            "content": "冲突A",
+            "conflict_key": "K",
+            "authority": "tool_fact",
+            "updated_at": "2026-01-01",
         },
         {
-            "doc_id": "c", "content": "冲突B",
-            "conflict_key": "K", "authority": "system_rule", "updated_at": "2026-02-01",
+            "doc_id": "c",
+            "content": "冲突B",
+            "conflict_key": "K",
+            "authority": "system_rule",
+            "updated_at": "2026-02-01",
         },
         {"doc_id": "d", "content": "另一无关文档"},
     ]
@@ -101,12 +116,18 @@ def test_resolve_unresolvable_keeps_all():
     engine = _engine()
     docs = [
         {
-            "doc_id": "a", "content": "x",
-            "conflict_key": "K", "authority": "unknown_src", "updated_at": "2026-01-01",
+            "doc_id": "a",
+            "content": "x",
+            "conflict_key": "K",
+            "authority": "unknown_src",
+            "updated_at": "2026-01-01",
         },
         {
-            "doc_id": "b", "content": "y",
-            "conflict_key": "K", "authority": "unknown_src", "updated_at": "2026-02-01",
+            "doc_id": "b",
+            "content": "y",
+            "conflict_key": "K",
+            "authority": "unknown_src",
+            "updated_at": "2026-02-01",
         },
     ]
     assert len(engine._resolve_doc_conflicts(docs)) == 2

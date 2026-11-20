@@ -47,7 +47,9 @@ def get_vector_store() -> VectorStoreBase:
         ValueError: VECTOR_STORE 配置值不在支持列表中时抛出。
     """
     settings = get_settings()
-    backend: str = getattr(settings, "VECTOR_STORE", _DEFAULT_BACKEND) or _DEFAULT_BACKEND
+    backend: str = (
+        getattr(settings, "VECTOR_STORE", _DEFAULT_BACKEND) or _DEFAULT_BACKEND
+    )
 
     if backend not in _BACKENDS:
         raise ValueError(

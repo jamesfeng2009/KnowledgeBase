@@ -164,9 +164,7 @@ class TraceSnapshot:
 
         iterations = _as_int(data.get("iterations", root_meta.get("iterations")))
         max_iter = _as_bool(
-            data.get(
-                "max_iterations_reached", root_meta.get("max_iterations_reached")
-            )
+            data.get("max_iterations_reached", root_meta.get("max_iterations_reached"))
         )
         error = _first_str(data, "error") or _error_from_spans(spans)
 
@@ -178,8 +176,7 @@ class TraceSnapshot:
             answer=answer.strip(),
             retrieved_doc_ids=retrieved,
             cited_doc_ids=_list_of_str(
-                data.get("cited_doc_ids")
-                or _cited_from_text(answer)
+                data.get("cited_doc_ids") or _cited_from_text(answer)
             ),
             spans=spans,
             feedback=_first_str(data, "feedback", "feedback_type") or None,
@@ -191,14 +188,11 @@ class TraceSnapshot:
             user_id=_first_str(data, "user_id"),
             tenant_id=_first_str(data, "tenant_id"),
             created_at=_first_str(data, "created_at", "timestamp"),
-            prompt_variant=_first_str(
-                ab, "ab_prompt_variant", "prompt_variant"
-            ),
+            prompt_variant=_first_str(ab, "ab_prompt_variant", "prompt_variant"),
             ab_arm=_first_str(ab, "ab_arm", "arm"),
             ab_experiment=_first_str(ab, "ab_experiment", "experiment"),
-            correlation_id=_first_str(
-                data, "correlation_id"
-            ) or _first_str(ab, "ab_correlation_id", "correlation_id"),
+            correlation_id=_first_str(data, "correlation_id")
+            or _first_str(ab, "ab_correlation_id", "correlation_id"),
         )
 
     def content_hash(self) -> str:
@@ -275,7 +269,9 @@ def _last_output(spans: list[dict[str, Any]], name_prefixes: tuple[str, ...]) ->
 def _error_from_spans(spans: list[dict[str, Any]]) -> str:
     for s in spans:
         if s.get("status") not in (None, "ok") or s.get("error"):
-            return str(s.get("error") or f"{s.get('name', 'span')} status={s.get('status')}")
+            return str(
+                s.get("error") or f"{s.get('name', 'span')} status={s.get('status')}"
+            )
     return ""
 
 
@@ -471,7 +467,7 @@ class ReplayExporter:
         )
         for full in files:
             try:
-                with open(full, "r", encoding="utf-8") as fh:
+                with open(full, encoding="utf-8") as fh:
                     for line in fh:
                         line = line.strip()
                         if not line:
@@ -582,10 +578,10 @@ class ReplayExporter:
         }
         kept_lines: list[str] = []
         if os.path.isfile(target_path):
-            with open(target_path, "r", encoding="utf-8") as fh:
+            with open(target_path, encoding="utf-8") as fh:
                 kept_lines = [ln.rstrip("\n") for ln in fh if ln.strip()]
 
-        with open(candidates_path, "r", encoding="utf-8") as fh:
+        with open(candidates_path, encoding="utf-8") as fh:
             for line in fh:
                 line = line.strip()
                 if not line:
@@ -638,7 +634,7 @@ def _read_index(path: str) -> tuple[set[str], set[str]]:
     ids: set[str] = set()
     if not os.path.isfile(path):
         return queries, ids
-    with open(path, "r", encoding="utf-8") as fh:
+    with open(path, encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
             if not line:
@@ -666,7 +662,7 @@ def load_traces(path: str) -> list[TraceSnapshot]:
     if not path or not os.path.isfile(path):
         log.warning("replay.trace_file_missing", path=path)
         return []
-    with open(path, "r", encoding="utf-8") as fh:
+    with open(path, encoding="utf-8") as fh:
         text = fh.read()
 
     items: list[Any] = []
@@ -687,8 +683,6 @@ def load_traces(path: str) -> list[TraceSnapshot]:
             except json.JSONDecodeError:
                 log.warning("replay.trace_line_skipped", path=path, line=line_no)
 
-    snapshots = [
-        TraceSnapshot.from_dict(o) for o in items if isinstance(o, dict)
-    ]
+    snapshots = [TraceSnapshot.from_dict(o) for o in items if isinstance(o, dict)]
     log.info("replay.traces_loaded", path=path, count=len(snapshots))
     return snapshots

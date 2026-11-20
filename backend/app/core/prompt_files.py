@@ -78,9 +78,7 @@ def split_guidance_sections(text: str) -> tuple[list[str], list[str]]:
     return _trim_blank(guidance), _trim_blank(redline)
 
 
-def compose_guidance_prompt(
-    guidance_lines: list[str], redline_lines: list[str]
-) -> str:
+def compose_guidance_prompt(guidance_lines: list[str], redline_lines: list[str]) -> str:
     """把（指引区, 红线区）拼回最终注入 LLM 的基础指引文本。
 
     直接以单换行连接（与历史硬编码三段式逐字一致，无段间空行）。
@@ -88,9 +86,7 @@ def compose_guidance_prompt(
     return "\n".join([*guidance_lines, *redline_lines]).strip()
 
 
-def render_guidance_file(
-    guidance_lines: list[str], redline_lines: list[str]
-) -> str:
+def render_guidance_file(guidance_lines: list[str], redline_lines: list[str]) -> str:
     """把（指引区, 红线区）渲染为完整文件文本（带分节标题）。
 
     进化循环用「候选指引区 + 原红线区」渲染候选文件 — 红线区永远来自

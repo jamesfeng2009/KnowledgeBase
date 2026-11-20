@@ -15,6 +15,7 @@ delivery_chain.py:226 的消费方查空表。
 chat 编排用 test_chat_disconnect 同款替身边界（引擎/权限/意图/收尾），
 事件写入与 checkpoint 存取全部走真实 DB。
 """
+
 from __future__ import annotations
 
 import uuid
@@ -22,7 +23,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import pytest_asyncio
 
 from tests.rls_harness import rls_db  # noqa: F401
 
@@ -212,9 +212,12 @@ class TestB7ChatEventScope:
             async with tenant_scope(session, TENANT_A):
                 svc, engine = _make_chat_service(session, user, TENANT_A, conv_id)
                 p1, p2, p3 = _stream_env_patches(engine)
-                with patch.object(
-                    svc, "_persist_assistant_result", new=AsyncMock()
-                ), p1, p2, p3:
+                with (
+                    patch.object(svc, "_persist_assistant_result", new=AsyncMock()),
+                    p1,
+                    p2,
+                    p3,
+                ):
                     chunks = [
                         c
                         async for c in svc.chat(
@@ -245,9 +248,12 @@ class TestB7ChatEventScope:
             # 单租户请求无租户 GUC（middleware 只认 JWT 租户）
             svc, engine = _make_chat_service(session, user, None, conv_id)
             p1, p2, p3 = _stream_env_patches(engine)
-            with patch.object(
-                svc, "_persist_assistant_result", new=AsyncMock()
-            ), p1, p2, p3:
+            with (
+                patch.object(svc, "_persist_assistant_result", new=AsyncMock()),
+                p1,
+                p2,
+                p3,
+            ):
                 chunks = [
                     c
                     async for c in svc.chat(
@@ -297,7 +303,9 @@ class TestB7HybridSaveLoad:
             sid,
         )
         assert len(rows) == 1
-        assert rows[0]["base_seq"] == "2", "快照必须锚定到最新事件 seq（审计现状：无 _base_seq）"
+        assert (
+            rows[0]["base_seq"] == "2"
+        ), "快照必须锚定到最新事件 seq（审计现状：无 _base_seq）"
 
     async def test_build_context_replays_events_after_checkpoint(self, rls_db):
         """加载 = 快照 + base_seq 之后事件重放（增量恢复真实生效）。"""
@@ -318,15 +326,27 @@ class TestB7HybridSaveLoad:
                 )
                 mgr = EventLogManager(session)
                 # seq 1：快照锚点对应的已重放事件
-                assert await mgr.append(
-                    sid, "node_end", "think",
-                    output_data={"iteration": 1}, iteration=1,
-                ) == 1
+                assert (
+                    await mgr.append(
+                        sid,
+                        "node_end",
+                        "think",
+                        output_data={"iteration": 1},
+                        iteration=1,
+                    )
+                    == 1
+                )
                 # seq 2：快照之后的增量事件 — 检索又命中一篇文档
-                assert await mgr.append(
-                    sid, "node_end", "retrieve",
-                    output_data={"retrieved_docs": ["d2"]}, iteration=2,
-                ) == 2
+                assert (
+                    await mgr.append(
+                        sid,
+                        "node_end",
+                        "retrieve",
+                        output_data={"retrieved_docs": ["d2"]},
+                        iteration=2,
+                    )
+                    == 2
+                )
             # checkpoint 分支走独立连接，种子必须先提交才可见
             await session.commit()
             async with tenant_scope(session, TENANT_A):
@@ -335,9 +355,10 @@ class TestB7HybridSaveLoad:
             await session.commit()
 
         assert ctx.checkpoint is not None
-        assert ctx.checkpoint["retrieved_docs"] == ["d1", "d2"], (
-            "base_seq 之后的事件增量必须重放进状态（审计现状：只读快照不重放）"
-        )
+        assert ctx.checkpoint["retrieved_docs"] == [
+            "d1",
+            "d2",
+        ], "base_seq 之后的事件增量必须重放进状态（审计现状：只读快照不重放）"
 
     async def test_single_tenant_checkpoint_visible_without_guc(self, rls_db):
         """单租户 NULL checkpoint：无 GUC 的 build_context 必须读得到。"""

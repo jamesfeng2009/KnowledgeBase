@@ -9,6 +9,7 @@ P1: 解析摘要响应（/documents/{doc_id}/summary）— 返回 preview/struct
 - TestDocumentSummaryEndpoint: /documents/{doc_id}/summary 端点端到端
 - TestUploadSizeValidation: 上传端点大小校验集成测试
 """
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -27,7 +28,6 @@ from app.api.v1.documents import (
     _validate_upload_size,
 )
 from app.config import get_settings
-
 
 # ======================================================================
 # Fixtures
@@ -219,7 +219,9 @@ class TestExtractStructureTags:
         assert _extract_structure_tags(text) == ["h1"]
 
     def test_multiple_tags_dedup(self) -> None:
-        text = "<h1>大标题</h1><h2>小标题</h2><table><tr></tr></table><ul><li>a</li></ul>"
+        text = (
+            "<h1>大标题</h1><h2>小标题</h2><table><tr></tr></table><ul><li>a</li></ul>"
+        )
         result = _extract_structure_tags(text)
         assert "h1" in result
         assert "h2" in result
@@ -264,7 +266,9 @@ class TestCountPages:
 
     def test_h2_count_for_pptx(self) -> None:
         """PPTX 按 <h2> 标题计数（每 slide 一个 h2）。"""
-        text = "<h2>幻灯片 1</h2><p>内容</p><h2>幻灯片 2</h2><p>内容</p><h2>幻灯片 3</h2>"
+        text = (
+            "<h2>幻灯片 1</h2><p>内容</p><h2>幻灯片 2</h2><p>内容</p><h2>幻灯片 3</h2>"
+        )
         assert _count_pages(text, "pptx") == 3
 
     def test_h2_count_for_xlsx(self) -> None:
@@ -341,9 +345,7 @@ class TestDocumentSummaryEndpoint:
             mock_service = mock_cls.return_value
             mock_service.get_document = AsyncMock(return_value=mock_doc)
 
-            response = await auth_client.get(
-                f"/api/v1/documents/{mock_doc.id}/summary"
-            )
+            response = await auth_client.get(f"/api/v1/documents/{mock_doc.id}/summary")
 
         assert response.status_code == 200
         data = response.json()["data"]
@@ -374,9 +376,7 @@ class TestDocumentSummaryEndpoint:
             mock_service = mock_cls.return_value
             mock_service.get_document = AsyncMock(return_value=mock_doc)
 
-            response = await auth_client.get(
-                f"/api/v1/documents/{mock_doc.id}/summary"
-            )
+            response = await auth_client.get(f"/api/v1/documents/{mock_doc.id}/summary")
 
         assert response.status_code == 200
         data = response.json()["data"]
@@ -406,9 +406,7 @@ class TestDocumentSummaryEndpoint:
             mock_service = mock_cls.return_value
             mock_service.get_document = AsyncMock(return_value=mock_doc)
 
-            response = await auth_client.get(
-                f"/api/v1/documents/{mock_doc.id}/summary"
-            )
+            response = await auth_client.get(f"/api/v1/documents/{mock_doc.id}/summary")
 
         assert response.status_code == 200
         data = response.json()["data"]
@@ -430,9 +428,7 @@ class TestDocumentSummaryEndpoint:
             mock_service = mock_cls.return_value
             mock_service.get_document = AsyncMock(return_value=mock_doc)
 
-            response = await auth_client.get(
-                f"/api/v1/documents/{mock_doc.id}/summary"
-            )
+            response = await auth_client.get(f"/api/v1/documents/{mock_doc.id}/summary")
 
         assert response.status_code == 200
         data = response.json()["data"]
@@ -457,18 +453,14 @@ class TestDocumentSummaryEndpoint:
             mock_service = mock_cls.return_value
             mock_service.get_document = AsyncMock(return_value=mock_doc)
 
-            response = await auth_client.get(
-                f"/api/v1/documents/{mock_doc.id}/summary"
-            )
+            response = await auth_client.get(f"/api/v1/documents/{mock_doc.id}/summary")
 
         assert response.status_code == 200
         data = response.json()["data"]
         assert data["pages"] == 2
 
     @pytest.mark.asyncio
-    async def test_summary_requires_auth(
-        self, raw_client: httpx.AsyncClient
-    ) -> None:
+    async def test_summary_requires_auth(self, raw_client: httpx.AsyncClient) -> None:
         """summary 端点需要认证。"""
         response = await raw_client.get(f"/api/v1/documents/{uuid4()}/summary")
         assert response.status_code == 401
@@ -490,9 +482,15 @@ class TestUploadSizeValidation:
         mock_doc = _make_mock_doc(content_text="内容", status="draft")
 
         # DocumentRepository 在函数内导入，patch 其真实路径
-        with patch("app.api.v1.documents.KnowledgeService") as mock_cls, \
-             patch("app.repositories.knowledge_repository.DocumentRepository") as mock_repo_cls, \
-             patch("app.utils.minio_client.upload_file", new_callable=AsyncMock) as mock_upload:
+        with (
+            patch("app.api.v1.documents.KnowledgeService") as mock_cls,
+            patch(
+                "app.repositories.knowledge_repository.DocumentRepository"
+            ) as mock_repo_cls,
+            patch(
+                "app.utils.minio_client.upload_file", new_callable=AsyncMock
+            ) as mock_upload,
+        ):
             mock_service = mock_cls.return_value
             mock_service.upload_document = AsyncMock(return_value=mock_doc)
             mock_repo = mock_repo_cls.return_value
@@ -519,7 +517,6 @@ class TestUploadSizeValidation:
         max_mb = settings.MAX_UPLOAD_SIZE_MB
 
         # 构造超过上限 1MB 的内容（不实际发送，用 patch 模拟 file.read）
-        from io import BytesIO
 
         oversize_bytes = b"x" * ((max_mb + 1) * 1024 * 1024)
 
@@ -590,14 +587,25 @@ class TestDocumentTaskWarnings:
         mock_repo = MagicMock()
         mock_repo.get_by_id = AsyncMock(return_value=mock_doc)
 
-        with patch("app.database.async_session_factory", return_value=mock_session), \
-             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo), \
-             patch("tasks.document_tasks._parse_document", new_callable=AsyncMock) as mock_parse, \
-             patch("tasks.document_tasks._chunk_document") as mock_chunk, \
-             patch("tasks.document_tasks._generate_embeddings", new_callable=AsyncMock) as mock_embed, \
-             patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock) as mock_index, \
-             patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock), \
-             patch("tasks.intelligence_tasks.process_intelligence") as mock_intel:
+        with (
+            patch("app.database.async_session_factory", return_value=mock_session),
+            patch(
+                "app.repositories.knowledge_repository.DocumentRepository",
+                return_value=mock_repo,
+            ),
+            patch(
+                "tasks.document_tasks._parse_document", new_callable=AsyncMock
+            ) as mock_parse,
+            patch("tasks.document_tasks._chunk_document") as mock_chunk,
+            patch(
+                "tasks.document_tasks._generate_embeddings", new_callable=AsyncMock
+            ) as mock_embed,
+            patch(
+                "tasks.document_tasks._build_indexes", new_callable=AsyncMock
+            ) as mock_index,
+            patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock),
+            patch("tasks.intelligence_tasks.process_intelligence") as mock_intel,
+        ):
             # _parse_document 真实签名为 tuple[text, images]，
             # 旧 mock 返回纯字符串导致解包失败走了 content_text 回退
             mock_parse.return_value = ("解析后的内容", [])
@@ -635,14 +643,25 @@ class TestDocumentTaskWarnings:
         mock_repo = MagicMock()
         mock_repo.get_by_id = AsyncMock(return_value=mock_doc)
 
-        with patch("app.database.async_session_factory", return_value=mock_session), \
-             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo), \
-             patch("tasks.document_tasks._parse_document", new_callable=AsyncMock) as mock_parse, \
-             patch("tasks.document_tasks._chunk_document") as mock_chunk, \
-             patch("tasks.document_tasks._generate_embeddings", new_callable=AsyncMock) as mock_embed, \
-             patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock) as mock_index, \
-             patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock), \
-             patch("tasks.intelligence_tasks.process_intelligence") as mock_intel:
+        with (
+            patch("app.database.async_session_factory", return_value=mock_session),
+            patch(
+                "app.repositories.knowledge_repository.DocumentRepository",
+                return_value=mock_repo,
+            ),
+            patch(
+                "tasks.document_tasks._parse_document", new_callable=AsyncMock
+            ) as mock_parse,
+            patch("tasks.document_tasks._chunk_document") as mock_chunk,
+            patch(
+                "tasks.document_tasks._generate_embeddings", new_callable=AsyncMock
+            ) as mock_embed,
+            patch(
+                "tasks.document_tasks._build_indexes", new_callable=AsyncMock
+            ) as mock_index,
+            patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock),
+            patch("tasks.intelligence_tasks.process_intelligence") as mock_intel,
+        ):
             # 解析抛异常
             mock_parse.side_effect = Exception("解析器崩溃")
             mock_chunk.return_value = []
@@ -677,15 +696,29 @@ class TestDocumentTaskWarnings:
         mock_repo = MagicMock()
         mock_repo.get_by_id = AsyncMock(return_value=mock_doc)
 
-        with patch("app.database.async_session_factory", return_value=mock_session), \
-             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo), \
-             patch("tasks.document_tasks._parse_document", new_callable=AsyncMock) as mock_parse, \
-             patch("tasks.document_tasks._chunk_document") as mock_chunk, \
-             patch("tasks.document_tasks._generate_embeddings", new_callable=AsyncMock) as mock_embed, \
-             patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock) as mock_index, \
-             patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock), \
-             patch("tasks.intelligence_tasks.process_intelligence") as mock_intel:
-            mock_parse.return_value = ("", [])  # 旧格式返回空（tuple[text, images] 签名）
+        with (
+            patch("app.database.async_session_factory", return_value=mock_session),
+            patch(
+                "app.repositories.knowledge_repository.DocumentRepository",
+                return_value=mock_repo,
+            ),
+            patch(
+                "tasks.document_tasks._parse_document", new_callable=AsyncMock
+            ) as mock_parse,
+            patch("tasks.document_tasks._chunk_document") as mock_chunk,
+            patch(
+                "tasks.document_tasks._generate_embeddings", new_callable=AsyncMock
+            ) as mock_embed,
+            patch(
+                "tasks.document_tasks._build_indexes", new_callable=AsyncMock
+            ) as mock_index,
+            patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock),
+            patch("tasks.intelligence_tasks.process_intelligence") as mock_intel,
+        ):
+            mock_parse.return_value = (
+                "",
+                [],
+            )  # 旧格式返回空（tuple[text, images] 签名）
             mock_chunk.return_value = []
             mock_embed.return_value = []
             mock_index.return_value = None
@@ -727,9 +760,7 @@ class TestSummaryDbFieldsPriority:
             mock_service = mock_cls.return_value
             mock_service.get_document = AsyncMock(return_value=mock_doc)
 
-            response = await auth_client.get(
-                f"/api/v1/documents/{mock_doc.id}/summary"
-            )
+            response = await auth_client.get(f"/api/v1/documents/{mock_doc.id}/summary")
 
         assert response.status_code == 200
         data = response.json()["data"]
@@ -752,9 +783,7 @@ class TestSummaryDbFieldsPriority:
             mock_service = mock_cls.return_value
             mock_service.get_document = AsyncMock(return_value=mock_doc)
 
-            response = await auth_client.get(
-                f"/api/v1/documents/{mock_doc.id}/summary"
-            )
+            response = await auth_client.get(f"/api/v1/documents/{mock_doc.id}/summary")
 
         assert response.status_code == 200
         data = response.json()["data"]
@@ -777,9 +806,7 @@ class TestSummaryDbFieldsPriority:
             mock_service = mock_cls.return_value
             mock_service.get_document = AsyncMock(return_value=mock_doc)
 
-            response = await auth_client.get(
-                f"/api/v1/documents/{mock_doc.id}/summary"
-            )
+            response = await auth_client.get(f"/api/v1/documents/{mock_doc.id}/summary")
 
         assert response.status_code == 200
         data = response.json()["data"]
@@ -801,9 +828,7 @@ class TestSummaryDbFieldsPriority:
             mock_service = mock_cls.return_value
             mock_service.get_document = AsyncMock(return_value=mock_doc)
 
-            response = await auth_client.get(
-                f"/api/v1/documents/{mock_doc.id}/summary"
-            )
+            response = await auth_client.get(f"/api/v1/documents/{mock_doc.id}/summary")
 
         assert response.status_code == 200
         data = response.json()["data"]
@@ -830,9 +855,7 @@ class TestSummaryDbFieldsPriority:
             mock_service = mock_cls.return_value
             mock_service.get_document = AsyncMock(return_value=mock_doc)
 
-            response = await auth_client.get(
-                f"/api/v1/documents/{mock_doc.id}/summary"
-            )
+            response = await auth_client.get(f"/api/v1/documents/{mock_doc.id}/summary")
 
         assert response.status_code == 200
         data = response.json()["data"]
@@ -859,9 +882,7 @@ class TestSummaryDbFieldsPriority:
             mock_service = mock_cls.return_value
             mock_service.get_document = AsyncMock(return_value=mock_doc)
 
-            response = await auth_client.get(
-                f"/api/v1/documents/{mock_doc.id}/summary"
-            )
+            response = await auth_client.get(f"/api/v1/documents/{mock_doc.id}/summary")
 
         assert response.status_code == 200
         data = response.json()["data"]
@@ -898,14 +919,25 @@ class TestTaskPersistsParseMetadata:
         mock_repo = MagicMock()
         mock_repo.get_by_id = AsyncMock(return_value=mock_doc)
 
-        with patch("app.database.async_session_factory", return_value=mock_session), \
-             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo), \
-             patch("tasks.document_tasks._parse_document", new_callable=AsyncMock) as mock_parse, \
-             patch("tasks.document_tasks._chunk_document") as mock_chunk, \
-             patch("tasks.document_tasks._generate_embeddings", new_callable=AsyncMock) as mock_embed, \
-             patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock) as mock_index, \
-             patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock), \
-             patch("tasks.intelligence_tasks.process_intelligence") as mock_intel:
+        with (
+            patch("app.database.async_session_factory", return_value=mock_session),
+            patch(
+                "app.repositories.knowledge_repository.DocumentRepository",
+                return_value=mock_repo,
+            ),
+            patch(
+                "tasks.document_tasks._parse_document", new_callable=AsyncMock
+            ) as mock_parse,
+            patch("tasks.document_tasks._chunk_document") as mock_chunk,
+            patch(
+                "tasks.document_tasks._generate_embeddings", new_callable=AsyncMock
+            ) as mock_embed,
+            patch(
+                "tasks.document_tasks._build_indexes", new_callable=AsyncMock
+            ) as mock_index,
+            patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock),
+            patch("tasks.intelligence_tasks.process_intelligence") as mock_intel,
+        ):
             mock_parse.return_value = ("解析后的内容", [])
             mock_chunk.return_value = []
             mock_embed.return_value = []
@@ -938,14 +970,25 @@ class TestTaskPersistsParseMetadata:
         mock_repo = MagicMock()
         mock_repo.get_by_id = AsyncMock(return_value=mock_doc)
 
-        with patch("app.database.async_session_factory", return_value=mock_session), \
-             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo), \
-             patch("tasks.document_tasks._parse_document", new_callable=AsyncMock) as mock_parse, \
-             patch("tasks.document_tasks._chunk_document") as mock_chunk, \
-             patch("tasks.document_tasks._generate_embeddings", new_callable=AsyncMock) as mock_embed, \
-             patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock) as mock_index, \
-             patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock), \
-             patch("tasks.intelligence_tasks.process_intelligence") as mock_intel:
+        with (
+            patch("app.database.async_session_factory", return_value=mock_session),
+            patch(
+                "app.repositories.knowledge_repository.DocumentRepository",
+                return_value=mock_repo,
+            ),
+            patch(
+                "tasks.document_tasks._parse_document", new_callable=AsyncMock
+            ) as mock_parse,
+            patch("tasks.document_tasks._chunk_document") as mock_chunk,
+            patch(
+                "tasks.document_tasks._generate_embeddings", new_callable=AsyncMock
+            ) as mock_embed,
+            patch(
+                "tasks.document_tasks._build_indexes", new_callable=AsyncMock
+            ) as mock_index,
+            patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock),
+            patch("tasks.intelligence_tasks.process_intelligence") as mock_intel,
+        ):
             mock_parse.return_value = ("内容", [])
             mock_chunk.return_value = []
             # 向量化失败 → 产生警告
@@ -980,16 +1023,29 @@ class TestTaskPersistsParseMetadata:
         mock_repo = MagicMock()
         mock_repo.get_by_id = AsyncMock(return_value=mock_doc)
 
-        parsed_content = "<h2>幻灯片1</h2><h2>幻灯片2</h2><h2>幻灯片3</h2><h2>幻灯片4</h2>"
+        parsed_content = (
+            "<h2>幻灯片1</h2><h2>幻灯片2</h2><h2>幻灯片3</h2><h2>幻灯片4</h2>"
+        )
 
-        with patch("app.database.async_session_factory", return_value=mock_session), \
-             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo), \
-             patch("tasks.document_tasks._parse_document", new_callable=AsyncMock) as mock_parse, \
-             patch("tasks.document_tasks._chunk_document") as mock_chunk, \
-             patch("tasks.document_tasks._generate_embeddings", new_callable=AsyncMock) as mock_embed, \
-             patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock) as mock_index, \
-             patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock), \
-             patch("tasks.intelligence_tasks.process_intelligence") as mock_intel:
+        with (
+            patch("app.database.async_session_factory", return_value=mock_session),
+            patch(
+                "app.repositories.knowledge_repository.DocumentRepository",
+                return_value=mock_repo,
+            ),
+            patch(
+                "tasks.document_tasks._parse_document", new_callable=AsyncMock
+            ) as mock_parse,
+            patch("tasks.document_tasks._chunk_document") as mock_chunk,
+            patch(
+                "tasks.document_tasks._generate_embeddings", new_callable=AsyncMock
+            ) as mock_embed,
+            patch(
+                "tasks.document_tasks._build_indexes", new_callable=AsyncMock
+            ) as mock_index,
+            patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock),
+            patch("tasks.intelligence_tasks.process_intelligence") as mock_intel,
+        ):
             mock_parse.return_value = (parsed_content, [])
             mock_chunk.return_value = []
             mock_embed.return_value = []
@@ -1022,18 +1078,28 @@ class TestTaskPersistsParseMetadata:
         mock_repo.get_by_id = AsyncMock(return_value=mock_doc)
 
         parsed_content = (
-            "<p>第1页</p>\n<!-- page: 1 -->\n"
-            "<p>第2页</p>\n<!-- page: 2 -->\n"
+            "<p>第1页</p>\n<!-- page: 1 -->\n" "<p>第2页</p>\n<!-- page: 2 -->\n"
         )
 
-        with patch("app.database.async_session_factory", return_value=mock_session), \
-             patch("app.repositories.knowledge_repository.DocumentRepository", return_value=mock_repo), \
-             patch("tasks.document_tasks._parse_document", new_callable=AsyncMock) as mock_parse, \
-             patch("tasks.document_tasks._chunk_document") as mock_chunk, \
-             patch("tasks.document_tasks._generate_embeddings", new_callable=AsyncMock) as mock_embed, \
-             patch("tasks.document_tasks._build_indexes", new_callable=AsyncMock) as mock_index, \
-             patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock), \
-             patch("tasks.intelligence_tasks.process_intelligence") as mock_intel:
+        with (
+            patch("app.database.async_session_factory", return_value=mock_session),
+            patch(
+                "app.repositories.knowledge_repository.DocumentRepository",
+                return_value=mock_repo,
+            ),
+            patch(
+                "tasks.document_tasks._parse_document", new_callable=AsyncMock
+            ) as mock_parse,
+            patch("tasks.document_tasks._chunk_document") as mock_chunk,
+            patch(
+                "tasks.document_tasks._generate_embeddings", new_callable=AsyncMock
+            ) as mock_embed,
+            patch(
+                "tasks.document_tasks._build_indexes", new_callable=AsyncMock
+            ) as mock_index,
+            patch("tasks.document_tasks._submit_for_audit", new_callable=AsyncMock),
+            patch("tasks.intelligence_tasks.process_intelligence") as mock_intel,
+        ):
             mock_parse.return_value = (parsed_content, [])
             mock_chunk.return_value = []
             mock_embed.return_value = []
@@ -1080,9 +1146,9 @@ class TestParseMetadataMigration:
         revisions = {r.revision: r for r in script.walk_revisions()}
 
         assert "a1b2c3d4e5f6" in revisions, "新迁移 revision 不存在"
-        assert revisions["a1b2c3d4e5f6"].down_revision == "115a9c06ba4a", (
-            "down_revision 应为 115a9c06ba4a"
-        )
+        assert (
+            revisions["a1b2c3d4e5f6"].down_revision == "115a9c06ba4a"
+        ), "down_revision 应为 115a9c06ba4a"
 
     def test_migration_adds_four_columns(self) -> None:
         """迁移 upgrade 应添加 4 个字段。"""
@@ -1138,15 +1204,15 @@ class TestParseMetadataMigration:
         import inspect
 
         upgrade_src = inspect.getsource(module.upgrade)
-        assert upgrade_src.count("op.add_column") == 4, (
-            f"upgrade 应包含 4 个 add_column 调用，实际: {upgrade_src.count('op.add_column')}"
-        )
+        assert (
+            upgrade_src.count("op.add_column") == 4
+        ), f"upgrade 应包含 4 个 add_column 调用，实际: {upgrade_src.count('op.add_column')}"
 
         # 验证 downgrade 函数源码包含 4 个 drop_column 调用
         downgrade_src = inspect.getsource(module.downgrade)
-        assert downgrade_src.count("op.drop_column") == 4, (
-            f"downgrade 应包含 4 个 drop_column 调用，实际: {downgrade_src.count('op.drop_column')}"
-        )
+        assert (
+            downgrade_src.count("op.drop_column") == 4
+        ), f"downgrade 应包含 4 个 drop_column 调用，实际: {downgrade_src.count('op.drop_column')}"
 
         # 验证字段名都在源码中
         for field in ("parse_status", "parse_warnings", "page_count", "char_count"):

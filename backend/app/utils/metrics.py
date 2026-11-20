@@ -17,15 +17,15 @@ from __future__ import annotations
 
 from typing import Any
 
+from fastapi import Request
+from fastapi.responses import Response
 from prometheus_client import (
+    CONTENT_TYPE_LATEST,
     Counter,
     Gauge,
     Histogram,
-    CONTENT_TYPE_LATEST,
     generate_latest,
 )
-from fastapi import Request
-from fastapi.responses import Response
 
 # 规范化 path 标签 — 避免高基数路径（UUID 等）撑爆指标维度。
 # 将形如 /xxx/{uuid} 的路径归一化为 /xxx/{id}。
@@ -113,6 +113,7 @@ def metrics_response() -> Response:
 
 # ---- 中间件辅助 ----
 
+
 async def metrics_middleware(request: Request, call_next: Any) -> Any:
     """记录请求指标的可观测中间件（挂载于 main 或 middleware）。
 
@@ -120,7 +121,6 @@ async def metrics_middleware(request: Request, call_next: Any) -> Any:
     """
     tenant = str(getattr(request.state, "tenant_id", "") or "")
     method = request.method
-    norm_path = _normalize_path(request.url.path)
 
     HTTP_INFLIGHT.labels(tenant or "none").inc()
     try:

@@ -51,9 +51,7 @@ def compute_input_hash(goal: str, kb_ids: list[str] | None) -> str:
     用"请求输入"而非权限收敛结果计算：收敛集合随账号权限变化，
     若参与指纹，同一提交在不同时刻会得到不同哈希，制造假 409。
     """
-    return canonical_input_hash(
-        {"goal": goal, "kb_ids": sorted(set(kb_ids or []))}
-    )
+    return canonical_input_hash({"goal": goal, "kb_ids": sorted(set(kb_ids or []))})
 
 
 async def find_active_job(
@@ -78,9 +76,7 @@ def _resolve_existing(
 ) -> tuple[ResearchJob, bool]:
     """命中旧任务后的裁决：同输入复用，异输入 409。"""
     if existing.input_hash != input_hash:
-        raise IdempotencyConflictError(
-            "idempotency_key 已绑定不同的提交内容"
-        )
+        raise IdempotencyConflictError("idempotency_key 已绑定不同的提交内容")
     return existing, False
 
 

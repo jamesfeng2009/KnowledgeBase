@@ -15,7 +15,6 @@ P1-B 内容哈希 + 确定性 chunk ID 测试。
 from __future__ import annotations
 
 import os
-import tempfile
 import uuid
 
 import pytest
@@ -27,7 +26,6 @@ from app.utils.hash import (
     find_duplicate_by_hash,
     generate_deterministic_chunk_id,
 )
-
 
 # ======================================================================
 # compute_content_hash 测试
@@ -284,7 +282,8 @@ class TestContentHashMigration:
         """迁移文件存在。"""
         alembic_dir = os.path.join(
             os.path.dirname(os.path.dirname(__file__)),
-            "alembic", "versions",
+            "alembic",
+            "versions",
         )
         files = os.listdir(alembic_dir)
         match = [f for f in files if "content_hash" in f]
@@ -296,10 +295,13 @@ class TestContentHashMigration:
 
         alembic_dir = os.path.join(
             os.path.dirname(os.path.dirname(__file__)),
-            "alembic", "versions",
+            "alembic",
+            "versions",
         )
         files = os.listdir(alembic_dir)
-        migration_file = [f for f in files if "content_hash" in f and f.endswith(".py")][0]
+        migration_file = [
+            f for f in files if "content_hash" in f and f.endswith(".py")
+        ][0]
         module_path = migration_file[:-3]
 
         spec = importlib.util.spec_from_file_location(
@@ -316,10 +318,13 @@ class TestContentHashMigration:
         """迁移添加 content_hash 列。"""
         alembic_dir = os.path.join(
             os.path.dirname(os.path.dirname(__file__)),
-            "alembic", "versions",
+            "alembic",
+            "versions",
         )
         files = os.listdir(alembic_dir)
-        migration_file = [f for f in files if "content_hash" in f and f.endswith(".py")][0]
+        migration_file = [
+            f for f in files if "content_hash" in f and f.endswith(".py")
+        ][0]
         with open(os.path.join(alembic_dir, migration_file)) as f:
             content = f.read()
         assert "content_hash" in content

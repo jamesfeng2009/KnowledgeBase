@@ -132,9 +132,7 @@ class TestVariantDimensions:
                 }
             ],
         )
-        controls = [
-            assign_ab_arm(CONTROL, user_id=f"u{i}") for i in range(50)
-        ]
+        controls = [assign_ab_arm(CONTROL, user_id=f"u{i}") for i in range(50)]
         assert any(c.arm == "control" for c in controls)
         assert all(c.hit for c in controls if c.arm)
 
@@ -152,9 +150,7 @@ class TestVariantDimensions:
                 }
             ],
         )
-        assignment = assign_ab_arm(
-            CONTROL, tenant_id="tenant-big", user_id="u1"
-        )
+        assignment = assign_ab_arm(CONTROL, tenant_id="tenant-big", user_id="u1")
         assert assignment.arm == "treatment"
         assert assignment.via == "allowlist"
         assert assignment.prompt_variant == "answer_first"
@@ -232,7 +228,9 @@ class TestAbContext:
 
     def test_max_iterations_clamped_to_ceiling(self):
         """迭代上限直接决定单次请求的 LLM 调用次数与费用，必须夹紧。"""
-        with ab_scope(ABAssignment(experiment="e", arm="treatment", max_iterations=999)):
+        with ab_scope(
+            ABAssignment(experiment="e", arm="treatment", max_iterations=999)
+        ):
             assert effective_max_iterations(5) == 5
         with ab_scope(ABAssignment(experiment="e", arm="treatment", max_iterations=0)):
             assert effective_max_iterations(5) == 5
@@ -265,7 +263,9 @@ class TestPromptVariants:
 
         assert variant_guidance(bad) is None
 
-    def test_redline_inherited_and_variant_replaces_only_guidance(self, monkeypatch, tmp_path):
+    def test_redline_inherited_and_variant_replaces_only_guidance(
+        self, monkeypatch, tmp_path
+    ):
         """红线区必须来自基线文件 —— 变体不得偷偷放宽安全约束。"""
         from app.rag import prompt_variants
         from app.rag.generator import Generator

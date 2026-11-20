@@ -116,11 +116,7 @@ class TestCaseManagementService:
         offset = (page - 1) * size
         stmt = select(TestCase).where(*conditions)
         stmt = apply_tenant_filter(stmt, TestCase, self._tenant_id)
-        stmt = (
-            stmt.order_by(TestCase.created_at.desc())
-            .offset(offset)
-            .limit(size)
-        )
+        stmt = stmt.order_by(TestCase.created_at.desc()).offset(offset).limit(size)
         result = await self.db.execute(stmt)
         cases = list(result.scalars().all())
         return cases, total
@@ -234,9 +230,7 @@ class TestCaseManagementService:
 
         stmt = update(TestCase).where(TestCase.id == case_id)
         stmt = apply_tenant_filter(stmt, TestCase, self._tenant_id)
-        await self.db.execute(
-            stmt.values(deleted_at=datetime.now(timezone.utc))
-        )
+        await self.db.execute(stmt.values(deleted_at=datetime.now(timezone.utc)))
         await self.db.flush()
 
         log.info("test_case.deleted", case_id=str(case_id))
@@ -262,12 +256,9 @@ class TestCaseManagementService:
         if not case_ids:
             return 0
 
-        stmt = (
-            update(TestCase)
-            .where(
-                TestCase.id.in_(case_ids),
-                TestCase.deleted_at.is_(None),
-            )
+        stmt = update(TestCase).where(
+            TestCase.id.in_(case_ids),
+            TestCase.deleted_at.is_(None),
         )
         stmt = apply_tenant_filter(stmt, TestCase, self._tenant_id)
         result = await self.db.execute(stmt.values(status=status))
@@ -307,16 +298,20 @@ class TestCaseManagementService:
             统计数据字典。
         """
         # --- 项目总数 ---
-        project_stmt = select(func.count()).select_from(TestProject).where(
-            TestProject.deleted_at.is_(None)
+        project_stmt = (
+            select(func.count())
+            .select_from(TestProject)
+            .where(TestProject.deleted_at.is_(None))
         )
         if project_id:
             project_stmt = project_stmt.where(TestProject.id == project_id)
         total_projects = (await self.db.execute(project_stmt)).scalar_one()
 
         # --- 需求总数 ---
-        req_stmt = select(func.count()).select_from(TestRequirement).where(
-            TestRequirement.deleted_at.is_(None)
+        req_stmt = (
+            select(func.count())
+            .select_from(TestRequirement)
+            .where(TestRequirement.deleted_at.is_(None))
         )
         if project_id:
             req_stmt = req_stmt.where(TestRequirement.project_id == project_id)
@@ -327,15 +322,11 @@ class TestCaseManagementService:
         if project_id:
             case_base.append(TestCase.project_id == project_id)
 
-        total_cases_stmt = (
-            select(func.count()).select_from(TestCase).where(*case_base)
-        )
+        total_cases_stmt = select(func.count()).select_from(TestCase).where(*case_base)
         total_cases_stmt = apply_tenant_filter(
             total_cases_stmt, TestCase, self._tenant_id
         )
-        total_cases = (
-            await self.db.execute(total_cases_stmt)
-        ).scalar_one()
+        total_cases = (await self.db.execute(total_cases_stmt)).scalar_one()
 
         # 按状态分组
         status_stmt = select(TestCase.status, func.count()).where(*case_base)

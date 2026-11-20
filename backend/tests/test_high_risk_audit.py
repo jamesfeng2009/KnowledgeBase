@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from collections.abc import AsyncIterator
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -41,7 +40,7 @@ class FakeResult:
     def scalar_one(self) -> Any:
         return self._scalar
 
-    def scalars(self) -> "FakeResult":
+    def scalars(self) -> FakeResult:
         return self
 
     def all(self) -> list:
@@ -58,7 +57,7 @@ class FakeSession:
         self.records: dict[uuid.UUID, HighRiskAuditRecord] = {}
         self.raise_on_commit: bool = False
 
-    async def __aenter__(self) -> "FakeSession":
+    async def __aenter__(self) -> FakeSession:
         return self
 
     async def __aexit__(self, *args: Any) -> bool:
@@ -159,10 +158,14 @@ class TestRecordBlockAudit:
         service = _make_service(session)
 
         record_id = await service.record_block_audit(
-            query="q", answer="a", session_id="s",
+            query="q",
+            answer="a",
+            session_id="s",
             user_id="not-a-uuid",
-            total_count=1, unverified_count=1,
-            max_risk_level="high", items=[],
+            total_count=1,
+            unverified_count=1,
+            max_risk_level="high",
+            items=[],
         )
 
         # uuid.UUID("not-a-uuid") 抛异常 → 整体降级返回 None
@@ -175,9 +178,13 @@ class TestRecordBlockAudit:
         service = _make_service(session)
 
         record_id = await service.record_block_audit(
-            query="q", answer="a", session_id="s",
-            total_count=1, unverified_count=1,
-            max_risk_level="high", items=[],
+            query="q",
+            answer="a",
+            session_id="s",
+            total_count=1,
+            unverified_count=1,
+            max_risk_level="high",
+            items=[],
         )
 
         assert record_id is None
@@ -195,13 +202,17 @@ class TestListAudits:
     async def test_list_returns_total_and_items(self) -> None:
         session = FakeSession()
         record = HighRiskAuditRecord(
-            query="q", answer_snippet="a", session_id="s",
-            total_count=1, unverified_count=1, max_risk_level="high",
+            query="q",
+            answer_snippet="a",
+            session_id="s",
+            total_count=1,
+            unverified_count=1,
+            max_risk_level="high",
             items=[],
         )
         session.execute_results = [
-            FakeResult(scalar=1),            # count
-            FakeResult(rows=[record]),       # rows
+            FakeResult(scalar=1),  # count
+            FakeResult(rows=[record]),  # rows
         ]
         service = _make_service(session)
 
@@ -237,8 +248,12 @@ class TestReviewAudit:
     async def test_review_marks_misjudged(self) -> None:
         session = FakeSession()
         record = HighRiskAuditRecord(
-            query="q", answer_snippet="a", session_id="s",
-            total_count=1, unverified_count=1, max_risk_level="high",
+            query="q",
+            answer_snippet="a",
+            session_id="s",
+            total_count=1,
+            unverified_count=1,
+            max_risk_level="high",
             items=[],
         )
         session.records[record.id] = record
@@ -365,9 +380,7 @@ class TestEngineWiring:
         engine = self._make_engine()
         state = self._make_state()
 
-        engine._check_high_risk(
-            state, "报销上限为 5250元", state["retrieved_docs"]
-        )
+        engine._check_high_risk(state, "报销上限为 5250元", state["retrieved_docs"])
 
         assert state.get("high_risk_confirm") is True
         assert not state.get("high_risk_blocked")
@@ -378,9 +391,7 @@ class TestEngineWiring:
         engine = self._make_engine()
         state = self._make_state()
 
-        engine._check_high_risk(
-            state, "报销上限为 5040元", state["retrieved_docs"]
-        )
+        engine._check_high_risk(state, "报销上限为 5040元", state["retrieved_docs"])
 
         assert not state.get("high_risk_blocked")
         assert not state.get("high_risk_confirm")
@@ -398,9 +409,7 @@ class TestEngineWiring:
             lambda: mock_service,
         )
 
-        engine._check_high_risk(
-            state, "报销上限为 6000元", state["retrieved_docs"]
-        )
+        engine._check_high_risk(state, "报销上限为 6000元", state["retrieved_docs"])
 
         assert state.get("high_risk_blocked") is True
         assert state.get("low_confidence") is True
@@ -430,23 +439,28 @@ class TestTenantBinding:
             (
                 "record_block_audit",
                 {
-                    "query": "q", "answer": "a", "session_id": "s",
-                    "total_count": 1, "unverified_count": 1,
-                    "max_risk_level": "high", "items": [],
+                    "query": "q",
+                    "answer": "a",
+                    "session_id": "s",
+                    "total_count": 1,
+                    "unverified_count": 1,
+                    "max_risk_level": "high",
+                    "items": [],
                 },
             ),
             ("list_audits", {}),
             (
                 "review_audit",
-                {"record_id": uuid.uuid4(), "review_status": "confirmed",
-                 "reviewer_id": uuid.uuid4()},
+                {
+                    "record_id": uuid.uuid4(),
+                    "review_status": "confirmed",
+                    "reviewer_id": uuid.uuid4(),
+                },
             ),
             ("get_misjudgment_stats", {}),
         ],
     )
-    async def test_every_method_binds_tenant(
-        self, method: str, kwargs: dict
-    ) -> None:
+    async def test_every_method_binds_tenant(self, method: str, kwargs: dict) -> None:
         session = FakeSession()
         session.execute_results = [
             FakeResult(scalar=0),

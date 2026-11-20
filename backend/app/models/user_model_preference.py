@@ -11,6 +11,7 @@
 
 遵循单一职责：本模块只定义表结构，不包含业务逻辑。
 """
+
 from __future__ import annotations
 
 import uuid

@@ -9,6 +9,7 @@
 每个测试用例使用 mock 模拟故障，不依赖真实服务，验证优雅降级行为
 （不崩溃、有日志、返回合理默认值）。
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -35,7 +36,6 @@ from app.utils.circuit_breaker import (
     get_circuit_breaker,
     reset_all_circuit_breakers,
 )
-
 
 # ======================================================================
 # 辅助函数
@@ -273,7 +273,7 @@ class TestEmbeddingTimeout:
         with patch.object(get_settings(), "OPENAI_API_KEY", "test-key-for-circuit"):
             embedder = OpenAIEmbedder()
         embedder.client.embeddings.create = AsyncMock(
-            side_effect=asyncio.TimeoutError("Embedding 请求超时")
+            side_effect=TimeoutError("Embedding 请求超时")
         )
         return embedder
 
@@ -370,7 +370,7 @@ class TestRerankTimeout:
 
         # mock reranker 超时
         reranker = AsyncMock()
-        reranker.rerank = AsyncMock(side_effect=asyncio.TimeoutError("Rerank 超时"))
+        reranker.rerank = AsyncMock(side_effect=TimeoutError("Rerank 超时"))
 
         engine = _make_mock_engine(retriever=retriever, reranker=reranker)
 

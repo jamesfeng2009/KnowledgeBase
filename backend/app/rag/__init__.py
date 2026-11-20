@@ -47,7 +47,7 @@ from __future__ import annotations
 from app.rag.cache import TokenCache
 from app.rag.chunker import Chunk, SemanticChunker
 from app.rag.citation import CitationExtractor
-from app.rag.engine import AgentState, AgenticRAGEngine, PermissionFilter
+from app.rag.engine import AgenticRAGEngine, AgentState, PermissionFilter
 from app.rag.generator import Generator
 from app.rag.llamaindex_pipeline import LlamaIndexPipeline
 from app.rag.reranker import (

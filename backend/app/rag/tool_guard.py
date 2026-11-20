@@ -28,9 +28,9 @@ log = get_logger(__name__)
 class GuardAction(Enum):
     """守卫决策动作。"""
 
-    ALLOW = "allow"        # 放行 — 安全工具或已确认
-    BLOCK = "block"        # 阻断 — 危险工具未确认
-    CONFIRM = "confirm"    # 需要用户确认
+    ALLOW = "allow"  # 放行 — 安全工具或已确认
+    BLOCK = "block"  # 阻断 — 危险工具未确认
+    CONFIRM = "confirm"  # 需要用户确认
 
 
 # ------------------------------------------------------------------

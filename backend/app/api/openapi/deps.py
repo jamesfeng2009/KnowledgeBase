@@ -6,6 +6,7 @@
 3. 检查密钥权限范围（scopes）
 4. 检查密钥是否过期/停用
 """
+
 from __future__ import annotations
 
 from typing import Any

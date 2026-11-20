@@ -39,12 +39,9 @@ class UserRepository(BaseRepository[User]):
 
     async def get_users_by_dept(self, dept_id: UUID) -> list[User]:
         """查询指定部门下的所有用户（排除已软删除）。"""
-        stmt = (
-            select(User)
-            .where(
-                User.dept_id == dept_id,
-                User.deleted_at.is_(None),
-            )
+        stmt = select(User).where(
+            User.dept_id == dept_id,
+            User.deleted_at.is_(None),
         )
         stmt = self._apply_all_filters(stmt)
         stmt = stmt.order_by(User.created_at.desc())
@@ -53,13 +50,10 @@ class UserRepository(BaseRepository[User]):
 
     async def get_subordinates(self, manager_id: UUID) -> list[User]:
         """查询某用户的直接下属（排除已软删除，仅返回活跃用户）。"""
-        stmt = (
-            select(User)
-            .where(
-                User.manager_id == manager_id,
-                User.deleted_at.is_(None),
-                User.is_active.is_(True),
-            )
+        stmt = select(User).where(
+            User.manager_id == manager_id,
+            User.deleted_at.is_(None),
+            User.is_active.is_(True),
         )
         stmt = self._apply_all_filters(stmt)
         stmt = stmt.order_by(User.created_at.desc())

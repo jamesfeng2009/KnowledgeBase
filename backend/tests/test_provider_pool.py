@@ -31,11 +31,8 @@ from app.llm.provider_pool import (
 from app.utils.circuit_breaker import (
     CircuitBreakerOpenError,
     CircuitState,
-    _breakers,
-    get_circuit_breaker,
     reset_all_circuit_breakers,
 )
-
 
 # ======================================================================
 # 测试辅助
@@ -46,9 +43,7 @@ def _make_mock_provider(name: str, embed_result=None):
     """创建 Mock Provider。"""
     provider = MagicMock()
     provider._name = name
-    provider.embed = AsyncMock(
-        return_value=embed_result or [[0.1, 0.2, 0.3]]
-    )
+    provider.embed = AsyncMock(return_value=embed_result or [[0.1, 0.2, 0.3]])
     provider.rerank = AsyncMock(return_value=[{"index": 0, "score": 0.9}])
     provider.search = AsyncMock(return_value=[{"id": "1", "score": 0.8}])
     provider.health_check = AsyncMock(return_value=True)
@@ -269,7 +264,7 @@ class TestAstreamWithFailover:
 
         async def _fail_chat_1(messages, tools=None, stream=False, **kwargs):
             raise CircuitBreakerOpenError("b1", CircuitState.OPEN)
-            yield  # noqa
+            yield
 
         p1.chat = _fail_chat_1
 
@@ -277,7 +272,7 @@ class TestAstreamWithFailover:
 
         async def _fail_chat_2(messages, tools=None, stream=False, **kwargs):
             raise CircuitBreakerOpenError("b2", CircuitState.OPEN)
-            yield  # noqa
+            yield
 
         p2.chat = _fail_chat_2
 
@@ -584,7 +579,7 @@ class TestEndToEndFailover:
 
         async def _fail(messages, tools=None, stream=False, **kwargs):
             raise CircuitBreakerOpenError("b1", CircuitState.OPEN)
-            yield  # noqa
+            yield
 
         p1.chat = _fail
         p2 = _make_mock_llm_provider("p2")

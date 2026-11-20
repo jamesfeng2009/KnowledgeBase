@@ -64,7 +64,9 @@ class MessageCreate(BaseModel):
         default=None, description="引用来源列表"
     )
     token_count: int = Field(default=0, ge=0, description="Token 消耗")
-    model_used: str | None = Field(default=None, max_length=100, description="使用的模型")
+    model_used: str | None = Field(
+        default=None, max_length=100, description="使用的模型"
+    )
 
 
 class MessageResponse(BaseModel):

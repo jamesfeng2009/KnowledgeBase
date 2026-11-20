@@ -17,7 +17,17 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status, Request
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+    status,
+)
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,11 +40,11 @@ from app.models.user import User
 from app.schemas.common import ApiResponse, PageResponse
 from app.schemas.knowledge import (
     DocResponse,
-    DocUpdate,
-    DocVersionResponse,
     DocumentImportRequest,
     DocumentImportResponse,
     DocumentSummaryResponse,
+    DocUpdate,
+    DocVersionResponse,
 )
 from app.services.knowledge_service import KnowledgeService
 from app.utils.logger import get_logger
@@ -212,7 +222,11 @@ def _check_multipart_session(
         raise HTTPException(status_code=404, detail="上传会话不存在或已过期")
     if user.role != "admin" and session.get("user_id") != str(user.id):
         raise HTTPException(status_code=403, detail="无权操作他人的上传会话")
-    if object_name and session.get("object_name") and session["object_name"] != object_name:
+    if (
+        object_name
+        and session.get("object_name")
+        and session["object_name"] != object_name
+    ):
         raise HTTPException(status_code=403, detail="object_name 与上传会话不匹配")
 
 
@@ -225,7 +239,9 @@ def _check_multipart_session(
 async def list_documents(
     request: Request,
     kb_id: UUID | None = Query(default=None, description="按知识库过滤"),
-    status_filter: str | None = Query(default=None, alias="status", description="按状态过滤"),
+    status_filter: str | None = Query(
+        default=None, alias="status", description="按状态过滤"
+    ),
     keyword: str | None = Query(default=None, description="标题关键词"),
     page: int = Query(default=1, ge=1, description="页码"),
     size: int = Query(default=20, ge=1, le=100, description="每页数量"),
@@ -283,7 +299,9 @@ async def list_documents(
     )
 
 
-@router.post("/documents/upload", response_model=ApiResponse[DocResponse], status_code=201)
+@router.post(
+    "/documents/upload", response_model=ApiResponse[DocResponse], status_code=201
+)
 async def upload_document_file(
     request: Request,
     kb_id: UUID = Query(..., description="目标知识库 ID"),
@@ -355,7 +373,10 @@ async def upload_document_file(
     if reject_reason:
         log.warning(
             "拒绝上传 %s：声明 %s，实际 %s (kb_id=%s)",
-            filename, doc_type, reject_reason, kb_id,
+            filename,
+            doc_type,
+            reject_reason,
+            kb_id,
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -365,7 +386,9 @@ async def upload_document_file(
     if final_doc_type != doc_type:
         log.info(
             "文件类型纠正：%s 声明为 %s，实际为 %s，已按实际类型入库",
-            filename, doc_type, final_doc_type,
+            filename,
+            doc_type,
+            final_doc_type,
         )
         doc_type = final_doc_type
 
@@ -456,9 +479,7 @@ async def upload_document_file(
         )
         log.info("文档 %s 已触发 Celery 异步解析任务", doc.id)
     except ImportError:
-        log.warning(
-            "Celery 任务模块未安装，文档 %s 不会自动解析，需手动触发", doc.id
-        )
+        log.warning("Celery 任务模块未安装，文档 %s 不会自动解析，需手动触发", doc.id)
     except Exception:
         # Celery 不可用时不应阻断上传响应，仅记录日志
         log.exception("触发 Celery 解析任务失败，文档 %s 需手动处理", doc.id)
@@ -525,9 +546,7 @@ async def init_multipart_upload(
     try:
         import redis.asyncio as aioredis
 
-        client = aioredis.from_url(
-            get_settings().REDIS_URL, decode_responses=True
-        )
+        client = aioredis.from_url(get_settings().REDIS_URL, decode_responses=True)
         session = {
             "kb_id": str(kb_id),
             "title": title,
@@ -602,7 +621,9 @@ async def upload_part(
         raise HTTPException(500, detail=f"分片 {part_number} 上传失败")
 
 
-@router.post("/documents/multipart/{upload_id}/complete", response_model=ApiResponse[DocResponse])
+@router.post(
+    "/documents/multipart/{upload_id}/complete", response_model=ApiResponse[DocResponse]
+)
 async def complete_multipart_upload(
     request: Request,
     upload_id: str,
@@ -775,7 +796,9 @@ async def complete_multipart_upload(
     try:
         from tasks.document_tasks import process_document
 
-        process_document.delay(str(doc.id), tenant_id=str(tenant_id) if tenant_id else None)
+        process_document.delay(
+            str(doc.id), tenant_id=str(tenant_id) if tenant_id else None
+        )
         log.info("multipart 文档 %s 已触发 Celery 解析", doc.id)
     except ImportError:
         log.warning("Celery 未安装，文档 %s 需手动触发解析", doc.id)
@@ -871,7 +894,9 @@ async def abort_multipart_upload(
     return ApiResponse(code=0, data={"aborted": True}, message="success")
 
 
-def _derive_index_state(status: str | None, progress_stage: str | None, warnings: list | None) -> dict[str, Any]:
+def _derive_index_state(
+    status: str | None, progress_stage: str | None, warnings: list | None
+) -> dict[str, Any]:
     """从「业务状态 + 流水线阶段 + 解析警告」派生索引可见性语义（纯派生，不落库）。
 
     为什么不新增 index_status 字段：
@@ -901,16 +926,36 @@ def _derive_index_state(status: str | None, progress_stage: str | None, warnings
         }
     # 已发布即已可检索（索引在 status 翻转前同步构建完成）
     if status == "published":
-        return {"index_state": "ready", "searchable": True, "reason": "内容已就绪，可被检索"}
+        return {
+            "index_state": "ready",
+            "searchable": True,
+            "reason": "内容已就绪，可被检索",
+        }
     # 审核中的文档：索引里是 pending_review，不进常规召回
     if status == "pending_review":
-        return {"index_state": "pending", "searchable": False, "reason": "内容审核中，通过后可被检索"}
+        return {
+            "index_state": "pending",
+            "searchable": False,
+            "reason": "内容审核中，通过后可被检索",
+        }
     # draft / processing / 其他：流水线正在跑或尚未开始
     if progress_stage and progress_stage not in ("unknown", "done"):
         if progress_stage == "indexing":
-            return {"index_state": "indexing", "searchable": False, "reason": "内容索引中，请稍后重试"}
-        return {"index_state": "indexing", "searchable": False, "reason": f"内容处理中（{progress_stage}），请稍后重试"}
-    return {"index_state": "pending", "searchable": False, "reason": "内容索引中，请稍后重试"}
+            return {
+                "index_state": "indexing",
+                "searchable": False,
+                "reason": "内容索引中，请稍后重试",
+            }
+        return {
+            "index_state": "indexing",
+            "searchable": False,
+            "reason": f"内容处理中（{progress_stage}），请稍后重试",
+        }
+    return {
+        "index_state": "pending",
+        "searchable": False,
+        "reason": "内容索引中，请稍后重试",
+    }
 
 
 @router.get("/documents/{doc_id}/progress", response_model=ApiResponse[dict])
@@ -1120,7 +1165,7 @@ async def update_document(
             from app.rag.cache import TokenCache
 
             await TokenCache().invalidate_by_doc_id(str(doc_id))
-        except Exception:  # noqa: BLE001 — 缓存不可用不应阻断文档更新
+        except Exception:
             log.debug("失效文档 Token 缓存失败 doc_id=%s", doc_id, exc_info=True)
 
     return ApiResponse(
@@ -1128,6 +1173,7 @@ async def update_document(
         data=DocResponse.model_validate(doc),
         message="success",
     )
+
 
 @router.delete("/documents/{doc_id}", response_model=ApiResponse)
 async def delete_document(
@@ -1162,6 +1208,7 @@ async def delete_document(
     # P1: 文档删除后主动失效关联的 Token 缓存
     try:
         from app.rag.cache import TokenCache
+
         cache = TokenCache()
         await cache.invalidate_by_doc_id(str(doc_id))
     except Exception:
@@ -1169,9 +1216,7 @@ async def delete_document(
     return ApiResponse(code=0, message="success")
 
 
-async def _require_doc_manager(
-    service: Any, doc: Document, user: User
-) -> None:
+async def _require_doc_manager(service: Any, doc: Document, user: User) -> None:
     """文档管理权限校验 — 知识库写权限 + 所有者/admin 兜底（归档/下架共用）。"""
     # 校验知识库写权限
     if not await service.permission.check_write(doc.kb_id):
@@ -1227,7 +1272,11 @@ async def reindex_document(
     log.info("document.reindex_requested", doc_id=str(doc.id), user_id=str(user.id))
     return ApiResponse(
         code=0,
-        data={"doc_id": str(doc.id), "status": "queued", "message": "已提交重建索引，请轮询 progress"},
+        data={
+            "doc_id": str(doc.id),
+            "status": "queued",
+            "message": "已提交重建索引，请轮询 progress",
+        },
         message="success",
     )
 
@@ -1252,7 +1301,7 @@ async def archive_document(
     if doc.status != "published":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="仅已发布文档可归档，当前状态: {doc.status}".format(doc=doc),
+            detail=f"仅已发布文档可归档，当前状态: {doc.status}",
         )
 
     from tasks.document_tasks import _archive_document
@@ -1266,7 +1315,9 @@ async def archive_document(
     )
 
 
-@router.post("/documents/{doc_id}/down-publish", response_model=ApiResponse[DocResponse])
+@router.post(
+    "/documents/{doc_id}/down-publish", response_model=ApiResponse[DocResponse]
+)
 async def down_publish_document(
     request: Request,
     doc_id: UUID,
@@ -1286,7 +1337,7 @@ async def down_publish_document(
     if doc.status != "published":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="仅已发布文档可下架，当前状态: {doc.status}".format(doc=doc),
+            detail=f"仅已发布文档可下架，当前状态: {doc.status}",
         )
 
     from tasks.document_tasks import _down_publish_document
@@ -1653,7 +1704,9 @@ async def get_document_summary(
         if not content_text.strip():
             warnings.append("文档正文为空，可能解析失败或尚未完成解析")
         if doc.doc_type in ("doc", "ppt"):
-            warnings.append(f"旧格式 .{doc.doc_type} 不支持解析，请转换为 .{doc.doc_type}x 后重新上传")
+            warnings.append(
+                f"旧格式 .{doc.doc_type} 不支持解析，请转换为 .{doc.doc_type}x 后重新上传"
+            )
         if doc.status == "draft" and not content_text:
             warnings.append("文档处于草稿状态，等待异步解析任务完成")
 
@@ -1796,7 +1849,9 @@ async def import_document_from_source(
     try:
         from tasks.document_tasks import process_document
 
-        process_document.delay(str(doc.id), tenant_id=str(tenant_id) if tenant_id else None)
+        process_document.delay(
+            str(doc.id), tenant_id=str(tenant_id) if tenant_id else None
+        )
         log.info(
             "document.import.triggered_parse",
             doc_id=str(doc.id),
@@ -1851,7 +1906,9 @@ class ClipBody(BaseModel):
     source_url: str = Field(default="", max_length=2048, description="来源 URL")
 
 
-@router.post("/documents/clip", response_model=ApiResponse[DocResponse], status_code=201)
+@router.post(
+    "/documents/clip", response_model=ApiResponse[DocResponse], status_code=201
+)
 async def clip_document(
     body: ClipBody,
     request: Request,
@@ -1906,7 +1963,9 @@ async def clip_document(
     try:
         from tasks.document_tasks import process_document
 
-        process_document.delay(str(doc.id), tenant_id=str(tenant_id) if tenant_id else None)
+        process_document.delay(
+            str(doc.id), tenant_id=str(tenant_id) if tenant_id else None
+        )
     except Exception:
         log.warning("剪藏文档 %s 触发 Celery 解析失败", doc.id)
 

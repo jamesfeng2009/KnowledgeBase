@@ -122,9 +122,7 @@ def _parse_jpeg_dimensions(data: bytes) -> tuple[int, int]:
             # SOF0 (0xC0) ~ SOF15 (0xCF)，排除 SOF4(0xC4)/SOF8(0xC8)/SOF12(0xCC)
             if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
                 # SOF 段: 2 字节长度 + 1 字节精度 + 2 字节高 + 2 字节宽
-                height, width = struct.unpack(
-                    ">HH", data[idx + 5 : idx + 9]
-                )
+                height, width = struct.unpack(">HH", data[idx + 5 : idx + 9])
                 return width, height
             # 跳过非 SOF 段: 2 字节长度 + 数据
             if marker in (0xD0, 0xD1, 0xD2, 0xD3, 0xD4, 0xD5, 0xD6, 0xD7, 0xD9):
@@ -345,11 +343,9 @@ async def resolve_minio_image_urls(text: str) -> str:
             try:
                 cache[url] = await get_presigned_url(m.group(1), m.group(2), expires)
             except Exception as exc:
-                log.warning(
-                    "image_url.presign_failed", url=url, error=str(exc)[:200]
-                )
+                log.warning("image_url.presign_failed", url=url, error=str(exc)[:200])
                 cache[url] = url
-        parts.append(text[last:m.start()])
+        parts.append(text[last : m.start()])
         parts.append(cache[url])
         last = m.end()
     parts.append(text[last:])

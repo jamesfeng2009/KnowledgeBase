@@ -13,7 +13,6 @@ from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
 
-
 # ======================================================================
 # 枚举定义
 # ======================================================================
@@ -115,7 +114,9 @@ class TestProjectCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255, description="项目名称")
     description: str | None = Field(default=None, description="项目描述")
     prd_doc_ids: list[str] | None = Field(default=None, description="PRD 文档 ID 列表")
-    tech_doc_ids: list[str] | None = Field(default=None, description="技术方案文档 ID 列表")
+    tech_doc_ids: list[str] | None = Field(
+        default=None, description="技术方案文档 ID 列表"
+    )
     api_doc_ids: list[str] | None = Field(default=None, description="接口文档 ID 列表")
 
 
@@ -330,7 +331,9 @@ class TestPlanOrchestrateRequest(BaseModel):
     # 可选：指定执行节点数量
     node_count: int = Field(default=3, ge=1, le=10, description="执行节点数量")
     # 可选：是否考虑用例依赖关系
-    consider_dependencies: bool = Field(default=True, description="是否考虑用例依赖关系")
+    consider_dependencies: bool = Field(
+        default=True, description="是否考虑用例依赖关系"
+    )
 
 
 class TestPlanResponse(BaseModel):

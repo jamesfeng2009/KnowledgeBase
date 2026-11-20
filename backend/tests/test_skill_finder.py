@@ -9,6 +9,7 @@
 - engine 集成：_get_tools_for_query 按需加载 + fallback
 - server 集成：list_tools_by_names / get_skill_index
 """
+
 from __future__ import annotations
 
 import sys
@@ -31,7 +32,6 @@ if "celery_app" not in sys.modules:
 from app.llm.base import Tool
 from app.rag.skill_finder import SkillFinder
 from app.rag.skill_registry import SkillMetadata, SkillRegistry
-
 
 # ======================================================================
 # 辅助：构造 Mock MCP Server
@@ -84,11 +84,13 @@ def _make_mock_server(
         for name in names:
             for td in tools_data:
                 if td["name"] == name:
-                    result.append(Tool(
-                        name=td["name"],
-                        description=td["description"],
-                        parameters={"type": "object", "properties": {}},
-                    ))
+                    result.append(
+                        Tool(
+                            name=td["name"],
+                            description=td["description"],
+                            parameters={"type": "object", "properties": {}},
+                        )
+                    )
         return result
 
     server.list_tools_by_names = _list_tools_by_names
@@ -408,12 +410,14 @@ class TestSkillFinder:
         # 构造大量工具
         tools_data = []
         for i in range(20):
-            tools_data.append({
-                "name": f"tool_{i}",
-                "category": "search",
-                "tags": ["搜索", "test"],
-                "description": "搜索测试工具",
-            })
+            tools_data.append(
+                {
+                    "name": f"tool_{i}",
+                    "category": "search",
+                    "tags": ["搜索", "test"],
+                    "description": "搜索测试工具",
+                }
+            )
         server = _make_mock_server(tools_data)
         registry = SkillRegistry()
         registry.load_from_server(server)
@@ -436,7 +440,8 @@ class TestSkillFinder:
         # 如果有匹配，验证只含强匹配项
         if len(matched) < 5:
             assert all(
-                registry.get_metadata(n).match_score("search", "search", ["search"]) >= 20
+                registry.get_metadata(n).match_score("search", "search", ["search"])
+                >= 20
                 for n in matched
             )
 
@@ -609,7 +614,9 @@ class TestServerSkillIntegration:
         server = KnowledgeBaseMCPServer(db_factory=mock_db_factory)
 
         index = server.get_skill_index()
-        assert len(index) == 8  # P1-1: read_tool_result；归因分析: analyze_outcome_attribution
+        assert (
+            len(index) == 8
+        )  # P1-1: read_tool_result；归因分析: analyze_outcome_attribution
         names = [item["name"] for item in index]
         assert "knowledge_search" in names
         assert "document_create" in names
@@ -626,7 +633,13 @@ class TestServerSkillIntegration:
         index = server.get_skill_index()
         for item in index:
             assert "category" in item
-            assert item["category"] in ("search", "document", "workflow", "analytics", "general")
+            assert item["category"] in (
+                "search",
+                "document",
+                "workflow",
+                "analytics",
+                "general",
+            )
 
     def test_server_skill_index_has_tags(self) -> None:
         """技能索引包含 tags 字段。"""
@@ -809,7 +822,9 @@ class TestMCPClientSkillIntegration:
         client = MCPClient(server)
 
         index = client.get_skill_index()
-        assert len(index) == 8  # P1-1: read_tool_result；归因分析: analyze_outcome_attribution
+        assert (
+            len(index) == 8
+        )  # P1-1: read_tool_result；归因分析: analyze_outcome_attribution
 
     @pytest.mark.asyncio
     async def test_client_get_tools_by_names(self) -> None:

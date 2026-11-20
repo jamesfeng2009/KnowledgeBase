@@ -41,7 +41,9 @@ class ConversationFocus:
 
     def to_context_str(self) -> str:
         """渲染为 LLM prompt 片段。"""
-        return f"当前对话焦点：主题={self.topic}，实体={self.entity}，意图={self.intent}"
+        return (
+            f"当前对话焦点：主题={self.topic}，实体={self.entity}，意图={self.intent}"
+        )
 
     def to_dict(self) -> dict[str, Any]:
         """转为字典（供 SSE 事件序列化）。"""
@@ -221,7 +223,9 @@ class TopicTracker:
 
         return None
 
-    async def _llm_extract(self, recent: list[dict[str, str]]) -> ConversationFocus | None:
+    async def _llm_extract(
+        self, recent: list[dict[str, str]]
+    ) -> ConversationFocus | None:
         """LLM 提取焦点 — 1 次轻量调用。"""
         history_text = "\n".join(
             f"{m.get('role', 'user')}: {m.get('content', '')[:self._HISTORY_PREVIEW_CHARS]}"

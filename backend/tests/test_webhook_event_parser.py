@@ -9,12 +9,10 @@
     - Confluence 非关注事件 → None
     - 统一入口 parse_webhook_event 分发
 """
+
 from __future__ import annotations
 
-import pytest
-
 from app.services.webhook_event_parser import (
-    ParsedWebhookEvent,
     _synthesize_confluence_event_id,
     is_feishu_challenge,
     parse_confluence_event,
@@ -22,10 +20,10 @@ from app.services.webhook_event_parser import (
     parse_webhook_event,
 )
 
-
 # ==================================================================
 # 飞书事件解析
 # ==================================================================
+
 
 class TestFeishuParser:
     """飞书 event v2 解析。"""
@@ -115,6 +113,7 @@ class TestFeishuChallenge:
 # Confluence 事件解析
 # ==================================================================
 
+
 class TestConfluenceParser:
     """Confluence webhook 解析。"""
 
@@ -193,6 +192,7 @@ class TestConfluenceParser:
 # ==================================================================
 # 统一入口
 # ==================================================================
+
 
 class TestParseDispatch:
     """parse_webhook_event 按 adapter_id 分发。"""

@@ -33,7 +33,6 @@ from __future__ import annotations
 import argparse
 import json
 import random
-import sys
 from pathlib import Path
 
 _BACKEND_ROOT = Path(__file__).resolve().parent.parent
@@ -74,9 +73,7 @@ def load_and_validate(paths: list[Path]) -> tuple[list[dict], list[str]]:
                     continue
                 case_id = str(raw.get("case_id", "")).strip()
                 query = str(raw.get("query", "")).strip()
-                contexts = [
-                    str(c) for c in raw.get("contexts", []) if str(c).strip()
-                ]
+                contexts = [str(c) for c in raw.get("contexts", []) if str(c).strip()]
                 if not case_id or not query or not contexts:
                     invalid.append(f"{where}: 缺少 case_id/query/非空 contexts")
                     continue
@@ -104,8 +101,7 @@ def write_jsonl(path: Path, records: list[dict]) -> None:
 def main() -> int:
     args = parse_args()
     inputs = [
-        p if p.is_absolute() else _BACKEND_ROOT / p
-        for p in map(Path, args.inputs)
+        p if p.is_absolute() else _BACKEND_ROOT / p for p in map(Path, args.inputs)
     ]
     records, invalid = load_and_validate(inputs)
 

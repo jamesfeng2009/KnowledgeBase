@@ -567,13 +567,17 @@ async def build_dpo_dataset(
                 prompt = f"{question.title}\n{question.content}"
             for rejected in rejected_by_q.get(question.id, []):
                 qa_pairs.append(
-                    (prompt.strip(), adopted.content, rejected.content, "qa_adopted", [])
+                    (
+                        prompt.strip(),
+                        adopted.content,
+                        rejected.content,
+                        "qa_adopted",
+                        [],
+                    )
                 )
 
     # ---- 6. 高风险拦截答案（quality_blocked 配对）----
-    hr_stmt = select(HighRiskAuditRecord).where(
-        HighRiskAuditRecord.created_at >= since
-    )
+    hr_stmt = select(HighRiskAuditRecord).where(HighRiskAuditRecord.created_at >= since)
     hr_stmt = apply_tenant_filter(hr_stmt, HighRiskAuditRecord, tenant_id)
     blocked_records = list((await db.execute(hr_stmt)).scalars().all())
     blocked_pairs: list[tuple[str, str, str, str, list[str]]] = []
@@ -581,7 +585,13 @@ async def build_dpo_dataset(
         chosen = praised_by_query.get(record.query.strip())
         if chosen:
             blocked_pairs.append(
-                (record.query.strip(), chosen, record.answer_snippet, "quality_blocked", [])
+                (
+                    record.query.strip(),
+                    chosen,
+                    record.answer_snippet,
+                    "quality_blocked",
+                    [],
+                )
             )
 
     raw_pairs = chat_pairs + qa_pairs + blocked_pairs
@@ -614,7 +624,9 @@ async def build_dpo_dataset(
                 "chosen": chosen_m,
                 "rejected": rejected_m,
                 "meta": {
-                    "source": "chat_feedback" if pair_type in ("feedback", "no_feedback") else pair_type,
+                    "source": "chat_feedback"
+                    if pair_type in ("feedback", "no_feedback")
+                    else pair_type,
                     "pair_type": pair_type,
                     "doc_ids": doc_ids,
                     "tenant_id": _tenant_str(tenant_id),
@@ -644,7 +656,9 @@ def _pair_feedback_group(
     """
     praised = [m for m in assistant_msgs if rating_by_msg.get(m.id, 0) >= min_rating]
     downvoted = [
-        m for m in assistant_msgs if 0 < rating_by_msg.get(m.id, 0) <= _NEGATIVE_RATING_MAX
+        m
+        for m in assistant_msgs
+        if 0 < rating_by_msg.get(m.id, 0) <= _NEGATIVE_RATING_MAX
     ]
     neutral = [m for m in assistant_msgs if m.id not in rating_by_msg]
 
@@ -654,11 +668,23 @@ def _pair_feedback_group(
         if downvoted:
             rejected_msg = downvoted[0]
             pairs.append(
-                (user_text, chosen_msg.content, rejected_msg.content, "feedback", doc_ids)
+                (
+                    user_text,
+                    chosen_msg.content,
+                    rejected_msg.content,
+                    "feedback",
+                    doc_ids,
+                )
             )
         elif neutral:
             pairs.append(
-                (user_text, chosen_msg.content, neutral[0].content, "no_feedback", doc_ids)
+                (
+                    user_text,
+                    chosen_msg.content,
+                    neutral[0].content,
+                    "no_feedback",
+                    doc_ids,
+                )
             )
     return pairs
 
@@ -818,7 +844,10 @@ async def build_golden_set(
     stats = new_filtered_stats()
     dedup = DedupFilter()
     raw_pairs = await _collect_sft_raw_pairs(
-        db, tenant_id, days=days, min_rating=min_rating,
+        db,
+        tenant_id,
+        days=days,
+        min_rating=min_rating,
         limit=limit * _GOLDEN_HASH_MODULO,  # 哈希桶仅留 ~1/modulo，放大采集补足
     )
 

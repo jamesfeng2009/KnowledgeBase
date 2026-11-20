@@ -141,6 +141,7 @@ async def upload_file(
         ImportError: ``boto3`` 包未安装。
         Exception: 上传失败(网络错误、权限不足等)。
     """
+
     def _upload() -> str:
         client = _get_client()
         _ensure_bucket_sync(bucket)
@@ -179,6 +180,7 @@ async def get_presigned_url(
         ImportError: ``boto3`` 未安装。
         Exception: 签名失败（client 初始化/凭证问题）。
     """
+
     def _sign() -> str:
         client = _get_client()
         return client.generate_presigned_url(
@@ -204,6 +206,7 @@ async def download_file(bucket: str, object_name: str) -> bytes:
         ImportError: ``boto3`` 包未安装。
         Exception: 下载失败。
     """
+
     def _download() -> bytes:
         client = _get_client()
         response = client.get_object(Bucket=bucket, Key=object_name)
@@ -232,6 +235,7 @@ async def download_file_to_path(bucket: str, object_name: str, dest_path: str) -
         ImportError: ``boto3`` 包未安装。
         Exception: 下载失败。
     """
+
     def _download() -> None:
         client = _get_client()
         client.download_file(Bucket=bucket, Key=object_name, Filename=dest_path)
@@ -250,6 +254,7 @@ async def delete_file(bucket: str, object_name: str) -> None:
         ImportError: ``boto3`` 包未安装。
         Exception: 删除失败。
     """
+
     def _delete() -> None:
         client = _get_client()
         client.delete_object(Bucket=bucket, Key=object_name)
@@ -271,6 +276,7 @@ async def file_exists(bucket: str, object_name: str) -> bool:
     Raises:
         ImportError: ``boto3`` 包未安装。
     """
+
     def _exists() -> bool:
         client = _get_client()
         try:
@@ -297,13 +303,16 @@ async def get_object_size(bucket: str, object_name: str) -> int | None:
     Returns:
         对象字节数；对象不存在或存储不可用时返回 None。
     """
+
     def _size() -> int | None:
         client = _get_client()
         try:
             resp = client.head_object(Bucket=bucket, Key=object_name)
         except Exception:
             log.warning(
-                "s3.head_object_failed", bucket=bucket, object_name=object_name,
+                "s3.head_object_failed",
+                bucket=bucket,
+                object_name=object_name,
                 exc_info=True,
             )
             return None
@@ -410,6 +419,7 @@ async def init_multipart_upload(
         ImportError: ``boto3`` 包未安装。
         Exception: 初始化失败。
     """
+
     def _init() -> str:
         client = _get_client()
         _ensure_bucket_sync(bucket)
@@ -456,6 +466,7 @@ async def upload_part(
         ImportError: ``boto3`` 包未安装。
         Exception: 上传失败。
     """
+
     def _upload() -> dict[str, Any]:
         client = _get_client()
         response = client.upload_part(
@@ -503,6 +514,7 @@ async def complete_multipart_upload(
         ImportError: ``boto3`` 包未安装。
         Exception: 合并失败。
     """
+
     def _complete() -> str:
         client = _get_client()
         # 转换为 boto3 要求的 MultipartUpload 结构(PascalCase)
@@ -548,6 +560,7 @@ async def abort_multipart_upload(
         object_name: 对象存储路径。
         upload_id: 多段上传会话 ID。
     """
+
     def _abort() -> None:
         client = _get_client()
         try:
@@ -591,6 +604,7 @@ async def list_parts(
         ``[{"part_number": 1, "etag": "...", "size": 10485760}, ...]``
         失败时返回空列表(允许继续上传)。
     """
+
     def _list() -> list[dict[str, Any]]:
         client = _get_client()
         try:
@@ -601,11 +615,13 @@ async def list_parts(
             )
             parts = []
             for p in response.get("Parts", []) or []:
-                parts.append({
-                    "part_number": p.get("PartNumber"),
-                    "etag": _strip_etag_quotes(p.get("ETag", "")),
-                    "size": p.get("Size"),
-                })
+                parts.append(
+                    {
+                        "part_number": p.get("PartNumber"),
+                        "etag": _strip_etag_quotes(p.get("ETag", "")),
+                        "size": p.get("Size"),
+                    }
+                )
             return parts
         except Exception as exc:
             log.warning("s3.list_parts_failed", error=str(exc))
@@ -627,17 +643,20 @@ async def list_multipart_uploads(bucket: str) -> list[dict[str, Any]]:
         ``[{"upload_id": "xxx", "object_name": "kb1/title", "initiated": "2026-01-01T00:00:00Z"}, ...]``
         失败时返回空列表(不阻断清理流程)。
     """
+
     def _list_uploads() -> list[dict[str, Any]]:
         client = _get_client()
         try:
             response = client.list_multipart_uploads(Bucket=bucket)
             uploads = []
             for u in response.get("Uploads", []) or []:
-                uploads.append({
-                    "upload_id": u.get("UploadId"),
-                    "object_name": u.get("Key"),
-                    "initiated": u.get("Initiated"),
-                })
+                uploads.append(
+                    {
+                        "upload_id": u.get("UploadId"),
+                        "object_name": u.get("Key"),
+                        "initiated": u.get("Initiated"),
+                    }
+                )
             return uploads
         except Exception as exc:
             log.warning("s3.list_uploads_failed", error=str(exc))

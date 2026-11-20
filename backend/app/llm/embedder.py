@@ -27,7 +27,7 @@ settings = get_settings()
 log = get_logger(__name__)
 
 # Embedder 工厂注册表 — deploy_mode → 工厂函数。
-_embedder_registry: dict[str, Callable[[], "EmbeddingProvider"]] = {}
+_embedder_registry: dict[str, Callable[[], EmbeddingProvider]] = {}
 
 
 class EmbeddingProvider(ABC):
@@ -56,6 +56,7 @@ class OpenAIEmbedder(EmbeddingProvider):
         if not texts:
             return []
         import time
+
         t0 = time.monotonic()
         log.info("embedder.openai.start", text_count=len(texts))
         try:
@@ -89,6 +90,7 @@ class TEIEmbedder(EmbeddingProvider):
         if not texts:
             return []
         import time
+
         t0 = time.monotonic()
         log.info("embedder.tei.start", text_count=len(texts))
         try:
@@ -99,7 +101,12 @@ class TEIEmbedder(EmbeddingProvider):
             resp.raise_for_status()
             data: Any = resp.json()
             # TEI /embed 对单条输入返回单层 list，批量返回二层 list，统一规整。
-            if texts and isinstance(data, list) and data and isinstance(data[0], (int, float)):
+            if (
+                texts
+                and isinstance(data, list)
+                and data
+                and isinstance(data[0], (int, float))
+            ):
                 result = [list(map(float, data))]
             else:
                 result = [list(map(float, vec)) for vec in data]
@@ -138,6 +145,7 @@ class DashScopeEmbedder(EmbeddingProvider):
         if not texts:
             return []
         import time
+
         t0 = time.monotonic()
         log.info("embedder.dashscope.start", text_count=len(texts))
         try:
@@ -161,18 +169,20 @@ class DashScopeEmbedder(EmbeddingProvider):
             return vectors
         except Exception as exc:
             elapsed_ms = round((time.monotonic() - t0) * 1000, 2)
-            log.warning("embedder.dashscope.error", error=str(exc), latency_ms=elapsed_ms)
+            log.warning(
+                "embedder.dashscope.error", error=str(exc), latency_ms=elapsed_ms
+            )
             raise
 
 
 def register_embedder(
     deploy_mode: str,
-) -> Callable[[Callable[[], "EmbeddingProvider"]], Callable[[], "EmbeddingProvider"]]:
+) -> Callable[[Callable[[], EmbeddingProvider]], Callable[[], EmbeddingProvider]]:
     """装饰器：注册某部署模式对应的 Embedder 工厂函数。"""
 
     def decorator(
-        factory: Callable[[], "EmbeddingProvider"],
-    ) -> Callable[[], "EmbeddingProvider"]:
+        factory: Callable[[], EmbeddingProvider],
+    ) -> Callable[[], EmbeddingProvider]:
         _embedder_registry[deploy_mode] = factory
         return factory
 

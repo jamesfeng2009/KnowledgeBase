@@ -283,14 +283,14 @@ score 为 1.0 表示完全切题，0.0 表示完全跑题。"""
 
         # DCG@K
         import math
+
         dcg = sum(
-            rel / math.log2(i + 2) for i, rel in enumerate(relevance_scores[:_DEFAULT_K])
+            rel / math.log2(i + 2)
+            for i, rel in enumerate(relevance_scores[:_DEFAULT_K])
         )
         # IDCG (理想 DCG = 降序排列后的 DCG)
         ideal = sorted(relevance_scores, reverse=True)
-        idcg = sum(
-            rel / math.log2(i + 2) for i, rel in enumerate(ideal[:_DEFAULT_K])
-        )
+        idcg = sum(rel / math.log2(i + 2) for i, rel in enumerate(ideal[:_DEFAULT_K]))
         if idcg == 0:
             return 0.0
         return dcg / idcg
@@ -299,9 +299,7 @@ score 为 1.0 表示完全切题，0.0 表示完全跑题。"""
     # 4. Context Recall — 上下文召回率
     # ==================================================================
 
-    async def _context_recall(
-        self, expected_answer: str, contexts: list[str]
-    ) -> float:
+    async def _context_recall(self, expected_answer: str, contexts: list[str]) -> float:
         """计算上下文召回率。
 
         RAGAS 定义：检索上下文是否覆盖了期望答案中的信息。
@@ -347,7 +345,9 @@ score 为 1.0 表示全部覆盖，0.0 表示完全未覆盖。"""
 
         P0-1: 统一使用 _tokenize() 的 CJK bigram 分词，替代字符级匹配。
         """
-        expected_sentences = [s.strip() for s in expected_answer.split("。") if s.strip()]
+        expected_sentences = [
+            s.strip() for s in expected_answer.split("。") if s.strip()
+        ]
         if not expected_sentences:
             return 1.0
 

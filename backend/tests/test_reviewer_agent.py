@@ -14,10 +14,9 @@ ReviewerAgent 测试 — app/agents/reviewer_agent.py。
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
-
 
 # ======================================================================
 # Mock LLM 工厂
@@ -106,12 +105,14 @@ class TestReview:
         """LLM 审查通过高风险操作。"""
         from app.agents.reviewer_agent import ReviewerAgent
 
-        llm_response = json.dumps({
-            "approved": True,
-            "reason": "参数合理，权限合规",
-            "risk_level": "low",
-            "concerns": [],
-        })
+        llm_response = json.dumps(
+            {
+                "approved": True,
+                "reason": "参数合理，权限合规",
+                "risk_level": "low",
+                "concerns": [],
+            }
+        )
         mock_llm = _make_mock_llm(llm_response)
         reviewer = ReviewerAgent(llm=mock_llm)
 
@@ -129,12 +130,14 @@ class TestReview:
         """LLM 审查拒绝高风险操作。"""
         from app.agents.reviewer_agent import ReviewerAgent
 
-        llm_response = json.dumps({
-            "approved": False,
-            "reason": "金额异常，超出权限范围",
-            "risk_level": "high",
-            "concerns": ["金额 999999 超出常规阈值", "用户无审批权限"],
-        })
+        llm_response = json.dumps(
+            {
+                "approved": False,
+                "reason": "金额异常，超出权限范围",
+                "risk_level": "high",
+                "concerns": ["金额 999999 超出常规阈值", "用户无审批权限"],
+            }
+        )
         mock_llm = _make_mock_llm(llm_response)
         reviewer = ReviewerAgent(llm=mock_llm)
 
@@ -171,12 +174,18 @@ class TestReview:
         """LLM 返回 markdown 代码块包裹的 JSON 也能解析。"""
         from app.agents.reviewer_agent import ReviewerAgent
 
-        llm_response = "```json\n" + json.dumps({
-            "approved": True,
-            "reason": "通过",
-            "risk_level": "low",
-            "concerns": [],
-        }) + "\n```"
+        llm_response = (
+            "```json\n"
+            + json.dumps(
+                {
+                    "approved": True,
+                    "reason": "通过",
+                    "risk_level": "low",
+                    "concerns": [],
+                }
+            )
+            + "\n```"
+        )
         mock_llm = _make_mock_llm(llm_response)
         reviewer = ReviewerAgent(llm=mock_llm)
 
@@ -216,12 +225,14 @@ class TestReview:
         """超长 user_query 被截断（防 prompt 注入）。"""
         from app.agents.reviewer_agent import ReviewerAgent
 
-        llm_response = json.dumps({
-            "approved": True,
-            "reason": "ok",
-            "risk_level": "low",
-            "concerns": [],
-        })
+        llm_response = json.dumps(
+            {
+                "approved": True,
+                "reason": "ok",
+                "risk_level": "low",
+                "concerns": [],
+            }
+        )
         mock_llm = _make_mock_llm(llm_response)
         reviewer = ReviewerAgent(llm=mock_llm)
 

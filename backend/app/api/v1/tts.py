@@ -9,7 +9,7 @@ P1: 为 AI 对话回复提供语音输出能力。
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
 

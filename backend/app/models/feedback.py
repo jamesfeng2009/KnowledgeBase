@@ -30,14 +30,23 @@ class Feedback(UUIDMixin, TimestampMixin, Base):
         String(20), default="normal", comment="优先级: low/normal/high/urgent"
     )
     related_message_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("messages.id"), nullable=True, comment="关联消息 ID"
+        UUID(as_uuid=True),
+        ForeignKey("messages.id"),
+        nullable=True,
+        comment="关联消息 ID",
     )
     # P0 质量评分 doc_id 维度：冗余关联文档 ID，评分时按 doc_id 直查。
     # 可空：bug/suggestion 等反馈类型不一定关联文档；旧数据未经回填亦为 NULL。
     doc_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("documents.id"), nullable=True, index=True, comment="关联文档 ID（质量评分冗余列）"
+        UUID(as_uuid=True),
+        ForeignKey("documents.id"),
+        nullable=True,
+        index=True,
+        comment="关联文档 ID（质量评分冗余列）",
     )
-    response: Mapped[str | None] = mapped_column(Text, nullable=True, comment="处理回复")
+    response: Mapped[str | None] = mapped_column(
+        Text, nullable=True, comment="处理回复"
+    )
     # 多租户隔离
     tenant_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), nullable=True, comment="租户 ID（多租户隔离）"

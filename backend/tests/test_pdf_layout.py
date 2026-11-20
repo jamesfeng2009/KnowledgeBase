@@ -8,24 +8,22 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 from app.document.layout_analyzer import (
     TextBlock,
+    _detect_columns,
     extract_page_text_ordered,
     sort_reading_order,
-    _detect_columns,
 )
 
 # A4 页宽（pt），与验证脚本一致
 PAGE_W = 595.0
 
 
-def _mk_block(
-    x0: float, y0: float, x1: float, y1: float, text: str = ""
-) -> TextBlock:
+def _mk_block(x0: float, y0: float, x1: float, y1: float, text: str = "") -> TextBlock:
     """构造 TextBlock 的便捷工厂。"""
     return TextBlock(bbox=(x0, y0, x1, y1), text=text)
 
@@ -37,7 +35,9 @@ def _mk_pymupdf_block(
     return {
         "type": 0,
         "bbox": (x0, y0, x1, y1),
-        "lines": [{"spans": [{"text": text, "font": "Helvetica", "size": 11.0, "flags": 0}]}],
+        "lines": [
+            {"spans": [{"text": text, "font": "Helvetica", "size": 11.0, "flags": 0}]}
+        ],
     }
 
 
@@ -181,7 +181,7 @@ class TestSortReadingOrder:
         第一轮栏检测会把它们聚进左栏，需靠 y 间隙断段剥离。
         """
         blocks = [
-            _mk_block(72, 60.7, 364.1, 85.4, "TITLE"),   # 短标题，x0=72 同左栏
+            _mk_block(72, 60.7, 364.1, 85.4, "TITLE"),  # 短标题，x0=72 同左栏
             _mk_block(72, 118.2, 236.5, 133.3, "L1"),
             _mk_block(72, 138.2, 252.4, 153.3, "L2"),
             _mk_block(72, 158.2, 240.1, 173.3, "L3"),
@@ -192,7 +192,14 @@ class TestSortReadingOrder:
         ]
         ordered = sort_reading_order(blocks, PAGE_W)
         assert [b.text for b in ordered] == [
-            "TITLE", "L1", "L2", "L3", "R1", "R2", "R3", "FOOT",
+            "TITLE",
+            "L1",
+            "L2",
+            "L3",
+            "R1",
+            "R2",
+            "R3",
+            "FOOT",
         ]
 
     def test_single_column_pure_y_order(self) -> None:
@@ -308,6 +315,7 @@ class TestPDFParserLayoutIntegration:
         """版式分析内部异常时降级为 get_text()，内容不丢。"""
         parser = self._make_parser()
         page = _mk_mock_page([], plain_text="plain fallback")
+
         # 让 get_text("dict") 抛异常
         def _boom(mode: str = "text", **kwargs: Any) -> Any:
             if mode == "dict":

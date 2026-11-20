@@ -138,7 +138,10 @@ async def test_create_ticket(db_session, seeded) -> None:
 async def test_list_tickets_shape_and_filters(db_session, seeded) -> None:
     """GET 必须返回 {items, total, page, size, pages}，并支持 status/category 过滤。"""
     async with _client_as(db_session, seeded.alice, seeded.tenant_a) as client:
-        for title, category in (("打印机坏了", "hardware"), ("邮箱容量不足", "software")):
+        for title, category in (
+            ("打印机坏了", "hardware"),
+            ("邮箱容量不足", "software"),
+        ):
             created = await client.post(
                 "/api/v1/tickets",
                 json={"title": title, "description": "描述", "category": category},
@@ -153,7 +156,9 @@ async def test_list_tickets_shape_and_filters(db_session, seeded) -> None:
         assert body["total"] == 2
         assert len(body["items"]) == 2
 
-        by_category = await client.get("/api/v1/tickets", params={"category": "hardware"})
+        by_category = await client.get(
+            "/api/v1/tickets", params={"category": "hardware"}
+        )
         assert by_category.json()["data"]["total"] == 1
         assert by_category.json()["data"]["items"][0]["title"] == "打印机坏了"
 
@@ -227,7 +232,10 @@ async def test_resolve_by_ai_endpoint(db_session, seeded) -> None:
         ticket_id = created.json()["data"]["id"]
         resp = await client.post(
             f"/api/v1/tickets/{ticket_id}/resolve-by-ai",
-            params={"ai_answer": "在 IT 门户提交许可申请", "ai_solution": "1. 打开门户"},
+            params={
+                "ai_answer": "在 IT 门户提交许可申请",
+                "ai_solution": "1. 打开门户",
+            },
         )
     assert resp.status_code == 200, resp.text
     data = resp.json()["data"]
@@ -261,7 +269,9 @@ async def test_tenant_isolation(db_session, seeded) -> None:
 
     async with _client_as(db_session, seeded.alice, seeded.tenant_a) as client:
         listing = await client.get("/api/v1/tickets")
-        assert all(t["title"] != "Bob 私有工单" for t in listing.json()["data"]["items"])
+        assert all(
+            t["title"] != "Bob 私有工单" for t in listing.json()["data"]["items"]
+        )
 
         detail = await client.get(f"/api/v1/tickets/{bob_ticket}")
         assert detail.status_code == 404, detail.text
@@ -299,8 +309,14 @@ async def test_soft_delete_hides_ticket(db_session, seeded) -> None:
     from app.models.ticket import Ticket
 
     row = (
-        await db_session.execute(select(Ticket).where(Ticket.id == uuid.UUID(ticket_id)))
-    ).scalars().one()
+        (
+            await db_session.execute(
+                select(Ticket).where(Ticket.id == uuid.UUID(ticket_id))
+            )
+        )
+        .scalars()
+        .one()
+    )
     assert row.deleted_at is not None
 
 

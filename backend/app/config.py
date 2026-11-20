@@ -125,8 +125,11 @@ class Settings(BaseSettings):
     # === 部署模式（核心切换变量）===
     # private_finetuned: 微调后的 7B + LoRA adapter，vLLM multi-LoRA 模式
     DEPLOY_MODE: Literal[
-        "saas", "saas_dashscope",
-        "private_overseas", "private_domestic", "private_finetuned",
+        "saas",
+        "saas_dashscope",
+        "private_overseas",
+        "private_domestic",
+        "private_finetuned",
     ] = "saas"
 
     # C6 fix: SaaS 模式默认关闭开放注册，需管理员邀请或审批
@@ -148,9 +151,9 @@ class Settings(BaseSettings):
     WECOM_CORP_ID: str = ""
     WECOM_AGENT_ID: str = ""
     WECOM_SECRET: str = ""
-    WECOM_BOT_WEBHOOK: str = ""   # 群机器人 webhook（推送用）
-    WECOM_BOT_TOKEN: str = ""     # 回调验签 token（接收用）
-    WECOM_BOT_AES_KEY: str = ""   # 回调解密 AES Key（EncodingAESKey）
+    WECOM_BOT_WEBHOOK: str = ""  # 群机器人 webhook（推送用）
+    WECOM_BOT_TOKEN: str = ""  # 回调验签 token（接收用）
+    WECOM_BOT_AES_KEY: str = ""  # 回调解密 AES Key（EncodingAESKey）
     CONNECTOR_WECOM_ENABLED: bool = False
 
     # === 入站 Webhook（公开端点，安全边界）===
@@ -163,16 +166,16 @@ class Settings(BaseSettings):
 
     # === OIDC 单点登录（P1）===
     OIDC_ENABLED: bool = False
-    OIDC_ISSUER: str = ""            # 如 https://login.microsoftonline.com/{tenant}/v2.0
+    OIDC_ISSUER: str = ""  # 如 https://login.microsoftonline.com/{tenant}/v2.0
     OIDC_CLIENT_ID: str = ""
     OIDC_CLIENT_SECRET: str = ""
     OIDC_REDIRECT_URI: str = "http://localhost:8000/api/v1/auth/oidc/callback"
     OIDC_SCOPES: str = "openid profile email"
 
     # === 网站嵌入 Widget（P2）===
-    WIDGET_HMAC_SECRET: str = ""     # 留空则从 SECRET_KEY 派生
-    WIDGET_TOKEN_TTL: int = 3600     # widget token 有效期（秒）
-    WIDGET_RATE_LIMIT: int = 10      # 每 token/IP 每分钟最大提问数
+    WIDGET_HMAC_SECRET: str = ""  # 留空则从 SECRET_KEY 派生
+    WIDGET_TOKEN_TTL: int = 3600  # widget token 有效期（秒）
+    WIDGET_RATE_LIMIT: int = 10  # 每 token/IP 每分钟最大提问数
 
     # === SaaS 模式·国内（通义千问 DashScope）===
     # 阿里云通义千问，OpenAI 兼容接口，国内直连无需代理
@@ -196,7 +199,7 @@ class Settings(BaseSettings):
     # OBJECT_STORE=local（默认，本地文件系统）| s3（S3/MinIO 兼容对象存储）
     OBJECT_STORE: str = "local"
     OBJECT_STORE_LOCAL_DIR: str = "data/objects"
-    S3_ENDPOINT: str = ""          # 留空则走 AWS 默认 endpoint；MinIO 填 http://minio:9000
+    S3_ENDPOINT: str = ""  # 留空则走 AWS 默认 endpoint；MinIO 填 http://minio:9000
     S3_BUCKET: str = "ekb-objects"
     S3_ACCESS_KEY: str = ""
     S3_SECRET_KEY: str = ""
@@ -656,7 +659,9 @@ class Settings(BaseSettings):
     CROSS_MODAL_DIM: int = 1024  # 默认 Jina 维度，DashScope 模式设为 1536
 
     # === P1-A 优雅关闭 ===
-    SHUTDOWN_TIMEOUT: int = 30  # 优雅关闭超时（秒），uvicorn --timeout-graceful-shutdown
+    SHUTDOWN_TIMEOUT: int = (
+        30  # 优雅关闭超时（秒），uvicorn --timeout-graceful-shutdown
+    )
     SHUTDOWN_GRACE_PERIOD_CORE: int = 30  # core-engine Docker stop_grace_period
     SHUTDOWN_GRACE_PERIOD_CELERY: int = 60  # celery-worker Docker stop_grace_period
 
@@ -696,8 +701,12 @@ class Settings(BaseSettings):
     #   - max_iterations: 软终止（break 循环，走兜底生成）
     #   - 硬预算: 硬终止（抛异常，拒绝继续）
     # 保守默认：无人值守的 run 应"宁可早死，不要烧钱"。
-    AGENT_BUDGET_MAX_TURNS: int = 10  # 决策循环最大迭代次数（硬上限，软 max_iterations 之上）
-    AGENT_BUDGET_MAX_SECONDS: float = 300.0  # wall-clock 最大时间（秒，与 AGENT_TOTAL_TIMEOUT_SECONDS 对齐）
+    AGENT_BUDGET_MAX_TURNS: int = (
+        10  # 决策循环最大迭代次数（硬上限，软 max_iterations 之上）
+    )
+    AGENT_BUDGET_MAX_SECONDS: float = (
+        300.0  # wall-clock 最大时间（秒，与 AGENT_TOTAL_TIMEOUT_SECONDS 对齐）
+    )
     AGENT_BUDGET_MAX_TOKENS: int = 200_000  # 累积 token 上限（cache-read 从基数扣除）
     AGENT_BUDGET_MAX_COST_USD: float = 1.0  # 累积成本上限（美元）
 
@@ -733,31 +742,41 @@ class Settings(BaseSettings):
     QUERY_DECOMPOSITION_ENABLED: bool = False  # 查询分解（复杂查询拆子查询）
     HYDE_ENABLED: bool = False  # HyDE 假设文档生成
     # === P1-10 改写策略自动路由 + 在线回退 ===
-    QUERY_REWRITE_AUTO_ROUTE: bool = False  # 按 query 类型自动路由策略（规则分类，零 LLM）
-    QUERY_REWRITE_ONLINE_FALLBACK: bool = False  # 改写后双跑对比召回，更差则回退原 query
+    QUERY_REWRITE_AUTO_ROUTE: bool = (
+        False  # 按 query 类型自动路由策略（规则分类，零 LLM）
+    )
+    QUERY_REWRITE_ONLINE_FALLBACK: bool = (
+        False  # 改写后双跑对比召回，更差则回退原 query
+    )
     QUERY_REWRITE_FALLBACK_MARGIN: float = 0.0  # 回退判定余量（防噪声抖动）
     # === P2-12 请求队列 + 配置化降级 ===
     RATE_LIMIT_QUEUE_ENABLED: bool = True  # 429 前短队列缓冲（返回预计等待时间）
     RATE_LIMIT_QUEUE_MAX_WAIT_MS: int = 2000  # 允许排队的最大预计等待毫秒数
     RATE_LIMIT_QUEUE_MAX_QUEUED: int = 20  # 全局同时排队请求数上限
-    DEGRADE_MODE_ENABLED: bool = False  # 降级模式：高负载时关闭 HyDE/QueryDecomposition 保核心链路
+    DEGRADE_MODE_ENABLED: bool = (
+        False  # 降级模式：高负载时关闭 HyDE/QueryDecomposition 保核心链路
+    )
     # === P2-13 长任务里程碑 + 超时分级 ===
-    TASK_STEP_TIMEOUT_SECONDS: int = 300  # Celery 长任务单阶段超时（总超时由 task_time_limit 控制）
+    TASK_STEP_TIMEOUT_SECONDS: int = (
+        300  # Celery 长任务单阶段超时（总超时由 task_time_limit 控制）
+    )
 
     # === P3 缓存容量上限 ===
-    CACHE_L2_MAX_SIZE: int = 1000  # L2 语义缓存（进程内存）最大条目数，超容逐出最旧（LRU）
+    CACHE_L2_MAX_SIZE: int = (
+        1000  # L2 语义缓存（进程内存）最大条目数，超容逐出最旧（LRU）
+    )
 
     # === P1 IntentRouter 稳态/敏态分离 ===
-    INTENT_ROUTER_ENABLED: bool = True          # IntentRouter 总开关
-    INTENT_ROUTER_LLM_FALLBACK: bool = True     # 规则未命中时是否调 LLM 解析意图
+    INTENT_ROUTER_ENABLED: bool = True  # IntentRouter 总开关
+    INTENT_ROUTER_LLM_FALLBACK: bool = True  # 规则未命中时是否调 LLM 解析意图
     INTENT_ROUTER_CONFIDENCE_THRESHOLD: float = 0.7  # LLM 意图置信度阈值
-    INTENT_SHORTCUT_ENABLED: bool = True        # 是否启用快捷路径（False=全部走 Agent Loop）
+    INTENT_SHORTCUT_ENABLED: bool = True  # 是否启用快捷路径（False=全部走 Agent Loop）
 
     # === 聊天问答 → 知识库回流（P0）===
     # 好评反馈 / 采纳答案自动沉淀为 KB FAQ 文档，复用 KnowledgeCompoundingService 5 步框架。
     # 详见 app/services/knowledge_compounding/compounding_service.py
     #   extract_from_chat_feedback / extract_from_accepted_answer
-    CHAT_FAQ_COMPOUNDING_ENABLED: bool = True   # 总开关（False=不触发任何回流）
+    CHAT_FAQ_COMPOUNDING_ENABLED: bool = True  # 总开关（False=不触发任何回流）
     # 全局唯一 FAQ 知识库 ID（UUID 字符串）。空字符串表示未配置，回流任务将跳过并告警。
     FAQ_KB_ID: str = ""
     # 好评阈值：Feedback.type → 分值映射（praise=5/suggestion=3/complaint=2/bug=1），
@@ -808,79 +827,87 @@ class Settings(BaseSettings):
     CHAT_FAQ_PROMOTE_BATCH_SIZE: int = 10
 
     # === P2 EntityRegistry 企业本体 ===
-    ENTITY_REGISTRY_ENABLED: bool = True        # EntityRegistry 总开关
-    GRAPH_SEARCH_ENABLED: bool = True           # 图谱召回开关（HybridRetriever 第四路）
-    GRAPH_SEARCH_MAX_DEPTH: int = 2             # 图谱遍历最大跳数
-    GRAPH_SEARCH_MAX_RESULTS: int = 10          # 图谱召回最大结果数
-    GRAPH_SEARCH_SCORE: float = 0.5             # 图谱召回固定分（合并时的权重）
+    ENTITY_REGISTRY_ENABLED: bool = True  # EntityRegistry 总开关
+    GRAPH_SEARCH_ENABLED: bool = True  # 图谱召回开关（HybridRetriever 第四路）
+    GRAPH_SEARCH_MAX_DEPTH: int = 2  # 图谱遍历最大跳数
+    GRAPH_SEARCH_MAX_RESULTS: int = 10  # 图谱召回最大结果数
+    GRAPH_SEARCH_SCORE: float = 0.5  # 图谱召回固定分（合并时的权重）
 
     # === 知识推荐（Recommendation）===
     # 三路召回按数据成熟度分级启停（冷启动 → 行为积累），非默认全开。
     # 每路一个开关；协同过滤在用户行为数达阈值后才启用（冷启动回退向量+热门）。
-    RECOMMEND_ENABLED: bool = True            # 推荐模块总开关
-    RECOMMEND_ENABLE_CF: bool = True          # 协同过滤召回开关（需行为积累）
-    RECOMMEND_ENABLE_VECTOR: bool = True      # 向量内容召回开关（冷启动兜底）
-    RECOMMEND_ENABLE_GRAPH: bool = True       # 图谱关联召回开关
-    RECOMMEND_CF_MIN_INTERACTIONS: int = 3    # 用户行为数达此阈值才启用协同过滤
-    RECOMMEND_CF_SIMILAR_USERS: int = 10      # UserCF 相似用户数
-    RECOMMEND_CF_SIMILAR_ITEMS: int = 10      # ItemCF 相似文档数
-    RECOMMEND_RRF_K: int = 60                 # RRF 常数（1/(K+rank)）
-    RECOMMEND_HOT_FALLBACK_TOP_K: int = 10    # 冷启动热门兜底数量
-    RECOMMEND_CACHE_TTL: int = 300            # 推荐结果缓存 TTL（秒）
+    RECOMMEND_ENABLED: bool = True  # 推荐模块总开关
+    RECOMMEND_ENABLE_CF: bool = True  # 协同过滤召回开关（需行为积累）
+    RECOMMEND_ENABLE_VECTOR: bool = True  # 向量内容召回开关（冷启动兜底）
+    RECOMMEND_ENABLE_GRAPH: bool = True  # 图谱关联召回开关
+    RECOMMEND_CF_MIN_INTERACTIONS: int = 3  # 用户行为数达此阈值才启用协同过滤
+    RECOMMEND_CF_SIMILAR_USERS: int = 10  # UserCF 相似用户数
+    RECOMMEND_CF_SIMILAR_ITEMS: int = 10  # ItemCF 相似文档数
+    RECOMMEND_RRF_K: int = 60  # RRF 常数（1/(K+rank)）
+    RECOMMEND_HOT_FALLBACK_TOP_K: int = 10  # 冷启动热门兜底数量
+    RECOMMEND_CACHE_TTL: int = 300  # 推荐结果缓存 TTL（秒）
 
     # === P3 上下文工程 ===
-    CONTEXT_FOCUS_TRACKING_ENABLED: bool = True       # P3-A 焦点追踪总开关
-    CONTEXT_FOCUS_HISTORY_WINDOW: int = 12            # 焦点追踪加载的历史消息数
-    COREFERENCE_RESOLUTION_ENABLED: bool = True       # P3-A 指代消解开关
-    CONTEXT_SELECTOR_ENABLED: bool = True             # P3-B 语义选择器开关
-    CONTEXT_SELECTOR_TOP_K: int = 5                   # 语义选择器最多选中消息数
-    CONTEXT_SELECTOR_MAX_TOKENS: int = 800            # 语义选择器 token 预算
-    CONVERSATION_SUMMARIZER_ENABLED: bool = True      # P3-C 滚动摘要开关
-    CONVERSATION_SUMMARIZER_MAX_TOKENS: int = 600     # 摘要触发阈值
+    CONTEXT_FOCUS_TRACKING_ENABLED: bool = True  # P3-A 焦点追踪总开关
+    CONTEXT_FOCUS_HISTORY_WINDOW: int = 12  # 焦点追踪加载的历史消息数
+    COREFERENCE_RESOLUTION_ENABLED: bool = True  # P3-A 指代消解开关
+    CONTEXT_SELECTOR_ENABLED: bool = True  # P3-B 语义选择器开关
+    CONTEXT_SELECTOR_TOP_K: int = 5  # 语义选择器最多选中消息数
+    CONTEXT_SELECTOR_MAX_TOKENS: int = 800  # 语义选择器 token 预算
+    CONVERSATION_SUMMARIZER_ENABLED: bool = True  # P3-C 滚动摘要开关
+    CONVERSATION_SUMMARIZER_MAX_TOKENS: int = 600  # 摘要触发阈值
     CONVERSATION_SUMMARIZER_RETAINED_TOKENS: int = 200  # 摘要后保留的近期 token
-    DETAIL_RECALL_ENABLED: bool = True                # P1-3 历史细节召回开关
-    DETAIL_RECALL_LIMIT: int = 3                      # 细节召回条数上限
-    DETAIL_RECALL_MAX_TOKENS: int = 300               # 细节召回注入 token 上限
-    SCRATCHPAD_ENABLED: bool = True                     # P3-E Scratchpad 开关
-    LLM_FACT_EXTRACTION_ENABLED: bool = True          # P3-F LLM 事实提取开关
+    DETAIL_RECALL_ENABLED: bool = True  # P1-3 历史细节召回开关
+    DETAIL_RECALL_LIMIT: int = 3  # 细节召回条数上限
+    DETAIL_RECALL_MAX_TOKENS: int = 300  # 细节召回注入 token 上限
+    SCRATCHPAD_ENABLED: bool = True  # P3-E Scratchpad 开关
+    LLM_FACT_EXTRACTION_ENABLED: bool = True  # P3-F LLM 事实提取开关
 
     # === 记忆遗忘 — 记忆的第三种动作（课程07） ===
     # 机制一：召回时实时算激活值（ACT-R 三因子 = 时间衰减 + 频率增益 + 近期增益）
-    MEMORY_ACTIVATION_ENABLED: bool = True              # 激活值闸门总开关（关闭则退回纯相似度排序）
-    MEMORY_ACTIVATION_FLOOR: float = 0.05               # 激活值地板（低于此值召回时当场跳过）
-    MEMORY_ACTIVATION_FREQ_WEIGHT: float = 0.2          # 频率增益权重：log(1+n) * w
-    MEMORY_ACTIVATION_RECENCY_WINDOW_DAYS: int = 7      # 近期增益窗口（天）：窗口内被召回过额外续命
-    MEMORY_ACTIVATION_RECENCY_BOOST: float = 0.3        # 近期增益最大加成（窗口内线性衰减）
+    MEMORY_ACTIVATION_ENABLED: bool = True  # 激活值闸门总开关（关闭则退回纯相似度排序）
+    MEMORY_ACTIVATION_FLOOR: float = 0.05  # 激活值地板（低于此值召回时当场跳过）
+    MEMORY_ACTIVATION_FREQ_WEIGHT: float = 0.2  # 频率增益权重：log(1+n) * w
+    MEMORY_ACTIVATION_RECENCY_WINDOW_DAYS: int = (
+        7  # 近期增益窗口（天）：窗口内被召回过额外续命
+    )
+    MEMORY_ACTIVATION_RECENCY_BOOST: float = 0.3  # 近期增益最大加成（窗口内线性衰减）
     # 机制二：写入时增量冲突整合（Top-K 检索找候选，LLM 裁决，败者退场）
-    MEMORY_CONSOLIDATION_ENABLED: bool = True           # 冲突整合总开关
-    MEMORY_CONSOLIDATION_LLM_ENABLED: bool = True       # LLM 裁决开关（关闭降级为纯规则短路）
-    MEMORY_CONSOLIDATION_TOP_K: int = 10                # 冲突候选检索数（冲突是局部的，不做全库扫描）
-    MEMORY_CONSOLIDATION_CONFLICT_FLOOR: float = 0.55   # 相似度下限（低于此值与新旧记忆语义无关）
-    MEMORY_CONSOLIDATION_DUPLICATE_THRESHOLD: float = 0.90  # 相似度上限（高于此值规则短路判等价，省 LLM）
+    MEMORY_CONSOLIDATION_ENABLED: bool = True  # 冲突整合总开关
+    MEMORY_CONSOLIDATION_LLM_ENABLED: bool = (
+        True  # LLM 裁决开关（关闭降级为纯规则短路）
+    )
+    MEMORY_CONSOLIDATION_TOP_K: int = 10  # 冲突候选检索数（冲突是局部的，不做全库扫描）
+    MEMORY_CONSOLIDATION_CONFLICT_FLOOR: float = (
+        0.55  # 相似度下限（低于此值与新旧记忆语义无关）
+    )
+    MEMORY_CONSOLIDATION_DUPLICATE_THRESHOLD: float = (
+        0.90  # 相似度上限（高于此值规则短路判等价，省 LLM）
+    )
     # P2 软删除窗口：被 superseded 的记忆保留 N 天，窗口期内强命中自动复活（防 LLM 误判）
-    MEMORY_REVIVAL_WINDOW_DAYS: int = 7                 # 复活窗口（天）
-    MEMORY_REVIVAL_THRESHOLD: float = 0.90              # 复活所需相似度（强命中才复活，防误复活）
+    MEMORY_REVIVAL_WINDOW_DAYS: int = 7  # 复活窗口（天）
+    MEMORY_REVIVAL_THRESHOLD: float = 0.90  # 复活所需相似度（强命中才复活，防误复活）
     # P0 记忆写入异步化：答完后 Celery 异步写记忆（回答先返回），broker 不可用降级同步
     MEMORY_ASYNC_WRITE_ENABLED: bool = True
     # P2 L1 短期窗口 Redis 热层：Redis List 保留最近 20 条（TTL 24h），miss 回填 PG
     MEMORY_SHORT_TERM_CACHE_ENABLED: bool = True
-    MEMORY_SHORT_TERM_CACHE_TTL_HOURS: int = 24         # 热层过期时间（h）
-    MEMORY_SHORT_TERM_CACHE_WINDOW: int = 20            # 热层保留消息条数
+    MEMORY_SHORT_TERM_CACHE_TTL_HOURS: int = 24  # 热层过期时间（h）
+    MEMORY_SHORT_TERM_CACHE_WINDOW: int = 20  # 热层保留消息条数
 
     # === 外部文档同步巡检（P2 定时兜底）===
     # 方案 A：单一阈值，所有外部文档无类别区分，无盲区
     # last_checked_at 天然限流 — P0/P1 已校验的文档不会重复巡检
-    EXTERNAL_SYNC_PATROL_ENABLED: bool = True           # 巡检总开关
+    EXTERNAL_SYNC_PATROL_ENABLED: bool = True  # 巡检总开关
     EXTERNAL_SYNC_PATROL_MAX_STALENESS_HOURS: int = 24  # 最大滞后阈值（h）
-    EXTERNAL_SYNC_PATROL_BATCH_SIZE: int = 50           # 单批巡检文档数上限
-    EXTERNAL_SYNC_PATROL_CONCURRENCY: int = 2            # 并发上限（防 IP 封禁）
+    EXTERNAL_SYNC_PATROL_BATCH_SIZE: int = 50  # 单批巡检文档数上限
+    EXTERNAL_SYNC_PATROL_CONCURRENCY: int = 2  # 并发上限（防 IP 封禁）
 
     # === 文档解析补偿扫描（P1 兜底 — 堵 Redis AOF 1s 丢失窗口 / worker 异常退出）===
     # 扫描卡死在"解析中"的文档并重投 process_document。
     # 重投安全：process_document 自带 Redis SETNX 幂等锁（P1-B），重复投递会被锁挡下。
-    DOCUMENT_RESCAN_ENABLED: bool = True            # 补偿扫描总开关
-    DOCUMENT_RESCAN_STUCK_HOURS: int = 2            # 卡死判定阈值（h）
-    DOCUMENT_RESCAN_BATCH_SIZE: int = 50            # 单轮最大重投文档数（防刷爆解析队列）
+    DOCUMENT_RESCAN_ENABLED: bool = True  # 补偿扫描总开关
+    DOCUMENT_RESCAN_STUCK_HOURS: int = 2  # 卡死判定阈值（h）
+    DOCUMENT_RESCAN_BATCH_SIZE: int = 50  # 单轮最大重投文档数（防刷爆解析队列）
 
     # ================================================================
     # Pydantic V2 校验器 — 结构性校验硬失败，运营性校验发 warning
@@ -892,8 +919,7 @@ class Settings(BaseSettings):
         """DATABASE_URL 必须使用 PostgreSQL 异步驱动，否则 SQLAlchemy 异步引擎无法启动。"""
         if not v.startswith("postgresql+asyncpg://"):
             raise ValueError(
-                f"DATABASE_URL 必须使用 postgresql+asyncpg:// 异步驱动，"
-                f"当前值: {v}"
+                f"DATABASE_URL 必须使用 postgresql+asyncpg:// 异步驱动，" f"当前值: {v}"
             )
         return v
 
@@ -1079,7 +1105,9 @@ class Settings(BaseSettings):
     def is_private(self) -> bool:
         """是否为私有部署模式。"""
         return self.DEPLOY_MODE in (
-            "private_overseas", "private_domestic", "private_finetuned",
+            "private_overseas",
+            "private_domestic",
+            "private_finetuned",
         )
 
     @property

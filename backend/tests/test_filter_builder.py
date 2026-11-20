@@ -22,7 +22,6 @@ from app.rag.filter_builder import (
     validate_filters,
 )
 
-
 # ======================================================================
 # build_opensearch_filter_clauses
 # ======================================================================
@@ -229,16 +228,12 @@ class TestOpenSearchClassificationClause:
         assert clause["bool"]["minimum_should_match"] == 1
         should = clause["bool"]["should"]
         assert {"terms": {"classification": ["public", "internal"]}} in should
-        assert {
-            "bool": {"must_not": {"exists": {"field": "classification"}}}
-        } in should
+        assert {"bool": {"must_not": {"exists": {"field": "classification"}}}} in should
 
     def test_strict_mode_pure_terms(self) -> None:
         """strict 模式（回填完成后开启）：纯 terms 白名单 —
         字段缺失的文档不再放行。"""
-        with patch.object(
-            get_settings(), "CLASSIFICATION_PUSHDOWN_STRICT", True
-        ):
+        with patch.object(get_settings(), "CLASSIFICATION_PUSHDOWN_STRICT", True):
             clauses = build_opensearch_filter_clauses(
                 {"classification": ["public", "internal"]}
             )
@@ -247,10 +242,7 @@ class TestOpenSearchClassificationClause:
     def test_single_string_value_normalized(self) -> None:
         """单字符串值归一化为单元素列表（防御性兼容）。"""
         clauses = build_opensearch_filter_clauses({"classification": "public"})
-        assert (
-            {"terms": {"classification": ["public"]}}
-            in clauses[0]["bool"]["should"]
-        )
+        assert {"terms": {"classification": ["public"]}} in clauses[0]["bool"]["should"]
 
     def test_combined_with_kb_ids(self) -> None:
         """kb_ids 与 classification 白名单在同一 filter 数组（AND 语义）。"""
@@ -272,16 +264,14 @@ class TestMilvusClassificationExpr:
 
     def test_strict_mode_in_clause(self) -> None:
         """strict 模式（回填完成后开启）：``classification in [...]`` 白名单。"""
-        with patch.object(
-            get_settings(), "CLASSIFICATION_PUSHDOWN_STRICT", True
-        ):
-            expr = build_milvus_expr(["kb1"], {"classification": ["public", "internal"]})
+        with patch.object(get_settings(), "CLASSIFICATION_PUSHDOWN_STRICT", True):
+            expr = build_milvus_expr(
+                ["kb1"], {"classification": ["public", "internal"]}
+            )
         assert expr == "kb_id in ['kb1'] and classification in ['public', 'internal']"
 
     def test_strict_mode_combined_with_other_filters(self) -> None:
-        with patch.object(
-            get_settings(), "CLASSIFICATION_PUSHDOWN_STRICT", True
-        ):
+        with patch.object(get_settings(), "CLASSIFICATION_PUSHDOWN_STRICT", True):
             expr = build_milvus_expr(
                 None, {"classification": ["public"], "doc_status": "published"}
             )
@@ -305,10 +295,18 @@ class TestValidateFilters:
         assert validate_filters({}) == []
 
     def test_all_valid_keys(self) -> None:
-        assert validate_filters(
-            {"series_id": "x", "path_prefix": "y", "parent_id": "z", "depth": 0,
-             "version_of": "w"}
-        ) == []
+        assert (
+            validate_filters(
+                {
+                    "series_id": "x",
+                    "path_prefix": "y",
+                    "parent_id": "z",
+                    "depth": 0,
+                    "version_of": "w",
+                }
+            )
+            == []
+        )
 
     def test_returns_unknown_keys(self) -> None:
         unknown = validate_filters({"series_id": "x", "foo": "y", "bar": "z"})

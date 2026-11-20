@@ -6,6 +6,7 @@
 - GapDetectorService.record_no_result 空查询跳过 + 递增计数；
 - FeedbackLoopService.process_feedback 状态流转 + 自动回复。
 """
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -19,12 +20,11 @@ from app.services.feedback_loop_service import FeedbackLoopService
 from app.services.gap_detector_service import GapDetectorService
 from app.services.permission_service import _CLEARANCE_ORDER
 from app.services.quality_service import (
+    WEIGHT_CITATION,
     WEIGHT_COMPLETENESS,
     WEIGHT_FEEDBACK,
-    WEIGHT_CITATION,
     QualityService,
 )
-
 
 # ======================================================================
 # 权限服务测试
@@ -81,7 +81,9 @@ class TestPermissionService:
 
         kb_accessible = uuid4()
         kb_other = uuid4()
-        user = SimpleNamespace(role="editor", clearance_level="internal", id=uuid4(), dept_id=None)
+        user = SimpleNamespace(
+            role="editor", clearance_level="internal", id=uuid4(), dept_id=None
+        )
 
         # mock db.execute → 返回可访问知识库 ID 集合
         db = AsyncMock()
@@ -112,7 +114,9 @@ class TestPermissionService:
         from app.services.permission_service import PermissionService
 
         kb_accessible = uuid4()
-        user = SimpleNamespace(role="editor", clearance_level="internal", id=uuid4(), dept_id=None)
+        user = SimpleNamespace(
+            role="editor", clearance_level="internal", id=uuid4(), dept_id=None
+        )
 
         db = AsyncMock()
         exec_result = MagicMock()
@@ -146,7 +150,9 @@ class TestPermissionService:
         """非 admin（editor）的 allowed_classifications 仍按 clearance_level 截断。"""
         from app.services.permission_service import PermissionService
 
-        user = SimpleNamespace(role="editor", clearance_level="internal", id=uuid4(), dept_id=None)
+        user = SimpleNamespace(
+            role="editor", clearance_level="internal", id=uuid4(), dept_id=None
+        )
         service = PermissionService(db=AsyncMock(), user=user)
 
         allowed = service.allowed_classifications()
@@ -212,7 +218,9 @@ class TestQualityService:
 
     def test_quality_weights_sum_to_one(self) -> None:
         """三个维度权重之和应为 1.0。"""
-        assert WEIGHT_COMPLETENESS + WEIGHT_CITATION + WEIGHT_FEEDBACK == pytest.approx(1.0)
+        assert WEIGHT_COMPLETENESS + WEIGHT_CITATION + WEIGHT_FEEDBACK == pytest.approx(
+            1.0
+        )
 
 
 # ======================================================================
@@ -302,11 +310,16 @@ class TestFeedbackLoopService:
         """process_feedback 应按类型流转状态并生成自动回复。"""
         fb_id = uuid4()
         feedback = SimpleNamespace(
-            id=fb_id, type="bug", status="open", response=None,
+            id=fb_id,
+            type="bug",
+            status="open",
+            response=None,
             updated_at=datetime.now(),
         )
         updated = SimpleNamespace(
-            id=fb_id, type="bug", status="processing",
+            id=fb_id,
+            type="bug",
+            status="processing",
             response="已收到缺陷反馈，正在调查中，我们会尽快修复。",
             updated_at=datetime.now(),
         )
@@ -330,11 +343,16 @@ class TestFeedbackLoopService:
         """praise 类型应直接 resolved（无需处理）。"""
         fb_id = uuid4()
         feedback = SimpleNamespace(
-            id=fb_id, type="praise", status="open", response=None,
+            id=fb_id,
+            type="praise",
+            status="open",
+            response=None,
             updated_at=datetime.now(),
         )
         updated = SimpleNamespace(
-            id=fb_id, type="praise", status="resolved",
+            id=fb_id,
+            type="praise",
+            status="resolved",
             response="感谢您的肯定，我们会继续保持！",
             updated_at=datetime.now(),
         )

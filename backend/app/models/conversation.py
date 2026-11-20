@@ -19,7 +19,9 @@ class Conversation(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, comment="用户 ID"
     )
-    title: Mapped[str] = mapped_column(String(255), default="新对话", comment="对话标题")
+    title: Mapped[str] = mapped_column(
+        String(255), default="新对话", comment="对话标题"
+    )
     agent_type: Mapped[str] = mapped_column(
         String(50), default="qa", comment="Agent 类型: qa/workflow/action"
     )
@@ -39,15 +41,22 @@ class Message(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "messages"
 
     conversation_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("conversations.id"), nullable=False, comment="对话 ID"
+        UUID(as_uuid=True),
+        ForeignKey("conversations.id"),
+        nullable=False,
+        comment="对话 ID",
     )
     role: Mapped[str] = mapped_column(
         String(20), nullable=False, comment="角色: user/assistant/system"
     )
     content: Mapped[str] = mapped_column(Text, nullable=False, comment="消息内容")
-    sources: Mapped[list | None] = mapped_column(JSONB, nullable=True, comment="引用来源")
+    sources: Mapped[list | None] = mapped_column(
+        JSONB, nullable=True, comment="引用来源"
+    )
     token_count: Mapped[int] = mapped_column(Integer, default=0, comment="Token 消耗")
-    model_used: Mapped[str | None] = mapped_column(String(100), nullable=True, comment="使用的模型")
+    model_used: Mapped[str | None] = mapped_column(
+        String(100), nullable=True, comment="使用的模型"
+    )
     # 多租户隔离
     tenant_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), nullable=True, comment="租户 ID（多租户隔离）"

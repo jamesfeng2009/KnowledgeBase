@@ -198,9 +198,7 @@ class GraphitiManager:
         )
         return event
 
-    async def get_entity_timeline(
-        self, entity_id: uuid.UUID
-    ) -> list[EntityEvent]:
+    async def get_entity_timeline(self, entity_id: uuid.UUID) -> list[EntityEvent]:
         """获取实体的完整变更历史（时间线）。"""
         result = await self.db.execute(
             select(EntityEvent)
@@ -219,9 +217,7 @@ class GraphitiManager:
         )
         return list(result.scalars().all())
 
-    async def get_expiring_soon(
-        self, days: int = 30
-    ) -> list[KnowledgeEntity]:
+    async def get_expiring_soon(self, days: int = 30) -> list[KnowledgeEntity]:
         """获取即将过期的实体（默认 30 天内）— 用于过期预警提醒。"""
         threshold = datetime.utcnow() + timedelta(days=days)
         result = await self.db.execute(
@@ -256,24 +252,25 @@ class GraphitiManager:
 
     async def sync_to_graph(self, entity_id: uuid.UUID) -> bool:
         """将实体及其事件时间线同步到 Neo4j 图数据库。
-        
+
         在 Neo4j 中创建：
         - 实体节点（带 current_version, valid_from, valid_to）
         - 事件节点（带 event_type, old_value, new_value, valid_from）
         - (实体)-[:HAS_EVENT]->(事件) 关系
-        
+
         PostgreSQL 保留为主存储，Neo4j 为可选的图分析后端。
-        
+
         Args:
             entity_id: 实体 ID。
-            
+
         Returns:
             是否同步成功。
         """
         try:
             from app.services.graph_service import get_graph_service
+
             graph = get_graph_service()
-            
+
             # 获取实体和时间线
             entity_result = await self.db.execute(
                 select(KnowledgeEntity).where(KnowledgeEntity.id == entity_id)
@@ -281,37 +278,57 @@ class GraphitiManager:
             entity = entity_result.scalar_one_or_none()
             if not entity:
                 return False
-            
+
             timeline = await self.get_entity_timeline(entity_id)
-            
+
             # 创建实体节点
-            await graph.create_node("KnowledgeEntity", {
-                "id": str(entity.id),
-                "entity_type": entity.entity_type,
-                "name": entity.name,
-                "current_version": entity.current_version,
-                "valid_from": entity.valid_from.isoformat() if entity.valid_from else None,
-                "valid_to": entity.valid_to.isoformat() if entity.valid_to else None,
-            })
-            
+            await graph.create_node(
+                "KnowledgeEntity",
+                {
+                    "id": str(entity.id),
+                    "entity_type": entity.entity_type,
+                    "name": entity.name,
+                    "current_version": entity.current_version,
+                    "valid_from": entity.valid_from.isoformat()
+                    if entity.valid_from
+                    else None,
+                    "valid_to": entity.valid_to.isoformat()
+                    if entity.valid_to
+                    else None,
+                },
+            )
+
             # 创建事件节点并建立关系
             for event in timeline:
-                await graph.create_node("TimelineEvent", {
-                    "id": str(event.id),
-                    "event_type": event.event_type,
-                    "old_value": event.old_value,
-                    "new_value": event.new_value,
-                    "event_source": event.event_source,
-                    "valid_from": event.valid_from.isoformat() if event.valid_from else None,
-                    "valid_to": event.valid_to.isoformat() if event.valid_to else None,
-                })
+                await graph.create_node(
+                    "TimelineEvent",
+                    {
+                        "id": str(event.id),
+                        "event_type": event.event_type,
+                        "old_value": event.old_value,
+                        "new_value": event.new_value,
+                        "event_source": event.event_source,
+                        "valid_from": event.valid_from.isoformat()
+                        if event.valid_from
+                        else None,
+                        "valid_to": event.valid_to.isoformat()
+                        if event.valid_to
+                        else None,
+                    },
+                )
                 await graph.create_relationship(
-                    "KnowledgeEntity", str(entity.id),
-                    "TimelineEvent", str(event.id),
+                    "KnowledgeEntity",
+                    str(entity.id),
+                    "TimelineEvent",
+                    str(event.id),
                     "HAS_EVENT",
                 )
-            
-            logger.info("graphiti.synced_to_graph", entity_id=str(entity_id), events=len(timeline))
+
+            logger.info(
+                "graphiti.synced_to_graph",
+                entity_id=str(entity_id),
+                events=len(timeline),
+            )
             return True
         except Exception as e:
             logger.warning("graphiti.sync_to_graph_failed", error=str(e))

@@ -20,10 +20,10 @@ BaseRepository 已内置 _apply_tenant_filter，但 Service 层有大量直接
     stmt = select(func.count(Document.id)).select_from(Document)
     stmt = apply_tenant_filter(stmt, Document, self._tenant_id)
 """
+
 from __future__ import annotations
 
 from uuid import UUID
-
 
 
 def apply_tenant_filter(stmt, model, tenant_id: UUID | None):

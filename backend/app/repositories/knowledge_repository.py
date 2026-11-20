@@ -30,12 +30,9 @@ class KnowledgeBaseRepository(BaseRepository[KnowledgeBase]):
 
     async def get_by_owner(self, owner_id: UUID) -> list[KnowledgeBase]:
         """查询某用户拥有的所有知识库（排除已软删除）。"""
-        stmt = (
-            select(KnowledgeBase)
-            .where(
-                KnowledgeBase.owner_id == owner_id,
-                KnowledgeBase.deleted_at.is_(None),
-            )
+        stmt = select(KnowledgeBase).where(
+            KnowledgeBase.owner_id == owner_id,
+            KnowledgeBase.deleted_at.is_(None),
         )
         stmt = self._apply_all_filters(stmt)
         stmt = stmt.order_by(KnowledgeBase.created_at.desc())
@@ -50,15 +47,12 @@ class KnowledgeBaseRepository(BaseRepository[KnowledgeBase]):
         2. 用户是知识库的成员（通过 kb_members 关联表）。
         """
         member_subq = select(KbMember.kb_id).where(KbMember.user_id == user_id)
-        stmt = (
-            select(KnowledgeBase)
-            .where(
-                KnowledgeBase.deleted_at.is_(None),
-                or_(
-                    KnowledgeBase.owner_id == user_id,
-                    KnowledgeBase.id.in_(member_subq),
-                ),
-            )
+        stmt = select(KnowledgeBase).where(
+            KnowledgeBase.deleted_at.is_(None),
+            or_(
+                KnowledgeBase.owner_id == user_id,
+                KnowledgeBase.id.in_(member_subq),
+            ),
         )
         stmt = self._apply_all_filters(stmt)
         stmt = stmt.order_by(KnowledgeBase.created_at.desc())
@@ -74,12 +68,9 @@ class DocumentRepository(BaseRepository[Document]):
 
     async def get_by_kb(self, kb_id: UUID) -> list[Document]:
         """查询指定知识库下的所有文档（排除已软删除）。"""
-        stmt = (
-            select(Document)
-            .where(
-                Document.kb_id == kb_id,
-                Document.deleted_at.is_(None),
-            )
+        stmt = select(Document).where(
+            Document.kb_id == kb_id,
+            Document.deleted_at.is_(None),
         )
         stmt = self._apply_all_filters(stmt)
         stmt = stmt.order_by(Document.created_at.desc())
@@ -92,12 +83,9 @@ class DocumentRepository(BaseRepository[Document]):
         Args:
             classification: 密级标识 — public/internal/confidential/secret。
         """
-        stmt = (
-            select(Document)
-            .where(
-                Document.classification == classification,
-                Document.deleted_at.is_(None),
-            )
+        stmt = select(Document).where(
+            Document.classification == classification,
+            Document.deleted_at.is_(None),
         )
         stmt = self._apply_all_filters(stmt)
         stmt = stmt.order_by(Document.created_at.desc())
@@ -114,15 +102,12 @@ class DocumentRepository(BaseRepository[Document]):
             keyword: 搜索关键词。
         """
         pattern = f"%{keyword}%"
-        stmt = (
-            select(Document)
-            .where(
-                Document.deleted_at.is_(None),
-                or_(
-                    Document.title.ilike(pattern),
-                    Document.content_text.ilike(pattern),
-                ),
-            )
+        stmt = select(Document).where(
+            Document.deleted_at.is_(None),
+            or_(
+                Document.title.ilike(pattern),
+                Document.content_text.ilike(pattern),
+            ),
         )
         stmt = self._apply_all_filters(stmt)
         stmt = stmt.order_by(Document.created_at.desc())

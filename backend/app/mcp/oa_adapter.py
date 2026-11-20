@@ -112,10 +112,14 @@ class HttpOaAdapter:
                 resp = await client.request(method, path, headers=headers, **kwargs)
                 # 5xx/429 视为瞬态错误，重试一次
                 if resp.status_code == 429 or resp.status_code >= 500:
-                    last_error = OaAdapterError(f"OA 系统返回错误状态: {resp.status_code}")
+                    last_error = OaAdapterError(
+                        f"OA 系统返回错误状态: {resp.status_code}"
+                    )
                     log.warning(
                         "oa_adapter.server_error",
-                        path=path, attempt=attempt, status=resp.status_code,
+                        path=path,
+                        attempt=attempt,
+                        status=resp.status_code,
                     )
                     continue
                 resp.raise_for_status()
@@ -129,7 +133,9 @@ class HttpOaAdapter:
                 last_error = exc
                 log.warning(
                     "oa_adapter.transient_error",
-                    path=path, attempt=attempt, error=str(exc),
+                    path=path,
+                    attempt=attempt,
+                    error=str(exc),
                 )
             except httpx.HTTPStatusError as exc:
                 # 4xx 客户端错误不重试，直接包装抛出
@@ -138,7 +144,9 @@ class HttpOaAdapter:
                 ) from exc
             except (json.JSONDecodeError, ValueError) as exc:
                 raise OaAdapterError(f"OA 系统响应解析失败: {exc}") from exc
-        raise OaAdapterError(f"OA 系统调用失败（已重试一次）: {last_error}") from last_error
+        raise OaAdapterError(
+            f"OA 系统调用失败（已重试一次）: {last_error}"
+        ) from last_error
 
     async def get_approval_status(self, bill_no: str) -> dict[str, Any]:
         """查询审批单状态 — 映射 OA 响应到 mock 相同字段结构。"""

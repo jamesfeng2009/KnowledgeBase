@@ -86,9 +86,7 @@ class ConstraintVerifier:
     """
 
     @classmethod
-    def verify(
-        cls, answer: str, rule: dict[str, Any]
-    ) -> list[ConstraintViolation]:
+    def verify(cls, answer: str, rule: dict[str, Any]) -> list[ConstraintViolation]:
         """核验答案 — 返回该规则的全部违规（空列表 = 通过）。"""
         normalized = rule.get("normalized")
         if not isinstance(normalized, dict) or not normalized:
@@ -102,9 +100,7 @@ class ConstraintVerifier:
         return violations
 
     @classmethod
-    def still_violates(
-        cls, answer: str, violations: list[ConstraintViolation]
-    ) -> bool:
+    def still_violates(cls, answer: str, violations: list[ConstraintViolation]) -> bool:
         """重生成结果的采纳门 — block 级违规在 新答案 上是否仍存在。
 
         仅复核产生 block 级违规的规则（warn 级不阻断，无需复核）。
@@ -130,9 +126,7 @@ class ConstraintVerifier:
         rule: dict[str, Any],
         normalized: dict[str, Any],
     ) -> list[ConstraintViolation]:
-        patterns = [
-            str(p) for p in (normalized.get("forbidden_patterns") or []) if p
-        ]
+        patterns = [str(p) for p in (normalized.get("forbidden_patterns") or []) if p]
         if not patterns:
             return []
         hits = [p for p in patterns if cls._pattern_hit(text, p)]
@@ -170,9 +164,7 @@ class ConstraintVerifier:
             else []
         )
         # 话题域不满足 → 必提词不适用（无 condition 视为恒满足）
-        if topics and not any(
-            cls._pattern_hit(answer, t) for t in topics
-        ):
+        if topics and not any(cls._pattern_hit(answer, t) for t in topics):
             return []
         if any(cls._pattern_hit(answer, m) for m in required):
             return []
@@ -224,9 +216,7 @@ class ConstraintVerifier:
                 if cls._amount_violates(amount, compare, limit_value, limit_unit)
             ]
             if hits:
-                shown = "、".join(
-                    f"{v:g}{u}" for v, u in hits
-                )
+                shown = "、".join(f"{v:g}{u}" for v, u in hits)
                 severity = str(
                     lim.get("on_violation") or rule.get("severity") or "warn"
                 )
@@ -344,21 +334,15 @@ class ToolGate:
             gate_cfg = normalized.get("tool_gate")
             gate_cfg = gate_cfg if isinstance(gate_cfg, dict) else {}
             tools = [
-                str(t)
-                for t in (gate_cfg.get("tools") or ["*"])
-                if str(t).strip()
+                str(t) for t in (gate_cfg.get("tools") or ["*"]) if str(t).strip()
             ] or ["*"]
             if "*" not in tools and tool_name not in tools:
                 continue
 
-            param_keys = [
-                str(k) for k in (gate_cfg.get("param_keys") or []) if k
-            ]
+            param_keys = [str(k) for k in (gate_cfg.get("param_keys") or []) if k]
             scan_text = cls._scan_arguments(tool_input, param_keys)
 
-            violation = ConstraintVerifier._check_amounts(
-                scan_text, rule, normalized
-            )
+            violation = ConstraintVerifier._check_amounts(scan_text, rule, normalized)
             if not violation:
                 violation = ConstraintVerifier._check_forbidden(
                     scan_text, rule, normalized

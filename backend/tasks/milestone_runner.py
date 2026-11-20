@@ -80,7 +80,9 @@ async def milestone_checkpoint_manager() -> AsyncIterator[CheckpointManager]:
     """
     from app.database import task_db_session
 
-    async with task_db_session(cross_tenant_reason="milestone_runner.milestone_checkpoint_manager") as db:
+    async with task_db_session(
+        cross_tenant_reason="milestone_runner.milestone_checkpoint_manager"
+    ) as db:
         yield CheckpointManager(db)
 
 
@@ -153,7 +155,7 @@ async def run_stages_with_milestones(
         t0 = time.monotonic()
         try:
             result = await asyncio.wait_for(stage.run(), timeout=step_timeout_s)
-        except (TimeoutError, asyncio.TimeoutError):
+        except TimeoutError:
             # 单步超时 — 记录 timeout 里程碑（非 done，重试时会重跑）后抛出
             await checkpoint_manager.save_milestone(
                 checkpoint_key,

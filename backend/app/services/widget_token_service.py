@@ -58,7 +58,7 @@ def _derive_secret() -> str:
     if settings.WIDGET_HMAC_SECRET:
         return settings.WIDGET_HMAC_SECRET
     # 从 SECRET_KEY 派生独立子密钥（避免直接复用主密钥签名空间）
-    material = f"ekb-widget:{settings.SECRET_KEY}".encode("utf-8")
+    material = f"ekb-widget:{settings.SECRET_KEY}".encode()
     return hashlib.sha256(material).hexdigest()
 
 
@@ -140,7 +140,9 @@ class WidgetTokenService:
         return base64.urlsafe_b64decode(raw + padding)
 
     def _sign(self, payload: dict[str, Any]) -> str:
-        body = self._b64encode(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
+        body = self._b64encode(
+            json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        )
         sig = hmac.new(
             self._secret.encode("utf-8"), body.encode("ascii"), hashlib.sha256
         ).hexdigest()
@@ -170,6 +172,8 @@ class WidgetRateLimiter:
         window_start = now - 60
         hits = [t for t in self._window.get(key, []) if t >= window_start]
         if len(hits) >= self._limit:
-            raise WidgetRateLimited(f"请求过于频繁，请 {60 - int(now - hits[0])} 秒后重试")
+            raise WidgetRateLimited(
+                f"请求过于频繁，请 {60 - int(now - hits[0])} 秒后重试"
+            )
         hits.append(now)
         self._window[key] = hits

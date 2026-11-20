@@ -7,18 +7,17 @@
     4. 格式校验 — blob 过短抛 ValueError
     5. 密钥隔离 — 不同 SECRET_KEY 派生的密钥无法解密对方密文
 """
-from __future__ import annotations
 
-import os
+from __future__ import annotations
 
 import pytest
 
 from app.utils.crypto import decrypt_secret, encrypt_secret
 
-
 # ------------------------------------------------------------------
 # 往返测试
 # ------------------------------------------------------------------
+
 
 class TestRoundTrip:
     """加解密往返 — 相同明文经 encrypt→decrypt 应还原原值。"""
@@ -55,6 +54,7 @@ class TestRoundTrip:
 # nonce 随机化
 # ------------------------------------------------------------------
 
+
 class TestNonceRandomization:
     """同一明文每次加密结果不同（nonce 随机），但都能解密。"""
 
@@ -78,6 +78,7 @@ class TestNonceRandomization:
 # ------------------------------------------------------------------
 # 篡改检测
 # ------------------------------------------------------------------
+
 
 class TestTamperDetection:
     """AES-GCM 认证标签 — 密文被改后解密抛异常。"""
@@ -115,6 +116,7 @@ class TestTamperDetection:
 # ------------------------------------------------------------------
 # 密钥隔离
 # ------------------------------------------------------------------
+
 
 class TestKeyIsolation:
     """不同 SECRET_KEY 派生的 AES 密钥不同，无法互解。"""

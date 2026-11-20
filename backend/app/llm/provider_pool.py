@@ -115,7 +115,9 @@ class ProviderPool:
         pool_type: str,
     ) -> None:
         assert len(providers) > 0, "ProviderPool 至少需要一个 Provider"
-        assert len(providers) == len(breaker_names), "providers 和 breaker_names 长度不一致"
+        assert len(providers) == len(
+            breaker_names
+        ), "providers 和 breaker_names 长度不一致"
         self._providers = providers
         self._breaker_names = breaker_names
         self._pool_type = pool_type
@@ -194,9 +196,7 @@ class ProviderPool:
         )
         if last_error:
             raise last_error
-        raise CircuitBreakerOpenError(
-            self._breaker_names[0], CircuitState.OPEN
-        )
+        raise CircuitBreakerOpenError(self._breaker_names[0], CircuitState.OPEN)
 
     async def _astream_with_failover(
         self,
@@ -206,18 +206,18 @@ class ProviderPool:
     ) -> AsyncIterator[Any]:
         """异步生成器故障转移 — 用于 LLM chat() 流式输出。
 
-        特殊处理：如果已经开始 yield 数据，则不再切换 Provider
-       （已发送的数据无法撤回，切换会导致内容不连续）。
+         特殊处理：如果已经开始 yield 数据，则不再切换 Provider
+        （已发送的数据无法撤回，切换会导致内容不连续）。
 
-        Args:
-            method_name: 要调用的方法名 (e.g., "chat")
-            *args, **kwargs: 方法参数
+         Args:
+             method_name: 要调用的方法名 (e.g., "chat")
+             *args, **kwargs: 方法参数
 
-        Yields:
-            第一个成功 Provider 的输出块
+         Yields:
+             第一个成功 Provider 的输出块
 
-        Raises:
-            CircuitBreakerOpenError: 所有 Provider 熔断器均 OPEN（且未开始 yield）
+         Raises:
+             CircuitBreakerOpenError: 所有 Provider 熔断器均 OPEN（且未开始 yield）
         """
         last_error: CircuitBreakerOpenError | None = None
 
@@ -261,9 +261,7 @@ class ProviderPool:
         )
         if last_error:
             raise last_error
-        raise CircuitBreakerOpenError(
-            self._breaker_names[0], CircuitState.OPEN
-        )
+        raise CircuitBreakerOpenError(self._breaker_names[0], CircuitState.OPEN)
 
     # ==================================================================
     # Embedder 方法
@@ -296,9 +294,7 @@ class ProviderPool:
         """向量检索 — 故障转移包装。"""
         return await self._call_with_failover("search", query_vec, kb_ids, top_k)
 
-    async def upsert(
-        self, doc_id: str, chunks: list[Any], **kwargs: Any
-    ) -> None:
+    async def upsert(self, doc_id: str, chunks: list[Any], **kwargs: Any) -> None:
         """向量写入 — 故障转移包装。"""
         await self._call_with_failover("upsert", doc_id, chunks, **kwargs)
 
@@ -522,7 +518,9 @@ def get_vector_store_pool() -> ProviderPool:
     from app.rag.vector_store import get_vector_store
 
     default_breaker = (
-        "vectorstore_milvus" if settings.VECTOR_STORE == "milvus" else "vectorstore_opensearch"
+        "vectorstore_milvus"
+        if settings.VECTOR_STORE == "milvus"
+        else "vectorstore_opensearch"
     )
 
     return _build_pool(

@@ -5,6 +5,7 @@
 2. TestStructlogContextBinding — structlog contextvars 绑定 tenant_id 验证
 3. TestMiddlewareContextCleanup — 中间件清理 structlog 上下文验证
 """
+
 from __future__ import annotations
 
 import sys
@@ -124,9 +125,7 @@ class TestRLSMigration:
             "usage_records",
         ]
         for table in expected_tables:
-            assert f'"{table}"' in rls_migration_content, (
-                f"RLS 迁移应覆盖表 {table}"
-            )
+            assert f'"{table}"' in rls_migration_content, f"RLS 迁移应覆盖表 {table}"
 
     def test_rls_migration_downgrade_drops_policy(
         self, rls_migration_content: str
@@ -153,9 +152,7 @@ class TestStructlogContextBinding:
     def test_middleware_imports_structlog(self) -> None:
         """中间件导入了 structlog。"""
         middleware_path = (
-            Path(__file__).resolve().parent.parent
-            / "app"
-            / "middleware.py"
+            Path(__file__).resolve().parent.parent / "app" / "middleware.py"
         )
         content = middleware_path.read_text()
         assert "import structlog" in content
@@ -163,9 +160,7 @@ class TestStructlogContextBinding:
     def test_middleware_binds_tenant_id(self) -> None:
         """中间件使用 bind_contextvars 绑定 tenant_id。"""
         middleware_path = (
-            Path(__file__).resolve().parent.parent
-            / "app"
-            / "middleware.py"
+            Path(__file__).resolve().parent.parent / "app" / "middleware.py"
         )
         content = middleware_path.read_text()
         assert "structlog.contextvars.bind_contextvars" in content
@@ -174,9 +169,7 @@ class TestStructlogContextBinding:
     def test_middleware_clears_context(self) -> None:
         """中间件在 finally 块中清理 structlog 上下文。"""
         middleware_path = (
-            Path(__file__).resolve().parent.parent
-            / "app"
-            / "middleware.py"
+            Path(__file__).resolve().parent.parent / "app" / "middleware.py"
         )
         content = middleware_path.read_text()
         assert "structlog.contextvars.clear_contextvars" in content
@@ -185,10 +178,7 @@ class TestStructlogContextBinding:
     def test_logger_has_merge_contextvars_processor(self) -> None:
         """logger 配置包含 merge_contextvars 处理器。"""
         logger_path = (
-            Path(__file__).resolve().parent.parent
-            / "app"
-            / "utils"
-            / "logger.py"
+            Path(__file__).resolve().parent.parent / "app" / "utils" / "logger.py"
         )
         content = logger_path.read_text()
         assert "merge_contextvars" in content
@@ -253,27 +243,21 @@ class TestDatabaseSessionRLS:
         assert TENANT_GUC == "app.tenant_id", "GUC 名必须与迁移里的策略一致"
         assert "from app.core.tenant_context import" in content
         assert "apply_tenant" in content
-        assert "SET LOCAL app.tenant_id" not in content, (
-            "database.py 又出现了手写 SET LOCAL —— 请改用 tenant_context"
-        )
+        assert (
+            "SET LOCAL app.tenant_id" not in content
+        ), "database.py 又出现了手写 SET LOCAL —— 请改用 tenant_context"
 
     def test_database_py_reads_request_state(self) -> None:
         """get_db_session 从 request.state 读取 tenant_id。"""
-        db_path = (
-            Path(__file__).resolve().parent.parent
-            / "app"
-            / "database.py"
-        )
+        db_path = Path(__file__).resolve().parent.parent / "app" / "database.py"
         content = db_path.read_text()
-        assert "request.state.tenant_id" in content or "getattr(request.state" in content
+        assert (
+            "request.state.tenant_id" in content or "getattr(request.state" in content
+        )
 
     def test_database_py_imports_request(self) -> None:
         """database.py 导入了 Request。"""
-        db_path = (
-            Path(__file__).resolve().parent.parent
-            / "app"
-            / "database.py"
-        )
+        db_path = Path(__file__).resolve().parent.parent / "app" / "database.py"
         content = db_path.read_text()
         assert "from fastapi import Request" in content or "Request" in content
 
@@ -289,10 +273,7 @@ class TestTenantUtilFunction:
     def test_tenant_util_file_exists(self) -> None:
         """tenant.py 工具文件存在。"""
         util_path = (
-            Path(__file__).resolve().parent.parent
-            / "app"
-            / "utils"
-            / "tenant.py"
+            Path(__file__).resolve().parent.parent / "app" / "utils" / "tenant.py"
         )
         assert util_path.exists(), "app/utils/tenant.py 应存在"
 

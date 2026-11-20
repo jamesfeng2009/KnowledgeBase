@@ -18,7 +18,6 @@ Deep Research 服务 — P2-11：目标拆解 → 子课题证据卡片 → 矛�
 
 from __future__ import annotations
 
-import asyncio
 import json
 from dataclasses import dataclass, field
 from typing import Any
@@ -233,9 +232,7 @@ class DeepResearchService:
             ]
             topics = [t for t in topics if t and t != goal][:_MAX_TOPICS]
             if len(topics) >= _MIN_TOPICS:
-                log.info(
-                    "deep_research.decomposed", goal=goal[:80], topics=len(topics)
-                )
+                log.info("deep_research.decomposed", goal=goal[:80], topics=len(topics))
                 return topics
         except Exception as exc:
             log.warning("deep_research.decompose_failed", error=str(exc))
@@ -461,7 +458,7 @@ class DeepResearchService:
         checkpoint_manager: Any = None,
         task_id: str | None = None,
         tenant_id: str | None = None,
-        progress: "Any | None" = None,
+        progress: Any | None = None,
     ) -> ResearchReport:
         """执行课题调研，返回结构化报告。
 
@@ -488,9 +485,7 @@ class DeepResearchService:
             )
 
             async def _gather_dict(topic: str) -> dict[str, Any]:
-                return (await self._gather_evidence(
-                    topic, kb_ids, tenant_id
-                )).to_dict()
+                return (await self._gather_evidence(topic, kb_ids, tenant_id)).to_dict()
 
             async def _on_stage(name: str, detail: dict[str, Any]) -> None:
                 if progress is None or not name.startswith("topic_"):
@@ -500,13 +495,15 @@ class DeepResearchService:
                 except (IndexError, ValueError):
                     return
                 status = (detail.get("result") or {}).get("status", "running")
-                await progress({
-                    "type": "subtopic",
-                    "index": idx,
-                    "total": total,
-                    "subtopic": topics[idx],
-                    "status": status,
-                })
+                await progress(
+                    {
+                        "type": "subtopic",
+                        "index": idx,
+                        "total": total,
+                        "subtopic": topics[idx],
+                        "status": status,
+                    }
+                )
 
             stage_results = await run_stages_with_milestones(
                 [
@@ -521,21 +518,22 @@ class DeepResearchService:
                 on_stage=_on_stage,
             )
             cards = [
-                EvidenceCard(**stage_results[f"topic_{i}"])
-                for i in range(len(topics))
+                EvidenceCard(**stage_results[f"topic_{i}"]) for i in range(len(topics))
             ]
         else:
             cards = []
             for i, topic in enumerate(topics):
                 card = await self._gather_evidence(topic, kb_ids, tenant_id)
                 if progress is not None:
-                    await progress({
-                        "type": "subtopic",
-                        "index": i,
-                        "total": total,
-                        "subtopic": topic,
-                        "status": card.status,
-                    })
+                    await progress(
+                        {
+                            "type": "subtopic",
+                            "index": i,
+                            "total": total,
+                            "subtopic": topic,
+                            "status": card.status,
+                        }
+                    )
                 cards.append(card)
 
         contradictions = await self._detect_contradictions(cards)
@@ -547,11 +545,13 @@ class DeepResearchService:
         }
 
         if progress is not None:
-            await progress({
-                "type": "overview",
-                "summary": summary,
-                "distribution": distribution,
-            })
+            await progress(
+                {
+                    "type": "overview",
+                    "summary": summary,
+                    "distribution": distribution,
+                }
+            )
 
         report = ResearchReport(
             goal=goal,

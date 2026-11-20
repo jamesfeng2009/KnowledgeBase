@@ -42,10 +42,10 @@ from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any
 
-
 # ------------------------------------------------------------------
 # 错误词汇表
 # ------------------------------------------------------------------
+
 
 class ErrorReason(str, Enum):
     """受控错误原因枚举 —— 按业务语义分类，可直接 JSON 序列化。
@@ -61,43 +61,43 @@ class ErrorReason(str, Enum):
     """
 
     # --- auth / billing ---
-    AUTH_INVALID = "auth_invalid"          # API key 失效 / 认证失败
-    BILLING = "billing"                    # 账单欠费 / 信用卡失效
+    AUTH_INVALID = "auth_invalid"  # API key 失效 / 认证失败
+    BILLING = "billing"  # 账单欠费 / 信用卡失效
 
     # --- quota / rate limit ---
-    QUOTA_EXHAUSTED = "quota_exhausted"    # 配额耗尽（需充值，不可恢复）
-    RATE_LIMITED = "rate_limited"          # 限流（等一会就好，可恢复）
+    QUOTA_EXHAUSTED = "quota_exhausted"  # 配额耗尽（需充值，不可恢复）
+    RATE_LIMITED = "rate_limited"  # 限流（等一会就好，可恢复）
 
     # --- server errors ---
-    SERVER_ERROR = "server_error"          # 500 内部错误
-    BAD_GATEWAY = "bad_gateway"            # 502 网关错误
+    SERVER_ERROR = "server_error"  # 500 内部错误
+    BAD_GATEWAY = "bad_gateway"  # 502 网关错误
     SERVICE_UNAVAILABLE = "service_unavailable"  # 503 服务不可用 / overloaded
 
     # --- transport ---
-    CONNECT_ERROR = "connect_error"        # 连接失败 / DNS / 拒连
-    TIMEOUT = "timeout"                   # 请求超时
+    CONNECT_ERROR = "connect_error"  # 连接失败 / DNS / 拒连
+    TIMEOUT = "timeout"  # 请求超时
 
     # --- payload ---
     CONTEXT_OVERFLOW = "context_overflow"  # 上下文超长
-    CONTENT_BLOCKED = "content_blocked"    # 内容策略拦截 / safety
-    MODEL_NOT_FOUND = "model_not_found"    # 模型名错误 / 不存在
-    FORMAT_ERROR = "format_error"          # 请求格式错误 / 参数非法
+    CONTENT_BLOCKED = "content_blocked"  # 内容策略拦截 / safety
+    MODEL_NOT_FOUND = "model_not_found"  # 模型名错误 / 不存在
+    FORMAT_ERROR = "format_error"  # 请求格式错误 / 参数非法
 
     # --- runtime ---
-    BUDGET_EXCEEDED = "budget_exceeded"    # 预算耗尽（运行时自产）
+    BUDGET_EXCEEDED = "budget_exceeded"  # 预算耗尽（运行时自产）
     RUNTIME_LOOP_DETECTED = "runtime_loop_detected"  # 死循环检测（运行时自产）
     TOOL_NOT_AVAILABLE = "tool_not_available"  # 工具不可用 / 熔断中
 
     # --- catch-all ---
-    UNKNOWN = "unknown"                    # 未知错误（默认不可重试）
+    UNKNOWN = "unknown"  # 未知错误（默认不可重试）
 
 
 class ErrorLayer(str, Enum):
     """错误来源层 —— 决定 classify_error 的分派路径。"""
 
-    LLM = "llm"          # LLM Provider 异常
-    TOOL = "tool"        # 工具调用异常
-    HTTP = "http"        # HTTP 应用层异常（有 status_code）
+    LLM = "llm"  # LLM Provider 异常
+    TOOL = "tool"  # 工具调用异常
+    HTTP = "http"  # HTTP 应用层异常（有 status_code）
     TRANSPORT = "transport"  # 传输层异常（连接 / 超时 / 网络）
     RUNTIME = "runtime"  # 运行时自产异常
 
@@ -106,23 +106,26 @@ class ErrorLayer(str, Enum):
 # 不可重试原因清单 —— 显式列出，安全默认
 # ------------------------------------------------------------------
 
-NON_RETRYABLE_REASONS: frozenset[ErrorReason] = frozenset({
-    ErrorReason.AUTH_INVALID,
-    ErrorReason.BILLING,
-    ErrorReason.QUOTA_EXHAUSTED,
-    ErrorReason.CONTENT_BLOCKED,
-    ErrorReason.MODEL_NOT_FOUND,
-    ErrorReason.FORMAT_ERROR,
-    ErrorReason.BUDGET_EXCEEDED,
-    ErrorReason.RUNTIME_LOOP_DETECTED,
-    ErrorReason.TOOL_NOT_AVAILABLE,
-    ErrorReason.UNKNOWN,  # ← 安全默认：未知错误不盲目重试
-})
+NON_RETRYABLE_REASONS: frozenset[ErrorReason] = frozenset(
+    {
+        ErrorReason.AUTH_INVALID,
+        ErrorReason.BILLING,
+        ErrorReason.QUOTA_EXHAUSTED,
+        ErrorReason.CONTENT_BLOCKED,
+        ErrorReason.MODEL_NOT_FOUND,
+        ErrorReason.FORMAT_ERROR,
+        ErrorReason.BUDGET_EXCEEDED,
+        ErrorReason.RUNTIME_LOOP_DETECTED,
+        ErrorReason.TOOL_NOT_AVAILABLE,
+        ErrorReason.UNKNOWN,  # ← 安全默认：未知错误不盲目重试
+    }
+)
 
 
 # ------------------------------------------------------------------
 # 归一化错误对象
 # ------------------------------------------------------------------
+
 
 @dataclass
 class ClassifiedError:
@@ -132,13 +135,13 @@ class ClassifiedError:
     可序列化为 dict，便于写入 event log / LangFuse span / 告警系统。
     """
 
-    reason: ErrorReason              # 归一化原因
-    code: str                         # 原始错误码 / 异常类名
-    retryable: bool                   # 是否可重试
-    status_code: int | None = None    # HTTP 状态码（如有）
-    provider: str | None = None       # LLM provider 名（anthropic / openai / dashscope）
-    model: str | None = None          # 模型名（如 claude-sonnet-4-6）
-    raw_message: str = ""             # 原始错误消息（已截断）
+    reason: ErrorReason  # 归一化原因
+    code: str  # 原始错误码 / 异常类名
+    retryable: bool  # 是否可重试
+    status_code: int | None = None  # HTTP 状态码（如有）
+    provider: str | None = None  # LLM provider 名（anthropic / openai / dashscope）
+    model: str | None = None  # 模型名（如 claude-sonnet-4-6）
+    raw_message: str = ""  # 原始错误消息（已截断）
     retry_after_seconds: float | None = None  # Retry-After header（秒）
     context: dict[str, Any] = field(default_factory=dict)  # 扩展上下文
 
@@ -175,26 +178,30 @@ class ClassifiedError:
 # ------------------------------------------------------------------
 
 # 永久性错误状态码 —— 不可重试，直接抛
-PERMANENT_STATUS_CODES: frozenset[int] = frozenset({
-    400,  # Bad Request
-    401,  # Unauthorized
-    402,  # Payment Required
-    403,  # Forbidden
-    404,  # Not Found
-    422,  # Unprocessable Entity
-})
+PERMANENT_STATUS_CODES: frozenset[int] = frozenset(
+    {
+        400,  # Bad Request
+        401,  # Unauthorized
+        402,  # Payment Required
+        403,  # Forbidden
+        404,  # Not Found
+        422,  # Unprocessable Entity
+    }
+)
 
 # 可重试状态码 —— 服务端临时故障或限流
-RETRYABLE_STATUS_CODES: frozenset[int] = frozenset({
-    408,  # Request Timeout
-    425,  # Too Early
-    429,  # Too Many Requests（需进一步区分 quota vs rate_limit）
-    500,  # Internal Server Error
-    502,  # Bad Gateway
-    503,  # Service Unavailable
-    504,  # Gateway Timeout
-    529,  # Provider Overloaded（Anthropic 专用，提示降级 fallback model）
-})
+RETRYABLE_STATUS_CODES: frozenset[int] = frozenset(
+    {
+        408,  # Request Timeout
+        425,  # Too Early
+        429,  # Too Many Requests（需进一步区分 quota vs rate_limit）
+        500,  # Internal Server Error
+        502,  # Bad Gateway
+        503,  # Service Unavailable
+        504,  # Gateway Timeout
+        529,  # Provider Overloaded（Anthropic 专用，提示降级 fallback model）
+    }
+)
 
 # 状态码 → ErrorReason 默认映射（429 / 529 需二次识别，见 _classify_http）
 _STATUS_REASON_MAP: dict[int, ErrorReason] = {

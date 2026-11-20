@@ -76,7 +76,9 @@ class DefaultActivation:
     ):
         settings = get_settings()
         self._freq_weight = (
-            settings.MEMORY_ACTIVATION_FREQ_WEIGHT if freq_weight is None else freq_weight
+            settings.MEMORY_ACTIVATION_FREQ_WEIGHT
+            if freq_weight is None
+            else freq_weight
         )
         self._recency_window_days = (
             settings.MEMORY_ACTIVATION_RECENCY_WINDOW_DAYS
@@ -84,7 +86,9 @@ class DefaultActivation:
             else recency_window_days
         )
         self._recency_boost = (
-            settings.MEMORY_ACTIVATION_RECENCY_BOOST if recency_boost is None else recency_boost
+            settings.MEMORY_ACTIVATION_RECENCY_BOOST
+            if recency_boost is None
+            else recency_boost
         )
         self._default_ttl_days = default_ttl_days
 

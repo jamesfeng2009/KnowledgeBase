@@ -23,11 +23,11 @@ from app.deps import get_current_active_user, require_module
 from app.models.user import User
 from app.schemas.common import ApiResponse, BehaviorReport, RecommendationItem
 from app.services.permission_service import PermissionService
-from app.services.recommendation_service import RecommendationService
 from app.services.rebuild_idempotency import (
     acquire_rebuild_lock,
     release_rebuild_lock,
 )
+from app.services.recommendation_service import RecommendationService
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -53,7 +53,9 @@ async def get_user_recommendations(
 ) -> ApiResponse[list[RecommendationItem]]:
     """个性化推荐（猜你想看）— 结果经权限过滤。"""
     service = _build_service(db, request)
-    permission = PermissionService(db, user, tenant_id=getattr(request.state, "tenant_id", None))
+    permission = PermissionService(
+        db, user, tenant_id=getattr(request.state, "tenant_id", None)
+    )
     items = await service.recommend_for_user(
         user.id,
         top_k=top_k,
@@ -77,7 +79,9 @@ async def get_related_documents(
         return ApiResponse(code=400, data=None, message="无效的文档 ID")
 
     service = _build_service(db, request)
-    permission = PermissionService(db, current_user, tenant_id=getattr(request.state, "tenant_id", None))
+    permission = PermissionService(
+        db, current_user, tenant_id=getattr(request.state, "tenant_id", None)
+    )
     items = await service.get_related_documents(
         doc_uuid,
         current_user.id,
@@ -144,9 +148,7 @@ async def trigger_rebuild(
         acquired, existing = True, None
 
     if not acquired:
-        logger.info(
-            "recommend.rebuild.reused_existing", scope=scope, task_id=existing
-        )
+        logger.info("recommend.rebuild.reused_existing", scope=scope, task_id=existing)
         return ApiResponse(
             code=0,
             data={

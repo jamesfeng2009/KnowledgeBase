@@ -70,14 +70,56 @@ def _public_endpoints() -> set[tuple[str, str]]:
 #: 公开端点白名单。每项 = (文件, 函数, 租户通道, 凭据/签名, 限流)
 PUBLIC_ENDPOINTS = {
     # 文件, 函数, 租户通道, 凭据/签名, 限流
-    ("v1/auth.py", "register", "system_session", "REGISTRATION_ENABLED 开关", "网关 + 全局中间件"),
+    (
+        "v1/auth.py",
+        "register",
+        "system_session",
+        "REGISTRATION_ENABLED 开关",
+        "网关 + 全局中间件",
+    ),
     ("v1/auth.py", "login", "system_session", "密码校验", "网关 + 全局中间件"),
-    ("v1/oidc.py", "oidc_login", "no_db", "OIDC state/一次性 code", "网关 + 全局中间件"),
-    ("v1/oidc.py", "oidc_callback", "system_session", "OIDC 一次性 code", "网关 + 全局中间件"),
-    ("v1/widget.py", "widget_ask", "signed_token", "HMAC widget token", "网关 + 进程内限流"),
-    ("v1/external_webhooks.py", "receive_external_webhook", "verified_credential", "HMAC 签名（默认强制）", "网关 + 全局中间件"),
-    ("v1/im.py", "wecom_callback_verify", "no_db", "企微 SHA1 签名", "网关 + 全局中间件"),
-    ("v1/im.py", "wecom_callback_events", "no_db", "企微 SHA1 签名", "网关 + 全局中间件"),
+    (
+        "v1/oidc.py",
+        "oidc_login",
+        "no_db",
+        "OIDC state/一次性 code",
+        "网关 + 全局中间件",
+    ),
+    (
+        "v1/oidc.py",
+        "oidc_callback",
+        "system_session",
+        "OIDC 一次性 code",
+        "网关 + 全局中间件",
+    ),
+    (
+        "v1/widget.py",
+        "widget_ask",
+        "signed_token",
+        "HMAC widget token",
+        "网关 + 进程内限流",
+    ),
+    (
+        "v1/external_webhooks.py",
+        "receive_external_webhook",
+        "verified_credential",
+        "HMAC 签名（默认强制）",
+        "网关 + 全局中间件",
+    ),
+    (
+        "v1/im.py",
+        "wecom_callback_verify",
+        "no_db",
+        "企微 SHA1 签名",
+        "网关 + 全局中间件",
+    ),
+    (
+        "v1/im.py",
+        "wecom_callback_events",
+        "no_db",
+        "企微 SHA1 签名",
+        "网关 + 全局中间件",
+    ),
     ("v1/i18n.py", "locales", "no_db", "纯静态只读", "网关 + 全局中间件"),
     ("v1/i18n.py", "messages", "no_db", "纯静态只读", "网关 + 全局中间件"),
 }
@@ -96,7 +138,10 @@ def _function_source(rel_path: str, name: str) -> str:
     src = path.read_text(encoding="utf-8")
     tree = ast.parse(src)
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == name
+        ):
             return ast.get_source_segment(src, node) or ""
     raise AssertionError(f"找不到函数 {rel_path}::{name}")
 
@@ -209,9 +254,7 @@ def test_queue_monitor_keeps_injected_tenant_session() -> None:
 # ======================================================================
 
 
-@pytest.mark.parametrize(
-    "name", ["wecom_callback_verify", "wecom_callback_events"]
-)
+@pytest.mark.parametrize("name", ["wecom_callback_verify", "wecom_callback_events"])
 def test_both_wecom_callbacks_verify_signature(name: str) -> None:
     """旧版 POST 事件回调完全没验签，任何匿名 POST 都能拿 200。"""
     src = _function_source("app/api/v1/im.py", name)
@@ -222,7 +265,7 @@ def test_both_wecom_callbacks_verify_signature(name: str) -> None:
 def test_wecom_missing_token_is_rejected() -> None:
     """WECOM_BOT_TOKEN 默认为空；空 token 的 sha1 仍可算，必须显式拒绝。"""
     src = _function_source("app/api/v1/im.py", "_verify_wecom_callback")
-    assert 'status_code=503' in src or "HTTPException(503" in src
+    assert "status_code=503" in src or "HTTPException(503" in src
     assert "WECOM_BOT_TOKEN" in src
 
 

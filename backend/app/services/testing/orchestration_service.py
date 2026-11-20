@@ -206,11 +206,7 @@ class TestOrchestrationService:
         offset = (page - 1) * size
         stmt = select(TestPlan).where(*conditions)
         stmt = apply_tenant_filter(stmt, TestPlan, self._tenant_id)
-        stmt = (
-            stmt.order_by(TestPlan.created_at.desc())
-            .offset(offset)
-            .limit(size)
-        )
+        stmt = stmt.order_by(TestPlan.created_at.desc()).offset(offset).limit(size)
         result = await self.db.execute(stmt)
         plans = list(result.scalars().all())
         return plans, total
@@ -397,9 +393,7 @@ class TestOrchestrationService:
         if conditions:
             stmt = stmt.where(*conditions)
         stmt = apply_tenant_filter(stmt, TestExecution, self._tenant_id)
-        stmt = stmt.order_by(
-            TestExecution.created_at.desc()
-        ).offset(offset).limit(size)
+        stmt = stmt.order_by(TestExecution.created_at.desc()).offset(offset).limit(size)
 
         result = await self.db.execute(stmt)
         executions = list(result.scalars().all())

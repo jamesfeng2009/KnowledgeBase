@@ -60,12 +60,8 @@ class SearchResult(BaseModel):
     score: float = Field(..., ge=0.0, le=1.0, description="相关性分数（0-1）")
     source: str | None = Field(default=None, description="来源标识")
     kb_name: str | None = Field(default=None, description="所属知识库名称")
-    highlights: list[str] | None = Field(
-        default=None, description="高亮匹配片段列表"
-    )
-    metadata: dict[str, Any] | None = Field(
-        default=None, description="附加元数据"
-    )
+    highlights: list[str] | None = Field(default=None, description="高亮匹配片段列表")
+    metadata: dict[str, Any] | None = Field(default=None, description="附加元数据")
 
 
 class SearchResponse(BaseModel):

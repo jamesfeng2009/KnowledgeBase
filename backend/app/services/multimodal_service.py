@@ -39,6 +39,7 @@ class MultimodalService:
         """懒加载 VLM Provider。"""
         if self._vlm is None:
             from app.vlm.provider import get_vision_provider
+
             self._vlm = get_vision_provider()
         return self._vlm
 

@@ -30,15 +30,23 @@ class WikiPage(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     __tablename__ = "wiki_pages"
 
     kb_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("knowledge_bases.id"), nullable=False, index=True,
+        UUID(as_uuid=True),
+        ForeignKey("knowledge_bases.id"),
+        nullable=False,
+        index=True,
         comment="所属知识库 ID",
     )
     source_doc_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("documents.id"), nullable=True, index=True,
+        UUID(as_uuid=True),
+        ForeignKey("documents.id"),
+        nullable=True,
+        index=True,
         comment="来源文档 ID（人工页面为 NULL）",
     )
     title: Mapped[str] = mapped_column(String(255), nullable=False, comment="页面标题")
-    content_md: Mapped[str] = mapped_column(Text, nullable=False, comment="Markdown 正文")
+    content_md: Mapped[str] = mapped_column(
+        Text, nullable=False, comment="Markdown 正文"
+    )
     status: Mapped[str] = mapped_column(
         String(20), default="draft", nullable=False, comment="状态: draft/published"
     )
@@ -57,14 +65,19 @@ class WikiPageVersion(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "wiki_page_versions"
 
     page_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("wiki_pages.id"), nullable=False, index=True,
+        UUID(as_uuid=True),
+        ForeignKey("wiki_pages.id"),
+        nullable=False,
+        index=True,
         comment="页面 ID",
     )
     version_seq: Mapped[int] = mapped_column(
         Integer, nullable=False, default=1, comment="版本号（页内递增，从 1 开始）"
     )
     title: Mapped[str] = mapped_column(String(255), nullable=False, comment="版本标题")
-    content_md: Mapped[str] = mapped_column(Text, nullable=False, comment="版本 Markdown 快照")
+    content_md: Mapped[str] = mapped_column(
+        Text, nullable=False, comment="版本 Markdown 快照"
+    )
     author_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, comment="操作者 ID"
     )
@@ -79,15 +92,24 @@ class WikiPageLink(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "wiki_page_links"
 
     kb_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("knowledge_bases.id"), nullable=False, index=True,
+        UUID(as_uuid=True),
+        ForeignKey("knowledge_bases.id"),
+        nullable=False,
+        index=True,
         comment="所属知识库 ID",
     )
     from_page_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("wiki_pages.id"), nullable=False, index=True,
+        UUID(as_uuid=True),
+        ForeignKey("wiki_pages.id"),
+        nullable=False,
+        index=True,
         comment="来源页面 ID",
     )
     to_page_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("wiki_pages.id"), nullable=False, index=True,
+        UUID(as_uuid=True),
+        ForeignKey("wiki_pages.id"),
+        nullable=False,
+        index=True,
         comment="目标页面 ID",
     )
     link_text: Mapped[str] = mapped_column(

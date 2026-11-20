@@ -66,13 +66,19 @@ class AnalyticsService:
             return_exceptions=True,
         )
         keys = [
-            "search_hotwords", "zero_click_queries", "popular_documents",
-            "knowledge_coverage", "knowledge_freshness", "top_contributors",
+            "search_hotwords",
+            "zero_click_queries",
+            "popular_documents",
+            "knowledge_coverage",
+            "knowledge_freshness",
+            "top_contributors",
         ]
         dashboard = {}
         for key, result in zip(keys, results):
             if isinstance(result, Exception):
-                logger.warning("analytics.dashboard_error", metric=key, error=str(result))
+                logger.warning(
+                    "analytics.dashboard_error", metric=key, error=str(result)
+                )
                 dashboard[key] = []
             else:
                 dashboard[key] = result
@@ -83,7 +89,9 @@ class AnalyticsService:
     # ------------------------------------------------------------------
 
     async def get_search_hotwords(
-        self, days: int = 30, top_k: int = 20,
+        self,
+        days: int = 30,
+        top_k: int = 20,
     ) -> list[dict]:
         """搜索热词 Top N — 按搜索次数降序。
 
@@ -95,23 +103,21 @@ class AnalyticsService:
             [{"keyword": "报销", "count": 42}, ...]
         """
         since = datetime.utcnow() - timedelta(days=days)
-        stmt = (
-            select(
-                SearchLog.query,
-                func.count(SearchLog.id).label("search_count"),
-            )
-            .where(SearchLog.created_at >= since)
-        )
+        stmt = select(
+            SearchLog.query,
+            func.count(SearchLog.id).label("search_count"),
+        ).where(SearchLog.created_at >= since)
         stmt = apply_tenant_filter(stmt, SearchLog, self._tenant_id)
-        stmt = stmt.group_by(SearchLog.query).order_by(desc("search_count")).limit(top_k)
+        stmt = (
+            stmt.group_by(SearchLog.query).order_by(desc("search_count")).limit(top_k)
+        )
         result = await self.db.execute(stmt)
-        return [
-            {"keyword": r.query, "count": r.search_count}
-            for r in result
-        ]
+        return [{"keyword": r.query, "count": r.search_count} for r in result]
 
     async def get_zero_click_queries(
-        self, days: int = 30, top_k: int = 20,
+        self,
+        days: int = 30,
+        top_k: int = 20,
     ) -> list[dict]:
         """零点击搜索词 — 无结果或用户未点击的查询。
 
@@ -125,26 +131,22 @@ class AnalyticsService:
             [{"keyword": "报销", "count": 5}, ...]
         """
         since = datetime.utcnow() - timedelta(days=days)
-        stmt = (
-            select(
-                SearchLog.query,
-                func.count(SearchLog.id).label("count"),
-            )
-            .where(
-                SearchLog.created_at >= since,
-                SearchLog.clicked.is_(False),
-            )
+        stmt = select(
+            SearchLog.query,
+            func.count(SearchLog.id).label("count"),
+        ).where(
+            SearchLog.created_at >= since,
+            SearchLog.clicked.is_(False),
         )
         stmt = apply_tenant_filter(stmt, SearchLog, self._tenant_id)
         stmt = stmt.group_by(SearchLog.query).order_by(desc("count")).limit(top_k)
         result = await self.db.execute(stmt)
-        return [
-            {"keyword": r.query, "count": r.count}
-            for r in result
-        ]
+        return [{"keyword": r.query, "count": r.count} for r in result]
 
     async def get_popular_documents(
-        self, days: int = 30, top_k: int = 10,
+        self,
+        days: int = 30,
+        top_k: int = 10,
     ) -> list[dict]:
         """文档热度排行 — 按浏览量降序。
 
@@ -155,16 +157,14 @@ class AnalyticsService:
         Returns:
             [{"id": "...", "title": "...", "views": 123}, ...]
         """
-        stmt = (
-            select(Document.id, Document.title, Document.view_count)
-            .where(Document.deleted_at.is_(None))
+        stmt = select(Document.id, Document.title, Document.view_count).where(
+            Document.deleted_at.is_(None)
         )
         stmt = apply_tenant_filter(stmt, Document, self._tenant_id)
         stmt = stmt.order_by(desc(Document.view_count)).limit(top_k)
         result = await self.db.execute(stmt)
         return [
-            {"id": str(r.id), "title": r.title, "views": r.view_count}
-            for r in result
+            {"id": str(r.id), "title": r.title, "views": r.view_count} for r in result
         ]
 
     async def get_knowledge_coverage(self) -> dict:
@@ -177,12 +177,9 @@ class AnalyticsService:
             {"covered_topics": 15, "searched_topics": 20, "coverage_ratio": 0.75}
         """
         # 已覆盖主题（文档分类去重）
-        covered_stmt = (
-            select(func.count(func.distinct(Document.category)))
-            .where(
-                Document.deleted_at.is_(None),
-                Document.category.isnot(None),
-            )
+        covered_stmt = select(func.count(func.distinct(Document.category))).where(
+            Document.deleted_at.is_(None),
+            Document.category.isnot(None),
         )
         covered_stmt = apply_tenant_filter(covered_stmt, Document, self._tenant_id)
         covered_result = await self.db.execute(covered_stmt)
@@ -190,9 +187,8 @@ class AnalyticsService:
 
         # 搜索主题（近 30 天热词去重）
         since = datetime.utcnow() - timedelta(days=30)
-        searched_stmt = (
-            select(func.count(func.distinct(SearchLog.query)))
-            .where(SearchLog.created_at >= since)
+        searched_stmt = select(func.count(func.distinct(SearchLog.query))).where(
+            SearchLog.created_at >= since
         )
         searched_stmt = apply_tenant_filter(searched_stmt, SearchLog, self._tenant_id)
         searched_result = await self.db.execute(searched_stmt)
@@ -206,7 +202,8 @@ class AnalyticsService:
         }
 
     async def get_knowledge_freshness(
-        self, tenant_id: uuid.UUID | None = None,
+        self,
+        tenant_id: uuid.UUID | None = None,
     ) -> dict:
         """知识新鲜度 — 过期/即将过期文档比例。
 
@@ -243,8 +240,8 @@ class AnalyticsService:
             logger.warning("analytics.freshness_error", error=str(exc))
             return await self._freshness_from_pg()
 
-        total_stmt = (
-            select(func.count(Document.id)).where(Document.deleted_at.is_(None))
+        total_stmt = select(func.count(Document.id)).where(
+            Document.deleted_at.is_(None)
         )
         total_stmt = apply_tenant_filter(total_stmt, Document, self._tenant_id)
         total_result = await self.db.execute(total_stmt)
@@ -273,35 +270,33 @@ class AnalyticsService:
         expire_threshold = now - timedelta(days=FRESHNESS_EXPIRE_DAYS)
         expiring_threshold = now - timedelta(days=FRESHNESS_EXPIRING_SOON_DAYS)
 
-        total_stmt = (
-            select(func.count(Document.id)).where(Document.deleted_at.is_(None))
+        total_stmt = select(func.count(Document.id)).where(
+            Document.deleted_at.is_(None)
         )
         total_stmt = apply_tenant_filter(total_stmt, Document, self._tenant_id)
         total_result = await self.db.execute(total_stmt)
         total_docs = total_result.scalar() or 0
 
-        expired_stmt = (
-            select(func.count(Document.id)).where(
-                Document.deleted_at.is_(None),
-                Document.updated_at < expire_threshold,
-            )
+        expired_stmt = select(func.count(Document.id)).where(
+            Document.deleted_at.is_(None),
+            Document.updated_at < expire_threshold,
         )
         expired_stmt = apply_tenant_filter(expired_stmt, Document, self._tenant_id)
         expired_result = await self.db.execute(expired_stmt)
         expired = expired_result.scalar() or 0
 
-        expiring_stmt = (
-            select(func.count(Document.id)).where(
-                Document.deleted_at.is_(None),
-                Document.updated_at >= expire_threshold,
-                Document.updated_at < expiring_threshold,
-            )
+        expiring_stmt = select(func.count(Document.id)).where(
+            Document.deleted_at.is_(None),
+            Document.updated_at >= expire_threshold,
+            Document.updated_at < expiring_threshold,
         )
         expiring_stmt = apply_tenant_filter(expiring_stmt, Document, self._tenant_id)
         expiring_result = await self.db.execute(expiring_stmt)
         expiring_soon = expiring_result.scalar() or 0
 
-        freshness_rate = round((total_docs - expired) / total_docs, 2) if total_docs > 0 else 1.0
+        freshness_rate = (
+            round((total_docs - expired) / total_docs, 2) if total_docs > 0 else 1.0
+        )
 
         return {
             "total_documents": total_docs,
@@ -312,7 +307,9 @@ class AnalyticsService:
         }
 
     async def get_top_contributors(
-        self, days: int = 30, top_k: int = 10,
+        self,
+        days: int = 30,
+        top_k: int = 10,
     ) -> list[dict]:
         """专家贡献排行 — 按文档数+回答数+评论数加权。
 
@@ -328,15 +325,12 @@ class AnalyticsService:
         since = datetime.utcnow() - timedelta(days=days)
 
         # 文档作者统计
-        doc_stmt = (
-            select(
-                Document.owner_id,
-                func.count(Document.id).label("doc_count"),
-            )
-            .where(
-                Document.deleted_at.is_(None),
-                Document.created_at >= since,
-            )
+        doc_stmt = select(
+            Document.owner_id,
+            func.count(Document.id).label("doc_count"),
+        ).where(
+            Document.deleted_at.is_(None),
+            Document.created_at >= since,
         )
         doc_stmt = apply_tenant_filter(doc_stmt, Document, self._tenant_id)
         doc_stmt = doc_stmt.group_by(Document.owner_id)
@@ -347,16 +341,13 @@ class AnalyticsService:
                 doc_counts[str(r.owner_id)] = r.doc_count
 
         # 采纳回答统计
-        answer_stmt = (
-            select(
-                QaAnswer.user_id,
-                func.count(QaAnswer.id).label("answer_count"),
-                func.sum(cast(QaAnswer.is_accepted, Integer)).label("accepted_count"),
-            )
-            .where(
-                QaAnswer.deleted_at.is_(None),
-                QaAnswer.created_at >= since,
-            )
+        answer_stmt = select(
+            QaAnswer.user_id,
+            func.count(QaAnswer.id).label("answer_count"),
+            func.sum(cast(QaAnswer.is_accepted, Integer)).label("accepted_count"),
+        ).where(
+            QaAnswer.deleted_at.is_(None),
+            QaAnswer.created_at >= since,
         )
         answer_stmt = apply_tenant_filter(answer_stmt, QaAnswer, self._tenant_id)
         answer_stmt = answer_stmt.group_by(QaAnswer.user_id)
@@ -370,17 +361,16 @@ class AnalyticsService:
                 }
 
         # 评论统计
-        comment_stmt = (
-            select(
-                DocumentComment.user_id,
-                func.count(DocumentComment.id).label("comment_count"),
-            )
-            .where(
-                DocumentComment.deleted_at.is_(None),
-                DocumentComment.created_at >= since,
-            )
+        comment_stmt = select(
+            DocumentComment.user_id,
+            func.count(DocumentComment.id).label("comment_count"),
+        ).where(
+            DocumentComment.deleted_at.is_(None),
+            DocumentComment.created_at >= since,
         )
-        comment_stmt = apply_tenant_filter(comment_stmt, DocumentComment, self._tenant_id)
+        comment_stmt = apply_tenant_filter(
+            comment_stmt, DocumentComment, self._tenant_id
+        )
         comment_stmt = comment_stmt.group_by(DocumentComment.user_id)
         comment_result = await self.db.execute(comment_stmt)
         comment_counts: dict = {}

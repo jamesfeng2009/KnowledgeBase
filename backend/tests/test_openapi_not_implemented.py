@@ -61,9 +61,9 @@ def client() -> TestClient:
 
 def _assert_not_implemented(resp, capability_hint: str) -> None:
     """统一断言：501 + code=501 + data is None + message 说明未实现。"""
-    assert resp.status_code == NOT_IMPLEMENTED_CODE, (
-        f"预期 501，实际 {resp.status_code}：{resp.text}"
-    )
+    assert (
+        resp.status_code == NOT_IMPLEMENTED_CODE
+    ), f"预期 501，实际 {resp.status_code}：{resp.text}"
     body = resp.json()
     assert body["code"] == NOT_IMPLEMENTED_CODE
     assert body["data"] is None, "未实现能力不应返回占位 data，避免被当成功"

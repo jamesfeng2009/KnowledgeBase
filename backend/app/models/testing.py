@@ -24,7 +24,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, SoftDeleteMixin, TimestampMixin, UUIDMixin
 
-
 # ======================================================================
 # 测试项目 — 顶层容器，关联 PRD/技术方案/接口文档
 # ======================================================================
@@ -41,14 +40,15 @@ class TestProject(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
 
     __tablename__ = "test_projects"
 
-    name: Mapped[str] = mapped_column(
-        String(255), nullable=False, comment="项目名称"
-    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False, comment="项目名称")
     description: Mapped[str | None] = mapped_column(
         Text, nullable=True, comment="项目描述"
     )
     owner_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, comment="项目负责人 ID"
+        UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False,
+        comment="项目负责人 ID",
     )
     # 关联文档 ID 列表（JSONB 存储 UUID 字符串列表）
     prd_doc_ids: Mapped[list | None] = mapped_column(
@@ -69,10 +69,10 @@ class TestProject(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     )
 
     # 关系
-    requirements: Mapped[list["TestRequirement"]] = relationship(
+    requirements: Mapped[list[TestRequirement]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )
-    test_plans: Mapped[list["TestPlan"]] = relationship(
+    test_plans: Mapped[list[TestPlan]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )
 
@@ -92,21 +92,24 @@ class TestRequirement(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     __tablename__ = "test_requirements"
 
     project_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("test_projects.id"), nullable=False, comment="项目 ID"
+        UUID(as_uuid=True),
+        ForeignKey("test_projects.id"),
+        nullable=False,
+        comment="项目 ID",
     )
     # 需求来源文档（PRD 或 UI 稿的 Document ID）
     source_doc_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), nullable=True, comment="来源文档 ID（知识库 Document）"
     )
-    title: Mapped[str] = mapped_column(
-        String(500), nullable=False, comment="需求标题"
-    )
+    title: Mapped[str] = mapped_column(String(500), nullable=False, comment="需求标题")
     description: Mapped[str | None] = mapped_column(
         Text, nullable=True, comment="需求详细描述"
     )
     # 需求分类: functional(功能) / non_functional(非功能) / ui(界面) / api(接口) / performance(性能)
     category: Mapped[str] = mapped_column(
-        String(30), default="functional", comment="需求分类: functional/non_functional/ui/api/performance"
+        String(30),
+        default="functional",
+        comment="需求分类: functional/non_functional/ui/api/performance",
     )
     priority: Mapped[str] = mapped_column(
         String(20), default="normal", comment="优先级: low/normal/high/critical"
@@ -123,7 +126,9 @@ class TestRequirement(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
         String(20), default="ai_extract", comment="来源: ai_extract/manual"
     )
     status: Mapped[str] = mapped_column(
-        String(20), default="pending", comment="状态: pending/analyzed/generating_cases/cases_ready"
+        String(20),
+        default="pending",
+        comment="状态: pending/analyzed/generating_cases/cases_ready",
     )
     # 知识回流：变更线程 ID（追踪需求的版本演化，用于关联历史知识资产）
     change_thread_id: Mapped[str | None] = mapped_column(
@@ -136,7 +141,7 @@ class TestRequirement(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
 
     # 关系
     project: Mapped[TestProject] = relationship(back_populates="requirements")
-    test_cases: Mapped[list["TestCase"]] = relationship(
+    test_cases: Mapped[list[TestCase]] = relationship(
         back_populates="requirement", cascade="all, delete-orphan"
     )
 
@@ -156,14 +161,18 @@ class TestCase(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     __tablename__ = "test_cases"
 
     project_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("test_projects.id"), nullable=False, comment="项目 ID"
+        UUID(as_uuid=True),
+        ForeignKey("test_projects.id"),
+        nullable=False,
+        comment="项目 ID",
     )
     requirement_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("test_requirements.id"), nullable=True, comment="关联需求 ID"
+        UUID(as_uuid=True),
+        ForeignKey("test_requirements.id"),
+        nullable=True,
+        comment="关联需求 ID",
     )
-    title: Mapped[str] = mapped_column(
-        String(500), nullable=False, comment="用例标题"
-    )
+    title: Mapped[str] = mapped_column(String(500), nullable=False, comment="用例标题")
     description: Mapped[str | None] = mapped_column(
         Text, nullable=True, comment="用例描述"
     )
@@ -181,19 +190,21 @@ class TestCase(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     )
     # 测试类型: functional/api/ui/performance/security/compatibility
     test_type: Mapped[str] = mapped_column(
-        String(30), default="functional", comment="测试类型: functional/api/ui/performance/security/compatibility"
+        String(30),
+        default="functional",
+        comment="测试类型: functional/api/ui/performance/security/compatibility",
     )
     priority: Mapped[str] = mapped_column(
         String(20), default="normal", comment="优先级: low/normal/high/critical"
     )
     # 用例状态
     status: Mapped[str] = mapped_column(
-        String(20), default="draft", comment="状态: draft/pending_review/approved/active/deprecated"
+        String(20),
+        default="draft",
+        comment="状态: draft/pending_review/approved/active/deprecated",
     )
     # 标签
-    tags: Mapped[list | None] = mapped_column(
-        JSONB, nullable=True, comment="标签列表"
-    )
+    tags: Mapped[list | None] = mapped_column(JSONB, nullable=True, comment="标签列表")
     # 创建方式
     created_by: Mapped[str] = mapped_column(
         String(20), default="ai_generate", comment="创建方式: ai_generate/manual"
@@ -216,11 +227,13 @@ class TestCase(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     )
 
     # 关系
-    requirement: Mapped[TestRequirement | None] = relationship(back_populates="test_cases")
-    reviews: Mapped[list["TestReview"]] = relationship(
+    requirement: Mapped[TestRequirement | None] = relationship(
+        back_populates="test_cases"
+    )
+    reviews: Mapped[list[TestReview]] = relationship(
         back_populates="test_case", cascade="all, delete-orphan"
     )
-    executions: Mapped[list["TestExecution"]] = relationship(
+    executions: Mapped[list[TestExecution]] = relationship(
         back_populates="test_case", cascade="all, delete-orphan"
     )
 
@@ -241,7 +254,10 @@ class TestReview(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "test_reviews"
 
     case_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("test_cases.id"), nullable=False, comment="用例 ID"
+        UUID(as_uuid=True),
+        ForeignKey("test_cases.id"),
+        nullable=False,
+        comment="用例 ID",
     )
     submitter_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, comment="提交者 ID"
@@ -253,9 +269,7 @@ class TestReview(UUIDMixin, TimestampMixin, Base):
         String(20), default="pending", comment="状态: pending/approved/rejected"
     )
     # 评审意见
-    comment: Mapped[str | None] = mapped_column(
-        Text, nullable=True, comment="评审意见"
-    )
+    comment: Mapped[str | None] = mapped_column(Text, nullable=True, comment="评审意见")
     # AI 或人工评审建议（JSONB 数组，每项含 type/suggestion/severity）
     suggestions: Mapped[list | None] = mapped_column(
         JSONB, nullable=True, comment="评审建议列表"
@@ -268,7 +282,7 @@ class TestReview(UUIDMixin, TimestampMixin, Base):
         DateTime(timezone=True), nullable=True, comment="评审处理时间"
     )
 
-    test_case: Mapped["TestCase"] = relationship(back_populates="reviews")
+    test_case: Mapped[TestCase] = relationship(back_populates="reviews")
 
 
 # ======================================================================
@@ -286,11 +300,12 @@ class TestPlan(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     __tablename__ = "test_plans"
 
     project_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("test_projects.id"), nullable=False, comment="项目 ID"
+        UUID(as_uuid=True),
+        ForeignKey("test_projects.id"),
+        nullable=False,
+        comment="项目 ID",
     )
-    name: Mapped[str] = mapped_column(
-        String(255), nullable=False, comment="计划名称"
-    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False, comment="计划名称")
     description: Mapped[str | None] = mapped_column(
         Text, nullable=True, comment="计划描述"
     )
@@ -300,7 +315,9 @@ class TestPlan(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     )
     # 执行策略: sequential(顺序) / parallel(并行) / priority_based(按优先级)
     execution_strategy: Mapped[str] = mapped_column(
-        String(30), default="priority_based", comment="执行策略: sequential/parallel/priority_based"
+        String(30),
+        default="priority_based",
+        comment="执行策略: sequential/parallel/priority_based",
     )
     # AI 生成的编排方案（JSONB）
     # 含 execution_order(执行顺序) / node_assignments(节点分配) / dependencies(依赖关系)
@@ -320,7 +337,7 @@ class TestPlan(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
 
     # 关系
     project: Mapped[TestProject] = relationship(back_populates="test_plans")
-    executions: Mapped[list["TestExecution"]] = relationship(
+    executions: Mapped[list[TestExecution]] = relationship(
         back_populates="test_plan", cascade="all, delete-orphan"
     )
 
@@ -340,19 +357,30 @@ class TestExecution(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "test_executions"
 
     plan_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("test_plans.id"), nullable=True, comment="测试计划 ID"
+        UUID(as_uuid=True),
+        ForeignKey("test_plans.id"),
+        nullable=True,
+        comment="测试计划 ID",
     )
     case_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("test_cases.id"), nullable=False, comment="用例 ID"
+        UUID(as_uuid=True),
+        ForeignKey("test_cases.id"),
+        nullable=False,
+        comment="用例 ID",
     )
     executor_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, comment="执行人 ID（人工执行时）"
+        UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=True,
+        comment="执行人 ID（人工执行时）",
     )
     executor: Mapped[str] = mapped_column(
         String(20), default="human", comment="执行者: human/ai"
     )
     status: Mapped[str] = mapped_column(
-        String(20), default="pending", comment="状态: pending/running/passed/failed/blocked/skipped"
+        String(20),
+        default="pending",
+        comment="状态: pending/running/passed/failed/blocked/skipped",
     )
     # 执行结果详情
     result: Mapped[str | None] = mapped_column(

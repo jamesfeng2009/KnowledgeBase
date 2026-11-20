@@ -13,7 +13,6 @@ mock 策略：注入 AsyncMock 的 embedder / vector_store / http_client，
 from __future__ import annotations
 
 import sys
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -62,9 +61,7 @@ class TestVectorSearchFilters:
         self, retriever_with_mocks: HybridRetriever
     ) -> None:
         filters = {"series_id": "prod-a", "depth": 0}
-        await retriever_with_mocks._vector_search(
-            "查询", ["kb1"], 20, filters
-        )
+        await retriever_with_mocks._vector_search("查询", ["kb1"], 20, filters)
         retriever_with_mocks._vector_store.search.assert_called_once()
         call_kwargs = retriever_with_mocks._vector_store.search.call_args.kwargs
         assert call_kwargs.get("filters") == filters
@@ -132,15 +129,22 @@ class TestSearchPassesFilters:
         filters = {"series_id": "s1"}
         # P0-1: search() 会注入 doc_status=published
         expected_filters = {"series_id": "s1", "doc_status": "published"}
-        with patch.object(
-            retriever_with_mocks, "_vector_search", new=AsyncMock(return_value=[])
-        ) as mock_vec, patch.object(
-            retriever_with_mocks, "_fulltext_search", new=AsyncMock(return_value=[])
-        ) as mock_ft, patch.object(
-            retriever_with_mocks, "_cross_modal_search", new=AsyncMock(return_value=[])
-        ) as mock_cm, patch.object(
-            retriever_with_mocks, "_graph_search", new=AsyncMock(return_value=[])
-        ) as mock_graph:
+        with (
+            patch.object(
+                retriever_with_mocks, "_vector_search", new=AsyncMock(return_value=[])
+            ) as mock_vec,
+            patch.object(
+                retriever_with_mocks, "_fulltext_search", new=AsyncMock(return_value=[])
+            ) as mock_ft,
+            patch.object(
+                retriever_with_mocks,
+                "_cross_modal_search",
+                new=AsyncMock(return_value=[]),
+            ) as mock_cm,
+            patch.object(
+                retriever_with_mocks, "_graph_search", new=AsyncMock(return_value=[])
+            ) as mock_graph,
+        ):
             await retriever_with_mocks.search("查询", ["kb1"], 20, filters)
 
         # 向量/全文/跨模态三路应收到含 doc_status 的 filters
@@ -160,14 +164,21 @@ class TestSearchPassesFilters:
         """filters=None 时三路都应收到含 doc_status=published 的 dict（P0-1 注入）。"""
         # P0-1: filters=None 时 search() 也注入 doc_status=published
         expected_filters = {"doc_status": "published"}
-        with patch.object(
-            retriever_with_mocks, "_vector_search", new=AsyncMock(return_value=[])
-        ) as mock_vec, patch.object(
-            retriever_with_mocks, "_fulltext_search", new=AsyncMock(return_value=[])
-        ), patch.object(
-            retriever_with_mocks, "_cross_modal_search", new=AsyncMock(return_value=[])
-        ), patch.object(
-            retriever_with_mocks, "_graph_search", new=AsyncMock(return_value=[])
+        with (
+            patch.object(
+                retriever_with_mocks, "_vector_search", new=AsyncMock(return_value=[])
+            ) as mock_vec,
+            patch.object(
+                retriever_with_mocks, "_fulltext_search", new=AsyncMock(return_value=[])
+            ),
+            patch.object(
+                retriever_with_mocks,
+                "_cross_modal_search",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch.object(
+                retriever_with_mocks, "_graph_search", new=AsyncMock(return_value=[])
+            ),
         ):
             await retriever_with_mocks.search("查询", ["kb1"], 20, None)
 

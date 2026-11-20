@@ -21,7 +21,8 @@ from sqlalchemy import (
     String,
     Text,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.config import get_settings
@@ -75,10 +76,14 @@ class MemoryFact(UUIDMixin, TimestampMixin, Base):
         default=0, comment="召回命中次数（激活值频率增益数据源）"
     )
     last_accessed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True, comment="最近召回命中时间（激活值近期增益数据源）"
+        DateTime(timezone=True),
+        nullable=True,
+        comment="最近召回命中时间（激活值近期增益数据源）",
     )
     superseded_by: Mapped[uuid.UUID | None] = mapped_column(
-        PGUUID(as_uuid=True), nullable=True, comment="被哪条新记忆语义覆写（冲突整合败者标记）"
+        PGUUID(as_uuid=True),
+        nullable=True,
+        comment="被哪条新记忆语义覆写（冲突整合败者标记）",
     )
     superseded_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, comment="退场时间（软删除窗口内可复活）"
@@ -92,7 +97,9 @@ class MemoryFact(UUIDMixin, TimestampMixin, Base):
         String(50), nullable=True, comment="来源类型: message/document/tool/feedback"
     )
     source_ref_id: Mapped[uuid.UUID | None] = mapped_column(
-        PGUUID(as_uuid=True), nullable=True, index=True,
+        PGUUID(as_uuid=True),
+        nullable=True,
+        index=True,
         comment="来源引用ID（消息/文档/工具结果ID）",
     )
     raw_excerpt: Mapped[str | None] = mapped_column(
@@ -103,7 +110,8 @@ class MemoryFact(UUIDMixin, TimestampMixin, Base):
         String(64), nullable=True, comment="写入时仲裁理由（ConsolidateVerdict.reason）"
     )
     forgotten_reason: Mapped[str | None] = mapped_column(
-        String(64), nullable=True,
+        String(64),
+        nullable=True,
         comment="退场原因: superseded_conflict/dedup/corrected/expired",
     )
     activation_value: Mapped[float | None] = mapped_column(
@@ -130,9 +138,7 @@ class KnowledgeEntity(UUIDMixin, TimestampMixin, Base):
         nullable=True,
         comment="关联的业务 ID（如文档 ID）",
     )
-    name: Mapped[str] = mapped_column(
-        String(500), nullable=False, comment="实体名称"
-    )
+    name: Mapped[str] = mapped_column(String(500), nullable=False, comment="实体名称")
     current_version: Mapped[str] = mapped_column(
         String(50), default="v1", comment="当前版本"
     )
@@ -170,12 +176,8 @@ class EntityEvent(UUIDMixin, TimestampMixin, Base):
         nullable=False,
         comment="事件类型: version_updated/status_changed/expired/deprecated/merged/split",
     )
-    old_value: Mapped[str | None] = mapped_column(
-        Text, nullable=True, comment="旧值"
-    )
-    new_value: Mapped[str | None] = mapped_column(
-        Text, nullable=True, comment="新值"
-    )
+    old_value: Mapped[str | None] = mapped_column(Text, nullable=True, comment="旧值")
+    new_value: Mapped[str | None] = mapped_column(Text, nullable=True, comment="新值")
     event_source: Mapped[str] = mapped_column(
         String(100), nullable=False, comment="事件来源"
     )

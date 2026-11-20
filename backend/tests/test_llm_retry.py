@@ -15,16 +15,17 @@ P0-2 LLM Provider 重试装饰器测试 —— 验证 with_llm_retry 的 async g
 from __future__ import annotations
 
 import asyncio
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 import pytest
 
 from app.utils.llm_retry import with_llm_retry
 
-
 # ------------------------------------------------------------------
 # 测试辅助：模拟 Provider 类与 SDK 异常
 # ------------------------------------------------------------------
+
 
 class FakeSDKError(Exception):
     """模拟 SDK 异常 —— 带 status_code / response / message。"""
@@ -97,6 +98,7 @@ class StreamingFailProvider:
 # 成功路径测试
 # ------------------------------------------------------------------
 
+
 class TestSuccessPath:
     """无错误时的正常流式输出测试。"""
 
@@ -133,6 +135,7 @@ class TestSuccessPath:
 # ------------------------------------------------------------------
 # 流式开始前可重试错误测试
 # ------------------------------------------------------------------
+
 
 class TestRetryableBeforeStreaming:
     """流式开始前的可重试错误（429 / 529 / 500 / timeout）会重试。"""
@@ -212,7 +215,7 @@ class TestRetryableBeforeStreaming:
             async def chat(self):
                 call_count[0] += 1
                 if call_count[0] == 1:
-                    raise asyncio.TimeoutError("timed out")
+                    raise TimeoutError("timed out")
                 yield "ok"
 
         p = P()
@@ -226,6 +229,7 @@ class TestRetryableBeforeStreaming:
 # ------------------------------------------------------------------
 # 流式开始前不可重试错误测试
 # ------------------------------------------------------------------
+
 
 class TestNonRetryableBeforeStreaming:
     """流式开始前的不可重试错误立即抛，不重试。"""
@@ -325,6 +329,7 @@ class TestNonRetryableBeforeStreaming:
 # 流式开始后错误测试 —— 不重试
 # ------------------------------------------------------------------
 
+
 class TestStreamingErrorNoRetry:
     """流式开始后的错误不重试（避免重复 yield）。"""
 
@@ -345,6 +350,7 @@ class TestStreamingErrorNoRetry:
 # ------------------------------------------------------------------
 # CancelledError 测试
 # ------------------------------------------------------------------
+
 
 class TestCancelledError:
     """asyncio.CancelledError 永不被吞。"""
@@ -375,6 +381,7 @@ class TestCancelledError:
 # ------------------------------------------------------------------
 # Retry-After 与 max_attempts 测试
 # ------------------------------------------------------------------
+
 
 class TestRetryAfterAndMaxAttempts:
     """Retry-After header 优先 + 达到上限放弃。"""
@@ -416,7 +423,9 @@ class TestRetryAfterAndMaxAttempts:
             _circuit_breaker_name = "test"
             default_model = "m"
 
-            @with_llm_retry(provider="test", max_attempts=3, base_delay=0.01, max_delay=0.05)
+            @with_llm_retry(
+                provider="test", max_attempts=3, base_delay=0.01, max_delay=0.05
+            )
             async def chat(self):
                 call_count[0] += 1
                 raise FakeSDKError("Rate limited", status_code=429)
@@ -434,6 +443,7 @@ class TestRetryAfterAndMaxAttempts:
 # ------------------------------------------------------------------
 # 子类继承 provider 名测试
 # ------------------------------------------------------------------
+
 
 class TestSubclassProviderName:
     """DashScope 子类继承时 provider 名正确（从 _circuit_breaker_name 读取）。"""

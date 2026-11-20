@@ -7,6 +7,7 @@
       本批单测全部通过 mock 隔离 DB，不会真实连接，但 env 仍需合法。
     - AUTO_MIGRATE=false 避免单测触发迁移。
 """
+
 from __future__ import annotations
 
 import os
@@ -52,7 +53,9 @@ def _isolate_pytest_temproot() -> None:
     if not root.is_dir():  # Windows / 无 /tmp 的环境保持默认行为
         return
     # tempfile.mkdtemp 走 os.mkdir（未被 shim 拦截），目录名保证唯一
-    os.environ["PYTEST_DEBUG_TEMPROOT"] = tempfile.mkdtemp(prefix="ekb-pytest-root-", dir=str(root))
+    os.environ["PYTEST_DEBUG_TEMPROOT"] = tempfile.mkdtemp(
+        prefix="ekb-pytest-root-", dir=str(root)
+    )
 
 
 _isolate_pytest_temproot()
@@ -87,20 +90,32 @@ def _db_url_from_env_file() -> str | None:
 
 def _with_dbname(url: str, dbname: str) -> str:
     parts = urlsplit(url)
-    return urlunsplit((parts.scheme, parts.netloc, f"/{dbname}", parts.query, parts.fragment))
+    return urlunsplit(
+        (parts.scheme, parts.netloc, f"/{dbname}", parts.query, parts.fragment)
+    )
 
 
 def _with_port(url: str, port: int) -> str:
     parts = urlsplit(url)
     userinfo, sep, hostport = parts.netloc.rpartition("@")
     host = hostport.rsplit(":", 1)[0] if ":" in hostport else hostport
-    return urlunsplit((parts.scheme, f"{userinfo}{sep}{host}:{port}", parts.path, parts.query, parts.fragment))
+    return urlunsplit(
+        (
+            parts.scheme,
+            f"{userinfo}{sep}{host}:{port}",
+            parts.path,
+            parts.query,
+            parts.fragment,
+        )
+    )
 
 
 def _tcp_alive(url: str, timeout: float = 0.4) -> bool:
     parts = urlsplit(url)
     try:
-        with socket.create_connection((parts.hostname or "localhost", parts.port or 5432), timeout=timeout):
+        with socket.create_connection(
+            (parts.hostname or "localhost", parts.port or 5432), timeout=timeout
+        ):
             return True
     except OSError:
         return False
@@ -166,8 +181,9 @@ os.environ.setdefault("OPENAI_API_KEY", "pytest-dummy-key-not-real")
 # （patrol/rescan 等 Celery 任务测试在全量运行时拿到 MagicMock 的根因）。
 # 无 celery 的环境下此处静默跳过，各文件守卫回退为 mock 行为。
 try:
-    import celery  # noqa: F401,E402
-    import celery_app  # noqa: F401,E402  # 项目模块：堵住独立守卫块
+    import celery  # noqa: F401
+
+    import celery_app  # noqa: F401  # 项目模块：堵住独立守卫块
 except ImportError:  # pragma: no cover - 环境缺 celery 时回退
     pass
 

@@ -162,7 +162,10 @@ def table_similarity(standard_text: str, parsed_text: str) -> dict[str, Any]:
         matched = 0
         for std_cell in standard_cells:
             for parsed_cell in parsed_cells:
-                if std_cell == parsed_cell or text_similarity(std_cell, parsed_cell) > 0.9:
+                if (
+                    std_cell == parsed_cell
+                    or text_similarity(std_cell, parsed_cell) > 0.9
+                ):
                     matched += 1
                     break
         cell_match_score = matched / len(standard_cells) if standard_cells else 1.0
@@ -184,12 +187,30 @@ def table_similarity(standard_text: str, parsed_text: str) -> dict[str, Any]:
 # LaTeX 公式：$...$
 _LATEX_PATTERN = re.compile(r"\$([^\$]+)\$")
 # 数学表达式：A = B² 形式
-_MATH_PATTERN = re.compile(
-    r"[A-Za-z]+\s*[=≈≠<>≤≥]\s*[A-Za-z0-9+\-*/^()²³√]+"
-)
+_MATH_PATTERN = re.compile(r"[A-Za-z]+\s*[=≈≠<>≤≥]\s*[A-Za-z0-9+\-*/^()²³√]+")
 _SPECIAL_SYMBOLS = [
-    "∑", "∫", "∂", "π", "√", "∞", "±", "×", "÷", "≈", "≠", "≤", "≥",
-    "²", "³", "α", "β", "γ", "θ", "λ", "μ", "Ω",
+    "∑",
+    "∫",
+    "∂",
+    "π",
+    "√",
+    "∞",
+    "±",
+    "×",
+    "÷",
+    "≈",
+    "≠",
+    "≤",
+    "≥",
+    "²",
+    "³",
+    "α",
+    "β",
+    "γ",
+    "θ",
+    "λ",
+    "μ",
+    "Ω",
 ]
 
 
@@ -275,11 +296,13 @@ def formula_similarity(standard_text: str, parsed_text: str) -> dict[str, Any]:
                 best_parsed = parsed_formula
         if best_match > 0.8:
             matched_count += 1
-            match_details.append({
-                "standard": std_formula,
-                "parsed": best_parsed,
-                "similarity": round(best_match, 4),
-            })
+            match_details.append(
+                {
+                    "standard": std_formula,
+                    "parsed": best_parsed,
+                    "similarity": round(best_match, 4),
+                }
+            )
 
     formula_match_score = matched_count / len(standard_formulas)
     overall = round((formula_count_score + formula_match_score) / 2, 4)

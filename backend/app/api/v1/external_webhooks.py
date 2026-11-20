@@ -34,6 +34,7 @@
 
 遵循单一职责：仅做事件接收/验签/派发，不涉及同步逻辑本身。
 """
+
 from __future__ import annotations
 
 import json
@@ -298,13 +299,14 @@ def _resolve_dispatch_tenant(credential_tenant: uuid.UUID | None) -> str | None:
         return None
     try:
         return normalize_tenant_id(raw)
-    except Exception:  # noqa: BLE001 - 配置写错时按「没有身份」处理，不放行
+    except Exception:
         return None
 
 
 # ------------------------------------------------------------------
 # 凭证查询辅助
 # ------------------------------------------------------------------
+
 
 async def _get_credentials(
     adapter_id: str,

@@ -369,9 +369,7 @@ class TestPersistToolSpans:
             self._make_span("failure.recover"),
             self._make_span("memory.read"),  # 非审计类型，应跳过
         ]
-        written = await persist_tool_spans(
-            spans, session, run_id="r1", session_id="s1"
-        )
+        written = await persist_tool_spans(spans, session, run_id="r1", session_id="s1")
         assert written == 3
         assert session.add.call_count == 3
 

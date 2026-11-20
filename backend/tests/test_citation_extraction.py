@@ -17,8 +17,16 @@ from app.rag.citation import CitationExtractor
 
 def _sources():
     return [
-        {"doc_id": "doc1", "title": "LangGraph 文档", "content": "LangGraph是一个状态机框架。"},
-        {"doc_id": "doc2", "title": "Agent 设计指南", "content": "使用 LangGraph 构建 Agent 循环。"},
+        {
+            "doc_id": "doc1",
+            "title": "LangGraph 文档",
+            "content": "LangGraph是一个状态机框架。",
+        },
+        {
+            "doc_id": "doc2",
+            "title": "Agent 设计指南",
+            "content": "使用 LangGraph 构建 Agent 循环。",
+        },
     ]
 
 

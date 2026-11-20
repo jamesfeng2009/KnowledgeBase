@@ -17,6 +17,7 @@
 基座：conftest db_session（真实 PostgreSQL；B4 不涉及 RLS 断言）。
 LLM 提取/embedder 属外部边界，按 B1/B3 同款方式打桩。
 """
+
 from __future__ import annotations
 
 import uuid
@@ -75,9 +76,7 @@ async def _seed_user_and_conversation(db):
     from app.models.conversation import Conversation
     from app.models.user import User
 
-    user = User(
-        email=f"b4-{uuid.uuid4()}@ekb.local", hashed_password="x", name="B4"
-    )
+    user = User(email=f"b4-{uuid.uuid4()}@ekb.local", hashed_password="x", name="B4")
     db.add(user)
     await db.flush()
     conv = Conversation(user_id=user.id)
@@ -125,9 +124,10 @@ class TestB4ChatPathNoClobber:
     ):
         """save_session(agent_state=None) 必须干净跳过 checkpoint，
         而不是抛 AttributeError 再被吞掉；摘要照常落库（正向证人）。"""
+        from sqlalchemy import select
+
         import app.memory.memory_manager as mm
         from app.models.memory import MemoryFact
-        from sqlalchemy import select
 
         user_id, session_id = await _seed_user_and_conversation(db_session)
         await _seed_checkpoint(db_session, session_id)
@@ -149,18 +149,20 @@ class TestB4ChatPathNoClobber:
         assert loaded["iteration"] == 3
 
         facts = (
-            await db_session.execute(
-                select(MemoryFact).where(
-                    MemoryFact.fact_text == "B4 摘要证人",
-                    MemoryFact.category == "summary",
+            (
+                await db_session.execute(
+                    select(MemoryFact).where(
+                        MemoryFact.fact_text == "B4 摘要证人",
+                        MemoryFact.category == "summary",
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert len(facts) == 1
 
-    async def test_memory_task_without_state_preserves_checkpoint(
-        self, db_session
-    ):
+    async def test_memory_task_without_state_preserves_checkpoint(self, db_session):
         """异步任务不带 agent_state（chat 派发路径）不得覆写 checkpoint。"""
         from tasks.memory_tasks import _persist_memory_async
 
