@@ -948,6 +948,81 @@ class KnowledgeBaseMCPServer:
         return json.dumps(result, ensure_ascii=False)
 
     @mcp_tool(
+        name="analyze_outcome_attribution",
+        description=(
+            "对一组「决策→结果」事件做归因分析：先跑 A/A 负对照排除管道自造效应，"
+            "再做显著性检验与分层混杂校正，结论可逐条点回原始 decision_id。"
+            "适用场景：用户提供了成对的决策事件与结果事件，要判断某干预是否真有效。"
+            "不适用于：没有事件数据时凭空推断原因——本工具不内置任何业务数据，"
+            "不传 decisions/outcomes 会明确返回 no_data，不会编造归因；"
+            "查询单条审批进度（用 query_oa_approval）；"
+            "搜索知识库文档（用 knowledge_search）。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "decisions": {
+                    "type": "array",
+                    "description": (
+                        "决策事件数组，每项含 decision_id/arm/strata 等。"
+                        "必须由调用方从真实业务系统注入；本工具不内置数据。"
+                    ),
+                    "items": {"type": "object"},
+                },
+                "outcomes": {
+                    "type": "array",
+                    "description": (
+                        "结果事件数组，每项含 decision_id 与二值/连续指标"
+                        "（如 filled/responded/utilization）。"
+                    ),
+                    "items": {"type": "object"},
+                },
+                "metric": {
+                    "type": "string",
+                    "description": "北极星指标字段名，默认 filled",
+                },
+                "strata_keys": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "分层维度（用于混杂校正），默认空",
+                },
+            },
+            "required": ["decisions", "outcomes"],
+        },
+        category="analytics",
+        tags=["归因", "显著性", "负对照", "A/B", "分析", "attribution"],
+        skill_description=(
+            "对注入的决策-结果事件做带负对照门禁的归因分析。"
+            "输出 trustworthy 判定：A/A 负对照不过或匹配率不足时，"
+            "结论标记为不可信，不作为决策依据。"
+            "负向边界：没有真实事件数据时返回 no_data，绝不编造归因结论。"
+        ),
+        output_interpretation=(
+            "status=no_data 表示未接入事件数据源；"
+            "trustworthy=false 表示分析管道未通过自检，结论不可采信；"
+            "evidence_decision_ids 是结论可点回的原始记录 ID。"
+        ),
+    )
+    async def _tool_analyze_outcome_attribution(
+        self,
+        decisions: list[dict[str, Any]] | None = None,
+        outcomes: list[dict[str, Any]] | None = None,
+        metric: str = "filled",
+        strata_keys: list[str] | None = None,
+    ) -> str:
+        """归因分析 — 事件由调用方注入，无数据则诚实返回 no_data。"""
+        from app.services.attribution_analysis_service import AttributionAnalysisService
+
+        svc = AttributionAnalysisService()
+        result = svc.analyze(
+            decisions or [],
+            outcomes or [],
+            metric=metric,
+            strata_keys=strata_keys or (),
+        )
+        return json.dumps(result, ensure_ascii=False, default=str)
+
+    @mcp_tool(
         name="read_tool_result",
         description=(
             "读取已写盘的超大工具结果全文。"

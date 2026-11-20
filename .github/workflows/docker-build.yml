@@ -2,10 +2,10 @@ name: Docker Image Build
 
 on:
   pull_request:
-    branches: [main]
+    branches: [master]
     paths: ["backend/**", "frontend/**", "Dockerfile*", "docker-compose*.yml"]
   push:
-    branches: [main]
+    branches: [master]
   workflow_dispatch:
 
 permissions:

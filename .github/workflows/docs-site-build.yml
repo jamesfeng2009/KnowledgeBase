@@ -2,10 +2,10 @@ name: Docs Site Build
 
 on:
   pull_request:
-    branches: [main]
+    branches: [master]
     paths: ["docs-site/**", "WeKnora-*.md", "CHANGELOG.md"]
   push:
-    branches: [main]
+    branches: [master]
     paths: ["docs-site/**"]
 
 permissions:

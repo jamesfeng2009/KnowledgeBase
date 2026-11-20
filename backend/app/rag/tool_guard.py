@@ -54,6 +54,9 @@ _SAFE_TOOLS: set[str] = {
     "knowledge_search",
     "document_get",
     "query_oa_approval",
+    # 归因分析是只读计算：事件由调用方注入、不访问业务表、不写知识库，
+    # 负对照不过时连结论都不出（见 AttributionAnalysisService）。
+    "analyze_outcome_attribution",
 }
 
 

@@ -5,8 +5,14 @@
 ```bash
 cd backend
 
-# 运行全部测试（3061 项）
+# 运行全部测试（需真实 PostgreSQL；用例数随迭代增长，以实际收集结果为准）
 python -m pytest --tb=short -q
+
+# 只想确认当前收集到多少用例
+python -m pytest --collect-only -q | tail -1
+
+# 环境不对时先自检（端口 / 连接角色）
+python scripts/dev_env_check.py
 
 # 运行特定模块测试
 python -m pytest tests/test_chunk_optimization.py -v    # RAG 分块优化（含 title_path 前缀 + Overlap）
@@ -113,6 +119,28 @@ python -m pytest tests/test_tool_governance.py -v            # 工具治理（�
 | `test_key_decision_persistence.py` | 7 | 关键决策持久化（决策关键词检测、LLM 提取、NONE 跳过、LLM 不可用降级、异常降级、TTL 24h） |
 | `test_reviewer_agent.py` | 13 | ReviewerAgent 对抗审查（高风险工具判定、非高风险放行、LLM 不可用降级、审批/拒绝、异常降级、markdown JSON 解析、超长 query 截断） |
 | `test_tool_governance.py` | 17 | 工具治理 P0-P2（描述负向边界约束、tags 口语化关键词、Agent 类型筛选 QA/Workflow/Action、未知类型安全默认、CrewAI 不可用降级、MCP 异常降级、无匹配工具指令构建） |
-| **合计** | **3061** | **122 个测试文件，3061 项测试**（DB 连接相关用例依赖测试环境 PostgreSQL，未起服务时作为环境基线跳过） |
+**数量口径**：上表是分类清单，不是完整统计。仓库现有 270 个 `tests/test_*.py`（2026-11-20 实测），2026-11-11 全量回归基线为 `5365 passed / 1 skipped / 1 xfailed / 0 failed`。用例数持续增加，验收请以 `pytest --collect-only -q` 的实际输出为准，不要用上表数字当基线。DB 连接相关用例依赖测试环境 PostgreSQL；`tests/conftest.py` 会在导入期自动探测 55432 / 15432 端口。
 
----
+## 门禁类测试（改动后必跑）
+
+这些守的是「改一行就可能全仓裸奔」的边界，不属于功能测试：
+
+| 测试文件 | 守什么 |
+|------|------|
+| `test_rls_fail_closed.py` | 无租户 GUC 时拒绝所有行、策略谓词形态、任务身份 |
+| `test_rls_role_split.py` | 运行角色非 superuser、迁移连接走 owner |
+| `test_tenant_resolver_fail_closed.py` | 伪造 `X-Tenant-Id` 头 / 无效 JWT 不得决定租户 |
+| `test_gateway_header_hygiene.py` | APISIX 每条路由都剥离三个租户头 |
+| `test_public_endpoint_contract.py` | 公开端点清单精确匹配，新增/删除一律变红 |
+| `test_frontend_api_contract.py` | 前端 `apis/*.ts` 的路径与 `app.openapi()` 一致 |
+| `test_migration_drift_guard.py` | autogenerate 不得产生破坏性 diff |
+| `test_test_env_bootstrap.py` | 端口探测与 pytest basetemp 沙箱兼容 |
+
+```bash
+cd backend
+python -m pytest tests/test_rls_fail_closed.py tests/test_rls_role_split.py \
+    tests/test_tenant_resolver_fail_closed.py tests/test_gateway_header_hygiene.py \
+    tests/test_public_endpoint_contract.py -q
+```
+
+> CI 的 `security-gate` job 会先 provision 一个 `NOSUPERUSER / NOBYPASSRLS` 角色再做真实隔离验证：**用 superuser 跑 RLS 测试全绿，但生产是裸奔的**，这条不能省。

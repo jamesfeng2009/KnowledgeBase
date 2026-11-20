@@ -573,24 +573,30 @@ const docId = Astro.url.searchParams.get('id') || 'new';
       </div>`;
   }
 
-  /** 解析状态徽章颜色 */
+  /** 解析状态徽章颜色 — 对齐后端 parse_status 真实取值 */
   function parseStatusBadge(status: string): string {
     const map: Record<string, string> = {
       pending: 'warning',
+      parsed: 'success',
+      partial: 'warning',
+      failed: 'danger',
+      // 旧枚举兼容（历史数据 / 缓存）
       processing: 'primary',
       completed: 'success',
-      failed: 'danger',
     };
     return map[status] || 'warning';
   }
 
-  /** 解析状态文案 */
+  /** 解析状态文案 — 对齐后端 parse_status 真实取值（parsed/partial/failed/pending） */
   function parseStatusLabel(status: string): string {
     const map: Record<string, string> = {
       pending: '解析等待中',
+      parsed: '解析完成',
+      partial: '部分解析（有警告）',
+      failed: '解析失败',
+      // 旧枚举兼容
       processing: '解析处理中',
       completed: '解析完成',
-      failed: '解析失败',
     };
     return map[status] || status;
   }

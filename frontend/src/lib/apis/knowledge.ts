@@ -107,6 +107,12 @@ export interface DocParseProgress {
   sub_current?: number;
   /** P2-E: 子阶段总进度（如总 ASR 段数） */
   sub_total?: number;
+  /** T2: 派生索引可见性 — ready/indexing/failed/pending */
+  index_state?: 'ready' | 'indexing' | 'failed' | 'pending';
+  /** T2: 当前是否可被检索到 */
+  searchable?: boolean;
+  /** T2: 给前端展示的中文提示（如"内容索引中，请稍后重试"） */
+  reason?: string;
 }
 
 /** 查询文档解析进度（从 Redis 读取 Celery 任务实时写入的进度） */

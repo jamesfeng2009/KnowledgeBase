@@ -44,6 +44,12 @@ log = get_logger(__name__)
 
 router = APIRouter(tags=["文档管理"])
 
+# T2: 文档级 reindex 独立限流（每客户端每分钟 6 次，突发 3）。
+# 全局 HTTP 中间件无法按端点区分配额，重建索引成本高，单独收紧。
+from app.middleware import RateLimiter as _RateLimiter  # noqa: E402
+
+_reindex_limiter = _RateLimiter(per_minute=6, burst=3)
+
 # 上传流式读取分块大小（1MB）— 避免一次性全量读入内存
 _UPLOAD_READ_CHUNK_BYTES = 1 * 1024 * 1024
 # Content-Length 预检的 multipart 表单开销余量（边界/表单字段/文件名等）
@@ -865,28 +871,73 @@ async def abort_multipart_upload(
     return ApiResponse(code=0, data={"aborted": True}, message="success")
 
 
+def _derive_index_state(status: str | None, progress_stage: str | None, warnings: list | None) -> dict[str, Any]:
+    """从「业务状态 + 流水线阶段 + 解析警告」派生索引可见性语义（纯派生，不落库）。
+
+    为什么不新增 index_status 字段：
+        检索可见性已有双层权威判定——召回层注入 doc_status=published
+        （retrieval_invariants.py），Final Gate 按 DB 的 Document.status 复检
+        （permission_service.py）。再加一个 DB 字段会造出第三套需要同步的状态机，
+        且与 status 不一致时反而更难判断。索引"能不能被搜到"的真实决定因素是
+        status 与索引构建是否成功，两者都已存在，这里只做派生。
+
+    Returns:
+        {
+          "index_state": "ready" | "indexing" | "failed" | "pending",
+          "searchable": bool,       # 当前是否可被检索到
+          "reason": str,            # 给前端展示的中文提示
+        }
+    """
+    warnings = warnings or []
+    index_failed = any("索引构建失败" in str(w) for w in warnings)
+    parse_failed = any("解析异常" in str(w) or "解析失败" in str(w) for w in warnings)
+
+    # 索引/解析失败：即使 status=published 也不可检索（索引异常被流水线吞掉的路径）
+    if index_failed or parse_failed or status == "failed":
+        return {
+            "index_state": "failed",
+            "searchable": False,
+            "reason": "处理失败，内容暂不可检索，请重新索引或联系管理员",
+        }
+    # 已发布即已可检索（索引在 status 翻转前同步构建完成）
+    if status == "published":
+        return {"index_state": "ready", "searchable": True, "reason": "内容已就绪，可被检索"}
+    # 审核中的文档：索引里是 pending_review，不进常规召回
+    if status == "pending_review":
+        return {"index_state": "pending", "searchable": False, "reason": "内容审核中，通过后可被检索"}
+    # draft / processing / 其他：流水线正在跑或尚未开始
+    if progress_stage and progress_stage not in ("unknown", "done"):
+        if progress_stage == "indexing":
+            return {"index_state": "indexing", "searchable": False, "reason": "内容索引中，请稍后重试"}
+        return {"index_state": "indexing", "searchable": False, "reason": f"内容处理中（{progress_stage}），请稍后重试"}
+    return {"index_state": "pending", "searchable": False, "reason": "内容索引中，请稍后重试"}
+
+
 @router.get("/documents/{doc_id}/progress", response_model=ApiResponse[dict])
 async def get_document_parse_progress(
+    request: Request,
     doc_id: UUID,
+    db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_active_user),
 ) -> ApiResponse[dict]:
-    """查询文档解析进度（P1 增强）。
+    """查询文档解析进度 + 派生索引可见性（P1 增强 / T2）。
 
-    返回 Celery 任务实时写入 Redis 的进度信息：
+    Redis 进度字段（原样保留，向后兼容）：
     - stage: queued / parsing / chunking / embedding / indexing / publishing / done / failed
-    - current: 当前进度（如当前页码）
-    - total: 总进度（如总页数、总分块数）
-    - message: 人类可读提示
+    - current / total / message
 
-    前端可替代按轮询次数模拟的虚假进度，展示真实解析阶段。
-    Redis 不可用或任务尚未启动时返回 stage="unknown"。
+    新增派生字段（不落库，解决"刚上传就问答不出"的产品语义）：
+    - index_state: ready / indexing / failed / pending
+    - searchable: 当前是否可被检索（前端据此提示"内容索引中，请稍后"）
+    - reason: 人类可读提示
+
+    Redis 不可用或任务尚未启动时 stage="unknown"；此时仍按 DB 状态派生 searchable。
     """
     try:
         from tasks.document_tasks import get_parse_progress
 
         progress = get_parse_progress(str(doc_id))
         if progress is None:
-            # 无进度记录 — 可能任务尚未启动或已超时清理
             progress = {"stage": "unknown", "message": "暂无进度信息"}
     except ImportError:
         log.debug("document_tasks 模块未安装，无法查询解析进度")
@@ -895,6 +946,25 @@ async def get_document_parse_progress(
         log.exception("查询文档 %s 解析进度失败", doc_id)
         progress = {"stage": "unknown", "message": "进度查询异常"}
 
+    # 查 DB 状态 + 警告，派生可检索语义；查询失败则保守降级为不可检索
+    try:
+        tenant_id = getattr(request.state, "tenant_id", None)
+        service = KnowledgeService(db, user, tenant_id=tenant_id)
+        doc = await service.get_document(doc_id)
+        derived = _derive_index_state(
+            getattr(doc, "status", None),
+            progress.get("stage"),
+            getattr(doc, "parse_warnings", None),
+        )
+    except Exception:
+        log.exception("派生文档 %s 索引可见性失败", doc_id)
+        derived = {
+            "index_state": "pending",
+            "searchable": False,
+            "reason": "状态查询中，请稍后重试",
+        }
+
+    progress.update(derived)
     return ApiResponse(code=0, data=progress, message="success")
 
 
@@ -1116,6 +1186,50 @@ async def _require_doc_manager(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="仅所有者或管理员可管理文档",
         )
+
+
+@router.post("/documents/{doc_id}/reindex", response_model=ApiResponse[dict])
+async def reindex_document(
+    request: Request,
+    doc_id: UUID,
+    db: AsyncSession = Depends(get_db_session),
+    user: User = Depends(get_current_active_user),
+) -> ApiResponse[dict]:
+    """文档级重建索引（T2）— 给「索引失败/长期 pending」一个用户可触发的重试入口。
+
+    安全约束：
+    - 写权限校验：复用 _require_doc_manager（知识库写权限 + 所有者/admin）；
+    - 限流：每客户端每分钟 6 次，防滥用打爆索引队列；
+    - 幂等：process_document 内部有 Redis SETNX 锁，同文档同时只有一个 worker 处理。
+
+    返回 status="queued"，前端应轮询 /documents/{id}/progress 观察 index_state。
+    """
+    # 限流：按 API Key / 用户 / IP 维度
+    from app.middleware import _get_client_id
+
+    client_id = _get_client_id(request)
+    if not _reindex_limiter.allow(client_id):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="重建索引请求过于频繁，请稍后再试",
+        )
+
+    tenant_id = getattr(request.state, "tenant_id", None)
+    service = KnowledgeService(db, user, tenant_id=tenant_id)
+    doc = await service.get_document(doc_id)
+    await _require_doc_manager(service, doc, user)
+
+    # 标记待处理 + 异步触发流水线（复用现成方法，失败仅告警不影响响应）
+    doc.parse_status = "pending"
+    await db.commit()
+    await service._trigger_reindex(str(doc.id), str(doc.kb_id) if doc.kb_id else None)
+
+    log.info("document.reindex_requested", doc_id=str(doc.id), user_id=str(user.id))
+    return ApiResponse(
+        code=0,
+        data={"doc_id": str(doc.id), "status": "queued", "message": "已提交重建索引，请轮询 progress"},
+        message="success",
+    )
 
 
 @router.post("/documents/{doc_id}/archive", response_model=ApiResponse[DocResponse])

@@ -2,10 +2,10 @@ name: API Smoke Test
 
 on:
   pull_request:
-    branches: [main]
+    branches: [master]
     paths: ["backend/app/**", "backend/tests/test_api_smoke.py"]
   push:
-    branches: [main]
+    branches: [master]
   workflow_dispatch:
 
 permissions:

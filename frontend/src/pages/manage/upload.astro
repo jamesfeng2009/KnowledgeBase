@@ -1226,6 +1226,11 @@ const breadcrumb = [{ label: '管理', href: '/manage/kb' }, { label: '文档上
       const unit = progress.stage === 'parsing' ? '页' : '块';
       return `第 ${progress.current}/${progress.total} ${unit}`;
     }
+    // T2: 索引未就绪时优先展示派生提示（"内容索引中，请稍后重试"），
+    // 比 Celery 原始 stage message 更贴近用户可理解的"能不能搜到"语义。
+    if (progress.index_state && progress.index_state !== 'ready' && progress.reason) {
+      return progress.reason;
+    }
     return progress.message || '';
   }
 

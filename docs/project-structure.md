@@ -88,7 +88,7 @@ EnterpriseKnowledge/
 │   ├── config/
 │   │   └── models.json               # P2 模型配置文件（7 个模型 × 4 种部署模式，Git 管理）
 │   ├── tasks/                        # Celery 异步任务
-│   ├── tests/                        # 测试（3061 项）
+│   ├── tests/                        # 测试（用例数见 docs/testing.md，勿写死）
 │   ├── celery_app.py                 # Celery 入口
 │   └── requirements.txt
 ├── collab-service/                   # Yjs 协作服务（Node.js + TypeScript）

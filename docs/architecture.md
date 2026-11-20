@@ -11,8 +11,9 @@ graph TB
         API_CLIENT[外部系统<br/>OpenAPI 调用方]
     end
 
-    subgraph "网关层"
-        CADDY[Caddy 反向代理<br/>自动 HTTPS + HTTP/3]
+    subgraph "接入层"
+        NGINX[Nginx 静态托管<br/>Astro 编译产物]
+        APISIX[APISIX 可选边缘网关<br/>多租户子域路由 / 租户头清洗 / 限流]
     end
 
     subgraph "核心引擎（FastAPI 模块化单体）"
@@ -49,11 +50,13 @@ graph TB
         VLLM_FT[vLLM + LoRA<br/>微调模型<br/>private_finetuned]
     end
 
-    Web --> CADDY
-    API_CLIENT --> CADDY
-    CADDY --> API
-    CADDY --> YJS
-    CADDY --> Web
+    Web --> NGINX
+    NGINX --> API
+    API_CLIENT --> APISIX
+    APISIX --> API
+    APISIX --> YJS
+    APISIX --> NGINX
+    Web --> YJS
 
     API --> SERVICE
     SERVICE --> RAG
@@ -80,6 +83,8 @@ graph TB
     SSE_LAYER --> REDIS
     BEAT --> WORKER
 ```
+
+> 接入层说明：前端由 `nginx:alpine` 托管 Astro 编译产物（静态资源，非 SSR）。APISIX 是**可选**边缘网关，配置在 `infra/apisix/`，用独立 compose 文件启动，不在主 `docker-compose.yml` 中；图中 APISIX 链路仅在启用它时存在。未启用时前端直连 `core-engine:8000`，此时租户头清洗、子域注入与租户级限流都不生效，需自行保证租户身份可信。
 
 ### 架构设计原则
 

@@ -2,10 +2,10 @@ name: Helm & Compose Lint
 
 on:
   pull_request:
-    branches: [main]
+    branches: [master]
     paths: ["infra/**", "docker-compose*.yml", ".github/workflows/helm-compose-lint.yml"]
   push:
-    branches: [main]
+    branches: [master]
     paths: ["infra/**", "docker-compose*.yml"]
 
 permissions:

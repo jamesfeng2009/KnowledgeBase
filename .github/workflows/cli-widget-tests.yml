@@ -2,10 +2,10 @@ name: CLI & Widget Tests
 
 on:
   pull_request:
-    branches: [main, develop]
+    branches: [master, develop]
     paths: ["backend/app/cli/**", "backend/app/api/v1/widget.py", "backend/app/services/widget_token_service.py", "backend/scripts/ekb_cli.py", "backend/tests/test_cli.py", "backend/tests/test_widget.py"]
   push:
-    branches: [main]
+    branches: [master]
 
 permissions:
   contents: read
